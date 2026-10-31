@@ -160,7 +160,6 @@ int APS5_VABI sceAppMessagingTryReceiveMsg(AppMessagingMessage* message) {
 }
 
 int APS5_VABI sceLncUtilAcquireCpuBudgetOfExtraAudioDevices() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -350,8 +349,7 @@ int APS5_VABI sceLncUtilIsCdlgActivated(std::uint8_t* activated) {
 }
 
 bool APS5_VABI sceLncUtilIsCpuBudgetOfExtraAudioDevicesAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return true;
 }
 
 int APS5_VABI sceLncUtilIsHostBoot(std::int32_t appId, bool* hostBoot) {
@@ -432,7 +430,6 @@ int APS5_VABI sceLncUtilRegisterShellUI() {
 }
 
 int APS5_VABI sceLncUtilReleaseCpuBudgetOfExtraAudioDevices() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
