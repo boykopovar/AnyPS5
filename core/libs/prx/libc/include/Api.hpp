@@ -1524,5 +1524,7 @@ std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_po
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*);
 int APS5_VABI siginterrupt_nid_postfix(int guest, int flag);
+int APS5_VABI sceLibcMspaceIsHeapEmpty_nid_postfix(void* handle);
+int APS5_VABI sceLibcPafMspaceIsHeapEmpty_nid_postfix(void* handle);
 
 }
