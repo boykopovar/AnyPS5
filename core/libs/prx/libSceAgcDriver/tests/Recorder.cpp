@@ -630,6 +630,14 @@ public:
                     std::cout << "pipeline binary internal_cache_disabled=" << internalCache.disableInternalCache << " driver=" << queried.properties.driverVersion << '\n';
                 }
             }
+            VkPhysicalDevicePortabilitySubsetFeaturesKHR portabilityFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PORTABILITY_SUBSET_FEATURES_KHR};
+            if (hasExtension(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &portabilityFeatures};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+                extensionsEnabled.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+                portabilityFeatures.pNext = address.pNext;
+                address.pNext = &portabilityFeatures;
+            }
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             const std::array<VkDeviceQueueCreateInfo, 2> queueInfos{queue, settle};
             device.queueCreateInfoCount = settleFamily != noSettleFamily && settleFamily != family ? 2 : 1;
