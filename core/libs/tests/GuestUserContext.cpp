@@ -118,6 +118,7 @@ asm(".text\n"
 
 namespace {
 
+constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int GuestSigBlock = 1;
 constexpr int GuestSigSetmask = 3;
@@ -218,7 +219,18 @@ void CheckErrors() {
     Require(getcontext_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "getcontext rejects a null context");
     *__error_nid_postfix() = 0;
     Require(setcontext_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "setcontext rejects a null context");
+    *__error_nid_postfix() = 0;
+    Require(getcontext_nid_postfix(reinterpret_cast<UserUcontext*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "getcontext rejects an invalid destination pointer");
+    *__error_nid_postfix() = 0;
+    Require(setcontext_nid_postfix(reinterpret_cast<const UserUcontext*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "setcontext rejects an invalid source pointer");
+    *__error_nid_postfix() = 0;
+    Require(swapcontext_nid_postfix(reinterpret_cast<UserUcontext*>(0x10), nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "swapcontext rejects a null next pointer");
     UserUcontext context{};
+    Require(getcontext_nid_postfix(&context) == 0, "capture a valid context");
+    *__error_nid_postfix() = 0;
+    Require(swapcontext_nid_postfix(reinterpret_cast<UserUcontext*>(0x10), &context) == -1 && *__error_nid_postfix() == GuestEfault, "swapcontext rejects an invalid saved pointer");
+    *__error_nid_postfix() = 0;
+    Require(swapcontext_nid_postfix(&context, reinterpret_cast<const UserUcontext*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "swapcontext rejects an invalid next pointer");
     Require(getcontext_nid_postfix(&context) == 0, "capture a context to corrupt");
     context.mcontext.len = 0;
     *__error_nid_postfix() = 0;
