@@ -869,7 +869,7 @@ std::uint64_t guardedColorBytes(const ColorTarget& target) {
 }
 
 void storeEarlierStorageResults(const ColorTarget& target) {
-    static_cast<void>(StorageTexture::FlushPending(target.address, static_cast<std::size_t>(guardedColorBytes(target)), nullptr, "multisampled color target"));
+    static_cast<void>(StorageTexture::FlushPending(target.address, static_cast<std::size_t>(guardedColorBytes(target)), nullptr, "multisampled color target", PublishScope::None));
 }
 
 void claimOverlapping(std::uint64_t address, std::uint64_t bytes, const TargetUse* claimant) {
