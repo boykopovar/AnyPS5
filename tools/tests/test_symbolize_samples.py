@@ -424,6 +424,26 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertIn("libSceAgcDriver.prx!short", "\n".join(lines))
         self.assertEqual(errors, "")
 
+    def test_module_names_with_spaces_keep_their_samples_and_records(self):
+        build_pe(self.libs / "My Game.exe")
+        record = f"# module My Game.exe {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        samples = self.root / "worker.txt"
+        samples.write_text("# 5 samples\nMy Game.exe 0x1011 3 3\nntdll.dll 0x10 2 2\n" + record, encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs)
+        self.assertEqual(lines[0], "5 samples")
+        self.assertIn("3  60.0%  My Game.exe!short", lines[2])
+        self.assertIn("2  40.0%  ntdll.dll+0x10", lines[3])
+        self.assertEqual(errors, "")
+        samples.write_text("thread 7 samples 4\n  My Game.exe 0x1011 4 4\n" + record, encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs, "--thread", "7")
+        self.assertEqual(lines[0], "4 samples")
+        self.assertIn("4 100.0%  My Game.exe!short", lines[2])
+        self.assertEqual(errors, "")
+        samples.write_text(record + "My Game.exe+0x1011 4\n", encoding="utf-8")
+        lines, errors = self.run_main(samples, "--libs", self.libs)
+        self.assertIn("My Game.exe!short", "\n".join(lines))
+        self.assertEqual(errors, "")
+
     def test_thread_files_keep_each_heading_and_can_select_one_thread(self):
         samples = self.root / "threads.txt"
         record = f"# module libSceAgcDriver.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"

@@ -230,10 +230,11 @@ class Symbolizer:
 def read_headers(lines):
     headers = {}
     for line in lines:
-        parts = line.split()
-        if len(parts) == 5 and parts[:2] == ["#", "module"]:
-            name = parts[2].lower()
-            identity = (int(parts[3], 16), int(parts[4], 16))
+        parts = line.split(None, 2)
+        fields = parts[2].rsplit(None, 2) if len(parts) == 3 and parts[:2] == ["#", "module"] else []
+        if len(fields) == 3:
+            name = fields[0].lower()
+            identity = (int(fields[1], 16), int(fields[2], 16))
             headers[name] = False if name in headers else identity
     return headers
 
@@ -264,10 +265,11 @@ def load(path, thread=None):
             if thread is None or current == thread:
                 samples.total["threads"] += int(parts[3])
             continue
-        if len(parts) == 4 and parts[1].startswith("0x") and parts[2].isdigit() and parts[3].isdigit():
+        fields = line.strip().rsplit(None, 3)
+        if len(fields) == 4 and fields[1].startswith("0x") and fields[2].isdigit() and fields[3].isdigit():
             if thread is None or current == thread:
-                samples.self_counts[(parts[0], parts[1])] += int(parts[2])
-                samples.inclusive[(parts[0], parts[1])] += int(parts[3])
+                samples.self_counts[(fields[0], fields[1])] += int(fields[2])
+                samples.inclusive[(fields[0], fields[1])] += int(fields[3])
             continue
         frames, _, count = line.rpartition(" ")
         if not frames or not count.isdigit():
