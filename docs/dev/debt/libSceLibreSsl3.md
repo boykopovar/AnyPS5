@@ -12,11 +12,12 @@
 - [EVP_PKEY_up_ref, EC_KEY_up_ref and RSA_up_ref](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) - console layouts and retain/release interoperability are unverified. The 32-byte EVP, 64-byte EC and 152-byte RSA layouts, with counters at offsets 4, 48 and 104, follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `evp/evp_local.h`, `evp/p_lib.c`, `ec/ec_local.h`, `ec/ec_key.c`, `rsa/rsa_local.h` and `rsa/rsa_lib.c`; the RSA layout has no `engine` field, unlike libSceLibreSsl's `LibreSslRsa`. Atomic retains replace its internal mutex; future releases must synchronize with the same counters. With no key constructors/destructors in this module, tests use caller-owned objects without validating allocator or destruction compatibility. Null keys and signed-counter overflow, undefined upstream, throw without mutation. Closes when: console layouts and lifetime interoperability are measured.
 
 - [Parent export forwarding](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) exposes 395 parent-library exports on Windows through IAT tail jumps without changing their ABI. Non-Windows hosts use their existing dependency lookup. Static COFF inspection verifies names, parent imports and tail jumps; Windows loading and runtime behavior remain unverified. Parent functions retain their existing implementation limitations.
+- [X509_VERIFY_PARAM_set_flags](../../../core/libs/prx/libSceLibreSsl3/src/X509VerifyParam.cpp) (libSceLibreSsl3) - nothing is checked on the console. It ORs the flags into `flags` and returns 1, as both [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/x509/x509_vpm.c) and [4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_vpm.c) `x509_vpm.c` do. They differ when `EXPLICIT_POLICY`, `INHIBIT_ANY` or `INHIBIT_MAP` is set while `POLICY_CHECK` is neither set nor requested: 2.5.4 also adds `POLICY_CHECK` and 4.0.0 does not. The console's choice is unknown, so that case throws through `NotImplemented_nid_no_patch` and leaves the parameters unchanged. It writes libSceLibreSsl's 2.5.4 `LibreSslX509VerifyParam`, whose `flags` is at offset 24 as in 4.0.0. Null parameters throw. Closes when: the console's policy behaviour is measured.
 - [sk_new, sk_push and sk_free](../../../core/libs/prx/libSceLibreSsl3/src/Stack.cpp) (libSceLibreSsl3) - follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/stack/stack.c) `stack.c` with libSceLibreSsl's 32-byte `_STACK` layout, which `stack_local.h` keeps there. Stacks and element arrays come from the guest heap, so the forwarded `sk_pop_free` can release them. Nothing is checked on the console. Where LibreSSL faults or overflows, they throw: `sk_push` on a null stack, on a negative element count, on a null element array it does not regrow, or when the element array cannot double without overflowing `int`
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 180 callable exports: 54 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 179 callable exports: 53 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -55,7 +56,6 @@
 | `unknown` | `8kct4CSWwOA` |
 | `tls_configure` | `8pwP-7j5UZI` |
 | `X509_STORE_CTX_get0_param` | `8wroYNJAQpo` |
-| `X509_VERIFY_PARAM_set_flags` | `9E9Gr4FLIE4` |
 | `unknown` | `A-Hs-8mau+8` |
 | `unknown` | `A0lZtFjhcTw` |
 | `unknown` | `A65b+ZhOt9k` |
