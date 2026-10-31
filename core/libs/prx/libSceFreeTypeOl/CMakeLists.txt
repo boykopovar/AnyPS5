@@ -3,7 +3,8 @@ target_include_directories(libSceFreeTypeOl PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceFreeTypeOl)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_freetype_outline_border_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineBorder.cpp)
+    add_test_executable(guest_freetype_outline_border_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineBorder.cpp)
     target_include_directories(guest_freetype_outline_border_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_outline_border_tests PRIVATE freetype ${CMAKE_DL_LIBS})
     if(WIN32)
