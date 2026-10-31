@@ -1765,6 +1765,12 @@ std::optional<std::uint32_t> hostHeapIndex(const VkPhysicalDeviceMemoryPropertie
     for (std::uint32_t index = 0; index < memory.memoryHeapCount; ++index) {
         if ((memory.memoryHeaps[index].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0 && (!heap || memory.memoryHeaps[index].size > memory.memoryHeaps[*heap].size)) heap = index;
     }
+    if (heap) return heap;
+    constexpr VkMemoryPropertyFlags shared = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    for (std::uint32_t index = 0; index < std::min<std::uint32_t>(memory.memoryTypeCount, VK_MAX_MEMORY_TYPES); ++index) {
+        const auto candidate = memory.memoryTypes[index].heapIndex;
+        if ((memory.memoryTypes[index].propertyFlags & shared) == shared && candidate < memory.memoryHeapCount && (!heap || memory.memoryHeaps[candidate].size > memory.memoryHeaps[*heap].size)) heap = candidate;
+    }
     return heap;
 }
 

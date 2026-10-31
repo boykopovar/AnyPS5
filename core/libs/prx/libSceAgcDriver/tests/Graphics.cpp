@@ -7203,6 +7203,49 @@ void hostImportBudgetTests() {
     Require(HostImportBudget(memory, 16 * GiB) == 8 * GiB, "a host heap past memoryHeapCount limits the import budget");
 }
 
+void unifiedHeapImportBudgetTests() {
+    using AgcDriver::Graphics::HostImportBudgetFor;
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    VkPhysicalDeviceMemoryProperties unified{};
+    unified.memoryHeapCount = 1;
+    unified.memoryHeaps[0] = {24 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    unified.memoryTypeCount = 3;
+    unified.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    unified.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, 0};
+    unified.memoryTypes[2] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT, 0};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT report{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    report.heapBudget[0] = 18 * GiB;
+    report.heapUsage[0] = 0;
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 0) == 12 * GiB, "an idle unified heap lowered the import budget");
+    report.heapUsage[0] = 8 * GiB;
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 0) == 7936 * MiB, "a unified heap used by other allocations did not lower the import budget");
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 4 * GiB) == 12032 * MiB, "a unified heap counted its own imports as other allocations");
+    report.heapUsage[0] = 17 * GiB;
+    Require(HostImportBudgetFor(unified, &report, 12 * GiB, 0) == 0, "a unified heap past its budget left room for imports");
+    Require(HostImportBudgetFor(unified, nullptr, 12 * GiB, 0) == 12 * GiB, "a missing budget report lowered the import budget");
+    auto deviceOnly = unified;
+    deviceOnly.memoryTypeCount = 2;
+    deviceOnly.memoryTypes[1].propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    report.heapUsage[0] = 8 * GiB;
+    Require(HostImportBudgetFor(deviceOnly, &report, 12 * GiB, 0) == 12 * GiB, "a heap without host-coherent memory was taken as the host heap");
+
+    VkPhysicalDeviceMemoryProperties discrete{};
+    discrete.memoryHeapCount = 2;
+    discrete.memoryHeaps[0] = {8 * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    discrete.memoryHeaps[1] = {16 * GiB, 0};
+    discrete.memoryTypeCount = 3;
+    discrete.memoryTypes[0] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 0};
+    discrete.memoryTypes[1] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 0};
+    discrete.memoryTypes[2] = {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 1};
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT split{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    split.heapBudget[0] = 6 * GiB;
+    split.heapUsage[0] = 6 * GiB;
+    split.heapBudget[1] = 12 * GiB;
+    split.heapUsage[1] = 0;
+    Require(HostImportBudgetFor(discrete, &split, 20 * GiB, 0) == 10752 * MiB, "a device with a separate host heap used its device-local heap for the import budget");
+}
+
 void tableUpdateAfterBindTests() {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     using namespace AgcDriver::Graphics;
@@ -13035,6 +13078,7 @@ int main(int argc, char** argv) {
         imageTableTemplateRefreshTests();
         debugBranchTests();
         hostImportBudgetTests();
+        unifiedHeapImportBudgetTests();
         textureCacheBudgetTests();
         sampledTextureBudgetTests();
         storageTextureBudgetTests();
