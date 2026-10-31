@@ -71,6 +71,8 @@ int main() {
     Require(scePthreadGetcpuclockid(scePthreadSelf(), &clock) == 0);
     Require(pthread_getcpuclockid_nid_postfix(scePthreadSelf(), &posixClock) == 0 && clock == posixClock);
     Require(scePthreadGetcpuclockid(scePthreadSelf(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(scePthreadGetcpuclockid(scePthreadSelf(), reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(pthread_getcpuclockid_nid_postfix(scePthreadSelf(), reinterpret_cast<int*>(0x10)) == 14);
     Require(scePthreadGetcpuclockid(nullptr, &clock) == SCE_KERNEL_ERROR_EINVAL);
 
     Require(pthread_setconcurrency_nid_postfix(3) == 0 && scePthreadGetconcurrency() == 3);
