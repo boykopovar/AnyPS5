@@ -1,5 +1,13 @@
 # libSceAudioLatencyEstimation technical debt
 
+### Silent stubs
+
+- [sceAudioLatencyEstimationAddData](../../../core/libs/prx/libSceAudioLatencyEstimation/Export.cpp) (libSceAudioLatencyEstimation) - returns 0 when initialized without feeding hardware audio buffers.
+
+### Functional
+
+- [sceAudioLatencyEstimationInitialize, sceAudioLatencyEstimationRelease](../../../core/libs/prx/libSceAudioLatencyEstimation/Export.cpp) (libSceAudioLatencyEstimation) - manage atomic initialization state.
+
 ### Unknown function info
 
-- [sceAudioLatencyEstimationAddData, sceAudioLatencyEstimationGetDelayTime, sceAudioLatencyEstimationInitialize and sceAudioLatencyEstimationRelease](../../../core/libs/prx/libSceAudioLatencyEstimation/Export.cpp) (libSceAudioLatencyEstimation) - names and NIDs are present in the [aerolib symbol database](https://github.com/zecoxao/sce_symbols/blob/master/aerolib.csv) and are attributed to this module by `sceAudioLatencyEstimation` symbol prefix; the library is absent from the PS5 3.20 export inventory, so the pairing is not firmware-verified and no credible prototypes were found. The declarations have no parameters solely to resolve imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [libSceAudioLatencyEstimation](../../../core/libs/prx/libSceAudioLatencyEstimation/Export.cpp) - names are in the [aerolib symbol database](https://github.com/zecoxao/sce_symbols/blob/master/aerolib.csv) and attributed by prefix; the module is absent from the 3.20 inventory, so pairing is unverified. Callers must not call declarations until signatures are verified.

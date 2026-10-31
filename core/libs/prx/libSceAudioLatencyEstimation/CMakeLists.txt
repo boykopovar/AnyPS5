@@ -1,0 +1,15 @@
+add_library(libSceAudioLatencyEstimation SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAudioLatencyEstimation PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAudioLatencyEstimation)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_audio_latency_estimation_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioLatencyEstimation.cpp)
+    configure_windows_unwind(guest_audio_latency_estimation_tests)
+    target_include_directories(guest_audio_latency_estimation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_latency_estimation_tests PRIVATE libSceAudioLatencyEstimation libc)
+    add_test(NAME guest_audio_latency_estimation COMMAND guest_audio_latency_estimation_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_latency_estimation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioLatencyEstimation>")
+    endif()
+endif()
