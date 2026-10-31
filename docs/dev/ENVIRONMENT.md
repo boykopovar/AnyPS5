@@ -486,6 +486,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_VERIFY_DRAW_DATA_HITS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` |  | recomputes a draw data hit and aborts on a disagreement |
 | `APS5_VERIFY_DRAW_ENTRIES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` |  | re-decodes every draw-cache hit through the full path and checks it |
 | `APS5_VERIFY_DRAW_PIPELINE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | with `APS5_DRAW_PIPELINE` set, runs the full check instead of every 64th reused epoch proof on each thread and prints `[epoch-proofs]` counts |
+| `APS5_VERIFY_DRAW_PLAN` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Draw.cpp` |  | builds a draw's plan (validation, fragment outputs, pipeline stages, vertex input layout and resource key) a second time after the draw's record-time work and requires it to equal the plan the draw used |
 | `APS5_VERIFY_DRAW_RECIPE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawCache.cpp` |  | re-decodes a draw recipe instead of using the cache and checks the result |
 | `APS5_VERIFY_DRAW_SNAPSHOTS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | re-reads a reused draw snapshot and counts the ones that differ |
 | `APS5_VERIFY_KNOWN_VALUES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Memory/BufferCopy.cpp` |  | serves known values through the hook too and counts mismatches |
