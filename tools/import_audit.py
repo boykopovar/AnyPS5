@@ -661,8 +661,9 @@ def source_stub_classes(source):
         if "shared_sources" in group:
             shared[library.name] = group["shared_sources"]
         done = {nid for name in group["done_names"] for nid in nid_names.nids_of(name, aliases)}
-        conditional = conditional_stubs(library) if group["todo_names"] else set()
-        for name in group["todo_names"]:
+        pending = sorted(group["todo_names"] + group["unobserved_names"])
+        conditional = conditional_stubs(library) if pending else set()
+        for name in pending:
             for nid in nid_names.nids_of(name, aliases) - done:
                 stubs.setdefault((library.name + ".prx", nid), name)
                 if name in conditional:

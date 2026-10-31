@@ -269,8 +269,8 @@ def page(points):
         'One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point is measured '
         f'with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> rules and instruction list, '
         'so the series is comparable across days. Commits from before the '
-        f'<a href="{progress.SOURCE}/docs/dev/PROGRESS.md#observed-imports">observed manifests</a> have none, so every stub counts as observed and their '
-        'counted figure is the declared one. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
+        f'<a href="{progress.SOURCE}/docs/dev/PROGRESS.md#observed-imports">observed manifests</a> have none, so every stub in them is unobserved and their '
+        'counted figure holds only what a manifest of that day names. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
         '<a href="progress.html">Back to the current progress</a>.</p>',
         '<p>The table lists, for each day, the commit measured, the library functions counted and the percentage, the unobserved '
         'stubs, every function declared (implemented, observed and unobserved) and how many were declared since the previous day, '

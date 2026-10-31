@@ -7,12 +7,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import progress
 
 
+class Everything(set):
+    def __rand__(self, other):
+        return set(other)
+
+
 def scan(source):
     with tempfile.TemporaryDirectory() as directory:
         library = Path(directory) / "libSceExample"
         library.mkdir()
         (library / "Export.cpp").write_text(source)
-        return progress.scan_library(library)
+        return progress.scan_library(library, Everything())
 
 
 STUB_BODY = "{ NotImplemented_nid_no_patch(__func__); return 0; }\n"

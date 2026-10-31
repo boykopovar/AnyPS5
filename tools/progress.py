@@ -275,7 +275,7 @@ def read_manifest(path):
     return frozenset(observed)
 
 
-def scan_library(path, observed=None, provenance=None, inventory=None):
+def scan_library(path, observed=frozenset(), provenance=None, inventory=None):
     done, todo, unobserved, inert, live = set(), set(), set(), set(), set()
     raw = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
            if "tests" not in source.relative_to(path).parts]
@@ -295,7 +295,7 @@ def scan_library(path, observed=None, provenance=None, inventory=None):
             body = text[match.end() - 1:body_end(text, match.end() - 1)]
             if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())
                    for call in CALL.finditer(body)):
-                if observed is None or tokenizer.nids_of(name, aliases) & observed:
+                if tokenizer.nids_of(name, aliases) & observed:
                     todo.add(name)
                 else:
                     unobserved.add(name)
@@ -305,12 +305,11 @@ def scan_library(path, observed=None, provenance=None, inventory=None):
     todo -= done
     unobserved -= done
     inert -= live
-    group = {"name": path.name, "label": path.name.removeprefix("libSce"), "classified": observed is not None,
+    group = {"name": path.name, "label": path.name.removeprefix("libSce"),
              "done": len(done), "todo": len(todo), "unobserved": len(unobserved),
              "done_names": sorted(done), "todo_names": sorted(todo), "unobserved_names": sorted(unobserved),
              "inert_names": sorted(inert)}
-    if observed is not None:
-        group["done_unobserved_names"] = sorted(name for name in done if not tokenizer.nids_of(name, aliases) & observed)
+    group["done_unobserved_names"] = sorted(name for name in done if not tokenizer.nids_of(name, aliases) & observed)
     if inventory:
         sources = {name: inventory[nid] for name in sorted(todo | unobserved) for nid in sorted(tokenizer.nids_of(name, aliases)) if nid in inventory}
         if sources:
@@ -347,7 +346,7 @@ def summarize(groups):
 
 def observed_nids(library):
     manifest = OBSERVED / f"{library.name}.txt"
-    return read_manifest(manifest) if manifest.is_file() else None
+    return read_manifest(manifest) if manifest.is_file() else frozenset()
 
 
 def inventory_sources(library):
@@ -635,7 +634,7 @@ def summary(libraries, shaders):
         "<p>A function is implemented when it no longer calls <code>NotImplemented_nid_no_patch</code>. "
         "A pending function is an observed stub when any measured use shows its NID is needed, and an unobserved stub otherwise. "
         "The percentage counts implemented functions over implemented and observed stubs, so unobserved stubs do not lower it; "
-        "the declared percentage counts them too. A library without a list of observed NIDs counts all its stubs as observed; "
+        "the declared percentage counts them too. A library with no list of observed NIDs has only unobserved stubs; "
         f'<a href="{SOURCE}/docs/dev/PROGRESS.md#observed-imports">how the lists work</a>. '
         "Comparison reports separately mark implemented functions whose body only returns a constant or throws. "
         f'The total only includes functions already declared in <a href="{SOURCE}/core/libs/prx">core/libs/prx</a>, '

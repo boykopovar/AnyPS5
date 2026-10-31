@@ -14,7 +14,7 @@ AUDIT_TOOLS = ("import_audit", "audit_dump")
 HEADER = "# NIDs of {library} that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md."
 DESCRIPTION = """Maintain docs/dev/observed/<library>.txt, the NIDs of each library that any measured use shows to be needed.
 tools/progress.py counts a pending function as an observed stub when its NID is listed there and as an unobserved
-stub otherwise; a library without a file is unclassified and counts every stub as observed. 'add' merges the JSON
+stub otherwise; a library without a file has no observed NID, so all its stubs are unobserved. 'add' merges the JSON
 written by tools/import_audit.py --json (or tools/audit_dump.py --json) into the files of the libraries that provide
 each imported NID, tagged audit with the tool and the date of the run; 'entry' adds one NID by hand and requires its
 provenance tag: audit, loader (needed before a title's own code runs) or manual (needs a written reason); 'check'

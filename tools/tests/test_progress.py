@@ -24,6 +24,14 @@ def excessive_nesting():
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+class Everything(set):
+    def __rand__(self, other):
+        return set(other)
+
+
+EVERYTHING = Everything()
+
+
 class ProgressSnapshotTests(unittest.TestCase):
     def test_library_counters_reject_invalid_types_and_negative_values(self):
         for field in ("done", "todo"):
@@ -297,7 +305,7 @@ class OriginFlagTests(unittest.TestCase):
             shaders = dict(progress.summarize([]), extra=[])
             progress.write_site(root / "traced", traced, shaders)
             progress.write_site(root / "plain", plain, shaders)
-            self.assertIn("Pending: observed stub, declared in", (root / "traced" / "progress-detail.svg").read_text(encoding="utf-8"))
+            self.assertIn("Pending: unobserved stub, declared in", (root / "traced" / "progress-detail.svg").read_text(encoding="utf-8"))
             self.assertNotIn("Pending:", (root / "traced" / "progress.svg").read_text(encoding="utf-8"))
             self.assertIn('href="progress-detail.svg"', (root / "traced" / "progress.html").read_text(encoding="utf-8"))
             self.assertFalse((root / "plain" / "progress-detail.svg").exists())
@@ -326,7 +334,7 @@ class InventorySourceTests(unittest.TestCase):
                 "int APS5_VABI Done() { return 1; }\n", encoding="utf-8")
             path = Path(directory) / "libSceExample.txt"
             path.write_text(listing, encoding="utf-8")
-            return progress.scan_library(library, None, None, progress.read_inventory(path))
+            return progress.scan_library(library, frozenset(), None, progress.read_inventory(path))
 
     def test_each_listed_stub_records_its_inventory_source(self):
         nid = progress.tokenizer.compute_nid
@@ -421,7 +429,6 @@ class ObservedStubTests(unittest.TestCase):
                   "int APS5_VABI Unseen() { NotImplemented_nid_no_patch(__func__); }\n")
         observed = frozenset({progress.tokenizer.compute_nid("Imported")})
         group = self.scan(source, observed)
-        self.assertTrue(group["classified"])
         self.assertEqual((group["done"], group["todo"], group["unobserved"]), (1, 1, 1))
         self.assertEqual(group["done_names"], ["Ready"])
         self.assertEqual(group["todo_names"], ["Imported"])
@@ -430,18 +437,34 @@ class ObservedStubTests(unittest.TestCase):
     def test_an_empty_manifest_classifies_every_stub_as_unobserved(self):
         source = "int APS5_VABI Pending() { NotImplemented_nid_no_patch(__func__); }\n"
         group = self.scan(source, frozenset())
-        self.assertTrue(group["classified"])
         self.assertEqual((group["todo"], group["unobserved"]), (0, 1))
         self.assertEqual(group["unobserved_names"], ["Pending"])
 
-    def test_a_library_without_a_manifest_keeps_every_stub_observed(self):
+    def test_a_library_without_a_manifest_has_every_pending_stub_unobserved(self):
         source = ("int APS5_VABI First() { NotImplemented_nid_no_patch(__func__); }\n"
-                  "int APS5_VABI Second() { NotImplemented_nid_no_patch(__func__); }\n")
+                  "int APS5_VABI Second() { NotImplemented_nid_no_patch(__func__); }\n"
+                  "int APS5_VABI Ready() { return 0; }\n")
         group = self.scan(source)
-        self.assertFalse(group["classified"])
-        self.assertEqual((group["todo"], group["unobserved"]), (2, 0))
-        self.assertEqual(group["todo_names"], ["First", "Second"])
-        self.assertEqual(group["unobserved_names"], [])
+        self.assertNotIn("classified", group)
+        self.assertEqual((group["done"], group["todo"], group["unobserved"]), (1, 0, 2))
+        self.assertEqual(group["todo_names"], [])
+        self.assertEqual(group["unobserved_names"], ["First", "Second"])
+        self.assertEqual(group["done_unobserved_names"], ["Ready"])
+
+    def test_the_same_stub_is_observed_only_once_a_manifest_names_it(self):
+        source = "int APS5_VABI Pending() { NotImplemented_nid_no_patch(__func__); }\n"
+        self.assertEqual(self.scan(source)["unobserved_names"], ["Pending"])
+        self.assertEqual(self.scan(source, frozenset({progress.tokenizer.compute_nid("Pending")}))["todo_names"], ["Pending"])
+
+    def test_collecting_a_tree_with_no_manifest_directory_leaves_every_pending_stub_unobserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / "prx" / "libSceExample"
+            library.mkdir(parents=True)
+            (library / "Export.cpp").write_text("int APS5_VABI Pending() { NotImplemented_nid_no_patch(__func__); }\n", encoding="utf-8")
+            with patch.multiple(progress, PRX=root / "prx", OBSERVED=root / "absent"):
+                data = progress.collect_libraries()
+        self.assertEqual((data["done"], data["total"], data["unobserved"], data["declared_total"]), (0, 0, 1, 1))
 
     def test_implemented_functions_without_an_observed_nid_are_listed(self):
         source = ("int APS5_VABI Ready() { return 0; }\n"
@@ -450,7 +473,7 @@ class ObservedStubTests(unittest.TestCase):
         group = self.scan(source, observed)
         self.assertEqual(group["done_names"], ["Imported", "Ready"])
         self.assertEqual(group["done_unobserved_names"], ["Ready"])
-        self.assertNotIn("done_unobserved_names", self.scan(source))
+        self.assertEqual(self.scan(source)["done_unobserved_names"], ["Imported", "Ready"])
 
     def test_summary_keeps_the_declared_figure_next_to_the_headline(self):
         source = ("int APS5_VABI Ready() { return 0; }\n"
@@ -458,8 +481,8 @@ class ObservedStubTests(unittest.TestCase):
                   "int APS5_VABI Unseen() { NotImplemented_nid_no_patch(__func__); }\n")
         observed = frozenset({progress.tokenizer.compute_nid("Imported")})
         data = progress.summarize([self.scan(source, observed), self.scan(source)])
-        self.assertEqual((data["done"], data["total"], data["percent"]), (2, 5, 40.0))
-        self.assertEqual((data["unobserved"], data["declared_total"], data["declared_percent"]), (1, 6, 33.33))
+        self.assertEqual((data["done"], data["total"], data["percent"]), (2, 3, 66.67))
+        self.assertEqual((data["unobserved"], data["declared_total"], data["declared_percent"]), (3, 6, 33.33))
 
     def test_an_alias_export_is_observed_under_its_nid(self):
         alias = "AbCdEfGhIjK"
@@ -485,18 +508,16 @@ class ManifestLoadingTests(unittest.TestCase):
         (observed / "libSceA.txt").write_text(f"# observed\n{progress.tokenizer.compute_nid('Imported')}\n", encoding="utf-8")
         return prx, observed
 
-    def test_each_library_is_classified_by_its_own_manifest(self):
+    def test_each_library_is_split_by_its_own_manifest_and_a_library_without_one_is_unobserved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             prx, observed = self.make_tree(root)
             with patch.object(progress, "PRX", prx), patch.object(progress, "OBSERVED", observed):
                 data = progress.collect_libraries()
             groups = {group["name"]: group for group in data["groups"]}
-            self.assertTrue(groups["libSceA"]["classified"])
             self.assertEqual((groups["libSceA"]["todo_names"], groups["libSceA"]["unobserved_names"]), (["Imported"], ["Unseen"]))
-            self.assertFalse(groups["libSceB"]["classified"])
-            self.assertEqual((groups["libSceB"]["todo_names"], groups["libSceB"]["unobserved"]), (["Pending"], 0))
-            self.assertEqual((data["done"], data["total"]), (1, 3))
+            self.assertEqual((groups["libSceB"]["todo_names"], groups["libSceB"]["unobserved_names"]), ([], ["Pending"]))
+            self.assertEqual((data["done"], data["total"], data["unobserved"]), (1, 2, 2))
 
     def test_root_reads_the_manifests_of_that_tree_and_restores_them(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -525,6 +546,11 @@ class ManifestLoadingTests(unittest.TestCase):
 
 
 class ProgressTests(unittest.TestCase):
+    def setUp(self):
+        patcher = patch.object(progress, "observed_nids", return_value=EVERYTHING)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def report_library(self, name, done=(), todo=(), **extra):
         return {"name": name, "label": name, "done": len(done), "todo": len(todo),
                 "done_names": list(done), "todo_names": list(todo), **extra}
@@ -779,7 +805,7 @@ class ProgressTests(unittest.TestCase):
             library = Path(directory) / "libSceExample"
             library.mkdir()
             (library / "Export.cpp").write_text(source, encoding="utf-8")
-            group = progress.scan_library(library)
+            group = progress.scan_library(library, EVERYTHING)
         self.assertEqual(group["done_names"], ["Real"])
         self.assertEqual(group["todo_names"], [])
 
@@ -792,7 +818,7 @@ class ProgressTests(unittest.TestCase):
                 library = Path(directory) / "libSceExample"
                 library.mkdir()
                 (library / "Export.cpp").write_text(source, encoding="utf-8")
-                group = progress.scan_library(library)
+                group = progress.scan_library(library, EVERYTHING)
                 self.assertEqual(group["done_names"], ["Ready"])
                 self.assertEqual(group["todo_names"], [])
 
@@ -803,7 +829,7 @@ class ProgressTests(unittest.TestCase):
             (library / "Export.cpp").write_text(
                 "static int SupportFormat() { NotImplemented_nid_no_patch(__func__); return 0; }\n"
                 "int APS5_VABI sceExampleSupportFormat() { return SupportFormat(); }\n")
-            group = progress.scan_library(library)
+            group = progress.scan_library(library, EVERYTHING)
             self.assertEqual(group["done_names"], [])
             self.assertEqual(group["todo_names"], ["sceExampleSupportFormat"])
 
@@ -815,7 +841,7 @@ class ProgressTests(unittest.TestCase):
                 (library / "Export.cpp").write_text(
                     "static int Unsupported() { NotImplemented_nid_no_patch(__func__); return 0; }\n"
                     f"int APS5_VABI Pending() {{ return Unsupported{separator}(); }}\n")
-                group = progress.scan_library(library)
+                group = progress.scan_library(library, EVERYTHING)
                 self.assertEqual(group["done_names"], [])
                 self.assertEqual(group["todo_names"], ["Pending"])
 
@@ -827,7 +853,7 @@ class ProgressTests(unittest.TestCase):
                 "static int Unsupported() { NotImplemented_nid_no_patch(__func__); return 0; }\n"
                 "static int NotUnsupported(int value) { return value * 2; }\n"
                 "int APS5_VABI Ready(int value) { return NotUnsupported(value); }\n")
-            group = progress.scan_library(library)
+            group = progress.scan_library(library, EVERYTHING)
             self.assertEqual(group["done_names"], ["Ready"])
             self.assertEqual(group["todo_names"], [])
 
@@ -844,7 +870,7 @@ class ProgressTests(unittest.TestCase):
                 "int APS5_VABI sceExampleBlock() { /* { */ return 0; }\n"
                 "int APS5_VABI sceExampleWrapped() { return Helper(); }\n"
                 "int APS5_VABI sceExampleReady() { return 0; }\n")
-            group = progress.scan_library(library)
+            group = progress.scan_library(library, EVERYTHING)
             self.assertEqual(group["done_names"], ["sceExampleBlock", "sceExampleOpen", "sceExampleQuote", "sceExampleReady"])
             self.assertEqual(group["todo_names"], ["sceExampleClose", "sceExampleNoted", "sceExampleWrapped"])
 
@@ -856,7 +882,7 @@ class ProgressTests(unittest.TestCase):
                 "int APS5_VABI sceExamplePending() {\n    /* it's */ log('}');\n"
                 "    NotImplemented_nid_no_patch(__func__);\n    return 0;\n}\n"
                 "int APS5_VABI sceExampleReady() { return 0; }\n")
-            group = progress.scan_library(library)
+            group = progress.scan_library(library, EVERYTHING)
             self.assertEqual(group["done_names"], ["sceExampleReady"])
             self.assertEqual(group["todo_names"], ["sceExamplePending"])
 
@@ -949,7 +975,7 @@ class ProgressTests(unittest.TestCase):
                 "int APS5_VABI F(int a, int b) { return a + b; }\n"
                 "int APS5_VABI G() { NotImplemented_nid_no_patch(__func__); return 0; }\n"
                 "int APS5_VABI H(int a) { return Compute(a); }\n")
-            group = progress.scan_library(library)
+            group = progress.scan_library(library, EVERYTHING)
             self.assertEqual(group["inert_names"], ["A", "B", "C", "D", "E", "I"])
             self.assertEqual(group["done_names"], ["A", "B", "C", "D", "E", "F", "H", "I", "J"])
             self.assertEqual(group["todo_names"], ["G"])
@@ -1015,7 +1041,7 @@ class ProgressTests(unittest.TestCase):
                 "int APS5_VABI Ready_nid_no_patch_cut() { return 1; }\n"
                 "int APS5_VABI Pending_nid_no_patch_cut() { NotImplemented_nid_no_patch(__func__); }\n"
                 "int APS5_VABI Real() { return 2; }\n", encoding="utf-8")
-            group = progress.scan_library(library)
+            group = progress.scan_library(library, EVERYTHING)
             self.assertEqual(group["done_names"], ["Real"])
             self.assertEqual(group["todo_names"], [])
             self.assertEqual(group["inert_names"], ["Real"])
@@ -1034,7 +1060,7 @@ class ProgressTests(unittest.TestCase):
                 'APS5_EXPORT(\n    "_ZN3sce7Example5ReadyEv",\n    Ready_nid_no_patch);\n'
                 '// APS5_EXPORT("BBBBBBBBBBB", Helper_nid_no_patch);\n'
                 'const char* text = "APS5_EXPORT(\\"CCCCCCCCCCC\\", Cut_nid_no_patch_cut)";\n', encoding="utf-8")
-            group = progress.scan_library(library)
+            group = progress.scan_library(library, EVERYTHING)
             self.assertEqual(group["done_names"], ["Ready_nid_no_patch"])
             self.assertEqual(group["todo_names"], ["Pending_nid_no_patch"])
 
@@ -1068,7 +1094,7 @@ class ProgressTests(unittest.TestCase):
         page = progress.summary(libraries, shaders)
         self.assertIn("an unobserved stub otherwise", page)
         self.assertIn("so unobserved stubs do not lower it", page)
-        self.assertIn("counts all its stubs as observed", page)
+        self.assertIn("has only unobserved stubs", page)
         self.assertIn("/docs/dev/PROGRESS.md#observed-imports", page)
         self.assertIn("<th>Declared %</th>", page)
         self.assertIn("<p>1 of the 1 declared functions that are not implemented are unobserved stubs.</p>", page)
@@ -1100,7 +1126,7 @@ class ProgressTests(unittest.TestCase):
                 library = Path(directory) / "libSceExample"
                 library.mkdir()
                 (library / "Export.cpp").write_text(wrapper + "int APS5_VABI Run(Obj* obj) { " + call + " return 0; }\n")
-                group = progress.scan_library(library)
+                group = progress.scan_library(library, EVERYTHING)
                 self.assertEqual(group[expected + "_names"], ["Run"])
 
     def library_snapshot(self):
