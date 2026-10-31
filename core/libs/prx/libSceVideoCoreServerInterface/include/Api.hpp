@@ -1,12 +1,24 @@
 #pragma once
 
+#include <cstdint>
 #include "SceTypes.hpp"
+
+struct VideoCoreAcquireDecoderResourceParam {
+    std::uint32_t resourceType;
+    std::uint32_t maxWidth;
+    std::uint32_t maxHeight;
+    std::uint32_t streamSpec;
+};
+
+static_assert(sizeof(VideoCoreAcquireDecoderResourceParam) == 0x10);
+
+using VideoCoreDecoderResourceCallback = void (APS5_VABI*)(std::uint32_t resourceId, std::uint64_t userData);
 
 extern "C" {
 
 int APS5_VABI sceVideoCoreAbortRequest();
-int APS5_VABI sceVideoCoreAcquireDecoderResource();
-int APS5_VABI sceVideoCoreAcquireDecoderResourceForBeWrapper();
+int APS5_VABI sceVideoCoreAcquireDecoderResource(const VideoCoreAcquireDecoderResourceParam* param, VideoCoreDecoderResourceCallback callback, std::uint32_t* resourceId);
+int APS5_VABI sceVideoCoreAcquireDecoderResourceForBeWrapper(const VideoCoreAcquireDecoderResourceParam* param, VideoCoreDecoderResourceCallback callback, std::uint32_t* resourceId);
 int APS5_VABI sceVideoCoreAddStream();
 int APS5_VABI sceVideoCoreAsyncAddStream();
 int APS5_VABI sceVideoCoreAsyncSendRequest();
@@ -39,8 +51,8 @@ int APS5_VABI sceVideoCoreMediaSourceSetDuration();
 int APS5_VABI sceVideoCoreMediaSourceSetTimestampOffset();
 int APS5_VABI sceVideoCorePlayControl();
 int APS5_VABI sceVideoCoreRegistEventCallback();
-int APS5_VABI sceVideoCoreReleaseDecoderResource();
-int APS5_VABI sceVideoCoreReleaseDecoderResourceForBeWrapper();
+int APS5_VABI sceVideoCoreReleaseDecoderResource(std::uint32_t resourceId);
+int APS5_VABI sceVideoCoreReleaseDecoderResourceForBeWrapper(std::uint32_t resourceId);
 int APS5_VABI sceVideoCoreSetAudioMute();
 int APS5_VABI sceVideoCoreSetAudioVolume();
 int APS5_VABI sceVideoCoreSetFullScreen();
