@@ -19,6 +19,14 @@ std::chrono::seconds StallWatchdogPeriod();
 using StallClock = std::chrono::steady_clock::time_point (*)();
 void SetStallClock(StallClock clock);
 
+enum class StallChoice { Wait, Quit, Unavailable };
+
+using StallPresenter = StallChoice (*)(const char* message);
+void SetStallPresenter(StallPresenter presenter);
+StallChoice ShowStallPrompt(const char* message);
+
+bool StallPromptEnabled();
+
 bool ReadSubmissionRingSettings();
 
 void PrepareSubmissionRing(std::uint32_t queue);
@@ -36,7 +44,7 @@ public:
 private:
     std::uint32_t queue;
     std::chrono::steady_clock::time_point since{};
-    bool dumped = false;
+    bool finished = false;
 };
 
 }

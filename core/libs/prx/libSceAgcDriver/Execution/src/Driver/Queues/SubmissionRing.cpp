@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libc/include/FailureReport.hpp"
+#include "prx/libc/include/Shutdown.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -35,6 +36,8 @@ constexpr std::size_t PayloadWordsShown = 8;
 std::chrono::steady_clock::time_point realStallClock() { return std::chrono::steady_clock::now(); }
 
 std::atomic<StallClock> stallClock{realStallClock};
+std::atomic<StallPresenter> stallPresenter{ShowStallPrompt};
+constexpr int StallQuitExitCode = 124;
 
 struct Entry {
     std::uint64_t tenthsOfMs = 0;
@@ -232,8 +235,23 @@ void SetStallClock(StallClock clock) {
     stallClock.store(clock != nullptr ? clock : realStallClock);
 }
 
+void SetStallPresenter(StallPresenter presenter) {
+    stallPresenter.store(presenter != nullptr ? presenter : ShowStallPrompt);
+}
+
+bool StallPromptEnabled() {
+    static const bool value = [] {
+        const char* text = std::getenv("ANYPS5_STALL_PROMPT");
+        if (text == nullptr || std::strcmp(text, "0") == 0) return false;
+        require(std::strcmp(text, "1") == 0, "ANYPS5_STALL_PROMPT must be 0 or 1");
+        return true;
+    }();
+    return value;
+}
+
 bool ReadSubmissionRingSettings() {
     StallWatchdogPeriod();
+    StallPromptEnabled();
     return SubmissionRingCapacity() != 0;
 }
 
@@ -271,7 +289,7 @@ void DumpSubmissionRings(std::string_view reason) {
 }
 
 void StallWatch::Check(const char* waiter, std::uint64_t value) {
-    if (dumped) return;
+    if (finished) return;
     const auto period = StallWatchdogPeriod();
     if (period.count() == 0) return;
     const auto now = stallClock.load()();
@@ -280,10 +298,24 @@ void StallWatch::Check(const char* waiter, std::uint64_t value) {
         return;
     }
     if (now - since < period) return;
-    dumped = true;
+    finished = true;
     char reason[192];
     std::snprintf(reason, sizeof(reason), "queue 0x%x %s 0x%llx has not progressed for %lld s (APS5_STALL_WATCHDOG_SECS)", queue, waiter, static_cast<unsigned long long>(value), static_cast<long long>(period.count()));
     DumpSubmissionRings(reason);
+    if (!StallPromptEnabled()) return;
+    char message[320];
+    std::snprintf(message, sizeof(message), "This title has not made progress for %lld seconds (queue 0x%x %s 0x%llx).\n\nWait keeps it running. Quit stops it; the submission rings are on stderr.", static_cast<long long>(period.count()), queue, waiter, static_cast<unsigned long long>(value));
+    switch (stallPresenter.load()(message)) {
+        case StallChoice::Wait:
+            return;
+        case StallChoice::Quit:
+            std::fprintf(stderr, "[stall prompt] quit at a stalled wait; exit code %d (ANYPS5_STALL_PROMPT)\n", StallQuitExitCode);
+            std::fflush(stderr);
+            LibcTerminate_nid_no_patch(StallQuitExitCode);
+        case StallChoice::Unavailable:
+            std::fputs("[stall prompt] no message box is available; the rings are printed only\n", stderr);
+            return;
+    }
 }
 
 }
