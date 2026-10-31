@@ -1128,11 +1128,6 @@ int APS5_VABI _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("PEV9t77ljzc", libwebrtcUnknown34);
 int APS5_VABI libwebrtcUnknown34(void) {
     NotImplemented_nid_no_patch("PEV9t77ljzc");
@@ -1993,86 +1988,6 @@ int APS5_VABI libwebrtcUnknown55(void) {
 APS5_EXPORT("ratmuLethas", libwebrtcUnknown56);
 int APS5_VABI libwebrtcUnknown56(void) {
     NotImplemented_nid_no_patch("ratmuLethas");
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_EncoderFree_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_SetBitRate_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_EnableFec_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_DisableFec_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_SetMaxPlaybackRate_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_SetComplexity_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_EnableDtx_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_DisableDtx_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_EnableCbr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_DisableCbr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_Encode_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_EncoderCreate_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_SetPacketLossRate_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_GetBandwidth_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_SetBandwidth_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcOpus_SetForceChannels_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

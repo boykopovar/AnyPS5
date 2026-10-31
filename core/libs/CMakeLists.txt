@@ -689,6 +689,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
     endif()
 
+    add_test_executable(guest_gnm_neo_context_state_internal_tests tests/GuestGnmNeoContextStateInternal.cpp)
+    target_include_directories(guest_gnm_neo_context_state_internal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_gnm_neo_context_state_internal_tests PRIVATE libSceGnmDriverForNeoMode libc)
+    configure_windows_unwind(guest_gnm_neo_context_state_internal_tests)
+    add_test(NAME guest_gnm_neo_context_state_internal COMMAND guest_gnm_neo_context_state_internal_tests)
+    if(WIN32)
+        set_tests_properties(guest_gnm_neo_context_state_internal PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
+    endif()
+
     add_test_executable(guest_vr_tracker_devices_tests tests/GuestVrTrackerDevices.cpp)
     target_include_directories(guest_vr_tracker_devices_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_vr_tracker_devices_tests PRIVATE libSceVrTracker libc)
