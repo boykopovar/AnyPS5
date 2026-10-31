@@ -8,7 +8,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 import nid_names
 
@@ -38,7 +38,18 @@ def git(*args):
         for index in range(separator + 1, len(args)):
             pathspec = args[index]
             if pathspec.startswith(("../", "..\\")):
-                absolute = (cwd / pathspec).resolve()
+                absolute = cwd / pathspec
+                try:
+                    absolute = absolute.resolve()
+                except RuntimeError as error:
+                    raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
+                except OSError as error:
+                    raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
+                if absolute.is_symlink():
+                    try:
+                        absolute.stat()
+                    except OSError as error:
+                        raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
                 try:
                     args[index] = absolute.relative_to(Path(root)).as_posix()
                 except ValueError:
@@ -83,6 +94,7 @@ def progress(message):
 
 
 LAST_PAGE = re.compile(r'[?&]page=(\d+)>; rel="last"')
+NEXT_LINK = re.compile(r'<([^>]+)>\s*;\s*rel="next"', re.IGNORECASE)
 
 
 def page(url):
@@ -117,12 +129,27 @@ def open_prs(base):
     if not pages:
         raise ValueError("gh api returned no JSON pages")
     last = LAST_PAGE.search(head)
+    pushed_past_last = None
     if last:
         numbers = range(2, int(last.group(1)) + 1)
         with ThreadPoolExecutor(max_workers=8) as executor:
             for out in executor.map(lambda number: page(f"{url}&page={number}")[1], numbers):
                 pages.extend(json_pages(out))
         pushed_past_last = numbers.stop
+    elif NEXT_LINK.search(head):
+        current_page = 1
+        while next_link := NEXT_LINK.search(head):
+            values = parse_qs(urlsplit(next_link.group(1)).query, keep_blank_values=True).get("page", [])
+            if len(values) != 1 or re.fullmatch(r"[0-9]+", values[0]) is None or int(values[0]) <= current_page:
+                raise ValueError("gh api returned an invalid next page link")
+            current_page = int(values[0])
+            head, out = page(f"{url}&page={current_page}")
+            fetched = json_pages(out)
+            if not fetched:
+                raise ValueError("gh api returned no JSON pages")
+            pages.extend(fetched)
+        pushed_past_last = current_page + 1
+    if pushed_past_last is not None:
         while len(pages[-1]) == 100:
             pages.extend(json_pages(page(f"{url}&page={pushed_past_last}")[1]) or [[]])
             pushed_past_last += 1
@@ -513,6 +540,10 @@ def write_reports(out, rows, blob, main_exports=None):
         (out / f"{number}.md").write_text(report(found, blob, main_exports.get(number)), encoding="utf-8")
 
 
+def unverified_overlaps(rows):
+    return {number: set(found["uncompared"]) for number, found in rows.items() if found.get("uncompared")}
+
+
 def main_export_findings(prs, current_exports):
     findings = {}
     for number, pr in prs.items():
@@ -571,8 +602,16 @@ def main(argv=None):
         blob = f'https://github.com/{REPO}/blob/{git("rev-parse", "refs/pr/base").strip()}'
     except subprocess.CalledProcessError as error:
         raise SystemExit(describe_failure(error))
+    except ValueError as error:
+        raise SystemExit(f"pr_overlap: {error}")
     if args.branch:
         print(report(rows[0], blob, main_exports.get(0)) or "No overlap with open pull requests.", end="")
+        unresolved = unverified_overlaps(rows[0])
+        if unresolved:
+            for number, files in sorted(unresolved.items()):
+                progress(f"cannot confirm overlap with PR {number}: {', '.join(sorted(files))}")
+            progress("overlap check failed closed; manually compare every reported PR branch before opening this one")
+            return 2
         return 0
     write_reports(args.out, rows, blob, main_exports)
     return 0

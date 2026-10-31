@@ -11,6 +11,7 @@
 
 namespace {
 constexpr SDL_AudioDeviceID device = 7;
+bool failOpenDevice = false;
 int opened = 0;
 int closed = 0;
 int queued = 0;
@@ -50,6 +51,40 @@ void RunOverflow(std::uint32_t frames, std::uint32_t format, std::uint32_t frame
     Require(queued == 0, "an output whose buffer size overflows queued audio");
     Require(sceAudioOutClose(handle) == 0 && closed == 1, "the port did not close after the refused output");
 }
+
+void RunVirtualOverflow() {
+    failOpenDevice = true;
+    std::vector<std::uint8_t> frame(sizeof(std::int16_t));
+    const int handle = sceAudioOutOpen(0, 0, 0, 0x40000000u, 48000, 0);
+    Require(handle > 0 && opened == 0, "a virtual port with an oversized length did not open");
+    bool threw = false;
+    try {
+        static_cast<void>(sceAudioOutOutput(handle, frame.data()));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "a virtual port output whose buffer size overflows did not throw");
+    Require(sceAudioOutClose(handle) == 0, "the virtual port did not close after the refused output");
+    failOpenDevice = false;
+
+    const int vibHandle = sceAudioOutOpen(0, 10, 0, 0x20000000u, 48000, 0);
+    Require(vibHandle > 0 && opened == 0, "a vibration port with an oversized frame count did not open");
+    threw = false;
+    try {
+        static_cast<void>(sceAudioOutOutput(vibHandle, frame.data()));
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "a vibration output whose pad buffer overflows did not throw");
+    Require(sceAudioOutClose(vibHandle) == 0, "the vibration port did not close after the refused output");
+}
+
+void RunInvalidFormat() {
+    constexpr int expectedError = -2144993273;
+    Require(sceAudioOutOpen(0, 0, 0, 512, 48000, 8) == expectedError, "format 8 did not return SCE_AUDIO_OUT_ERROR_INVALID_FORMAT");
+    Require(sceAudioOutOpen(0, 0, 0, 512, 48000, 0xFF) == expectedError, "format 0xFF did not return SCE_AUDIO_OUT_ERROR_INVALID_FORMAT");
+    Require(opened == 0, "an invalid format opened an audio device");
+}
 }
 
 int InitializeSdlAudio_nid_no_patch() { return 0; }
@@ -62,6 +97,7 @@ extern "C" const char* SDLCALL SDL_GetCurrentAudioDriver() { return "dummy"; }
 extern "C" const char* SDLCALL SDL_GetError() { return "test error"; }
 extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int capture, const SDL_AudioSpec* desired, SDL_AudioSpec* obtained, int) {
     Require(name == nullptr && capture == 0 && desired->callback == nullptr, "the main port did not open the default device");
+    if (failOpenDevice) return 0;
     ++opened;
     *obtained = *desired;
     return device;
@@ -86,6 +122,8 @@ int main(int argc, char** argv) {
         else if (mode == "wrap") RunOverflow(0x80000000u, 5, 8u * sizeof(float));
         else if (mode == "mix") RunOverflow(0x80000000u, 7, 8u * sizeof(float));
         else if (mode == "threshold") RunOverflow(0x40000000u, 0, sizeof(std::int16_t));
+        else if (mode == "virtual_overflow") RunVirtualOverflow();
+        else if (mode == "invalid_format") RunInvalidFormat();
         else Require(false, "invalid buffer size mode");
         std::puts("audio out buffer size tests passed");
         return 0;

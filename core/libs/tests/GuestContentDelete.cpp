@@ -44,5 +44,8 @@ int main() {
     Require(sceContentDeleteTerminate() == 0);
     Require(sceContentDeleteTerminate() == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteById(1) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5002u));
     return 0;
 }

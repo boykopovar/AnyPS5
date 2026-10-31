@@ -213,7 +213,7 @@ void Ngs2ResetUserFx2(Ngs2Voice& voice) {
 static void SetupCustomSubmixer(Ngs2Voice& voice, const Ngs2CustomSubmixerVoiceSetupParam& setup) {
     if (setup.flags != 0) throw std::runtime_error("NGS2: custom submixer setup flags are not implemented");
     if (setup.num_input_channels != setup.num_output_channels) throw std::runtime_error("NGS2: custom submixer channel conversion is not implemented");
-    if (setup.num_input_channels == 0 || setup.num_input_channels > voice.rack->maxChannels) APS5_INVALID_ARG_EX;
+    if (setup.num_input_channels == 0 || setup.num_input_channels > voice.rack->maxChannels || setup.num_input_channels > NGS2_MAX_CHANNELS) APS5_INVALID_ARG_EX;
     if (Ngs2HasPitchShift(voice)) voice.ResetSetup();
     else Ngs2ResetUserFx2(voice);
     for (auto& gain : voice.customGain) if (gain.configured) gain.lifecycleUnknown = true;
@@ -404,7 +404,7 @@ void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
 
 void Ngs2ProcessLegacyUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
     if (voice.userFxHandler == nullptr) return;
-    std::array<float*, NGS2_MAX_CHANNELS> channels{};
+    std::array<float*, NGS2_MAX_RACK_CHANNELS> channels{};
     for (std::uint32_t c = 0; c < voice.channels; ++c) channels[c] = voice.samples.data() + static_cast<std::size_t>(c) * grain;
     Ngs2UserFxProcessContext context{channels.data(), voice.userFxData[0], voice.userFxData[1], voice.userFxData[2],
                                     voice.UserFxFlags(voice.userFxFlags), voice.channels, grain, sampleRate};
