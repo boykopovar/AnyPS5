@@ -120,6 +120,48 @@ void deviceSelectionTests() {
     std::puts("sampled-cache device selection CPU tests passed");
 }
 
+VkPhysicalDeviceMemoryProperties SpillHeaps(std::uint64_t hostBytes) {
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    VkPhysicalDeviceMemoryProperties memory{};
+    memory.memoryHeapCount = hostBytes != 0 ? 2u : 1u;
+    memory.memoryHeaps[0] = {12u * GiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    memory.memoryHeaps[1] = {hostBytes, 0u};
+    return memory;
+}
+
+void spillTests() {
+    constexpr std::uint64_t MiB = 1ull << 20u;
+    constexpr std::uint64_t GiB = 1ull << 30u;
+    Require(SampledTextureSpill(0, true, false, 0) == 0 && SampledTextureSpill(SampledSpillLimit, false, true, 0) == 0 && SampledTextureSpill(SampledSpillLimit, false, false, 0) == 0, "a device with no ceiling was given room for sampled textures past its share");
+    std::uint64_t spill = 0;
+    for (std::uint64_t step = 1; step <= 8; ++step) {
+        spill = SampledTextureSpill(spill, true, false, SampledSpillLimit);
+        Require(spill == step * 256u * MiB, "after " + std::to_string(step) + " budget reads with a refused texture the room past the device's share is " + std::to_string(spill / MiB) + " MiB, not " + std::to_string(step * 256u) + " MiB");
+    }
+    Require(SampledTextureSpill(spill, true, false, SampledSpillLimit) == 2048u * MiB, "the room past the device's share grew beyond 2 GiB");
+    Require(SampledTextureSpill(spill, false, false, SampledSpillLimit) == spill, "a budget read without a refused texture changed the room before the cache was quiet");
+    Require(SampledTextureSpill(spill, false, true, SampledSpillLimit) == spill - 256u * MiB, "a quiet budget read did not give back one step");
+    Require(SampledTextureSpill(100u * MiB, false, true, SampledSpillLimit) == 0, "a quiet budget read with less than a step left did not give back the rest");
+    Require(SampledTextureSpill(1536u * MiB, true, false, 1536u * MiB) == 1536u * MiB, "the room grew past a 1536 MiB ceiling");
+    Require(SampledTextureSpill(2048u * MiB, false, false, 1536u * MiB) == 1536u * MiB, "room above a ceiling that fell was not brought down to it");
+    const auto ceiling = [](std::uint64_t hostBytes, std::uint64_t hostBudget, bool discrete) {
+        const auto memory = SpillHeaps(hostBytes);
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        reported.heapBudget[0] = 9u * GiB;
+        reported.heapBudget[1] = hostBudget;
+        return SampledSpillCeiling(memory, &reported, discrete);
+    };
+    Require(ceiling(22u * GiB, 22u * GiB, true) == SampledSpillLimit, "a discrete GPU with a 22 GiB host heap was not given the 2 GiB ceiling");
+    Require(ceiling(22u * GiB, 6u * GiB, true) == 1536u * MiB, "the ceiling of a host heap with a 6 GiB budget is " + std::to_string(ceiling(22u * GiB, 6u * GiB, true) / MiB) + " MiB, not a quarter of its budget (1536 MiB)");
+    Require(ceiling(6u * GiB, 0, true) == 1536u * MiB, "a host heap with no reported budget was not bounded by a quarter of its size");
+    Require(ceiling(6u * GiB + 100u * MiB, 0, true) == 1536u * MiB, "the ceiling was not rounded down to whole steps");
+    Require(ceiling(GiB - MiB, 0, true) == 0, "a host heap whose quarter is less than a step gave room");
+    Require(ceiling(22u * GiB, 22u * GiB, false) == 0, "a GPU that is not discrete (an integrated GPU's GTT heap) was given room past its share");
+    Require(ceiling(0, 0, true) == 0, "a device whose heaps are all device-local was given room past its share");
+    Require(SampledSpillCeiling(SpillHeaps(6u * GiB), nullptr, true) == 1536u * MiB, "without VK_EXT_memory_budget the ceiling did not come from the host heap's size");
+    std::puts("sampled texture spill CPU tests passed");
+}
+
 class Device {
 public:
     explicit Device(bool enableStorageImageMultisample = true) {
@@ -420,6 +462,23 @@ std::shared_ptr<ShaderResources> ImageResources(const Context& context, const Bl
     program.bindings.push_back(std::move(binding));
     const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
     return std::make_shared<ShaderResources>(context, shader);
+}
+
+ShaderRecompiler::RecompileResult StorageImageProgram(std::uint64_t address) {
+    ShaderRecompiler::DescriptorBinding binding{};
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.descriptorSet = 0;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageWritten.assign(1, false);
+    binding.imageSamplers.assign(1, 0u);
+    const auto words = Descriptor(address);
+    binding.guestDescriptor.assign(words.begin(), words.end());
+    ShaderRecompiler::RecompileResult program;
+    program.bindings.push_back(std::move(binding));
+    return program;
 }
 
 void recorderEvictionTests(const Context& context, const Block& block) {
@@ -1077,6 +1136,34 @@ std::uint64_t ReadStorageBudget(const Context& context) {
     return StorageTextureCacheBudget(context);
 }
 
+void spillGrowthTests(Context context) {
+    Require(context.memory.memoryHeapCount < VK_MAX_MEMORY_HEAPS, "the device reports every heap slot, so the test cannot add a host heap");
+    context.memory.memoryHeaps[context.memory.memoryHeapCount++] = {16ull << 30u, 0u};
+    context.memoryProperties2 = &ReportBudget;
+    context.discreteGpu = true;
+    Block block(context);
+    ClearCachedTextures(context.device);
+    const auto share = ReadBudget(context);
+    Require(share == ExpectedBudget(context), "the first budget read of a discrete GPU with a host heap already had room past the device's share");
+    OverrideCacheBudgetForTest(Budget);
+    Recorder::CountPresent();
+    const auto bytes = Sampled(context, block.Surface(0))->AllocationBytes();
+    const auto capacity = static_cast<std::size_t>(Budget / bytes);
+    Require(capacity >= 2u && capacity < Surfaces && TextureCacheUsage().sampledEntries == 1u, "a snapshot of the 256 KiB surface holds " + std::to_string(bytes) + " bytes, which the test's 1 MiB budget does not fit as planned");
+    std::weak_ptr<Texture> last;
+    for (std::size_t surface = 1; surface <= capacity; ++surface) last = Sampled(context, block.Surface(surface));
+    Require(last.expired() && TextureCacheUsage().sampledEntries == capacity, "the first use of a texture past a cache full of the current present's textures was not turned away");
+    OverrideCacheBudgetForTest(0);
+    const auto grown = ReadBudget(context);
+    const auto grownShare = ExpectedBudget(context);
+    Require(grown == grownShare + SampledSpillStep, "the budget read after a texture was turned away is " + std::to_string(grown >> 20u) + " MiB, not one 256 MiB step past the device's share of " + std::to_string(grownShare >> 20u) + " MiB");
+    Require(ReadBudget(context) == ExpectedBudget(context) + SampledSpillStep, "a budget read with no texture turned away since the last one changed the room before the cache was quiet");
+    context.discreteGpu = false;
+    Require(ReadBudget(context) == ExpectedBudget(context), "a GPU that is not discrete kept room past the device's share");
+    ClearCachedTextures(context.device);
+    std::printf("a texture turned away grew the sampled texture cache budget from %llu MiB by one %llu MiB step\n", static_cast<unsigned long long>(share >> 20u), static_cast<unsigned long long>(SampledSpillStep >> 20u));
+}
+
 void memoryTests(Context context) {
     context.memoryProperties2 = &ReportBudget;
     const auto before = SampledTextureMemory();
@@ -1116,7 +1203,10 @@ struct RecoveryProbe {
     std::uint64_t released = 0;
     unsigned requests = 0;
     unsigned failures = 0;
+    unsigned hostAllocations = 0;
     bool pressure = false;
+    bool deviceLocalOnly = false;
+    VkPhysicalDeviceMemoryProperties memory{};
 };
 
 RecoveryProbe recovery;
@@ -1131,9 +1221,14 @@ VkDeviceSize ReclaimForTest(VkDeviceSize bytes, bool newImage) {
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL AllocateForTest(VkDevice device, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* memory) {
-    if (recovery.pressure && recovery.released == 0) {
-        ++recovery.failures;
-        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    if (recovery.pressure && recovery.released == 0 && recovery.hostAllocations == 0) {
+        const bool deviceLocal = (recovery.memory.memoryHeaps[recovery.memory.memoryTypes[info->memoryTypeIndex].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+        if (recovery.deviceLocalOnly && !deviceLocal) {
+            ++recovery.hostAllocations;
+        } else {
+            ++recovery.failures;
+            return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+        }
     }
     return reinterpret_cast<PFN_vkAllocateMemory>(recovery.deviceProc(device, "vkAllocateMemory"))(device, info, allocator, memory);
 }
@@ -1143,7 +1238,21 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL RecoveryProc(VkDevice device, const cha
     return recovery.deviceProc(device, name);
 }
 
-void recoveryTests(Context context, const std::string& mode) {
+bool hasHostMemoryType(const VkPhysicalDeviceMemoryProperties& memory) {
+    for (std::uint32_t type = 0; type < memory.memoryTypeCount; ++type) {
+        if ((memory.memoryHeaps[memory.memoryTypes[type].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0) return true;
+    }
+    return false;
+}
+
+bool recoveryTests(Context context, const std::string& mode) {
+    const bool recent = mode == "recover-sampled-recent" || mode == "recover-sampled-recent-noroom";
+    const bool storageRecent = mode == "recover-storage-recent" || mode == "recover-storage-recent-noroom";
+    const bool storageAged = mode == "recover-storage-aged" || mode == "recover-storage-hit" || mode == "recover-storage-repeat" || mode == "recover-storage-proved";
+    if ((recent || storageRecent || storageAged) && !hasHostMemoryType(context.memory)) {
+        std::puts("skipped, the device has no memory type outside its device-local heaps for a texture to fall back to");
+        return false;
+    }
     recovery = RecoveryProbe{};
     recovery.deviceProc = context.deviceProc;
     context.deviceProc = RecoveryProc;
@@ -1166,6 +1275,126 @@ void recoveryTests(Context context, const std::string& mode) {
         Require(recovery.released == allocated, "storage allocation recovery counted memory still held by its caller");
         pending->Flush();
         Require(!pending->Dirty(), "pending storage results could not be stored after memory recovery");
+    } else if (storageRecent) {
+        const bool room = mode == "recover-storage-recent";
+        context.discreteGpu = true;
+        context.memoryProperties2 = &ReportBudget;
+        recovery.memory = context.memory;
+        recovery.deviceLocalOnly = true;
+        Recorder::CountPresent();
+        Require(ReadBudget(context) == ExpectedBudget(context), "the recovery fixture's first budget read already had room past the device's share");
+        if (room) SetSampledSpillForTest(SampledSpillStep);
+        auto image = CachedStorageSurface(context, Resource(block.Surface(0)));
+        const auto allocated = image->AllocationBytes();
+        const auto* kept = image.get();
+        image.reset();
+        Require(StorageImageCached(context, kept) && TextureCacheUsage().sampledEntries == 0, "the recent storage image fixture needs one cached storage image and no sampled texture");
+        recovery.pressure = true;
+        auto made = Sampled(context, block.Surface(2));
+        recovery.pressure = false;
+        if (room) {
+            Require(made != nullptr && StorageImageCached(context, kept) && recovery.released == 0, "while the sampled cache was past the device's share, an allocation that could go to host memory evicted a storage image of the current present");
+            Require(recovery.hostAllocations == 1, "the texture whose device allocation failed was not placed in host memory");
+            SetSampledSpillForTest(0);
+        } else {
+            Require(made != nullptr && !StorageImageCached(context, kept) && recovery.released == allocated, "with no room past the device's share, sampled allocation recovery did not evict the storage image of the current present");
+            Require(recovery.hostAllocations == 0, "the texture whose device allocation failed went to host memory although the recovery released enough");
+        }
+    } else if (storageAged) {
+        context.discreteGpu = true;
+        context.memoryProperties2 = &ReportBudget;
+        recovery.memory = context.memory;
+        recovery.deviceLocalOnly = true;
+        Recorder::CountPresent();
+        Require(ReadBudget(context) == ExpectedBudget(context), "the recovery fixture's first budget read already had room past the device's share");
+        SetSampledSpillForTest(SampledSpillStep);
+        const bool proved = mode == "recover-storage-proved";
+        std::optional<WatchedSurface> watched;
+        if (proved) watched.emplace(context);
+        const auto address = watched.has_value() ? watched->Address() : block.Surface(0);
+        const auto resource = Resource(address);
+        auto image = CachedStorageSurface(context, resource);
+        const auto program = StorageImageProgram(address);
+        const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+        std::optional<PlaceholderImages> placeholders;
+        std::shared_ptr<ShaderResources> resources;
+        if (proved) {
+            placeholders.emplace(context);
+            context.placeholderImages = &*placeholders;
+            resources = std::make_shared<ShaderResources>(context, shader);
+            Require(resources->Revalidate(shader), "the storage image descriptor set did not prove current");
+        }
+        Require(TextureCacheUsage().sampledEntries == 0 && TextureCacheUsage().storageBytes != 0, "the aged storage image fixture needs one cached storage image and no sampled texture");
+        Recorder::CountPresent();
+        Recorder::CountPresent();
+        const char* via = "nothing";
+        if (mode == "recover-storage-hit") {
+            via = "a storage cache hit";
+            Require(CachedStorageSurface(context, resource) == image, "the second lookup of the storage surface was not a cache hit");
+        } else if (mode == "recover-storage-repeat") {
+            via = "RepeatStorageSurface";
+            Require(RepeatStorageSurface(context, resource, image) == image, "RepeatStorageSurface did not return the cached storage image");
+        } else if (proved) {
+            via = "a fast proof of a descriptor set over it";
+            ShaderResources::ProofReport report{};
+            Require(resources->Revalidate(shader, &report), "the storage image descriptor set did not prove current");
+            if (report.path != ShaderResources::ProofPath::Fast) {
+                SetSampledSpillForTest(0);
+                std::puts("skipped, the storage image descriptor set took the full walk here, so StorageImagesCached is not reached");
+                return false;
+            }
+        }
+        const auto allocated = image->AllocationBytes();
+        const auto* kept = image.get();
+        image.reset();
+        recovery.pressure = true;
+        auto made = Sampled(context, block.Surface(2));
+        recovery.pressure = false;
+        const bool cached = StorageImageCached(context, kept);
+        SetSampledSpillForTest(0);
+        if (mode == "recover-storage-aged") {
+            Require(made != nullptr && !cached && recovery.released == allocated, "with room past the device's share, the recovery kept a storage image last used two presents earlier");
+            Require(recovery.hostAllocations == 0, "the texture whose device allocation failed went to host memory although the recovery released enough");
+        } else {
+            Require(made != nullptr && cached, std::string("the recovery evicted a storage image used in the current present through ") + via + ", while the sampled cache had room past the device's share");
+            Require(recovery.hostAllocations == 1, "the texture whose device allocation failed was not placed in host memory");
+        }
+    } else if (recent || mode == "recover-sampled-recent-device") {
+        const bool hostHeap = mode != "recover-sampled-recent-device";
+        const bool room = mode == "recover-sampled-recent";
+        context.discreteGpu = true;
+        context.memoryProperties2 = &ReportBudget;
+        recovery.memory = context.memory;
+        recovery.deviceLocalOnly = true;
+        if (!hostHeap) {
+            for (std::uint32_t heap = 0; heap < context.memory.memoryHeapCount; ++heap) context.memory.memoryHeaps[heap].flags |= VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+        }
+        Recorder::CountPresent();
+        const auto before = ReadBudget(context);
+        Require(before == ExpectedBudget(context), "the recovery fixture's first budget read already had room past the device's share");
+        if (room) SetSampledSpillForTest(SampledSpillStep);
+        auto recent = Sampled(context, block.Surface(0));
+        Require(!recent->ViewsStorageImage(), "the recent-texture recovery fixture needs a snapshot allocation");
+        const auto allocated = recent->AllocationBytes();
+        std::weak_ptr<Texture> kept = recent;
+        recent.reset();
+        recovery.pressure = true;
+        auto made = Sampled(context, block.Surface(2));
+        recovery.pressure = false;
+        if (room) {
+            Require(made != nullptr && !kept.expired() && recovery.released == 0, "while the sampled cache was past the device's share, an allocation that could go to host memory released a texture of the current present");
+            Require(recovery.hostAllocations == 1, "the texture whose device allocation failed was not placed in host memory");
+            SetSampledSpillForTest(0);
+        } else if (hostHeap) {
+            Require(made != nullptr && kept.expired() && recovery.released == allocated, "with no room past the device's share, an allocation that could go to host memory kept the texture of the current present instead of releasing it");
+            Require(recovery.hostAllocations == 0, "the texture whose device allocation failed went to host memory although the recovery released enough");
+            const auto grown = ReadBudget(context);
+            const auto share = ExpectedBudget(context);
+            Require(grown == share + SampledSpillStep, "a recovery that released a texture of the current present left the next budget read at " + std::to_string(grown >> 20u) + " MiB, not one 256 MiB step past the device's share of " + std::to_string(share >> 20u) + " MiB");
+        } else {
+            Require(made != nullptr && kept.expired() && recovery.released == allocated, "without a host heap, sampled allocation recovery did not release the texture of the current present");
+            Require(recovery.hostAllocations == 0, "a device without a host heap placed a texture in host memory");
+        }
     } else if (mode == "recover-sampled") {
         auto oldest = Sampled(context, block.Surface(0));
         Require(!oldest->ViewsStorageImage(), "the sampled recovery fixture needs a snapshot allocation");
@@ -1217,8 +1446,9 @@ void recoveryTests(Context context, const std::string& mode) {
         Require(!source->Dirty(), "pending storage results could not be stored after memory recovery");
     }
     Require(recovery.requests == 1 && recovery.failures >= 1 && recovery.failures <= 2, "image allocation recovery was skipped or retried without a bound");
-    const char* label = storage ? "storage" : mode == "recover-srgb" ? "sRGB" : mode == "recover-repack" ? "repacked" : "sampled";
+    const char* label = storage ? "storage" : mode == "recover-srgb" ? "sRGB" : mode == "recover-repack" ? "repacked" : mode == "recover-sampled-recent" ? "recent sampled (host heap, room past the device's share)" : mode == "recover-sampled-recent-noroom" ? "recent sampled (host heap, no room)" : mode == "recover-sampled-recent-device" ? "recent sampled (no host heap)" : mode == "recover-storage-recent" ? "recent storage (host heap, room past the device's share)" : mode == "recover-storage-recent-noroom" ? "recent storage (host heap, no room)" : mode == "recover-storage-aged" ? "aged storage (host heap, room past the device's share)" : mode == "recover-storage-hit" ? "storage used through a cache hit" : mode == "recover-storage-repeat" ? "storage used through RepeatStorageSurface" : mode == "recover-storage-proved" ? "storage used through a fast proof" : "sampled";
     std::printf("%s image allocation recovered after %u injected failures: %llu bytes released\n", label, recovery.failures, static_cast<unsigned long long>(recovery.released));
+    return true;
 }
 
 }
@@ -1315,14 +1545,21 @@ int main(int argc, char** argv) {
             deviceSelectionTests();
             return 0;
         }
+        if (mode == "spill-cpu") {
+            spillTests();
+            return 0;
+        }
         const bool resources = mode == "resource-admission" || mode == "resource-oversized" || mode == "resource-clear";
         const bool disableStorageImageMultisample = mode == "without-storage-image-multisample";
-        const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack";
+        const bool recent = mode == "recover-sampled-recent" || mode == "recover-sampled-recent-noroom" || mode == "recover-sampled-recent-device" || mode == "recover-storage-recent" || mode == "recover-storage-recent-noroom" || mode == "recover-storage-aged" || mode == "recover-storage-hit" || mode == "recover-storage-repeat" || mode == "recover-storage-proved";
+        const bool recover = mode == "recover-sampled" || mode == "recover-storage" || mode == "recover-srgb" || mode == "recover-repack" || recent;
+        const bool growth = mode == "spill-growth";
+        const bool reported = memory || recent || growth;
 #ifdef _WIN32
-        if (!memory) _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
+        if (!reported) _putenv_s("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1");
         if (std::getenv("APS5_TEMPLATE_AUDIT_MS") == nullptr) _putenv_s("APS5_TEMPLATE_AUDIT_MS", "250");
 #else
-        if (!memory) setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
+        if (!reported) setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
         setenv("APS5_TEMPLATE_AUDIT_MS", "250", 0);
 #endif
         std::unique_ptr<Device> device;
@@ -1390,7 +1627,11 @@ int main(int argc, char** argv) {
         }
         if (recover) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-            recoveryTests(context, mode);
+            return recoveryTests(context, mode) ? 0 : VulkanTestSkipped;
+        }
+        if (growth) {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            spillGrowthTests(context);
             return 0;
         }
         {

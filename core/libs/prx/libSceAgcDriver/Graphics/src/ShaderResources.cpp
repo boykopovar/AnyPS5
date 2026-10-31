@@ -156,6 +156,10 @@ struct TextureCache {
     std::uint64_t reportedStorage = 0;
     std::chrono::steady_clock::time_point reportedAt{};
     std::uint64_t erasures = 0;
+    std::uint64_t uncachedTotal = 0;
+    std::uint64_t uncachedSeen = 0;
+    std::uint64_t spill = 0;
+    std::chrono::steady_clock::time_point spillQuietSince{};
 };
 
 TextureCache& Textures() {
@@ -316,6 +320,7 @@ bool admitTexture(TextureCache& cache, const TextureKey& key, std::uint64_t inco
         if (scan && !over && (firstUse ? back->present + 1u >= present : back->present == present)) {
             cache.firstUses.insert(key);
             ++cache.counts.uncached;
+            ++cache.uncachedTotal;
             return false;
         }
         const bool keep = back->accounted == 0 || (!over && back->texture.use_count() > 1);
@@ -606,6 +611,7 @@ std::optional<std::uint32_t> largestDeviceLocalHeap(const VkPhysicalDeviceMemory
 }
 
 std::atomic<std::uint64_t> budgetOverride{0};
+std::atomic<std::uint64_t> sampledRoom{0};
 
 std::uint64_t forcedCacheBudget() {
     if (const auto overridden = budgetOverride.load(std::memory_order_relaxed); overridden != 0) return overridden;
@@ -656,7 +662,14 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     context.memoryProperties2(context.physical, &properties);
     const auto sampled = SampledTextureMemory();
     const auto storage = storageCacheBytes();
-    const auto budget = SampledTextureBudget(context.memory, &reported, sampled + storage, storage);
+    const auto device = SampledTextureBudget(context.memory, &reported, sampled + storage, storage);
+    const bool thrashed = cache.uncachedTotal != cache.uncachedSeen;
+    cache.uncachedSeen = cache.uncachedTotal;
+    if (thrashed || cache.spill == 0) cache.spillQuietSince = now;
+    const bool quiet = now - cache.spillQuietSince >= std::chrono::seconds(10) && cache.bytes + 2u * SampledSpillStep <= device + cache.spill;
+    cache.spill = SampledTextureSpill(cache.spill, thrashed, quiet, SampledSpillCeiling(context.memory, &reported, context.discreteGpu));
+    sampledRoom.store(cache.spill, std::memory_order_relaxed);
+    const auto budget = device + cache.spill;
     const bool fresh = cache.budgetDevice != context.physical;
     const auto storageLimit = storageBudget(context);
     if (const auto heap = largestDeviceLocalHeap(context.memory); heap && (fresh || SampledBudgetReportDue(cache.reportedBudget, budget, now - cache.reportedAt) || SampledBudgetReportDue(cache.reportedStorage, storageLimit, now - cache.reportedAt))) {
@@ -666,7 +679,9 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
             std::snprintf(was, sizeof(was), " (was %llu MiB)", static_cast<unsigned long long>(cache.reportedBudget >> 20u));
             std::snprintf(wasStorage, sizeof(wasStorage), " (was %llu MiB)", static_cast<unsigned long long>(cache.reportedStorage >> 20u));
         }
-        std::fprintf(stderr, "[gpu] sampled texture cache budget %llu MiB%s: device-local heap %u has a VK_EXT_memory_budget budget of %llu MiB and uses %llu MiB, %llu MiB of it sampled textures (%llu MiB in the cache) and %llu MiB cached storage images; storage image cache budget %llu MiB%s\n", static_cast<unsigned long long>(budget >> 20u), was, *heap, static_cast<unsigned long long>(reported.heapBudget[*heap] >> 20u), static_cast<unsigned long long>(reported.heapUsage[*heap] >> 20u), static_cast<unsigned long long>(sampled >> 20u), static_cast<unsigned long long>(cache.bytes >> 20u), static_cast<unsigned long long>(storage >> 20u), static_cast<unsigned long long>(storageLimit >> 20u), wasStorage);
+        char spilled[96] = "";
+        if (cache.spill != 0) std::snprintf(spilled, sizeof(spilled), ", %llu MiB of it past the device's share for a frame that did not fit", static_cast<unsigned long long>(cache.spill >> 20u));
+        std::fprintf(stderr, "[gpu] sampled texture cache budget %llu MiB%s%s: device-local heap %u has a VK_EXT_memory_budget budget of %llu MiB and uses %llu MiB, %llu MiB of it sampled textures (%llu MiB in the cache) and %llu MiB cached storage images; storage image cache budget %llu MiB%s\n", static_cast<unsigned long long>(budget >> 20u), was, spilled, *heap, static_cast<unsigned long long>(reported.heapBudget[*heap] >> 20u), static_cast<unsigned long long>(reported.heapUsage[*heap] >> 20u), static_cast<unsigned long long>(sampled >> 20u), static_cast<unsigned long long>(cache.bytes >> 20u), static_cast<unsigned long long>(storage >> 20u), static_cast<unsigned long long>(storageLimit >> 20u), wasStorage);
         cache.reportedBudget = budget;
         cache.reportedStorage = storageLimit;
         cache.reportedAt = now;
@@ -1099,6 +1114,7 @@ struct CachedStorageTexture {
     std::uint32_t mip;
     std::shared_ptr<StorageTexture> texture;
     std::uint64_t accounted = 0;
+    std::uint64_t present = 0;
 };
 
 // As TextureCache: use order with a hash index by key, plus one by image for StorageImageCached.
@@ -1273,6 +1289,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (layers) it->texture->RefreshLayers(layers->first, layers->second);
             else it->texture->Refresh();
             cache.entries.splice(cache.entries.begin(), cache.entries, it);
+            it->present = Recorder::Presents();
             texture = it->texture;
             counters.storageHits.fetch_add(1, std::memory_order_relaxed);
             if (profile) LookupOutcomes::Add(LookupOutcomes::StorageHit, start);
@@ -1292,6 +1309,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) evicted.push_back(evictStorage(cache, std::prev(cache.entries.end())));
             cache.bytes += entry.accounted;
             texture = entry.texture;
+            entry.present = Recorder::Presents();
             cache.entries.push_front(std::move(entry));
             cache.index[key] = cache.entries.begin();
             cache.byImage[texture.get()] = cache.entries.begin();
@@ -1341,6 +1359,21 @@ std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memor
     return std::min<std::uint64_t>(StorageTextureCeiling(memory, reported), std::max<std::uint64_t>(512ull << 20u, budget > reserved ? budget - reserved : 0u));
 }
 
+std::uint64_t SampledSpillCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, bool discreteGpu) {
+    if (!discreteGpu) return 0;
+    std::uint64_t host = 0;
+    for (std::uint32_t i = 0; i < std::min<std::uint32_t>(memory.memoryHeapCount, VK_MAX_MEMORY_HEAPS); ++i) {
+        if ((memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) continue;
+        host = std::max<std::uint64_t>(host, reported != nullptr && reported->heapBudget[i] != 0 ? reported->heapBudget[i] : memory.memoryHeaps[i].size);
+    }
+    return std::min(SampledSpillLimit, host / 4u / SampledSpillStep * SampledSpillStep);
+}
+
+std::uint64_t SampledTextureSpill(std::uint64_t spill, bool thrashed, bool quiet, std::uint64_t ceiling) {
+    const auto next = thrashed ? spill + SampledSpillStep : quiet ? spill - std::min(spill, SampledSpillStep) : spill;
+    return std::min(next, ceiling);
+}
+
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes) {
     const auto heap = largestDeviceLocalHeap(memory);
     if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return TextureCacheBudget(memory);
@@ -1365,6 +1398,14 @@ std::uint64_t StorageTextureCacheBudget(const Context& context) {
 
 void OverrideCacheBudgetForTest(std::uint64_t bytes) {
     budgetOverride.store(bytes, std::memory_order_relaxed);
+}
+
+void SetSampledSpillForTest(std::uint64_t bytes) {
+    auto& cache = Textures();
+    std::lock_guard lock(cache.mutex);
+    cache.spill = bytes;
+    sampledRoom.store(bytes, std::memory_order_relaxed);
+    cache.spillQuietSince = std::chrono::steady_clock::now();
 }
 
 TextureCacheUse TextureCacheUsage() {
@@ -1469,7 +1510,12 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
     std::size_t storageEntries = 0;
     std::size_t storageKept = 0;
     bool sampledSkipped = false;
+    bool sampledRecentKept = false;
     bool storageSkipped = false;
+    bool storageRecentKept = false;
+    const bool hostFallback = ReclaimHasHostFallback();
+    bool keepRecent = hostFallback && sampledRoom.load(std::memory_order_relaxed) != 0;
+    const auto present = Recorder::Presents();
     {
         auto& cache = Textures();
         std::unique_lock lock(cache.mutex, std::defer_lock);
@@ -1477,8 +1523,18 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
         if ((inherited && (!newImage || sampledCacheReclaimable == 0)) || (!inherited && !lock.try_lock())) {
             sampledSkipped = true;
         } else {
+            keepRecent = hostFallback && cache.spill != 0;
+            bool recentSeen = false;
             for (auto it = cache.entries.end(); it != cache.entries.begin() && freed < bytes;) {
                 --it;
+                if (hostFallback && present != 0 && it->present + 1u >= present) {
+                    if (!recentSeen) ++cache.uncachedTotal;
+                    recentSeen = true;
+                    if (keepRecent) {
+                        sampledRecentKept = true;
+                        break;
+                    }
+                }
                 if (it->texture.use_count() != 1 || (it->source != nullptr && it->source->Dirty())) continue;
                 const auto allocated = it->texture->AllocationBytes();
                 const auto sourceBytes = it->source != nullptr ? it->source->AllocationBytes() : 0u;
@@ -1512,6 +1568,10 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
                         storageKept = 0;
                         for (auto it = cache.entries.end(); it != cache.entries.begin();) {
                             --it;
+                            if (keepRecent && present != 0 && it->present + 1u >= present) {
+                                storageRecentKept = true;
+                                break;
+                            }
                             if (it->texture->Dirty()) {
                                 ++storageKept;
                                 continue;
@@ -1540,7 +1600,16 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage) {
             }
         }
     }
-    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s, %zu with pending results kept\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : "", storageKept);
+    static std::atomic<std::uint64_t> recentStops{0};
+    char recentNote[160] = "";
+    char storageNote[96] = "";
+    if (sampledRecentKept || storageRecentKept) {
+        const auto stops = recentStops.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (stops > 5 && (stops & (stops - 1)) != 0) return freed;
+        std::snprintf(recentNote, sizeof(recentNote), " (stopped at one used in the last two presents, as the allocation can go to host memory; %llu such releases)", static_cast<unsigned long long>(stops));
+        std::snprintf(storageNote, sizeof(storageNote), " (stopped at one used in the last two presents; %llu such releases)", static_cast<unsigned long long>(stops));
+    }
+    std::fprintf(stderr, "[gpu] texture caches released %llu MiB of the %llu MiB asked for: %zu sampled entries%s, %zu storage images%s, %zu with pending results kept\n", static_cast<unsigned long long>(freed >> 20u), static_cast<unsigned long long>(bytes >> 20u), sampledEntries, sampledSkipped ? " (cache busy, skipped)" : sampledRecentKept ? recentNote : "", storageEntries, storageSkipped ? " (cache or device busy, skipped)" : storageRecentKept ? storageNote : "", storageKept);
     return freed;
 }
 
@@ -1550,6 +1619,7 @@ bool StorageImageCached(const Context& context, const StorageTexture* image) {
     const auto it = findStorageByImage(cache, context.device, image);
     if (it == cache.entries.end()) return false;
     cache.entries.splice(cache.entries.begin(), cache.entries, it);
+    it->present = Recorder::Presents();
     return true;
 }
 
@@ -1564,6 +1634,7 @@ bool StorageImagesCached(const Context& context, std::span<const StorageTexture*
         const auto it = findStorageByImage(cache, context.device, image);
         if (it == cache.entries.end()) return false;
         cache.entries.splice(cache.entries.begin(), cache.entries, it);
+        it->present = Recorder::Presents();
     }
     return true;
 }
@@ -1605,6 +1676,7 @@ std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, con
     if (it == cache.entries.end() || MetadataMoved(*it->texture, resource)) return nullptr;
     it->texture->Refresh();
     cache.entries.splice(cache.entries.begin(), cache.entries, it);
+    it->present = Recorder::Presents();
     TextureCounts().storageHits.fetch_add(1, std::memory_order_relaxed);
     if (profile) LookupOutcomes::Add(LookupOutcomes::StorageHit, start);
     return it->texture;

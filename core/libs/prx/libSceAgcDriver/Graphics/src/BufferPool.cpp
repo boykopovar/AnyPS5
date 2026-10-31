@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <atomic>
 #include <bit>
@@ -13,6 +14,20 @@
 namespace AgcDriver::Graphics {
 
 namespace {
+
+struct ReclaimFallbackStorage {};
+
+bool& reclaimFallback() {
+    return HostThreadLocal<bool, ReclaimFallbackStorage>();
+}
+
+struct ReclaimFallbackScope {
+    bool previous;
+    explicit ReclaimFallbackScope(bool fallback) : previous(reclaimFallback()) { reclaimFallback() = fallback; }
+    ~ReclaimFallbackScope() { reclaimFallback() = previous; }
+    ReclaimFallbackScope(const ReclaimFallbackScope&) = delete;
+    ReclaimFallbackScope& operator=(const ReclaimFallbackScope&) = delete;
+};
 
 // APS5_BUFFER_POOL_SHARED=1: one tier for every size, as before the split.
 bool sharedTiers() {
@@ -76,7 +91,10 @@ VkDeviceMemory BufferPool::AllocateMemory(const VkMemoryAllocateInfo& allocation
         }
     }
     if (exhausted(result)) {
-        if (cacheReclaim != nullptr) released = cacheReclaim(ReclaimTarget(allocation.allocationSize), newImage);
+        if (cacheReclaim != nullptr) {
+            const ReclaimFallbackScope fallback(hostType.has_value() && *hostType != allocation.memoryTypeIndex);
+            released = cacheReclaim(ReclaimTarget(allocation.allocationSize), newImage);
+        }
         if (released != 0) {
             reclaimed += trim();
             memory = VK_NULL_HANDLE;
@@ -583,6 +601,10 @@ void BufferPool::Put(const BufferAllocation& allocation) noexcept {
         destroy(allocation);
     }
     for (const auto& gone : evicted) destroy(gone);
+}
+
+bool ReclaimHasHostFallback() {
+    return reclaimFallback();
 }
 
 std::shared_ptr<BufferPool> GetBufferPool(const Context& context) {

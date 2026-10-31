@@ -34,6 +34,10 @@ std::uint64_t ReleaseTextureCaches(std::uint64_t bytes, bool newImage = false);
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory);
 std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported);
 std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes);
+inline constexpr std::uint64_t SampledSpillStep = 256ull << 20u;
+inline constexpr std::uint64_t SampledSpillLimit = 2048ull << 20u;
+std::uint64_t SampledSpillCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, bool discreteGpu);
+std::uint64_t SampledTextureSpill(std::uint64_t spill, bool thrashed, bool quiet, std::uint64_t ceiling);
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes = 0);
 bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport);
 std::optional<std::uint32_t> LargestDeviceLocalHeap(const VkPhysicalDeviceMemoryProperties& memory);
@@ -48,6 +52,7 @@ struct TextureCacheUse {
 };
 TextureCacheUse TextureCacheUsage();
 void OverrideCacheBudgetForTest(std::uint64_t bytes);
+void SetSampledSpillForTest(std::uint64_t bytes);
 std::uint64_t SampledTextureCacheBudget(const Context& context);
 std::shared_ptr<Texture> CachedSampledTexture(const Context& context, std::span<const std::uint32_t> words, VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D);
 bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<const std::uint32_t> second);
