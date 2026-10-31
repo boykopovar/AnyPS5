@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -174,6 +175,26 @@ class ProgressSnapshotTests(unittest.TestCase):
         for section in ("libraries", "shaders"):
             snapshot[section]["groups"] = [{"name": "same"}, {"name": "Same"}]
         progress.validate_snapshot(snapshot)
+
+
+class ObservedManifestTests(unittest.TestCase):
+    def read(self, text):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "libSceExample.txt"
+            path.write_text(text, encoding="utf-8")
+            return progress.read_manifest(path)
+
+    def test_reads_nids_and_ignores_comments_and_evidence(self):
+        observed = self.read("# Observed NIDs.\n\nAbCdEfGhIjK\nZyXwVuTsRqP  # evidence: resolved by name at run time\n")
+        self.assertEqual(observed, frozenset({"AbCdEfGhIjK", "ZyXwVuTsRqP"}))
+
+    def test_empty_manifest_is_a_classification_with_no_observations(self):
+        self.assertEqual(self.read("# nothing observed yet\n"), frozenset())
+
+    def test_malformed_entries_are_rejected_with_their_line(self):
+        for line in ("short", "TooLongForANid1", "AbCdEfGhIj!", "AbCdEfGhIjK extra", "AbCdEfGhI K"):
+            with self.subTest(line=line), self.assertRaisesRegex(ValueError, rf":2: invalid NID {re.escape(repr(line))}"):
+                self.read("# header\n" + line + "\n")
 
 
 class ProgressTests(unittest.TestCase):

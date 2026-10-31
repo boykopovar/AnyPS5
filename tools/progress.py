@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
 OPCODES = ROOT / "core" / "shader" / "recompiler" / "RdnaDecoder" / "include" / "RdnaDecoder" / "RdnaOpcode.hpp"
 ISA = Path(__file__).resolve().parent / "rdna_isa.txt"
+NID = re.compile(r"[A-Za-z0-9+\-]{11}")
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
@@ -160,6 +161,18 @@ def inert_wrappers(text):
         if not found:
             return names
         names |= found
+
+
+def read_manifest(path):
+    observed = set()
+    for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
+        entry = line.split("#", 1)[0].strip()
+        if not entry:
+            continue
+        if NID.fullmatch(entry) is None:
+            raise ValueError(f"{path}:{number}: invalid NID {entry!r}")
+        observed.add(entry)
+    return frozenset(observed)
 
 
 def scan_library(path):
