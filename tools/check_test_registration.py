@@ -221,7 +221,10 @@ def main(argv=None):
     parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
     args = parser.parse_args(argv)
     if args.scripts:
-        scripts, unrun = unrun_scripts(Path(__file__).resolve().parents[1])
+        try:
+            scripts, unrun = unrun_scripts(Path(__file__).resolve().parents[1])
+        except (OSError, RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+            parser.error(f"--scripts reads the source tree from git, so run it in a git checkout: {error}")
         for name in unrun:
             print(f"error: {name} is a test script that no add_test or workflow runs")
         if unrun:
