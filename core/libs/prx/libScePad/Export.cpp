@@ -548,8 +548,9 @@ int APS5_VABI scePadDisableVibration(std::int32_t handle, bool disabled) {
 }
 
 int APS5_VABI scePadSetVibrationStrength(std::int32_t handle, std::uint32_t strength) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)strength;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadSetLightBarBaseBrightness(std::int32_t handle, std::uint32_t brightness) {
