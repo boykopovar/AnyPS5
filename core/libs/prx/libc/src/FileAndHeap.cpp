@@ -655,6 +655,10 @@ void* APS5_VABI malloc_nid_postfix(size_t size) {
     return heapAllocation(size, [size] { return ApplicationHeapAllocate_nid_no_patch(size); });
 }
 
+void APS5_VABI __std_free_crt_nid_postfix(void* ptr) {
+    free_nid_postfix(ptr);
+}
+
 void APS5_VABI free_nid_postfix(void* ptr) {
     ApplicationHeapFree_nid_no_patch(ptr);
 }
