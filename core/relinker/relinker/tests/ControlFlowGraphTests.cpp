@@ -1,6 +1,7 @@
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <codegen/CodegenException.hpp>
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <initializer_list>
@@ -427,6 +428,49 @@ void CheckRelativeJumpTables() {
     Require(Relinker::FindRelativeJumpTables(cutShort, TextAddress, {{TextAddress, TextAddress + cutShort.size()}}).empty(), "Table followed by more of its function was accepted");
 }
 
+Bytes GapStubTable(std::initializer_list<std::uint8_t> stub) {
+    constexpr std::size_t function = 16;
+    constexpr std::size_t tableOffset = 40;
+    Bytes text(64, 0x90);
+    for (std::size_t i = 0; i < function; ++i) text[i] = 0xcc;
+    std::copy(stub.begin(), stub.end(), text.begin());
+    text[function] = 0x48;
+    text[function + 1] = 0x8d;
+    text[function + 2] = 0x05;
+    SetDisplacement(text, function + 3, function + 7, TextAddress + tableOffset);
+    text[function + 7] = 0xe8;
+    SetDisplacement(text, function + 8, function + 12, TextAddress);
+    text[function + 12] = 0xc3;
+    for (std::size_t i = function + 13; i < tableOffset; ++i) text[i] = 0xcc;
+    text[tableOffset] = 0x0f;
+    text[tableOffset + 1] = 0x78;
+    text[tableOffset + 2] = 0x33;
+    text[tableOffset + 3] = 0x1e;
+    return text;
+}
+
+std::vector<Relinker::RelativeJumpTable> GapStubTables(const Bytes& text) {
+    return Relinker::FindRelativeJumpTables(text, TextAddress, {{TextAddress + 16, TextAddress + 29}, {TextAddress + text.size(), TextAddress + text.size() + 8}});
+}
+
+void CheckGapWalkBranchTargets() {
+    const auto returning = GapStubTables(GapStubTable({0xc3}));
+    Require(returning.size() == 1 && returning[0].Begin == TextAddress + 40, "A gap stub that returns hid the data table");
+
+    Bytes direct = GapStubTable({0xe9, 0, 0, 0, 0});
+    SetDisplacement(direct, 1, 5, TextAddress + 40);
+    Require(GapStubTables(direct).empty(), "A jump from a called gap stub into the table was missed");
+
+    Bytes afterOneByte = GapStubTable({0x55, 0xe9, 0, 0, 0, 0});
+    SetDisplacement(afterOneByte, 2, 6, TextAddress + 40);
+    Require(GapStubTables(afterOneByte).empty(), "A jump after a one-byte instruction in a gap stub was missed");
+
+    Bytes chained = GapStubTable({0xe9, 0, 0, 0, 0, 0xc3, 0xcc, 0xcc, 0xe9, 0, 0, 0, 0});
+    SetDisplacement(chained, 1, 5, TextAddress + 8);
+    SetDisplacement(chained, 9, 13, TextAddress + 40);
+    Require(GapStubTables(chained).empty(), "A jump from a gap stub reached only through another gap stub was missed");
+}
+
 void CheckEmbeddedDataTables() {
     constexpr std::size_t tableOffset = 24;
     Bytes text(48, 0x90);
@@ -702,6 +746,7 @@ int main() {
         CheckStubBeforeUndecodableData();
         CheckTableWithPaddingAndReturnBytes();
         CheckLargeZeroGaps();
+        CheckGapWalkBranchTargets();
         std::cout << "Control-flow graph tests passed\n";
         return 0;
     } catch (const std::exception& error) {
