@@ -702,6 +702,12 @@ int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, std::uint32_t mixLevel) {
     return 0;
 }
 
+int APS5_VABI sceAudioOutSetPadSpkVolume(std::int32_t handle, std::int32_t volume) {
+    (void)handle;
+    (void)volume;
+    return 0;
+}
+
 int APS5_VABI sceAudioOutExClose(int handle) {
     if (handle <= 0 || handle > PORTS_MAX) {
         throw std::runtime_error("sceAudioOutExClose: handle " + std::to_string(handle) + " is not an open Ex port");
