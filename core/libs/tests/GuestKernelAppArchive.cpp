@@ -317,6 +317,21 @@ void Directories() {
     Check(!DescriptorIsOpen_nid_no_patch(owned));
 }
 
+void DirectoryClosedThroughStream(const std::filesystem::path& root) {
+    std::ofstream(root / "app0" / "StreamClose.txt", std::ios::binary) << "abc";
+    const int directory = sceKernelOpen("/app0/sce_sys/Concurrent", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Check(directory >= 0);
+    auto* stream = fdopen_nid_postfix(directory, "r");
+    Check(stream != nullptr);
+    Check(fclose_nid_postfix(stream) == 0);
+    const int file = sceKernelOpen("/app0/StreamClose.txt", SCE_KERNEL_O_RDONLY, 0);
+    Check(file == directory);
+    char data[4]{};
+    Check(sceKernelRead(file, data, sizeof(data)) == 3);
+    Check(sceKernelClose(file) == 0);
+    Check(std::filesystem::remove(root / "app0" / "StreamClose.txt"));
+}
+
 void Reads() {
     const auto expected = AppArchiveFixture::Pattern(BigSize);
     const int fd = sceKernelOpen("/app0/data/big.BIN", SCE_KERNEL_O_RDONLY, 0);
@@ -496,6 +511,7 @@ int main(int argc, char** argv) {
         Archive(root);
         FileNumbers();
         ConcurrentArchiveDirectoryEntries();
+        DirectoryClosedThroughStream(root);
         Reads();
         Status();
         Refusals();

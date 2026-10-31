@@ -2231,8 +2231,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_kernel_fcntl_sync PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
+    add_test_executable(guest_stream_close_tests ${LIBS_INCLUDE_DIR}/tests/GuestStreamClose.cpp)
+    target_include_directories(guest_stream_close_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_stream_close_tests PRIVATE libkernel libc)
+    configure_windows_unwind(guest_stream_close_tests)
+    add_test(NAME guest_stream_close COMMAND guest_stream_close_tests)
+    set_tests_properties(guest_stream_close PROPERTIES TIMEOUT 15)
     if(WIN32)
-        set_tests_properties(guest_kernel_fcntl guest_append_writes PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_kernel_fcntl guest_append_writes guest_stream_close PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         add_test_executable(guest_file_lock_tests ${LIBS_INCLUDE_DIR}/tests/GuestFileLock.cpp)
         target_include_directories(guest_file_lock_tests PRIVATE ${LIBS_INCLUDE_DIR})
