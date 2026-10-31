@@ -32,6 +32,7 @@
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include <limits>
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
 #include <windows.h>
@@ -3407,6 +3408,34 @@ void metadataPassTests() {
 }
 
 alignas(4096) std::array<std::uint8_t, 4096> cmaskMemory{};
+
+constexpr std::size_t GcnSliceBytes = 64u * 64u * 4u;
+
+void gcnColorSliceTests() {
+    using AgcDriver::Graphics::DecodeColorBuffer;
+    void* block = GuestHeap::GuestHeapAlignForGpu_nid_postfix(256, 3u * GcnSliceBytes);
+    struct Release {
+        void* block;
+        ~Release() { GuestHeap::GuestHeapFree_nid_postfix(block); }
+    } release{block};
+    const auto base = reinterpret_cast<std::uintptr_t>(block);
+    Require(base < (std::uintptr_t{1} << 40u), "guest heap memory is beyond the 40-bit PS4 GPU address space");
+    auto queue = makeState();
+    queue.context[0x318] = static_cast<std::uint32_t>(base >> 8u);
+    queue.context[0x319] = 64u / 8u - 1u;
+    queue.context[0x31a] = 64u * 64u / 64u - 1u;
+    queue.context[0x31c] = 0x8000u | (10u << 2u);
+    queue.context[0x31d] = 5u;
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    struct Restore {
+        ~Restore() { ShaderRecompiler::SetGcnGuestShaders(false); }
+    } restore;
+    for (const std::uint32_t slice : {0u, 2u}) {
+        queue.context[0x31b] = slice | (slice << 13u);
+        const auto target = DecodeColorBuffer(queue.context, 0);
+        Require(target.address == base + slice * GcnSliceBytes && target.bytes == GcnSliceBytes, "a GCN color view of one array slice does not address that slice");
+    }
+}
 
 void cmaskTests() {
     using AgcDriver::Graphics::DecodeColorBuffer;
@@ -12985,6 +13014,7 @@ int main(int argc, char** argv) {
         metadataPassTests();
         depthCopyPassTests();
         cmaskTests();
+        gcnColorSliceTests();
         uint16ExportTests();
         uint8x2TargetTests();
         uint8x4TargetTests();
