@@ -308,6 +308,9 @@ int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* valu
 }
 
 int APS5_VABI sceUserServiceGetForegroundUser(int* user_id) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
  if (user_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
