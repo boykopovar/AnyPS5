@@ -166,6 +166,16 @@ int main() {
     }
     SetLanguage("30");
     Require(sceConvertKeycodeGetImeKeyboardType(0x10000000, &type) == 0 && type == 4);
+#if defined(__linux__)
+    for (const char* name : {"LC_MESSAGES", "LANG", "LANGUAGE"}) Require(::unsetenv(name) == 0);
+    Require(::setenv("LC_ALL", "de_DE.UTF-8", 1) == 0);
+    SetLanguage("auto");
+    type = 0xFFFFFFFFu;
+    Require(sceConvertKeycodeGetImeKeyboardType(0x10000000, &type) == 0 && type == imeTypeByLanguage[4]);
+    Require(::setenv("LC_ALL", "ja_JP.UTF-8", 1) == 0);
+    type = 0xFFFFFFFFu;
+    Require(sceConvertKeycodeGetImeKeyboardType(0x10000000, &type) == 0 && type == imeTypeByLanguage[4]);
+#endif
     SetLanguage(nullptr);
 
     Require(ImeKeyboardType::IsPs4TitleId("CUSA00000"));

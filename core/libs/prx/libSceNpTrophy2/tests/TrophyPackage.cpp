@@ -1,6 +1,7 @@
 #include "prx/libSceNpTrophy2/include/TitleTrophies.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyPackage.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
+#include "prx/libSceSystemService/LanguageLocale.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -272,6 +273,10 @@ void testPackage() {
           "a tropconf.json of more than 1048576 values was read");
     check(contains(failure([] { NpTrophy2::ParseTrophyPackage("not a package", "en-US"); }), "fewer than the 64-byte header"), "a package that is not a container was read");
     check(NpTrophy2::LanguageTag(1) == "en-US" && NpTrophy2::LanguageTag(0) == "ja-JP" && NpTrophy2::LanguageTag(2) == "fr-FR" && NpTrophy2::LanguageTag(29) == "id-ID", "language tags are wrong");
+    for (int language = 0; language <= 30; ++language) {
+        const auto match = SystemServiceLocale::MatchLocale(NpTrophy2::LanguageTag(language));
+        check(match.recognised && match.id == language, "the trophy tag of a console language does not map back to it");
+    }
     bool thrown = false;
     try {
         NpTrophy2::LanguageTag(31);

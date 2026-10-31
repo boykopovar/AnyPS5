@@ -95,6 +95,16 @@ int main() {
         Require(sceUserServiceGetKeyboardType(123, &untouched) == USER_SERVICE_ERROR_UNKNOWN_USER && untouched == 0x5A5A);
         Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, &untouched) == USER_SERVICE_OK && untouched == 0);
     }
+#if defined(__linux__)
+    for (const char* name : {"LC_MESSAGES", "LANG", "LANGUAGE"}) Require(::unsetenv(name) == 0);
+    Require(::setenv("LC_ALL", "de_DE.UTF-8", 1) == 0);
+    SetLanguage("auto");
+    std::int32_t german = 0x5A5A;
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &german) == USER_SERVICE_OK && german == keyboardTypeByLanguage[4]);
+    Require(::setenv("LC_ALL", "ja_JP.UTF-8", 1) == 0);
+    german = 0x5A5A;
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &german) == USER_SERVICE_OK && german == keyboardTypeByLanguage[4]);
+#endif
     SetLanguage(nullptr);
     Require(color == 0);
 
