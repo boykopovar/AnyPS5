@@ -106,6 +106,52 @@ Url Parse(std::string_view text) {
     return url;
 }
 
+std::string NormalizePath(std::string_view path) {
+    std::string result;
+    while (!path.empty()) {
+        if (path.starts_with("../")) path.remove_prefix(3);
+        else if (path.starts_with("./")) path.remove_prefix(2);
+        else if (path.starts_with("/./")) path.remove_prefix(2);
+        else if (path == "/.") path = "/";
+        else if (path.starts_with("/../") || path == "/..") {
+            path = path == "/.." ? "/" : path.substr(3);
+            const auto slash = result.rfind('/');
+            result.erase(slash == std::string::npos ? 0 : slash);
+        } else if (path == "." || path == "..") path = {};
+        else {
+            const auto slash = path.find('/', path.front() == '/' ? 1 : 0);
+            result.append(path.substr(0, slash));
+            path = slash == std::string_view::npos ? std::string_view{} : path.substr(slash);
+        }
+    }
+    return result;
+}
+
+Url RedirectTarget(const Url& base, std::string_view reference) {
+    reference = reference.substr(0, reference.find('#'));
+    const auto colon = reference.find(':');
+    const auto delimiter = reference.find_first_of("/?");
+    Url result;
+    if (colon != std::string_view::npos && (delimiter == std::string_view::npos || colon < delimiter)) result = Parse(reference);
+    else if (reference.starts_with("//")) result = Parse("https:" + std::string(reference));
+    else {
+        std::string path;
+        if (reference.empty()) path = base.path;
+        else if (reference.starts_with('?')) path = base.path.substr(0, base.path.find('?')) + std::string(reference);
+        else if (reference.starts_with('/')) path = reference;
+        else {
+            path = base.path.substr(0, base.path.find('?'));
+            path.erase(path.rfind('/') + 1);
+            path += reference;
+        }
+        result = Parse("https://" + base.authority + path);
+    }
+    const auto query = result.path.find('?');
+    result.path = NormalizePath(std::string_view(result.path).substr(0, query)) +
+        (query == std::string::npos ? std::string{} : result.path.substr(query));
+    return result;
+}
+
 struct Address {
     std::array<std::uint8_t, 28> bytes{};
     std::uint32_t size = 0;
@@ -245,21 +291,26 @@ int AddHeader(Settings& settings, const char* name, const char* value, std::uint
 }
 
 struct Request::State {
+    const int id;
     int sslContext;
     const std::shared_ptr<Capacity> capacity;
     bool acquired = false;
-    const Settings settings;
-    const std::string method;
-    const Url url;
+    Settings settings;
+    std::string method;
+    Url url;
     std::mutex mutex;
     std::atomic<bool> cancelled{false};
     bool started = false;
+    bool callbackActive = false;
+    std::unique_lock<std::mutex>* callbackLock = nullptr;
     bool ready = false;
     bool ended = false;
     int status = 0;
     std::string contentEncoding;
     bool inflatedGzip = false;
     int blockStatus = 0;
+    std::string location;
+    bool hasLocation = false;
     int networkResult = 0;
     int socket = -1;
     int ssl = -1;
@@ -279,8 +330,8 @@ struct Request::State {
     std::exception_ptr callbackFailure;
     Clock::time_point totalDeadline;
 
-    State(int context, std::shared_ptr<Capacity> capacity, Settings options, std::string verb, std::string target)
-        : sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)), url(Parse(target)) {
+    State(int id, int context, std::shared_ptr<Capacity> capacity, Settings options, std::string verb, std::string target)
+        : id(id), sslContext(context), capacity(std::move(capacity)), settings(std::move(options)), method(std::move(verb)), url(Parse(target)) {
         Require(!method.empty() && nghttp2_check_method(reinterpret_cast<const std::uint8_t*>(method.data()), method.size()),
             "sceHttp2CreateRequestWithURL: invalid method");
         Require(method != "CONNECT", "sceHttp2: CONNECT is not implemented");
@@ -291,6 +342,7 @@ struct Request::State {
     ~State() { Close(); }
 
     void Close() {
+        callbackLock = nullptr;
         if (session) nghttp2_session_del(std::exchange(session, nullptr));
         if (ssl >= 0) sceSslDeleteConnection(std::exchange(ssl, -1));
         if (socket >= 0) sceNetSocketClose(std::exchange(socket, -1));
@@ -301,6 +353,32 @@ struct Request::State {
     Clock::time_point Deadline(std::uint32_t duration) const {
         Require(duration != 0, "sceHttp2: zero timeout semantics are unknown");
         return std::min(totalDeadline, Clock::now() + std::chrono::microseconds(duration));
+    }
+
+    template<class TCallback>
+    int InvokeCallback(std::unique_lock<std::mutex>& lock, TCallback callback) {
+        callbackActive = true;
+        lock.unlock();
+        try {
+            const int result = callback();
+            lock.lock();
+            callbackActive = false;
+            Check(totalDeadline);
+            return result;
+        } catch (...) {
+            if (!lock.owns_lock()) lock.lock();
+            callbackActive = false;
+            throw;
+        }
+    }
+
+    static int APS5_VABI Verify_nid_no_patch(int context, unsigned int errors, void** certificates, int count, void* argument) {
+        auto& state = *static_cast<State*>(argument);
+        Require(state.callbackLock && state.settings.sslCallback, "sceHttp2: unexpected SSL callback phase");
+        const int decision = state.InvokeCallback(*state.callbackLock, [&] {
+            return state.settings.sslCallback(context, errors, certificates, count, state.settings.sslArgument);
+        });
+        return decision == 0 ? 0 : -1;
     }
 
     void Check(Clock::time_point deadline) const {
@@ -426,12 +504,14 @@ struct Request::State {
         Require(sceSslDisableVerifyOption(ssl, 0x3d) == 0 && sceSslEnableVerifyOption(ssl, settings.verifyFlags) == 0,
             "sceHttp2: SSL verification options rejected");
         Require(sceSslSetAlpn(ssl, "h2") == 0, "sceHttp2: ALPN setup failed");
+        if (settings.sslCallback) Require(sceSslSetVerifyCallback(ssl, Verify_nid_no_patch, this) == 0, "sceHttp2: SSL callback setup failed");
         for (;;) {
             Check(connectDeadline);
             result = sceSslConnect(ssl);
             if (result == WantRead || result == WantWrite) Wait(result == WantWrite, connectDeadline);
             else break;
         }
+        if (settings.sslCallback) Require(sceSslSetVerifyCallback(ssl, nullptr, nullptr) == 0, "sceHttp2: SSL callback cleanup failed");
         Require(result == 0, "sceHttp2: TLS failed; console error mapping is unknown");
         const char* selected = sceSslGetAlpnSelected(ssl);
         Require(selected && std::string_view(selected) == "h2", "sceHttp2: server did not negotiate h2; fallback contract is unknown");
@@ -452,6 +532,8 @@ struct Request::State {
                 state.blockStatus = 0;
                 state.hasLength = false;
                 state.contentLength = 0;
+                state.location.clear();
+                state.hasLocation = false;
             }
         });
     }
@@ -467,6 +549,11 @@ struct Request::State {
             const std::string_view key(reinterpret_cast<const char*>(name), nameSize);
             const std::string_view text(reinterpret_cast<const char*>(value), valueSize);
             if (key == ":status") state.blockStatus = static_cast<int>(Number(text));
+            if (key == "location") {
+                Require(!state.hasLocation, "sceHttp2: duplicate redirect location; console error mapping is unknown");
+                state.location = text;
+                state.hasLocation = true;
+            }
             if (key == "content-length") {
                 state.contentLength = Number(text);
                 state.hasLength = true;
@@ -484,8 +571,6 @@ struct Request::State {
             if (frame->hd.stream_id != state.stream) return;
             if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
                 state.status = state.blockStatus;
-                Require(!state.settings.redirect || (state.status != 301 && state.status != 302 && state.status != 303 && state.status != 307 && state.status != 308),
-                    "sceHttp2: automatic redirects are not implemented");
                 Require(!state.settings.auth || (state.status != 401 && state.status != 407), "sceHttp2: authentication is not implemented");
                 state.ready = true;
             }
@@ -605,6 +690,7 @@ struct Request::State {
     std::unique_lock<std::mutex> Lock() {
         std::unique_lock lock(mutex, std::try_to_lock);
         Require(lock.owns_lock(), "sceHttp2: concurrent operation on one request is not implemented");
+        Require(!callbackActive, "sceHttp2: operation during request callback is not implemented");
         if (failure) std::rethrow_exception(failure);
         Require(!cancelled.load(), "sceHttp2: request cancelled; console error mapping is unknown");
         return lock;
@@ -617,8 +703,8 @@ struct Request::State {
     }
 };
 
-Request::Request(int context, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url)
-    : state(std::make_unique<State>(context, std::move(capacity), std::move(settings), std::move(method), std::move(url))) {}
+Request::Request(int id, int context, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url)
+    : state(std::make_unique<State>(id, context, std::move(capacity), std::move(settings), std::move(method), std::move(url))) {}
 Request::~Request() = default;
 
 int Request::Send(const void* data, std::size_t size) {
@@ -629,24 +715,74 @@ int Request::Send(const void* data, std::size_t size) {
     state->started = true;
     state->totalDeadline = Clock::now() + std::chrono::microseconds(state->settings.timeout);
     try {
-        const int active = state->capacity->active.fetch_add(1);
-        state->acquired = true;
-        Require(active < state->capacity->maximum, "sceHttp2: connection slot waiting is not implemented");
-        state->networkResult = state->Connect();
-        if (state->networkResult < 0) { state->Close(); return state->networkResult; }
-        state->Setup(data, size);
-        const auto sendDeadline = state->Deadline(state->settings.sendTimeout);
-        auto receiveDeadline = sendDeadline;
-        bool uploaded = false;
-        for (;;) {
-            state->Flush(uploaded ? state->Deadline(state->settings.sendTimeout) : sendDeadline);
-            if (!uploaded && state->uploadOffset == size) {
-                uploaded = true;
-                receiveDeadline = state->Deadline(state->settings.recvTimeout);
+        const void* payload = data;
+        std::size_t payloadSize = size;
+        for (unsigned redirects = 0;; ++redirects) {
+            const int active = state->capacity->active.fetch_add(1);
+            state->acquired = true;
+            Require(active < state->capacity->maximum, "sceHttp2: connection slot waiting is not implemented");
+            state->callbackLock = &lock;
+            state->networkResult = state->Connect();
+            state->callbackLock = nullptr;
+            if (state->networkResult < 0) { state->Close(); return state->networkResult; }
+            state->Setup(payload, payloadSize);
+            const auto sendDeadline = state->Deadline(state->settings.sendTimeout);
+            auto receiveDeadline = sendDeadline;
+            bool uploaded = false;
+            for (;;) {
+                state->Flush(uploaded ? state->Deadline(state->settings.sendTimeout) : sendDeadline);
+                if (!uploaded && state->uploadOffset == payloadSize) {
+                    uploaded = true;
+                    receiveDeadline = state->Deadline(state->settings.recvTimeout);
+                }
+                if (state->ready) break;
+                state->Receive(uploaded ? receiveDeadline : sendDeadline);
+                if (state->ready) break;
             }
-            if (state->ready) break;
-            state->Receive(uploaded ? receiveDeadline : sendDeadline);
-            if (state->ready) break;
+            const bool redirectStatus = state->status == 301 || state->status == 302 || state->status == 303 || state->status == 307 || state->status == 308;
+            if (!state->settings.redirect || !redirectStatus || state->location.empty()) break;
+            const bool retrieve = (state->status == 303 && state->method != "HEAD") ||
+                ((state->status == 301 || state->status == 302) && state->method == "POST");
+            std::string method = retrieve ? "GET" : state->method;
+            if (const auto callback = state->settings.redirectCallback) {
+                const char* selected = method.c_str();
+                const int result = state->InvokeCallback(lock, [&] {
+                    return callback(state->id, state->status, &selected, state->location.c_str(), state->settings.redirectArgument);
+                });
+                if (result != 0) break;
+                Require(selected, "sceHttp2: redirect callback returned a null method");
+                method = selected;
+            }
+            Require(redirects < 6, "sceHttp2: redirect limit exceeded; console error mapping is unknown");
+            Require(!method.empty() && nghttp2_check_method(reinterpret_cast<const std::uint8_t*>(method.data()), method.size()) && method != "CONNECT",
+                "sceHttp2: redirect callback returned an unsupported method");
+            auto target = RedirectTarget(state->url, state->location);
+            const bool differentOrigin = Lower(target.host) != Lower(state->url.host) || target.port != state->url.port;
+            const bool dropBody = (retrieve || method != state->method) && (method == "GET" || method == "HEAD");
+            std::erase_if(state->settings.headers, [&](const auto& header) {
+                const auto& key = header.first;
+                return (differentOrigin && (key == "authorization" || key == "proxy-authorization" || key == "cookie" || key == "origin" || key == "referer")) ||
+                    (dropBody && (key.starts_with("content-") || key == "digest" || key == "last-modified"));
+            });
+            if (dropBody) { payload = nullptr; payloadSize = 0; }
+            state->settings.contentLength = payloadSize;
+            state->Close();
+            state->method = std::move(method);
+            state->url = std::move(target);
+            state->ready = state->ended = false;
+            state->status = state->blockStatus = 0;
+            state->location.clear();
+            state->hasLocation = state->hasLength = false;
+            state->contentLength = 0;
+            state->headerBytes = 0;
+            state->body.clear();
+            state->bodyOffset = 0;
+            state->contentEncoding.clear();
+            state->inflatedGzip = false;
+            state->upload = nullptr;
+            state->uploadSize = state->uploadOffset = 0;
+            state->callbackFailure = nullptr;
+            state->stream = -1;
         }
         state->upload = nullptr;
         if (state->ended && state->body.empty()) state->Close();
@@ -711,8 +847,8 @@ std::shared_ptr<Capacity> CreateCapacity_nid_no_patch(int maximum) {
     return std::make_shared<Capacity>(maximum);
 }
 
-std::shared_ptr<Request> CreateRequest_nid_no_patch(int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url) {
-    return std::make_shared<Request>(sslContext, std::move(capacity), std::move(settings), std::move(method), std::move(url));
+std::shared_ptr<Request> CreateRequest_nid_no_patch(int id, int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url) {
+    return std::make_shared<Request>(id, sslContext, std::move(capacity), std::move(settings), std::move(method), std::move(url));
 }
 
 }
