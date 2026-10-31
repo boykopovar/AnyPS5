@@ -1,6 +1,9 @@
 #pragma once
 
+#include <vector>
 #include "SceTypes.hpp"
+#include "Bio.hpp"
+#include "Cmac.hpp"
 
 struct Asn1String {
     std::int32_t length;
@@ -124,6 +127,18 @@ struct Sha512Context {
     std::uint64_t Nl, Nh;
     std::uint64_t data[16];
     std::uint32_t num, mdLength;
+};
+
+struct Bignum {
+    std::uint64_t* d;
+    int top;
+    int dmax;
+    int neg;
+    int flags;
+};
+
+struct BignumContext {
+    std::vector<std::size_t> marks;
 };
 
 using StackCompare = int (APS5_VABI*)(const void*, const void*);
@@ -254,39 +269,39 @@ int APS5_VABI ASN1_STRING_print_nid_postfix(void);
 int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(unsigned char** output, Asn1String* value);
 int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value);
 int APS5_VABI ASN1_TIME_print_nid_postfix(void);
-int APS5_VABI BIO_ctrl_nid_postfix(void);
+std::int64_t APS5_VABI BIO_ctrl_nid_postfix(LibreSsl::Bio* bio, int command, std::int64_t argument, void* pointer);
 int APS5_VABI BIO_f_ssl_nid_postfix(void);
-int APS5_VABI BIO_free_nid_postfix(void);
-int APS5_VABI BIO_new_nid_postfix(void);
+int APS5_VABI BIO_free_nid_postfix(LibreSsl::Bio* bio);
+LibreSsl::Bio* APS5_VABI BIO_new_nid_postfix(const LibreSsl::BioMethod* method);
 int APS5_VABI BIO_new_fp_nid_postfix(void);
-int APS5_VABI BIO_new_mem_buf_nid_postfix(void);
+LibreSsl::Bio* APS5_VABI BIO_new_mem_buf_nid_postfix(const void* source, int size);
 int APS5_VABI BIO_new_socket_nid_postfix(void);
 int APS5_VABI BIO_printf_nid_postfix(void);
-int APS5_VABI BIO_puts_nid_postfix(void);
+int APS5_VABI BIO_puts_nid_postfix(LibreSsl::Bio* bio, const char* source);
 int APS5_VABI BIO_s_file_nid_postfix(void);
-int APS5_VABI BIO_s_mem_nid_postfix(void);
-int APS5_VABI BIO_write_nid_postfix(void);
-int APS5_VABI BN_CTX_end_nid_postfix(void);
-int APS5_VABI BN_CTX_free_nid_postfix(void);
-int APS5_VABI BN_CTX_new_nid_postfix(void);
-int APS5_VABI BN_CTX_start_nid_postfix(void);
-int APS5_VABI BN_add_word_nid_postfix(void);
-int APS5_VABI BN_bin2bn_nid_postfix(void);
-int APS5_VABI BN_bn2bin_nid_postfix(void);
-int APS5_VABI BN_free_nid_postfix(void);
-int APS5_VABI BN_hex2bn_nid_postfix(void);
-int APS5_VABI BN_mod_inverse_nid_postfix(void);
-int APS5_VABI BN_mul_nid_postfix(void);
-int APS5_VABI BN_new_nid_postfix(void);
-int APS5_VABI BN_num_bits_nid_postfix(void);
+const LibreSsl::BioMethod* APS5_VABI BIO_s_mem_nid_postfix();
+int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int size);
+void APS5_VABI BN_CTX_end_nid_postfix(BignumContext* ctx);
+void APS5_VABI BN_CTX_free_nid_postfix(BignumContext* ctx);
+BignumContext* APS5_VABI BN_CTX_new_nid_postfix(void);
+void APS5_VABI BN_CTX_start_nid_postfix(BignumContext* ctx);
+int APS5_VABI BN_add_word_nid_postfix(Bignum* a, std::uint64_t w);
+Bignum* APS5_VABI BN_bin2bn_nid_postfix(const unsigned char* s, int len, Bignum* ret);
+int APS5_VABI BN_bn2bin_nid_postfix(const Bignum* a, unsigned char* to);
+void APS5_VABI BN_free_nid_postfix(Bignum* a);
+int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str);
+Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const Bignum* n, BignumContext*);
+int APS5_VABI BN_mul_nid_postfix(Bignum* r, const Bignum* a, const Bignum* b, BignumContext*);
+Bignum* APS5_VABI BN_new_nid_postfix(void);
+int APS5_VABI BN_num_bits_nid_postfix(const Bignum* a);
 int APS5_VABI BN_print_nid_postfix(void);
-int APS5_VABI BN_set_word_nid_postfix(void);
-int APS5_VABI BN_sub_word_nid_postfix(void);
-int APS5_VABI CMAC_CTX_free_nid_postfix(void);
-int APS5_VABI CMAC_CTX_new_nid_postfix(void);
-int APS5_VABI CMAC_Final_nid_postfix(void);
-int APS5_VABI CMAC_Init_nid_postfix(void);
-int APS5_VABI CMAC_Update_nid_postfix(void);
+int APS5_VABI BN_set_word_nid_postfix(Bignum* a, std::uint64_t w);
+int APS5_VABI BN_sub_word_nid_postfix(Bignum* a, std::uint64_t w);
+void APS5_VABI CMAC_CTX_free_nid_postfix(LibreSslCmac* context);
+LibreSslCmac* APS5_VABI CMAC_CTX_new_nid_postfix();
+int APS5_VABI CMAC_Final_nid_postfix(LibreSslCmac* context, unsigned char* output, std::size_t* length);
+int APS5_VABI CMAC_Init_nid_postfix(LibreSslCmac* context, const void* key, std::size_t keyLength, const LibreSslCipher* cipher, void* engine);
+int APS5_VABI CMAC_Update_nid_postfix(LibreSslCmac* context, const void* data, std::size_t length);
 int APS5_VABI CONF_modules_free_nid_postfix(void);
 int APS5_VABI CONF_modules_load_file_nid_postfix(void);
 int APS5_VABI CRYPTO_THREADID_set_callback_nid_postfix(void* callback);
@@ -336,13 +351,13 @@ int APS5_VABI ENGINE_init_nid_postfix(void);
 int APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void);
 int APS5_VABI ENGINE_load_private_key_nid_postfix(void);
 int APS5_VABI ENGINE_set_default_nid_postfix(void);
-void APS5_VABI ERR_clear_error_nid_postfix(void);
-int APS5_VABI ERR_error_string_nid_postfix(void);
-int APS5_VABI ERR_error_string_n_nid_postfix(void);
-int APS5_VABI ERR_free_strings_nid_postfix(void);
-std::uint64_t APS5_VABI ERR_get_error_nid_postfix(void);
-std::uint64_t APS5_VABI ERR_peek_error_nid_postfix(void);
-void APS5_VABI ERR_remove_thread_state_nid_postfix(const void* threadId);
+void APS5_VABI ERR_clear_error_nid_postfix();
+char* APS5_VABI ERR_error_string_nid_postfix(std::uint64_t error, char* buffer);
+void APS5_VABI ERR_error_string_n_nid_postfix(std::uint64_t error, char* buffer, std::size_t length);
+void APS5_VABI ERR_free_strings_nid_postfix();
+std::uint64_t APS5_VABI ERR_get_error_nid_postfix();
+std::uint64_t APS5_VABI ERR_peek_error_nid_postfix();
+void APS5_VABI ERR_remove_thread_state_nid_postfix(const void* id);
 int APS5_VABI EVP_CIPHER_CTX_cleanup_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_ctrl_nid_postfix(void);
 int APS5_VABI EVP_CIPHER_CTX_free_nid_postfix(void);
@@ -378,15 +393,15 @@ int APS5_VABI EVP_PKEY_id_nid_postfix(void);
 int APS5_VABI EVP_PKEY_new_nid_postfix(void);
 int APS5_VABI EVP_PKEY_set1_RSA_nid_postfix(void);
 int APS5_VABI EVP_PKEY_type_nid_postfix(int type);
-int APS5_VABI EVP_aes_128_cbc_nid_postfix(void);
+const LibreSslCipher* APS5_VABI EVP_aes_128_cbc_nid_postfix();
 int APS5_VABI EVP_aes_128_cfb8_nid_postfix(void);
 int APS5_VABI EVP_aes_128_ctr_nid_postfix(void);
 int APS5_VABI EVP_aes_128_gcm_nid_postfix(void);
-int APS5_VABI EVP_aes_192_cbc_nid_postfix(void);
+const LibreSslCipher* APS5_VABI EVP_aes_192_cbc_nid_postfix();
 int APS5_VABI EVP_aes_192_cfb8_nid_postfix(void);
 int APS5_VABI EVP_aes_192_ctr_nid_postfix(void);
 int APS5_VABI EVP_aes_192_gcm_nid_postfix(void);
-int APS5_VABI EVP_aes_256_cbc_nid_postfix(void);
+const LibreSslCipher* APS5_VABI EVP_aes_256_cbc_nid_postfix();
 int APS5_VABI EVP_aes_256_cfb8_nid_postfix(void);
 int APS5_VABI EVP_aes_256_ctr_nid_postfix(void);
 int APS5_VABI EVP_aes_256_gcm_nid_postfix(void);
