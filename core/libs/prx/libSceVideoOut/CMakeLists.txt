@@ -109,7 +109,8 @@ if(BUILD_TESTING)
     endforeach()
 
     set_target_properties(video_out_flip_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay padstatus unopened ps4 resolution resolution_override fresh)
+    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay padstatus unopened ps4 resolution resolution_override fresh
+            present backtoback dcc pacing aftergpu onedevice deferred unregistered)
         if(flipMode STREQUAL "lifetime")
             add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests)
         else()
@@ -133,6 +134,12 @@ if(BUILD_TESTING)
     set_tests_properties(video_out_flip_cpuflip_in_order PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_CPU_FLIP_IN_ORDER=1")
     if(WIN32)
         set_tests_properties(video_out_flip_cpuflip_in_order PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME video_out_flip_unavailable COMMAND video_out_flip_tests unavailable)
+    set_tests_properties(video_out_flip_unavailable PROPERTIES TIMEOUT 30 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    if(WIN32)
+        set_tests_properties(video_out_flip_unavailable PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

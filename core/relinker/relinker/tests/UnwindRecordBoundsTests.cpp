@@ -1,5 +1,6 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <io/BufferUtils.hpp>
+#include <algorithm>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -51,7 +52,7 @@ int main() {
         auto empty = Fixture();
         Io::WriteU64(empty, 112, 0);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
-        for (int kind = 0; kind < 12; ++kind) {
+        for (int kind = 0; kind < 13; ++kind) {
             auto bytes = Fixture(); auto segment = load;
             switch (kind) {
                 case 0: Io::WriteU32(bytes, 64, 0x1000); break;
@@ -84,6 +85,14 @@ int main() {
                     bytes[3] = 0x3B;
                     Io::WriteU32(bytes, 96, 0x80000000);
                     Io::WriteU32(bytes, 100, 0x80000000);
+                    break;
+                }
+                case 12: {
+                    bytes[3] = 0x49;
+                    bytes[96] = 0;
+                    bytes[97] = 0x80;
+                    bytes[98] = 0;
+                    bytes[99] = 0x80;
                     break;
                 }
             }
@@ -147,6 +156,16 @@ int main() {
             sdata8Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(sdata8Rejected);
+        auto sdata2Overflow = Fixture();
+        sdata2Overflow[3] = 0x3A;
+        Io::WriteU16(sdata2Overflow, 16, 0x1000);
+        Io::WriteU16(sdata2Overflow, 18, 0x1000);
+        bool sdata2Rejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(sdata2Overflow, {highLoad, highEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            sdata2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(sdata2Rejected);
         std::vector<std::uint8_t> lsdaBytes(0x400, 0);
         Io::WriteU32(lsdaBytes, 0x200, 25);
         lsdaBytes[0x208] = 1;
@@ -176,6 +195,41 @@ int main() {
             lsdaOverflowRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaOverflowRejected);
-        std::cout << "22 unwind record cases passed\n";
+        lsdaBytes[0x21B] = 0x49;
+        lsdaBytes[0x238] = 2;
+        Io::WriteU32(lsdaBytes, 0x239, 0x5FFF);
+        bool lsdaSlebRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaBytes, {lsdaLoad, lsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaSlebRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(lsdaSlebRejected);
+        lsdaBytes[0x21B] = 0x4C;
+        Io::WriteU32(lsdaBytes, 0x220, 33);
+        lsdaBytes[0x238] = 8;
+        Io::WriteU64(lsdaBytes, 0x239, 0xFFFFFFFFFFFFEFFFULL);
+        bool lsda8OverflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaBytes, {lsdaLoad, lsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsda8OverflowRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(lsda8OverflowRejected);
+        auto lsdaLeb = lsdaBytes;
+        lsdaLeb[0x21B] = 0x41;
+        lsdaLeb[0x21C] = 0;
+        Io::WriteU32(lsdaLeb, 0x220, 35);
+        Io::WriteU32(lsdaLeb, 0x224, 0x24);
+        Io::WriteU64(lsdaLeb, 0x228, 0x1000);
+        Io::WriteU64(lsdaLeb, 0x230, 0x20);
+        lsdaLeb[0x238] = 10;
+        for (int index = 0; index < 9; ++index) lsdaLeb[0x239 + index] = 0x80;
+        lsdaLeb[0x242] = 0x82;
+        bool lsdaLebRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaLeb, {lsdaLoad, lsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaLebRejected = std::string(error.what()).find("overflowing LEB128 value") != std::string::npos;
+        }
+        Require(lsdaLebRejected);
+        std::cout << "25 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

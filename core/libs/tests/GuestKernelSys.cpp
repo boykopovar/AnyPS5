@@ -1193,6 +1193,11 @@ int main() {
     CheckUnsupportedPathconf(_fpathconf_nid_postfix, sharedMemoryDescriptor);
     Require(close_nid_postfix(sharedMemoryDescriptor) == 0);
     Require(shm_unlink_nid_postfix(namedSharedMemory.c_str()) == 0);
+    const int anonymousSharedMemoryDescriptor = shm_open_nid_postfix(reinterpret_cast<const char*>(1), SCE_KERNEL_O_RDWR, 0600);
+    Require(anonymousSharedMemoryDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, anonymousSharedMemoryDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, anonymousSharedMemoryDescriptor);
+    Require(close_nid_postfix(anonymousSharedMemoryDescriptor) == 0);
     Require(close_nid_postfix(descriptor) == 0);
     Require(fstatfs_nid_postfix(-1, reinterpret_cast<KernelStatfs*>(viaPublic)) == -1 && Error() == 9);
     Require(fstat_nid_postfix(descriptor, &viaFstat) == -1 && Error() == 9);

@@ -1402,10 +1402,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->fragmentShaderBarycentric = barycentricFeatures.fragmentShaderBarycentric == VK_TRUE;
         state->fragmentBarycentricBuiltins = state->fragmentShaderBarycentric;
         if (state->fragmentShaderBarycentric && hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
-            VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
-            VkPhysicalDeviceProperties2 driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
-            state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &driverProperties);
-            state->fragmentShaderBarycentric = FragmentShaderBarycentricUsable(driver.driverID, state->fragmentShaderBarycentric);
+            state->fragmentShaderBarycentric = FragmentShaderBarycentricUsable(driverId, state->fragmentShaderBarycentric);
         }
     }
     VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR terminateFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR};
@@ -1429,11 +1426,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->shaderClock = clockFeatures.shaderSubgroupClock == VK_TRUE && clockFeatures.shaderDeviceClock == VK_TRUE;
     }
     if (state->shaderClock && hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
-        VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
-        VkPhysicalDeviceProperties2 driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
-        state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &driverProperties);
-        state->narrowSubgroupClock = NarrowSubgroupClock(driver.driverID, state->properties.deviceID, state->properties.deviceName);
-        APS5_LOG_OUT("Shader clock driver=%d narrowSubgroupClock=%d", static_cast<int>(driver.driverID), state->narrowSubgroupClock ? 1 : 0);
+        state->narrowSubgroupClock = NarrowSubgroupClock(driverId, state->properties.deviceID, state->properties.deviceName);
+        APS5_LOG_OUT("Shader clock driver=%d narrowSubgroupClock=%d", static_cast<int>(driverId), state->narrowSubgroupClock ? 1 : 0);
     }
     VkPhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT demoteFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DEMOTE_TO_HELPER_INVOCATION_FEATURES_EXT};
     if (hasExtension(VK_EXT_SHADER_DEMOTE_TO_HELPER_INVOCATION_EXTENSION_NAME)) {
@@ -1742,10 +1736,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (libraryDevice) deviceExtensions.insert(deviceExtensions.end(), libraryExtensions.begin(), libraryExtensions.end());
         state->graphicsPipelineLibrary = libraryDevice && std::getenv("APS5_NO_GPL") == nullptr;
         if (state->graphicsPipelineLibrary && hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
-            VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
-            VkPhysicalDeviceProperties2 driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
-            state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &driverProperties);
-            state->pipelineLinkTimeOptimization = PipelineLinkTimeOptimizationUsable(driver.driverID);
+            state->pipelineLinkTimeOptimization = PipelineLinkTimeOptimizationUsable(driverId);
         }
     }
     VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5Features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
@@ -2496,12 +2487,12 @@ bool OpportunisticReap() {
 
 }
 
-void VulkanDevice::StoreIdleResults(bool reapFirst) {
+void VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>& stop) {
     if (!Graphics::StorageTexture::AnyPending()) return;
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    Graphics::StorageTexture::FlushAllPending("idle");
+    static_cast<void>(Graphics::StorageTexture::FlushAllPendingUntil("idle", stop));
     SubmitRecorded(reapFirst);
 }
 

@@ -558,6 +558,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
 | `APS5_SAVEDATA_TRACE` | presence | `core/libs/prx/libSceSaveData.native/Export.cpp` | 3 | logs every save-data operation instead of the first three at each logging site |
+| `ANYPS5_FREE_SPACE` | string | `core/libs/prx/libSceSaveData.native/Export.cpp` | fixed | `fixed` keeps the save sizes and room the title sees today; `host` refuses to create a save whose blocks the save's volume cannot hold (`SCE_SAVE_DATA_ERROR_NO_SPACE_FS`, with the missing blocks in `required_blocks`) and bounds a save's free blocks by the room its volume has; empty or any other value stops the game with an error naming the variable; on Windows an empty value is the same as unset, because `cmd` and PowerShell remove the variable |
 
 ### libSceSystemService
 

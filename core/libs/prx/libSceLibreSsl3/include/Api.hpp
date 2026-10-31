@@ -101,7 +101,7 @@ int APS5_VABI BN_dup_nid_postfix();
 int APS5_VABI ERR_func_error_string_nid_postfix();
 int APS5_VABI EVP_CIPHER_iv_length_nid_postfix();
 int APS5_VABI EVP_CIPHER_key_length_nid_postfix();
-int APS5_VABI EVP_MD_CTX_md_nid_postfix();
+const void* APS5_VABI EVP_MD_CTX_md_nid_postfix(const void* context);
 int APS5_VABI EVP_PKEY_CTX_free_nid_postfix();
 int APS5_VABI EVP_PKEY_assign_nid_postfix();
 int APS5_VABI EVP_PKEY_bits_nid_postfix();
