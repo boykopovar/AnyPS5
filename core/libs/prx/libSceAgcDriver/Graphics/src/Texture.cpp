@@ -4389,15 +4389,19 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     if (auto* recorder = Recorder::Active(); recorder != nullptr && !Recorder::InCompletion()) {
         try {
             static const bool wholeRange = std::getenv("APS5_FLUSH_WAIT_WHOLE_RANGE") != nullptr;
-            std::vector<std::pair<std::uint64_t, std::uint64_t>> stored;
-            if (wholeRange) stored.emplace_back(address, address + bytes);
-            else {
-                for (const auto& texture : flush) texture->appendStoredLayers(address, bytes, stored);
-            }
             const bool publishes = !wholeRange && scope != PublishScope::None;
-            if (publishes) {
-                for (const auto& range : LiveShadowedRanges(address, bytes, scope)) stored.push_back(range);
-            }
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> stored;
+            const auto waitRanges = [&] {
+                stored.clear();
+                if (wholeRange) {
+                    stored.emplace_back(address, address + bytes);
+                    return;
+                }
+                for (const auto& texture : flush) texture->appendStoredLayers(address, bytes, stored);
+                if (publishes) {
+                    for (const auto& range : LiveShadowedRanges(address, bytes, scope)) stored.push_back(range);
+                }
+            };
             const auto pendingWriter = [&](const Recorder& active) {
                 constexpr std::uint64_t block = 65536;
                 std::uint64_t writer = 0;
@@ -4417,14 +4421,17 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             const auto openWrites = [&stored](const Recorder& active) {
                 return std::any_of(stored.begin(), stored.end(), [&active](const auto& range) { return active.OpenWriteOverlaps(range.first, static_cast<std::size_t>(range.second - range.first)); });
             };
-            if (pendingWriter(*recorder) != 0) {
+            for (waitRanges(); pendingWriter(*recorder) != 0; waitRanges()) {
                 recorder->Reap();
-                if (const auto writer = pendingWriter(*recorder); writer == recorder->OpenSerial()) {
+                waitRanges();
+                const auto writer = pendingWriter(*recorder);
+                if (writer == recorder->OpenSerial()) {
                     Recorder::CountSync(openWrites(*recorder) ? 1 : 3);
                     recorder->Sync();
-                } else if (writer != 0) {
-                    recorder->FinishUpTo(writer);
+                    break;
                 }
+                if (writer == 0) break;
+                recorder->FinishUpTo(writer);
             }
         } catch (...) {
             for (const auto& texture : flush) texture->reconcilePending();
