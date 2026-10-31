@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 
 namespace {
 
@@ -20,7 +21,8 @@ constexpr int kResultUserCanceled = 1;
 
 int main() {
     std::int64_t param = 0;
-    std::int32_t result[2] = {-1, -1};
+    std::int32_t result[2];
+    std::memset(result, 0x5a, sizeof(result));
 
     Require(sceNpFriendListDialogTerminate() == kErrNotInitialized);
     Require(sceNpFriendListDialogOpenA(nullptr) == kErrNotInitialized);
@@ -37,7 +39,10 @@ int main() {
     Require(sceNpFriendListDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceNpFriendListDialogOpenA(nullptr) == kErrArgNull);
+    Require(sceNpFriendListDialogGetResultA(nullptr) == kErrArgNull);
     Require(sceNpFriendListDialogGetResultA(result) == kErrNotFinished);
+    Require(result[0] == 0x5a5a5a5a);
+    Require(result[1] == 0x5a5a5a5a);
 
     Require(sceNpFriendListDialogOpenA(&param) == 0);
     Require(sceNpFriendListDialogGetStatus() == kStatusFinished);
@@ -46,7 +51,7 @@ int main() {
     Require(sceNpFriendListDialogGetResultA(nullptr) == kErrArgNull);
     Require(sceNpFriendListDialogGetResultA(result) == 0);
     Require(result[0] == kResultUserCanceled);
-    Require(result[1] == -1);
+    Require(result[1] == 0x5a5a5a5a);
 
     Require(sceNpFriendListDialogClose() == 0);
     Require(sceNpFriendListDialogTerminate() == 0);
@@ -63,9 +68,10 @@ int main() {
     Require(sceNpFriendListDialogUpdateStatus() == kStatusInitialized);
     Require(sceNpFriendListDialogClose() == 0);
     Require(sceNpFriendListDialogUpdateStatus() == kStatusFinished);
-    result[0] = -1;
+    std::memset(result, 0x5a, sizeof(result));
     Require(sceNpFriendListDialogGetResultA(result) == 0);
     Require(result[0] == kResultUserCanceled);
+    Require(result[1] == 0x5a5a5a5a);
     Require(sceNpFriendListDialogTerminate() == 0);
     Require(sceNpFriendListDialogTerminate() == kErrNotInitialized);
     Require(sceNpFriendListDialogOpenA(nullptr) == kErrNotInitialized);

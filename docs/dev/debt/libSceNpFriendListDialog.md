@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [libSceNpFriendListDialog](../../../core/libs/prx/libSceNpFriendListDialog/Export.cpp) - the friend list dialog (`sceNpFriendListDialogOpenA` and `sceNpFriendListDialogGetResultA`) runs the common-dialog state machine but shows nothing and reports the user as having cancelled, as there is no PSN friend list. The signatures are from [Orbital's type database](https://github.com/AlexAltea/orbital/blob/b321fcdbd700cc02da1cb1ad25412781d5ec73c6/tools/ida/db_types.json); the result layout beyond the leading `int32_t` result code is not known, so nothing else is written.
+- [libSceNpFriendListDialog](../../../core/libs/prx/libSceNpFriendListDialog/Export.cpp) - the friend list dialog (`sceNpFriendListDialogOpenA` and `sceNpFriendListDialogGetResultA`) runs the common-dialog state machine but shows nothing and reports the user as having cancelled, as there is no PSN friend list. In `sceNpFriendListDialogGetResultA`, checking for a null result pointer (`COMMON_DIALOG_ERROR_ARG_NULL`) takes precedence over unfinished state (`COMMON_DIALOG_ERROR_NOT_FINISHED`), matching native PS5 firmware 13.42 module `libSceNpFriendListDialog.sprx` disassembly (offset `0xa10`) and native export execution data. The signatures are from [Orbital's type database](https://github.com/AlexAltea/orbital/blob/b321fcdbd700cc02da1cb1ad25412781d5ec73c6/tools/ida/db_types.json); the result layout beyond the leading `int32_t` result code is not known, so nothing else is written.
 
 ### Unknown function info
 
