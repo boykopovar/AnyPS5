@@ -5707,7 +5707,7 @@ void idlePublishWaitTests(const Device& device, Recorder& recorder) {
     std::cout << "idle publish wait verified\n";
 }
 
-void untrackedForgetTests(const Device& device) {
+void untrackedForgetTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: untracked comparison memo not tested\n";
@@ -5786,6 +5786,7 @@ void untrackedForgetTests(const Device& device) {
         image->Refresh();
         Require(StorageTexture::UntrackedCompares() == compares + 1, "forgetting the surface's own memory left its comparison memo standing");
     }
+    recorder.Sync();
 #ifdef _WIN32
     VirtualFree(other, 0, MEM_RELEASE);
 #endif
@@ -12757,7 +12758,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
-            untrackedForgetTests(device);
+            untrackedForgetTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
