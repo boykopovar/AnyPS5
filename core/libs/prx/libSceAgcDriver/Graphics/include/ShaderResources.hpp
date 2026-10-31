@@ -164,10 +164,19 @@ struct PresyncSurface {
     bool dccKeys;
 };
 
+struct VertexReach {
+    std::optional<std::uint32_t> vertex;
+    std::optional<std::uint32_t> instance;
+    VertexReach() = default;
+    VertexReach(std::nullopt_t) {}
+    VertexReach(std::uint32_t vertex) : vertex(vertex) {}
+    VertexReach(std::optional<std::uint32_t> vertex, std::optional<std::uint32_t> instance = std::nullopt) : vertex(vertex), instance(instance) {}
+};
+
 class ShaderResources {
 public:
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
-    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {}, std::optional<std::uint32_t> maxVertex = std::nullopt);
+    ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {}, VertexReach maxVertex = {});
     ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots = {});
     // Two-stage build for dispatches (see build): with `deferred` the constructor runs stage A only,
     // which needs no device lock, and Complete() runs stage B under GuestMemory::GpuMutex; until
@@ -214,9 +223,9 @@ public:
         std::span<const std::uint32_t> words;
     };
     std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false) const;
-    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, std::optional<std::uint32_t> maxVertex = std::nullopt) const;
-    bool BindsVertexRange(std::span<const CompiledShader> shaders, const ColorTarget* target, std::optional<std::uint32_t> maxVertex) const;
-    static std::uint64_t VertexBoundBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element, std::optional<std::uint32_t> maxVertex);
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, VertexReach maxVertex = {}) const;
+    bool BindsVertexRange(std::span<const CompiledShader> shaders, const ColorTarget* target, VertexReach maxVertex) const;
+    static std::uint64_t VertexBoundBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element, VertexReach maxVertex);
     static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
     struct MoveProof {
@@ -624,7 +633,7 @@ private:
     std::chrono::steady_clock::time_point lastFullWalk = std::chrono::steady_clock::now();
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writeOnlyRanges;
     bool drawBuild = false;
-    std::optional<std::uint32_t> drawMaxVertex;
+    VertexReach drawMaxVertex;
     std::uint64_t dispatchThreads = 0;
     std::optional<std::pair<std::uint64_t, std::size_t>> htileClear;
     std::vector<std::shared_ptr<Texture>> textures;

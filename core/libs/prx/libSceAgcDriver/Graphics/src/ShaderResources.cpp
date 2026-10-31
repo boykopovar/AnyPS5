@@ -1672,7 +1672,7 @@ void ShaderResources::KeepStorageImageBytes(Recorder& recorder) const {
     }
 }
 
-ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots, std::optional<std::uint32_t> maxVertex) : context(context), guestMemory(context) {
+ShaderResources::ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots, VertexReach maxVertex) : context(context), guestMemory(context) {
     drawBuild = true;
     drawMaxVertex = maxVertex;
     prepareAddressBindings(shaders, snapshots);
@@ -5657,7 +5657,7 @@ ShaderResources::DrawBindings::~DrawBindings() {
     release(fragmentLayout, fragmentAllocation);
 }
 
-std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, std::optional<std::uint32_t> maxVertex) const {
+std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, VertexReach maxVertex) const {
     std::vector<MovedBuffer> moved;
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || usesBda) return moved;
     for (const auto& shader : shaders) {
@@ -5765,7 +5765,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
     return moved;
 }
 
-bool ShaderResources::BindsVertexRange(std::span<const CompiledShader> shaders, const ColorTarget* target, std::optional<std::uint32_t> maxVertex) const {
+bool ShaderResources::BindsVertexRange(std::span<const CompiledShader> shaders, const ColorTarget* target, VertexReach maxVertex) const {
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) return false;
         for (const auto& binding : shader.program->bindings) {
@@ -5787,15 +5787,17 @@ bool ShaderResources::BindsVertexRange(std::span<const CompiledShader> shaders, 
     return true;
 }
 
-std::uint64_t ShaderResources::VertexBoundBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element, std::optional<std::uint32_t> maxVertex) {
+std::uint64_t ShaderResources::VertexBoundBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element, VertexReach maxVertex) {
     Require(binding.guestDescriptor.size() >= (static_cast<std::size_t>(element) + 1u) * 4u, "buffer descriptor must contain four DWORDs");
     const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
     const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
     const auto bytes = descriptor.GetSize();
     const bool written = element >= binding.bufferWritten.size() || binding.bufferWritten[element];
     const auto extent = element < binding.bufferVertexExtent.size() ? binding.bufferVertexExtent[element] : 0u;
-    if (!maxVertex.has_value() || written || extent == 0u || descriptor.SwizzleEnabled() || descriptor.AddTid()) return bytes;
-    const auto reach = (static_cast<std::uint64_t>(*maxVertex) * descriptor.Stride() + extent + 15u) & ~std::uint64_t{15};
+    const bool byInstance = element < binding.bufferVertexByInstance.size() && binding.bufferVertexByInstance[element];
+    const auto bound = byInstance ? maxVertex.instance : maxVertex.vertex;
+    if (!bound.has_value() || written || extent == 0u || descriptor.SwizzleEnabled() || descriptor.AddTid()) return bytes;
+    const auto reach = (static_cast<std::uint64_t>(*bound) * descriptor.Stride() + extent + 15u) & ~std::uint64_t{15};
     return std::min(bytes, reach);
 }
 

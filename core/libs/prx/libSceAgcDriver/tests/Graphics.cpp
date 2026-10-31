@@ -6633,6 +6633,14 @@ void vertexRangeBindingTests() {
         Require(ShaderResources::VertexBoundBytes(threadIndexed, 0, 3u) == whole(0), "a V# with ADD_TID_ENABLE was cut to the vertex range");
         auto strideless = ringBinding(vsharp(bytes, 4096), extent);
         Require(ShaderResources::VertexBoundBytes(strideless, 0, 1000u) == extent, "a V# without a stride was not bound to one fetch");
+        auto perInstance = binding;
+        perInstance.bufferVertexByInstance = {true};
+        using AgcDriver::Graphics::VertexReach;
+        Require(ShaderResources::VertexBoundBytes(perInstance, 0, VertexReach{3u, 1u}) == 2u * stride + extent - stride + 8u, "a read-only element indexed by the instance index was not cut to the draw's last instance");
+        Require(ShaderResources::VertexBoundBytes(perInstance, 0, VertexReach{3u, 0u}) == extent, "the first instance's fetch was not bound alone");
+        Require(ShaderResources::VertexBoundBytes(perInstance, 0, VertexReach{3u, std::nullopt}) == whole(0), "an instance-indexed element of a draw without a known instance range was cut");
+        Require(ShaderResources::VertexBoundBytes(perInstance, 0, VertexReach{std::nullopt, 1u}) == 2u * stride + extent - stride + 8u, "an instance-indexed element was not cut when only the instance range is known");
+        Require(ShaderResources::VertexBoundBytes(binding, 0, VertexReach{std::nullopt, 1u}) == whole(0), "a vertex-indexed element was cut by the instance range");
     }
     auto context = mockContext();
     context.limits.maxStorageBufferRange = 1u << 20u;

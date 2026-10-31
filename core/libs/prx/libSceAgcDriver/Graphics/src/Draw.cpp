@@ -1165,7 +1165,7 @@ ResourceCache::Key DrawResourceKey(const Context& context, std::span<const Compi
 // addGuestBuffer), repeated for a cached build whose own checks compared the buffers against
 // another draw's render target and index buffer. The same conditions and messages, so a draw that
 // would have failed its build fails its hit.
-void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint64_t indexAddress, std::uint64_t indexBytes, std::optional<std::uint32_t> maxVertex) {
+void CheckBufferAliases(std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint64_t indexAddress, std::uint64_t indexBytes, VertexReach maxVertex) {
     const auto overlap = [](std::uint64_t first, std::uint64_t firstSize, std::uint64_t second, std::uint64_t secondSize) { return first < second + secondSize && second < first + firstSize; };
     for (const auto& shader : shaders) {
         for (const auto& binding : shader.program->bindings) {
@@ -1443,9 +1443,10 @@ bool StripPatches(const State& state, std::span<const CompiledShader> shaders) {
     return state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP && BarycentricPatches(state, shaders);
 }
 
-std::optional<std::uint32_t> drawVertexBound(const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs) {
-    if (draw.indirect || state.stages.path != ShaderPath::Vertex || state.stages.mesh || state.stages.tessellation) return std::nullopt;
-    return inputs.maxIndex;
+VertexReach drawVertexBound(const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs) {
+    if (draw.indirect || state.stages.path != ShaderPath::Vertex || state.stages.mesh || state.stages.tessellation) return {};
+    const auto lastInstance = draw.instanceCount == 0u ? std::optional<std::uint32_t>{} : std::optional<std::uint32_t>{draw.firstInstance + draw.instanceCount - 1u};
+    return {inputs.maxIndex, lastInstance};
 }
 
 std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t bytes) {
@@ -1855,7 +1856,7 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
-ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, std::optional<std::uint32_t> maxVertex, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
+ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, VertexReach maxVertex, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
     // A recordable draw whose stages' compiled content repeats an earlier one binds that build's

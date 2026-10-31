@@ -140,7 +140,7 @@ constexpr std::size_t fieldCount() {
 }
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
-static_assert(fieldCount<BufferResource>() == 13, "BufferResource changed: update the info encoder");
+static_assert(fieldCount<BufferResource>() == 14, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 46, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
@@ -479,6 +479,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.bufferRead);
     writer.Values(std::span<const std::uint32_t>(binding.bufferExtent));
     writer.Values(std::span<const std::uint32_t>(binding.bufferVertexExtent));
+    writer.Flags(binding.bufferVertexByInstance);
 }
 
 void decodeBinding(Reader& reader, DescriptorBinding& binding) {
@@ -509,6 +510,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.bufferRead);
     reader.Values(binding.bufferExtent);
     reader.Values(binding.bufferVertexExtent);
+    reader.Flags(binding.bufferVertexByInstance);
 }
 
 void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
@@ -772,6 +774,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(buffer.scalar);
         out.Value(buffer.typedAlignment);
         out.Value(buffer.vertexExtent);
+        out.Value(buffer.vertexExtentByInstance);
     });
     writer.List(info.images, [](Writer& out, const ImageResource& image) {
         out.Value(image.source);
@@ -884,6 +887,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(buffer.scalar);
         in.Value(buffer.typedAlignment);
         in.Value(buffer.vertexExtent);
+        in.Value(buffer.vertexExtentByInstance);
     });
     reader.List(info.images, 77, [](Reader& in, ImageResource& image) {
         in.Value(image.source);

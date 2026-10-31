@@ -1719,16 +1719,20 @@ void verifyVertexIndexExtents() {
     constexpr std::uint32_t Wait = 0xbf8c3f70u;
     constexpr std::uint32_t AddOne = 0x4a0c0a81u;
     const auto data = [](std::uint32_t soffset, std::uint32_t address) { return (soffset << 24u) | 0x100u | address; };
+    constexpr std::uint32_t InstanceIndex = 8u;
     struct Case {
         const char* name;
         std::vector<std::uint32_t> code;
         std::uint32_t extent;
+        bool byInstance = false;
     };
-    const std::array<Case, 4> cases{{
+    const std::array<Case, 6> cases{{
         {"buffer_load_format_xyzw indexed by the vertex index", {FormatLoad, data(0x80u, VertexIndex), Wait, Export, ExportQuad, End}, 16u},
         {"buffer_load_dwordx2 indexed by the vertex index at offset 8 and SOFFSET 4", {PairLoad, data(0x84u, VertexIndex), Wait, Export, ExportPair, End}, 20u},
         {"buffer_load_format_xyzw indexed by the vertex index plus one", {AddOne, FormatLoad, data(0x80u, 6u), Wait, Export, ExportQuad, End}, 0u},
         {"a vertex-indexed load and a load indexed by the vertex index plus one", {AddOne, FormatLoad, data(0x80u, VertexIndex), PairLoad, data(0x80u, 6u), Wait, Export, ExportQuad, End}, 0u},
+        {"buffer_load_format_xyzw indexed by the instance index", {FormatLoad, data(0x80u, InstanceIndex), Wait, Export, ExportQuad, End}, 16u, true},
+        {"a vertex-indexed load and an instance-indexed load of one V#", {FormatLoad, data(0x80u, VertexIndex), PairLoad, data(0x80u, InstanceIndex), Wait, Export, ExportQuad, End}, 0u},
     }};
     for (const auto& item : cases) {
         RecompileRequest request{};
@@ -1749,6 +1753,7 @@ void verifyVertexIndexExtents() {
         const auto guest = std::ranges::find_if(result.bindings, [](const DescriptorBinding& binding) { return binding.role == DescriptorRole::GuestBuffers; });
         require(guest != result.bindings.end() && guest->count == 1u && guest->bufferVertexExtent.size() == 1u, (prefix + ": the program does not bind its V# with a vertex extent").c_str());
         require(guest->bufferVertexExtent[0] == item.extent, (prefix + ": vertex extent " + std::to_string(guest->bufferVertexExtent[0]) + ", expected " + std::to_string(item.extent)).c_str());
+        require(guest->bufferVertexByInstance.size() == 1u && guest->bufferVertexByInstance[0] == item.byInstance, (prefix + ": the extent is not marked as indexed by the " + (item.byInstance ? "instance" : "vertex") + " index").c_str());
     }
 }
 

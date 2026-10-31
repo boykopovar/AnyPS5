@@ -7,6 +7,7 @@
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <bit>
 #include <cstdio>
@@ -108,17 +109,21 @@ bool immediateU32(const IrValue* value, std::uint32_t& result) {
     return true;
 }
 
-std::uint32_t vertexIndexedExtent(const IrValue& inst, const MemoryInfo& memory) {
+std::uint32_t vertexIndexedExtent(const IrValue& inst, const MemoryInfo& memory, bool& byInstance) {
+    byInstance = false;
     if (BufferAccessOf(inst.Opcode()) != BufferAccess::Read || inst.Opcode() == IrOpcode::ReadConstBuffer || memory.kind != ResourceKind::Buffer || !memory.idxen || inst.ArgumentCount() < 4u) return 0u;
     const IrValue* index = inst.Argument(1)->Resolve();
     std::uint32_t kind = 0;
-    if (index->Opcode() != IrOpcode::GetBuiltin || index->ArgumentCount() == 0u || !immediateU32(index->Argument(0), kind) || kind != static_cast<std::uint32_t>(StageInputKind::VertexIndex)) return 0u;
+    if (index->Opcode() != IrOpcode::GetBuiltin || index->ArgumentCount() == 0u || !immediateU32(index->Argument(0), kind)) return 0u;
+    if (kind != static_cast<std::uint32_t>(StageInputKind::VertexIndex) && kind != static_cast<std::uint32_t>(StageInputKind::InstanceIndex)) return 0u;
     std::uint32_t offset = 0;
     std::uint32_t soffset = 0;
     if (!immediateU32(inst.Argument(2), offset) || !immediateU32(inst.Argument(3), soffset)) return 0u;
     const auto bytes = static_cast<std::uint64_t>(std::max((memory.dataBits + 7u) / 8u, 1u)) * std::max(memory.dataDwords, 1u);
     const auto end = static_cast<std::uint64_t>(memory.offset) + offset + soffset + (memory.formatted ? std::max<std::uint64_t>(bytes, 16u) : bytes);
-    return end > std::numeric_limits<std::uint32_t>::max() ? 0u : static_cast<std::uint32_t>(end);
+    if (end > std::numeric_limits<std::uint32_t>::max()) return 0u;
+    byInstance = kind == static_cast<std::uint32_t>(StageInputKind::InstanceIndex);
+    return static_cast<std::uint32_t>(end);
 }
 
 class Tracker {
@@ -2093,7 +2098,9 @@ private:
         const auto access = BufferAccessOf(inst.Opcode());
         if (ValidateSource(descriptor, badDword)) {
             const auto source = InternSource(descriptor);
-            const auto resource = AddBuffer(source, memory, inst.Opcode(), inst.Flags<MemoryFlags>().pc, vertexIndexedExtent(inst, memory));
+            bool byInstance = false;
+            const auto vertexExtent = vertexIndexedExtent(inst, memory, byInstance);
+            const auto resource = AddBuffer(source, memory, inst.Opcode(), inst.Flags<MemoryFlags>().pc, vertexExtent, byInstance);
             if (resource == std::numeric_limits<std::uint32_t>::max()) fail("buffer resource limit exceeded");
             AddMemoryPatch(memoryIndex, resource, 0u, false);
             memory.gpuDescriptor = false;
@@ -2116,12 +2123,12 @@ private:
         }
     }
 
-    std::uint32_t AddBuffer(std::uint32_t source, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc, std::uint32_t vertexExtent) {
+    std::uint32_t AddBuffer(std::uint32_t source, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc, std::uint32_t vertexExtent, bool vertexExtentByInstance) {
         for (std::uint32_t i = 0; i < m_info.buffers.size(); i++) {
             if (m_info.buffers[i].source == source) {
                 auto& buffer = m_info.buffers[i];
                 Merge(buffer, memory, op, pc);
-                buffer.vertexExtent = buffer.vertexExtent == 0u || vertexExtent == 0u ? 0u : std::max(buffer.vertexExtent, vertexExtent);
+                buffer.vertexExtent = buffer.vertexExtent == 0u || vertexExtent == 0u || buffer.vertexExtentByInstance != vertexExtentByInstance ? 0u : std::max(buffer.vertexExtent, vertexExtent);
                 return i;
             }
         }
@@ -2129,6 +2136,7 @@ private:
         resource.source = source;
         resource.firstUsePc = pc;
         resource.vertexExtent = vertexExtent;
+        resource.vertexExtentByInstance = vertexExtentByInstance;
         Merge(resource, memory, op, pc);
         m_info.buffers.push_back(resource);
         return static_cast<std::uint32_t>(m_info.buffers.size() - 1);
