@@ -59,18 +59,39 @@ def write_seed(path, text):
             temporary.unlink(missing_ok=True)
 
 
+def selected(results, include, exclude):
+    return {name: entry for name, entry in results.items()
+            if (not include or any(fnmatch.fnmatchcase(name, pattern) for pattern in include))
+            and not any(fnmatch.fnmatchcase(name, pattern) for pattern in exclude)}
+
+
+def render(found):
+    return "".join(f"set({quote(name)} {quote(value)} CACHE INTERNAL {quote(doc)})\n"
+                   for name, (value, doc) in sorted(found.items()))
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Write the configure check results of a CMake cache as an initial cache file")
     parser.add_argument("cache", help="CMakeCache.txt of a configured tree")
-    parser.add_argument("seed", help="file to pass to cmake -C")
+    parser.add_argument("seed", nargs="?", help="file to pass to cmake -C")
     parser.add_argument("--include", action="append", default=[], metavar="GLOB",
                         help="seed matching check names only; repeat to include several patterns")
     parser.add_argument("--exclude", action="append", default=[], metavar="GLOB",
                         help="omit matching check names after inclusion; patterns are case-sensitive")
+    parser.add_argument("--stdout", action="store_true", help="write CMake seed text to stdout instead of a file")
     args = parser.parse_args(argv)
+    if args.stdout == (args.seed is not None):
+        parser.error("provide either a seed file or --stdout")
+    if args.stdout:
+        try:
+            results = checks(Path(args.cache))
+        except (OSError, UnicodeDecodeError) as error:
+            parser.error(f"{args.cache}: {error}")
+        sys.stdout.write(render(selected(results, args.include, args.exclude)))
+        return 0
     cache, seed = Path(args.cache), Path(args.seed)
     if cache.resolve() == seed.resolve() or (cache.exists() and seed.exists() and cache.samefile(seed)):
         parser.error("seed output would overwrite the input cache")
@@ -78,12 +99,9 @@ def main(argv=None):
         results = checks(cache)
     except (OSError, UnicodeDecodeError) as error:
         parser.error(f"{cache}: {error}")
-    found = {name: entry for name, entry in results.items()
-             if (not args.include or any(fnmatch.fnmatchcase(name, pattern) for pattern in args.include))
-             and not any(fnmatch.fnmatchcase(name, pattern) for pattern in args.exclude)}
+    found = selected(results, args.include, args.exclude)
     try:
-        write_seed(seed, "".join(f"set({quote(name)} {quote(value)} CACHE INTERNAL {quote(doc)})\n"
-                                 for name, (value, doc) in sorted(found.items())))
+        write_seed(seed, render(found))
     except OSError as error:
         parser.error(f"{seed}: {error}")
     print(f"{len(found)} check results")
