@@ -20,7 +20,7 @@ HIGH_BASE = 0x400000000
 SHIFT = HIGH_BASE - BASE
 ENTRY = 0x10
 SLOT = 0x800
-ADDRESS_TAGS = {3, 4, 5, 6, 7, 23}
+ADDRESS_TAGS = {3, 4, 5, 6, 7, 23, 0x6ffffef5}
 GUEST_ARENA_START = 0x200000000
 LAZY_WARNING = "with --lazy-binding the Linux executable stays position independent"
 
