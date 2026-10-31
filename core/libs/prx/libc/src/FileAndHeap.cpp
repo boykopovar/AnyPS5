@@ -771,6 +771,10 @@ void* APS5_VABI calloc_nid_postfix(size_t count, size_t size) {
     return defaultHeapAllocation(count * size, 0, allocate);
 }
 
+void* APS5_VABI __std_calloc_crt_nid_postfix(size_t count, size_t size) {
+    return calloc_nid_postfix(count, size);
+}
+
 int APS5_VABI posix_memalign_nid_postfix(void** pointer, size_t alignment, size_t size) {
     if (!pointer || alignment < sizeof(void*) || (alignment & (alignment - 1)) != 0) return 22;
     const int savedError = errno;
