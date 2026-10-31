@@ -386,7 +386,7 @@ class NonAsciiDirectoryTests(unittest.TestCase):
 
 class BuildErrorTests(unittest.TestCase):
     def run_tool(self, *args):
-        return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, text=True, timeout=60)
+        return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, encoding="utf-8", timeout=60)
 
     def test_explain_rejects_malformed_saved_graph_without_a_traceback(self):
         graphs = (
@@ -676,7 +676,7 @@ class GraphClosureTests(unittest.TestCase):
             changed = root / "changed.txt"
             changed.write_text("src/unit.cpp\n", encoding="utf-8")
             result = subprocess.run([sys.executable, str(Path(select_tests.__file__)), "explain", str(path), str(changed)],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, encoding="utf-8", timeout=10)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("unit", result.stderr)
             self.assertIn("closure", result.stderr)
