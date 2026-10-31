@@ -569,6 +569,27 @@ class ProgressTests(unittest.TestCase):
         group = dict(self.report_library("libScePad", ["Ready", "New"], ["Seen"]), unobserved=1, unobserved_names=["Old"])
         self.assertEqual(self.headline(group), "\U0001f4c8 **System libraries**: 66.67% (+16.67%, +1 implemented functions)")
 
+    def test_new_stubs_are_listed_with_a_link_to_their_origin_commit(self):
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        base = self.report_snapshot(self.report_library("libScePad", ["Ready"], []))
+        head_group = dict(self.report_library("libScePad", ["Ready"], ["Seen"]), unobserved=1, unobserved_names=["Unseen"],
+                          origins={"Seen": {"commit": sha, "date": "2026-01-02"}})
+        text = "\n".join(progress.compare("System libraries", "Library", "functions", base["libraries"],
+                                          self.report_snapshot(head_group)["libraries"]))
+        link = f"[`0123456789`]({progress.commit_url(sha)}) 2026-01-02"
+        self.assertIn("| Library | Name | Origin |", text)
+        self.assertIn(f"| libScePad | `Seen` | {link} |", text)
+        self.assertIn("| libScePad | `Unseen` |\n", text)
+        self.assertTrue(progress.commit_url(sha).endswith(f"/commit/{sha}"))
+
+    def test_new_stubs_have_no_origin_column_without_origins(self):
+        base = self.report_snapshot(self.report_library("libScePad", ["Ready"], []))
+        head_group = dict(self.report_library("libScePad", ["Ready"], ["Seen"]), unobserved=0, unobserved_names=[])
+        text = "\n".join(progress.compare("System libraries", "Library", "functions", base["libraries"],
+                                          self.report_snapshot(head_group)["libraries"]))
+        self.assertIn("| Library | Name |\n", text + "\n")
+        self.assertNotIn("Origin", text)
+
     def test_report_table_shows_unobserved_stubs_beside_the_headline(self):
         before = self.report_snapshot(self.report_library("libScePad", ["A"], ["T"]))
         after = self.report_snapshot(dict(self.report_library("libScePad", ["A"], ["T"]), unobserved=2, unobserved_names=["U", "V"]),

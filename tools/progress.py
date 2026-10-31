@@ -640,11 +640,26 @@ def names(data, state, owners=None):
     return {(owners.get(g["name"], g["name"]), n) for g in data["groups"] for n in g.get(f"{state}_names", [])}
 
 
-def details(icon, title, column, items):
+def origin_map(data, owners=None):
+    owners = owners or {}
+    return {(owners.get(g["name"], g["name"]), n): origin for g in data["groups"] for n, origin in g.get("origins", {}).items()}
+
+
+def origin_link(origin):
+    return f"[`{origin['commit'][:10]}`]({commit_url(origin['commit'])}) {origin['date']}"
+
+
+def details(icon, title, column, items, origins=None):
     if not items:
         return []
-    rows = [f"<details>\n<summary>{icon} {len(items)} {title}</summary>\n", f"| {column} | Name |", "| - | - |"]
-    rows += [f"| {group} | `{name}` |" for group, name in sorted(items)[:REPORT_ROWS]]
+    shown = sorted(items)[:REPORT_ROWS]
+    linked = bool(origins) and any(item in origins for item in shown)
+    if linked:
+        rows = [f"<details>\n<summary>{icon} {len(items)} {title}</summary>\n", f"| {column} | Name | Origin |", "| - | - | - |"]
+        rows += [f"| {group} | `{name}` | {origin_link(origins[(group, name)]) if (group, name) in origins else ''} |" for group, name in shown]
+    else:
+        rows = [f"<details>\n<summary>{icon} {len(items)} {title}</summary>\n", f"| {column} | Name |", "| - | - |"]
+        rows += [f"| {group} | `{name}` |" for group, name in shown]
     if len(items) > REPORT_ROWS:
         rows.append(f"| ... | {len(items) - REPORT_ROWS} more |")
     return rows + ["\n</details>"]
@@ -678,6 +693,7 @@ def compare(title, column, unit, base, head):
     regressed, removed = base_done & (head_all - head_done), base_all - head_all
     inert = implemented & names(head, "inert", owners)
     unseen = implemented & names(head, "done_unobserved", owners)
+    origins = origin_map(head, owners)
     if not (implemented or declared or regressed or removed or shared):
         return []
     delta = round(head["percent"] - base["percent"], 2)
@@ -695,8 +711,8 @@ def compare(title, column, unit, base, head):
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
     lines += details("🔍", "implemented but not observed anywhere", column, unseen)
-    lines += details("🆕", "declared as observed stubs", column, declared_observed)
-    lines += details("👻", "declared as unobserved stubs (no measured use needs them)", column, declared_unobserved)
+    lines += details("🆕", "declared as observed stubs", column, declared_observed, origins)
+    lines += details("👻", "declared as unobserved stubs (no measured use needs them)", column, declared_unobserved, origins)
     lines += details("⚠️", "went back to stubs", column, regressed)
     lines += details("🗑️", "removed", column, removed)
     lines += details("🔗", "now sharing sources", column, shared)
