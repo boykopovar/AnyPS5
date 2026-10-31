@@ -52,7 +52,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, CloseHandshake, AlertHandshake, Expired, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 
 std::string GzipPayload() {
@@ -97,9 +97,11 @@ public:
         mbedtls_pk_init(&key);
         mbedtls_ssl_config_init(&config);
         Require(mbedtls_ctr_drbg_seed(&random, mbedtls_entropy_func, &entropy, nullptr, 0) == 0, "server RNG");
-        Require(mbedtls_x509_crt_parse(&certificate, reinterpret_cast<const unsigned char*>(ServerPem), sizeof(ServerPem)) == 0, "server cert");
-        Require(mbedtls_pk_parse_key(&key, reinterpret_cast<const unsigned char*>(ServerKey), sizeof(ServerKey), nullptr, 0,
-            mbedtls_ctr_drbg_random, &random) == 0, "server key");
+        const bool expired = mode == Mode::Expired;
+        Require(mbedtls_x509_crt_parse(&certificate, reinterpret_cast<const unsigned char*>(expired ? ExpiredServerPem : ServerPem),
+            expired ? sizeof(ExpiredServerPem) : sizeof(ServerPem)) == 0, "server cert");
+        Require(mbedtls_pk_parse_key(&key, reinterpret_cast<const unsigned char*>(expired ? ExpiredServerKey : ServerKey),
+            expired ? sizeof(ExpiredServerKey) : sizeof(ServerKey), nullptr, 0, mbedtls_ctr_drbg_random, &random) == 0, "server key");
         Require(mbedtls_ssl_config_defaults(&config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) == 0, "server TLS");
         mbedtls_ssl_conf_rng(&config, mbedtls_ctr_drbg_random, &random);
         Require(mbedtls_ssl_conf_own_cert(&config, &certificate, &key) == 0, "server identity");
@@ -271,6 +273,7 @@ private:
         Require(mbedtls_net_accept(&listener, &client, nullptr, 0, nullptr) == 0, "server accept");
         Stage(1);
         if (mode == Mode::StallHandshake) Stall();
+        else if (mode == Mode::CloseHandshake || mode == Mode::AlertHandshake) RefuseHello(client);
         else {
             Require(mbedtls_ssl_setup(&ssl, &config) == 0, "server TLS setup");
             mbedtls_ssl_set_bio(&ssl, &client, mbedtls_net_send, mbedtls_net_recv, mbedtls_net_recv_timeout);
@@ -282,6 +285,19 @@ private:
         }
         mbedtls_ssl_free(&ssl);
         mbedtls_net_free(&client);
+    }
+
+    void RefuseHello(mbedtls_net_context& client) {
+        std::vector<unsigned char> hello(5);
+        std::size_t received = 0;
+        while (received < hello.size()) {
+            const int count = mbedtls_net_recv(&client, hello.data() + received, hello.size() - received);
+            if (count <= 0) return;
+            received += static_cast<std::size_t>(count);
+            if (received == 5) hello.resize(5 + ((static_cast<std::size_t>(hello[3]) << 8) | hello[4]));
+        }
+        static constexpr unsigned char Alert[] = {0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28};
+        if (mode == Mode::AlertHandshake) Require(mbedtls_net_send(&client, Alert, sizeof(Alert)) == static_cast<int>(sizeof(Alert)), "server alert");
     }
 
     void Exchange(mbedtls_ssl_context& ssl) {
@@ -504,11 +520,10 @@ void GzipFailure(int ssl, Mode mode, const char* message) {
     server.Join();
 }
 
-void Failure(int ssl, Mode mode, bool verifyName = false) {
+void Failure(int ssl, Mode mode) {
     std::fprintf(stderr, "HTTP2 failure scenario %d\n", static_cast<int>(mode));
     Server server(mode);
     Client client(ssl);
-    if (verifyName) Require(sceHttp2SslEnableOption(client.tmpl, 0x4) == 0, "enable numeric host name rejection");
     client.Create(server.Url());
     Require(sceHttp2SetConnectTimeOut(client.request, 1000000) == 0 && sceHttp2SetRecvTimeOut(client.request, 1000000) == 0, "failure deadlines");
     Require(Throws([&] {
@@ -518,6 +533,28 @@ void Failure(int ssl, Mode mode, bool verifyName = false) {
     }), "failure never reports complete success");
     int status = 1234;
     Require(Throws([&] { sceHttp2GetStatusCode(client.request, &status); }) && status == 1234, "failed outputs unchanged");
+}
+
+void AfterFailedSend(const Client& client, int expected) {
+    int status = 1234;
+    Require(sceHttp2GetStatusCode(client.request, &status) == 0 && status == 0, "status after a failed send");
+    int kind = 5;
+    std::uint64_t length = 999;
+    Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == static_cast<int>(0x817b1065) && kind == 5 && length == 999,
+        "no content length after a failed send");
+    char byte = 'z';
+    Require(sceHttp2ReadData(client.request, &byte, 1) == static_cast<int>(0x817b1065) && byte == 'z', "no response to read after a failed send");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == expected, "another send repeats the failure");
+}
+
+void Handshake(int ssl, Mode mode, int expected, std::uint32_t enable = 0) {
+    std::fprintf(stderr, "HTTP2 handshake failure scenario %d\n", static_cast<int>(mode));
+    Server server(mode);
+    Client client(ssl);
+    if (enable) Require(sceHttp2SslEnableOption(client.tmpl, enable) == 0, "enable certificate check");
+    client.Create(server.Url());
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == expected, "handshake failure result");
+    AfterFailedSend(client, expected);
 }
 
 void Cancellation(int ssl, Mode mode, int teardown) {
@@ -627,8 +664,7 @@ void Refused(int ssl) {
     Client client(ssl);
     client.Create(url);
     Require(sceHttp2SendRequest(client.request, nullptr, 0) == static_cast<int>(0x8041013d), "raw connection refused error");
-    int status = 123;
-    Require(sceHttp2GetStatusCode(client.request, &status) == static_cast<int>(0x8041013d) && status == 123, "failed status untouched");
+    AfterFailedSend(client, static_cast<int>(0x8041013d));
 }
 
 std::atomic<int> lookups{0};
@@ -742,7 +778,10 @@ int main(int argc, char** argv) {
         GzipFailure(ssl, Mode::GzipChecksum, "gzip checksum mismatch throws");
         GzipFailure(ssl, Mode::GzipConcat, "concatenated gzip members throw");
         for (const auto mode : {Mode::NoAlpn, Mode::Reset, Mode::Truncate, Mode::Redirect, Mode::Auth}) Failure(ssl, mode);
-        Failure(ssl, Mode::Normal, true);
+        Handshake(ssl, Mode::Normal, static_cast<int>(0x8095f00b), 0x4);
+        Handshake(ssl, Mode::CloseHandshake, static_cast<int>(0x8095170d));
+        Handshake(ssl, Mode::AlertHandshake, static_cast<int>(0x8095f010));
+        Handshake(ssl, Mode::Expired, static_cast<int>(0x8095f00d), 0x8);
         for (const auto mode : {Mode::StallHandshake, Mode::StallHeaders, Mode::StallBody, Mode::StallUpload}) {
             Deadline(ssl, mode, false);
             Deadline(ssl, mode, true);
@@ -753,7 +792,7 @@ int main(int argc, char** argv) {
         Retries(ssl);
         const int untrusted = sceSslInit_nid_postfix(8 * 1024 * 1024);
         Require(untrusted > 0, "untrusted SSL context");
-        Failure(untrusted, Mode::Normal);
+        Handshake(untrusted, Mode::Normal, static_cast<int>(0x8095f00c));
         Success(untrusted, Mode::Normal, true);
         Require(sceSslTerm_nid_postfix(untrusted) == 0, "untrusted SSL term");
     }
