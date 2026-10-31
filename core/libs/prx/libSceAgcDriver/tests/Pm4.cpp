@@ -22,6 +22,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -2105,6 +2106,149 @@ void testStallWatchdogOrder() {
     checkOneStallDump(lines, done);
 }
 
+struct StallPromptGate {
+    std::mutex mutex;
+    std::condition_variable changed;
+    int asked = 0;
+    bool waiting = false;
+    bool answered = false;
+    AgcDriver::DriverDetail::StallChoice answer = AgcDriver::DriverDetail::StallChoice::Wait;
+};
+
+StallPromptGate stallPromptGate;
+
+AgcDriver::DriverDetail::StallChoice gatedStallPrompt(const char*) {
+    std::unique_lock lock(stallPromptGate.mutex);
+    ++stallPromptGate.asked;
+    stallPromptGate.waiting = true;
+    stallPromptGate.changed.notify_all();
+    stallPromptGate.changed.wait(lock, [] { return stallPromptGate.answered; });
+    stallPromptGate.waiting = false;
+    stallPromptGate.answered = false;
+    return stallPromptGate.answer;
+}
+
+void answerGatedStallPrompt(AgcDriver::DriverDetail::StallChoice choice) {
+    {
+        std::lock_guard lock(stallPromptGate.mutex);
+        stallPromptGate.answer = choice;
+        stallPromptGate.answered = true;
+    }
+    stallPromptGate.changed.notify_all();
+}
+
+void awaitGatedStallPrompt(int count) {
+    std::unique_lock lock(stallPromptGate.mutex);
+    check(stallPromptGate.changed.wait_for(lock, std::chrono::seconds(5), [&] { return stallPromptGate.waiting && stallPromptGate.asked == count; }), "the stall prompt was not asked on the real clock");
+}
+
+int gatedStallPromptCount() {
+    std::lock_guard lock(stallPromptGate.mutex);
+    return stallPromptGate.asked;
+}
+
+template <class Action>
+std::future<void> inBackground(Action action) {
+    auto promise = std::make_shared<std::promise<void>>();
+    auto result = promise->get_future();
+    std::thread([promise, action = std::move(action)]() mutable {
+        try {
+            action();
+            promise->set_value();
+        } catch (...) {
+            promise->set_exception(std::current_exception());
+        }
+    }).detach();
+    return result;
+}
+
+void checkDriverLockFree() {
+    alignas(8) static std::uint32_t probe = 0;
+    auto submitted = inBackground([] {
+        auto words = writeWord(probe, 1);
+        submitWords(words, 0x21);
+    });
+    check(submitted.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "a submission waited for the driver lock while the stall prompt was open");
+    submitted.get();
+    auto registered = inBackground([] {
+        auto output = std::make_shared<GatedOutput>();
+        AgcDriverRegisterVideoOutput_nid_postfix(8, output);
+        AgcDriverUnregisterVideoOutput_nid_postfix(8, output);
+    });
+    check(registered.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "a video output registration waited for the driver lock while the stall prompt was open");
+    registered.get();
+}
+
+void submitStalledOrderWait(const std::shared_ptr<GatedOutput>& output, std::uint32_t& done) {
+    std::vector<std::uint32_t> wait{AgcDriver::RenderingWaitPacketHeader, 7, 0, 0};
+    submitWords(wait);
+    {
+        std::unique_lock lock(output->state->mutex);
+        check(output->state->changed.wait_for(lock, std::chrono::seconds(5), [&] { return output->state->waiting; }), "queue 0 did not reach the rendering wait");
+    }
+    auto words = writeWord(done, 1);
+    submitWords(words, 0x20);
+}
+
+void testStallPromptLock() {
+    using AgcDriver::DriverDetail::StallChoice;
+    alignas(8) static std::uint32_t done = 0;
+    auto output = std::make_shared<GatedOutput>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    struct GateRelease {
+        std::shared_ptr<RenderingGateState> state;
+        ~GateRelease() { state->Open(); }
+    } release{output->state};
+    AgcDriver::DriverDetail::SetStallPresenter(gatedStallPrompt);
+    struct AnswerPrompt {
+        ~AnswerPrompt() { answerGatedStallPrompt(StallChoice::Wait); }
+    } answer;
+    {
+        CapturedStderr capture;
+        submitStalledOrderWait(output, done);
+        awaitGatedStallPrompt(1);
+        checkDriverLockFree();
+        answerGatedStallPrompt(StallChoice::Wait);
+        awaitGatedStallPrompt(2);
+        checkDriverLockFree();
+        check(stallDumpCount(capture) == 1, "the rings were not dumped once for the wait that was kept running");
+        check(std::atomic_ref<std::uint32_t>(done).load() == 0, "a compute submission passed queue 0 while its wait was held");
+    }
+    answerGatedStallPrompt(StallChoice::Quit);
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+    throw std::runtime_error("the Quit answer did not end the title");
+}
+
+void testStallPromptLockUnavailable() {
+    using AgcDriver::DriverDetail::StallChoice;
+    alignas(8) static std::uint32_t done = 0;
+    auto output = std::make_shared<GatedOutput>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    struct GateRelease {
+        std::shared_ptr<RenderingGateState> state;
+        ~GateRelease() { state->Open(); }
+    } release{output->state};
+    AgcDriver::DriverDetail::SetStallPresenter(gatedStallPrompt);
+    std::vector<std::string> lines;
+    {
+        CapturedStderr capture;
+        submitStalledOrderWait(output, done);
+        awaitGatedStallPrompt(1);
+        checkDriverLockFree();
+        answerGatedStallPrompt(StallChoice::Unavailable);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+        check(gatedStallPromptCount() == 1, "a wait whose message box was unavailable asked again");
+        check(stallDumpCount(capture) == 1, "the rings were not dumped once for the wait without a message box");
+        check(std::atomic_ref<std::uint32_t>(done).load() == 0, "a compute submission passed queue 0 while its wait was held");
+        output->state->Open();
+        AgcDriverWaitIdle_nid_postfix();
+        lines = capture.RingLines();
+    }
+    AgcDriver::DriverDetail::SetStallPresenter(nullptr);
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+    checkOneStallDump(lines, done);
+}
+
 void testRefusedWorkerPriority() {
     alignas(8) static std::uint32_t result = 0;
     auto words = writeWord(result, 91);
@@ -2297,7 +2441,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"rewind-trace", testRewindTailTrace}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
