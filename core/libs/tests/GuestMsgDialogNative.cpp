@@ -215,6 +215,9 @@ int main() {
     Require(sceMsgDialogGetResult(&result) == kErrNotInitialized);
     Require(sceMsgDialogUpdateStatus() == 0);
     Require(sceMsgDialogGetStatus() == 0);
+    Require(sceMsgDialogProgressBarInc(0, 10) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetMsg(0, "progress") == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == kErrNotRunning);
 
     Require(sceMsgDialogInitialize() == 0);
     Require(sceMsgDialogInitialize() == kErrAlreadyInitialized);
