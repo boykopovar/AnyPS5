@@ -52,8 +52,10 @@ public:
         std::filesystem::remove(FilePath, ignored);
     }
 
-    void Read(void* destination, std::uint64_t bytes, std::uint64_t offset) const {
-        const Apr::ReadFileCommand command{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, id, 0,
+    void Read(void* destination, std::uint64_t bytes, std::uint64_t offset) const { ReadFile(id, destination, bytes, offset); }
+
+    static void ReadFile(std::uint32_t fileId, void* destination, std::uint64_t bytes, std::uint64_t offset) {
+        const Apr::ReadFileCommand command{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, fileId, 0,
             reinterpret_cast<std::uint64_t>(destination), bytes, offset};
         alignas(8) std::array<std::uint8_t, sizeof(command)> memory{};
         std::memcpy(memory.data(), &command, sizeof(command));
@@ -114,6 +116,47 @@ void TestEof(const Fixture& fixture) {
     CheckRead(fixture, data, 65537, FileBytes);
     CheckRead(fixture, data, 65537, FileBytes + 19);
 }
+
+#ifdef _WIN32
+void TestLongEof() {
+    constexpr std::size_t payloadBytes = 100;
+    std::vector<std::filesystem::path> directories{std::filesystem::current_path() / "apr_long"};
+    while (directories.back().native().size() < MAX_PATH + 16) directories.push_back(directories.back() / std::wstring(40, L'a'));
+    const auto extended = [](const std::filesystem::path& path) { return L"\\\\?\\" + path.wstring(); };
+    for (const auto& directory : directories) Require(CreateDirectoryW(extended(directory).c_str(), nullptr) != 0, "cannot create the long directory");
+    const auto file = directories.back() / L"payload.bin";
+    const HANDLE handle = CreateFileW(extended(file).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE, "cannot create the long path file");
+    std::array<std::uint8_t, payloadBytes> payload{};
+    for (std::size_t index = 0; index < payload.size(); ++index) payload[index] = FileByte(index);
+    DWORD written = 0;
+    const bool wrote = WriteFile(handle, payload.data(), static_cast<DWORD>(payload.size()), &written, nullptr) != 0 && written == payload.size();
+    CloseHandle(handle);
+    std::array<std::uint8_t, 2 * payloadBytes + 2> storage{};
+    storage.fill(0xCC);
+    const auto text = file.string();
+    const char* path = text.c_str();
+    std::uint32_t id = 0;
+    std::uint32_t failed = 0;
+    const bool resolved = sceKernelAprResolveFilepathsToIds(&path, 1, &id, &failed) == 0 && failed == 0;
+    std::string error;
+    try {
+        if (resolved) Fixture::ReadFile(id, storage.data() + 1, 2 * payloadBytes, 0);
+    } catch (const std::exception& caught) {
+        error = caught.what();
+    }
+    DeleteFileW(extended(file).c_str());
+    for (auto it = directories.rbegin(); it != directories.rend(); ++it) RemoveDirectoryW(extended(*it).c_str());
+    Require(wrote, "cannot write the long path file");
+    Require(resolved, "cannot resolve the long path APR file");
+    Require(error.empty(), "APR read of the long path file failed");
+    Require(storage.front() == 0xCC && storage.back() == 0xCC, "APR wrote outside the requested range");
+    for (std::size_t index = 0; index < 2 * payloadBytes; ++index) {
+        const auto expected = index < payloadBytes ? FileByte(index) : std::uint8_t{0};
+        Require(storage[index + 1] == expected, "APR returned incorrect bytes or did not zero-fill the end of a long path file");
+    }
+}
+#endif
 
 void TestErrors(const Fixture& fixture) {
     std::array<std::uint8_t, 8> data;
@@ -315,6 +358,8 @@ int main(int argc, char** argv) {
             Require(committedPages > 2, "APR did not exercise demand-committed destination pages");
         } else if (mode == "stack") {
             TestSmallStack(fixture);
+        } else if (mode == "longeof") {
+            TestLongEof();
 #endif
         } else {
             throw std::runtime_error("unknown APR read case");

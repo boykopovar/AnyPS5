@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <windows.h>
 #include "prx/libc/include/WindowsDescriptor.hpp"
+#include "prx/libkernel/File/include/WindowsExtendedPath.hpp"
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     const int access = nativeFlags & (_O_RDONLY | _O_WRONLY | _O_RDWR);
@@ -43,7 +44,8 @@ static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint
     else if (nativeFlags & _O_TRUNC) disposition = TRUNCATE_EXISTING;
     const DWORD attributes = (nativeFlags & _O_CREAT) && !(mode & _S_IWRITE) ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL;
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
-    const auto handle = CreateFileW(p.c_str(), desired, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &security, disposition, attributes, nullptr);
+    const auto openPath = File::WindowsExtendedPath(p);
+    const auto handle = CreateFileW(openPath.c_str(), desired, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &security, disposition, attributes, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = WindowsOpenError_nid_no_patch(GetLastError());
         return -1;
@@ -113,15 +115,7 @@ static int NativeUnlink(const std::filesystem::path& p) {
     return -1;
 }
 static std::filesystem::path NativeMetadataPath(const std::filesystem::path& path, std::error_code& error) {
-    const auto& input = path.native();
-    if (input.starts_with(L"\\\\?\\") || input.starts_with(L"\\\\.\\")) return path;
-    auto absolute = std::filesystem::absolute(path, error);
-    if (error) return {};
-    absolute = absolute.lexically_normal().make_preferred();
-    const auto& native = absolute.native();
-    if (native.size() < MAX_PATH || native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return absolute;
-    return native.starts_with(L"\\\\") ? std::filesystem::path(L"\\\\?\\UNC\\" + native.substr(2))
-                                            : std::filesystem::path(L"\\\\?\\" + native);
+    return File::WindowsNormalizedPath(path, error);
 }
 static bool NativeSymbolicLinkLoop(const std::filesystem::path& path) {
     return File::WindowsSymbolicLinkLoop(path);
@@ -227,26 +221,27 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         File::RememberDescriptor(*archived, flags);
         return *archived;
     }
+    const auto openPath = File::WindowsExtendedPath(native);
 #ifdef _WIN32
     if ((flags & (SCE_KERNEL_O_DIRECTORY | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_DIRECTORY) {
         std::error_code error;
-        const auto status = std::filesystem::status(native, error);
+        const auto status = std::filesystem::status(openPath, error);
         if (std::filesystem::exists(status) && !std::filesystem::is_directory(status)) return SceErrorFromErrno(ENOTDIR);
     }
     if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL) && native.has_filename()) {
-        const DWORD attributes = GetFileAttributesW(native.c_str());
+        const DWORD attributes = GetFileAttributesW(openPath.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return SceErrorFromErrno(EEXIST);
     }
 #endif
     if ((flags & SCE_KERNEL_O_NOFOLLOW) != 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) != (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) {
         constexpr int GuestEmlink = 31;
         std::error_code error;
-        if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GuestEmlink);
+        if (std::filesystem::is_symlink(openPath, error)) return SceErrorFromErrno(GuestEmlink);
 #ifdef _WIN32
-        const DWORD attributes = GetFileAttributesW(native.c_str());
+        const DWORD attributes = GetFileAttributesW(openPath.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;
-            if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "open")) return SceErrorFromErrno(GuestEmlink);
+            if (File::WindowsSymbolicLink::ReadJunction(openPath, junctionTarget, "open")) return SceErrorFromErrno(GuestEmlink);
         }
 #endif
     }
@@ -267,7 +262,7 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         auto directory = native;
         while (!directory.has_filename() && directory.has_relative_path()) directory = directory.parent_path();
         std::error_code error;
-        if (std::filesystem::is_directory(directory, error)) {
+        if (std::filesystem::is_directory(File::WindowsExtendedPath(directory), error)) {
             if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) errno = EEXIST;
             else if ((flags & SCE_KERNEL_O_ACCMODE) != SCE_KERNEL_O_RDONLY || (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC))) errno = EISDIR;
             else fd = File::OpenDirectoryDescriptor(directory);
