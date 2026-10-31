@@ -477,12 +477,6 @@ def read_modules(directories):
     return imports, {name: sorted(files) for name, files in exports.items()}
 
 
-def nids_of(name, aliases):
-    if name in aliases:
-        return aliases[name]
-    return {nid_names.compute_nid(nid_names.strip_nid_postfix(name))}
-
-
 def top_level_statements(body):
     braces, parens, start, parts = 0, 0, 1, []
     for i, character in enumerate(body[1:-1], 1):
@@ -666,10 +660,10 @@ def source_stub_classes(source):
         group = progress.scan_library(library)
         if "shared_sources" in group:
             shared[library.name] = group["shared_sources"]
-        done = {nid for name in group["done_names"] for nid in nids_of(name, aliases)}
+        done = {nid for name in group["done_names"] for nid in nid_names.nids_of(name, aliases)}
         conditional = conditional_stubs(library) if group["todo_names"] else set()
         for name in group["todo_names"]:
-            for nid in nids_of(name, aliases) - done:
+            for nid in nid_names.nids_of(name, aliases) - done:
                 stubs.setdefault((library.name + ".prx", nid), name)
                 if name in conditional:
                     partial.add((library.name + ".prx", nid))
