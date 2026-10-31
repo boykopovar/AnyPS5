@@ -245,6 +245,8 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
             set_tests_properties(annotate_module PROPERTIES TIMEOUT 20)
         endif()
+        add_test(NAME export_gap COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_export_gap.py)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
