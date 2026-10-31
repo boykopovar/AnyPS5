@@ -272,6 +272,8 @@ def load(path, thread=None):
         frames, _, count = line.rpartition(" ")
         if not frames or not count.isdigit():
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        if thread is not None:
+            raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")
         samples.stacks[frames] += int(count)
     return samples
 

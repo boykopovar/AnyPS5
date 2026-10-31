@@ -648,5 +648,24 @@ class CandidateModuleTests(unittest.TestCase):
                 self.assertEqual(symbolizer.frame(self.frame), self.frame)
 
 
+class ThreadFilterInputTests(unittest.TestCase):
+    def test_collapsed_stacks_reject_thread_filter_without_writing_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            capture = root / "samples.txt"
+            capture.write_text("example.prx+0x1010 5\n", encoding="utf-8")
+            output = root / "output.txt"
+            output.write_bytes(b"existing output\n")
+            result = subprocess.run([sys.executable, symbolize_samples.__file__, str(capture),
+                                     "--libs", str(root), "--thread", "123", "--out", str(output)],
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("thread filtering requires an address capture", result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(output.read_bytes(), b"existing output\n")
+
+
+
 if __name__ == "__main__":
     unittest.main()
