@@ -375,6 +375,8 @@ private:
         int tileMode = 0;
         std::uint64_t dccAddress = 0;
         bool imageTable = false;
+        std::optional<std::array<std::uint32_t, 8>> storedWords;
+        std::uint32_t storedMip = 0;
     };
     std::vector<DescribedRange> describedRanges;
     struct Allocation {
