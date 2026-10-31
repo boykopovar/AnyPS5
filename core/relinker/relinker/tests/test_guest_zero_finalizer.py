@@ -67,7 +67,7 @@ def check_native(case, output, converted, host, compiler, present, system, loade
     shutil.copyfile(host, libraries / 'libkernel.prx')
     events = case / 'events.txt'
     if system == 'windows':
-        for name in ('libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll'):
+        for name in ('libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll', 'libmcfgthread-2.dll'):
             dependency = compiler.parent / name
             if dependency.is_file():
                 shutil.copyfile(dependency, libraries / name)
