@@ -3,6 +3,7 @@
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -268,6 +269,43 @@ static void* APS5_VABI Vectors(void* arg) {
         :
         : [pattern] "r"(vectorPattern), [result] "r"(vectorResult), [stop] "r"(&vectorStop)
         : "memory", "cc", "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15");
+    return nullptr;
+}
+#endif
+
+#ifdef _WIN32
+static constexpr int DrainRounds = 10;
+static std::atomic<int> drainingRound{0};
+static std::uint32_t drainWord = 0;
+
+static void* APS5_VABI Churning(void* arg) {
+    auto& worker = *static_cast<Worker*>(arg);
+    worker.id = std::this_thread::get_id();
+    const std::string source(64u << 20u, 'a');
+    std::vector<wchar_t> converted(64u << 20u);
+    std::vector<char> moved(64u << 20u);
+    for (int round = 0; round < DrainRounds; ++round) {
+        worker.started.store(true);
+        while (drainingRound.load() == round) {
+            MultiByteToWideChar(CP_UTF8, 0, source.data(), static_cast<int>(source.size()), converted.data(), static_cast<int>(converted.size()));
+            std::memmove(moved.data(), source.data(), moved.size());
+            std::this_thread::yield();
+        }
+        Require(sceKernelSyncOnAddressWake(&drainWord, 1) >= 0);
+    }
+    return nullptr;
+}
+
+static constexpr int ExitRounds = 10;
+static std::atomic<bool> exitingRelease{false};
+
+static void* APS5_VABI ChurnUntil(void* arg) {
+    auto& worker = *static_cast<Worker*>(arg);
+    worker.id = std::this_thread::get_id();
+    const std::string source(64u << 20u, 'a');
+    std::vector<wchar_t> converted(64u << 20u);
+    worker.started.store(true);
+    while (!exitingRelease.load()) MultiByteToWideChar(CP_UTF8, 0, source.data(), static_cast<int>(source.size()), converted.data(), static_cast<int>(converted.size()));
     return nullptr;
 }
 #endif
@@ -701,6 +739,49 @@ int main() {
         Require(scePthreadJoin(vectorsThread, nullptr) == 0);
         Require(std::memcmp(vectorPattern, vectorResult, VectorBytes) == 0);
     }
+
+    Worker churning;
+    Pthread churningThread = nullptr;
+    Require(scePthreadCreate(&churningThread, nullptr, Churning, &churning, "churn then drain") == 0);
+    for (int round = 0; round < DrainRounds; ++round) {
+        while (!churning.started.load()) std::this_thread::yield();
+        churning.started.store(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const int before = calls.load();
+        Require(sceKernelRaiseException(churningThread, GUEST_SIGUSR1) == 0);
+        drainingRound.store(round + 1);
+        ExpectDelivery(before, churning.id);
+    }
+    Require(scePthreadJoin(churningThread, nullptr) == 0);
+
+    for (int round = 0; round < ExitRounds; ++round) {
+        exitingRelease.store(false);
+        Worker exiting;
+        Pthread exitingThread = nullptr;
+        Require(scePthreadCreate(&exitingThread, nullptr, ChurnUntil, &exiting, "exit after churn") == 0);
+        while (!exiting.started.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        const int result = sceKernelRaiseException(exitingThread, GUEST_SIGUSR1);
+        Require(result == 0 || result == SCE_KERNEL_ERROR_ESRCH);
+        exitingRelease.store(true);
+        Require(scePthreadJoin(exitingThread, nullptr) == 0);
+        Require(TimedWait::DeliveryDrainPending() == 0);
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    const int settledCalls = calls.load();
+    drainingRound.store(0);
+    Worker settled;
+    Pthread settledThread = nullptr;
+    Require(scePthreadCreate(&settledThread, nullptr, Churning, &settled, "settled") == 0);
+    for (int round = 0; round < DrainRounds; ++round) {
+        while (!settled.started.load()) std::this_thread::yield();
+        settled.started.store(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        Require(sceKernelRaiseException(settledThread, GUEST_SIGUSR1) == 0);
+        drainingRound.store(round + 1);
+        ExpectDelivery(settledCalls + round, settled.id);
+    }
+    Require(scePthreadJoin(settledThread, nullptr) == 0);
 #endif
 
     SpinState spin;
