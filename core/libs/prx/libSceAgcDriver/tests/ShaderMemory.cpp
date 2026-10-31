@@ -10010,8 +10010,12 @@ void verifyRuntimeImageSwitchDeduplication() {
             source.dwordCount = 8u;
             TableColumn column{};
             column.stride = 32u;
+            column.heapSource = 1u;
             source.tableColumn = column;
             program.Resources().descriptorSources.push_back(source);
+            DescriptorSource heap{};
+            heap.dwordCount = 4u;
+            program.Resources().descriptorSources.push_back(heap);
             modes = {image, image};
             modes[1].mipMode = static_cast<ImageMipMode>(2);
             program.Metadata().bindings.descriptors = {
