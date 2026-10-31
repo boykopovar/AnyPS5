@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import functools
 import os
 import re
 import shutil
@@ -221,6 +222,7 @@ class Namer:
 OBJDUMP_NAMES = ("objdump", "gobjdump", "x86_64-linux-gnu-objdump", "x86_64-elf-objdump")
 
 
+@functools.cache
 def gnu_objdump():
     for name in OBJDUMP_NAMES:
         path = shutil.which(name)

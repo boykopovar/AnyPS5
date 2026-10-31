@@ -179,6 +179,8 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
         def run(command, **kwargs):
             return subprocess.CompletedProcess(command, 0, versions[Path(command[0]).name], "")
 
+        annotate_module.gnu_objdump.cache_clear()
+        self.addCleanup(annotate_module.gnu_objdump.cache_clear)
         with mock.patch.object(annotate_module.shutil, "which", which), mock.patch.object(annotate_module.subprocess, "run", run):
             return annotate_module.gnu_objdump()
 
@@ -258,7 +260,9 @@ class AnnotateModuleTests(unittest.TestCase):
 
     def test_objdump_found_through_a_relative_path_entry_is_disassembled(self):
         found = Path(annotate_module.gnu_objdump()).absolute()
+        self.addCleanup(annotate_module.gnu_objdump.cache_clear)
         self.addCleanup(os.chdir, os.getcwd())
+        annotate_module.gnu_objdump.cache_clear()
         os.chdir(found.parent.parent)
         with mock.patch.dict(os.environ, {"PATH": found.parent.name}):
             self.assertFalse(Path(annotate_module.gnu_objdump()).is_absolute())
