@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -232,6 +233,132 @@ char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream) {
     stream->SyncStatus();
     stream->KeepDirectoryReadError(result == nullptr);
     return result;
+}
+}
+
+namespace {
+void* SafeAllocate(std::size_t size) {
+    try {
+        return ApplicationHeapAllocate_nid_no_patch(size);
+    } catch (const std::bad_alloc&) {
+    } catch (const std::length_error&) {
+    }
+    errno = 12;
+    return nullptr;
+}
+void* SafeReallocate(void* ptr, std::size_t size) {
+    try {
+        return ApplicationHeapReallocate_nid_no_patch(ptr, size);
+    } catch (const std::bad_alloc&) {
+    } catch (const std::length_error&) {
+    }
+    errno = 12;
+    return nullptr;
+}
+}
+
+namespace LibcDetail {
+bool ExpandLineBufferCapacity(std::size_t current, std::size_t needed, std::size_t limit, std::size_t& result) {
+    if (needed > limit) return false;
+    std::size_t next = current < 64 ? 128 : (current <= limit / 2 ? current * 2 : limit);
+    if (next < needed) next = needed;
+    if (next > limit || next <= current) return false;
+    result = next;
+    return true;
+}
+}
+
+extern "C" {
+std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, size_t* n, int delimiter, FileStream* stream) {
+    if (!stream) {
+        errno = 22;
+        return -1;
+    }
+    if (!stream->IsOpen()) {
+        errno = 9;
+        return -1;
+    }
+    if (!lineptr || !n) {
+        stream->SetError();
+        errno = 22;
+        return -1;
+    }
+    constexpr std::size_t maxLineSize = static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max());
+    flockfile_nid_postfix(stream);
+    struct Unlock {
+        FileStream* stream;
+        ~Unlock() { funlockfile_nid_postfix(stream); }
+    } unlock{stream};
+
+    if (*lineptr == nullptr) {
+        *n = 0;
+        std::size_t initialSize = 128;
+        char* newBuf = static_cast<char*>(SafeAllocate(initialSize));
+        if (!newBuf) {
+            stream->SetError();
+            return -1;
+        }
+        *lineptr = newBuf;
+        *n = initialSize;
+    }
+
+    std::size_t pos = 0;
+    for (;;) {
+        const int ch = fgetc_nid_postfix(stream);
+        if (ch == -1) {
+            if (ferror_nid_postfix(stream)) {
+                stream->SetError();
+                return -1;
+            }
+            if (pos == 0) {
+                if (*n < 1) {
+                    std::size_t nextCapacity = 0;
+                    if (!LibcDetail::ExpandLineBufferCapacity(*n, 1, maxLineSize, nextCapacity)) {
+                        errno = 84;
+                        stream->SetError();
+                        return -1;
+                    }
+                    char* resized = static_cast<char*>(SafeReallocate(*lineptr, nextCapacity));
+                    if (!resized) {
+                        stream->SetError();
+                        return -1;
+                    }
+                    *lineptr = resized;
+                    *n = nextCapacity;
+                }
+                (*lineptr)[0] = '\0';
+                return -1;
+            }
+            break;
+        }
+        if (pos + 2 > *n) {
+            std::size_t nextCapacity = 0;
+            if (!LibcDetail::ExpandLineBufferCapacity(*n, pos + 2, maxLineSize, nextCapacity)) {
+                errno = 84;
+                stream->SetError();
+                return -1;
+            }
+            char* resized = static_cast<char*>(SafeReallocate(*lineptr, nextCapacity));
+            if (!resized) {
+                stream->SetError();
+                return -1;
+            }
+            *lineptr = resized;
+            *n = nextCapacity;
+        }
+        (*lineptr)[pos++] = static_cast<char>(ch);
+        if (ch == static_cast<unsigned char>(delimiter)) break;
+    }
+    if (pos > maxLineSize) {
+        errno = 84;
+        stream->SetError();
+        return -1;
+    }
+    (*lineptr)[pos] = '\0';
+    return static_cast<std::int64_t>(pos);
+}
+std::int64_t APS5_VABI getline_nid_postfix(char** lineptr, size_t* n, FileStream* stream) {
+    return getdelim_nid_postfix(lineptr, n, '\n', stream);
 }
 int APS5_VABI feof_nid_postfix(FileStream* stream) {
     stream->SyncStatus();
