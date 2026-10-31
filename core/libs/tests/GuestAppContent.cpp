@@ -104,6 +104,15 @@ int main() {
     Require(std::filesystem::exists(downloadData / "index.dat"));
     Require(sceAppContentDownloadDataFormat(&download) == 0);
     Require(std::filesystem::is_directory(downloadData) && std::filesystem::is_empty(downloadData));
+    AppContentMountPoint download2Mount{};
+    std::memcpy(download2Mount.data, "/download2", 11);
+    const auto download2Data = ResolvePath_nid_no_patch("/download2");
+    std::filesystem::create_directories(download2Data);
+    { std::ofstream file(downloadData / "preserve.bin"); file << "download0"; }
+    { std::ofstream file(download2Data / "old.bin"); file << "download2"; }
+    Require(sceAppContentDownloadDataFormat(&download2Mount) == 0);
+    Require(std::filesystem::is_directory(download2Data) && std::filesystem::is_empty(download2Data));
+    Require(std::filesystem::exists(downloadData / "preserve.bin"));
 
     const int32_t expectedParams[] = {3, 23566, -7, 0, 2147483647};
     for (uint32_t id = 0; id < 5; ++id) {
