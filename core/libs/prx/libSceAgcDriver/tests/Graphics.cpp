@@ -846,12 +846,14 @@ void msaaEnableClearOneSampleTargetTests() {
     queue = drawC();
     queue.context[0x1b3] |= ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
     requireOneSample(queue, "draw C with an enabled but unaddressed ANCILLARY input");
-    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index or coverage input, or a sample-mask export";
-    for (const auto input : {ShaderRecompiler::PixelInput::Ancillary, ShaderRecompiler::PixelInput::SampleCoverage}) {
-        queue = drawC();
-        queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(input);
-        expectFailure([&] { DecodeState(queue); }, refused);
-    }
+    constexpr std::string_view refused = "a one-sample color target under a multisampled rasterizer without MSAA_ENABLE is unsupported with a sample index input under PS_ITER_SAMPLE, a coverage input, or a sample-mask export";
+    queue = drawC();
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
+    requireOneSample(queue, "draw C whose pixel program reads ANCILLARY without PS_ITER_SAMPLE");
+    Require(!DecodeState(queue).perSampleShading, "ANCILLARY into a one-sample color target without MSAA_ENABLE asked for sample shading");
+    queue = drawC();
+    queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::SampleCoverage);
+    expectFailure([&] { DecodeState(queue); }, refused);
     queue = drawC();
     queue.context[0x293] = 0x10000u;
     queue.context[0x1b3] = queue.context[0x1b4] = 2u | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PerspectiveSample);
