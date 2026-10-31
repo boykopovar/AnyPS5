@@ -98,6 +98,7 @@ inline TextureTileMode MipTileMode(TextureTileMode tileMode, const TileMipLayout
 bool LevelsFitAllocation(const GuestTextureResource& surface, std::uint32_t levels);
 GuestTextureResource ViewedArrayWindow(const GuestTextureResource& viewed, bool keysReadAsStored);
 GuestTextureResource ArrayLayerWindow(const GuestTextureResource& viewed, std::uint32_t maxArrayLayers);
+GuestTextureResource BoundArrayWindow(const GuestTextureResource& viewed, std::uint64_t availableBytes);
 
 }
 

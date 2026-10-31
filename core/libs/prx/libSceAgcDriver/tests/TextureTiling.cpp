@@ -705,6 +705,41 @@ void RunTextureTilingTests() {
         const auto kept = ArrayLayerWindow(fitting, 2048);
         Require(kept.baseAddress == fitting.baseAddress && kept.baseArray == fitting.baseArray && kept.depthOrLastArray == fitting.depthOrLastArray, "an array within maxImageArrayLayers must keep its descriptor");
 
+        auto outsideAllocation = array;
+        outsideAllocation.baseArray = 0;
+        outsideAllocation.depthOrLastArray = 6144;
+        const auto bounded = BoundArrayWindow(outsideAllocation, geometry.layerBytes * 90u);
+        Require(bounded.baseAddress == outsideAllocation.baseAddress && bounded.baseArray == 0 && bounded.depthOrLastArray == 89, "a sampled array view must stop at the registered allocation boundary");
+        auto boundedWindow = outsideAllocation;
+        boundedWindow.baseArray = 6;
+        Require(BoundArrayWindow(boundedWindow, geometry.layerBytes * 90u).depthOrLastArray == 89, "a sampled array window must preserve its in-range starting slice when bounded");
+        boundedWindow.baseArray = 90;
+        const auto firstSlice = BoundArrayWindow(boundedWindow, geometry.layerBytes * 90u);
+        Require(firstSlice.baseArray == 0 && firstSlice.depthOrLastArray == 0, "a sampled array window starting past its allocation must fall back to its first slice");
+        reject([&] { static_cast<void>(BoundArrayWindow(boundedWindow, geometry.layerBytes - 1u)); }, "no complete slice");
+
+        auto cubes = outsideAllocation;
+        cubes.dimension = TextureDimension::kCube;
+        cubes.baseArray = 0;
+        cubes.depthOrLastArray = 11;
+        const auto cubeLayers = [](const GuestTextureResource& window) { return window.depthOrLastArray - window.baseArray + 1u; };
+        reject([&] { static_cast<void>(BoundArrayWindow(cubes, geometry.layerBytes * 5u)); }, "no complete cube");
+        const auto trailing = BoundArrayWindow(cubes, geometry.layerBytes * 8u);
+        Require(trailing.baseArray == 0 && trailing.depthOrLastArray == 5 && cubeLayers(trailing) % 6u == 0, "a cube view must be cut to the complete cubes of its allocation");
+        auto cubesPastAllocation = cubes;
+        cubesPastAllocation.baseArray = 12;
+        cubesPastAllocation.depthOrLastArray = 17;
+        const auto firstCube = BoundArrayWindow(cubesPastAllocation, geometry.layerBytes * 6u);
+        Require(firstCube.baseArray == 0 && firstCube.depthOrLastArray == 5, "a cube view starting past its allocation must fall back to its first complete cube");
+        auto cubesNearEnd = cubes;
+        cubesNearEnd.baseArray = 6;
+        const auto nearEnd = BoundArrayWindow(cubesNearEnd, geometry.layerBytes * 8u);
+        Require(cubeLayers(nearEnd) >= 6u && cubeLayers(nearEnd) % 6u == 0, "a cube view whose last cube is incomplete must still hold complete cubes");
+        const auto fittingCubes = BoundArrayWindow(cubes, geometry.layerBytes * 12u);
+        Require(fittingCubes.baseArray == 0 && fittingCubes.depthOrLastArray == 11, "a cube view within its allocation keeps its descriptor");
+        const auto cubeAbove = BoundArrayWindow(cubes, geometry.layerBytes * 13u);
+        Require(cubeAbove.depthOrLastArray == 11, "a cube view within its allocation keeps its descriptor even when a partial cube follows");
+
         auto linear = array;
         linear.tileMode = TextureTileMode::kLinear;
         Require(ArrayLayerWindow(linear, 2048).baseAddress == linear.baseAddress + 1536ull * DescribeSurface(linear).layerBytes, "a linear storage view past maxImageArrayLayers must start at its first viewed slice");

@@ -708,6 +708,27 @@ GuestTextureResource ArrayLayerWindow(const GuestTextureResource& viewed, std::u
     return window;
 }
 
+GuestTextureResource BoundArrayWindow(const GuestTextureResource& viewed, std::uint64_t availableBytes) {
+    const bool layered = viewed.dimension == TextureDimension::k2DArray || viewed.dimension == TextureDimension::k1DArray || viewed.dimension == TextureDimension::kCube;
+    if (!layered) return viewed;
+    Require(viewed.baseArray <= viewed.depthOrLastArray, "an image view's first array slice lies past its last");
+    const auto geometry = DescribeSurface(viewed);
+    Require(!geometry.thick && geometry.layerBytes != 0, "an array window must use thin slices");
+    auto availableLayers = availableBytes / geometry.layerBytes;
+    if (availableLayers > viewed.depthOrLastArray) return viewed;
+    const bool cube = viewed.dimension == TextureDimension::kCube;
+    if (cube) availableLayers -= availableLayers % 6u;
+    Require(availableLayers != 0, cube ? "a cube view has no complete cube in its registered guest allocation" : "an array view has no complete slice in its registered guest allocation");
+    auto bounded = viewed;
+    if (viewed.baseArray >= availableLayers || (cube && viewed.baseArray + 6u > availableLayers)) {
+        bounded.baseArray = 0;
+        bounded.depthOrLastArray = cube ? 5u : 0u;
+        return bounded;
+    }
+    bounded.depthOrLastArray = static_cast<std::uint32_t>(availableLayers - 1u);
+    return bounded;
+}
+
 std::vector<TileMipLayout> ComputeElementMipLayout(TextureTileMode tileMode, std::uint32_t bytesPerElement, std::uint32_t width, std::uint32_t height, std::uint32_t mipCount) {
     Require(width != 0 && height != 0 && mipCount != 0 && mipCount <= 16u, "invalid surface mip chain");
     Require(!IsGcnTiled(tileMode), "PS4 surfaces are laid out by ComputeGcnMipLayout from their pitch");
