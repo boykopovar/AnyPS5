@@ -523,6 +523,38 @@ static void CheckSpecialPort(int user, int handle) {
     Require(scePadGetHandle(user, 0, 0) == handle);
 }
 
+static void CheckHeldSampleTimes(int handle) {
+    PadData samples[64]{};
+    scePadRead_nid_postfix(handle, samples, 64);
+    PadInputState held;
+    held.buttons = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    held.sticks[0] = 200;
+    PadPublishInput_nid_postfix(held);
+    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    PadData first{}, second{};
+    Require(scePadReadState(handle, &first) == PAD_OK);
+    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    Require(scePadReadState(handle, &second) == PAD_OK);
+    Require(first.buttons == held.buttons && second.buttons == held.buttons);
+    Require(first.left_stick_x == 200 && second.left_stick_x == 200);
+    if (second.timestamp <= first.timestamp) {
+        std::fputs("scePadReadState returned a stale timestamp for held input\n", stderr);
+        std::abort();
+    }
+    Require(scePadRead_nid_postfix(handle, samples, 64) == 1);
+    Require(samples[0].buttons == held.buttons && samples[0].timestamp <= first.timestamp);
+    Require(scePadRead_nid_postfix(handle, &first, 1) == 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(3));
+    Require(scePadRead_nid_postfix(handle, &second, 1) == 1);
+    Require(first.buttons == held.buttons && second.buttons == held.buttons);
+    Require(first.left_stick_x == 200 && second.left_stick_x == 200);
+    if (second.timestamp <= first.timestamp) {
+        std::fputs("scePadRead returned a stale timestamp for held input\n", stderr);
+        std::abort();
+    }
+    PadPublishInput_nid_postfix(PadInputState{});
+}
+
 static void CheckRemoteController(int handle) {
     bool remote = true;
     Require(scePadIsRemoteController(handle + 1, &remote) == PAD_ERROR_INVALID_HANDLE);
@@ -940,6 +972,7 @@ int main() {
     CheckLatchedPressAtSlowReads(handle);
     CheckLatchedPressPerPort();
     CheckReadStateHandle(handle);
+    CheckHeldSampleTimes(handle);
     CheckRemoteController(handle);
     CheckTrackerDevices(handle);
     CheckAccessibilityControllerState(handle);
