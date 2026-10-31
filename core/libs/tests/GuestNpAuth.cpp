@@ -122,6 +122,9 @@ int main() {
     Require(asyncWait == signedOut);
     Require(sceNpAuthPollAsync(asyncReq, reinterpret_cast<int*>(0x10)) == invalidArgument);
     Require(sceNpAuthWaitAsync(asyncReq, reinterpret_cast<int*>(0x10)) == invalidArgument);
+    asyncWait = 0;
+    Require(sceNpAuthWaitAsync(asyncReq, &asyncWait) == 0);
+    Require(asyncWait == signedOut);
 
     Require(sceNpAuthGetAuthorizationCodeV3(asyncReq2, param, authCode, &issuerId) == 0);
     Require(sceNpAuthGetAuthorizationCodeV3(asyncReq2, param, authCode, &issuerId) == invalidArgument);
