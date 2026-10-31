@@ -2556,6 +2556,8 @@ target_include_directories(agc_driver_image_table_cache_bounds_tests PRIVATE $<T
 
 target_include_directories(agc_driver_draw_cache_relocation_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
 
+target_include_directories(agc_driver_gcn_compare_exec_writes_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+
 if(BUILD_TESTING)
     add_test(NAME agc_driver_linear_target_completion_points_sync_flip COMMAND agc_driver_linear_target_completion_points_tests --flip)
     set_tests_properties(agc_driver_linear_target_completion_points_sync_flip PROPERTIES
