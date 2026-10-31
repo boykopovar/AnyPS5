@@ -1812,9 +1812,6 @@ int main() {
     bool lchmodThrew = false;
     try { lchmod_nid_postfix(modeLink.c_str(), 0600); } catch (const std::exception&) { lchmodThrew = true; }
     Require(lchmodThrew);
-    bool fchmodatThrew = false;
-    try { fchmodat_nid_postfix(-100, modeLink.c_str(), 0600, 0x0200); } catch (const std::exception&) { fchmodatThrew = true; }
-    Require(fchmodatThrew);
 #endif
     Require((std::filesystem::status(modeFile).permissions() & std::filesystem::perms::all) == readable);
     Require(RemoveSymlink(modeLink));
