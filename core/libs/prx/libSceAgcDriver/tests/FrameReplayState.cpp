@@ -2,8 +2,10 @@
 #include "../tools/FrameReplay.cpp"
 #undef main
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <barrier>
+#include <new>
 
 namespace {
 
@@ -182,6 +184,94 @@ void testEopTokens() {
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
 }
 
+class ReservationOutput final : public AgcDriver::IVideoOutput {
+public:
+    explicit ReservationOutput(Frames& frames) : frames(frames) {}
+    std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override {
+        ++reservations;
+        if (failure) std::rethrow_exception(failure);
+        return available ? std::make_shared<ReplayFlip>(frames) : nullptr;
+    }
+    void Fail(std::exception_ptr error) noexcept override { frames.Failed(error); }
+    std::exception_ptr failure;
+    bool available = true;
+    std::size_t reservations = 0;
+
+private:
+    Frames& frames;
+};
+
+FrameCall reservationCall(std::uint32_t token) {
+    FrameCall call;
+    call.kind = FrameCallKind::ReserveEopFlip;
+    call.values = {7, static_cast<std::uint64_t>(-1), 1, 99, token};
+    return call;
+}
+
+template <typename TException>
+void expectReservationFailure(Replay& replay, const FrameCall& call) {
+    const auto kept = replay.keptReservations.load();
+    bool failed = false;
+    try { replay.runWindow(std::span(&call, 1)); }
+    catch (const TException&) { failed = true; }
+    check(failed, "the replay accepted a failed EOP reservation");
+    check(replay.keptReservations.load() == kept, "a failed EOP reservation was counted as kept");
+}
+
+void testRepeatedReservations(const std::filesystem::path& directory, bool driverFailure) {
+    FrameCaptureWriter writer(directory);
+    writer.Finish("{}");
+    const FrameCaptureReader reader(directory);
+    Options options;
+    options.pace = false;
+    options.release = false;
+    Replay replay{options, reader};
+    auto output = std::make_shared<ReservationOutput>(replay.frames);
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    AgcDriverRegisterVideoOutput_nid_postfix(8, output);
+    const auto call = reservationCall(AgcDriver::EopFlipTokenBase);
+    replay.execute(call);
+    expectReservationFailure<AgcDriver::EopFlipAlreadyReserved>(replay, call);
+    replay.pass = 1;
+    if (driverFailure) {
+        AgcDriverReportFailure_nid_postfix(std::make_exception_ptr(std::runtime_error("reservation driver failure")));
+        expectReservationFailure<std::runtime_error>(replay, call);
+        bool failed = false;
+        try { AgcDriverShutdown_nid_postfix(); }
+        catch (const std::runtime_error& error) { failed = std::string_view(error.what()) == "reservation driver failure"; }
+        check(failed, "the injected driver failure was not propagated at shutdown");
+        return;
+    }
+    replay.runWindow(std::span(&call, 1));
+    check(replay.keptReservations.load() == 1 && output->reservations == 1, "a compatible pending reservation was not kept without allocating again");
+    for (std::size_t field = 0; field < 4; ++field) {
+        auto different = call;
+        ++different.values[field];
+        expectReservationFailure<std::runtime_error>(replay, different);
+    }
+    auto missing = call;
+    missing.values[0] = 9;
+    expectReservationFailure<std::runtime_error>(replay, missing);
+    expectReservationFailure<std::runtime_error>(replay, reservationCall(AgcDriver::EopFlipTokenBase - 1));
+    expectReservationFailure<std::runtime_error>(replay, reservationCall(AgcDriver::EopFlipTokenLimit + 1));
+    const auto fresh = reservationCall(AgcDriver::EopFlipTokenBase + 1);
+    output->failure = std::make_exception_ptr(std::bad_alloc{});
+    expectReservationFailure<std::bad_alloc>(replay, fresh);
+    output->failure = std::make_exception_ptr(std::runtime_error("reservation output failure"));
+    expectReservationFailure<std::runtime_error>(replay, fresh);
+    output->failure = nullptr;
+    output->available = false;
+    expectReservationFailure<std::runtime_error>(replay, fresh);
+    output->available = true;
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+    auto replacement = std::make_shared<ReservationOutput>(replay.frames);
+    AgcDriverRegisterVideoOutput_nid_postfix(7, replacement);
+    replay.runWindow(std::span(&call, 1));
+    check(replay.keptReservations.load() == 1 && replacement->reservations == 1, "a closed output's token was kept after reopening");
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, replacement);
+    AgcDriverUnregisterVideoOutput_nid_postfix(8, output);
+}
+
 class WaitingOutput final : public AgcDriver::IVideoOutput {
 public:
     WaitingOutput(Frames& frames, const std::uint32_t* label) : frames(frames), label(label) {}
@@ -287,6 +377,101 @@ void testShaderCode(const std::filesystem::path& directory, bool host) {
         }
     }
     check(registered && captured == expected, "the complete separate shader code was not captured before registration");
+    CapturedMemory memory(reader);
+    std::map<std::uint64_t, std::vector<const FrameMemoryChunk*>> groups;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind == FrameMemoryKind::Delta) groups[chunk.group].push_back(&chunk);
+    }
+    std::optional<std::vector<std::byte>> listed;
+    for (const auto& call : reader.Calls()) {
+        if (call.kind == FrameCallKind::RegisterShader) {
+            listed = memory.Read(address(code), CodeBytes);
+            break;
+        }
+        if (call.kind != FrameCallKind::Memory) continue;
+        if (const auto found = groups.find(call.values.at(0)); found != groups.end()) memory.Apply(found->second);
+    }
+    check(listed && *listed == expected, "the offline shader listing read other code than the capture holds at the registration");
+}
+
+void writeInspectionCapture(const std::filesystem::path& directory) {
+    constexpr std::uint64_t Commands = 0x1000000001ull;
+    constexpr std::uint64_t Header = 0x2000000000ull;
+    constexpr std::uint64_t Code = 0x2000010000ull;
+    const std::array<std::uint32_t, 27> commands{
+        0x00010000u, 0xc0053c00u, 0xc0064900u, 0x80000000u, 0xffff1000u,
+        0xc0053c00u, 0x13u, 0x12345678u, 0x9abcdef0u, 0x10203040u, 0xf0f0f0f0u, 4u,
+        0xc0064900u, 1u, 2u, 3u, 4u, 5u, 6u, 7u,
+        0xc0033700u, 0x500u, 0xdeadbeefu, 0x12u, 0x1337u,
+        0x00030000u, 0xc0053c00u};
+    std::array<std::uint8_t, 16> code{0, 1, 2, 3, 4, 5, 6, 7, 255, 128, 13, 10, 39, 36, 38, 0};
+    Shader shader{};
+    shader.code = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(Code));
+    shader.shader_size = code.size();
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(Commands, 6, FrameRangeKind::Host, ReadWrite, FrameRangeAccess::Readable);
+    writer.WriteRange(Commands + 6, sizeof(commands) - 6, FrameRangeKind::Host, ReadWrite, FrameRangeAccess::Readable);
+    writer.WriteRange(Header, sizeof(shader), FrameRangeKind::Host, ReadWrite, FrameRangeAccess::Readable);
+    writer.WriteRange(Code, code.size(), FrameRangeKind::Host, ReadWrite, FrameRangeAccess::Readable);
+    writer.WriteSnapshot(Header, std::as_bytes(std::span(&shader, 1)));
+    writer.WriteSnapshot(Code, std::as_bytes(std::span(code)));
+    writer.WriteDelta(1, 0, Commands, std::as_bytes(std::span(commands)));
+    const std::uint32_t reference = 0x55667788u;
+    writer.WriteDelta(2, 0, Commands + 9 * sizeof(std::uint32_t), std::as_bytes(std::span(&reference, 1)));
+    code[0] = 0x42;
+    writer.WriteDelta(3, 0, Code, std::as_bytes(std::span(code)));
+    FrameCall call;
+    const auto write = [&](FrameCallKind kind, std::uint64_t location, std::uint64_t size, std::vector<std::uint64_t> values = {}) {
+        call.kind = kind;
+        ++call.ordinal;
+        call.address = location;
+        call.size = size;
+        call.values = std::move(values);
+        call.thread = 7;
+        call.queue = 0x42;
+        call.accepted = 12;
+        call.completed = 9;
+        writer.WriteCall(call);
+    };
+    write(FrameCallKind::Submit, Commands, commands.size());
+    write(FrameCallKind::Memory, 0, 0, {1});
+    write(FrameCallKind::RegisterShader, Header, 0);
+    write(FrameCallKind::FrameStart, 0, 0);
+    write(FrameCallKind::Submit, Commands, commands.size());
+    write(FrameCallKind::Memory, 0, 0, {2});
+    write(FrameCallKind::Submit, Commands, commands.size());
+    write(FrameCallKind::RegisterShader, Header, 0);
+    write(FrameCallKind::Memory, 0, 0, {3});
+    write(FrameCallKind::RegisterShader, Header, 0);
+    write(FrameCallKind::Flip, 0, 0);
+    write(FrameCallKind::ReserveEopFlip, 0, 0);
+    write(FrameCallKind::Submit, 0x3000000000ull, 1);
+    write(FrameCallKind::Submit, Commands, std::numeric_limits<std::uint64_t>::max());
+    write(FrameCallKind::Submit, std::numeric_limits<std::uint64_t>::max() - 1, 1);
+    write(FrameCallKind::Submit, Commands, 0);
+    writer.Finish("{}");
+}
+
+void testColdPipelines() {
+    const auto* inherited = std::getenv("APS5_HEADLESS_PIPELINE_CACHE");
+    check(inherited != nullptr && std::string_view(inherited) == "1", "pipeline cache setting was not inherited");
+    Options options;
+    options.coldPipelines = true;
+    configureEnvironment(options);
+    check(std::getenv("APS5_HEADLESS_PIPELINE_CACHE") == nullptr, "cold replay kept the inherited pipeline cache setting");
+    check(std::getenv("APS5_FRAME_CAPTURE") == nullptr, "replay kept the capture setting");
+    options.coldPipelines = false;
+    configureEnvironment(options);
+    const auto* warm = std::getenv("APS5_HEADLESS_PIPELINE_CACHE");
+    check(warm != nullptr && std::string_view(warm) == "1", "warm replay did not enable the pipeline cache");
+#ifdef _WIN32
+    _putenv_s("APS5_HEADLESS_PIPELINE_CACHE", "0");
+#else
+    setenv("APS5_HEADLESS_PIPELINE_CACHE", "0", 1);
+#endif
+    options.coldPipelines = true;
+    configureEnvironment(options);
+    check(std::getenv("APS5_HEADLESS_PIPELINE_CACHE") == nullptr, "cold replay kept a present zero pipeline cache setting");
 }
 
 }
@@ -296,16 +481,22 @@ int main(int argc, char** argv) {
         check(argc == 3, "expected a test name and capture directory");
         const std::string mode = argv[1];
         const std::filesystem::path directory = argv[2];
+        if (mode == "inspect_capture") {
+            writeInspectionCapture(directory);
+            return 0;
+        }
         if (mode == "order") testMemoryOrder(directory);
         else if (mode == "zero") testReusedMemory(directory);
         else if (mode == "shared_page") testSharedPage(directory);
         else if (mode == "host_neighbors") testHostNeighbors(directory);
         else if (mode == "unwatched") testUnwatched();
         else if (mode == "tokens") testEopTokens();
+        else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
+        else if (mode == "environment") testColdPipelines();
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
         else throw std::runtime_error("unknown test");
-        AgcDriverShutdown_nid_postfix();
+        if (mode != "reservation_failure") AgcDriverShutdown_nid_postfix();
         std::puts("frame replay state test passed");
         return 0;
     } catch (const std::exception& error) {
