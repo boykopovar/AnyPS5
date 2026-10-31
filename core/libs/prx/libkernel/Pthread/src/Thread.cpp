@@ -59,6 +59,7 @@ static constexpr int GUEST_EINVAL = 22;
 static constexpr std::size_t HOST_STACK_MARGIN = 1u << 20;
 static constexpr int DETACH_DETACHED = 1;
 static constexpr std::size_t THREAD_NAME_CAPACITY = 32;
+static constexpr std::uint16_t GUEST_THREAD_FPU_CONTROL = 0x037f;
 
 #ifdef _WIN32
 #include <windows.h>
@@ -795,6 +796,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
     BindHostCpuClock(self);
     TimedWait::BindThreadWaitState(&self->waitCount);
     CurrentGuestState().current = self;
+    asm volatile("fldcw %0" : : "m"(GUEST_THREAD_FPU_CONTROL));
     RegisterStack(self);
 #ifndef _WIN32
     const sigset_t signalMask = args->signalMask;
