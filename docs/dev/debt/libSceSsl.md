@@ -17,3 +17,12 @@
 
 ### Functional
 - [System roots for HTTP](../../../core/libs/prx/libSceSsl/Export.cpp) (libSceSsl) - `SslTrustSystemRoots_nid_no_patch` makes one connection also trust the system CA list, read once per process from `/<sandbox word>/common/cert/CA_LIST.cer`. It is parsed into a separate allocation pool, not charged to the title's `sceSslInit` pool, and linked after the context's own authorities; `sceSslGetCaList` and `sceSslGetCaCerts` do not report it. A missing, empty or certificate-free list throws and names the path instead of trusting nothing. Only the HTTP libraries call it: whether a bare libSceSsl connection on the console trusts the system roots is not measured, so `sceSslCreateConnection` alone keeps trusting only the context's authorities
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceSsl/Export.cpp) - 2 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `IuduYLwFh9c` |
+| `Unknown` | `KPh5GncdOcc` |

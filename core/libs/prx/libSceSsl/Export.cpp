@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceSsl/include/InventoryExports.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
 #ifdef _WIN32
 #include <winsock2.h>
@@ -1426,5 +1428,19 @@ int APS5_VABI sceSslSetServerName() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceSslUnknown_IuduYLwFh9c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IuduYLwFh9c", libSceSslUnknown_IuduYLwFh9c_nid_no_patch);
+
+int APS5_VABI libSceSslUnknown_KPh5GncdOcc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KPh5GncdOcc", libSceSslUnknown_KPh5GncdOcc_nid_no_patch);
 
 }
