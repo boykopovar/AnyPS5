@@ -115,9 +115,10 @@ private:
         Recorder* recorder = nullptr;
         std::uint64_t serial = 0;
         bool open = false;
-        std::uint64_t entries = 0;
+        std::uint64_t entered = 0;
     };
     std::vector<Chunk> ringChunks;
+    std::uint64_t ringEntries = 0;
     std::size_t ringChunk = ~std::size_t{0};
     void enterRingChunk(std::size_t index);
     std::size_t wrapRingOffset(std::size_t offset, std::size_t bytes);

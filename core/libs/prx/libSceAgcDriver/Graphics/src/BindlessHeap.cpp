@@ -530,21 +530,22 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words) {
 bool BindlessHeap::Held(const SpanMark& mark) {
     if (mark.entry == 0u || mark.words == 0u) return false;
     const auto first = chunkOf(mark.offset);
-    if (first != lastChunkOf(mark.offset, static_cast<std::size_t>(mark.words) * sizeof(std::uint32_t))) return false;
+    const auto last = lastChunkOf(mark.offset, static_cast<std::size_t>(mark.words) * sizeof(std::uint32_t));
     std::lock_guard lock(mutex);
-    auto& chunk = ringChunks[first];
-    if (chunk.entries != mark.entry) {
-        ++counts.spansExpired;
-        return false;
+    for (auto chunk = first; chunk <= last; ++chunk) {
+        if (ringChunks[chunk].entered > mark.entry) {
+            ++counts.spansExpired;
+            return false;
+        }
     }
-    chunk.open = true;
+    for (auto chunk = first; chunk <= last; ++chunk) ringChunks[chunk].open = true;
     ++counts.spansKept;
     return true;
 }
 
 BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark) {
     const auto bytes = ringInHeap ? alignUp(words * sizeof(std::uint32_t), RingSpanAlignment) : words * sizeof(std::uint32_t);
-    if (bytes > RingChunkBytes) throw std::runtime_error("AGC bindless heap: per-draw data exceeds a ring chunk");
+    if (bytes > ringBytes / 2u) throw std::runtime_error("AGC bindless heap: per-draw data exceeds half the shader data ring");
     std::lock_guard lock(mutex);
     auto offset = wrapRingOffset(alignUp(ringCursor, ringAlignment), bytes);
     const auto keptAhead = [&] {
@@ -562,7 +563,7 @@ BindlessHeap::DataSpan BindlessHeap::Allocate(std::size_t words, SpanMark& mark)
     for (auto chunk = chunkOf(offset); chunk <= lastChunkOf(offset, bytes); ++chunk) enterRingChunk(chunk);
     auto* base = reinterpret_cast<std::uint32_t*>(ringData + offset);
     ++counts.spansWritten;
-    mark = {static_cast<std::uint32_t>(offset), static_cast<std::uint32_t>(words), ringChunks[chunkOf(offset)].entries};
+    mark = {static_cast<std::uint32_t>(offset), static_cast<std::uint32_t>(words), ringEntries};
     return {static_cast<std::uint32_t>(offset), std::span<std::uint32_t>(base, words)};
 }
 
@@ -584,7 +585,7 @@ void BindlessHeap::enterRingChunk(std::size_t index) {
         chunk.serial = 0u;
     }
     chunk.open = true;
-    ++chunk.entries;
+    chunk.entered = ++ringEntries;
 }
 
 void BindlessHeap::writeSamplerSlot(std::uint32_t slot, VkSampler sampler) {
