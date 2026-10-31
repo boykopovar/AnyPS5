@@ -17,36 +17,68 @@ BUTTONS = {
 }
 
 
+def command_line(command):
+    line = command.readline(129)
+    if os.name == "nt" and line.endswith(b"\r\n"):
+        line = line[:-2] + b"\n"
+    return line
+
+
+def unsigned_tokens(tokens):
+    if not tokens or any(re.fullmatch(rb"\+?[0-9]+", token) is None for token in tokens):
+        return None
+    values = [int(token) for token in tokens]
+    if any(value > 2**64 - 1 for value in values):
+        return None
+    return values
+
+
+def timeline_body_valid(command, count):
+    previous_end = 0
+    for _ in range(count):
+        line = command_line(command)
+        values = unsigned_tokens(line.split())
+        if len(line.rstrip(b"\n")) > 127 or values is None or len(values) != 3:
+            return False
+        start, duration, buttons = values
+        if buttons & ~0x70fffe or not 1 <= duration <= 5000 or start < previous_end:
+            return False
+        if start > 3600000 - duration:
+            return False
+        previous_end = start + duration
+    while chunk := command.read(65536):
+        if chunk.strip():
+            return False
+    return True
+
+
 def previous_sequence(path):
     try:
         with path.open("rb") as command:
-            line = command.readline(129)
+            line = command_line(command)
+            overlong = len(line.rstrip(b"\n")) > 127
+            tokens = line.split()
+            timeline = tokens[:1] == [b"APS5_PAD_TIMELINE"]
+            if not timeline and len(tokens) in (4, 8):
+                touch = re.fullmatch(rb"touch\((\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+)\)", tokens.pop())
+                if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 942, 127, 1))):
+                    return 0
+            if timeline:
+                tokens = tokens[1:]
+            values = unsigned_tokens(tokens)
+            if overlong or values is None or len(values) not in ((3,) if timeline else (3, 7)):
+                return 0
+            if timeline:
+                if values[0] != 1 or not 1 <= values[2] <= 4096:
+                    return 0
+                return values[1] if timeline_body_valid(command, values[2]) else 0
+            if values[0] == 0 or values[1] & ~0x70fffe or not 1 <= values[2] <= 5000:
+                return 0
+            if any(axis > 255 for axis in values[3:]):
+                return 0
+            return values[0]
     except FileNotFoundError:
         return 0
-    if os.name == "nt" and line.endswith(b"\r\n"):
-        line = line[:-2] + b"\n"
-    tokens = line.split()
-    timeline = tokens[:1] == [b"APS5_PAD_TIMELINE"]
-    if not timeline and len(tokens) in (4, 8):
-        touch = re.fullmatch(rb"touch\((\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+),(\+?[0-9]+)\)", tokens.pop())
-        if touch is None or any(int(value) > limit for value, limit in zip(touch.groups(), (1919, 942, 127, 1))):
-            return 0
-    if timeline:
-        tokens = tokens[1:]
-    if len(line.rstrip(b"\n")) > 127 or len(tokens) not in ((3,) if timeline else (3, 7)):
-        return 0
-    if any(re.fullmatch(rb"\+?[0-9]+", token) is None for token in tokens):
-        return 0
-    values = [int(token) for token in tokens]
-    if any(value > 2**64 - 1 for value in values):
-        return 0
-    if timeline:
-        return values[1] if values[0] == 1 and 1 <= values[2] <= 4096 else 0
-    if values[0] == 0 or values[1] & ~0x70fffe or not 1 <= values[2] <= 5000:
-        return 0
-    if any(axis > 255 for axis in values[3:]):
-        return 0
-    return values[0]
 
 
 def next_sequence(path):

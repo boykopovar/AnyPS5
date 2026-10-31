@@ -66,6 +66,31 @@ class PadInputTests(unittest.TestCase):
         self.path.write_text("APS5_PAD_TIMELINE 1 2000 1\n0 100 16384\n", encoding="utf-8")
         self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
 
+    def test_timeline_body_advances_sequence_and_tolerates_trailing_whitespace(self):
+        self.path.write_text("APS5_PAD_TIMELINE 1 2000 2\n0 100 16384\n+200 +100 0\n\n \n", encoding="utf-8")
+        self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
+
+    def test_timeline_sequence_requires_a_valid_body(self):
+        for text in ["APS5_PAD_TIMELINE 1 2000 1\n",
+                     "APS5_PAD_TIMELINE 1 2000 2\n0 100 16384\n",
+                     "APS5_PAD_TIMELINE 1 2000 1\n0 100 16384\nextra\n",
+                     "APS5_PAD_TIMELINE 1 2000 1\n0 0 16384\n",
+                     "APS5_PAD_TIMELINE 1 2000 1\n0 5001 16384\n",
+                     "APS5_PAD_TIMELINE 1 2000 1\n3600000 1 16384\n",
+                     "APS5_PAD_TIMELINE 1 2000 2\n200 100 64\n0 100 64\n",
+                     "APS5_PAD_TIMELINE 1 2000 1\n0 100 4294967296\n",
+                     "APS5_PAD_TIMELINE 1 2000 1\n0 100 1\n",
+                     "APS5_PAD_TIMELINE 1 2000 1\n-0 100 16384\n",
+                     "APS5_PAD_TIMELINE 1 2000 1\n0 100 16384 64\n",
+                     "APS5_PAD_TIMELINE 1 2000 1\n0 100 " + "1" * 122 + "\n"]:
+            with self.subTest(text=text):
+                self.path.write_text(text, encoding="utf-8")
+                self.assertEqual(self.queue(1000, "down"), [1000, 64, 300])
+
+    def test_exhausted_timeline_header_with_rejected_body_does_not_lock_out_commands(self):
+        self.path.write_text("APS5_PAD_TIMELINE 1 18446744073709551615 1\n0 0 16384\n", encoding="utf-8")
+        self.assertEqual(self.queue(1000, "down"), [1000, 64, 300])
+
     def test_equal_clock_still_produces_new_pulses(self):
         first = self.queue(1000, "cross")
         second = self.queue(1000, "down")
