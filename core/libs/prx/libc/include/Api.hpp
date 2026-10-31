@@ -1443,6 +1443,8 @@ int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::si
 
 [[gnu::returns_twice]] int APS5_VABI setjmp_nid_postfix(std::uint64_t* buffer);
 [[noreturn]] void APS5_VABI longjmp_nid_postfix(std::uint64_t* buffer, int value);
+[[gnu::returns_twice]] int APS5_VABI _setjmp_nid_postfix(std::uint64_t* buffer);
+[[noreturn]] void APS5_VABI _longjmp_nid_postfix(std::uint64_t* buffer, int value);
 
 std::uint8_t APS5_VABI __atomic_load_1_nid_postfix(const volatile std::uint8_t* target, int);
 std::uint16_t APS5_VABI __atomic_load_2_nid_postfix(const volatile std::uint16_t* target, int);
