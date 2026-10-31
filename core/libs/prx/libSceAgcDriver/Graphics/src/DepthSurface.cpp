@@ -386,7 +386,10 @@ public:
             clearGeneration = 0u;
             pendingClear = 0u;
         }
-        Require(GuestMemory::UnchangedSinceAll(sampling.initial), "guest writes over native multisample depth are not implemented");
+        for (std::size_t index = 0u; index < sampling.initial.size(); ++index) {
+            if (index == 1u && target.htileDepthOnly) continue;
+            Require(GuestMemory::UnchangedSince(sampling.initial[index].address, sampling.initial[index].bytes, sampling.initial[index].generation), "guest writes over native multisample depth are not implemented");
+        }
     }
 
     void CheckResource(const GuestTextureResource& resource) const {

@@ -2621,10 +2621,24 @@ std::uint64_t blockBytes(const GuestRuns& runs) {
 }
 
 void reserveHeapBytes(std::uint64_t address, std::uint64_t bytes, std::uint64_t need) {
+    if (auto dropped = Spaces().current.exchange(nullptr); dropped != nullptr) {
+        Spaces().droppedByWaiter.store(true, std::memory_order_relaxed);
+        Spaces().waiterDrops.fetch_add(1, std::memory_order_relaxed);
+    }
+    sweepMirrors();
     auto& state = Mirrors();
     for (int attempt = 0;; ++attempt) {
         {
             std::lock_guard lock(state.mutex);
+            for (auto it = state.entries.begin(); it != state.entries.end();) {
+                if (it->second.use_count() <= 1) {
+                    if (it->second->heap) unlistMirror(state, *it->second);
+                    it = state.entries.erase(it);
+                    ++state.version;
+                    continue;
+                }
+                ++it;
+            }
             std::uint64_t held = state.heapBytes;
             if (const auto found = state.entries.find(address); found != state.entries.end() && found->second->heap && found->second->listed) held -= found->second->accounted;
             if (held + need <= heapMirrorBudget()) {
