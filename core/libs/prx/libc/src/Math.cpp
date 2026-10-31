@@ -1396,7 +1396,36 @@ float APS5_VABI acoshf_nid_postfix(float x) {
     const float t = x - 1.0f;
     return AtanhfLog1p(t + std::sqrt(2.0f * t + t * t));
 }
-double APS5_VABI atanh_nid_postfix(double x) { return std::atanh(x); }
+double APS5_VABI atanh_nid_postfix(double x) {
+    const double huge = 1e300;
+    static volatile double zero = 0.0;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    const std::int32_t hx = static_cast<std::int32_t>(bits >> 32);
+    const std::uint32_t lx = static_cast<std::uint32_t>(bits);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if ((static_cast<std::uint32_t>(ix) | ((lx | (0u - lx)) >> 31)) > 0x3ff00000u) {
+        _Feraise_nid_postfix(0x01);
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    if (ix == 0x3ff00000) {
+        _Feraise_nid_postfix(0x04);
+        errno = ERANGE;
+        return x / zero;
+    }
+    if (ix < 0x3e300000 && huge + x > 0.0) {
+        return x;
+    }
+    x = std::bit_cast<double>((static_cast<std::uint64_t>(static_cast<std::uint32_t>(ix)) << 32) | lx);
+    double t;
+    if (ix < 0x3fe00000) {
+        t = x + x;
+        t = 0.5 * log1p_nid_postfix(t + t * x / (1.0 - x));
+    } else {
+        t = 0.5 * log1p_nid_postfix((x + x) / (1.0 - x));
+    }
+    return hx >= 0 ? t : -t;
+}
 
 float APS5_VABI atanhf_nid_postfix(float x) {
     const std::uint32_t magnitude = std::bit_cast<std::uint32_t>(x) & 0x7fffffffu;
