@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ImageMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "AllocationFailure.hpp"
 #include <algorithm>
 #include <array>
@@ -1030,8 +1031,66 @@ void MultithreadedRanges() {
 
 }
 
-int main() {
+void MemoryAccountingRanges() {
+    ResetMock();
+    auto context = NewContext();
+    const auto find = [&](VkDeviceMemory memory) {
+        const auto snapshot = MemoryAccounting::Read(context.device);
+        Expect(snapshot.complete, "image memory accounting became incomplete");
+        const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [&](const auto& allocation) { return allocation.memory == memory; });
+        Expect(found != snapshot.allocations.end(), "an image allocation is missing from memory accounting");
+        return *found;
+    };
+    const auto firstImage = NewImage(257);
+    const auto secondImage = NewImage();
+    auto first = Take(context, firstImage);
+    auto second = Take(context, secondImage);
+    const auto memory = first.Memory();
+    Expect(second.Memory() == memory, "accounting fixture images did not share a block");
+    Expect(find(memory).bytes == 4 * MiB && find(memory).retained == 4 * MiB - 512 - 64 * KiB, "shared image memory has the wrong active or retained charge");
+    first.Reset();
+    Expect(find(memory).retained == 4 * MiB - 64 * KiB, "releasing one image lost its live sibling's charge");
+    second.Reset();
+    Expect(find(memory).retained == 4 * MiB, "an empty image block was not counted as retained");
+    first = Take(context, firstImage);
+    Expect(first.Memory() == memory && find(memory).retained == 4 * MiB - 512, "reusing an image range kept its retained charge");
+    auto dedicated = Take(context, NewImage(64 * KiB, 256, 1u, true));
+    Expect(find(dedicated.Memory()).bytes == 64 * KiB && find(dedicated.Memory()).retained == 0, "dedicated image memory has the wrong charge");
+    dedicated.Reset();
+    Expect(MemoryAccounting::Read(context.device).allocations.size() == 1, "dedicated image destruction left an allocation counted");
+    auto standalone = Take(context, NewImage(2 * MiB));
+    const auto standaloneMemory = standalone.Memory();
+    standalone.Reset();
+    Expect(find(standaloneMemory).retained == 2 * MiB, "a retained standalone image has the wrong charge");
+    first.Reset();
+    mock.results[0] = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    mock.resultCount = 1;
+    VkMemoryAllocateInfo request{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    request.allocationSize = 8 * MiB;
+    request.memoryTypeIndex = 0;
+    const auto replacement = context.bufferPool->AllocateMemory(request, "test accounting trim");
+    Expect(MemoryAccounting::Read(context.device).allocations.size() == 1 && find(replacement).bytes == 8 * MiB, "trimming image blocks left freed memory counted");
+    MemoryAccounting::Free(context, replacement);
+    context.bufferPool.reset();
+    Expect(MemoryAccounting::Read(context.device).allocations.empty(), "image pool destruction left an allocation counted");
+    auto fallbackContext = NewContext();
+    mock.refusedDevice = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    auto fallback = Take(fallbackContext, NewImage(64 * KiB, 256, 3u));
+    Expect(find(fallback.Memory()).heap == 1 && find(fallback.Memory()).bytes == 64 * KiB, "image host fallback has the wrong memory charge");
+    fallback.Reset();
+    fallbackContext.bufferPool.reset();
+    Expect(MemoryAccounting::Read(context.device).allocations.empty(), "image host fallback destruction left an allocation counted");
+    Clean();
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::strcmp(argv[1], "--memory-accounting") == 0) {
+            Expect(MemoryAccounting::Enabled(), "memory accounting is not enabled");
+            MemoryAccountingRanges();
+            std::puts("image allocation: memory accounting for shared ranges, dedicated memory, retention, reuse, trimming and host fallback passed");
+            return 0;
+        }
         std::puts("image allocation: concurrent burst");
         ConcurrentBurst();
         std::puts("image allocation: variable and boundary ranges");
