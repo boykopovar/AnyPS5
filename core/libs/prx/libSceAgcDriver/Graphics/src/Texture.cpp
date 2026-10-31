@@ -3008,9 +3008,9 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             toGeneral.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
             toGeneral.newLayout = VK_IMAGE_LAYOUT_GENERAL;
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 0, nullptr, 1, &toGeneral);
-            APS5_LOG_CHARS_OUT("StorageTexture upload submit");
+            APS5_LOG_CHARS_OUT_DEBUG("StorageTexture upload submit");
             batch.SubmitAndWait();
-            APS5_LOG_CHARS_OUT("StorageTexture upload done");
+            APS5_LOG_CHARS_OUT_DEBUG("StorageTexture upload done");
     }
     countStorageUpload(2, uploadedBytes);
     ++version;
