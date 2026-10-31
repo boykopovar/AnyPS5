@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DwordPatternFill.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -420,6 +421,7 @@ void Driver::storeBufferFill(std::uint32_t queueId, std::uint64_t base, std::siz
         for (std::size_t done = 0; done < bytes; done += chunk) GuestMemory::Write(base + done, std::span<const std::byte>(block).first(std::min(chunk, bytes - done)), 16);
         phase(FillCpu);
     }
+    FrameRecorder::NoteGpuFill(base, bytes, pattern);
     if (noteMetadata && uniform) {
         Graphics::NoteDepthMetadataFill(base, bytes, pattern[0]);
         Graphics::NoteColorMetadataFill(base, bytes, pattern[0]);
