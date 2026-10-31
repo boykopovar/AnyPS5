@@ -200,7 +200,7 @@ def check_unavailable_unused(relinker, work):
         source.write_bytes(main_fixture())
         (case / "prx" / "consumer.prx").write_bytes(module_with_needed((kernel, plugin), (0, 1)))
         output = case / "output.elf"
-        result = subprocess.run([str(relinker), "--rpath", str(libraries), str(source), str(output)],
+        result = subprocess.run([str(relinker), "--rpath", "$ORIGIN/libs", str(source), str(output)],
                                 capture_output=True, text=True, encoding="utf-8", timeout=30)
         assert result.returncode == 0, (label, result.stdout, result.stderr)
         artifact = case / "app0" / "prx" / "consumer.prx.guest.prx"
