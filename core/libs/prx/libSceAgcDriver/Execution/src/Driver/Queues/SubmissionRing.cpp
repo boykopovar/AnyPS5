@@ -37,6 +37,7 @@ std::chrono::steady_clock::time_point realStallClock() { return std::chrono::ste
 
 std::atomic<StallClock> stallClock{realStallClock};
 std::atomic<StallPresenter> stallPresenter{ShowStallPrompt};
+std::atomic<bool> stallPromptOpen{false};
 constexpr int StallQuitExitCode = 124;
 constexpr int MaxStallPrompts = 3;
 
@@ -311,7 +312,10 @@ void StallWatch::Check(const char* waiter, std::uint64_t value) {
     }
     char message[320];
     std::snprintf(message, sizeof(message), "This title has not made progress for %lld seconds (queue 0x%x %s 0x%llx).\n\nWait keeps it running. Quit stops it; the submission rings are on stderr.", static_cast<long long>(period.count()), queue, waiter, static_cast<unsigned long long>(value));
-    switch (stallPresenter.load()(message)) {
+    if (stallPromptOpen.exchange(true)) return;
+    const auto choice = stallPresenter.load()(message);
+    stallPromptOpen.store(false);
+    switch (choice) {
         case StallChoice::Wait:
             if (++prompts == MaxStallPrompts) finished = true;
             since = stallClock.load()();
