@@ -844,18 +844,29 @@ void wideStoreSplit() {
     require(absolute32Split && absolute32Split->Low.Bytes == Bytes{0x67, 0xC5, 0xF8, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F} && absolute32Split->High.Bytes == Bytes{0x67, 0xC4, 0xE3, 0x7D, 0x19, 0x04, 0x25, 0x08, 0x00, 0x00, 0x80, 0x01}, "A 32-bit absolute 256-bit store was not split across the signed displacement boundary");
     const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
     const auto rosetta32 = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
-    for (const auto& dynamic32 : {
-             Bytes{0x67, 0xC5, 0xFE, 0x7F, 0x01},
-             Bytes{0x67, 0xC5, 0xFC, 0x11, 0x41, 0xF8},
-             Bytes{0x67, 0xC5, 0xFD, 0x11, 0x81, 0x00, 0x01, 0x00, 0x00},
-             Bytes{0x67, 0xC5, 0xFE, 0x7F, 0x81, 0x00, 0xFF, 0xFF, 0xFF},
-             Bytes{0x67, 0xC5, 0xFC, 0x11, 0x04, 0x0D, 0x00, 0x00, 0x00, 0x00},
-             Bytes{0x67, 0xC5, 0xFE, 0x7F, 0x04, 0x89},
-             Bytes{0x67, 0xC4, 0xA1, 0x7C, 0x11, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00},
-             Bytes{0x67, 0xC4, 0xC1, 0x7C, 0x11, 0x45, 0x00}}) {
+    const std::vector<Case> dynamicAddressCases = {
+        {{0xC5, 0xFE, 0x7F, 0x01}, {0xC5, 0xFA, 0x7F, 0x01}, {0xC4, 0xE3, 0x7D, 0x19, 0x41, 0x10, 0x01}, "vmovdqu (%rcx)"},
+        {{0xC5, 0xFC, 0x11, 0x41, 0xF8}, {0xC5, 0xF8, 0x11, 0x41, 0xF8}, {0xC4, 0xE3, 0x7D, 0x19, 0x41, 0x08, 0x01}, "vmovups -8(%rcx)"},
+        {{0xC5, 0xFD, 0x11, 0x81, 0x00, 0x01, 0x00, 0x00}, {0xC5, 0xF9, 0x11, 0x81, 0x00, 0x01, 0x00, 0x00}, {0xC4, 0xE3, 0x7D, 0x19, 0x81, 0x10, 0x01, 0x00, 0x00, 0x01}, "vmovupd 256(%rcx)"},
+        {{0xC5, 0xFE, 0x7F, 0x81, 0x00, 0xFF, 0xFF, 0xFF}, {0xC5, 0xFA, 0x7F, 0x81, 0x00, 0xFF, 0xFF, 0xFF}, {0xC4, 0xE3, 0x7D, 0x19, 0x81, 0x10, 0xFF, 0xFF, 0xFF, 0x01}, "vmovdqu -256(%rcx)"},
+        {{0xC5, 0xFC, 0x11, 0x04, 0x0D, 0x00, 0x00, 0x00, 0x00}, {0xC5, 0xF8, 0x11, 0x04, 0x0D, 0x00, 0x00, 0x00, 0x00}, {0xC4, 0xE3, 0x7D, 0x19, 0x04, 0x0D, 0x10, 0x00, 0x00, 0x00, 0x01}, "vmovups (,%rcx)"},
+        {{0xC5, 0xFE, 0x7F, 0x04, 0x89}, {0xC5, 0xFA, 0x7F, 0x04, 0x89}, {0xC4, 0xE3, 0x7D, 0x19, 0x44, 0x89, 0x10, 0x01}, "vmovdqu (%rcx,%rcx,4)"},
+        {{0xC4, 0xA1, 0x7C, 0x11, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00}, {0xC4, 0xA1, 0x78, 0x11, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00}, {0xC4, 0xA3, 0x7D, 0x19, 0x04, 0x25, 0x10, 0x00, 0x00, 0x00, 0x01}, "vmovups (,%r12)"},
+        {{0xC4, 0xC1, 0x7C, 0x11, 0x45, 0x00}, {0xC4, 0xC1, 0x78, 0x11, 0x45, 0x00}, {0xC4, 0xC3, 0x7D, 0x19, 0x45, 0x10, 0x01}, "vmovups (%r13)"}};
+    for (const auto& item : dynamicAddressCases) {
+        const auto split = Codegen::DecodeVexWideStore(item.Original.data(), item.Original.size());
+        require(split && split->Low.Bytes == item.Low && split->High.Bytes == item.High && !split->Low.RipDisplacementOffset && !split->High.RipDisplacementOffset, (std::string("A 64-bit addressed wide store lost its supported split: ") + item.Name).c_str());
+        auto dynamic32 = item.Original;
+        dynamic32.insert(dynamic32.begin(), 0x67);
         requireFailure([&] { (void)Codegen::DecodeVexWideStore(dynamic32.data(), dynamic32.size()); }, "A runtime 32-bit address can wrap the upper half despite a small displacement");
         requireFailure([&] { (void)rosetta32->Match(dynamic32.data(), dynamic32.size()); }, "Rosetta conversion accepted an unsafe 32-bit addressed wide-store split");
         require(!intel->Match(dynamic32.data(), dynamic32.size()), "Intel conversion changed a native 32-bit addressed wide store");
+    }
+    for (const auto& unchanged32 : {
+             Bytes{0x67, 0xC5, 0xF8, 0x11, 0x01}, Bytes{0x67, 0xC5, 0xF9, 0x11, 0x01}, Bytes{0x67, 0xC5, 0xFA, 0x7F, 0x01},
+             Bytes{0x67, 0xC5, 0xFC, 0x29, 0x01}, Bytes{0x67, 0xC5, 0xFD, 0x29, 0x01}, Bytes{0x67, 0xC5, 0xFD, 0x7F, 0x01}}) {
+        require(!Codegen::DecodeVexWideStore(unchanged32.data(), unchanged32.size()), "A 128-bit or aligned 256-bit store entered the unsafe wide-store check");
+        require(!rosetta32->Match(unchanged32.data(), unchanged32.size()), "Rosetta conversion changed a native 128-bit or aligned 256-bit store");
     }
     const Bytes lastAbsolute32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xEF, 0xFF, 0xFF, 0xFF};
     const auto lastAbsolute32Split = Codegen::DecodeVexWideStore(lastAbsolute32.data(), lastAbsolute32.size());
@@ -865,6 +876,23 @@ void wideStoreSplit() {
     const Bytes eip = {0x67, 0xC5, 0xFC, 0x11, 0x05, 0x00, 0x01, 0x00, 0x00};
     const auto eipSplit = Codegen::DecodeVexWideStore(eip.data(), eip.size());
     require(eipSplit && eipSplit->Low.RipTarget == 9 + 0x100 && eipSplit->High.RipTarget == 9 + 0x110, "EIP-relative wide-store target metadata changed");
+    for (const auto segment : {std::uint8_t{0x64}, std::uint8_t{0x65}}) {
+        auto segmentAbsolute = absolute32;
+        segmentAbsolute.insert(segmentAbsolute.begin(), segment);
+        auto expectedLow = absolute32Split->Low.Bytes;
+        auto expectedHigh = absolute32Split->High.Bytes;
+        expectedLow.insert(expectedLow.begin(), segment);
+        expectedHigh.insert(expectedHigh.begin(), segment);
+        const auto absoluteSplit = Codegen::DecodeVexWideStore(segmentAbsolute.data(), segmentAbsolute.size());
+        require(absoluteSplit && absoluteSplit->Low.Bytes == expectedLow && absoluteSplit->High.Bytes == expectedHigh && !absoluteSplit->Low.RipDisplacementOffset && !absoluteSplit->High.RipDisplacementOffset, "A segment-prefixed 32-bit absolute store lost its prefixes or split");
+        auto segmentEip = eip;
+        segmentEip.insert(segmentEip.begin(), segment);
+        const auto segmentEipSplit = Codegen::DecodeVexWideStore(segmentEip.data(), segmentEip.size());
+        require(segmentEipSplit && segmentEipSplit->Low.Bytes == Bytes{segment, 0x67, 0xC5, 0xF8, 0x11, 0x05, 0x00, 0x01, 0x00, 0x00} && segmentEipSplit->High.Bytes == Bytes{segment, 0x67, 0xC4, 0xE3, 0x7D, 0x19, 0x05, 0, 0, 0, 0, 0x01}, "A segment-prefixed EIP-relative store lost its prefixes or split");
+        require(segmentEipSplit->Low.RipDisplacementOffset == 6 && segmentEipSplit->High.RipDisplacementOffset == 7 && segmentEipSplit->Low.RipTarget == 10 + 0x100 && segmentEipSplit->High.RipTarget == 10 + 0x110, "A segment-prefixed EIP-relative store changed its relocation metadata");
+        const auto segmentEipMatch = rosetta32->Match(segmentEip.data(), segmentEip.size());
+        require(segmentEipMatch && segmentEipMatch->Relocations.size() == 2 && segmentEipMatch->Relocations[0].AddressSize32 && segmentEipMatch->Relocations[1].AddressSize32 && segmentEipMatch->Relocations[0].SiteTarget == 10 + 0x100 && segmentEipMatch->Relocations[1].SiteTarget == 10 + 0x110, "Rosetta conversion lost a segment-prefixed EIP-relative relocation's address size or target");
+    }
     const Bytes disp32 = {0x67, 0xC5, 0xFC, 0x11, 0x80, 0xF8, 0xFF, 0xFF, 0x7F};
     requireFailure([&] { (void)Codegen::DecodeVexWideStore(disp32.data(), disp32.size()); }, "A 32-bit base-relative 256-bit store whose upper half can wrap was split");
     const Bytes indexed32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x0D, 0xF8, 0xFF, 0xFF, 0x7F};
