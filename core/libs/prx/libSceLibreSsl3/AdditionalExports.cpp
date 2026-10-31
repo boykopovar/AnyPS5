@@ -179,18 +179,6 @@ int APS5_VABI i2d_X509_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sk_free_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sk_new_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sk_push_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_client_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
