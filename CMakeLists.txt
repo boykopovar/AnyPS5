@@ -423,6 +423,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_bom_shebang COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_bom_shebang.py)
         set_tests_properties(conventions_bom_shebang PROPERTIES TIMEOUT 20)
+        add_test(NAME tool_script_modes COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_tool_script_modes.py)
+        set_tests_properties(tool_script_modes PROPERTIES TIMEOUT 20)
         add_test(NAME env_reference COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_env_reference.py)
         set_tests_properties(env_reference PROPERTIES TIMEOUT 20)
