@@ -10804,14 +10804,17 @@ void unorm4_4_4_4TargetTests() {
     changed.context[0x8e] = 1u;
     changed.context[0x31d] = (changed.context.at(0x31d) & ~0x3f000u) | (1u << 12u) | (1u << 15u);
     {
-        const auto multisampled = AgcDriver::Graphics::DecodeState(changed);
-        Require(multisampled.samples == 2u && multisampled.color.samples == 2u && multisampled.color.partialWriteMask == 0xf000u && multisampled.blends[0].colorWriteMask == 0u && multisampled.perSampleShading, "a partial write of a 2-sample 4_4_4_4 unorm target did not merge per sample behind a closed write mask");
+        const auto staged = AgcDriver::Graphics::DecodeState(changed);
+        Require(staged.samples == 2u && staged.color.samples == 2u && staged.color.staged && staged.color.stagedMask == 0xf000u && staged.color.partialWriteMask == 0u && staged.color.format == VK_FORMAT_R32_UINT && staged.color.stagedFormat == VK_FORMAT_R16_UINT && staged.blends[0].colorWriteMask == VK_COLOR_COMPONENT_R_BIT && !staged.perSampleShading, "a partial write of a 2-sample 4_4_4_4 unorm target was not staged through an R32_UINT temporary at the guest's shading rate");
+        Require(AgcDriver::Graphics::ExportTargetMerges(staged).empty(), "a staged partial write of a 2-sample 4_4_4_4 unorm target merged inside its pixel shader");
+        const auto packedTarget = AgcDriver::Graphics::StagedMergeTarget(staged.color);
+        Require(packedTarget.format == VK_FORMAT_R16_UINT && packedTarget.partialWriteMask == 0xf000u && !packedTarget.staged && packedTarget.samples == 2u && packedTarget.address == staged.color.address, "the packed target a staged partial write merges into does not carry the target's own format and word mask");
         auto coverage = changed;
         coverage.context[0x1b3] = 0x4002u;
         coverage.context[0x1b4] = 0x4002u;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(coverage); }, "SAMPLE_COVERAGE in a multisampled pixel shader that runs per sample");
+        Require(AgcDriver::Graphics::DecodeState(coverage).color.staged, "a staged partial write of a 2-sample 4_4_4_4 unorm target with a SAMPLE_COVERAGE input was refused");
         coverage.context[0x8e] = 0xfu;
-        Require(!AgcDriver::Graphics::DecodeState(coverage).perSampleShading, "a full write of a 2-sample 4_4_4_4 unorm target with a SAMPLE_COVERAGE input was refused or ran per sample");
+        Require(!AgcDriver::Graphics::DecodeState(coverage).perSampleShading && !AgcDriver::Graphics::DecodeState(coverage).color.staged, "a full write of a 2-sample 4_4_4_4 unorm target with a SAMPLE_COVERAGE input was refused or ran per sample");
         struct InputCase {
             std::uint32_t inputs;
             std::uint32_t position;
@@ -10828,21 +10831,22 @@ void unorm4_4_4_4TargetTests() {
             queue.context[0x1b8] = position;
             return queue;
         };
-        for (const auto& [inputs, position, what] : {InputCase{0x0004u, 0u, "PERSP_CENTROID"}, InputCase{0x0040u, 0u, "LINEAR_CENTROID"}, InputCase{0x0001u, 0u, "PERSP_SAMPLE"}, InputCase{0x0008u, 0u, "PERSP_PULL_MODEL"}, InputCase{0x2002u, 0u, "ANCILLARY"}, InputCase{0x0402u, 0u, "POS_Z_FLOAT"}, InputCase{0x0802u, 0u, "POS_W_FLOAT"}, InputCase{0x0302u, 0x20000u, "POS_X_FLOAT and POS_Y_FLOAT at a sample"}, InputCase{0x0102u, 0x10000u, "POS_X_FLOAT at the centroid"}}) {
-            auto moved = inputState(rasterized, inputs, position);
-            expectFailure([&] { AgcDriver::Graphics::DecodeState(moved); }, "cannot read the ancillary word or, unless every sample sits at the pixel centre");
-            moved.context[0x293] = moved.context.at(0x293) | 0x10000u;
-            Require(AgcDriver::Graphics::DecodeState(moved).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target whose shader the guest runs per sample was refused for reading ") + what);
-            if (inputs == 0x2002u) {
-                expectFailure([&] { AgcDriver::Graphics::DecodeState(inputState(changed, inputs, position)); }, "cannot read the ancillary word");
-                continue;
-            }
-            Require(AgcDriver::Graphics::DecodeState(inputState(changed, inputs, position)).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target raised from a one-sample rasterizer, every sample at the pixel centre, was refused for reading ") + what);
+        for (const auto& [inputs, position, what] : {InputCase{0x0004u, 0u, "PERSP_CENTROID"}, InputCase{0x0040u, 0u, "LINEAR_CENTROID"}, InputCase{0x0001u, 0u, "PERSP_SAMPLE"}, InputCase{0x0010u, 0u, "LINEAR_SAMPLE"}, InputCase{0x0008u, 0u, "PERSP_PULL_MODEL"}, InputCase{0x2002u, 0u, "ANCILLARY"}, InputCase{0x0402u, 0u, "POS_Z_FLOAT"}, InputCase{0x0802u, 0u, "POS_W_FLOAT"}, InputCase{0x0302u, 0x20000u, "POS_X_FLOAT and POS_Y_FLOAT at a sample"}, InputCase{0x0102u, 0x10000u, "POS_X_FLOAT at the centroid"}, InputCase{0x0302u, 0u, "POS_X_FLOAT and POS_Y_FLOAT at the centre"}, InputCase{0x9022u, 0u, "PERSP_CENTER, LINEAR_CENTER, FRONT_FACE and POS_FIXED_PT"}}) {
+            const auto decoded = AgcDriver::Graphics::DecodeState(inputState(rasterized, inputs, position));
+            Require(decoded.color.staged && !decoded.perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target was not staged at the guest's shading rate for a pixel shader reading ") + what);
         }
-        for (const auto& [inputs, position, what] : {InputCase{0x0302u, 0u, "POS_X_FLOAT and POS_Y_FLOAT at the centre"}, InputCase{0x0302u, 0x100000u, "POS_X_FLOAT and POS_Y_FLOAT at the upper-left corner"}, InputCase{0x9022u, 0u, "PERSP_CENTER, LINEAR_CENTER, FRONT_FACE and POS_FIXED_PT"}}) {
-            Require(AgcDriver::Graphics::DecodeState(inputState(rasterized, inputs, position)).perSampleShading, std::string("a partial write of a 2-sample 4_4_4_4 unorm target whose pixel-rate shader reads ") + what + " was refused");
-        }
-        const auto merge = AgcDriver::Graphics::ExportTargetMerges(multisampled).at(0);
+        const auto inShader = [](AgcDriver::Graphics::State state) {
+            state.colors[0] = AgcDriver::Graphics::StagedMergeTarget(state.colors[0]);
+            state.color = state.colors[0];
+            state.blends[0].colorWriteMask = 0u;
+            state.blend = state.blends[0];
+            state.perSampleShading = true;
+            return state;
+        };
+        const auto multisampled = inShader(staged);
+        const auto merges = AgcDriver::Graphics::ExportTargetMerges(multisampled);
+        Require(merges.size() == 1u, "a staged partial write merged into more than one target of its own draw");
+        const auto merge = merges.front();
         const auto surface = AgcDriver::Graphics::DecodeTextureResource(merge.descriptor);
         Require(merge.samples == 2u && merge.mask == 0xf000u && surface.dimension == AgcDriver::Graphics::TextureDimension::k2DMsaa && surface.samples == 2u && surface.baseAddress == multisampled.color.surfaceAddress && surface.width == multisampled.color.extent.width && surface.height == multisampled.color.extent.height && surface.format == AgcDriver::Graphics::TargetMergeSurface(multisampled.color).format, "the merge descriptor of a 2-sample 4_4_4_4 unorm target does not decode to its multisampled surface");
         auto unshaded = multisampled;
@@ -10873,7 +10877,7 @@ void unorm4_4_4_4TargetTests() {
         centred.context.pixel->sampleLocations = AgcDriver::Graphics::PixelSampleLocations(multisampled, *centred.context.pixel);
         Require(std::ranges::all_of(centred.context.pixel->sampleLocations, [](std::uint8_t location) { return location == 0u; }), "a merge raised from a one-sample rasterizer did not keep every sample at the pixel centre");
         static_cast<void>(ShaderRecompiler::Recompile(centred));
-        const auto rasterizedState = AgcDriver::Graphics::DecodeState(rasterized);
+        const auto rasterizedState = inShader(AgcDriver::Graphics::DecodeState(rasterized));
         auto offCentre = packedExportRequest(rasterized, rasterizedState, mergeCode);
         offCentre.context.pixel->targetMerges = AgcDriver::Graphics::ExportTargetMerges(rasterizedState);
         offCentre.context.pixel->iteratesSamples = rasterizedState.perSampleShading;

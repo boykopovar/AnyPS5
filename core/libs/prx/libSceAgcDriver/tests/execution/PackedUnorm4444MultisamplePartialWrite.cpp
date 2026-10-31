@@ -25,7 +25,9 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <map>
 #include <numeric>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -57,6 +59,10 @@ constexpr std::array<float, 4> First{0.2f, 0.4f, 0.6f, 0.8f};
 constexpr std::array<float, 4> Second{13.0f / 15.0f, 0.0f, 1.0f, 0.0f};
 constexpr std::array<float, 4> Third{1.0f / 15.0f, 1.0f, 0.0f, 4.0f / 15.0f};
 constexpr std::array<float, 4> Fourth{0.0f, 7.0f / 15.0f, 0.0f, 11.0f / 15.0f};
+constexpr std::uint32_t PositionInputs = 0x300u;
+constexpr std::uint32_t DepthInput = 0x400u;
+constexpr std::uint32_t LateKill = 0x40u;
+constexpr std::array<std::uint32_t, 5> CheckerboardKill{0x7e040f00u, 0x7e060f01u, 0x3a040702u, 0x36040481u, 0x7da40480u};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -85,7 +91,7 @@ constexpr std::array<std::array<float, 4>, 3> Overlapping{{
     {-0.08f, -0.47f, 0.5f, 1.0f}, {1.0f, -0.13f, 0.5f, 1.0f}, {0.29f, 1.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 16>, 24> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 16>, 48> Programs{};
 std::size_t programCount = 0;
 alignas(256) std::array<std::uint32_t, Threads * Words> Buffer{};
 
@@ -104,11 +110,29 @@ std::uint32_t Packed(std::array<float, 4> rgba) {
     return Unorm(rgba[3]) | (Unorm(rgba[2]) << 4u) | (Unorm(rgba[1]) << 8u) | (Unorm(rgba[0]) << 12u);
 }
 
-std::span<const std::uint32_t> Float32Program(std::array<float, 4> rgba) {
+std::span<const std::uint32_t> Float32Program(std::array<float, 4> rgba, bool kill = false) {
     Require(programCount < Programs.size(), "too many test programs");
     auto& code = Programs[programCount++];
     std::size_t at = 0;
+    if (kill) {
+        for (const auto word : CheckerboardKill) code[at++] = word;
+    }
     for (std::uint32_t vgpr = 0; vgpr < 4u; ++vgpr) {
+        code[at++] = 0x7e0002ffu | ((4u + vgpr) << 17u);
+        code[at++] = std::bit_cast<std::uint32_t>(rgba[vgpr]);
+    }
+    code[at++] = 0xf800180fu;
+    code[at++] = 0x07060504u;
+    code[at++] = 0xbf810000u;
+    return std::span<const std::uint32_t>(code.data(), at);
+}
+
+std::span<const std::uint32_t> DepthAsXProgram(std::array<float, 4> rgba) {
+    Require(programCount < Programs.size(), "too many test programs");
+    auto& code = Programs[programCount++];
+    std::size_t at = 0;
+    code[at++] = 0x7e080300u;
+    for (std::uint32_t vgpr = 1; vgpr < 4u; ++vgpr) {
         code[at++] = 0x7e0002ffu | ((4u + vgpr) << 17u);
         code[at++] = std::bit_cast<std::uint32_t>(rgba[vgpr]);
     }
@@ -195,11 +219,11 @@ AgcDriver::Graphics::State TargetState(const Block& block, std::uint32_t exporte
     const auto decoded = AgcDriver::Graphics::DecodeState(Queue(block, exportedMask, samples));
     const auto& color = decoded.colors.front();
     char detail[256];
-    std::snprintf(detail, sizeof(detail), "CB_TARGET_MASK 0x%x of the %u-sample 4_4_4_4 target decoded %zu targets, %u samples, word mask 0x%04x, write mask 0x%x and %s shading", exportedMask, samples, decoded.colors.size(), decoded.samples, color.partialWriteMask, decoded.blends.front().colorWriteMask, decoded.perSampleShading ? "per-sample" : "pixel-rate");
-    Require(decoded.colors.size() == 1u && decoded.samples == samples && color.samples == samples && color.partialWriteMask == (partial ? AgcDriver::Graphics::PackedWriteMask(color.componentMapping, exportedMask) : 0u) && decoded.blends.size() == 1u && decoded.blends.front().colorWriteMask == (partial ? 0u : 0xfu) && decoded.blend.colorWriteMask == decoded.blends.front().colorWriteMask && decoded.perSampleShading == partial, detail);
+    std::snprintf(detail, sizeof(detail), "CB_TARGET_MASK 0x%x of the %u-sample 4_4_4_4 target decoded %zu targets, %u samples, word mask 0x%04x, write mask 0x%x and %s shading", exportedMask, samples, decoded.colors.size(), decoded.samples, color.stagedMask, decoded.blends.front().colorWriteMask, decoded.perSampleShading ? "per-sample" : "pixel-rate");
+    const auto stagedMask = partial ? AgcDriver::Graphics::PackedWriteMask(color.componentMapping, exportedMask) : 0u;
+    Require(decoded.colors.size() == 1u && decoded.samples == samples && color.samples == samples && color.staged == partial && color.stagedMask == stagedMask && color.partialWriteMask == 0u && color.format == (partial ? VK_FORMAT_R32_UINT : VK_FORMAT_R16_UINT) && color.stagedFormat == (partial ? VK_FORMAT_R16_UINT : VK_FORMAT_UNDEFINED) && decoded.blends.size() == 1u && decoded.blends.front().colorWriteMask == (partial ? VK_COLOR_COMPONENT_R_BIT : 0xfu) && decoded.blend.colorWriteMask == decoded.blends.front().colorWriteMask && !decoded.perSampleShading, detail);
     const auto merges = AgcDriver::Graphics::ExportTargetMerges(decoded);
-    const auto merge = merges.empty() ? ShaderRecompiler::TargetMerge{} : merges.front();
-    Require(merges.size() == (partial ? 1u : 0u) && merge.mask == color.partialWriteMask && merge.samples == (partial ? samples : 1u) && !merge.depthStencilWrites && merge.descriptor == (partial ? AgcDriver::Graphics::EncodeTextureResource(AgcDriver::Graphics::TargetMergeSurface(color)) : std::array<std::uint32_t, 8>{}), "the decoded " + std::to_string(samples) + "-sample target exported another merge than its own surface");
+    Require(merges.empty(), "the decoded " + std::to_string(samples) + "-sample target merged inside its pixel shader instead of staging");
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 64u, 64u, std::nullopt, std::nullopt};
     state.colors = decoded.colors;
@@ -220,7 +244,28 @@ AgcDriver::Graphics::State TargetState(const Block& block, std::uint32_t exporte
     return state;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::State& state, const std::array<std::array<float, 4>, 3>& triangle, std::span<const std::uint32_t> pixelCode) {
+struct DrawSetup {
+    std::uint32_t inputs = 0;
+    std::uint32_t shaderControl = 0;
+    std::optional<AgcDriver::Graphics::DepthTarget> depth;
+    bool depthWrite = false;
+    VkCompareOp depthCompare = VK_COMPARE_OP_LESS;
+};
+
+const std::array<std::array<float, 4>, 3>& TriangleAt(float z) {
+    static std::map<float, std::array<std::array<float, 4>, 3>> triangles;
+    return triangles.try_emplace(z, std::array<std::array<float, 4>, 3>{{{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}}}).first->second;
+}
+
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::State& start, const std::array<std::array<float, 4>, 3>& triangle, std::span<const std::uint32_t> pixelCode, const DrawSetup& setup = {}) {
+    auto state = start;
+    state.pixelKill = (setup.shaderControl & LateKill) != 0u;
+    if (setup.depth) {
+        state.depth = *setup.depth;
+        state.depthTest = true;
+        state.depthWrite = setup.depthWrite;
+        state.depthCompare = setup.depthCompare;
+    }
     const auto target = device.Target();
     constexpr std::uint32_t waveSize = 64;
     std::vector<std::uint32_t> vertexUserData(4, 0u);
@@ -238,7 +283,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::State& sta
     const auto vertexResult = ShaderRecompiler::Recompile(vertex);
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
-    const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, Float32Export}};
+    const AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, setup.inputs}, {0x1b4, setup.inputs}, {0x203, setup.shaderControl}, {0x1c5, Float32Export}};
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{codeAddress, std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, codeAddress, pixelCode, 0, {}},
@@ -317,7 +362,7 @@ void RunSamples(AgcDriver::VulkanDevice& device, const Block& block, std::uint32
     const auto full = TargetState(block, 0xfu, samples);
     Draw(device, full, Covering, Float32Program(First));
     const auto merged = TargetState(block, 0x1u, samples);
-    Require(merged.colors.front().partialWriteMask == 0xf000u, "an X write of the 4_4_4_4 target did not merge bits 15..12");
+    Require(merged.colors.front().stagedMask == 0xf000u, "an X write of the 4_4_4_4 target did not merge bits 15..12");
     Draw(device, merged, Cutting, Float32Program(Second));
     Draw(device, full, Overlapping, Float32Program(Third));
     const auto texture = AgcDriver::Graphics::EncodeTextureResource(AgcDriver::Graphics::TargetMergeSurface(color));
@@ -360,7 +405,7 @@ void RunSamples(AgcDriver::VulkanDevice& device, const Block& block, std::uint32
     Require(overdrawn != 0 && mergedAfterOverdraw != 0, "the last full write does not cover some merged samples and leave others");
     Draw(device, full, Covering, Float32Program(First));
     const auto lowMerged = TargetState(block, 0x8u, samples);
-    Require(lowMerged.colors.front().partialWriteMask == 0x000fu, "a W write of the 4_4_4_4 target did not merge bits 3..0");
+    Require(lowMerged.colors.front().stagedMask == 0x000fu, "a W write of the 4_4_4_4 target did not merge bits 3..0");
     Draw(device, merged, Cutting, Float32Program(Second));
     Draw(device, lowMerged, Crossing, Float32Program(Fourth));
     const auto twice = LoadSamples(device, texture, samples);
@@ -390,10 +435,115 @@ void RunSamples(AgcDriver::VulkanDevice& device, const Block& block, std::uint32
     std::printf("4_4_4_4 unorm %u-sample partial write tests passed: %u partly merged pixels kept bits 15..12 merged into their covered samples only, a full write drawn right after covered %u merged samples, and %u samples kept both of two merges drawn back to back\n", samples, partlyMerged, overdrawn, mergedTwice);
 }
 
+void KillUnderLateTests(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t samples, std::vector<std::unique_ptr<Block>>& depthBlocks) {
+    const bool tied = samples == 2u;
+    const auto color = DecodeTarget(block, samples);
+    const auto full = TargetState(block, 0xfu, samples);
+    const auto merged = TargetState(block, 0x1u, samples);
+    std::optional<AgcDriver::Graphics::DepthTarget> depth;
+    if (tied) {
+        depthBlocks.push_back(std::make_unique<Block>(BlockBytes));
+        depth = AgcDriver::Graphics::DepthTarget{depthBlocks.back()->Address(), 0u, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+        depth->samples = samples;
+    }
+    Draw(device, full, TriangleAt(0.9f), Float32Program(First), {0u, 0u, depth, true, VK_COMPARE_OP_ALWAYS});
+    Draw(device, merged, TriangleAt(0.5f), Float32Program(Second, true), {PositionInputs, LateKill, depth, true, VK_COMPARE_OP_LESS});
+    if (tied) Draw(device, merged, TriangleAt(0.5f), Float32Program(Third), {0u, 0u, depth, true, VK_COMPARE_OP_LESS});
+    const auto texture = AgcDriver::Graphics::EncodeTextureResource(AgcDriver::Graphics::TargetMergeSurface(color));
+    const auto loaded = LoadSamples(device, texture, samples);
+    const auto background = Packed(First) & 0x0fffu;
+    const auto survivor = background | (Packed(Second) & 0xf000u);
+    const auto killed = tied ? background | (Packed(Third) & 0xf000u) : Packed(First);
+    Require(survivor != killed && survivor != Packed(First) && (!tied || killed != Packed(First)), "the test colors do not differ in the merged nibble");
+    std::uint32_t survivors = 0;
+    std::uint32_t killedPixels = 0;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            const bool survives = ((x ^ y) & 1u) == 0u;
+            for (std::uint32_t sample = 0; sample < samples; ++sample) {
+                const auto word = loaded[(y * Side + x) * samples + sample];
+                char where[192];
+                std::snprintf(where, sizeof(where), "sample %u of %s pixel (%u, %u) holds 0x%04x, expected 0x%04x", sample, survives ? "a surviving" : "a killed", x, y, word, survives ? survivor : killed);
+                Require(word == (survives ? survivor : killed), where);
+            }
+            (survives ? survivors : killedPixels) += 1u;
+        }
+    }
+    Require(survivors != 0 && killedPixels != 0, "the checkerboard kill left no surviving or no killed pixel");
+    std::printf("4_4_4_4 unorm %u-sample partial writes that kill under late tests: %u surviving pixels merged%s, %u killed pixels %s\n", samples, survivors, tied ? " and kept the first merge past a depth tie" : "", killedPixels, tied ? "took the second merge" : "kept their word");
+}
+
+void ScissoredMerge(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t samples) {
+    const auto color = DecodeTarget(block, samples);
+    const auto full = TargetState(block, 0xfu, samples);
+    auto merged = TargetState(block, 0x1u, samples);
+    merged.scissor = {{3, 5}, {7, 6}};
+    Draw(device, full, TriangleAt(0.5f), Float32Program(First));
+    Draw(device, merged, TriangleAt(0.5f), Float32Program(Second));
+    const auto texture = AgcDriver::Graphics::EncodeTextureResource(AgcDriver::Graphics::TargetMergeSurface(color));
+    const auto loaded = LoadSamples(device, texture, samples);
+    const auto background = Packed(First);
+    const auto written = (background & 0x0fffu) | (Packed(Second) & 0xf000u);
+    std::uint32_t inside = 0;
+    for (std::uint32_t y = 0; y < Side; ++y) {
+        for (std::uint32_t x = 0; x < Side; ++x) {
+            const bool scissored = x >= 3u && x < 10u && y >= 5u && y < 11u;
+            for (std::uint32_t sample = 0; sample < samples; ++sample) {
+                const auto word = loaded[(y * Side + x) * samples + sample];
+                char where[160];
+                std::snprintf(where, sizeof(where), "sample %u of pixel (%u, %u) %s the scissor holds 0x%04x, expected 0x%04x", sample, x, y, scissored ? "inside" : "outside", word, scissored ? written : background);
+                Require(word == (scissored ? written : background), where);
+            }
+            inside += scissored ? 1u : 0u;
+        }
+    }
+    Require(inside == 42u, "the scissor does not cover 42 pixels");
+    std::printf("4_4_4_4 unorm %u-sample partial write inside a scissor: the %u pixels inside it merged and the rest kept their word\n", samples, inside);
+}
+
+void DepthInputMerge(AgcDriver::VulkanDevice& device, const Block& block, std::uint32_t samples) {
+    const auto color = DecodeTarget(block, samples);
+    const auto full = TargetState(block, 0xfu, samples);
+    const auto merged = TargetState(block, 0x1u, samples);
+    static const std::array<std::array<float, 4>, 3> sloped{{{-1.0f, -1.0f, 0.0f, 1.0f}, {1.0f, -1.0f, 1.0f, 1.0f}, {-1.0f, 1.0f, 0.0f, 1.0f}}};
+    Draw(device, full, TriangleAt(0.5f), Float32Program(First));
+    Draw(device, merged, sloped, DepthAsXProgram(Second), {DepthInput, 0u});
+    const auto texture = AgcDriver::Graphics::EncodeTextureResource(AgcDriver::Graphics::TargetMergeSurface(color));
+    const auto loaded = LoadSamples(device, texture, samples);
+    const auto depthAt = [](float x) { return std::clamp(x / static_cast<float>(Side), 0.0f, 1.0f); };
+    std::uint32_t discriminating = 0;
+    std::uint32_t distinct = 0;
+    std::uint32_t previous = 0xffffu;
+    for (std::uint32_t y = 1; y < Side; ++y) {
+        previous = 0xffffu;
+        for (std::uint32_t x = 0; x + 1u <= y; ++x) {
+            const auto first = loaded[(y * Side + x) * samples];
+            for (std::uint32_t index = 1; index < samples; ++index) {
+                char where[160];
+                std::snprintf(where, sizeof(where), "sample %u of pixel (%u, %u) holds 0x%04x but sample 0 holds 0x%04x: the shader did not run once per pixel", index, x, y, loaded[(y * Side + x) * samples + index], first);
+                Require(loaded[(y * Side + x) * samples + index] == first, where);
+            }
+            const auto lowest = Unorm(depthAt(static_cast<float>(x)));
+            const auto highest = Unorm(depthAt(static_cast<float>(x) + 1.0f));
+            discriminating += Unorm(depthAt(static_cast<float>(x) + 0.25f)) != Unorm(depthAt(static_cast<float>(x) + 0.75f)) ? 1u : 0u;
+            Require((first >> 12u) >= lowest && (first >> 12u) <= highest, "a depth merged from a shader reading POS_Z left the depth range of its pixel");
+            Require((first & 0x0fffu) == (Packed(First) & 0x0fffu), "the nibbles the depth merge did not write changed");
+            distinct += first != previous ? 1u : 0u;
+            previous = first;
+        }
+    }
+    Require(discriminating > 8u && distinct > 8u, "the sloped depth does not tell a pixel-rate shader from a per-sample one");
+    std::printf("4_4_4_4 unorm %u-sample partial write of a depth read by the shader merged one depth per pixel into all its samples\n", samples);
+}
+
 bool SupportsSamples(const AgcDriver::Graphics::Context& context, std::uint32_t samples) {
-    VkImageFormatProperties properties{};
-    const VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
-    return (context.limits.framebufferColorSampleCounts & samples) != 0u && context.imageFormatProperties(context.physical, VK_FORMAT_R16_UINT, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, 0, &properties) == VK_SUCCESS && (properties.sampleCounts & samples) != 0u;
+    const auto supports = [&](VkFormat format, VkImageUsageFlags usage) {
+        VkImageFormatProperties properties{};
+        return context.imageFormatProperties(context.physical, format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, 0, &properties) == VK_SUCCESS && (properties.sampleCounts & samples) != 0u;
+    };
+    return (context.limits.framebufferColorSampleCounts & samples) != 0u
+        && supports(VK_FORMAT_R16_UINT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_STORAGE_BIT)
+        && supports(VK_FORMAT_R32_UINT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
 }
 
 }
@@ -403,12 +553,12 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
-        for (const auto& [present, feature] : {std::pair{context.storageImageMultisample, "shaderStorageImageMultisample"}, std::pair{context.sampleRateShading, "sampleRateShading"}, std::pair{TargetHasCapability(device->Target(), spv::CapabilityFragmentShaderPixelInterlockEXT), "fragmentShaderPixelInterlock"}}) {
-            if (present) continue;
-            std::printf("skipped, the device lacks %s\n", feature);
+        if (!context.storageImageMultisample) {
+            std::printf("skipped, the device lacks shaderStorageImageMultisample\n");
             return VulkanTestSkipped;
         }
         std::vector<std::unique_ptr<Block>> blocks;
+        std::vector<std::unique_ptr<Block>> depthBlocks;
         std::uint32_t tested = 0;
         for (const auto samples : SampleCounts) {
             if (!SupportsSamples(context, samples)) {
@@ -417,6 +567,9 @@ int main() {
             }
             blocks.push_back(std::make_unique<Block>(4u * BlockBytes));
             RunSamples(*device, *blocks.back(), samples);
+            if (samples != 2u || (context.limits.framebufferDepthSampleCounts & samples) != 0u) KillUnderLateTests(*device, *blocks.back(), samples, depthBlocks);
+            ScissoredMerge(*device, *blocks.back(), samples);
+            DepthInputMerge(*device, *blocks.back(), samples);
             ++tested;
         }
         if (tested == 0) return VulkanTestSkipped;

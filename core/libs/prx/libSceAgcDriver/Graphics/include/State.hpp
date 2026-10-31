@@ -86,6 +86,9 @@ struct ColorTarget {
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
     std::uint16_t partialWriteMask = 0;
+    bool staged = false;
+    std::uint16_t stagedMask = 0;
+    VkFormat stagedFormat = VK_FORMAT_UNDEFINED;
 };
 
 struct DepthTarget {
@@ -217,6 +220,7 @@ std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
 std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
 GuestTextureResource TargetMergeSurface(const ColorTarget& color);
+ColorTarget StagedMergeTarget(const ColorTarget& staged);
 bool DepthStencilWrites(const State& state);
 bool DepthStencilTests(const State& state);
 std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state);
