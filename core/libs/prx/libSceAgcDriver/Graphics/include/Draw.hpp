@@ -90,7 +90,7 @@ MeshArguments ResolveMeshArguments(const Pm4::DrawArguments& record, const MeshA
 // storage cache, the template is gone, the pipeline is gone from the pipeline store, or the
 // template's proof failed (ShaderResources::ProveCurrent; the template is removed from the
 // resource cache and kept by the batch).
-enum class DrawRecipeMiss : std::uint8_t { None, NotRecordable, TargetGone, TemplateGone, ObjectsGone, Proof, Count };
+enum class DrawRecipeMiss : std::uint8_t { None, NotRecordable, TargetGone, TemplateGone, ObjectsGone, Proof, VertexRange, Count };
 const char* DrawRecipeMissName(DrawRecipeMiss miss);
 struct DrawRecipeOutcome {
     bool recorded = false;

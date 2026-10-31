@@ -6579,6 +6579,145 @@ void dispatchMoveTests() {
     Require(mock.live == 0, "dispatch move resources leaked Vulkan objects");
 }
 
+void vertexRangeBindingTests() {
+    using AgcDriver::Graphics::CompiledShader;
+    using AgcDriver::Graphics::DescriptorCache;
+    using AgcDriver::Graphics::Recorder;
+    using AgcDriver::Graphics::ShaderResources;
+    constexpr std::size_t ringBytes = 65536;
+    constexpr std::uint32_t stride = 24;
+    constexpr std::uint32_t extent = 16;
+    constexpr std::uint32_t quad = 4 * stride;
+    constexpr std::size_t bound = 96;
+    void* ring = ::operator new(ringBytes, std::align_val_t{ringBytes});
+    auto* bytes = static_cast<std::byte*>(ring);
+    for (std::size_t i = 0; i < ringBytes; ++i) bytes[i] = static_cast<std::byte>(i * 5u + 1u);
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, ring, ringBytes, true, true, true);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    const auto records = [&](std::uint32_t first) { return static_cast<std::uint32_t>(ringBytes / stride) - first; };
+    const auto vertices = [&](std::uint32_t first) {
+        auto words = vsharp(bytes + static_cast<std::size_t>(first) * stride, records(first));
+        words[1] |= stride << 16u;
+        return words;
+    };
+    const auto whole = [&](std::uint32_t first) { return static_cast<std::size_t>(records(first)) * stride; };
+    const auto ringBinding = [&](std::vector<std::uint32_t> words, std::uint32_t vertexExtent) {
+        auto binding = makeBinding(Role::GuestBuffers, 0, 1, std::move(words));
+        binding.bufferWritten = {false};
+        binding.bufferRead = {true};
+        binding.bufferVertexExtent = {vertexExtent};
+        return binding;
+    };
+    const auto address = [](const void* pointer) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)); };
+    {
+        const auto binding = ringBinding(vertices(0), extent);
+        Require(ShaderResources::VertexBoundBytes(binding, 0, 3u) == bound, "a read-only element indexed by the vertex index was not cut to the draw's last vertex");
+        Require(ShaderResources::VertexBoundBytes(binding, 0, 0u) == extent, "the first vertex's fetch was not bound alone");
+        Require(ShaderResources::VertexBoundBytes(binding, 0, std::nullopt) == whole(0), "an element of a draw without a known vertex range was cut");
+        Require(ShaderResources::VertexBoundBytes(binding, 0, 0x01000000u) == whole(0), "a vertex range past the V# grew the element beyond its V#");
+        Require(ShaderResources::VertexBoundBytes(ringBinding(vertices(0), 0u), 0, 3u) == whole(0), "an element not proven to be indexed by the vertex index was cut");
+        auto written = binding;
+        written.bufferWritten = {true};
+        Require(ShaderResources::VertexBoundBytes(written, 0, 3u) == whole(0), "a written element was cut to the vertex range");
+        auto unclassified = binding;
+        unclassified.bufferVertexExtent.clear();
+        Require(ShaderResources::VertexBoundBytes(unclassified, 0, 3u) == whole(0), "an element the recompiler did not classify was cut to the vertex range");
+        auto swizzled = binding;
+        swizzled.guestDescriptor[1] |= 0x80000000u;
+        Require(ShaderResources::VertexBoundBytes(swizzled, 0, 3u) == whole(0), "a swizzled V# was cut to the vertex range");
+        auto threadIndexed = binding;
+        threadIndexed.guestDescriptor[3] |= 1u << 23u;
+        Require(ShaderResources::VertexBoundBytes(threadIndexed, 0, 3u) == whole(0), "a V# with ADD_TID_ENABLE was cut to the vertex range");
+        auto strideless = ringBinding(vsharp(bytes, 4096), extent);
+        Require(ShaderResources::VertexBoundBytes(strideless, 0, 1000u) == extent, "a V# without a stride was not bound to one fetch");
+    }
+    auto context = mockContext();
+    context.limits.maxStorageBufferRange = 1u << 20u;
+    for (const bool known : {true, false}) {
+        const std::optional<std::uint32_t> lastVertex = known ? std::optional<std::uint32_t>(3u) : std::nullopt;
+        const auto expected = [&](std::uint32_t first) { return known ? bound : whole(first); };
+        mock = MockVulkan{};
+        mock.allowCopies = true;
+        {
+            DescriptorCache cache(context);
+            context.descriptorCache = &cache;
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Recorder recorder(context);
+            ShaderRecompiler::RecompileResult vertex, fragment;
+            vertex.bindings.push_back(ringBinding(vertices(0), extent));
+            const auto state = AgcDriver::Graphics::DecodeState(makeState());
+            const std::array<CompiledShader, 2> built{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+            ShaderResources resources(context, built, state.color, 1, 0, 0, {}, lastVertex);
+            Require(findWrite(0).buffers.at(0).range == expected(0), known ? "a vertex-indexed element was bound past the draw's vertices" : "an element of a draw without a vertex range was not bound whole");
+            const auto shadersOf = [&](const ShaderRecompiler::RecompileResult& program) { return std::array<CompiledShader, 2>{{{ShaderRecompiler::ShaderStage::Vertex, &program, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}}; };
+            const auto same = resources.MovedReadOnlyBuffers(shadersOf(vertex), recorder, &state.color, lastVertex);
+            Require(same.has_value() && same->empty(), "a vertex-indexed element at the same base and range was listed as moved");
+            Require(resources.BindsVertexRange(shadersOf(vertex), &state.color, lastVertex), "a template bound for the draw's vertex range was refused for the same range");
+            Require(!resources.BindsVertexRange(shadersOf(vertex), &state.color, 7u), "a template bound for another vertex range served a draw of eight vertices");
+            auto advanced = vertex;
+            advanced.bindings[0].guestDescriptor = vertices(4);
+            const auto moved = resources.MovedReadOnlyBuffers(shadersOf(advanced), recorder, &state.color, lastVertex);
+            Require(moved.has_value() && moved->size() == 1 && moved->front().address == address(bytes + quad) && moved->front().size == expected(4), known ? "a vertex ring advanced by one quad was not listed at the draw's vertices" : "a moved element without a vertex range was not listed whole");
+            const auto draw = resources.PrepareDrawBindings(recorder, *moved);
+            Require(draw != nullptr && draw->snapshots.size() == 1 && draw->snapshots.front().Bytes().size() == expected(4) && sameBytes(draw->snapshots.front().Bytes(), bytes + quad, expected(4)), known ? "a moved vertex ring was not snapshotted at the draw's vertices" : "a moved element without a vertex range was not snapshotted whole");
+            if (known) {
+                const auto wider = resources.MovedReadOnlyBuffers(shadersOf(vertex), recorder, &state.color, 7u);
+                Require(wider.has_value() && wider->size() == 1 && wider->front().size == 192u, "a draw reaching more vertices than the template was not listed at its own range");
+            }
+            recorder.Sync();
+        }
+        context.descriptorCache = nullptr;
+        Require(mock.live == 0, "vertex-range resources leaked Vulkan objects");
+    }
+    {
+        const auto state = AgcDriver::Graphics::DecodeState(makeState());
+        const auto reaching = [&](std::uint32_t past) {
+            auto words = vsharp(reinterpret_cast<const void*>(state.color.address - (bound - past)), records(0));
+            words[1] |= stride << 16u;
+            return words;
+        };
+        ShaderRecompiler::RecompileResult vertex, fragment;
+        vertex.bindings.push_back(ringBinding(reaching(8), extent));
+        const std::array<CompiledShader, 2> built{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+        mock = MockVulkan{};
+        mock.allowCopies = true;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            Recorder recorder(context);
+            ShaderResources resources(context, built, state.color, 1, 0, 0, {}, 3u);
+            Require(findWrite(0).buffers.at(0).range == bound - 8, "a vertex-indexed element reaching 8 bytes into the render target was not bound up to the target");
+            const auto same = resources.MovedReadOnlyBuffers(built, recorder, &state.color, 3u);
+            Require(same.has_value() && same->empty(), "a vertex-indexed element bound up to the render target was listed as moved for the same words, range and target");
+            Require(resources.BindsVertexRange(built, &state.color, 3u), "a template bound up to the render target was refused for the same vertex range and target");
+            Require(!resources.BindsVertexRange(built, nullptr, 3u), "a template bound up to the render target served a draw without that target");
+            Require(!resources.BindsVertexRange(built, &state.color, 7u), "a template bound up to the render target served a draw of eight vertices");
+            const auto movedFor = [&](std::uint32_t past) {
+                auto drawn = vertex;
+                drawn.bindings[0].guestDescriptor = reaching(past);
+                const std::array<CompiledShader, 2> stages{{{ShaderRecompiler::ShaderStage::Vertex, &drawn, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+                return resources.MovedReadOnlyBuffers(stages, recorder, &state.color, 3u);
+            };
+            auto moved = movedFor(4);
+            Require(moved.has_value() && moved->size() == 1 && moved->front().address == state.color.address - 92u && moved->front().size == 92u, "a vertex-indexed element that moved to reach 4 bytes into the render target was not listed up to the target");
+            moved = movedFor(stride);
+            Require(moved.has_value() && moved->size() == 1 && moved->front().address == state.color.address - (bound - stride) && moved->front().size == bound, "a vertex-indexed element that moved to reach a whole stride into the render target was cut");
+            recorder.Sync();
+        }
+        Require(mock.live == 0, "vertex-range resources at the render target leaked Vulkan objects");
+        expectFailure([&] { ShaderResources whole(context, built, state.color, 1, 0, 0, {}, std::nullopt); }, "aliases the render target");
+        expectFailure([&] { ShaderResources wider(context, built, state.color, 1, 0, 0, {}, 7u); }, "aliases the render target");
+    }
+    {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, ring);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    }
+    ::operator delete(ring, std::align_val_t{ringBytes});
+}
+
 void resourceTests() {
     mock = MockVulkan{};
     const auto context = mockContext();
@@ -12642,6 +12781,11 @@ int main(int argc, char** argv) {
             stencilReferenceUnusedTests();
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--vertex-range-bindings") {
+            vertexRangeBindingTests();
+            std::cout << "vertex-indexed guest buffers are bound and snapshotted up to the draw's last vertex\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--command-batch-fence-failure") {
             commandBatchFenceFailureTests();
             return 0;
@@ -13024,6 +13168,7 @@ int main(int argc, char** argv) {
         guestBufferViewBytesTests();
         descriptorSnapshotTests();
         dispatchMoveTests();
+        vertexRangeBindingTests();
         descriptorCacheTests();
         bufferBudgetPlacementTests();
         imageTableAllocationTests();
