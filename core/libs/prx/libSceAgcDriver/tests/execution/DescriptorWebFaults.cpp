@@ -81,6 +81,25 @@ alignas(256) constexpr std::array<std::uint32_t, 51> TableNoLaneWebCode{
     0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 48> LaneIndexWebCode{
+    0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u,
+    0xbf8cc07fu, 0xbf068010u, 0xbf850005u, 0xbf068110u, 0xbf85000cu, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu,
+    0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu,
+    0xbf820009u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu,
+    0xd7650009u, 0x000100c1u, 0x7e100502u, 0x7e120503u, 0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u,
+    0x7e1c0508u, 0x7e1e0509u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 49> NoLaneLaneIndexWebCode{
+    0xf4000400u, 0xfa000050u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf40c0200u, 0xfa000000u,
+    0xbf8cc07fu, 0xbf068010u, 0xbf850005u, 0xbf068110u, 0xbf85000cu, 0xf40c0200u, 0xfa000060u, 0xbf8cc07fu,
+    0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu,
+    0xbf820009u, 0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu, 0x7e0c020cu, 0x7e0e020du, 0x7e10020eu,
+    0xd7650009u, 0x000100c1u, 0x7e100502u, 0x7e120503u, 0x7e140504u, 0x7e160505u, 0x7e180506u, 0x7e1a0507u,
+    0x7e1c0508u, 0x7e1e0509u, 0xbefe0380u, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u,
+    0xbf810000u,
+};
+
 class StderrCapture {
 public:
     StderrCapture() {
@@ -245,6 +264,16 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     Require(Faulted(tableSelected.log, TableSamplePc), "descriptor web faults: with an image table and no poisoned record, a lane selecting an undefined arm did not fault at the read:\n" + tableSelected.log);
     const auto tableNoLanes = Run(device, TableNoLaneWebCode, UndefinedFormat, SecondSelector, true);
     Require(Clean(tableNoLanes.log) && tableNoLanes.word == Untouched, "descriptor web faults: with an image table, an undefined arm faulted with no lane enabled:\n" + tableNoLanes.log);
+
+    constexpr std::uint32_t LaneIndexSamplePc = 0xa8u;
+    const auto laneValid = Run(device, LaneIndexWebCode, Format8888UNorm, ValidSelector);
+    Require(Clean(laneValid.log) && Reads(laneValid.word, FirstTexel), "descriptor web faults: with a lane-index path, a lane selecting the first arm faulted or did not read its texture:\n" + laneValid.log);
+    const auto laneOther = Run(device, LaneIndexWebCode, Format8888UNorm, SecondSelector);
+    Require(Clean(laneOther.log) && Reads(laneOther.word, SecondTexel), "descriptor web faults: with a lane-index path, a lane selecting the second arm faulted or did not read its texture:\n" + laneOther.log);
+    const auto laneFolded = Run(device, LaneIndexWebCode, Format8888UNorm, FoldedSelector);
+    Require(Faulted(laneFolded.log, LaneIndexSamplePc), "descriptor web faults: a lane on the lane-index path did not fault at the read:\n" + laneFolded.log);
+    const auto laneFoldedNoLanes = Run(device, NoLaneLaneIndexWebCode, Format8888UNorm, FoldedSelector);
+    Require(Clean(laneFoldedNoLanes.log) && laneFoldedNoLanes.word == Untouched, "descriptor web faults: the lane-index path faulted or wrote with no lane enabled:\n" + laneFoldedNoLanes.log);
 }
 
 }

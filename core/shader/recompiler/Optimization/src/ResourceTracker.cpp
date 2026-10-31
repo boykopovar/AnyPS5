@@ -1,4 +1,5 @@
 #include "Optimization/ResourceTracker.hpp"
+#include "Optimization/DeadCodeEliminator.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
@@ -120,6 +121,9 @@ public:
             fail("SRT plan is not ready");
         }
         SplitDescriptorPhis();
+        if (m_foldedWeb) {
+            DeadCodeEliminator{}.Eliminate(m_program);
+        }
         PlanTableColumns();
         std::unordered_map<const IrBlock*, std::uint32_t> blockIndices;
         for (const IrBlock* block : m_program.BlockOrder()) {
@@ -1361,7 +1365,7 @@ private:
         inst.Parent()->RemoveInstruction(&inst);
     }
 
-    static bool HoldsControlValue(IrValue* value, std::uint32_t depth, std::vector<const IrValue*>& seen) {
+    static bool HoldsFoldableValue(IrValue* value, std::uint32_t depth, std::vector<const IrValue*>& seen) {
         value = value->Resolve();
         if (value->HasImmediate()) {
             return false;
@@ -1371,7 +1375,12 @@ private:
             case IrOpcode::GetExec:
             case IrOpcode::GetExecLo:
             case IrOpcode::GetExecHi:
-            case IrOpcode::Ballot: return true;
+            case IrOpcode::Ballot:
+            case IrOpcode::LaneId:
+            case IrOpcode::ImageRead:
+            case IrOpcode::ImageSampleExplicitLod:
+            case IrOpcode::ImageSampleImplicitLod:
+            case IrOpcode::ImageSampleRaw: return true;
             default: break;
         }
         if (depth == 0u) {
@@ -1386,16 +1395,16 @@ private:
             return false;
         }
         for (std::size_t index = 0; index < value->ArgumentCount(); index++) {
-            if (HoldsControlValue(value->Argument(index), depth - 1u, seen)) {
+            if (HoldsFoldableValue(value->Argument(index), depth - 1u, seen)) {
                 return true;
             }
         }
         return false;
     }
 
-    static bool HoldsControlValue(IrValue* value) {
+    static bool HoldsFoldableValue(IrValue* value) {
         std::vector<const IrValue*> seen;
-        return HoldsControlValue(value, phiSearchDepth, seen);
+        return HoldsFoldableValue(value, phiSearchDepth, seen);
     }
 
     struct DescriptorWeb {
@@ -1403,7 +1412,7 @@ private:
         static constexpr std::size_t maxArms = 64u;
         static constexpr std::uint32_t foldedArm = 0xffffffffu;
         std::string failure;
-        bool foldedControlValue = false;
+        bool foldedValue = false;
         std::vector<std::vector<IrValue*>> arms;
         std::map<std::vector<IrValue*>, IrValue*> selectors;
         std::vector<std::pair<IrBlock*, IrValue*>> phis;
@@ -1474,17 +1483,35 @@ private:
         if (const auto known = web.selectors.find(tuple); known != web.selectors.end()) {
             return known->second;
         }
+        if (web.order.empty()) {
+            const auto& order = m_program.BlockOrder();
+            for (std::size_t index = 0; index < order.size(); index++) {
+                web.order.emplace(order[index], index);
+            }
+        }
         const auto phi = std::ranges::find_if(tuple, [](const IrValue* value) { return value->IsPhi(); });
-        const auto lane = std::ranges::find_if(tuple, [](const IrValue* value) { return value->Opcode() == IrOpcode::SelectU32 || value->Opcode() == IrOpcode::ReadFirstLane; });
-        if (phi == tuple.end() && lane != tuple.end()) {
-            return LaneSelector(tuple, **lane, web, position);
+        IrValue* lane = nullptr;
+        std::size_t laneOrder = 0;
+        for (IrValue* value : tuple) {
+            if (value->Opcode() != IrOpcode::SelectU32 && value->Opcode() != IrOpcode::ReadFirstLane) {
+                continue;
+            }
+            const auto found = web.order.find(value->Parent());
+            const std::size_t index = found == web.order.end() ? 0u : found->second;
+            if (lane == nullptr || index > laneOrder) {
+                lane = value;
+                laneOrder = index;
+            }
+        }
+        if (phi == tuple.end() && lane != nullptr) {
+            return LaneSelector(tuple, *lane, web, position);
         }
         if (phi == tuple.end()) {
-            if (std::ranges::any_of(tuple, [](IrValue* value) { return HoldsControlValue(value); })) {
+            if (std::ranges::any_of(tuple, [](IrValue* value) { return HoldsFoldableValue(value); })) {
                 if (StrictDescriptorWebs()) {
-                    return GiveUp(web, "a descriptor dword depends on the program counter, EXEC or a lane mask");
+                    return GiveUp(web, "a descriptor dword depends on the program counter, EXEC, a lane mask, the lane index or texels");
                 }
-                web.foldedControlValue = true;
+                web.foldedValue = true;
                 return &m_builder.Constant(DescriptorWeb::foldedArm);
             }
             for (IrValue* value : tuple) {
@@ -1503,12 +1530,6 @@ private:
             }
             web.arms.push_back(std::move(tuple));
             return &m_builder.Constant(static_cast<std::uint32_t>(web.arms.size() - 1u));
-        }
-        if (web.order.empty()) {
-            const auto& order = m_program.BlockOrder();
-            for (std::size_t index = 0; index < order.size(); index++) {
-                web.order.emplace(order[index], index);
-            }
         }
         IrBlock* block = nullptr;
         std::size_t latest = 0;
@@ -1633,7 +1654,7 @@ private:
         }
         DescriptorWeb web;
         IrValue* selector = WebSelector(tuple, web, inst);
-        const bool select = selector != nullptr && !web.arms.empty() && (web.arms.size() > 1u || web.foldedControlValue);
+        const bool select = selector != nullptr && !web.arms.empty() && (web.arms.size() > 1u || web.foldedValue);
         if (select) {
             for (const auto& [block, phi] : web.phis) {
                 block->InsertInstructionBefore(nullptr, phi);
@@ -1664,7 +1685,7 @@ private:
             }
         }
         if (selector == nullptr || web.arms.empty()) {
-            const std::string reason = !web.failure.empty() ? web.failure : web.foldedControlValue ? std::string("every path's descriptor depends on the program counter, EXEC or a lane mask") : std::string("no descriptor was found on any path");
+            const std::string reason = !web.failure.empty() ? web.failure : web.foldedValue ? std::string("every path's descriptor depends on the program counter, EXEC, a lane mask, the lane index or texels") : std::string("no descriptor was found on any path");
             for (std::uint32_t slot = 0; slot < handleCount; slot++) {
                 if (split[slot]) {
                     m_splitFailures.try_emplace(handles[slot], reason);
@@ -1673,7 +1694,8 @@ private:
             return;
         }
 
-        if (web.foldedControlValue) {
+        if (web.foldedValue) {
+            m_foldedWeb = true;
             const std::array<IrValue*, 2> compare {selector, &m_builder.Constant(DescriptorWeb::foldedArm)};
             IrValue* folded = EmitBefore(inst, IrOpcode::IEqual32, IrType::Bool, compare);
             EmitDescriptorFault(inst, *folded, m_builder.Constant(0u), m_builder.Constant(0u));
@@ -2433,6 +2455,7 @@ private:
     };
     std::vector<EdgeSelectorEntry> m_edgeSelectors;
     std::unordered_map<const IrValue*, std::string> m_splitFailures;
+    bool m_foldedWeb = false;
 };
 
 }
