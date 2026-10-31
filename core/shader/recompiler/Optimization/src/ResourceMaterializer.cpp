@@ -204,6 +204,21 @@ bool layerRowsCandidate(const ImageResource& image) {
     return image.dimension == RdnaImageDimension::Dim1DArray && image.layerRowsCompatible && image.resourceClass != ImageResourceClass::Storage && image.table == NoTable && !image.depthCompare;
 }
 
+bool registeredSampledArrayCandidate(const ImageResource& image) {
+    return image.dimension == RdnaImageDimension::Dim1DArray && image.layerRowsCompatible && image.resourceClass == ImageResourceClass::Sampled && !image.depthCompare && !image.atomic && !image.written;
+}
+
+void normalizeRegisteredImageView(const ImageResource& image, const SrtRuntime& runtime, std::uint32_t maxArrayLayers, std::uint32_t resource, std::uint32_t record, DescriptorValue& descriptor, std::vector<RegisteredImageView>& views) {
+    if (runtime.normalizeImageView == nullptr || !registeredSampledArrayCandidate(image) || descriptor.dwordCount != 8u || nullImageDescriptor(image, descriptor)) return;
+    const auto provenance = descriptor;
+    auto identity = SrtImageViewIdentity{};
+    auto effective = descriptor.dwords;
+    const bool normalized = runtime.normalizeImageView(runtime.userContext, maxArrayLayers, effective, identity);
+    descriptor.dwords = effective;
+    static_cast<void>(normalized);
+    views.push_back({resource, record, provenance, descriptor, identity.generation, identity.address, identity.rangeAddress, identity.rangeBytes, identity.allocationAddress, identity.allocationBytes, identity.backingSerial, identity.hasRange, identity.readable, identity.writable, identity.gpu});
+}
+
 bool viewsPastLayerLimit(const DescriptorValue& descriptor, std::uint32_t limit) {
     const auto lastArray = descriptor.dwords[4] & 0x1fffu;
     const auto baseArray = (descriptor.dwords[4] >> 16u) & 0x1fffu;
@@ -1386,6 +1401,15 @@ private:
         out.codes = records.contents.codes;
         out.words = records.contents.words;
         out.readRanges = records.contents.readRanges;
+        for (std::uint32_t resource = 0; resource < plan.info.images.size(); ++resource) {
+            const auto& image = plan.info.images[resource];
+            if (image.table != table || !registeredSampledArrayCandidate(image) || runtime.normalizeImageView == nullptr) continue;
+            auto effectiveWords = records.contents.words.Copy();
+            std::vector<RegisteredImageView> identities;
+            identities.reserve(effectiveWords.size());
+            for (std::uint32_t record = 0; record < effectiveWords.size(); ++record) normalizeRegisteredImageView(image, runtime, plan.maxImageArrayLayers, resource, record, effectiveWords[record], identities);
+            out.resourceViews.push_back({resource, SharedValues<DescriptorValue>(std::move(effectiveWords)), std::move(identities)});
+        }
         auto& counters = tableCounters();
         if (records.fault != 0u) counters.poison[records.fault & ~ImageTableAbi::PoisonFlag].fetch_add(1, std::memory_order_relaxed);
         if (records.contents.unmapped != 0u) counters.poison[static_cast<std::size_t>(PoisonReason::Unmapped)].fetch_add(records.contents.unmapped, std::memory_order_relaxed);
@@ -1411,6 +1435,7 @@ private:
 
 void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, SrtWalker& walker, ResourceSnapshot& snapshot, std::vector<std::uint8_t>& activeSources) {
     snapshot = ResourceSnapshot{};
+    snapshot.imageAllocationGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
     if (plan.uniformFill.fill.kind != UniformFillKind::None) {
         const auto words = plan.uniformFill.fill.words;
         if (words == 0u || words > plan.uniformFill.values.size()) {
@@ -1487,6 +1512,8 @@ void materializeSnapshot(const IrResourcePlan& plan, const SrtRuntime& runtime, 
             descriptor = DescriptorValue{};
             descriptor.dwordCount = 8u;
         }
+        const auto maxArrayLayers = image.maxArrayLayers != 0u ? image.maxArrayLayers : plan.maxImageArrayLayers;
+        normalizeRegisteredImageView(image, runtime, maxArrayLayers, i, 0u, descriptor, snapshot.registeredImages);
         snapshot.images[i] = descriptor;
     }
 
@@ -1796,14 +1823,17 @@ bool sameColumns(const std::vector<ImageTableColumnSnapshot>& left, const std::v
     for (std::size_t index = 0; index < left.size(); index++) {
         const auto& a = left[index];
         const auto& b = right[index];
-        if (a.base != b.base || a.size != b.size || a.records != b.records || a.keys != b.keys || a.fault != b.fault || a.outside != b.outside || !a.codes.Shares(b.codes) || !a.words.Shares(b.words)) return false;
+        if (a.base != b.base || a.size != b.size || a.records != b.records || a.keys != b.keys || a.fault != b.fault || a.outside != b.outside || !a.codes.Shares(b.codes) || !a.words.Shares(b.words) || a.resourceViews != b.resourceViews) return false;
     }
     return true;
 }
 
 std::size_t resolutionFootprint(const ResolvedImageTables& resolved, const std::vector<ImageTableColumnSnapshot>& tables) {
     std::size_t footprint = resolved.map.size() + (resolved.elements.size() * sizeof(ImageTableElement) + resolved.samplers.size() * sizeof(ImageTableSamplerElement) + resolved.poison.size() * sizeof(ImageTablePoisonRecord)) / sizeof(std::uint32_t);
-    for (const auto& table : tables) footprint += 16u + table.codes.size() + table.words.size() * 9u;
+    for (const auto& table : tables) {
+        footprint += 16u + table.codes.size() + table.words.size() * 9u;
+        for (const auto& view : table.resourceViews) footprint += view.words.size() * 9u + view.identities.size() * (sizeof(RegisteredImageView) / sizeof(std::uint32_t));
+    }
     return footprint;
 }
 
@@ -1970,7 +2000,9 @@ ResolvedImageTables ResourceMaterializer::ResolveImageTables(const ShaderInfo& i
                 if (const auto known = records.Find(code)) {
                     mapped = *known;
                 } else {
-                    const auto& words = column.words.at(code);
+                    const auto& rawWords = column.words.at(code);
+                    const auto view = sampler ? column.resourceViews.end() : std::find_if(column.resourceViews.begin(), column.resourceViews.end(), [resource](const auto& candidate) { return candidate.resource == resource; });
+                    const auto& words = !sampler && view != column.resourceViews.end() ? view->words.at(code) : rawWords;
                     if (sampler || (words.availableDwordMask & (1u << 3u)) == 0u || !nullImageDescriptor(info.images[resource], words)) mapped = sampler ? samplerRecord(resource, words) : imageRecord(resource, words);
                     records.Set(code, mapped);
                 }
@@ -2669,12 +2701,18 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
         for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
             const SrtForceSyncScope forceSync(runtime, attempt == 2u);
             const auto beforeSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            const auto beforeImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
             activeSources.clear();
             materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
             const auto afterSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
             TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
             const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
-            if (runtime.descriptorScope == nullptr || (afterTables == afterSnapshot && (plan.uniformFill.fill.kind == UniformFillKind::None || afterSnapshot == beforeSnapshot))) {
+            const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
+            if ((runtime.descriptorScope == nullptr || (afterTables == afterSnapshot && (plan.uniformFill.fill.kind == UniformFillKind::None || afterSnapshot == beforeSnapshot))) && afterImageGeneration == beforeImageGeneration) {
+                for (const auto& table : nextSnapshot.tables.tables) {
+                    for (const auto& view : table.resourceViews) nextSnapshot.registeredImages.insert(nextSnapshot.registeredImages.end(), view.identities.begin(), view.identities.end());
+                }
+                nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
                 completed = true;
                 break;
             }

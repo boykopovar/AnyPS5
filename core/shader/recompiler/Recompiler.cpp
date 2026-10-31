@@ -1727,6 +1727,23 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     }
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
+    mix(snapshot.registeredImages.size());
+    for (const auto& view : snapshot.registeredImages) {
+        mix(view.resource);
+        mix(view.record);
+        mix(view.address);
+        mix(view.rangeAddress);
+        mix(view.rangeBytes);
+        mix(view.allocationAddress);
+        mix(view.allocationBytes);
+        mix(view.backingSerial);
+        mix(view.hasRange);
+        mix(view.readable);
+        mix(view.writable);
+        mix(view.gpu);
+        for (const auto word : view.provenance.dwords) mix(word);
+        for (const auto word : view.effective.dwords) mix(word);
+    }
     if (masked) {
         mix(snapshot.flattenedSrt.size());
         mix(snapshot.userData.size());
