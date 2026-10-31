@@ -145,9 +145,11 @@ std::uint64_t currentTick(std::size_t clock = 0) {
 
 int setCurrentTick(std::size_t clock, const RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    if (tick->tick < UNIX_EPOCH_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
+    RtcTick source{};
+    if (!GuestCopyIn_nid_no_patch(&source, tick, sizeof(source))) return SCE_RTC_ERROR_INVALID_POINTER;
+    if (source.tick < UNIX_EPOCH_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     std::lock_guard lock(clockMutex);
-    clocks[clock] = ClockState{tick->tick, std::chrono::steady_clock::now(), true};
+    clocks[clock] = ClockState{source.tick, std::chrono::steady_clock::now(), true};
     return 0;
 }
 
@@ -447,13 +449,15 @@ int APS5_VABI sceRtcConvertTickToDateTime(const RtcTick* tick, RtcDateTime* time
 
 int APS5_VABI sceRtcGetCurrentTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick();
+    const RtcTick value{currentTick()};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcGetCurrentNetworkTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick(1);
+    const RtcTick value{currentTick(1)};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
@@ -461,7 +465,8 @@ int APS5_VABI sceRtcGetCurrentClock(RtcDateTime* time, int time_zone_minutes) {
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcTick tick{currentTick()};
     if (const int result = addTicks(&tick, &tick, time_zone_minutes, TICKS_PER_MINUTE); result != 0) return result;
-    *time = fromTick(tick.tick);
+    const RtcDateTime converted = fromTick(tick.tick);
+    if (!GuestCopyOut_nid_no_patch(time, &converted, sizeof(converted))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
@@ -471,7 +476,8 @@ int APS5_VABI sceRtcGetCurrentClockLocalTime(RtcDateTime* time) {
     const RtcTick utc{currentTick()};
     if (utc.tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     if (const int result = addTicks(&local, &utc, localOffsetSeconds(utc.tick), TICKS_PER_SECOND); result != 0) return result;
-    *time = fromTick(local.tick);
+    const RtcDateTime converted = fromTick(local.tick);
+    if (!GuestCopyOut_nid_no_patch(time, &converted, sizeof(converted))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
@@ -703,19 +709,22 @@ int APS5_VABI sceRtcCompareTick(const RtcTick* first, const RtcTick* second) {
 
 int APS5_VABI sceRtcGetCurrentRawNetworkTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick(4);
+    const RtcTick value{currentTick(4)};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcGetCurrentAdNetworkTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick(2);
+    const RtcTick value{currentTick(2)};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
 int APS5_VABI sceRtcGetCurrentDebugNetworkTick(RtcTick* tick) {
     if (!tick) return SCE_RTC_ERROR_INVALID_POINTER;
-    tick->tick = currentTick(3);
+    const RtcTick value{currentTick(3)};
+    if (!GuestCopyOut_nid_no_patch(tick, &value, sizeof(value))) return SCE_RTC_ERROR_INVALID_POINTER;
     return 0;
 }
 
