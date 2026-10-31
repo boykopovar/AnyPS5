@@ -152,7 +152,7 @@ static int TestVtable(const char* mode) {
         if (!deleting && actual->message) FixtureFail(59);
     } else {
         const char* result = ProbeWhat(what, actual, unused);
-        if (!result || std::strcmp(result, plain ? "std::bad_alloc" : "actual virtual message") ||
+        if (!result || std::strcmp(result, plain ? "bad allocation" : "actual virtual message") ||
             objectFrees || messageFrees) FixtureFail(60);
     }
     if (other->vtable != originalOther.vtable || other->message != originalOther.message ||
