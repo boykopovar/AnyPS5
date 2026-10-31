@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -213,9 +214,12 @@ std::string Counts(const AgcDriver::Graphics::DrawPassCounts& before, const AgcD
 
 void ReadersShareAPass(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
     const auto before = AddressDraws();
+    const auto heapBinds = AgcDriver::Graphics::DescriptorHeapBinds();
     Submit(vertices, target, {{PixelRead.data(), data.At(0)}, {PixelRead.data(), data.At(0)}});
     const auto after = AddressDraws();
-    std::printf("two draws reading through the table: %s\n", Counts(before, after).c_str());
+    const auto binds = AgcDriver::Graphics::DescriptorHeapBinds() - heapBinds;
+    std::printf("two draws reading through the table: %s, %llu heap binds\n", Counts(before, after).c_str(), static_cast<unsigned long long>(binds));
+    Expect(!AgcDriver::Graphics::DescriptorHeapEnabled() || binds == 1, "two heap draws in one command buffer bound the descriptor heaps " + std::to_string(binds) + " times");
     Expect(after.draws - before.draws == 2 && after.passesContinued - before.passesContinued == 1, "a draw reading through the table after another did not continue its pass: " + Counts(before, after));
 }
 

@@ -440,6 +440,21 @@ void TestRetiredSurfaceRelease(const Context& context) {
     DepthSurfaceView(context, {sampled + 0x200000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
     Require(destroyed(sampledImage), "a retired depth surface must free its image once its sampled view is released");
 
+    constexpr std::uint64_t heapHeld = 0x9a000000;
+    DepthSurfaceView(context, {heapHeld, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    const auto heapImage = lastImage;
+    auto slotView = lookup(context, {heapHeld, FormatR32Float, 256, 256});
+    Require(slotView != nullptr, "an R32F view of a D32 surface's own extent must sample its depth plane");
+    slotView->AddHeapHold();
+    RetireDepthSurfaces(context.device, heapHeld, bytes);
+    const auto heapReleased = DepthSurfacesReleased();
+    DepthSurfaceView(context, {heapHeld + 0x100000u, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
+    Require(DepthSurfacesReleased() > heapReleased, "a retired depth surface whose sampled view only GPU heap slots hold must be freed");
+    Require(!destroyed(heapImage), "a GPU heap slot's sampled view must keep the freed surface's depth image");
+    slotView->DropHeapHold();
+    slotView.reset();
+    Require(destroyed(heapImage), "dropping the heap slot's view must free the depth image");
+
     constexpr std::uint64_t kept = 0x9c000000;
     DepthSurfaceView(context, {kept, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0});
     const auto keptImage = lastImage;

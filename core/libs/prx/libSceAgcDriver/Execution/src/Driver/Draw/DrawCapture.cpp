@@ -1,3 +1,14 @@
+#include <mutex>
+#include <cstdio>
+#include <chrono>
+#include <atomic>
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include <algorithm>
+#include <optional>
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
@@ -60,11 +71,18 @@ void TraceShaderRequestFailure(std::uint64_t token, const Submission& submission
 
 }
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDrawStage(std::size_t i, std::uint32_t pushOffset, const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::uint64_t traceToken, const std::vector<DrawProgram>& programs, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<ShaderRecompiler::LinkedProgram>& linked, const Pm4::DrawParameters& drawParameters, const std::shared_ptr<VulkanDevice>& localDevice, ShaderMemory& shaderMemory, std::vector<StageCapture>& stageCaptures, std::vector<bool>& recompiled, bool drawHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool profile, std::uint64_t dumpTarget, std::uint64_t dumpSlot1, std::uint64_t& captures, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, std::string& rejected, const std::optional<ShaderRecompiler::MeshBarycentricLayout>& meshBarycentrics) try {
+std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDrawStage(std::size_t i, std::uint32_t pushOffset, const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::uint64_t traceToken, const std::vector<DrawProgram>& programs, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, std::vector<ShaderRecompiler::MemoryRegion>& memory, const std::vector<ShaderRecompiler::LinkedProgram>& linked, const Pm4::DrawParameters& drawParameters, const std::shared_ptr<VulkanDevice>& localDevice, ShaderMemory& shaderMemory, std::vector<StageCapture>& stageCaptures, std::vector<bool>& recompiled, bool drawHit, const std::vector<std::shared_ptr<DispatchVariant>>& matched, const std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool profile, std::uint64_t dumpTarget, std::uint64_t dumpSlot1, std::uint64_t& captures, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, std::string& rejected, const std::optional<ShaderRecompiler::MeshBarycentricLayout>& meshBarycentrics, bool heapPartners) try {
     PerformanceTimer timing("Shader.DrawStage");
     using Stage = ShaderRecompiler::ShaderStage;
     phaseTiming.Phase(DrawRowVectors);
     const auto& program = programs[i];
+    const auto tailMask = [&]() -> std::uint64_t {
+        const auto& tail = program.snapshot->userDataTailRegister;
+        if (!tail || *tail < program.firstUserSgpr) return 0;
+        const auto index = *tail - program.firstUserSgpr;
+        return index + 1u < 64u ? std::uint64_t{3} << index : ~std::uint64_t{0};
+    };
+    Graphics::HeapCostScope prepareCost(Graphics::HeapCost::StagePrepare);
     const auto waveSize = Graphics::StageWaveSize(graphics.stages, program.binary.stage);
     ShaderRecompiler::RecompileRequest request{
         program.binary,
@@ -76,17 +94,56 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     if (graphics.depthRemap.mode != 0u && pushOffset < Graphics::PipelinePushSlotBytes) {
         request.layout.pushConstantSizeBytes = std::min(request.layout.pushConstantSizeBytes, ShaderRecompiler::DepthRemapPushOffsetBytes - pushOffset);
     }
+    if (request.target.deviceImageTables) request.target.deviceImageTables = localDevice->DeviceImagesServe(program.binary.codeAddress);
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
-    auto invocation = [&] {
+    const bool heapCandidate = heapPartners && (program.binary.stage == Stage::Fragment || HeapPreRasterStage(program.binary.stage)) && !HeapStageExcluded(program.binary.stage) && HeapFragmentsEnabled();
+    const auto fragmentOnHeap = [&] {
+        const auto fragment = std::find_if(programs.begin(), programs.end(), [](const DrawProgram& candidate) { return candidate.binary.stage == Stage::Fragment; });
+        if (fragment == programs.end()) return true;
+        const auto known = HeapFragmentKnown(fragment->snapshot.get(), fragment->codeOffset);
+        return known.has_value() ? *known : PreparedHeapStage(*fragment->snapshot, fragment->codeOffset);
+    };
+    const bool heapVertex = request.target.descriptorMemory && HeapPreRasterStage(program.binary.stage) && fragmentOnHeap();
+    const auto heapKey = program.codeOffset | (heapVertex ? std::size_t{1} << 62u : std::size_t{0});
+    const auto heapKnown = heapCandidate ? HeapFragmentKnown(program.snapshot.get(), heapKey) : std::nullopt;
+    if (heapKnown.value_or(false)) request.target.gpuResolvedImages = true;
+    const auto invocationFor = [&] {
         try {
             return InvocationFor(*program.snapshot, program.codeOffset, request);
         } catch (...) {
             TraceShaderRequestFailure(traceToken, submission, packetOffset, program, std::current_exception());
             throw;
         }
-    }();
+    };
+    auto invocation = invocationFor();
+    const auto heapEligible = [&](const std::shared_ptr<const ShaderRecompiler::IrResourcePlan>& plan) { return HeapStageEligible(program.binary.stage, plan.get(), heapVertex); };
+    const auto plan = heapCandidate && invocation.Plan() == nullptr ? invocation.LoadPlan() : invocation.Plan();
+    using StageReason = Graphics::HeapStageReason;
+    StageReason stageReason = StageReason::Heap;
+    if (!heapCandidate) stageReason = !HeapFragmentsEnabled() ? StageReason::Disabled : !heapPartners ? StageReason::PairRefused : StageReason::StageKind;
+    else if (heapKnown == std::optional(false)) stageReason = StageReason::KnownIneligible;
+    if (heapKnown.value_or(false) && !heapEligible(plan)) {
+        stageReason = HeapStageIneligibility(program.binary.stage, plan.get(), heapVertex);
+        NoteHeapFragment(program.snapshot.get(), heapKey, false);
+        request.target.gpuResolvedImages = false;
+        invocation = invocationFor();
+    } else if (heapCandidate && !heapKnown.has_value()) {
+        stageReason = HeapStageIneligibility(program.binary.stage, plan.get(), heapVertex);
+        const bool eligible = stageReason == StageReason::Heap;
+        NoteHeapFragment(program.snapshot.get(), heapKey, eligible);
+        if (eligible) {
+            request.target.gpuResolvedImages = true;
+            invocation = invocationFor();
+        }
+    }
+    Graphics::NoteHeapStageReason(stageReason);
+    prepareCost.Stop();
     timing.Mark("prepared_invocation");
     auto& stageCapture = stageCaptures[i];
+    stageCapture.direct = false;
+    stageCapture.ring = false;
+    stageCapture.heapReadWords.reset();
+    stageCapture.capture.reset();
     stageCapture.forgetSerial = GuestMemory::ForgetSerial();
     stageCapture.pushOffset = pushOffset;
     const auto named = [&](const std::exception& error, std::span<const ShaderRecompiler::MemoryRegion> regions) {
@@ -105,6 +162,62 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         where << ": ";
         return std::runtime_error(where.str() + error.what());
     };
+    const auto unmapped = [&] {
+        Graphics::NoteHeapFallback(Graphics::HeapFallback::DrawUnmapped);
+        NoteHeapFragment(program.snapshot.get(), heapKey, false);
+        return materializeDrawStage(i, pushOffset, queue, submission, packetOffset, traceToken, programs, graphics, pixel, vertexInfos, memory, linked, drawParameters, localDevice, shaderMemory, stageCaptures, recompiled, drawHit, matched, matchedRegions, profile, dumpTarget, dumpSlot1, captures, phaseTiming, phaseMs, rejected, meshBarycentrics, heapPartners);
+    };
+    if (request.target.gpuResolvedImages) {
+        auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
+        std::shared_ptr<const ShaderRecompiler::HeapStageWords> reusedWords;
+        HeapStageReads reads;
+        decltype(MaterializeHeapStage(invocation, program.userData, program.binary.codeAddress, words.get(), &reusedWords, &reads)) direct;
+        Graphics::HeapCostScope callCost(Graphics::HeapCost::HeapStageCall);
+        try {
+            direct = MaterializeHeapStage(invocation, program.userData, program.binary.codeAddress, words.get(), &reusedWords, &reads);
+        } catch (const std::exception& error) {
+            throw named(error, request.context.memory);
+        }
+        callCost.Stop();
+        Graphics::HeapCostScope finishCost(Graphics::HeapCost::StageFinish);
+        if (direct == nullptr) goto heapCapture;
+        if (!HeapDrawStageMappable(*direct, program.binary.stage)) return unmapped();
+        NoteHeapDirect();
+        stageCapture.compiled = std::move(direct);
+        if (reusedWords != nullptr) words = std::const_pointer_cast<ShaderRecompiler::HeapStageWords>(std::move(reusedWords));
+        stageCapture.heapWords = stageCapture.compiled->heapTemplateId != 0 ? std::move(words) : nullptr;
+        if (SampleHeapStageVerify()) {
+            const auto fullCapture = shaderMemory.Capture(invocation);
+            const auto expected = invocation.Materialize(*fullCapture);
+            static_cast<void>(shaderMemory.TakeRecentRegions());
+            NoteHeapDirectVerify(stageCapture.heapWords != nullptr ? *PatchedHeapResult(*stageCapture.compiled, *stageCapture.heapWords) : *stageCapture.compiled, *expected, fullCapture.get());
+        }
+        stageCapture.regions.clear();
+        stageCapture.direct = true;
+        if (reads.complete) {
+            auto owned = std::make_shared<const std::vector<std::uint32_t>>(std::move(reads.values));
+            std::size_t cursor = 0;
+            for (const auto& [begin, end] : reads.ranges) {
+                const auto count = static_cast<std::size_t>((end - begin) / sizeof(std::uint32_t));
+                stageCapture.regions.push_back({begin, std::as_bytes(std::span(owned->data() + cursor, count))});
+                cursor += count;
+            }
+            stageCapture.heapReadWords = std::move(owned);
+            stageCapture.userDataUse = reads.userDataUse;
+            stageCapture.capture = std::move(reads.capture);
+            auto mask = reads.userDataUse.asValue | reads.userDataUse.asBase | stageCapture.compiled->userDataRegisterReads | tailMask();
+            if (vertexInfos[i]) {
+                for (const auto reg : {static_cast<std::uint32_t>(vertexInfos[i]->fetchAttribReg), static_cast<std::uint32_t>(vertexInfos[i]->fetchBufferReg)}) mask |= reg + 1u < 64u ? std::uint64_t{3} << reg : ~std::uint64_t{0};
+            }
+            stageCapture.userDataMask = mask;
+            stageCapture.ring = true;
+        }
+        recompiled[i] = true;
+        timing.Mark("heap_direct");
+        phaseTiming.Phase(DrawRowRecompile);
+        return stageCapture.compiled;
+    }
+heapCapture:
     const auto capture = [&] {
         const SampledReadScope sampling(evidenceReads);
         try {
@@ -155,16 +268,30 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         phaseTiming.Phase(DrawRowCapture);
 
     timing.Mark("capture_resources");
-    try {
-        stageCapture.compiled = invocation.Materialize(*capture);
-        stageCapture.capture = capture;
-    } catch (const std::exception& error) {
-        TraceMaterializationFailure(traceToken, submission, packetOffset, i, "capture-or-materialize", std::current_exception());
-        throw named(error, request.context.memory);
+    stageCapture.heapWords.reset();
+    if (request.target.gpuResolvedImages) {
+        auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
+        if (auto shared = invocation.MaterializeHeap(*capture, *words)) {
+            stageCapture.compiled = std::move(shared);
+            stageCapture.heapWords = std::move(words);
+            stageCapture.direct = true;
+            stageCapture.ring = true;
+            if (SampleHeapStageVerify()) NoteHeapDirectVerify(*PatchedHeapResult(*stageCapture.compiled, *stageCapture.heapWords), *invocation.Materialize(*capture));
+        }
     }
+    if (stageCapture.heapWords == nullptr) {
+        try {
+            stageCapture.compiled = invocation.Materialize(*capture);
+        } catch (const std::exception& error) {
+            TraceMaterializationFailure(traceToken, submission, packetOffset, i, "capture-or-materialize", std::current_exception());
+            throw named(error, request.context.memory);
+        }
+    }
+    if (stageCapture.compiled->gpuResolvedImages && !HeapDrawStageMappable(*stageCapture.compiled, program.binary.stage)) return unmapped();
+    stageCapture.capture = capture;
     timing.Mark("materialize");
     const auto walked = capture->userDataUse.asValue | capture->userDataUse.asBase;
-    auto mask = walked == 0 ? ~std::uint64_t{0} : walked | stageCapture.compiled->userDataRegisterReads;
+    auto mask = walked == 0 ? ~std::uint64_t{0} : walked | stageCapture.compiled->userDataRegisterReads | tailMask();
     if (vertexInfos[i]) {
         for (const auto reg : {static_cast<std::uint32_t>(vertexInfos[i]->fetchAttribReg), static_cast<std::uint32_t>(vertexInfos[i]->fetchBufferReg)}) {
             mask |= reg + 1u < 64u ? std::uint64_t{3} << reg : ~std::uint64_t{0};
@@ -183,7 +310,7 @@ void Driver::recordStageDataPositions(DispatchVariant& variant, const ShaderReco
     for (std::size_t b = 0; b < compiled.bindings.size(); ++b) {
         if (compiled.bindings[b].role != ShaderRecompiler::DescriptorRole::FlattenedSrt) continue;
         variant.flatBinding = static_cast<std::uint32_t>(b);
-        static_cast<void>(DataWordPositions(variant.runs, capture.readTrace.leaves, capture.readTrace.otherReads, variant.words, compiled.bindings[b].guestDescriptor, variant.dataPositions, variant.dataSlots));
+        static_cast<void>(DataWordPositions(variant.runs, capture.readTrace.leaves, capture.readTrace.otherReads, variant.words, variant.ringFlat != nullptr ? *variant.ringFlat : compiled.bindings[b].guestDescriptor, variant.dataPositions, variant.dataSlots));
         break;
     }
     if (variant.dataPositions.empty() || decodeReads.empty()) return;
@@ -222,7 +349,7 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
                 fresh[i] = matched[i];
                 continue;
             }
-            if (stageCapture.compiled == nullptr || !CacheableResult(*stageCapture.compiled)) continue;
+            if (stageCapture.compiled == nullptr || (stageCapture.direct && !stageCapture.ring) || !CacheableResult(*stageCapture.compiled)) continue;
             auto variant = std::make_shared<DispatchVariant>();
             variant->compiled = stageCapture.compiled;
             if (programs[i].binary.stage == ShaderRecompiler::ShaderStage::Mesh) {
@@ -232,6 +359,12 @@ void Driver::cacheDrawStages(bool useDrawEntries, bool drawHit, const Pm4::DrawP
             variant->forgetSerial = stageCapture.forgetSerial;
             variant->pushOffset = stageCapture.pushOffset;
             variant->userDataMask = stageCapture.userDataMask;
+            if (stageCapture.ring && stageCapture.heapWords != nullptr) {
+                variant->ring = true;
+                variant->ringAttributes = std::make_shared<const std::vector<ShaderRecompiler::VertexAttribute>>(stageCapture.heapWords->vertexAttributes);
+                if (!stageCapture.heapWords->flattenedSrt.empty()) variant->ringFlat = std::make_shared<const std::vector<std::uint32_t>>(stageCapture.heapWords->flattenedSrt);
+                if (!stageCapture.heapWords->bindings.empty()) variant->ringBindings = std::make_shared<const std::vector<std::vector<std::uint32_t>>>(stageCapture.heapWords->bindings);
+            }
             if (vertexInfos[i]) variant->vertexInfo = std::make_shared<const ShaderRecompiler::ShaderVertexStageInfo>(*vertexInfos[i]);
 
             std::vector<ShaderRecompiler::MemoryRegion> regions(stageCapture.regions.begin(), stageCapture.regions.end());

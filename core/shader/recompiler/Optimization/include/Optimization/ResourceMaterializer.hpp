@@ -3,11 +3,13 @@
 
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/SrtWalker.hpp"
+#include "DeviceImageTableAbi.hpp"
 #include "ImageTableAbi.hpp"
 #include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -61,6 +63,12 @@ struct RuntimeImageModeMatch {
     std::string detail;
 };
 
+struct DeviceImageInterface {
+    std::uint64_t id = 0;
+    ImageResource image;
+    std::vector<ImageResource> modes;
+};
+
 class ConvertedSampleRequired : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -78,6 +86,12 @@ public:
     static std::shared_ptr<const ResolvedImageTables> ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey);
     static bool NullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor);
     static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
+    static std::uint64_t DeviceImageInterfaceId(const ImageResource& image, std::span<const ImageResource> modes);
+    static std::uint64_t RegisterDeviceImageInterface(const ImageResource& image, std::span<const ImageResource> modes);
+    static void RegisterDeviceImageInterfaces(const ShaderInfo& info);
+    static std::shared_ptr<const DeviceImageInterface> FindDeviceImageInterface(std::uint64_t id);
+    static constexpr std::size_t MaxDeviceImageCandidates = 16;
+    static std::vector<DeviceImageTableAbi::Expectation> ExpectedDeviceImages(const IrResourcePlan& plan, const SrtRuntime& runtime, bool& complete);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     static void CompactPlan(IrResourcePlan& plan);
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;

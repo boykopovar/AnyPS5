@@ -6023,6 +6023,45 @@ void copyInputKeptBytesTests() {
     Require(mock.live == 0, "copy input accounting tests leaked Vulkan objects");
 }
 
+void pooledBufferAddressTests() {
+    using namespace AgcDriver::Graphics;
+    constexpr std::size_t bytes = 4096;
+    constexpr auto properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+    const bool forced = BufferPool::ForceAddresses();
+    mock = MockVulkan{};
+    {
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.bufferDeviceAddress = true;
+        context.memory.memoryTypes[0].propertyFlags |= properties;
+        context.memory.memoryHeapCount = 1;
+        context.memory.memoryHeaps[0] = {std::uint64_t{4} << 30u, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+        context.limits.maxMemoryAllocationCount = 4096;
+        context.bufferPool = std::make_shared<BufferPool>(context);
+        BufferPool::SetForceAddresses(true);
+        VkBuffer pooled = VK_NULL_HANDLE;
+        {
+            DeviceBuffer texture(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            pooled = texture.Handle();
+        }
+        VkDeviceAddress address = 0;
+        VkDeviceAddress expected = 0;
+        {
+            Buffer staging(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, properties);
+            Require(staging.Handle() == pooled, "a device-local buffer of the pooled device buffer's size and usage did not reuse its allocation");
+            const VkBufferDeviceAddressInfo info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, pooled};
+            expected = mockGetBufferDeviceAddress(context.device, &info);
+            try {
+                address = staging.DeviceAddress();
+            } catch (const std::exception&) {
+            }
+        }
+        BufferPool::SetForceAddresses(forced);
+        Require(address == expected, "a buffer that reuses a pooled device buffer's allocation has no device address");
+    }
+    Require(mock.live == 0, "pooled buffer address tests leaked Vulkan objects");
+}
+
 void depthCopyKeptBytesTests() {
     using namespace AgcDriver::Graphics;
     constexpr std::size_t bytes = (8 * 8 + 4 * 4) * sizeof(float);
@@ -12679,6 +12718,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--copy-input-kept-bytes") {
             copyInputKeptBytesTests();
             std::cout << "GPU-copy input snapshot accounting and retention passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--pooled-buffer-address") {
+            pooledBufferAddressTests();
+            std::cout << "a reused pooled allocation keeps a device address\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--depth-copy-kept-bytes") {

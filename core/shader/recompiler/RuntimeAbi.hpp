@@ -18,6 +18,11 @@ inline constexpr std::uint32_t FirstImageBinding = 1u;
 inline constexpr std::uint32_t FirstComparisonImageBinding = 22u;
 inline constexpr std::uint32_t FirstStorageImageBinding = 29u;
 inline constexpr std::uint32_t ImageBindingCount = 56u;
+inline constexpr bool GpuHeapStorageKind(std::uint32_t kind) { return kind >= FirstStorageImageBinding && kind < FirstImageBinding + ImageBindingCount; }
+inline constexpr std::uint32_t FirstAtomicImageBinding = FirstStorageImageBinding + 14u;
+inline constexpr std::uint32_t FirstAtomic64ImageBinding = FirstStorageImageBinding + 21u;
+inline constexpr bool AtomicImageKind(std::uint32_t kind) { return kind >= FirstAtomicImageBinding && kind < FirstAtomic64ImageBinding; }
+inline constexpr bool Atomic64ImageKind(std::uint32_t kind) { return kind >= FirstAtomic64ImageBinding && kind < FirstImageBinding + ImageBindingCount; }
 
 enum class Binding : std::uint32_t {
     Buffers = 0u,
@@ -44,6 +49,31 @@ inline constexpr std::uint32_t BindlessTableSlots = 16u;
 inline constexpr std::uint32_t StorageMipSlots = 16u;
 inline constexpr std::uint32_t StorageHeapCapacity = 64u;
 inline constexpr std::uint32_t SamplerHeapCapacity = 64u;
+inline constexpr std::uint32_t GpuImageHeapSlots = static_cast<std::uint32_t>(Binding::Samplers) * 4096u;
+inline constexpr std::uint32_t GpuSamplerHeapSlots = 2048u;
+inline constexpr std::uint32_t GpuDataSet = 2u;
+inline constexpr std::uint32_t GpuGdsSet = 4u;
+inline constexpr std::uint32_t GdsBytes = 0x10000u;
+inline constexpr std::uint32_t PushDataDwords = 64u;
+inline constexpr std::uint32_t RootDword = 38u;
+inline constexpr std::uint32_t RootRingAddress = 0u;
+inline constexpr std::uint32_t RootPagetableAddress = 2u;
+inline constexpr std::uint32_t RootFaultAddress = 4u;
+inline constexpr std::uint32_t RootGdsAddress = 6u;
+inline constexpr std::uint32_t RootPagetableDwords = 8u;
+inline constexpr std::uint32_t RootStencilReference = 9u;
+inline constexpr std::uint32_t RootStageRecords = 10u;
+enum class RootStageField : std::uint32_t { ShaderData, FlattenedSrt, SrtDwords, TableMap, Count };
+inline constexpr std::uint32_t RootStageDword(Stage stage, RootStageField field) { return RootStageRecords + static_cast<std::uint32_t>(stage) * static_cast<std::uint32_t>(RootStageField::Count) + static_cast<std::uint32_t>(field); }
+inline constexpr std::uint32_t RootDwords = RootStageRecords + StageCount * static_cast<std::uint32_t>(RootStageField::Count);
+static_assert(RootDword * 4u % 8u == 0u && RootDword + RootDwords == PushDataDwords);
+struct HeapSlotWord {
+    std::uint32_t dword = 0;
+    std::uint32_t kind = 0;
+    std::uint32_t element = 0;
+
+    bool operator==(const HeapSlotWord& other) const = default;
+};
 inline constexpr std::uint32_t StateExportMappings = 0u;
 inline constexpr std::uint32_t StateDwords = 2u;
 inline constexpr std::uint32_t StateVertexSelectors = 0u;

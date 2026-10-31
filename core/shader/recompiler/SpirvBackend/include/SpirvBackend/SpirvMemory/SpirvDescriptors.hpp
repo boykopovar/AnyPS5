@@ -18,6 +18,7 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
 std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t sampler);
 std::uint32_t MakeSampledImage(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t sampler);
 void DecorateTableNonUniform(SpirvEmitterState& state, std::uint32_t id);
+std::uint32_t TableTrailerWord(SpirvEmitterState& state, std::uint32_t field);
 bool TablePointSampled(const ImageResource& image);
 bool TableModeEmitted(const ImageResource& mode);
 std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint32_t resource);

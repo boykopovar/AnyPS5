@@ -1,3 +1,5 @@
+#include "execution/VulkanTestDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
@@ -26,7 +28,6 @@ using AgcDriver::DisplayBuffer;
 using AgcDriver::PresentationPass;
 using AgcDriver::PresentationScaler;
 
-constexpr int VulkanTestSkipped = 77;
 constexpr std::uint64_t Bgra8 = 0x8000000000000000ull;
 constexpr std::uint64_t Rgba8 = 0x8000000022000000ull;
 constexpr std::uint64_t TenBit = 0x0100000000000000ull;
@@ -826,6 +827,17 @@ int main() {
         residentPresentTests(device->GetContext());
         overlayPlaneTests(device->GetContext());
         sourceImageOutsideDeviceMemoryTests(device->GetContext());
+        if (GpuHeapEnabled()) {
+            const auto heapDevice = OpenVulkanTestDevice();
+            if (!heapDevice) return VulkanTestSkipped;
+            if (!DescriptorHeapEnabled()) {
+                std::printf("skipped, the device has no descriptor heap\n");
+                return VulkanTestSkipped;
+            }
+            const auto context = heapDevice->GraphicsContext();
+            Require(BindlessHeap::For(context).DescriptorHeapMode(), "the test device did not open the descriptor heap");
+            residentPresentTests(context);
+        }
         std::cout << "resident present format, presentation pass, overlay plane and letterbox tests passed\n";
         return 0;
     } catch (const std::exception& error) {

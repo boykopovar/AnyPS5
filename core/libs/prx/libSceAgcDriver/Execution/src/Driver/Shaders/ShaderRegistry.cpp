@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/HeapStages.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "CacheKey.hpp"
@@ -1074,6 +1075,12 @@ ShaderRecompiler::LinkedCalls LinkUserDataCallees(const ShaderRecompiler::Recomp
 
 }
 
+bool PreparedHeapStage(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
+    if (snapshot.prepared == nullptr) return false;
+    std::lock_guard lock(snapshot.prepared->mutex);
+    return std::ranges::any_of(snapshot.prepared->entries, [&](const auto& entry) { return entry.codeOffset == codeOffset && entry.handle != nullptr && entry.handle->artifact != nullptr && ShaderRecompiler::GetPreparedArtifact(*entry.handle).gpuResolvedImages; });
+}
+
 ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
@@ -1098,7 +1105,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
         if (entry.codeOffset != codeOffset) continue;
         invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*entry.handle);
         if (!linked.code.empty() && !std::ranges::equal(invocationRequest.shader.code, linked.code)) continue;
-        if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, entry.handle, key)) {
+        if (auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(std::move(invocationRequest), entry.handle, key)) {
             NoteMatchedEntry(entry, preparedAtUse);
             return std::move(*invocation);
         }
@@ -1108,7 +1115,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     auto handle = PrepareShaderWithDiagnostics(source);
     invocationRequest = source;
     invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
-    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
+    auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(std::move(invocationRequest), handle, key);
     if (!invocation.has_value()) throw std::runtime_error("AGC driver: an artifact prepared at use does not match its invocation");
     snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
     return std::move(*invocation);
@@ -1339,6 +1346,7 @@ std::unique_ptr<RegisteredPreparation> PlanRegistered(const ShaderSnapshot& snap
     }
     plan->memory = {{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}, {snapshot.headerAddress, snapshot.header}}};
     auto& request = plan->request.emplace(ShaderRecompiler::RecompileRequest{{stage, address, code, snapshot.headerAddress, snapshot.header}, {wave, firstUser, plan->userData, compute, pixel, vertex, plan->memory, RegisteredFloatMode(snapshot)}, stage == Stage::Compute ? device.ComputeTarget(wave) : device.Target(), {0, 0, 0, 128}, graphics});
+    if (request.target.deviceImageTables) request.target.deviceImageTables = device.DeviceImagesServe(address);
     if (graphics && graphics->mesh) request.layout.pushConstantSizeBytes = ShaderRecompiler::MeshDrawPushOffsetBytes;
     if (graphics && graphics->tessellation) request.layout.pushConstantSizeBytes = ShaderRecompiler::TessellationLevelPushOffsetBytes;
     if (pixel && device.GraphicsPipelineLibraries()) request.layout.pushConstantOffsetBytes = Graphics::FixedPushOffset(Stage::Fragment);
@@ -1355,6 +1363,7 @@ bool LibraryPrebuildDisabled() {
 
 void PrebuildStageLibrary(const std::shared_ptr<VulkanDevice>& device, const Graphics::ShaderStages& stages, ShaderRecompiler::ShaderStage stage, std::shared_ptr<const ShaderRecompiler::RecompileResult> result, std::uint32_t pushOffset, std::uint64_t program) {
     if (LibraryPrebuildDisabled() || result == nullptr || (stage != ShaderRecompiler::ShaderStage::Vertex && stage != ShaderRecompiler::ShaderStage::Fragment)) return;
+    if (result->gpuResolvedImages && !HeapStageMappable(*result)) return;
     SubmitLibraryPrebuild([device, stages, stage, result = std::move(result), pushOffset] {
         const std::array<Graphics::CompiledShader, 1> shaders{{{stage, result.get(), pushOffset}}};
         try {
@@ -1374,13 +1383,30 @@ std::vector<PreparedShaders::Entry> PrepareRegistered(RegisteredPreparation& pla
         entries.push_back({plan.codeOffset, PrepareShaderWithDiagnostics(request, &preparation)});
     };
     append();
-    if (plan.prebuildDevice != nullptr && request.target.registrationModules && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && !LibraryPrebuildDisabled()) {
+    const bool fragment = request.shader.stage == ShaderRecompiler::ShaderStage::Fragment;
+    const bool heapVertex = HeapPreRasterStage(request.shader.stage) && request.target.descriptorMemory;
+    const bool vertex = request.shader.stage == ShaderRecompiler::ShaderStage::Vertex;
+    const auto prebuild = [&](const ShaderRecompiler::RecompileRequest& stageRequest, const ShaderRecompiler::SourceHandle& handle) {
+        if (plan.prebuildDevice == nullptr || !stageRequest.target.registrationModules || !(fragment || (vertex && heapVertex && stageRequest.target.gpuResolvedImages)) || LibraryPrebuildDisabled()) return;
         try {
-            PrebuildStageLibrary(plan.prebuildDevice, {Graphics::ShaderPath::Vertex, 0u, 32u, request.context.waveSize, {}, {}}, request.shader.stage, ShaderRecompiler::RegistrationResult(request, *entries.front().handle), request.layout.pushConstantOffsetBytes, plan.program);
+            PrebuildStageLibrary(plan.prebuildDevice, {Graphics::ShaderPath::Vertex, 0u, 32u, stageRequest.context.waveSize, {}, {}}, stageRequest.shader.stage, ShaderRecompiler::RegistrationResult(stageRequest, handle), stageRequest.layout.pushConstantOffsetBytes, plan.program);
         } catch (const std::exception& error) {
             APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
         }
+    };
+    bool heapPrebuilt = false;
+    if ((fragment || heapVertex) && !HeapStageExcluded(request.shader.stage) && HeapFragmentsEnabled()) {
+        const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(request, entries.front().handle);
+        if (invocation && HeapStageEligible(request.shader.stage, invocation->Plan().get(), heapVertex)) {
+            auto heapRequest = request;
+            heapRequest.target.gpuResolvedImages = true;
+            PerformanceTimer timing("Shader.PrepareArtifact");
+            entries.push_back({plan.codeOffset, PrepareShaderWithDiagnostics(heapRequest, &preparation)});
+            prebuild(heapRequest, *entries.back().handle);
+            heapPrebuilt = request.target.descriptorMemory;
+        }
     }
+    if (!heapPrebuilt) prebuild(request, *entries.front().handle);
     if (request.context.compute) {
         request.context.compute->partialThreads = {1, 1, 1};
         append();
@@ -1859,6 +1885,24 @@ std::optional<std::size_t> RegistrationPreparationsPending() {
 
 std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decoded, const ShaderRecompiler::SpirvTarget& target, bool deferUnprepared) {
     ShaderPreparationTransaction transaction;
+    const auto preparedHandle = [&](const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
+        std::vector<std::uint64_t> key;
+        ShaderRecompiler::BuildPreparedShaderKey(request, key);
+        for (const auto& entry : transaction.Read(snapshot).entries) {
+            if (entry.codeOffset == codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) return entry.handle;
+        }
+        PerformanceTimer timing("Shader.PrepareArtifact");
+        return PrepareShaderWithDiagnostics(request);
+    };
+    const auto registrationFor = [&](const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle& handle) -> std::shared_ptr<const ShaderRecompiler::RecompileResult> {
+        if (!target.registrationModules || LibraryPrebuildDisabled()) return nullptr;
+        try {
+            return ShaderRecompiler::RegistrationResult(request, handle);
+        } catch (const std::exception& error) {
+            APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
+            return nullptr;
+        }
+    };
     require(decoded.programs.size() == decoded.roles.size(), "graphics ABI program roles are incomplete");
     for (const auto& program : decoded.programs) require(program.snapshot != nullptr, "graphics ABI has no registered shader snapshot");
     std::vector<ShaderRecompiler::ProgramRole> expected;
@@ -1883,6 +1927,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         linked.push_back({decoded.roles[index], program.binary, program.userDataBase, program.firstUserSgpr, program.userData});
     }
     std::vector<PreparedGraphicsStage> prepared;
+    std::vector<std::optional<ShaderRecompiler::RecompileRequest>> requests;
     std::uint32_t pushOffset = 0;
     const bool fixedSlots = target.fixedPushSlots;
     const auto capacity = Graphics::StagePushLimit(decoded.state.stages, 0, decoded.state.depthRemap.mode != 0u);
@@ -1899,6 +1944,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         }
         if (deferUnprepared && DeferFailedRegistration(*program.snapshot)) {
             prepared.push_back({program.snapshot, {program.codeOffset, nullptr}, program.binary.stage, offset, nullptr});
+            requests.emplace_back();
             continue;
         }
         std::optional<ShaderRecompiler::ShaderVertexStageInfo> vertex;
@@ -1908,6 +1954,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
             if (!deferUnprepared) throw;
             DeferPipelineStage(transaction.Edit(*program.snapshot), *program.snapshot, error.what());
             prepared.push_back({program.snapshot, {program.codeOffset, nullptr}, program.binary.stage, offset, nullptr});
+            requests.emplace_back();
             continue;
         }
         if (vertex) {
@@ -1919,35 +1966,42 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         std::vector<std::uint64_t> key;
         ShaderRecompiler::BuildPreparedShaderKey(request, key);
         std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
-        for (const auto& entry : transaction.Read(*program.snapshot).entries) {
-            if (entry.codeOffset == program.codeOffset && ShaderRecompiler::MatchesPreparedShader(request, *entry.handle, key)) {
-                handle = entry.handle;
-                break;
-            }
-        }
-        if (handle == nullptr) {
-            PerformanceTimer timing("Shader.PrepareArtifact");
-            try {
-                handle = PrepareShaderWithDiagnostics(request);
-            } catch (const std::exception& error) {
-                if (!deferUnprepared) throw;
-                DeferPipelineStage(transaction.Edit(*program.snapshot), *program.snapshot, error.what());
-                prepared.push_back({program.snapshot, {program.codeOffset, nullptr}, program.binary.stage, offset, nullptr});
-                continue;
-            }
+        try {
+            handle = preparedHandle(*program.snapshot, program.codeOffset, request);
+        } catch (const std::exception& error) {
+            if (!deferUnprepared) throw;
+            DeferPipelineStage(transaction.Edit(*program.snapshot), *program.snapshot, error.what());
+            prepared.push_back({program.snapshot, {program.codeOffset, nullptr}, program.binary.stage, offset, nullptr});
+            requests.emplace_back();
+            continue;
         }
         const auto bytes = handle->artifact->bindings.pushConstantSizeBytes;
         require(bytes <= room, "prepared graphics stages exceed the push constant block");
-        std::shared_ptr<const ShaderRecompiler::RecompileResult> registration;
-        if (target.registrationModules && !LibraryPrebuildDisabled()) {
-            try {
-                registration = ShaderRecompiler::RegistrationResult(request, *handle);
-            } catch (const std::exception& error) {
-                APS5_LOG_OUT("shader library prebuild skipped: %s", error.what());
-            }
-        }
-        prepared.push_back({program.snapshot, {program.codeOffset, handle}, program.binary.stage, offset, std::move(registration)});
+        prepared.push_back({program.snapshot, {program.codeOffset, handle}, program.binary.stage, offset, registrationFor(request, *handle)});
+        requests.push_back(std::move(request));
         pushOffset += bytes;
+    }
+    if (HeapFragmentsEnabled()) {
+        std::vector<PreparedGraphicsStage> heap;
+        const auto addHeap = [&](std::size_t index, bool heapVertex) {
+            const auto& stage = prepared[index];
+            if (stage.entry.handle == nullptr || !requests[index] || HeapStageExcluded(stage.stage)) return false;
+            const auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(*requests[index], stage.entry.handle);
+            if (!invocation || !HeapStageEligible(stage.stage, invocation->Plan().get(), heapVertex)) return false;
+            auto request = *requests[index];
+            request.target.gpuResolvedImages = true;
+            const auto handle = preparedHandle(*stage.snapshot, stage.entry.codeOffset, request);
+            heap.push_back({stage.snapshot, {stage.entry.codeOffset, handle}, stage.stage, stage.pushOffset, registrationFor(request, *handle), true});
+            return true;
+        };
+        bool fragmentOnHeap = true;
+        for (std::size_t index = 0; index < prepared.size(); ++index) {
+            if (prepared[index].stage == ShaderRecompiler::ShaderStage::Fragment) fragmentOnHeap = addHeap(index, false);
+        }
+        for (std::size_t index = 0; index < prepared.size(); ++index) {
+            if (HeapPreRasterStage(prepared[index].stage)) static_cast<void>(addHeap(index, target.descriptorMemory && fragmentOnHeap));
+        }
+        prepared.insert(prepared.begin(), std::make_move_iterator(heap.begin()), std::make_move_iterator(heap.end()));
     }
     transaction.Commit();
     return prepared;
@@ -2051,11 +2105,13 @@ void Driver::ResolveGraphicsStagesAbi(std::span<const Shader* const> stages, std
         if (!duplicate) transaction.Edit(*stage.snapshot).entries.push_back(std::move(stage.entry));
     }
     for (const auto& stage : prepared) {
-        if (stage.snapshot->type == 1) continue;
+        if (stage.snapshot->type == 1 || stage.heapVariant) continue;
         ResolvePreparedGraphics(*stage.snapshot, {}, primitiveType == state.userConfig.end() ? 0u : primitiveType->second, localDevice->Target(), true);
     }
     PreparedShaderState::GraphicsAbi abi{key, registry, {}};
-    for (const auto& stage : prepared) abi.stages.push_back(stage.snapshot);
+    for (const auto& stage : prepared) {
+        if (!stage.heapVariant) abi.stages.push_back(stage.snapshot);
+    }
     auto& graphicsAbis = transaction.Edit(*owner).graphicsAbis;
     std::erase_if(graphicsAbis, [](const auto& entry) { return entry.registry.expired(); });
     graphicsAbis.push_back(std::move(abi));
