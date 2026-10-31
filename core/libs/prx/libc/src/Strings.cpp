@@ -576,7 +576,7 @@ int APS5_VABI strncasecmp_nid_postfix(const char* s1, const char* s2, size_t n) 
 }
 
 int APS5_VABI bcmp_nid_postfix(const void* s1, const void* s2, size_t n) {
-    return std::memcmp(s1, s2, n);
+    return n != 0 && std::memcmp(s1, s2, n) != 0 ? 1 : 0;
 }
 
 size_t APS5_VABI strspn_nid_postfix(const char* s, const char* accept) {

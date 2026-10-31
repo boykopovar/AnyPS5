@@ -74,7 +74,7 @@ static void CheckStandardStrings() {
     const unsigned char same[6] = {1, 2, 3, 4, 5, 6};
     Require(bcmp_nid_postfix(bytes, same, 6) == 0 && bcmp_nid_postfix(bytes, "zz", 0) == 0);
     bytes[5] = 9;
-    Require(bcmp_nid_postfix(bytes, same, 6) != 0 && bcmp_nid_postfix(bytes, same, 5) == 0);
+    Require(bcmp_nid_postfix(bytes, same, 6) == 1 && bcmp_nid_postfix(same, bytes, 6) == 1 && bcmp_nid_postfix(bytes, same, 5) == 0);
     bzero_nid_postfix(bytes + 1, 4);
     Require(bytes[0] == 1 && bytes[1] == 0 && bytes[4] == 0 && bytes[5] == 9);
 }
