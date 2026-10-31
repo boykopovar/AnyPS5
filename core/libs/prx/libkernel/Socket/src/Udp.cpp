@@ -126,6 +126,10 @@ struct Socket : KernelSocketPoll::NativeOwner {
     bool receiveShut = false;
     bool sendShut = false;
     bool localAddressCleared = false;
+#ifdef _WIN32
+    bool connecting = false;
+    int connectFailure = 0;
+#endif
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
@@ -1366,6 +1370,27 @@ int APS5_VABI socketpair_nid_postfix(int family, int type, int protocol, int* de
         return Fail(12);
     }
 }
+#ifdef _WIN32
+static int ConnectFailure(Socket& socket) {
+    std::lock_guard lock(socket.modeMutex);
+    if (socket.connecting) {
+        int pending = 0;
+        int size = sizeof(pending);
+        if (::getsockopt(socket.value, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&pending), &size) == 0 && pending != 0) {
+            socket.connecting = false;
+            socket.connectFailure = GuestSockets::GuestErrorFromHost(WSAECONNREFUSED);
+        }
+    }
+    return socket.connectFailure;
+}
+static int NoteConnectError(Socket& socket) {
+    const int host = WSAGetLastError();
+    const int error = ConnectError();
+    std::lock_guard lock(socket.modeMutex);
+    socket.connecting = host == WSAEWOULDBLOCK || (socket.connecting && host == WSAEALREADY);
+    return error;
+}
+#endif
 int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint32_t length) {
     if (const int error = AddressLengthError(address, length)) return Fail(error);
     const auto socket = Lookup(descriptor);
@@ -1383,10 +1408,26 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (socket->type == 1) RefuseClosedLoopbackAtOnce_nid_no_patch(socket->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
     if (ZeroPortConnect(*socket, address, length)) return -1;
+#ifdef _WIN32
+    if (socket->type == 1) {
+        if (const int failure = ConnectFailure(*socket)) return Fail(failure);
+    }
+#endif
     std::unique_lock lock(socket->modeMutex);
     socket->options.reportedError = 0;
     if (socket->type != 2) lock.unlock();
-    if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) return Fail(ConnectError());
+    if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) {
+#ifdef _WIN32
+        if (socket->type == 1) return Fail(NoteConnectError(*socket));
+#endif
+        return Fail(ConnectError());
+    }
+#ifdef _WIN32
+    if (socket->type == 1) {
+        std::lock_guard connected(socket->modeMutex);
+        socket->connecting = false;
+    }
+#endif
     if (socket->type == 2) socket->localAddressCleared = false;
     return 0;
 }
