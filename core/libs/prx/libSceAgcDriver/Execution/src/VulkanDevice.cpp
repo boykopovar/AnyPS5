@@ -2583,6 +2583,10 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     static const bool drain = std::getenv("APS5_DRAIN_COMPLETION_LABELS") != nullptr;
     const auto context = graphicsContext();
     const auto* import = Graphics::HostImportFor(context, address, bytes.size());
+    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
+    const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0;
+    const auto unregistered = import == nullptr && !listed && !storesPending ? Graphics::UnregisteredHostImport(context, address, bytes.size()) : nullptr;
+    if (unregistered != nullptr) import = unregistered.get();
     if (import == nullptr) return 3;
     // A unit shadow's results in the label's unit reach the import before the store lands over
     // part of it (the store's stamp then makes the unit stale); the deferred label paths call no
@@ -2593,7 +2597,10 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // pair for a whole group of labels recorded back to back (Recorder::RecordStore orders the
     // stores of a run against each other and against the work before and after, the queued DCC
     // key stores included).
-    const auto recordStore = [&] { recorder.RecordStore(import->buffer, Graphics::HostImportOffset(*import, address), bytes, address); };
+    const auto recordStore = [&] {
+        recorder.RecordStore(import->buffer, Graphics::HostImportOffset(*import, address), bytes, address);
+        if (unregistered != nullptr) recorder.Keep(unregistered);
+    };
     // On the console every store a queue made before a label is in memory once the label is
     // visible. A listed copied writer (a dispatch or draw whose written buffer the device holds as a
     // CPU copy) is written back by the CPU when its batch is reaped, after the GPU already ran any
@@ -2614,10 +2621,9 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // range stored this way sync through its batch first (the label is a pending write of its batch
     // and counted in PendingCompletionLabels). Debug aid: APS5_DRAIN_COMPLETION_LABELS=1 drains
     // (reason 2) instead and stores the label on the CPU.
-    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
     if (drain) {
         if (listed) return 2;
-    } else if (const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0; bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
+    } else if (bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
         recorder.AfterCompletions(address, bytes, stamp, queue, false);
         return 5;
     }

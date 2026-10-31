@@ -350,6 +350,7 @@ public:
     // The value alone, for callers asking whether any label is pending in a dword (afterStamp 0).
     static std::optional<std::uint64_t> LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp);
     static bool WideLabelIn(std::uint64_t address, std::size_t bytes);
+    static bool LookupStoredBytes(std::uint64_t address, std::span<std::byte> bytes);
     // A label a queue worker decoded but has not recorded yet (Driver.cpp DeferredLabels): it
     // enters the table with no batch, and only a lookup made on the noting thread (a WAIT_REG_MEM
     // of the same queue) takes its value, since that queue's later work follows the label in queue
@@ -562,6 +563,14 @@ public:
     static bool FlipReadCheck();
 
 private:
+    struct Batch;
+    struct WideLabel {
+        std::uint64_t end;
+        std::vector<std::byte> bytes;
+        std::uint64_t sequence;
+        bool overwritten = false;
+        const Batch* batch = nullptr;
+    };
     struct Batch {
         VkCommandBuffer commands = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
@@ -590,6 +599,7 @@ private:
         std::uint64_t serial = 0;
         std::uint64_t traceId = 0;
         bool submitted = false;
+        std::atomic<bool> submitStarted{false};
         // The GpuMutex queue tag of the thread that opened the batch, and when it was submitted
         // (the [syncwait] line reports what a wait's target and the batches ahead of it were).
         std::uint32_t queue = 0xffffffffu;
@@ -615,7 +625,7 @@ private:
         std::uint64_t readGeneration = 0;
         // Dword addresses this batch noted in the label table (removed when it finishes).
         std::vector<std::uint64_t> labelDwords;
-        std::vector<std::multimap<std::uint64_t, std::uint64_t>::iterator> wideLabels;
+        std::vector<std::multimap<std::uint64_t, WideLabel>::iterator> wideLabels;
         // Labels stored by this batch's completion actions (see AfterCompletions); subtracted from
         // the lock-free pending count when the batch finishes, whether or not its completions ran.
         std::uint32_t completionLabelCount = 0;
@@ -825,6 +835,7 @@ private:
     std::uint64_t writtenBackSequence = 0;
     // PendingLabel without the table mutex (the caller holds it, or the GPU mutex).
     std::optional<LabelHit> lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const;
+    bool storedBytesLocked(std::uint64_t address, std::span<std::byte> bytes) const;
     // Whether the in-flight batch with that serial has not signaled its fence (false when it is
     // not in flight any more): what makes a wait for it a real GPU wait (ThreadHookWaits).
     bool unsignaled(std::uint64_t serial) const;
@@ -845,8 +856,10 @@ private:
     // The queued entries (batch always null), by dword; a lookup on the noting queue's thread
     // prefers them (its newest store in program order), every other lookup sees `labels` alone.
     std::map<std::uint64_t, LabelEntry> queuedLabels;
-    std::multimap<std::uint64_t, std::uint64_t> wideLabels;
+    std::multimap<std::uint64_t, WideLabel> wideLabels;
     std::uint64_t wideLabelBytes = 0;
+    std::uint64_t wideLabelSequence = 0;
+    std::atomic<std::size_t> recordedWideLabels{0};
     bool wideLabelInLocked(std::uint64_t address, std::size_t bytes) const;
     // labels.size(), readable without the table mutex: a noted write skips the mutex while the
     // table is empty (most of the time between label groups).

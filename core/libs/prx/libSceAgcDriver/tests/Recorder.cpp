@@ -1724,6 +1724,51 @@ void largeLabelTests(Recorder& recorder) {
     Require(recorder.PendingLabels() == 0 && !Recorder::WideLabelIn(0, ~0ull) && !recorder.PendingLabelIn(slot, clear.size()) && !recorder.PendingWriteOverlaps(slot, clear.size()), "large label tests left entries, ranges or writes behind");
 }
 
+void storedBytesTests(Recorder& recorder) {
+    constexpr std::uint64_t ring = 0x74000;
+    std::array<std::byte, 144> table{};
+    for (std::size_t i = 0; i < table.size(); ++i) table[i] = static_cast<std::byte>(i + 1);
+    std::array<std::byte, 256> next{};
+    next.fill(std::byte{0x5a});
+    const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    std::array<std::byte, 8> out{};
+    const auto served = [](std::uint64_t address, std::span<std::byte> bytes) { return Recorder::LookupStoredBytes(address, bytes); };
+    recorder.Sync();
+    Require(!served(ring, out), "stored bytes are served from an empty table");
+    recorder.NoteLabel(ring, table, 200, 0);
+    Require(served(ring + 0x40, out) && std::equal(out.begin(), out.end(), table.begin() + 0x40), "a wide store is not served");
+    std::array<std::byte, 144> whole{};
+    Require(served(ring, whole) && whole == table, "a whole wide store is not served");
+    Require(!served(ring + table.size() - 4, out), "bytes past a wide store are served");
+    Require(!served(ring + 2, std::span(out).first(4)) && !served(ring, std::span(out).first(2)), "a partial dword is served");
+    recorder.NoteLabel(ring + 0x80, next, 201, 0);
+    std::array<std::byte, 16> straddle{};
+    Require(served(ring + 0x78, straddle) && std::equal(straddle.begin(), straddle.begin() + 8, table.begin() + 0x78) && std::all_of(straddle.begin() + 8, straddle.end(), [](std::byte value) { return value == std::byte{0x5a}; }), "overlapping wide stores do not compose newest first");
+    recorder.NoteLabel(ring + 0x10, one, 202, 0);
+    Require(served(ring + 0x0c, out) && std::equal(out.begin(), out.begin() + 4, table.begin() + 0x0c) && std::equal(out.begin() + 4, out.end(), one.begin()), "a label inside a wide store does not win");
+    recorder.NoteLabel(ring, next, 203, 0);
+    Require(!Recorder::LookupLabel(ring + 0x10, 4, 0).has_value() && served(ring + 0x10, out) && std::all_of(out.begin(), out.end(), [](std::byte value) { return value == std::byte{0x5a}; }), "a wide store over a label does not replace it");
+    const auto tag = AgcDriver::GuestMemory::GpuLockThreadTag();
+    Recorder::NoteQueuedLabel(ring + 0x104, one, 204, tag);
+    Require(!served(ring + 0x100, out), "a store with a queued label over it is served");
+    Recorder::ForgetQueuedLabels();
+    Require(served(ring + 0x100, out), "a forgotten queued label still refuses the store");
+    recorder.NotePendingWrite(ring + 0x20, 4);
+    Require(!served(ring, std::span(out).first(4)), "an overwritten wide store is served");
+    Require(served(ring + 0x100, out), "a write over other stores refused this one");
+    recorder.NotePendingWrite(ring + 0x14c, 4);
+    Require(!served(ring + 0x148, out), "a write inside a wide store did not refuse it");
+    recorder.Sync();
+    recorder.NoteLabel(ring + 0x200, table, 205, 0);
+    recorder.NoteLabel(ring + 0x300, one, 206, 0);
+    Require(served(ring + 0x240, out) && served(ring + 0x300, std::span(out).first(4)), "stores of the open batch are not served");
+    recorder.Submit();
+    Require(!served(ring + 0x240, out), "a wide store is served after its batch was submitted, when a guest that saw the batch's labels may have written over it");
+    Require(!served(ring + 0x300, std::span(out).first(4)), "a label-table store is served after its batch was submitted, when a guest that saw the batch's labels may have written over it");
+    recorder.Sync();
+    Require(!served(ring + 0x100, out) && !Recorder::WideLabelIn(ring, 0x400), "stored bytes outlived their batch");
+}
+
 // (6) GuestMemory::UnchangedSinceCollected: false outside the watched arena, and around a
 // MarkWritten or a CPU write of the block inside it.
 void unchangedSinceTests() {
@@ -12471,6 +12516,11 @@ int main(int argc, char** argv) {
             settledBaselineTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--stored-bytes-only") {
+            storedBytesTests(recorder);
+            std::cout << "stored bytes tests passed\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--command-buffer-release-only") {
             commandBufferReleaseTests(device, recorder);
             return 0;
@@ -12482,6 +12532,7 @@ int main(int argc, char** argv) {
             labelTests(recorder);
             lateLabelTests(recorder);
             largeLabelTests(recorder);
+            storedBytesTests(recorder);
             std::cout << "Completion label storage and ordering tests passed\n";
             return 0;
         }
@@ -12705,6 +12756,7 @@ int main(int argc, char** argv) {
         labelTests(recorder);
         lateLabelTests(recorder);
         largeLabelTests(recorder);
+        storedBytesTests(recorder);
         unchangedSinceTests();
         closeRaceTests(device, recorder);
         keyProofTests(device, recorder);

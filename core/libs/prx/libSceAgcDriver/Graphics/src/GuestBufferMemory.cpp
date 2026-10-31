@@ -22,6 +22,7 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <linux/udmabuf.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -4238,6 +4239,69 @@ bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size
     }
 #endif
     return GuestMemory::Watched(address, bytes);
+}
+
+#ifndef _WIN32
+namespace {
+
+bool privateAnonymousReadWrite(std::uint64_t begin, std::uint64_t end) {
+#ifdef PROCMAP_QUERY
+    static const int mapsFile = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+    if (mapsFile >= 0) {
+        procmap_query query{};
+        query.size = sizeof(query);
+        query.query_addr = begin;
+        if (ioctl(mapsFile, PROCMAP_QUERY, &query) == 0) return end <= query.vma_end && query.vma_flags == (PROCMAP_QUERY_VMA_READABLE | PROCMAP_QUERY_VMA_WRITABLE) && query.inode == 0;
+        if (errno == ENOENT) return false;
+    }
+#endif
+    std::FILE* maps = std::fopen("/proc/self/maps", "r");
+    if (maps == nullptr) return false;
+    bool covered = false;
+    char line[512];
+    while (std::fgets(line, sizeof(line), maps) != nullptr) {
+        unsigned long long first = 0;
+        unsigned long long last = 0;
+        char permissions[5] = {};
+        unsigned long long offset = 0;
+        unsigned major = 0;
+        unsigned minor = 0;
+        unsigned long long inode = 0;
+        if (std::sscanf(line, "%llx-%llx %4s %llx %x:%x %llu", &first, &last, permissions, &offset, &major, &minor, &inode) != 7 || begin < first || begin >= last) continue;
+        covered = end <= last && std::strcmp(permissions, "rw-p") == 0 && inode == 0;
+        break;
+    }
+    std::fclose(maps);
+    return covered;
+}
+
+}
+#endif
+
+std::shared_ptr<HostImport> UnregisteredHostImport(const Context& context, std::uint64_t address, std::size_t bytes) {
+    const auto alignment = context.hostImportAlignment;
+    if (alignment == 0 || bytes == 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes - 2 * alignment) return nullptr;
+    const auto base = address / alignment * alignment;
+    const auto end = (address + bytes + alignment - 1) / alignment * alignment;
+    if (const auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(static_cast<std::uintptr_t>(base), true); range != nullptr && range->address < end) return nullptr;
+#ifdef _WIN32
+    const void* allocation = nullptr;
+    for (std::uint64_t cursor = base; cursor < end;) {
+        MEMORY_BASIC_INFORMATION info{};
+        if (VirtualQuery(reinterpret_cast<const void*>(cursor), &info, sizeof(info)) == 0 || info.State != MEM_COMMIT || info.Type != MEM_PRIVATE || info.Protect != PAGE_READWRITE) return nullptr;
+        if (allocation == nullptr) allocation = info.AllocationBase;
+        if (info.AllocationBase != allocation) return nullptr;
+        cursor = reinterpret_cast<std::uint64_t>(info.BaseAddress) + info.RegionSize;
+    }
+#else
+    if (!privateAnonymousReadWrite(base, end)) return nullptr;
+#endif
+    std::map<std::uint64_t, HostImport> made;
+    auto& entry = made.emplace(base, HostImport{base, end - base, VK_NULL_HANDLE, VK_NULL_HANDLE, 0}).first->second;
+    VkResult failure = VK_SUCCESS;
+    if (createHostPointerImport(context, entry, failure) != nullptr) return nullptr;
+    auto holder = std::make_shared<RetiredImport>(context.device, context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer"), context.Function<PFN_vkFreeMemory>("vkFreeMemory"), made.extract(base));
+    return std::shared_ptr<HostImport>(holder, &holder->node.mapped());
 }
 
 bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
