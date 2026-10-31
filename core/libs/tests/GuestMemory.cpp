@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include <set>
 #include <vector>
 #if defined(__linux__)
 #include <fcntl.h>
@@ -3167,6 +3168,34 @@ static void CheckDirectMemorySharedBacking() {
     Require(sceKernelReleaseDirectMemory(right, page) == 0);
 }
 
+using WrittenPages = std::set<std::uintptr_t>;
+using WatchCollector = bool (*)(std::uintptr_t, std::size_t, void (*)(void*, std::uintptr_t, std::uintptr_t), void*);
+
+static WrittenPages CollectPages(const void* base, std::size_t offset, std::size_t bytes, WatchCollector collector = &GuestWriteWatch::GuestWriteWatchCollect_nid_postfix) {
+    WrittenPages pages;
+    Require(collector(reinterpret_cast<std::uintptr_t>(base) + offset, bytes, [](void* context, std::uintptr_t begin, std::uintptr_t end) {
+        for (auto at = begin; at < end; at += 4096) static_cast<WrittenPages*>(context)->insert(at / 4096);
+    }, &pages));
+    return pages;
+}
+
+static WrittenPages PagesOf(std::initializer_list<std::pair<const void*, std::size_t>> pages) {
+    WrittenPages set;
+    for (const auto& [base, offset] : pages) set.insert((reinterpret_cast<std::uintptr_t>(base) + offset) / 4096);
+    return set;
+}
+
+static WrittenPages PagesOfRange(const void* base, std::size_t offset, std::size_t bytes) {
+    WrittenPages set;
+    for (std::size_t at = 0; at < bytes; at += 4096) set.insert((reinterpret_cast<std::uintptr_t>(base) + offset + at) / 4096);
+    return set;
+}
+
+static WrittenPages Joined(WrittenPages left, const WrittenPages& right) {
+    left.insert(right.begin(), right.end());
+    return left;
+}
+
 static void CheckDirectMemoryWriteWatch() {
     if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
         std::puts("write watch unavailable: direct memory not tested");
@@ -3188,17 +3217,21 @@ static void CheckDirectMemoryWriteWatch() {
     void* alias = nullptr;
     Require(sceKernelMapDirectMemory(&alias, page, 3, 0, phys + page, 0) == 0);
     const auto aliasAddress = reinterpret_cast<std::uintptr_t>(alias);
-    Require(!GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(aliasAddress, page));
-    Require(!GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address + page, page));
-    Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address, page) && GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address + page * 2, page));
-    PageRuns runs;
-    Require(!CollectRuns(first, 0, page * 3, runs));
+    Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(aliasAddress, page));
+    Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address, page * 3));
+    Require(CollectPages(first, 0, page * 3) == Joined(PagesOfRange(alias, 0, page), PagesOfRange(first, page, page)));
+    Require(CollectPages(first, 0, page * 3).empty());
     bytes[0] = 2;
     static_cast<volatile unsigned char*>(alias)[7] = 3;
     Require(bytes[page + 7] == 3);
-    Require(CollectRuns(first, 0, page, runs) && runs == PageRuns{{0, 1}});
-    Require(CollectRuns(first, page * 2, page, runs) && runs.empty());
+    Require(CollectPages(first, 0, page * 3) == PagesOf({{first, 0}, {first, page}, {alias, 0}}));
+    Require(CollectPages(alias, 0, page).empty());
+    bytes[page + small * 2] = 4;
+    Require(CollectPages(alias, 0, page) == PagesOf({{alias, small * 2}, {first, page + small * 2}}));
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(alias), page) == 0);
+    Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address, page * 3));
+    bytes[page + 9] = 5;
+    Require(CollectPages(first, 0, page * 3) == PagesOf({{first, page}}));
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(first), page * 3) == 0);
     Require(!GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(address, page));
     void* flexible = nullptr;
@@ -3231,17 +3264,18 @@ static void CheckDirectMemoryWriteWatchFollowsRemovedMappings() {
     const auto watched = [](const void* pointer, std::size_t offset) { return GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(pointer) + offset, page); };
     void* pair = nullptr;
     Require(sceKernelMapDirectMemory(&pair, page * 2, 3, 0, phys + page, 0) == 0);
-    Require(watched(whole, 0) && !watched(whole, page) && !watched(whole, page * 2) && watched(whole, page * 3));
-    Require(!watched(pair, 0) && !watched(pair, page));
+    Require(watched(whole, 0) && watched(whole, page) && watched(whole, page * 2) && watched(whole, page * 3));
+    Require(watched(pair, 0) && watched(pair, page));
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(pair), page) == 0);
+    Require(watched(whole, page) && watched(pair, page));
     void* single = nullptr;
     Require(sceKernelMapDirectMemory(&single, page, 3, 0, phys + page, 0) == 0);
-    Require(!watched(single, 0) && watched(whole, 0) && watched(whole, page * 3));
+    Require(watched(single, 0) && watched(whole, 0) && watched(whole, page * 3));
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(single), page) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(static_cast<unsigned char*>(pair) + page), page) == 0);
     void* replaced = whole;
     Require(sceKernelMapDirectMemory(&replaced, page, 3, 0x10, phys + page * 3, 0) == 0 && replaced == whole);
-    Require(!watched(whole, 0) && !watched(whole, page * 3));
+    Require(watched(whole, 0) && watched(whole, page * 3));
     std::uintptr_t start = 0;
     std::uintptr_t end = 0;
     std::uint64_t offset = 0;
@@ -3252,11 +3286,76 @@ static void CheckDirectMemoryWriteWatchFollowsRemovedMappings() {
     Require(watched(alone, 0));
     void* again = nullptr;
     Require(sceKernelMapDirectMemory(&again, page, 3, 0, phys, 0) == 0);
-    Require(!watched(alone, 0) && !watched(again, 0));
+    Require(watched(alone, 0) && watched(again, 0));
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(again), page) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(alone), page) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(whole), page * 4) == 0);
     Require(sceKernelReleaseDirectMemory(phys, page * 4) == 0);
+}
+
+static void CheckDirectMemoryWriteWatchSeesWritesThroughAliases() {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::puts("write watch unavailable: direct memory aliases not tested");
+        return;
+    }
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t small = 4096;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* first = nullptr;
+    Require(sceKernelMapDirectMemory(&first, page * 2, 3, 0, phys, 0) == 0);
+    Require(CollectPages(first, 0, page * 2) == PagesOfRange(first, 0, page * 2));
+    void* second = nullptr;
+    Require(sceKernelMapDirectMemory(&second, page, 3, 0, phys + page, 0) == 0);
+    Require(CollectPages(first, 0, page * 2, &GuestWriteWatch::GuestWriteWatchCollectFresh_nid_postfix) == Joined(PagesOfRange(second, 0, page), PagesOfRange(first, page, page)));
+    Require(CollectPages(first, 0, page * 2, &GuestWriteWatch::GuestWriteWatchCollectFresh_nid_postfix).empty());
+    static_cast<volatile unsigned char*>(second)[small + 1] = 6;
+    Require(CollectPages(first, 0, page * 2, &GuestWriteWatch::GuestWriteWatchCollectArmed_nid_postfix) == PagesOf({{second, small}, {first, page + small}}));
+    void* third = nullptr;
+    Require(sceKernelMapDirectMemory(&third, page, 3, 0, phys + page, 0) == 0);
+    Require(CollectPages(third, 0, page) == Joined(PagesOfRange(third, 0, page), Joined(PagesOfRange(second, 0, page), PagesOfRange(first, page, page))));
+    static_cast<volatile unsigned char*>(third)[small * 3] = 7;
+    Require(CollectPages(first, page, page) == PagesOf({{first, page + small * 3}, {second, small * 3}, {third, small * 3}}));
+    Require(CollectPages(second, 0, page).empty() && CollectPages(third, 0, page).empty());
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(second), page) == 0);
+    static_cast<volatile unsigned char*>(third)[2] = 8;
+    Require(CollectPages(first, page, page) == PagesOf({{first, page}, {third, 0}}));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(third), page) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(first), page * 2) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
+}
+
+static void CheckDirectMemoryWriteWatchDropsAliasOnRemap() {
+    if (!GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) {
+        std::puts("write watch unavailable: direct memory alias remap not tested");
+        return;
+    }
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t small = 4096;
+    std::int64_t phys = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, page * 2, 0, 0, &phys) == 0);
+    void* first = nullptr;
+    Require(sceKernelMapDirectMemory(&first, page, 3, 0, phys, 0) == 0);
+    void* second = nullptr;
+    Require(sceKernelMapDirectMemory(&second, page, 3, 0, phys, 0) == 0);
+    static_cast<void>(CollectPages(first, 0, page));
+    Require(CollectPages(second, 0, page).empty());
+    static_cast<volatile unsigned char*>(second)[small] = 4;
+    Require(CollectPages(first, 0, page) == PagesOf({{first, small}, {second, small}}));
+    void* remapped = second;
+    Require(sceKernelMapDirectMemory(&remapped, page, 3, 0x10, phys + page, 0) == 0 && remapped == second);
+    Require(GuestWriteWatch::GuestWriteWatchCovers_nid_postfix(reinterpret_cast<std::uintptr_t>(second), page));
+    Require(CollectPages(first, 0, page).empty());
+    Require(CollectPages(second, 0, page) == PagesOfRange(second, 0, page));
+    static_cast<volatile unsigned char*>(first)[small * 2] = 5;
+    Require(CollectPages(first, 0, page) == PagesOf({{first, small * 2}}));
+    Require(CollectPages(second, 0, page).empty());
+    static_cast<volatile unsigned char*>(second)[small * 3] = 6;
+    Require(CollectPages(first, 0, page).empty());
+    Require(CollectPages(second, 0, page) == PagesOf({{second, small * 3}}));
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(second), page) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(first), page) == 0);
+    Require(sceKernelReleaseDirectMemory(phys, page * 2) == 0);
 }
 
 static double MapAcrossBackingsSeconds(std::int64_t phys, std::size_t backings) {
@@ -3997,6 +4096,8 @@ int main(int argc, char** argv) {
     CheckWriteWatchFreshCollect();
     CheckDirectMemoryWriteWatch();
     CheckDirectMemoryWriteWatchFollowsRemovedMappings();
+    CheckDirectMemoryWriteWatchSeesWritesThroughAliases();
+    CheckDirectMemoryWriteWatchDropsAliasOnRemap();
     CheckMappingCostFollowsTheMappingCount();
     CheckDirectMemoryBackingNeedsNoFilesystem();
     CheckDirectMemorySharedBacking();

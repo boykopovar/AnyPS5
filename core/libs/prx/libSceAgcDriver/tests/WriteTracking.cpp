@@ -1783,6 +1783,38 @@ void CheckImportWindowAcrossThreads() {
     }
 }
 
+#if defined(__linux__)
+void CheckImportWindowOverAlias() {
+    const int file = memfd_create("aps5-import-window-alias", 0);
+    Require(file >= 0 && ftruncate(file, Block) == 0, "cannot create the aliased import window backing");
+    void* raw = mmap(nullptr, 3 * Block, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(raw != MAP_FAILED, "cannot reserve the aliased import window");
+    const auto low = (reinterpret_cast<std::uintptr_t>(raw) + Block - 1) & ~static_cast<std::uintptr_t>(Block - 1);
+    const auto high = low + Block;
+    for (const auto view : {low, high}) {
+        Require(mmap(reinterpret_cast<void*>(view), Block, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0) != MAP_FAILED, "cannot map an import window alias");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<void*>(view), Block);
+    }
+    if (GuestWriteWatch::GuestWriteWatchAlias_nid_postfix(reinterpret_cast<void*>(low), reinterpret_cast<void*>(high), Block)) {
+        auto* bytes = reinterpret_cast<volatile std::uint8_t*>(low);
+        std::memset(reinterpret_cast<void*>(low), 0x11, Block);
+        const auto synced = CollectWritesUncached(low, 2 * Block);
+        Require(synced != 0, "the aliased import window is not collected");
+        Require(ImportWatched(high, Block, [&] {
+            bytes[0x100] = 0x22;
+            return true;
+        }, true, false), "the aliased import window import failed");
+        Require(Watched(low, 2 * Block), "an import window over an alias left a view unwatched");
+        Require(WrittenSince(high, Block, synced) && WrittenSince(low, Block, synced), "a store through an alias during an import window was missed at one of its views");
+    } else {
+        std::cout << "write watch aliases unavailable: import window over an alias skipped\n";
+    }
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<void*>(low), 2 * Block);
+    munmap(raw, 3 * Block);
+    close(file);
+}
+#endif
+
 void CheckImportWindowFootprint() {
 #ifdef __GLIBC__
     constexpr std::size_t bytes = std::size_t{64} << 20;
@@ -2202,6 +2234,9 @@ int main() {
         CheckImportWindowOtherThread();
         CheckImportWindowOverUnwatchedBlock();
         CheckImportWindowAcrossThreads();
+#if defined(__linux__)
+        CheckImportWindowOverAlias();
+#endif
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
         CheckUnwatchedImport();

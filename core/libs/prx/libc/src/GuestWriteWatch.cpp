@@ -62,6 +62,7 @@ public:
         std::unique_lock lock(_lock);
         remove(_ranges, begin, end);
         remove(_fresh, begin, end);
+        cut(begin, end);
         uffdio_register registration{};
         registration.range.start = begin;
         registration.range.len = end - begin;
@@ -83,7 +84,17 @@ public:
         std::unique_lock lock(_lock);
         const bool watched = remove(_ranges, begin, end);
         remove(_fresh, begin, end);
+        cut(begin, end);
         return watched;
+    }
+
+    bool Alias(std::uintptr_t first, std::uintptr_t second, std::uintptr_t bytes) {
+        if (!Available() || bytes == 0 || first == second || (first | second | bytes) % PageBytes != 0) return false;
+        std::unique_lock lock(_lock);
+        if (!covers(first, first + bytes) || !covers(second, second + bytes)) return false;
+        link(first, first + bytes, second);
+        link(second, second + bytes, first);
+        return true;
     }
 
     bool Covers(std::uintptr_t begin, std::uintptr_t end) {
@@ -104,8 +115,14 @@ public:
         begin &= ~(PageBytes - 1);
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
         if (end <= begin) return true;
-        if (!takeFresh(begin, end, true, written, context)) return false;
-        return scanWritten(begin, end, written, context);
+        const auto plan = aliasPlan(begin, end);
+        Fanout fanout{&plan.own, written, context};
+        if (!takeFresh(begin, end, true, &Fanout::Report, &fanout) || !scanWritten(begin, end, &Fanout::Report, &fanout)) return false;
+        for (const auto& alias : plan.aliases) {
+            Fanout through{&alias.translations, written, context};
+            if (!takeFresh(alias.begin, alias.end, false, &Fanout::Report, &through) || !scanWritten(alias.begin, alias.end, &Fanout::Report, &through)) return false;
+        }
+        return true;
     }
 
     bool CollectFresh(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
@@ -113,14 +130,21 @@ public:
         begin &= ~(PageBytes - 1);
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
         if (end <= begin) return true;
-        {
+        const auto plan = aliasPlan(begin, end);
+        if (plan.aliases.empty()) {
             std::shared_lock lock(_lock);
             auto it = _fresh.upper_bound(begin);
             if (it != _fresh.begin()) --it;
             while (it != _fresh.end() && it->first < end && it->second <= begin) ++it;
             if (it == _fresh.end() || it->first >= end) return true;
         }
-        return takeFresh(begin, end, false, written, context);
+        Fanout fanout{&plan.own, written, context};
+        if (!takeFresh(begin, end, false, &Fanout::Report, &fanout)) return false;
+        for (const auto& alias : plan.aliases) {
+            Fanout through{&alias.translations, written, context};
+            if (!takeFresh(alias.begin, alias.end, false, &Fanout::Report, &through)) return false;
+        }
+        return true;
     }
 
     bool CollectArmed(std::uintptr_t begin, std::uintptr_t end, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
@@ -129,26 +153,140 @@ public:
         end = (end + PageBytes - 1) & ~(PageBytes - 1);
         if (end <= begin) return true;
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> armed;
+        AliasPlan plan;
+        std::vector<std::vector<std::pair<std::uintptr_t, std::uintptr_t>>> aliasArmed;
         {
             std::shared_lock lock(_lock);
             if (!covers(begin, end)) return false;
-            auto cursor = begin;
-            auto it = _fresh.upper_bound(begin);
-            if (it != _fresh.begin()) --it;
-            for (; it != _fresh.end() && it->first < end; ++it) {
-                if (it->second <= cursor) continue;
-                if (it->first > cursor) armed.emplace_back(cursor, it->first);
-                cursor = std::max(cursor, it->second);
-            }
-            if (cursor < end) armed.emplace_back(cursor, end);
+            armed = armedParts(begin, end);
+            plan = aliasPlanLocked(begin, end);
+            for (const auto& alias : plan.aliases) aliasArmed.push_back(armedParts(alias.begin, alias.end));
         }
+        Fanout fanout{&plan.own, written, context};
         for (const auto& [from, to] : armed) {
-            if (!scanWritten(from, to, written, context)) return false;
+            if (!scanWritten(from, to, &Fanout::Report, &fanout)) return false;
+        }
+        for (std::size_t index = 0; index < plan.aliases.size(); ++index) {
+            Fanout through{&plan.aliases[index].translations, written, context};
+            for (const auto& [from, to] : aliasArmed[index]) {
+                if (!scanWritten(from, to, &Fanout::Report, &through)) return false;
+            }
         }
         return true;
     }
 
 private:
+    struct Translation {
+        std::uintptr_t begin;
+        std::uintptr_t end;
+        std::uintptr_t partner;
+    };
+
+    struct AliasRange {
+        std::uintptr_t begin;
+        std::uintptr_t end;
+        std::vector<Translation> translations;
+    };
+
+    struct AliasPlan {
+        std::vector<Translation> own;
+        std::vector<AliasRange> aliases;
+    };
+
+    struct Fanout {
+        const std::vector<Translation>* translations;
+        void (*written)(void*, std::uintptr_t, std::uintptr_t);
+        void* context;
+
+        static void Report(void* self, std::uintptr_t begin, std::uintptr_t end) {
+            auto& fanout = *static_cast<Fanout*>(self);
+            fanout.written(fanout.context, begin, end);
+            for (const auto& [from, to, partner] : *fanout.translations) {
+                const auto left = std::max(from, begin);
+                const auto right = std::min(to, end);
+                if (left < right) fanout.written(fanout.context, partner + (left - from), partner + (right - from));
+            }
+        }
+    };
+
+    struct Link {
+        std::uintptr_t end;
+        std::uintptr_t partner;
+    };
+
+    AliasPlan aliasPlan(std::uintptr_t begin, std::uintptr_t end) {
+        std::shared_lock lock(_lock);
+        return aliasPlanLocked(begin, end);
+    }
+
+    AliasPlan aliasPlanLocked(std::uintptr_t begin, std::uintptr_t end) const {
+        AliasPlan plan;
+        plan.own = translations(begin, end);
+        for (const auto& [from, to, partner] : plan.own) {
+            const auto stop = partner + (to - from);
+            plan.aliases.push_back({partner, stop, translations(partner, stop)});
+        }
+        return plan;
+    }
+
+    std::vector<Translation> translations(std::uintptr_t begin, std::uintptr_t end) const {
+        std::vector<Translation> found;
+        if (_links.empty()) return found;
+        for (auto it = _links.lower_bound(begin > _linkBytes ? begin - _linkBytes : 0); it != _links.end() && it->first < end; ++it) {
+            const auto from = std::max(it->first, begin);
+            const auto to = std::min(it->second.end, end);
+            if (from < to) found.push_back({from, to, it->second.partner + (from - it->first)});
+        }
+        return found;
+    }
+
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> armedParts(std::uintptr_t begin, std::uintptr_t end) const {
+        std::vector<std::pair<std::uintptr_t, std::uintptr_t>> armed;
+        auto cursor = begin;
+        auto it = _fresh.upper_bound(begin);
+        if (it != _fresh.begin()) --it;
+        for (; it != _fresh.end() && it->first < end; ++it) {
+            if (it->second <= cursor) continue;
+            if (it->first > cursor) armed.emplace_back(cursor, it->first);
+            cursor = std::max(cursor, it->second);
+        }
+        if (cursor < end) armed.emplace_back(cursor, end);
+        return armed;
+    }
+
+    void link(std::uintptr_t begin, std::uintptr_t end, std::uintptr_t partner) {
+        _links.emplace(begin, Link{end, partner});
+        _linkBytes = std::max(_linkBytes, end - begin);
+    }
+
+    void cut(std::uintptr_t begin, std::uintptr_t end) {
+        std::vector<std::pair<std::uintptr_t, Link>> kept;
+        for (auto it = _links.begin(); it != _links.end();) {
+            const auto from = it->first;
+            const auto bytes = it->second.end - from;
+            const auto partner = it->second.partner;
+            if (!(from < end && begin < from + bytes) && !(partner < end && begin < partner + bytes)) {
+                ++it;
+                continue;
+            }
+            it = _links.erase(it);
+            std::vector<std::pair<std::uintptr_t, std::uintptr_t>> pieces{{0, bytes}};
+            for (const auto base : {from, partner}) {
+                const auto low = std::min(bytes, begin > base ? begin - base : 0);
+                const auto high = std::min(bytes, end > base ? end - base : 0);
+                if (low >= high) continue;
+                std::vector<std::pair<std::uintptr_t, std::uintptr_t>> remaining;
+                for (const auto& [left, right] : pieces) {
+                    if (left < low) remaining.emplace_back(left, std::min(right, low));
+                    if (right > high) remaining.emplace_back(std::max(left, high), right);
+                }
+                pieces = std::move(remaining);
+            }
+            for (const auto& [left, right] : pieces) kept.emplace_back(from + left, Link{from + right, partner + left});
+        }
+        for (const auto& [from, piece] : kept) _links.emplace(from, piece);
+    }
+
     bool takeFresh(std::uintptr_t begin, std::uintptr_t end, bool whole, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
         std::vector<std::pair<std::uintptr_t, std::uintptr_t>> fresh;
         {
@@ -323,6 +461,8 @@ private:
     std::shared_mutex _lock;
     std::map<std::uintptr_t, std::uintptr_t> _ranges;
     std::map<std::uintptr_t, std::uintptr_t> _fresh;
+    std::multimap<std::uintptr_t, Link> _links;
+    std::uintptr_t _linkBytes = 0;
 };
 
 const bool g_opened = (Watch::Get(), true);
@@ -718,6 +858,17 @@ bool GuestWriteWatchUnregister_nid_postfix(const void* pointer, std::size_t byte
     return Watch::Get().Unregister(begin, begin + bytes);
 #else
     static_cast<void>(pointer);
+    static_cast<void>(bytes);
+    return false;
+#endif
+}
+
+bool GuestWriteWatchAlias_nid_postfix(const void* first, const void* second, std::size_t bytes) {
+#if defined(__linux__) && defined(PAGEMAP_SCAN) && defined(UFFD_FEATURE_WP_ASYNC)
+    return Watch::Get().Alias(reinterpret_cast<std::uintptr_t>(first), reinterpret_cast<std::uintptr_t>(second), bytes);
+#else
+    static_cast<void>(first);
+    static_cast<void>(second);
     static_cast<void>(bytes);
     return false;
 #endif

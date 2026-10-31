@@ -932,6 +932,7 @@ struct WindowCopy {
     std::span<const std::uint64_t> hashes;
 
     bool Holds(std::uintptr_t page) const {
+        if (page < first || (page - first) / WritePageBytes >= hashes.size()) return false;
         return HashPage(reinterpret_cast<const std::byte*>(page)) == hashes[(page - first) / WritePageBytes];
     }
 };
