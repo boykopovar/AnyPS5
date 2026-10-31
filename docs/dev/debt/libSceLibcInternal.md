@@ -2,7 +2,7 @@
 
 ### Floating-point word access
 
-- [Floating-point word access](../../../core/libs/prx/libSceLibcInternal/FloatWords.cpp): `_Plsw`, `_Pmsw`, `_FPlsw` and `_FPmsw` return writable pointers to the least or most significant 16-bit word of a double or float. The signatures and word-selection model follow Dinkumware's `xmath.h`, `xdtest.c` and `xfdtest.c` ([reference tree](https://github.com/dorpxtos/xtos/tree/master/Crt/stl)). This is not verified on PS5. The implementation assumes the guest's little-endian IEEE binary32/binary64 layout and rejects null pointers by throwing instead of reproducing native pointer arithmetic on a null address.
+- [Floating-point word access](../../../core/libs/prx/libSceLibcInternal/FloatWords.cpp): `_Plsw`, `_Pmsw`, `_FPlsw`, `_FPmsw`, `_LPlsw` and `_LPmsw` return writable pointers to the least or most significant 16-bit word of a double, float or 80-bit extended value. The signatures and word-selection model follow Dinkumware's `xmath.h`, `xdtest.c` `xfdtest.c` and `xldtest.c` ([reference tree](https://github.com/dorpxtos/xtos/tree/master/Crt/stl)). This is not verified on PS5. The implementation assumes the guest's little-endian IEEE binary32/binary64 and padded x87 extended layout (the extended sign/exponent word starts at byte 8; bytes 10–15 are padding) and rejects null pointers by throwing instead of reproducing native pointer arithmetic on a null address.
 
 ### Additional callable exports
 
@@ -362,7 +362,7 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fwprep`, `_Genld`, `_Gentime`, `_Getcloc`, `_Getctyptab`, `_Getdst`, `_Geterrno`, `_Getfld`, `_Getfloat`, `_Getgloballocale`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Getint`, `_Getpcostate`, `_Getpwcostate`, `_Getpwctrtab`, `_Getpwctytab`, `_Getstr`, `_Gettime`, `_Getzone`, `_Hypot`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Isdst`, `_LAtan`, `_LDtento`, `_LErfc`, `_LHypot`, `_LLogpoly`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LPlsw`, `_LPmsw`, `_LPow`, `_LQuad`, `_LQuadph`, `_LRint`, `_LSincos`, `_LTan`
+- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LPow`, `_LQuad`, `_LQuadph`, `_LRint`, `_LSincos`, `_LTan`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LTgamma`, `_LXp_addh`, `_LXp_addx`, `_LXp_getw`, `_LXp_invx`, `_LXp_ldexpx`, `_LXp_movx`, `_LXp_mulh`, `_LXp_mulx`, `_LXp_setn`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LXp_setw`, `_LXp_sqrtx`, `_LXp_subx`, `_Ldtob`, `_Litob`, `_Lock_spin_lock`, `_Locsum`, `_Locterm`, `_Locvar`, `_Logpoly`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Makeloc`, `_Makestab`, `_Makewct`, `_Mbtowc`, `_Mtxdst`, `_Mtxinit`, `_Mtxlock`, `_Mtxunlock`, `_Nnl`

@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/FloatWords.hpp"
 #include <bit>
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -48,6 +49,33 @@ void Check(Bits bits, std::uint16_t* (APS5_VABI *least)(Float*), std::uint16_t* 
 }
 
 int main() {
+    long double extended = 0.0L;
+    std::array<unsigned char, 16> bytes;
+    for (unsigned i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<unsigned char>(i + 0x40);
+    std::memcpy(&extended, bytes.data(), bytes.size());
+    auto* low = _LPlsw_nid_postfix(&extended);
+    auto* high = _LPmsw_nid_postfix(&extended);
+    Require(reinterpret_cast<void*>(low) == &extended);
+    Require(reinterpret_cast<unsigned char*>(high) == reinterpret_cast<unsigned char*>(&extended) + 8);
+    std::array<unsigned char, 16> actual;
+    std::memcpy(actual.data(), &extended, actual.size());
+    Require(actual == bytes);
+    const std::uint16_t word = 0x1234;
+    std::memcpy(low, &word, sizeof(word));
+    std::memcpy(high, &word, sizeof(word));
+    bytes[0] = bytes[8] = 0x34;
+    bytes[1] = bytes[9] = 0x12;
+    std::memcpy(actual.data(), &extended, actual.size());
+    Require(actual == bytes);
+    for (auto function : {_LPlsw_nid_postfix, _LPmsw_nid_postfix}) {
+        bool threw = false;
+        try {
+            function(nullptr);
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw);
+    }
     for (std::uint32_t bits : {0u, 0x80000000u, 0x3f800000u, 0x7f800000u, 0x7fc01234u, 0xffffffffu, 1u})
         Check<float>(bits, _FPlsw_nid_postfix, _FPmsw_nid_postfix);
     for (std::uint64_t bits : {0ull, 0x8000000000000000ull, 0x3ff0000000000000ull, 0x7ff0000000000000ull,
