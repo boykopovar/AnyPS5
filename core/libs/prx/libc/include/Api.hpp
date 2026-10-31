@@ -930,6 +930,8 @@ int APS5_VABI putchar_nid_postfix(int value);
 int APS5_VABI putchar_unlocked_nid_postfix(int value);
 int APS5_VABI ungetc_nid_postfix(int value, FileStream* stream);
 char* APS5_VABI fgets_nid_postfix(char* buffer, int size, FileStream* stream);
+std::int64_t APS5_VABI getdelim_nid_postfix(char** lineptr, size_t* n, int delimiter, FileStream* stream);
+std::int64_t APS5_VABI getline_nid_postfix(char** lineptr, size_t* n, FileStream* stream);
 int APS5_VABI feof_nid_postfix(FileStream* stream);
 int APS5_VABI ferror_nid_postfix(FileStream* stream);
 int APS5_VABI feof_unlocked_nid_postfix(FileStream* stream);

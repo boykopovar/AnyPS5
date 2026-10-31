@@ -409,4 +409,8 @@ extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
 }
 
+namespace LibcDetail {
+bool ExpandLineBufferCapacity(std::size_t current, std::size_t needed, std::size_t limit, std::size_t& result);
+}
+
 #endif
