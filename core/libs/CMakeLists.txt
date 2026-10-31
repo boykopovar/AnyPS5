@@ -273,6 +273,8 @@ elseif(TARGET mimalloc)
 endif()
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
+include(prx/libSceLibreSsl/ErrorQueue.cmake)
+include(prx/libSceLibreSsl/MemoryBio.cmake)
 
 include(prx/libSceLibreSsl/ProtocolSelection.cmake)
 

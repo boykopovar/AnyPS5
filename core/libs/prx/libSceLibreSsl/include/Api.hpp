@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceLibreSsl/include/Bio.hpp"
 
 struct Asn1String {
     std::int32_t length;
@@ -254,18 +255,18 @@ int APS5_VABI ASN1_STRING_print_nid_postfix(void);
 int APS5_VABI ASN1_STRING_to_UTF8_nid_postfix(unsigned char** output, Asn1String* value);
 int APS5_VABI ASN1_STRING_type_nid_postfix(Asn1String* value);
 int APS5_VABI ASN1_TIME_print_nid_postfix(void);
-int APS5_VABI BIO_ctrl_nid_postfix(void);
+std::int64_t APS5_VABI BIO_ctrl_nid_postfix(LibreSsl::Bio* bio, int command, std::int64_t argument, void* pointer);
 int APS5_VABI BIO_f_ssl_nid_postfix(void);
-int APS5_VABI BIO_free_nid_postfix(void);
-int APS5_VABI BIO_new_nid_postfix(void);
+int APS5_VABI BIO_free_nid_postfix(LibreSsl::Bio* bio);
+LibreSsl::Bio* APS5_VABI BIO_new_nid_postfix(const LibreSsl::BioMethod* method);
 int APS5_VABI BIO_new_fp_nid_postfix(void);
-int APS5_VABI BIO_new_mem_buf_nid_postfix(void);
+LibreSsl::Bio* APS5_VABI BIO_new_mem_buf_nid_postfix(const void* source, int size);
 int APS5_VABI BIO_new_socket_nid_postfix(void);
 int APS5_VABI BIO_printf_nid_postfix(void);
-int APS5_VABI BIO_puts_nid_postfix(void);
+int APS5_VABI BIO_puts_nid_postfix(LibreSsl::Bio* bio, const char* source);
 int APS5_VABI BIO_s_file_nid_postfix(void);
-int APS5_VABI BIO_s_mem_nid_postfix(void);
-int APS5_VABI BIO_write_nid_postfix(void);
+const LibreSsl::BioMethod* APS5_VABI BIO_s_mem_nid_postfix();
+int APS5_VABI BIO_write_nid_postfix(LibreSsl::Bio* bio, const void* source, int size);
 int APS5_VABI BN_CTX_end_nid_postfix(void);
 int APS5_VABI BN_CTX_free_nid_postfix(void);
 int APS5_VABI BN_CTX_new_nid_postfix(void);
@@ -337,9 +338,9 @@ int APS5_VABI ENGINE_load_builtin_engines_nid_postfix(void);
 int APS5_VABI ENGINE_load_private_key_nid_postfix(void);
 int APS5_VABI ENGINE_set_default_nid_postfix(void);
 void APS5_VABI ERR_clear_error_nid_postfix(void);
-int APS5_VABI ERR_error_string_nid_postfix(void);
-int APS5_VABI ERR_error_string_n_nid_postfix(void);
-int APS5_VABI ERR_free_strings_nid_postfix(void);
+char* APS5_VABI ERR_error_string_nid_postfix(std::uint64_t error, char* buffer);
+void APS5_VABI ERR_error_string_n_nid_postfix(std::uint64_t error, char* buffer, std::size_t length);
+void APS5_VABI ERR_free_strings_nid_postfix();
 std::uint64_t APS5_VABI ERR_get_error_nid_postfix(void);
 std::uint64_t APS5_VABI ERR_peek_error_nid_postfix(void);
 void APS5_VABI ERR_remove_thread_state_nid_postfix(const void* threadId);
