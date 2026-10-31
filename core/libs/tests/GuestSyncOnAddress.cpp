@@ -368,6 +368,21 @@ static void RegisteredRangesRespectReadability() {
     }
 }
 
+static void UnregisteredPrefixCannotBypassRegisteredUnreadableSuffix() {
+    alignas(std::uint32_t) unsigned char bytes[sizeof(std::uint32_t)]{2, 0, 0, 0};
+    auto* address = reinterpret_cast<std::uint32_t*>(bytes);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(bytes + 2, 2, false, false, false);
+    }
+    KernelUseconds timeout = SHORT_TIMEOUT;
+    Require(sceKernelSyncOnAddressWait32(address, 1, &timeout, nullptr) == SCE_KERNEL_ERROR_EFAULT && timeout == SHORT_TIMEOUT);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(bytes + 2);
+    }
+}
+
 static void RegisteredPrefixWithUnregisteredTailUsesGuardedCopy() {
     alignas(std::uint32_t) unsigned char bytes[sizeof(std::uint32_t)]{2, 0, 0, 0};
     auto* address = reinterpret_cast<std::uint32_t*>(bytes);
@@ -414,6 +429,7 @@ int main() {
     UnreadableAddressFailsWithEfault();
     RegisteredUnreadableAddressFailsWithEfault();
     RegisteredRangesRespectReadability();
+    UnregisteredPrefixCannotBypassRegisteredUnreadableSuffix();
     RegisteredPrefixWithUnregisteredTailUsesGuardedCopy();
     RegisteredReadableAddressKeepsWaitSemantics();
 }

@@ -147,18 +147,27 @@ std::optional<TValue> TryLoadAddressValue(TValue* address) {
     const auto end = guestAddress + sizeof(TValue);
     std::array<std::shared_ptr<const GuestAllocations::Range>, sizeof(TValue)> pins;
     std::size_t pinCount = 0;
+    bool hasUnregistered = false;
     for (auto cursor = guestAddress; cursor < end;) {
-        auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(cursor, false);
-        if (range == nullptr) {
-            TValue value;
-            if (!GuestCopyIn_nid_no_patch(&value, address, sizeof(value))) return std::nullopt;
-            return value;
+        auto range = GuestAllocations::GuestAllocationsLookup_nid_postfix(cursor, true);
+        if (range == nullptr || range->address >= end) {
+            hasUnregistered = true;
+            break;
+        }
+        if (range->address > cursor) {
+            hasUnregistered = true;
+            cursor = range->address;
         }
         if (!range->readable || cursor < range->address || range->address > std::numeric_limits<std::uintptr_t>::max() - range->bytes) return std::nullopt;
         const auto rangeEnd = range->address + range->bytes;
         if (rangeEnd <= cursor) return std::nullopt;
         pins[pinCount++] = std::move(range);
         cursor = std::min(end, rangeEnd);
+    }
+    if (hasUnregistered) {
+        TValue value;
+        if (!GuestCopyIn_nid_no_patch(&value, address, sizeof(value))) return std::nullopt;
+        return value;
     }
     return LoadAddressValue(address);
 }
