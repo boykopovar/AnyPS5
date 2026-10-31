@@ -488,19 +488,22 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     constexpr int GuestEperm = 1;
     std::error_code error;
-    if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) {
 #ifdef _WIN32
-        if (native.has_filename()) {
-            WIN32_FIND_DATAW found{};
-            if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
-                FindClose(find);
-                if ((found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
-                    if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
-                    RecordWrittenPath_nid_no_patch(native);
-                    return 0;
-                }
+    if (native.has_filename() && native.filename().native().find_first_of(L"*?<>\"") == std::wstring::npos) {
+        WIN32_FIND_DATAW found{};
+        if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
+            FindClose(find);
+            constexpr DWORD DirectoryLink = FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY;
+            if ((found.dwFileAttributes & DirectoryLink) == DirectoryLink && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
+                if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
+                RecordWrittenPath_nid_no_patch(native);
+                return 0;
             }
         }
+    }
+#endif
+    if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) {
+#ifdef _WIN32
         const DWORD attributes = GetFileAttributesW(native.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;

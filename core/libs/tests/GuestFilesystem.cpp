@@ -1548,6 +1548,7 @@ int main() {
         Require(sceKernelRmdir(directoryLink.string().c_str()) == static_cast<int>(0x80020014u));
         Require(rmdir_nid_postfix(danglingDirectoryLink.string().c_str()) == -1 && *__error_nid_postfix() == 20);
         Require((GetFileAttributesW(directoryLink.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && std::filesystem::is_directory(linkedDirectory));
+        Require(unlink_nid_postfix((root / "directory-li*").string().c_str()) == -1 && *__error_nid_postfix() != 5 && (GetFileAttributesW(directoryLink.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
         Require(unlink_nid_postfix(directoryLink.string().c_str()) == 0 && unlink_nid_postfix(danglingDirectoryLink.string().c_str()) == 0);
     }
 #else
