@@ -20,6 +20,7 @@ extern "C" const char* NanSubjectEnd_nid_no_patch(const char* text);
 extern "C" bool RejectIntegerBase_nid_no_patch(const char* str, char** endptr, int base, bool setError);
 extern "C" int KeepHostStandardError_nid_no_patch();
 extern "C" int KeepHostStandardOutput_nid_no_patch();
+extern "C" int WideToMultibyteChecked_nid_no_patch(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit);
 #ifndef _WIN32
 extern "C" int HostStandardError_nid_no_patch();
 #else

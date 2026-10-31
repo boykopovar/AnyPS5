@@ -319,7 +319,7 @@ void OpenIndexed(Directory& directory) {
 }
 
 extern "C" {
-void* APS5_VABI opendir_nid_postfix(const char* path) {
+void* APS5_VABI OpenDirectory_nid_no_patch(const char* path) {
     if (!path) { errno = 14; return nullptr; }
     if (!*path) { errno = 2; return nullptr; }
     try {
@@ -341,14 +341,14 @@ void* APS5_VABI opendir_nid_postfix(const char* path) {
       catch (const std::exception&) { errno = 5; return nullptr; }
 }
 
-GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle) {
+GuestDirectoryEntry* APS5_VABI ReadDirectory_nid_no_patch(void* handle) {
     if (!handle) { errno = 9; return nullptr; }
     auto& directory = *static_cast<Directory*>(handle);
     std::lock_guard lock(directory.mutex);
     return ReadEntry(directory);
 }
 
-int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
+int APS5_VABI ReadDirectoryEntry_nid_no_patch(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
     if (!handle) return 9;
     if (!entry || !result) throw std::invalid_argument("readdir_r: null entry or result");
     auto& directory = *static_cast<Directory*>(handle);
@@ -366,7 +366,7 @@ int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, Gu
     return 0;
 }
 
-int APS5_VABI closedir_nid_postfix(void* handle) {
+int APS5_VABI CloseDirectory_nid_no_patch(void* handle) {
     if (!handle) { errno = 9; return -1; }
     std::unique_ptr<Directory> directory(static_cast<Directory*>(handle));
     int result = directory->native ? CloseNative(directory->native) : 0;
@@ -374,6 +374,22 @@ int APS5_VABI closedir_nid_postfix(void* handle) {
     if (result) errno = DirectoryError(errno);
     if (directory->closeDescriptor && directory->closeDescriptor(directory->descriptor) != 0) result = -1;
     return result;
+}
+
+void* APS5_VABI opendir_nid_postfix(const char* path) {
+    return OpenDirectory_nid_no_patch(path);
+}
+
+GuestDirectoryEntry* APS5_VABI readdir_nid_postfix(void* handle) {
+    return ReadDirectory_nid_no_patch(handle);
+}
+
+int APS5_VABI readdir_r_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
+    return ReadDirectoryEntry_nid_no_patch(handle, entry, result);
+}
+
+int APS5_VABI closedir_nid_postfix(void* handle) {
+    return CloseDirectory_nid_no_patch(handle);
 }
 
 void APS5_VABI rewinddir_nid_postfix(void* handle) {
