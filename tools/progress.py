@@ -175,11 +175,16 @@ def read_manifest(path):
     return frozenset(observed)
 
 
-def scan_library(path):
-    done, todo, inert, live = set(), set(), set(), set()
-    texts = [code(source.read_text(encoding="utf-8", errors="ignore")) for source in path.rglob("*.cpp")
-             if "tests" not in source.relative_to(path).parts]
+def scan_library(path, observed=None):
+    done, todo, unobserved, inert, live = set(), set(), set(), set(), set()
+    raw = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
+           if "tests" not in source.relative_to(path).parts]
+    texts = [code(text) for text in raw]
     exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
+    aliases = {}
+    for text in raw:
+        for nid, name in tokenizer.source_aliases(text):
+            aliases.setdefault(name, set()).add(nid)
     for text in texts:
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
@@ -190,15 +195,21 @@ def scan_library(path):
             body = text[match.end() - 1:body_end(text, match.end() - 1)]
             if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())
                    for call in CALL.finditer(body)):
-                todo.add(name)
+                if observed is None or tokenizer.nids_of(name, aliases) & observed:
+                    todo.add(name)
+                else:
+                    unobserved.add(name)
                 continue
             done.add(name)
             (inert if inert_body(body, wrappers) else live).add(name)
     todo -= done
+    unobserved -= done
     inert -= live
-    group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
-             "done_names": sorted(done), "todo_names": sorted(todo), "inert_names": sorted(inert)}
-    if not (done or todo):
+    group = {"name": path.name, "label": path.name.removeprefix("libSce"), "classified": observed is not None,
+             "done": len(done), "todo": len(todo), "unobserved": len(unobserved),
+             "done_names": sorted(done), "todo_names": sorted(todo), "unobserved_names": sorted(unobserved),
+             "inert_names": sorted(inert)}
+    if not (done or todo or unobserved):
         cmake = path / "CMakeLists.txt"
         texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
         texts += [(SOURCE_SHARED, source.read_text(encoding="utf-8", errors="ignore")) for source in sorted(path.glob("*.cpp"))]
