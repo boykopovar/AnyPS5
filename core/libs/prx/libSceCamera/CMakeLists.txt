@@ -27,6 +27,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCamera>")
     endif()
 
+    add_test_executable(guest_camera2_tests ${LIBS_INCLUDE_DIR}/tests/GuestCamera2.cpp)
+    target_include_directories(guest_camera2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_camera2_tests PRIVATE libSceCamera libc)
+    configure_windows_unwind(guest_camera2_tests)
+    add_test(NAME guest_camera2 COMMAND guest_camera2_tests)
+    if(WIN32)
+        set_tests_properties(guest_camera2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCamera>")
+    endif()
+
     add_test_executable(guest_camera_settings_tests ${LIBS_INCLUDE_DIR}/tests/GuestCameraSettings.cpp)
     target_include_directories(guest_camera_settings_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_camera_settings_tests PRIVATE libSceCamera libc ${CMAKE_DL_LIBS})
