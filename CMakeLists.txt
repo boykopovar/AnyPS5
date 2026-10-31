@@ -443,6 +443,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_agent_files.py)
         add_test(NAME conventions_alignment COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_alignment.py)
+        add_test(NAME tools_intervals_complete COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_intervals_complete.py)
+        set_tests_properties(tools_intervals_complete PROPERTIES TIMEOUT 20)
         add_test(NAME trace_intervals_csv COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_intervals_csv.py)
         set_tests_properties(trace_intervals_csv PROPERTIES TIMEOUT 20)
