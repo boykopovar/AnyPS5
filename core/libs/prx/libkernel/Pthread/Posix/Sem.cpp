@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Common.hpp"
 #include "../include/Cancel.hpp"
@@ -40,6 +41,7 @@ static constexpr std::string_view NAMED_SEMAPHORE_PREFIX = "/tmp/SEMD";
 static constexpr std::string_view NAMED_SEMAPHORE_FILE_PREFIX = "SEMD";
 
 static int Fail(int error) {
+    *__error_nid_postfix() = error;
     errno = error;
     return -1;
 }
@@ -47,7 +49,7 @@ static int Fail(int error) {
 static PosixSemaphore* Get(void* sem) {
     if (!sem) return nullptr;
     PosixSemaphore* semaphore = nullptr;
-    std::memcpy(&semaphore, sem, sizeof(semaphore));
+    if (!GuestCopyIn_nid_no_patch(&semaphore, sem, sizeof(semaphore))) return nullptr;
     return semaphore;
 }
 
@@ -114,15 +116,21 @@ int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value) {
     if (!sem || value > GUEST_SEM_VALUE_MAX) return Fail(PosixThread::GUEST_EINVAL);
     auto* semaphore = new PosixSemaphore();
     semaphore->count = value;
-    std::memcpy(sem, &semaphore, sizeof(semaphore));
+    if (!GuestCopyOut_nid_no_patch(sem, &semaphore, sizeof(semaphore))) {
+        delete semaphore;
+        return Fail(PosixThread::GUEST_EFAULT);
+    }
     return 0;
 }
 
 int APS5_VABI sem_destroy_nid_postfix(void* sem) {
     auto* semaphore = Get(sem);
     if (!semaphore || IsNamed(sem)) return Fail(PosixThread::GUEST_EINVAL);
+    PosixSemaphore* cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(sem, &cleared, sizeof(cleared))) {
+        return Fail(PosixThread::GUEST_EFAULT);
+    }
     delete semaphore;
-    std::memset(sem, 0, sizeof(semaphore));
     return 0;
 }
 
@@ -153,8 +161,10 @@ int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime
         }
     }
     if (!abstime) return WaitFor(semaphore, nullptr);
+    KernelTimespec timeout{};
+    if (!GuestCopyIn_nid_no_patch(&timeout, abstime, sizeof(timeout))) return Fail(PosixThread::GUEST_EFAULT);
     KernelUseconds usec = 0;
-    if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, abstime, &usec)) return Fail(PosixThread::GUEST_EINVAL);
+    if (!PosixThread::RelativeMicroseconds(GUEST_REALTIME_CLOCK, &timeout, &usec)) return Fail(PosixThread::GUEST_EINVAL);
     return WaitFor(semaphore, &usec);
 }
 
@@ -178,8 +188,14 @@ int APS5_VABI sem_post_nid_postfix(void* sem) {
 int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value) {
     auto* semaphore = Get(sem);
     if (!semaphore || !value) return Fail(PosixThread::GUEST_EINVAL);
-    std::lock_guard lock(semaphore->lock);
-    *value = static_cast<int>(semaphore->count);
+    int count = 0;
+    {
+        std::lock_guard lock(semaphore->lock);
+        count = static_cast<int>(semaphore->count);
+    }
+    if (!GuestCopyOut_nid_no_patch(value, &count, sizeof(count))) {
+        return Fail(PosixThread::GUEST_EFAULT);
+    }
     return 0;
 }
 

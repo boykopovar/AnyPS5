@@ -100,6 +100,83 @@ static void CheckRelativeTimeout() {
     Require(sem_destroy_nid_postfix(&sem) == 0, "relative-timeout semaphore destroy must succeed");
 }
 
+static void CheckNullAndInvalidArguments() {
+    std::uintptr_t sem = 0;
+    int value = -1;
+    const auto badSem = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    const auto badValue = reinterpret_cast<int*>(std::uintptr_t{0x10});
+    const auto badTimespec = reinterpret_cast<const KernelTimespec*>(std::uintptr_t{0x10});
+
+    *__error_nid_postfix() = 0;
+    Require(sem_init_nid_postfix(nullptr, 0, 1) == -1 && *__error_nid_postfix() == 22, "sem_init(nullptr) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_init_nid_postfix(badSem, 0, 1) == -1 && *__error_nid_postfix() == 14, "sem_init(badSem) must fail with EFAULT");
+    *__error_nid_postfix() = 0;
+    Require(sem_destroy_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22, "sem_destroy(nullptr) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_destroy_nid_postfix(badSem) == -1 && *__error_nid_postfix() == 22, "sem_destroy(badSem) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_wait_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22, "sem_wait(nullptr) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_wait_nid_postfix(badSem) == -1 && *__error_nid_postfix() == 22, "sem_wait(badSem) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_trywait_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22, "sem_trywait(nullptr) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_trywait_nid_postfix(badSem) == -1 && *__error_nid_postfix() == 22, "sem_trywait(badSem) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_post_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22, "sem_post(nullptr) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_post_nid_postfix(badSem) == -1 && *__error_nid_postfix() == 22, "sem_post(badSem) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_getvalue_nid_postfix(nullptr, &value) == -1 && *__error_nid_postfix() == 22, "sem_getvalue(nullptr, val) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_getvalue_nid_postfix(badSem, &value) == -1 && *__error_nid_postfix() == 22, "sem_getvalue(badSem, val) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_reltimedwait_np_nid_postfix(nullptr, 1000) == -1 && *__error_nid_postfix() == 22, "sem_reltimedwait_np(nullptr) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_reltimedwait_np_nid_postfix(badSem, 1000) == -1 && *__error_nid_postfix() == 22, "sem_reltimedwait_np(badSem) must fail with EINVAL");
+
+    KernelTimespec soon{100, 0};
+    *__error_nid_postfix() = 0;
+    Require(sem_timedwait_nid_postfix(nullptr, &soon) == -1 && *__error_nid_postfix() == 22, "sem_timedwait(nullptr, abstime) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_timedwait_nid_postfix(badSem, &soon) == -1 && *__error_nid_postfix() == 22, "sem_timedwait(badSem, abstime) must fail with EINVAL");
+
+    Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "test semaphore must initialize");
+    *__error_nid_postfix() = 0;
+    Require(sem_getvalue_nid_postfix(&sem, nullptr) == -1 && *__error_nid_postfix() == 22, "sem_getvalue(sem, nullptr) must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_getvalue_nid_postfix(&sem, badValue) == -1 && *__error_nid_postfix() == 14, "sem_getvalue(sem, badValue) must fail with EFAULT");
+
+    KernelTimespec negativeNanoseconds{100, -1};
+    *__error_nid_postfix() = 0;
+    Require(sem_timedwait_nid_postfix(&sem, &negativeNanoseconds) == -1 && *__error_nid_postfix() == 22, "negative nanoseconds must fail with EINVAL");
+    *__error_nid_postfix() = 0;
+    Require(sem_timedwait_nid_postfix(&sem, badTimespec) == -1 && *__error_nid_postfix() == 14, "sem_timedwait(sem, badTimespec) must fail with EFAULT");
+
+    auto* readOnlyMem = static_cast<char*>(mmap_nid_postfix(nullptr, 16384, 1, 0x1002, -1, 0));
+    Require(readOnlyMem != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)), "mmap readOnlyMem must succeed");
+    *__error_nid_postfix() = 0;
+    Require(sem_init_nid_postfix(readOnlyMem, 0, 1) == -1 && *__error_nid_postfix() == 14, "sem_init(readOnlyMem) must fail with EFAULT");
+    *__error_nid_postfix() = 0;
+    Require(sem_getvalue_nid_postfix(&sem, reinterpret_cast<int*>(readOnlyMem)) == -1 && *__error_nid_postfix() == 14, "sem_getvalue(sem, readOnlyMem) must fail with EFAULT");
+    munmap_nid_postfix(readOnlyMem, 16384);
+
+    auto* semPage = static_cast<void**>(mmap_nid_postfix(nullptr, 4096, 3, 0x1002, -1, 0));
+    Require(semPage != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)), "mmap semPage must succeed");
+    Require(sem_init_nid_postfix(semPage, 0, 1) == 0, "sem_init on semPage must succeed");
+    Require(mprotect_nid_postfix(semPage, 4096, 1) == 0, "mprotect semPage to read-only must succeed");
+    *__error_nid_postfix() = 0;
+    Require(sem_destroy_nid_postfix(semPage) == -1 && *__error_nid_postfix() == 14, "sem_destroy on read-only page must fail with EFAULT");
+    int readVal = -1;
+    Require(sem_getvalue_nid_postfix(semPage, &readVal) == 0 && readVal == 1, "semaphore must be preserved after failed destroy");
+    Require(mprotect_nid_postfix(semPage, 4096, 3) == 0, "mprotect semPage to read-write must succeed");
+    Require(sem_destroy_nid_postfix(semPage) == 0, "sem_destroy on writable page must succeed");
+    munmap_nid_postfix(semPage, 4096);
+
+    Require(sem_destroy_nid_postfix(&sem) == 0, "test semaphore destroy must succeed");
+}
+
 int main(int argc, char** argv) {
     constexpr unsigned int maximum = 0x7fffffffu;
     std::uintptr_t sem = 0;
@@ -176,6 +253,7 @@ int main(int argc, char** argv) {
     CheckFutureDeadline();
     CheckRelativeTimeout();
     CheckRetire();
+    CheckNullAndInvalidArguments();
 
     Require(sem_init_nid_postfix(&sem, 0, 1) == 0, "renamed semaphore must initialize");
     Require(sem_setname_nid_postfix(&sem, "semaphore") == 0, "first setname must succeed");
