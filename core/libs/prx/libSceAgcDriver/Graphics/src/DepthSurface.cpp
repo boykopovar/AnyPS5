@@ -2910,11 +2910,11 @@ void NoteDepthMetadataFill(std::uint64_t address, std::size_t bytes, std::uint32
     for (const auto& surface : surfaces()) {
         if (!surface->active->load(std::memory_order_acquire)) continue;
         const auto& target = surface->target;
-        if (target.samples != 1u && target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes) surface->sampling.Refuse("native multisample depth metadata fill transition is not implemented");
+        if (target.samples != 1u && !target.htileDepthOnly && target.htileAddress != 0u && address < target.htileAddress + HtileMetadataBytes(target.extent) && target.htileAddress < address + bytes) surface->sampling.Refuse("native multisample depth metadata fill transition is not implemented");
         if (HtileFillCovers(target.htileAddress, target.extent, address, bytes)) {
             const VkImageAspectFlags written = VK_IMAGE_ASPECT_DEPTH_BIT | (target.htileStencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0u);
             surface->ForgetClear(written);
-            surface->NoteHtileClear(HtileFillClears(pattern, target.htileStencil));
+            if (target.samples == 1u) surface->NoteHtileClear(HtileFillClears(pattern, target.htileStencil));
             continue;
         }
         if (target.samples != 1) continue;
