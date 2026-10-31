@@ -1333,7 +1333,9 @@ std::uint32_t EmitFPSin(SpirvEmitterState& state, std::uint32_t arg0) {
     const auto linearConstant = Select(state, TypeF32(state), nearHalf, ConstantF32(state, 0x40c90fdbu), ConstantF32(state, 0x40c90fd5u));
     const auto linearLimit = GcnGuestShaders() ? Select(state, TypeU32(state), nearHalf, ConstantU32(state, 0x39800000u), ConstantU32(state, 0x39c00000u)) : ConstantU32(state, 0x39800000u);
     const auto result = TrigLinearNearZero(state, value, distance, linearConstant, linearLimit);
-    return Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseOr, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), result), signBits));
+    const auto signedResult = Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseOr, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), result), signBits));
+    const auto halfCycle = Binary(state, spv::OpFOrdEqual, TypeBool(state), absolute, ConstantF32(state, 0x3f000000u));
+    return Select(state, TypeF32(state), halfCycle, ConstantF32(state, 0u), signedResult);
 }
 
 std::uint32_t EmitFPCos(SpirvEmitterState& state, std::uint32_t arg0) {
