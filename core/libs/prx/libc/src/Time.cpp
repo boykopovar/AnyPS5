@@ -570,8 +570,9 @@ int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
         return time;
     }
 #endif
-    if (approximate < firstOrdinary || approximate > HOST_LAST_SECOND - SECONDS_PER_DAY) {
-        moved = calendarCycles(approximate - firstOrdinary, CALENDAR_CYCLE_SECONDS) * CALENDAR_CYCLE_SECONDS;
+    if (!ordinary || approximate < firstOrdinary || approximate > HOST_LAST_SECOND - SECONDS_PER_DAY) {
+        if (approximate < firstOrdinary || approximate > HOST_LAST_SECOND - SECONDS_PER_DAY)
+            moved = calendarCycles(approximate - firstOrdinary, CALENDAR_CYCLE_SECONDS) * CALENDAR_CYCLE_SECONDS;
         GuestTm window{};
         if (!utcCalendarFields(approximate - moved, window)) return -1;
         window.tm_isdst = host.tm_isdst;

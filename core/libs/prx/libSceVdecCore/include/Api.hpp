@@ -4,6 +4,8 @@
 
 extern "C" {
 
+int APS5_VABI sceVdecCoreQueryMemorySizeSvp();
+
 int APS5_VABI sceVdecCoreAnalyzeStream();
 int APS5_VABI sceVdecCoreCreateDecoder();
 int APS5_VABI sceVdecCoreDeleteDecoder();
