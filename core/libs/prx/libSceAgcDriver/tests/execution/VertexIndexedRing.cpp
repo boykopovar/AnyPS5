@@ -49,6 +49,10 @@ alignas(256) constexpr std::array<std::uint32_t, 6> ReadOnlyVertexCode{
     0xe00c2000u, 0x80020805u, 0xbf8c3f70u, 0xf80008cfu, 0x0b0a0908u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 6> ReadOnlyInstanceCode{
+    0xe00c2000u, 0x80020808u, 0xbf8c3f70u, 0xf80008cfu, 0x0b0a0908u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{
     0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u,
 };
@@ -177,24 +181,28 @@ std::byte* GuestBlock() {
     return block;
 }
 
-void DrawsUpToTheTarget(AgcDriver::VulkanDevice& device, std::uint32_t past) {
-    const auto what = "a ring whose first three vertices reach " + std::to_string(past) + " bytes into the target";
+void DrawsUpToTheTarget(AgcDriver::VulkanDevice& device, std::uint32_t past, std::uint32_t instances = 0u, std::uint32_t firstInstance = 0u) {
+    const bool instanced = instances != 0u;
+    const auto what = (instanced ? "a ring whose instances " + std::to_string(firstInstance) + " to " + std::to_string(firstInstance + instances - 1u) + " reach " : "a ring whose first three vertices reach ") + std::to_string(past) + " bytes into the target";
     static const auto* block = GuestBlock();
     const auto* target = block + GuestBlockBytes;
-    const auto* base = target - (ThreeVerticesBytes - past);
+    const auto readBytes = instanced ? (firstInstance + instances) * 16u : ThreeVerticesBytes;
+    const auto* base = target - (readBytes - past);
     const auto targetBytes = AgcDriver::Graphics::ColorTargetLayout(Width, Height, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4u).Bytes();
     Require(targetBytes <= GuestBlockBytes, "the target does not fit its guest block");
     const auto ring = Descriptor(base, 16u, static_cast<std::uint32_t>((target + targetBytes - base) / 16), 0x1104bfacu);
     std::vector<std::uint32_t> userData(12, 0u);
     std::copy(ring.begin(), ring.end(), userData.begin() + 8);
-    const auto programs = Compile(device, ReadOnlyVertexCode, userData);
+    const auto programs = Compile(device, instanced ? std::span<const std::uint32_t>(ReadOnlyInstanceCode) : std::span<const std::uint32_t>(ReadOnlyVertexCode), userData);
     const auto guest = programs.GuestBuffers();
     Require(guest != programs.vertex.bindings.end() && guest->count == 1u && guest->bufferVertexExtent == std::vector<std::uint32_t>{16u}, what + ": the vertex shader does not bind its V# with a vertex extent");
+    Require(guest->bufferVertexByInstance == std::vector<bool>{instanced}, what + ": the extent is not marked as indexed by the " + (instanced ? "instance" : "vertex") + " index");
     auto state = TargetState(target);
     state.color.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
     state.color.bytes = targetBytes;
     state.colors = {state.color};
-    const AgcDriver::Pm4::DrawParameters draw{0u, 3u, 0u, 1, 0, false};
+    AgcDriver::Pm4::DrawParameters draw{0u, 3u, 0u, instanced ? instances : 1u, 0, false};
+    draw.firstInstance = firstInstance;
     const auto shaders = programs.Shaders();
     std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
     device.Draw(state, draw, shaders, {}, &recipe);
@@ -237,6 +245,8 @@ int main() {
         }
         DrawsUpToTheTarget(*device, 0u);
         DrawsUpToTheTarget(*device, 8u);
+        DrawsUpToTheTarget(*device, 0u, 3u, 0u);
+        DrawsUpToTheTarget(*device, 8u, 3u, 2u);
         std::puts("vertex-indexed ring tests passed");
         return 0;
     } catch (const std::exception& error) {
