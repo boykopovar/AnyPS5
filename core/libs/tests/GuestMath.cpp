@@ -1262,6 +1262,38 @@ static void CheckExpm1ScalingRounding() {
     }
     _mm_setcsr(savedCsr);
 }
+static void CheckAtanhEdgeFlags() {
+    for (const double input : {2.0, -2.0, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN(), -std::numeric_limits<double>::quiet_NaN()}) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(atanh_nid_postfix(input)) && errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
+}
+static void CheckAtanhConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0}, {0x8000000000000000ull, 0x8000000000000000ull, 0},
+        {0x3e2fffffffffffffull, 0x3e2fffffffffffffull, 0}, {0x3e30000000000000ull, 0x3e30000000000000ull, 0},
+        {0xbe30000000000000ull, 0xbe30000000000000ull, 0}, {0x3fdfffffffffffffull, 0x3fe193ea7aad030aull, 0},
+        {0x3fe0000000000000ull, 0x3fe193ea7aad030aull, 0}, {0xbfe0000000000000ull, 0xbfe193ea7aad030aull, 0},
+        {0x3fefffffffffffffull, 0x4032b708872320e2ull, 0}, {0xbfefffffffffffffull, 0xc032b708872320e2ull, 0},
+        {0x3ff0000000000000ull, 0x7ff0000000000000ull, ERANGE}, {0xbff0000000000000ull, 0xfff0000000000000ull, ERANGE},
+        {0x3ff0000000000001ull, 0xfff8000000000000ull, EDOM}, {0xc000000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff0000000000000ull, 0xfff8000000000000ull, EDOM}, {0xfff0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, EDOM}, {0xfff8000000000002ull, 0xfff8000000000002ull, EDOM},
+        {0x3f03a67d5567227bull, 0x3f03a67d558ea76eull, 0}, {0x3faa28c4621dd8d7ull, 0x3faa2e9a77f5a83full, 0},
+        {0x3f4742fce55398bbull, 0x3f4742fd26e249ceull, 0}, {0x3f2cf9c68a297d4aull, 0x3f2cf9c69214cc60ull, 0},
+        {0x3fc796d8c6ddd135ull, 0x3fc7dca409c1ba11ull, 0}, {0x3f73b85b718bdc38ull, 0x3f73b8656ddda145ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(atanh_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
 
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
@@ -2621,6 +2653,8 @@ int main() {
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckExpm1ScalingRounding();
+    CheckAtanhConsoleBits();
+    CheckAtanhEdgeFlags();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
