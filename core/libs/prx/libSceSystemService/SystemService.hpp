@@ -18,6 +18,7 @@ constexpr int SYSTEM_SERVICE_RUNNING_APP_ID = 1;
 constexpr int SYSTEM_SERVICE_INVALID_TITLE_APP_ID = -1;
 constexpr std::size_t SYSTEM_SERVICE_TITLE_ID_LENGTH = 9;
 
+constexpr int LNC_UTIL_ERROR_NO_APP = static_cast<int>(0x80940004u);
 constexpr int LNC_UTIL_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80940005u);
 constexpr int SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80e30003u);
 
