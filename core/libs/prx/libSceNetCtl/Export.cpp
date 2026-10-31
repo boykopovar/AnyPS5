@@ -21,6 +21,7 @@
 #include <netpacket/packet.h>
 #endif
 #ifdef __APPLE__
+#include <net/if_dl.h>
 #include <sys/sysctl.h>
 #endif
 #endif
@@ -874,6 +875,17 @@ static void HostTraffic(std::uint64_t& sent, std::uint64_t& received) {
         const std::string statistics = std::string("/sys/class/net/") + item->ifa_name + "/statistics/";
         sent += NetCtlReadByteCounter_nid_no_patch((statistics + "tx_bytes").c_str());
         received += NetCtlReadByteCounter_nid_no_patch((statistics + "rx_bytes").c_str());
+    }
+    freeifaddrs(interfaces);
+#elif defined(__APPLE__)
+    ifaddrs* interfaces = nullptr;
+    if (getifaddrs(&interfaces) != 0) throw std::runtime_error("sceNetCtlGetIfStat: the host interface list is unavailable");
+    for (auto* item = interfaces; item; item = item->ifa_next) {
+        if (!item->ifa_addr || item->ifa_addr->sa_family != AF_LINK || !item->ifa_data) continue;
+        if (!(item->ifa_flags & IFF_UP) || (item->ifa_flags & IFF_LOOPBACK)) continue;
+        const auto* statistics = static_cast<const struct if_data*>(item->ifa_data);
+        sent += statistics->ifi_obytes;
+        received += statistics->ifi_ibytes;
     }
     freeifaddrs(interfaces);
 #else
