@@ -645,6 +645,15 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0) 
     return cached.budget;
 }
 
+std::size_t storageEntries() {
+    static const std::size_t entries = [] {
+        const char* text = std::getenv("APS5_STORAGE_CACHE_ENTRIES");
+        const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+        return parsed != 0 ? static_cast<std::size_t>(parsed) : std::size_t{2048};
+    }();
+    return entries;
+}
+
 std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     if (const auto forced = forcedCacheBudget(); forced != 0) return forced;
     if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return TextureCacheBudget(context.memory);
@@ -1289,7 +1298,7 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
             entry.accounted = heldBytes(*entry.texture);
             const auto budget = storageBudget(context, cache.bytes + entry.accounted);
-            while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) evicted.push_back(evictStorage(cache, std::prev(cache.entries.end())));
+            while (!cache.entries.empty() && (cache.bytes + entry.accounted > budget || cache.entries.size() >= storageEntries())) evicted.push_back(evictStorage(cache, std::prev(cache.entries.end())));
             cache.bytes += entry.accounted;
             texture = entry.texture;
             cache.entries.push_front(std::move(entry));

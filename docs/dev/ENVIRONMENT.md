@@ -418,6 +418,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_STAGING_POOL_MIB` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/BufferPool.cpp` |  | size in MiB of the device-local staging buffer pool; `0` disables the device tier |
 | `APS5_STALE_EVICT` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | also evicts a proved-present dead image's pending layers on an access |
 | `APS5_STALL_WATCHDOG_SECS` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Queues/SubmissionRing.cpp` | 0 | seconds a queue may go without progress before the submission rings are dumped; 0 disables the watchdog, at most 86400 |
+| `APS5_STORAGE_CACHE_ENTRIES` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` | 2048 | most surfaces the storage-image cache keeps; beyond it the least recently used is evicted; `0` or unset selects 2048 |
 | `APS5_STORE_AT_FLIP` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | stores every pending storage-image result at each display flip; only `1` is accepted |
 | `APS5_STORE_AT_LABEL` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | flushes every pending storage-image result when a label is written on the GPU; only `1` is accepted |
 | `APS5_SUBMISSION_EPOCH_EACH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketExecution.cpp` |  | bumps the guest-memory collect epoch on every submission instead of only when the submission is newer than the last bump |
