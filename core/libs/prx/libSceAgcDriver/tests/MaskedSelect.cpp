@@ -1364,6 +1364,56 @@ int main() {
     passed &= run("an optional wave body spanning several blocks preserves inactive values through its own phis", [&] { return optionalPixelRegion(false); });
     passed &= run("an optional wave body spanning several blocks cannot write an inactive lane on any of its paths", [&] { return !optionalPixelRegion(true); });
 
+    const auto optionalPixelExit = [&](bool exitKeepsLanes) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = pixelPredicate(b);
+        auto& zero = b.constant(0u);
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& body = b.newBlock();
+        auto& exit = b.newBlock();
+        auto& rest = b.newBlock();
+        auto& merge = b.newBlock();
+        entry.AddBranch(&body);
+        entry.AddBranch(&merge);
+        body.AddBranch(&exit);
+        body.AddBranch(&rest);
+        rest.AddBranch(&merge);
+        auto& entryInfo = b.program.Metadata().blockInfo[0u];
+        entryInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        entryInfo.terminator.condition = BranchCondition::ExecZero;
+        entryInfo.terminator.trueBlock = merge.Id();
+        entryInfo.terminator.falseBlock = body.Id();
+        entryInfo.condition = &condition;
+        b.block = &body;
+        auto& uniformBit = b.emit(IrOpcode::INotEqual32, IrType::Bool, {&b.emit(IrOpcode::GetUserData, IrType::U32, {}), &zero});
+        auto& bodyInfo = b.program.Metadata().blockInfo[1u];
+        bodyInfo.terminator.kind = TerminatorKind::ConditionalBranch;
+        bodyInfo.terminator.condition = BranchCondition::SccNonZero;
+        bodyInfo.terminator.trueBlock = exit.Id();
+        bodyInfo.terminator.falseBlock = rest.Id();
+        bodyInfo.condition = &uniformBit;
+        b.program.Metadata().blockInfo[2u].terminator.kind = TerminatorKind::Return;
+        b.program.Metadata().blockInfo[3u].terminator.kind = TerminatorKind::Branch;
+        b.program.Metadata().blockInfo[3u].terminator.trueBlock = merge.Id();
+        b.block = &exit;
+        auto& keepsNone = b.program.CreateValue(IrOpcode::Void, IrType::Bool);
+        keepsNone.SetImmediateBool(false);
+        exportUnder(b, exitKeepsLanes ? b.truth() : keepsNone, true, true);
+        b.block = &rest;
+        auto& restValue = b.select(predicate, b.constant(42u), zero);
+        b.block = &merge;
+        auto& merged = b.phi(IrType::U32, entry, zero);
+        merged.AddPhiOperand(&rest, &restValue);
+        b.keep(merged);
+        exportUnder(b, b.truth(), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("an optional wave body may end the wave through an exit that keeps no lane", [&] { return optionalPixelExit(false); });
+    passed &= run("an optional wave body cannot end the wave through an exit that keeps lanes", [&] { return !optionalPixelExit(true); });
+
     const auto nestedOptionalGuard = [&](bool unsafeInner, bool ballotEscape) {
         Builder b;
         b.program.Resources().stage = IrShaderStage::Pixel;
