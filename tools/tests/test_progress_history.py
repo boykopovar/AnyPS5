@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -299,6 +300,10 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertIn("Unobserved stubs 7", svg)
         self.assertIn("Observed stubs 2, unobserved stubs 7\nCommit 0123456789", svg)
         self.assertEqual(svg.count("Unobserved stubs"), 1)
+        line = re.search(rf'<polyline points="([^"]+)" fill="none" stroke="{progress.UNOBSERVED_COLOR}"', svg).group(1)
+        first_y, second_y = (float(point.split(",")[1]) for point in line.split())
+        self.assertGreater(first_y, second_y)
+        self.assertLess(second_y, 36 + 150 - 1)
 
     def test_old_points_without_the_split_still_chart_with_no_unobserved_stubs(self):
         points = [{"date": "2026-01-01", "libraries": {"done": 1, "total": 2, "percent": 50.0}, "shaders": {"done": 1, "total": 1, "percent": 100.0}}]
