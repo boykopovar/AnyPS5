@@ -7,6 +7,23 @@ class MutexOperations {
 public:
     static int Timedlock(PthreadMutex* mutex, const KernelTimespec* abstime);
     static bool IsOwned(const PthreadMutex* mutex);
+
+    template<typename TTry, typename TPause, typename TYield>
+    static bool SpinAcquire(int spins, int yields, TTry tryAcquire, TPause pause, TYield yield) {
+        if (tryAcquire())
+            return true;
+        for (int spin = 0; spin < spins; ++spin) {
+            if (tryAcquire())
+                return true;
+            pause();
+        }
+        for (int round = 0; round < yields; ++round) {
+            yield();
+            if (tryAcquire())
+                return true;
+        }
+        return false;
+    }
 };
 
 extern "C" {

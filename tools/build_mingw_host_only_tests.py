@@ -68,7 +68,7 @@ def is_libc_link(name, target):
     if name == "libc":
         return True
     command = link_command(target)
-    return re.search(r"(?i)(?:^|[/\\\s])libc(?:\.prx|\.dll\.a)(?:$|[\s\"'])", command) is not None
+    return re.search(r"(?i)(?:^|[/\\\s])(?:libc\.prx|(?:lib)?libc\.dll\.a)(?:$|[\s\"'])", command) is not None
 
 
 def links_guest_libc(target):

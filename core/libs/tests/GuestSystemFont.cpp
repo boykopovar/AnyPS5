@@ -119,7 +119,11 @@ static std::string CaptureStderr(const std::filesystem::path& path, TRun run) {
 #else
     const int saved = dup(2);
 #endif
-    std::FILE* file = std::fopen(path.string().c_str(), "wb");
+#ifdef _WIN32
+    std::FILE* file = _wfopen(path.c_str(), L"wb");
+#else
+    std::FILE* file = std::fopen(path.c_str(), "wb");
+#endif
     Require(saved >= 0 && file != nullptr);
 #ifdef _WIN32
     Require(_dup2(_fileno(file), 2) == 0);

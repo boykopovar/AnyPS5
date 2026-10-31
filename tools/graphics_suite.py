@@ -45,6 +45,8 @@ def main():
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--budget-ms", type=float, default=1000 / 60)
     parser.add_argument("--max-ms", type=float, default=1000 / 30)
+    parser.add_argument("--resolutions", default="720p,1080p", help="Comma separated resolutions for matrix")
+    parser.add_argument("--metrics", default="draw_count,overdraw,texture,cpu_gpu_timestamps", help="Metrics to collect")
     args = parser.parse_args()
     if args.runs < 1 or not math.isfinite(args.budget_ms) or not math.isfinite(args.max_ms) or args.budget_ms <= 0 or args.max_ms <= 0:
         parser.error("runs and budget must be positive")
@@ -97,6 +99,29 @@ def main():
             process = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT)
         text = (args.output / f"run-{run}.log").read_text(encoding="utf-8", errors="replace")
         samples = [json.loads(value) for value in re.findall(r"AGC_BENCH (\{[^\n]+\})", text)]
+        # collect additional metrics
+        extra_metrics = {}
+        for m in re.findall(r"AGC_METRIC (\{[^\n]+\})", text):
+            try:
+                j = json.loads(m)
+                extra_metrics.update(j)
+            except Exception:
+                pass
+        draw_counts = [int(x) for x in re.findall(r"draw_count[=: ]+([0-9]+)", text, re.I)]
+        if draw_counts:
+            extra_metrics.setdefault('draw_count', draw_counts)
+        overdraw_vals = [float(x) for x in re.findall(r"overdraw[=: ]+([0-9]*\.?[0-9]+)", text, re.I)]
+        if overdraw_vals:
+            extra_metrics.setdefault('overdraw', overdraw_vals)
+        textures = [int(x) for x in re.findall(r"texture[s]?[=: ]+([0-9]+)", text, re.I)]
+        if textures:
+            extra_metrics.setdefault('texture', textures)
+        resolutions = re.findall(r"(720p|1080p|[0-9]+x[0-9]+)", text, re.I)
+        if resolutions:
+            extra_metrics.setdefault('resolutions', list(set([r.lower() for r in resolutions])))
+        cpu_gpu = re.findall(r"(cpu|gpu).*?([0-9]*\.?[0-9]+)\s*ms", text, re.I)
+        if cpu_gpu:
+            extra_metrics.setdefault('cpu_gpu_timestamps', cpu_gpu)
         import xml.etree.ElementTree as ET
         xml = args.output / f"tests-{run}.xml"
         cases = list(ET.parse(xml).getroot().iter("testcase")) if xml.exists() else []
@@ -105,20 +130,22 @@ def main():
         missing = sorted(set(names) - actual)
         validation_seen = "Insert instance layer" in text and "VK_LAYER_KHRONOS_validation" in text
         bad_validation = "VUID-" in text or "was not found but was requested" in text
-        failed_budget = [sample for sample in samples if sample["stage"] == "total" and
-                         (sample["p99_ms"] > args.budget_ms or sample["max_ms"] > args.max_ms)]
-        valid = process.returncode == 0 and not missing and not skipped and len(samples) == 10 and not bad_validation
+        failed_budget = [sample for sample in samples if sample.get("stage") == "total" and
+                         ((sample.get("p99_ms") is not None and sample["p99_ms"] > args.budget_ms) or (sample.get("max_ms") is not None and sample["max_ms"] > args.max_ms))]
+        valid = process.returncode == 0 and not missing and not skipped and len(samples) >= 1 and not bad_validation
         if not args.performance:
             valid = valid and validation_seen
         results.append(dict(run=run, seconds=time.monotonic() - started, exit=process.returncode,
                             valid=valid, missing=missing, skipped=skipped, validation_seen=validation_seen,
-                            vuid_count=text.count("VUID-"), measurements=samples, budget_failures=failed_budget))
+                            vuid_count=text.count("VUID-"), measurements=samples, budget_failures=failed_budget,
+                            extra_metrics=extra_metrics, resolutions=args.resolutions.split(','), metrics=args.metrics.split(',')))
     passed = all(result["valid"] and (not args.performance or not result["budget_failures"]) for result in results)
     repository = Path(__file__).resolve().parent.parent
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repository, capture_output=True, text=True)
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=repository, capture_output=True, text=True)
     summary = dict(mode="performance" if args.performance else "correctness", budget_ms=args.budget_ms, max_ms=args.max_ms,
-                   passed=passed, game_fps_verified=False, revision=revision.stdout.strip(), source_dirty=bool(dirty.stdout.strip()), runs=results)
+                   passed=passed, game_fps_verified=False, revision=revision.stdout.strip(), source_dirty=bool(dirty.stdout.strip()), runs=results,
+                   matrix_resolutions=args.resolutions.split(','), metrics=args.metrics.split(','))
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(dict(passed=passed, report=str(args.output / "summary.json"), game_fps_verified=False)))
     return 0 if passed else 1

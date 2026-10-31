@@ -507,6 +507,17 @@ PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false
     registry.threads.emplace(cpuClockThread, this);
 }
 
+std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& thread) {
+    auto& registry = CpuClocks();
+    std::unique_lock lock(registry.lock);
+    for (const auto& [id, candidate] : registry.threads) {
+        if (!candidate->initialThread.load(std::memory_order_acquire) || candidate->_finished.load(std::memory_order_acquire)) continue;
+        thread = candidate;
+        return lock;
+    }
+    return {};
+}
+
 PthreadPrivate::~PthreadPrivate() {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
@@ -1185,6 +1196,7 @@ Pthread APS5_VABI scePthreadSelf() {
         if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle, 0, FALSE, DUPLICATE_SAME_ACCESS))
             throw std::system_error(GetLastError(), std::system_category(), "Adopting guest thread");
         adopted->nativeHandle = handle;
+        adopted->initialThread.store(IsInitialPthread_nid_no_patch(), std::memory_order_release);
         adopted->threadId = std::this_thread::get_id();
         // Report the real stack of the adopted (main) thread: a conservative collector reads the
         // bounds through pthread_attr_getstack and would otherwise not scan this stack at all.
@@ -1204,6 +1216,7 @@ Pthread APS5_VABI scePthreadSelf() {
         adoptedThread = std::make_unique<PthreadPrivate>();
         adoptedThread->_detached = true;
         adoptedThread->_adopted = true;
+        adoptedThread->initialThread.store(IsInitialPthread_nid_no_patch(), std::memory_order_release);
         BindHostCpuClock(adoptedThread.get());
         adoptedThread->threadId = std::this_thread::get_id();
         adoptedThread->hostThread = pthread_self();

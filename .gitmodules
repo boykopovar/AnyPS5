@@ -67,3 +67,6 @@
 [submodule "3rdparty/nghttp2"]
 	path = 3rdparty/nghttp2
 	url = https://github.com/nghttp2/nghttp2.git
+[submodule "3rdparty/quickjs"]
+	path = 3rdparty/quickjs
+	url = https://github.com/quickjs-ng/quickjs.git

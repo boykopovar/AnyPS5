@@ -3,8 +3,6 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
-#include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -19,6 +17,8 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
+#include "prx/libSceAudioOut/include/HostGain.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "AudioOutShutdown.hpp"
 #include "AudioOut2PadMix.hpp"
 #include "prx/libScePad/include/PadState.hpp"
@@ -44,7 +44,7 @@ static constexpr std::uint64_t DRAIN_TIMEOUT_US = 200000;
 static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
 static constexpr int MONITOR_TYPE_HDMI = 1;
 static constexpr std::uint32_t HDMI_MONITOR_INFO_SIZE = 0x180;
-static constexpr std::uint32_t EX_MONITOR_INFO_MIN_SIZE = 0xA0;
+static constexpr std::uint32_t EX_MONITOR_INFO_SIZE = 0x400;
 static constexpr std::uint32_t EX_OPEN_MODE_MAX = 10;
 static constexpr std::uint32_t EX_OPEN_MODES = 0x61F;
 static constexpr std::uint32_t EX_CONFIGURE_MODE_DEFAULT = 0xFF;
@@ -126,9 +126,7 @@ struct Port {
     AudioOut2PadLayout padLayout;
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
-    bool deviceStarted = false;
-    std::uint64_t tracePushes = 0;
-    std::uint64_t traceUnderruns = 0;
+    HostGainRamp hostGain;
 };
 
 static std::mutex g_mutex;
@@ -136,19 +134,11 @@ static std::array<std::mutex, PORTS_MAX> g_outputMutexes;
 static Port g_ports[PORTS_MAX];
 static bool g_sdlInitialized = false;
 
-static void sleepUs(std::unique_lock<std::mutex>& lock, std::uint64_t us) {
-    lock.unlock();
-    PreciseSleepUs(us);
-    lock.lock();
-}
-
 static bool ensureSdlAudio() {
     if (g_sdlInitialized) {
         return true;
     }
     if (InitializeSdlAudio_nid_no_patch() < 0) {
-        if (std::getenv("APS5_TRACE_AUDIOOUT") != nullptr)
-            std::fprintf(stderr, "[audioout] SDL audio init failed: %s\n", SDL_GetError());
         return false;
     }
     g_sdlInitialized = true;
@@ -168,20 +158,10 @@ static bool openDevice(Port& port) {
     SDL_AudioSpec obtained{};
     port.device = SDL_OpenAudioDevice(nullptr, 0, &desired, &obtained, 0);
     if (port.device == 0) {
-        if (std::getenv("APS5_TRACE_AUDIOOUT") != nullptr)
-            std::fprintf(stderr, "[audioout] SDL audio open failed: %s\n", SDL_GetError());
         return false;
     }
     port.spec = obtained;
-    if (std::getenv("APS5_TRACE_AUDIOOUT") != nullptr) {
-        std::fprintf(stderr, "[audioout] device %u: wanted %d Hz fmt 0x%x ch %u samples %u, got %d Hz fmt 0x%x ch %u samples %u\n",
-                     port.device, desired.freq, desired.format, desired.channels, desired.samples,
-                     obtained.freq, obtained.format, obtained.channels, obtained.samples);
-    }
-    // Queue the target latency before starting playback; otherwise callback phase alone
-    // can repeatedly starve a port receiving 256-frame blocks in a 480-frame device.
-    SDL_PauseAudioDevice(port.device, 1);
-    port.deviceStarted = false;
+    SDL_PauseAudioDevice(port.device, 0);
     return true;
 }
 
@@ -216,7 +196,21 @@ static void closeDevice(Port& port) {
     }
     port.device = 0;
     port.spec = {};
-    port.deviceStarted = false;
+}
+
+static void reopenStoppedDevice(Port& port) {
+    if (port.device == 0 || SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED) return;
+    closeDevice(port);
+    if (port.type == PORT_TYPE_VIBRATION) {
+        try {
+            openVibrationDevice(port);
+        } catch (const std::runtime_error&) {
+            port.device = 0;
+            port.spec = {};
+        }
+    } else {
+        openDevice(port);
+    }
 }
 
 static constexpr std::uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};
@@ -271,36 +265,6 @@ static const void* prepareBuffer(const Port& port, const void* data, std::vector
     return buf.data();
 }
 
-// Debug aid: APS5_TRACE_AUDIOOUT=1 reports, about once a second per port, the block pointer and the
-// peak of the 16-bit samples the title outputs (whether its audio is silent before any mixing).
-static void traceOutput(int handle, const Port& port, const void* data) {
-    static const bool enabled = std::getenv("APS5_TRACE_AUDIOOUT") != nullptr;
-    if (!enabled || data == nullptr || bytesPerSample(port.format) != 2) return;
-    static std::uint64_t counts[PORTS_MAX] = {};
-    static int peaks[PORTS_MAX] = {};
-    const auto index = static_cast<std::size_t>(handle - 1) % PORTS_MAX;
-    const auto* samples = static_cast<const std::int16_t*>(data);
-    for (std::uint32_t i = 0; i < port.samplesNum * static_cast<std::uint32_t>(port.channels); ++i)
-        peaks[index] = std::max(peaks[index], std::abs(static_cast<int>(samples[i])));
-    // The first minute of each port is also kept as raw S16 in audioout_port<handle>.raw.
-    static std::FILE* files[PORTS_MAX] = {};
-    static std::uint64_t written[PORTS_MAX] = {};
-    const std::uint64_t bytes = static_cast<std::uint64_t>(port.samplesNum) * static_cast<std::uint32_t>(port.channels) * 2u;
-    if (written[index] < 60ull * port.freq * static_cast<std::uint32_t>(port.channels) * 2u) {
-        if (files[index] == nullptr) {
-            char name[32];
-            std::snprintf(name, sizeof(name), "audioout_port%d.raw", handle);
-            files[index] = std::fopen(name, "wb");
-        }
-        if (files[index] != nullptr) { std::fwrite(data, 1, bytes, files[index]); std::fflush(files[index]); }
-        written[index] += bytes;
-    }
-    const auto blocksPerSecond = port.samplesNum != 0 ? port.freq / port.samplesNum : 1u;
-    if (++counts[index] % std::max(1u, blocksPerSecond) != 0) return;
-    std::fprintf(stderr, "[audioout] port %d type %d %u ch %d: block %p, peak %d over the last second\n", handle, port.type, port.samplesNum, port.channels, data, peaks[index]);
-    peaks[index] = 0;
-
-}
 static std::vector<float> prepareVibration(const Port& port, const void* data) {
     checkedBufferSize(port.samplesNum, AUDIO_OUT2_PAD_CHANNELS, sizeof(float));
     std::vector<std::uint8_t> prepared;
@@ -319,17 +283,17 @@ static std::vector<float> prepareVibration(const Port& port, const void* data) {
     return pad;
 }
 
+static void sleepUs(std::unique_lock<std::mutex>& lock, std::uint64_t us) {
+    lock.unlock();
+    PreciseSleepUs(us);
+    lock.lock();
+}
+
 static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex>& lock) {
     if (data == nullptr) {
-        if (!port.deviceStarted && SDL_GetQueuedAudioSize(port.device) != 0) {
-            SDL_PauseAudioDevice(port.device, 0);
-            port.deviceStarted = true;
-        }
         const std::uint64_t waitStart = sceKernelGetProcessTime();
         while (SDL_GetQueuedAudioSize(port.device) > 0) {
             if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-                if (std::getenv("APS5_TRACE_AUDIOOUT") != nullptr)
-                    std::fprintf(stderr, "[audioout] device %u queue timeout: %u bytes\n", port.device, SDL_GetQueuedAudioSize(port.device));
                 SDL_ClearQueuedAudio(port.device);
                 break;
             }
@@ -350,6 +314,7 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
         queueData = padFrames.data();
     } else {
         queueData = prepareBuffer(port, data, prepareBuf);
+        queueData = HostGainFilter(port.hostGain, HostVolumeGain_nid_no_patch(), queueData, formatIsFloat(port.format), port.samplesNum, static_cast<unsigned>(port.channels), prepareBuf);
         queueSize = checkedBufferSize(port.samplesNum, static_cast<std::uint32_t>(port.channels), bytesPerSample(port.format));
     }
 
@@ -364,32 +329,14 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
 
     while (SDL_GetQueuedAudioSize(port.device) > minQueued) {
         if (sceKernelGetProcessTime() - waitStart > DRAIN_TIMEOUT_US) {
-            if (std::getenv("APS5_TRACE_AUDIOOUT") != nullptr)
-                std::fprintf(stderr, "[audioout] device %u queue cleared after drain timeout\n", port.device);
             SDL_ClearQueuedAudio(port.device);
             break;
         }
         sleepUs(lock, DRAIN_SLEEP_US);
     }
 
-    if (std::getenv("APS5_TRACE_AUDIOOUT") != nullptr) {
-        const auto queued = SDL_GetQueuedAudioSize(port.device);
-        if (port.tracePushes++ > 200 && port.deviceStarted && queued == 0 && port.traceUnderruns++ < 40) {
-            std::fprintf(stderr, "[audioout] device %u underrun at %llu us (waited %llu us)\n", port.device,
-                         static_cast<unsigned long long>(sceKernelGetProcessTime()),
-                         static_cast<unsigned long long>(sceKernelGetProcessTime() - waitStart));
-        }
-        if (port.tracePushes % 1024 == 0)
-            std::fprintf(stderr, "[audioout] device %u pushes %llu underruns %llu queued %u bytes\n", port.device,
-                         static_cast<unsigned long long>(port.tracePushes),
-                         static_cast<unsigned long long>(port.traceUnderruns), queued);
-    }
     if (SDL_QueueAudio(port.device, queueData, queueSize) < 0) {
         throw std::runtime_error(std::string("SDL_QueueAudio: ") + SDL_GetError());
-    }
-    if (!port.deviceStarted && SDL_GetQueuedAudioSize(port.device) >= minQueued) {
-        SDL_PauseAudioDevice(port.device, 0);
-        port.deviceStarted = true;
     }
     // APS5_LOG_OUT("device=%u type=%d bytes=%u queued=%u", port.device, port.type, queueSize, SDL_GetQueuedAudioSize(port.device));
 }
@@ -455,6 +402,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
             port.format = format;
             port.channels = channelsForFormat(format);
             port.lastDataOutputTime = 0;
+            port.hostGain = HostGainRamp(freq / 100);
             port.virtualQueueEnd = sceKernelGetProcessTime();
             port.mixLevel = type == PORT_TYPE_PADSPK ? DEFAULT_PADSPK_MIX_LEVEL : DEFAULT_VOLUME;
             if (type == PORT_TYPE_VIBRATION) {
@@ -563,7 +511,7 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) try {
         return -2144993277;
     }
 
-    traceOutput(handle, *port, ptr);
+    reopenStoppedDevice(*port);
     if (port->device == 0) {
         outputVirtualPort(*port, ptr, lock);
     } else {
@@ -601,7 +549,7 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     Port& first = *getPort(param[0].handle);
     for (std::uint32_t i = 0; i < num; i++) {
         Port& port = *getPort(param[i].handle);
-        traceOutput(param[i].handle, port, param[i].ptr);
+        reopenStoppedDevice(port);
         if (port.device == 0) {
             outputVirtualPort(port, param[i].ptr, lock);
         } else {
@@ -735,15 +683,10 @@ int APS5_VABI sceAudioOutSysConfigureOutput(int type, std::uint64_t flags, std::
 }
 
 int APS5_VABI sceAudioOutSysGetHdmiMonitorInfo(int type, void* info, std::uint32_t size) {
-    if (type != MONITOR_TYPE_HDMI) {
-        throw std::runtime_error("sceAudioOutSysGetHdmiMonitorInfo: monitor type " + std::to_string(type) + " not supported");
-    }
-    if (size != HDMI_MONITOR_INFO_SIZE) {
-        throw std::runtime_error("sceAudioOutSysGetHdmiMonitorInfo: size " + std::to_string(size) + " not supported");
-    }
-    if (info == nullptr) {
-        return -2144993276;
-    }
+    if (info == nullptr) return static_cast<int>(0x80260004);
+    if (size != HDMI_MONITOR_INFO_SIZE) return static_cast<int>(0x80260006);
+    if (type != MONITOR_TYPE_HDMI && type != 0x10) return static_cast<int>(0x8026000C);
+    if (type == 0x10) throw std::runtime_error("sceAudioOutSysGetHdmiMonitorInfo: monitor type 16 not supported");
     std::memset(info, 0, HDMI_MONITOR_INFO_SIZE);
     return 0;
 }
@@ -766,14 +709,11 @@ int APS5_VABI sceAudioOutSetMixLevelPadSpk(int handle, std::uint32_t mixLevel) {
     if (port == nullptr) {
         return -2144993277;
     }
-    if (port->type != PORT_TYPE_PADSPK) {
-        return -2144993270;
-    }
     if (mixLevel > DEFAULT_VOLUME) {
         return -2144993260;
     }
-    if (mixLevel < 0) {
-        throw std::runtime_error("sceAudioOutSetMixLevelPadSpk: negative mix level not supported");
+    if (port->type != PORT_TYPE_PADSPK) {
+        return -2144993270;
     }
     port->mixLevel = mixLevel;
     return 0;
@@ -810,16 +750,10 @@ int APS5_VABI sceAudioOutExConfigureOutput(int control, std::uint64_t flags, std
 }
 
 int APS5_VABI sceAudioOutExGetMonitorInfo(int type, int index, void* info, std::uint32_t size) {
-    if (type != 0 || index != 0) {
-        throw std::runtime_error("sceAudioOutExGetMonitorInfo: monitor " + std::to_string(type) + ", " + std::to_string(index) + " not supported");
-    }
-    if (size < EX_MONITOR_INFO_MIN_SIZE) {
-        throw std::runtime_error("sceAudioOutExGetMonitorInfo: size " + std::to_string(size) + " not supported");
-    }
-    if (info == nullptr) {
-        return -2144993276;
-    }
-    std::memset(info, 0, size);
+    if (type != 0) return static_cast<int>(0x80260003);
+    if (info == nullptr) return static_cast<int>(0x80260004);
+    if (size != EX_MONITOR_INFO_SIZE) return static_cast<int>(0x80260006);
+    std::memset(info, 0, EX_MONITOR_INFO_SIZE);
     return 0;
 }
 

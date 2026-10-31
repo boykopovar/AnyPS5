@@ -12,6 +12,10 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <thread>
+#if defined(__x86_64__) || defined(_M_X64)
+#include <immintrin.h>
+#endif
 
 namespace {
 
@@ -59,6 +63,19 @@ PthreadMutex resolveMutex(PthreadMutex* mutex, bool initialize) {
     return created;
 }
 
+template<typename TNative>
+bool spinAcquire(PthreadMutex mutex, TNative& native) {
+    static const bool multiprocessor = std::thread::hardware_concurrency() > 1;
+    const int spins = multiprocessor ? mutex->_spinloops.load(std::memory_order_relaxed) : 0;
+    return MutexOperations::SpinAcquire(spins, mutex->_yieldloops.load(std::memory_order_relaxed), [&] {
+        return mutex->_owner.load(std::memory_order_relaxed) == std::thread::id{} && native.try_lock();
+    }, [] {
+#if defined(__x86_64__) || defined(_M_X64)
+        _mm_pause();
+#endif
+    }, [] { std::this_thread::yield(); });
+}
+
 template<typename TAcquire>
 int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool tryOnly) {
     if (!mutex)
@@ -74,12 +91,15 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
     }
     if (owned && mutex->_count == std::numeric_limits<int>::max())
         throw std::overflow_error("Recursive mutex lock count overflow");
+    const auto take = [&](auto& native) {
+        return (!tryOnly && !owned && spinAcquire(mutex, native)) || acquire(native);
+    };
     if (mutex->_type == MutexType::Recursive) {
-        if (!acquire(mutex->_rmtx))
+        if (!take(mutex->_rmtx))
             return unavailable;
         ++mutex->_count;
     } else {
-        if (!acquire(mutex->_mtx))
+        if (!take(mutex->_mtx))
             return unavailable;
     }
     mutex->_owner.store(thread, std::memory_order_release);

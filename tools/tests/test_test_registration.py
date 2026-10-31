@@ -15,6 +15,17 @@ import check_test_registration
 
 
 class RegistrationTests(unittest.TestCase):
+    def test_truncated_registration_commands_are_rejected(self):
+        for tail in ('set_tests_properties(bounds PROPERTIES DISABLED TRUE',
+                     'set_tests_properties(bounds PROPERTIES DISABLED TRUE # truncated',
+                     'subdirs(nested', 'add_test(other /build/tests/other_tests'):
+            with self.subTest(tail=tail), tempfile.TemporaryDirectory() as directory:
+                build = Path(directory)
+                (build / 'CTestTestfile.cmake').write_text(
+                    'add_test(bounds /build/tests/buffer_bounds_tests)\n' + tail, encoding='utf-8')
+                with self.assertRaisesRegex(ValueError, 'unterminated'):
+                    check_test_registration.registered(build)
+
     @unittest.skipUnless(shutil.which("cmake"), "CMake is required for the argument oracle")
     def test_quoted_semicolons_match_real_cmake_arguments(self):
         values = ["left" + "\\" * count + ";right" for count in range(9)]

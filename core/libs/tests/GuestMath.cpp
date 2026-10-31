@@ -1532,6 +1532,16 @@ static void CheckTrigfConsoleBits() {
     }
 }
 
+static void CheckRemainderf() {
+    Require(remainderf_nid_postfix(5.0f, 2.0f) == 1.0f && remainderf_nid_postfix(7.0f, 2.0f) == -1.0f);
+    Require(remainderf_nid_postfix(-5.0f, 2.0f) == -1.0f && remainderf_nid_postfix(5.5f, 2.0f) == -0.5f);
+    Require(remainderf_nid_postfix(6.0f, 3.0f) == 0.0f && !std::signbit(remainderf_nid_postfix(6.0f, 3.0f)));
+    Require(remainderf_nid_postfix(-6.0f, 3.0f) == 0.0f && std::signbit(remainderf_nid_postfix(-6.0f, 3.0f)));
+    Require(remainderf_nid_postfix(3.0f, INFINITY) == 3.0f);
+    Require(std::isnan(remainderf_nid_postfix(1.0f, 0.0f)) && std::isnan(remainderf_nid_postfix(INFINITY, 2.0f)));
+    Require(std::isnan(remainderf_nid_postfix(NAN, 2.0f)) && std::isnan(remainderf_nid_postfix(2.0f, NAN)));
+}
+
 static void CheckExtendedMath() {
     Require(ExtendedBits(atanl_nid_postfix(INFINITY), 0xc90fdaa22168c235ull, 0x3fff));
     Require(std::fabs(atanl_nid_postfix(1.0L) - 0.785398163397448309616L) < 1e-18L);
@@ -2600,6 +2610,7 @@ int main() {
     CheckExpm1ConsoleBits();
     CheckLog1pConsoleBits();
     CheckNextafterConsoleBits();
+    CheckRemainderf();
     CheckTanhConsoleBits();
     CheckSinhMsunBits();
     CheckSinhLargeArguments();

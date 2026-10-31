@@ -223,6 +223,8 @@ void windowsFixedBase() {
         const auto args = parse({"--windows-fixed-base", value, "--windows", "input.elf", "output.exe"});
         require(args.windowsFixedBase == 0x400000, "fixed base was parsed incorrectly");
     }
+    require(parse({"--windows", "--windows-fixed-base", "0x20000", "input.elf", "output.exe"}).windowsFixedBase == 0x20000, "lowest fixed base was rejected");
+    require(parse({"--windows", "--windows-fixed-base", "0x7fffffff0000", "input.elf", "output.exe"}).windowsFixedBase == 0x7fffffff0000, "highest fixed base was rejected");
     require(parse({"--windows", "--windows-fixed-base", "0x400000000", "input.elf", "output.exe"}).windowsFixedBase == 0x400000000, "fixed base was truncated to 32 bits");
     for (const auto& value : {"0", "0x10000", "0x400001", "0x", "-4194304", "+4194304", " 4194304", "0x400000junk", "18446744073709551616", "0x800000000000"})
         expectThrows({"--windows", "--windows-fixed-base", value, "input.elf", "output.exe"}, "--windows-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000");

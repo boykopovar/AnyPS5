@@ -1,4 +1,5 @@
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -72,7 +73,7 @@ def convert(relinker, source, output, extra, windows):
     for relative in extra:
         command += ["--module-dir", relative]
     command += [str(source / "eboot.elf"), str(output)]
-    return subprocess.run(command, capture_output=True, text=True)
+    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
 
 def comparison_path(path, links=frozenset()):
@@ -143,6 +144,15 @@ def main(argv=None):
                 parser.error(f"{generated}: cannot check work directory against the input dump: {error}")
             if dump_path.is_relative_to(generated_path) or generated_path.is_relative_to(dump_path):
                 parser.error(f"{generated}: work directory overlaps the input dump")
+            for input_path in (Path(args.relinker), *(Path(library) for library in args.libs)):
+                try:
+                    resolved = comparison_path(input_path)
+                except (OSError, RuntimeError) as error:
+                    parser.error(f"{input_path}: cannot check work directory against input: {error}")
+                supplied = Path(os.path.abspath(input_path))
+                generated_spelling = Path(os.path.abspath(generated))
+                if supplied.is_relative_to(generated_spelling) or resolved.is_relative_to(generated_path):
+                    parser.error(f"{generated}: work directory contains input {input_path}")
         for generated in (source, output):
             try:
                 if generated.is_symlink():
@@ -155,7 +165,11 @@ def main(argv=None):
             if generated.exists() or generated.is_symlink():
                 print(f"FAIL: cannot empty {generated}: it still exists", file=sys.stderr)
                 return 2
-        output.mkdir(parents=True, exist_ok=True)
+        try:
+            output.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            print(f"FAIL: cannot create {output}: {error}", file=sys.stderr)
+            return 2
         try:
             module_directories, extra = prepare(dump, source)
         except (unwrap_self.Refused, OSError) as error:

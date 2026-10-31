@@ -57,13 +57,17 @@ ShaderRecompiler::RecompileRequest Request(std::span<const std::uint32_t> userDa
     };
 }
 
-void Run(AgcDriver::VulkanDevice& device, bool registrationModules) {
+void Run(AgcDriver::VulkanDevice& device, bool registrationModules, bool coherent = false) {
+    alignas(256) auto code = Code;
+    if (coherent) code[1] |= 0x4000u;
     const std::string mode = registrationModules ? "registration modules" : "specialized modules";
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(Code.data()), std::as_bytes(std::span(Code))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
     std::array<std::uint32_t, 8> userData{};
     auto target = device.ComputeTarget(Lanes);
     target.registrationModules = registrationModules;
-    const auto request = Request(userData, target, memory);
+    auto request = Request(userData, target, memory);
+    request.shader.code = code;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
     const auto handle = ShaderRecompiler::PrepareShader(request);
     const std::array<Case, 7> cases{{
         {"aligned", 0, 128, true},
@@ -258,6 +262,8 @@ int main() {
         for (std::uint32_t index = 0; index < InputBytes; ++index) Input[index] = static_cast<std::uint8_t>(index * 41u + 3u + (index >> 3u));
         Run(*device, false);
         Run(*device, true);
+        Run(*device, false, true);
+        Run(*device, true, true);
         ScalarReads(*device);
         DisabledDescriptors(*device);
         std::puts("buffer descriptor runtime tests passed");

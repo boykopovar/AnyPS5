@@ -386,6 +386,30 @@ class SkipReportTests(unittest.TestCase):
             path.write_text(content, encoding="utf-8")
             return list(check_skips.skips(path))
 
+    def test_a_test_listed_twice_is_rejected(self):
+        reason = ('<skipped message="SKIP_RETURN_CODE=77"/>'
+                  '<system-out>skipped, the device lacks geometryShader</system-out>')
+        flaky = ('<skipped message="SKIP_RETURN_CODE=77"/>'
+                 '<system-out>skipped, flaky</system-out>')
+        for content in (
+            f'<testsuite><testcase name="t">{reason}</testcase><testcase name="t">{reason}</testcase></testsuite>',
+            f'<testsuite><testcase name="t">{flaky}</testcase><testcase name="t">{reason}</testcase></testsuite>',
+            f'<testsuite><testcase name="t">{reason}</testcase><testcase name="t">{flaky}</testcase></testsuite>',
+        ):
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, "listed more than once"):
+                self.skipped(content)
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            junit.write_text(
+                f'<testsuite><testcase name="t">{reason}</testcase><testcase name="t">{reason}</testcase></testsuite>',
+                encoding="utf-8",
+            )
+            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("listed more than once", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_non_junit_roots_are_rejected_even_with_testcases(self):
         for content in ('<report/>', '<testcase name="passed"/>',
                         '<report><testcase name="passed"/></report>',

@@ -15,6 +15,6 @@
 - [workloads](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) (libSceGnmDriverForNeoMode) - `sceGnmCreateWorkloadStream`, `sceGnmBeginWorkload` and `sceGnmEndWorkload` return shadPS4's values (3 for a null output or name, 1 for a stream above 15, 2 for workload 0 or one with a top byte above 15) and keep no state; not measured on a console
 - [sceGnmGetGpuCoreClockFrequency](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) (libSceGnmDriverForNeoMode) - returns 911 MHz, shadPS4's Neo-mode value, which it derives from Neo mode instead of the console's ioctl. `sceGnmGetOffChipTessellationBufferSize` returns shadPS4's `0x800000`
 
-### Unimplemented imports
+### Additional callable exports
 
-- [sceGnmDriverTraceInProgress, sceGnmGetDbgGcHandle, sceGnmValidateOnSubmitEnabled](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) (libSceGnmDriverForNeoMode) - declared without a known signature to resolve the import; the call throws through `NotImplemented_nid_no_patch`
+- [Additional callable exports](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - 20 callable NIDs are present in both version-labelled images. Both images also export these NIDs from the distinct normal Gnm provider; matching NIDs do not establish behavioral equivalence. Future declarations or implementations in that provider require loader analysis. Image labels are not authenticated. Names, signatures and behavior are unverified; each declaration throws.

@@ -9,6 +9,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -79,7 +80,7 @@ static bool FchflagsThrows(int descriptor, std::uint64_t flags, const char* name
 }
 
 static std::string CaptureStderr(const std::function<void()>& action) {
-    std::FILE* capture = std::tmpfile();
+    std::FILE* capture = TemporaryFile::Open();
     Require(capture != nullptr);
     std::fflush(stderr);
 #ifdef _WIN32
@@ -446,8 +447,9 @@ int main() {
     Require(sceKernelWriteThrottlingStatus(throttling) == 0);
     Require(throttling[0] == 0xffffffffu && throttling[1] == 0 && throttling[2] == 0 && throttling[3] == 0);
     Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelWriteThrottlingStatus(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(0, nullptr) == static_cast<int>(0x8002000eu));
-    auto* captured = std::tmpfile();
+    auto* captured = TemporaryFile::Open();
     Require(captured != nullptr);
 #ifdef _WIN32
     const int saved = ::_dup(::_fileno(stderr));
@@ -518,7 +520,7 @@ int main() {
         }
     }
     Require(close_nid_postfix(descriptors[0]) == 0);
-    auto* hostCapture = std::tmpfile();
+    auto* hostCapture = TemporaryFile::Open();
     Require(hostCapture != nullptr && pipe_nid_postfix(descriptors) == 0);
 #ifdef _WIN32
     const int hostError = ::_dup(2);
@@ -543,7 +545,7 @@ int main() {
     Require(std::fclose(hostCapture) == 0);
 #ifdef _WIN32
     for (const bool reopen : {false, true}) {
-        auto* hostCapture = std::tmpfile();
+        auto* hostCapture = TemporaryFile::Open();
         const int hostError = ::_dup(2);
         Require(hostCapture != nullptr && hostError >= 0);
         int redirect[2] = {-1, -1};
