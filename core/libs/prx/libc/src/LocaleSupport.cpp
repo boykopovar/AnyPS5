@@ -554,9 +554,7 @@ int ClassifyCharacter(int value, short mask) {
 int ConvertCharacter(int value, bool upper) {
     ValidateCharacter(value);
     if (value < 0) return value;
-    const auto& facet = std::use_facet<std::ctype<char>>(std::locale::classic());
-    const auto character = static_cast<char>(value);
-    return static_cast<unsigned char>(upper ? facet.toupper(character) : facet.tolower(character));
+    return (upper ? g_upperTable : g_lowerTable)[static_cast<std::size_t>(value) + 1];
 }
 
 }
