@@ -764,6 +764,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
     endif()
 
+    add_test_executable(guest_np_common_sdk_version_tests tests/GuestNpCommonSdkVersion.cpp)
+    target_include_directories(guest_np_common_sdk_version_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_np_common_sdk_version_tests PRIVATE libSceNpCommon libkernel libc)
+    configure_windows_unwind(guest_np_common_sdk_version_tests)
+    add_test(NAME guest_np_common_sdk_version COMMAND guest_np_common_sdk_version_tests)
+    set_tests_properties(guest_np_common_sdk_version PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_np_common_sdk_version PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
+    endif()
+
     add_test_executable(guest_xml_value_types_tests tests/GuestXmlValueTypes.cpp)
     target_include_directories(guest_xml_value_types_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_xml_value_types_tests PRIVATE libSceXml libkernel libc)
