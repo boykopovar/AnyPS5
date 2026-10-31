@@ -521,6 +521,24 @@ int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len)
     }
 }
 
+int APS5_VABI getfsstat_nid_postfix(KernelStatfs* buf, std::int64_t bufsize, int mode) {
+    constexpr int MntWait = 1;
+    constexpr int MntNowait = 2;
+    if (bufsize < 0 || (mode != MntWait && mode != MntNowait)) return static_cast<int>(Fail(GuestEinval));
+    if (buf == nullptr || bufsize == 0) return 1;
+    if (static_cast<std::size_t>(bufsize) < sizeof(KernelStatfs)) return 0;
+    const int root = open_nid_postfix("/", 0, 0);
+    if (root < 0) return 0;
+    KernelStatfs result{};
+    const int status = _fstatfs_nid_postfix(root, &result);
+    const int saved = *__error_nid_postfix();
+    close_nid_postfix(root);
+    *__error_nid_postfix() = saved;
+    if (status != 0) return 0;
+    if (!GuestCopyOut_nid_no_patch(buf, &result, sizeof(result))) return static_cast<int>(Fail(GuestEfault));
+    return 1;
+}
+
 int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info);
 
 int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule handle, ModuleInfoEx* info) {
