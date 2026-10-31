@@ -1702,6 +1702,15 @@ void EmitF16DenormPreserve(SpirvEmitterState& state) {
     state.module.EmitCapability(spv::CapabilityDenormPreserve);
     state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDenormPreserve, 16u);
     state.f16DenormPreserveEmitted = true;
+    if (state.coupledF16F64Denorms) EmitF64DenormPreserve(state);
+}
+
+void EmitF64DenormPreserve(SpirvEmitterState& state) {
+    if (state.f64DenormPreserveEmitted) return;
+    state.module.EmitCapability(spv::CapabilityDenormPreserve);
+    state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDenormPreserve, 64u);
+    state.f64DenormPreserveEmitted = true;
+    if (state.coupledF16F64Denorms) EmitF16DenormPreserve(state);
 }
 
 static std::uint32_t UnpackF16BitsToF32(SpirvEmitterState& state, std::uint32_t bits, bool nanBits) {

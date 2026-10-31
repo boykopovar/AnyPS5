@@ -479,10 +479,7 @@ void DefineModule(SpirvEmitterState& state) {
         }
         state.module.EmitCapability(spv::CapabilityFloat64);
         state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeSignedZeroInfNanPreserve, 64u);
-        if (state.float64DenormPreserve) {
-            state.module.EmitCapability(spv::CapabilityDenormPreserve);
-            state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeDenormPreserve, 64u);
-        }
+        if (state.float64DenormPreserve) EmitF64DenormPreserve(state);
     }
     if (const auto* workgroup = ShaderWorkgroupInput(state)) {
         const auto local = WorkgroupLocalSize(state, *workgroup);

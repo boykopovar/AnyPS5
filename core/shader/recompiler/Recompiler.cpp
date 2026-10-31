@@ -634,6 +634,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.registrationModules = registration;
     targetOptions.fragmentDescriptorSet = request.target.registrationModules;
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
+    targetOptions.coupledF16F64Denorms = request.target.coupledF16F64Denorms;
     targetOptions.spannedWaves = request.target.spannedWaves;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
     targetOptions.exactRobustLoads = request.target.exactRobustLoads;
