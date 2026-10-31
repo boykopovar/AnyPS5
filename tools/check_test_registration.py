@@ -106,9 +106,18 @@ def registered(build):
             if command == "subdirs":
                 pending.extend(directory / argument for argument in arguments)
             elif command == "add_test" and arguments:
-                test = [arguments[1:], False]
+                if arguments[0] == "NAME":
+                    if "COMMAND" not in arguments[2:]:
+                        continue
+                    start = arguments.index("COMMAND", 2) + 1
+                    end = next((index for index in range(start, len(arguments))
+                                if arguments[index] in ("CONFIGURATIONS", "WORKING_DIRECTORY", "COMMAND_EXPAND_LISTS", "BUILD_DEPENDS")), len(arguments))
+                    test = [arguments[start:end], False]
+                    latest[arguments[1]] = test
+                else:
+                    test = [arguments[1:], False]
+                    latest[arguments[0]] = test
                 tests.append(test)
-                latest[arguments[0]] = test
             elif command == "set_tests_properties" and "PROPERTIES" in arguments:
                 properties = arguments.index("PROPERTIES")
                 values = arguments[properties + 1:]

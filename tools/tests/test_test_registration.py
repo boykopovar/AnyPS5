@@ -127,6 +127,14 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(list(check_test_registration.commands('subdirs("\npath")\n')),
                          [("subdirs", ["\npath"])])
 
+    def test_name_form_records_its_command_and_follows_its_properties(self):
+        content = ('add_test(NAME bounds COMMAND /build/tests/bounds_tests WORKING_DIRECTORY /tmp)\n'
+                   'add_test(NAME other COMMAND /build/tests/other_tests CONFIGURATIONS Release)\n'
+                   'set_tests_properties(other PROPERTIES DISABLED TRUE)\n')
+        self.assertEqual(self.registered(content), {"bounds_tests"})
+        self.assertEqual(self.registered(content.replace("DISABLED TRUE", "DISABLED FALSE")),
+                         {"bounds_tests", "other_tests"})
+
     def test_bracket_initial_newlines_do_not_hide_disabled_tests(self):
         content = ('add_test([=[\nbounds]=] "/build/tests/buffer_bounds_tests")\n'
                    'set_tests_properties(bounds PROPERTIES DISABLED [=[\nTRUE]=])\n')
