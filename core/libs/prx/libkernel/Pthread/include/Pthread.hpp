@@ -180,6 +180,10 @@ struct PthreadPrivate {
     ~PthreadPrivate();
     PthreadPrivate(const PthreadPrivate&) = delete;
     PthreadPrivate& operator=(const PthreadPrivate&) = delete;
+#ifdef ANYPS5_GUEST_LIFTED
+    static void* operator new(std::size_t bytes);
+    static void operator delete(void* pointer);
+#endif
 };
 
 bool GuestThreadStack(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end);

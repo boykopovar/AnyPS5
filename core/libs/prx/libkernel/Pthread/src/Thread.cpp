@@ -16,6 +16,9 @@
 #include "prx/libc/include/CpuTopology.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestCpu.hpp"
+#ifdef ANYPS5_GUEST_LIFTED
+#include "prx/libc/include/GuestHeap.hpp"
+#endif
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include <algorithm>
 #include <cstdio>
@@ -572,6 +575,16 @@ static CpuClockRegistry& CpuClocks() {
     static auto* registry = new CpuClockRegistry();
     return *registry;
 }
+
+#ifdef ANYPS5_GUEST_LIFTED
+void* PthreadPrivate::operator new(std::size_t bytes) {
+    return GuestHeap::GuestHeapAlign_nid_postfix(alignof(PthreadPrivate), bytes);
+}
+
+void PthreadPrivate::operator delete(void* pointer) {
+    GuestHeap::GuestHeapFree_nid_postfix(pointer);
+}
+#endif
 
 PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false), _retval(nullptr), _detached(false), _adopted(false), _handleStorage(nullptr), _joined(false) {
     auto& registry = CpuClocks();
