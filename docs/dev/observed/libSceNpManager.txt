@@ -1,2 +1,0 @@
-# NIDs of libSceNpManager that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
-ZVZ++68nNI8  # manual: reported in issue #13260

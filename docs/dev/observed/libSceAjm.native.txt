@@ -1,3 +1,0 @@
-# NIDs of libSceAjm.native that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
-3cAg7xN995U  # manual: reported in PR #12231
-7FZsbyVRM4U  # manual: reported in issue #9985
