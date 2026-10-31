@@ -564,6 +564,36 @@ void CheckEmbeddedDataTables() {
     Require(tablesWhirlpool[0].Begin == TextAddress + 32, "Whirlpool table start was incorrect");
 }
 
+void CheckSyscallsBeforeLaterPadding() {
+    for (const auto& opcode : {Bytes{0x0f, 0x05}, Bytes{0x0f, 0x34}, Bytes{0x0f, 0x07}, Bytes{0xcd, 0x80},
+                              Bytes{0xf3, 0x0f, 0x05}, Bytes{0x66, 0x0f, 0x34}, Bytes{0x48, 0x0f, 0x07}, Bytes{0x66, 0xcd, 0x80}}) {
+        for (const auto pad : {std::uint8_t{0x00}, std::uint8_t{0x90}, std::uint8_t{0xcc}}) {
+            for (const auto leadingPadding : {std::size_t{0}, std::size_t{4}}) {
+                constexpr std::size_t tableOffset = 16;
+                Bytes text(80, pad);
+                text[0] = 0x48;
+                text[1] = 0x8d;
+                text[2] = 0x05;
+                SetDisplacement(text, 3, 7, TextAddress + tableOffset);
+                text[7] = 0xc3;
+                const Bytes data{0x0f, 0x78, 0x11, 0x22, 0x33, 0x44};
+                std::memcpy(text.data() + tableOffset, data.data(), data.size());
+                const auto routineOffset = tableOffset + data.size() + leadingPadding;
+                Bytes routine{0x31, 0xc0, 0xb0, 0x3b};
+                routine.insert(routine.end(), opcode.begin(), opcode.end());
+                routine.push_back(0xc3);
+                std::memcpy(text.data() + routineOffset, routine.data(), routine.size());
+                const Bytes lastRoutine{0x31, 0xc0, 0xc3};
+                std::memcpy(text.data() + routineOffset + routine.size() + 4, lastRoutine.data(), lastRoutine.size());
+                const auto tables = Relinker::FindRelativeJumpTables(text, TextAddress,
+                    {{TextAddress, TextAddress + 8}, {TextAddress + text.size(), TextAddress + text.size() + 8}});
+                Require(tables.size() == 1 && tables[0].Begin == TextAddress + tableOffset, "Expected one data table before the syscall block");
+                Require(tables[0].End <= TextAddress + routineOffset, "Later padding hid an earlier syscall block in the data mask");
+            }
+        }
+    }
+}
+
 void CheckDecodedPaddingSuffix() {
     Bytes text(0x38, 0x90);
     text[0] = 0x48;
@@ -698,6 +728,7 @@ int main() {
         CheckHighVirtualAddress();
         CheckRelativeJumpTables();
         CheckEmbeddedDataTables();
+        CheckSyscallsBeforeLaterPadding();
         CheckDecodedPaddingSuffix();
         CheckStubBeforeUndecodableData();
         CheckTableWithPaddingAndReturnBytes();

@@ -957,6 +957,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_to_rosetta.py $<TARGET_FILE:relinker>)
         add_test(NAME syscall_number COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_syscall_number.py $<TARGET_FILE:relinker>)
+        add_test(NAME embedded_data_syscalls COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_embedded_data_syscalls.py $<TARGET_FILE:relinker> executable)
+        add_test(NAME guest_embedded_data_syscalls COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_embedded_data_syscalls.py $<TARGET_FILE:relinker> guest)
+        set_tests_properties(embedded_data_syscalls guest_embedded_data_syscalls PROPERTIES TIMEOUT 20)
         add_test(NAME unused_filter_indirect COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_unused_filter_indirect.py $<TARGET_FILE:relinker>)
         add_test(NAME unused_filter_fallthrough_padding COMMAND ${Python3_EXECUTABLE}
