@@ -837,6 +837,16 @@ class ProgressTests(unittest.TestCase):
             self.assertNotIn("<td>0</td>", html)
 
 
+    def test_page_text_explains_the_states_and_both_percentages(self):
+        libraries = progress.summarize([{"name": "libA", "label": "A", "done": 1, "todo": 0, "unobserved": 1}])
+        shaders = progress.summarize([])
+        shaders["extra"] = []
+        page = progress.summary(libraries, shaders)
+        self.assertIn("an unobserved stub otherwise", page)
+        self.assertIn("so unobserved stubs do not lower it", page)
+        self.assertIn("counts all its stubs as observed", page)
+        self.assertIn("<th>Declared %</th>", page)
+
     def test_library_table_shows_each_state_and_both_percentages(self):
         groups = [{"name": "libA", "label": "A", "done": 1, "todo": 1, "unobserved": 2},
                   {"name": "libB", "label": "B", "done": 0, "todo": 0, "unobserved": 3},
