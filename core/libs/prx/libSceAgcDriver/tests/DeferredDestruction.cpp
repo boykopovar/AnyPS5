@@ -86,6 +86,16 @@ void DeferredUntilTheQueueIsIdle() {
     const std::vector<std::string> drained{"idle 2304", "buffer 17 on 256", "memory 33 on 256"};
     Expect(events == drained && DeferredObjects(device) == 0, "old deferred objects were not destroyed after a queue wait, buffers before memory");
     events.clear();
+    const auto queued = std::chrono::steady_clock::now();
+    context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(device, Handle<VkBuffer>(0x13), nullptr);
+    DestroyDeferredAtIdle(context, queued + std::chrono::milliseconds(4), true);
+    Expect(events.empty() && DeferredObjects(device) == 1, "an idle queue drained deferred objects younger than the idle drain age");
+    const auto later = std::chrono::steady_clock::now() + std::chrono::milliseconds(31);
+    DestroyDeferredAtIdle(context, later);
+    Expect(events.empty() && DeferredObjects(device) == 1, "a busy queue was waited for before the drain age");
+    DestroyDeferredAtIdle(context, later, true);
+    Expect(events == std::vector<std::string>{"idle 2304", "buffer 19 on 256"} && DeferredObjects(device) == 0, "an idle queue did not drain deferred objects past the idle drain age");
+    events.clear();
     for (std::uintptr_t index = 0; index < 512; ++index) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(device, Handle<VkBuffer>(0x1000 + index), nullptr);
     DestroyDeferredAtIdle(context, std::chrono::steady_clock::now());
     Expect(events.size() == 513 && events.front() == "idle 2304" && DeferredObjects(device) == 0, "512 young deferred objects were not destroyed after a queue wait");

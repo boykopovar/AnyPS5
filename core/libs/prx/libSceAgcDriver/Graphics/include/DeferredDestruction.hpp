@@ -8,7 +8,7 @@
 namespace AgcDriver::Graphics {
 
 PFN_vkGetDeviceProcAddr DeferDestructionToIdle(VkDevice device, PFN_vkGetDeviceProcAddr resolver);
-void DestroyDeferredAtIdle(const Context& context, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+void DestroyDeferredAtIdle(const Context& context, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now(), bool queueIdle = false);
 void DestroyDeferredObjects(VkDevice device) noexcept;
 std::size_t DeferredObjects(VkDevice device);
 
