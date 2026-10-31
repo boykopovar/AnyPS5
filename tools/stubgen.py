@@ -267,6 +267,22 @@ def write_outputs(outputs):
                 temporary.unlink(missing_ok=True)
 
 
+def inventory_text(nids, source, existing=""):
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", source) is None:
+        raise ValueError(f"invalid inventory source {source!r}: use letters, digits and . _ + -")
+    listed = {}
+    for number, line in enumerate(existing.splitlines(), 1):
+        entry = line.split("#", 1)[0].split()
+        if not entry:
+            continue
+        if len(entry) != 2 or re.fullmatch(r"[A-Za-z0-9+\-]{11}", entry[0]) is None:
+            raise ValueError(f"inventory line {number}: expected '<NID> <source>'")
+        listed.setdefault(entry[0], entry[1])
+    for nid in nids:
+        listed.setdefault(nid, source)
+    return "".join(f"{nid}  {label}\n" for nid, label in sorted(listed.items()))
+
+
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -281,9 +297,15 @@ def main(argv=None):
     ap.add_argument("--td-path", required=False, default=None, help="override file path used inside TechnicalDebt lines, default derived from module, relative to docs/dev/debt")
     ap.add_argument("--td-lib", required=False, default=None, help="override lib label used inside TechnicalDebt lines, default derived from module")
     ap.add_argument("--td-out", required=False, default=None, help="output file for TechnicalDebt lines, which go in docs/dev/debt/MODULE.md, default stderr when code uses stdout, otherwise stdout")
+    ap.add_argument("--inventory-source", required=False, default=None, help="name of the firmware NID list these NIDs come from, e.g. PS5-3.20_Libs; needs --inventory-out")
+    ap.add_argument("--inventory-out", required=False, default=None, help="docs/dev/inventory/MODULE.txt: gets one 'NID source' line per NID, merged with the lines already there")
     ap.add_argument("--td-only", action="store_true", help="print only TechnicalDebt lines, no code")
     args = ap.parse_args(argv)
     try:
+        if bool(args.inventory_source) != bool(args.inventory_out):
+            ap.error("--inventory-source and --inventory-out go together")
+        if args.inventory_out and any(destination and same_file(args.inventory_out, destination) for destination in (args.out, args.td_out, args.nids, args.db)):
+            ap.error("--inventory-out must differ from every other input and output")
         if not args.td_only and args.out and args.td_out and same_file(args.out, args.td_out):
             ap.error("--out and --td-out must name different files")
         destinations = [args.td_out] if args.td_only else [args.out, args.td_out]
@@ -299,6 +321,9 @@ def main(argv=None):
             outputs.append((args.out, code))
         if args.td_out:
             outputs.append((args.td_out, td))
+        if args.inventory_out:
+            existing = Path(args.inventory_out).read_text(encoding="utf-8-sig") if Path(args.inventory_out).is_file() else ""
+            outputs.append((args.inventory_out, inventory_text(nids, args.inventory_source, existing)))
         write_outputs(outputs)
     except (OSError, ValueError) as error:
         ap.error(str(error))
