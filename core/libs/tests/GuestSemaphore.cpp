@@ -108,6 +108,10 @@ int main() {
     remaining = 5000000;
     Require(sceKernelWaitSema(sem, 1, &remaining) == SCE_OK && remaining > 0 && remaining <= 5000000);
 
+    Require(sceKernelWaitSema(sem, 4, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    remaining = 1000;
+    Require(sceKernelWaitSema(sem, 4, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
+
     Require(sceKernelSignalSema(sem, 1) == SCE_OK);
     Require(sceKernelWaitSema(sem, 1, nullptr) == SCE_OK);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
