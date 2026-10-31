@@ -120,6 +120,7 @@ def invalid_cases(sce):
     yield "relative-symbol-mismatched-value", module([(TARGET, (1 << 32) | 8, FUNCTION + 8)], sce=sce), "RELATIVE relocation has a symbol"
     yield "relative-symbol-undefined", module([(TARGET, (1 << 32) | 8, 0)], sce=sce, exported=False), "RELATIVE relocation has a symbol"
     yield "invalid-symbol", module([NOOP, (TARGET, (99 << 32) | 6, 0)], sce=sce), "Unsupported relocation or symbol index"
+    yield "invalid-guest-symbol-addend", module([(TARGET, (1 << 32) | 6, 1)], sce=sce), "Invalid guest symbol relocation"
     yield "invalid-target", module([NOOP, (0xffffffffffffffff, 8, FUNCTION)], sce=sce), "Unmapped or inaccessible guest address"
     yield "overlapping-real", module([NOOP, RELATIVE, RELATIVE], sce=sce), "Overlapping guest relocations"
     yield "invalid-plt-kind", module(plt=[NOOP, RELATIVE], sce=sce), "Unsupported relocation or symbol index"
