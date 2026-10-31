@@ -133,6 +133,18 @@ def main():
                 assert result.returncode == 2 and "Overlapping PT_LOAD memory ranges" in result.stderr, (name, options, result)
                 assert not output.exists(), (name, options)
 
+        for extra_flags in (0x8, 0x100000, 0x80000000):
+            image = fixture(b"\x90\xc3")
+            struct.pack_into("<I", image, 64 + 4, 6 | extra_flags)
+            source = work / f"load-flags-{extra_flags:x}.elf"
+            source.write_bytes(image)
+            output = work / f"load-flags-{extra_flags:x}.out"
+            for options in image_targets:
+                result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
+                                        capture_output=True, text=True, timeout=20)
+                assert result.returncode == 2 and "Unsupported PT_LOAD permission flags" in result.stderr, (extra_flags, options, result)
+                assert not output.exists(), (extra_flags, options)
+
         phdr3 = {"flags": (4, "I"), "offset": (8, "Q"), "address": (16, "Q"),
                  "paddr": (24, "Q"), "filesz": (32, "Q"), "memsz": (40, "Q")}
 
