@@ -51,6 +51,45 @@ static KernelEvent UserEvent(std::uint16_t flags, std::uint32_t fflags) {
     change.fflags = fflags;
     return change;
 }
+static void PollsSocketsShutForReading() {
+    constexpr int UnixDomain = 1, Stream = 1;
+    for (const bool queued : {true, false}) {
+        int pair[2];
+        Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+        if (queued) Require(send_nid_postfix(pair[1], "abc", 3, 0) == 3);
+        Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        GuestPollDescriptor entry{pair[0], static_cast<short>(In | ReadNormal), -1};
+        Require(poll_nid_postfix(&entry, 1, 0) == 1 && (entry.revents & (In | ReadNormal)) == (In | ReadNormal));
+        if (!queued) Require(entry.revents == (In | ReadNormal));
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    }
+    for (const bool duplicated : {false, true}) {
+        int pair[2];
+        Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+        const int watched = duplicated ? dup_nid_postfix(pair[0]) : pair[0];
+        Require(watched >= 0);
+        GuestPollDescriptor entry{watched, In, -1};
+        const auto start = std::chrono::steady_clock::now();
+        std::thread shutter([&pair] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            Require(shutdown_nid_postfix(pair[0], 0) == 0);
+        });
+        const int ready = poll_nid_postfix(&entry, 1, 5000);
+        const auto waited = std::chrono::steady_clock::now() - start;
+        shutter.join();
+        Require(ready == 1 && entry.revents == In);
+        Require(waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(4));
+        if (duplicated) Require(close_nid_postfix(watched) == 0);
+        Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    }
+    int pair[2];
+    Require(socketpair_nid_postfix(UnixDomain, Stream, 0, pair) == 0);
+    Require(shutdown_nid_postfix(pair[0], 2) == 0);
+    GuestPollDescriptor both{pair[0], static_cast<short>(In | Out), -1};
+    Require(poll_nid_postfix(&both, 1, 0) == 1 && both.revents == (In | Hup));
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+}
+
 static void PollsKqueues(int socket) {
     const int queue = kqueue_nid_postfix();
     Require(queue >= 0);
@@ -392,4 +431,5 @@ int main() {
     Require(std::chrono::steady_clock::now() - inputStart >= std::chrono::milliseconds(25));
     PollsKqueues(listener);
     Require(close_nid_postfix(listener) == 0);
+    PollsSocketsShutForReading();
 }

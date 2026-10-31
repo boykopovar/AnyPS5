@@ -179,6 +179,10 @@ Waker& ThreadWaker() {
     struct WakerTag {};
     return HostThreadLocal<Waker, WakerTag>();
 }
+void DrainWaker(NativeSocket waker) {
+    char drained[16];
+    while (recv(waker, drained, sizeof(drained), 0) > 0) {}
+}
 std::mutex socketsMutex;
 std::map<int, std::shared_ptr<Socket>> sockets;
 std::set<int> closeOnExecDescriptors;
@@ -526,8 +530,7 @@ bool GuestSockets::WaitAny(const std::vector<Interest>& interests, std::uint64_t
     if (::ppoll(entries.data(), entries.size(), deadlineNanos != 0 ? &timeout : nullptr, nullptr) < 0 && errno != EINTR)
         throw std::runtime_error("equeue wait: ppoll failed, guest errno " + std::to_string(NativeError()));
 #endif
-    char drained[16];
-    while (recv(waker, drained, sizeof(drained), 0) > 0) {}
+    DrainWaker(waker);
     return true;
 }
 
@@ -803,6 +806,35 @@ bool ReceiveShut(Socket& socket) {
     std::lock_guard lock(socket.modeMutex);
     return socket.receiveShut;
 }
+std::mutex readWatchersMutex;
+std::multimap<int, std::uintptr_t> readWatchers;
+struct ReadWatch {
+    std::vector<std::multimap<int, std::uintptr_t>::iterator> entries;
+    explicit ReadWatch(const std::vector<int>& descriptors) {
+        if (descriptors.empty()) return;
+        const auto waker = static_cast<std::uintptr_t>(ThreadWaker().value);
+        entries.reserve(descriptors.size());
+        std::lock_guard lock(readWatchersMutex);
+        try {
+            for (const int descriptor : descriptors) entries.push_back(readWatchers.emplace(descriptor, waker));
+        } catch (...) {
+            for (const auto entry : entries) readWatchers.erase(entry);
+            throw;
+        }
+    }
+    ~ReadWatch() {
+        std::lock_guard lock(readWatchersMutex);
+        for (const auto entry : entries) readWatchers.erase(entry);
+    }
+    ReadWatch(const ReadWatch&) = delete;
+    ReadWatch& operator=(const ReadWatch&) = delete;
+};
+void WakeReadWatchers(int descriptor) {
+    std::lock_guard lock(readWatchersMutex);
+    const auto [first, last] = readWatchers.equal_range(descriptor);
+    for (auto entry = first; entry != last; ++entry) GuestSockets::Wake(entry->second);
+}
+
 int ReceiveAnsweredHere(Socket& socket, std::uint64_t length) {
     if (ReceiveShut(socket)) return 0;
     if (length != 0) return -1;
@@ -1102,29 +1134,46 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
     constexpr short NativeUrgent = POLLPRI;
     constexpr short NativeWritable = POLLOUT;
 #endif
+    std::vector<int> readers;
     for (int index = 0; index < count; ++index) {
         auto socket = Find(entries[index].descriptor);
         if (!socket) return -9;
         NativePollDescriptor request{};
         request.fd = socket->value;
-        if (entries[index].events & KernelSocketPoll::Readable) request.events = static_cast<short>(request.events | NativeReadable);
+        if (entries[index].events & KernelSocketPoll::Readable) {
+            request.events = static_cast<short>(request.events | NativeReadable);
+            readers.push_back(entries[index].descriptor);
+        }
         if (entries[index].events & KernelSocketPoll::Urgent) request.events = static_cast<short>(request.events | NativeUrgent);
         if (entries[index].events & KernelSocketPoll::Writable) request.events = static_cast<short>(request.events | NativeWritable);
         native.push_back(request);
         held.push_back(std::move(socket));
     }
     if (native.empty()) return 0;
+    const auto shutReader = [&](int index) {
+        return (entries[index].events & KernelSocketPoll::Readable) != 0 && ReceiveShut(*held[static_cast<std::size_t>(index)]);
+    };
+    const ReadWatch watch(readers);
+    if (!readers.empty()) {
+        NativePollDescriptor request{};
+        request.fd = ThreadWaker().value;
+        request.events = NativeReadable;
+        native.push_back(request);
+    }
+    for (int index = 0; index < count; ++index)
+        if (shutReader(index)) timeoutMilliseconds = 0;
 #ifdef _WIN32
     const int result = WSAPoll(native.data(), static_cast<ULONG>(native.size()), timeoutMilliseconds);
 #else
     const int result = ::poll(native.data(), static_cast<nfds_t>(native.size()), timeoutMilliseconds);
 #endif
     if (result < 0) return -NativeError();
+    if (!readers.empty() && native[static_cast<std::size_t>(count)].revents != 0) DrainWaker(native[static_cast<std::size_t>(count)].fd);
     int ready = 0;
     for (int index = 0; index < count; ++index) {
         const short events = native[static_cast<std::size_t>(index)].revents;
         short revents = 0;
-        if (events & NativeReadable) revents = static_cast<short>(revents | KernelSocketPoll::Readable);
+        if ((events & NativeReadable) || shutReader(index)) revents = static_cast<short>(revents | KernelSocketPoll::Readable);
         if (events & NativeUrgent) revents = static_cast<short>(revents | KernelSocketPoll::Urgent);
         if (events & NativeWritable) revents = static_cast<short>(revents | KernelSocketPoll::Writable);
         if (events & (POLLERR | POLLNVAL)) revents = static_cast<short>(revents | KernelSocketPoll::Error);
@@ -1500,8 +1549,12 @@ int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
         if (how != 1) socket->receiveShut = true;
         if (how != 0) socket->sendShut = true;
     }
-    if (how != 1)
-        for (const int alias : DescriptorsOf(socket)) EqueueDescriptorReadShut(alias);
+    if (how != 1) {
+        for (const int alias : DescriptorsOf(socket)) {
+            EqueueDescriptorReadShut(alias);
+            WakeReadWatchers(alias);
+        }
+    }
     return unconnected ? Fail(57) : 0;
 }
 int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
@@ -1938,6 +1991,8 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
     std::vector<std::uint32_t> owners;
     std::vector<std::uint32_t> pipes;
     std::vector<std::uint32_t> kqueues;
+    std::vector<int> readers;
+    std::vector<std::pair<std::size_t, std::shared_ptr<Socket>>> guestSockets;
     int ready = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         auto& entry = descriptors[i];
@@ -1949,6 +2004,8 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         std::uintptr_t value = 0;
         if (auto socket = Find(entry.descriptor)) {
             value = static_cast<std::uintptr_t>(socket->value);
+            if (entry.events & GuestPollReadable) readers.push_back(entry.descriptor);
+            guestSockets.emplace_back(native.size(), socket);
             owner = std::move(socket);
         } else if (!KernelFindSocketNative_nid_no_patch(entry.descriptor, &owner, &value)) {
             if (!DescriptorIsOpen_nid_no_patch(entry.descriptor)) {
@@ -2011,6 +2068,30 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         PreciseSleepUs(static_cast<unsigned long long>(timeout) * 1000);
         return 0;
     }
+    const ReadWatch watch(readers);
+    const std::size_t watched = native.size();
+    if (!readers.empty()) {
+        NativePollDescriptor request{};
+        request.fd = ThreadWaker().value;
+#ifdef _WIN32
+        request.events = POLLRDNORM;
+#else
+        request.events = POLLIN;
+#endif
+        native.push_back(request);
+    }
+    std::vector<short> shutAt(watched, 0);
+    const auto refreshShut = [&] {
+        int shut = 0;
+        for (const auto& [index, socket] : guestSockets) {
+            std::lock_guard lock(socket->modeMutex);
+            const short readable = socket->receiveShut ? static_cast<short>(descriptors[owners[index]].events & GuestPollReadable) : short{0};
+            const short hangUp = socket->receiveShut && socket->sendShut ? GuestPollHangUp : short{0};
+            shutAt[index] = static_cast<short>(readable | hangUp);
+            if (shutAt[index]) ++shut;
+        }
+        return shut;
+    };
     const auto collect = [&](std::size_t i, bool pipe) {
         auto& entry = descriptors[owners[i]];
 #if defined(_WIN32) || defined(__APPLE__)
@@ -2028,8 +2109,11 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         if (pipe && (entry.revents & GuestPollError)) entry.revents = static_cast<short>((entry.revents & ~GuestPollError) | GuestPollHangUp);
         if (pipe && (entry.revents & GuestPollHangUp))
             entry.revents = static_cast<short>((entry.revents & ~GuestPollWritable) | (entry.events & GuestPollReadable));
+        if (!pipe) entry.revents = static_cast<short>(entry.revents | shutAt[i]);
 #ifndef _WIN32
         if (entry.revents & GuestPollHangUp) entry.revents = static_cast<short>(entry.revents & ~GuestPollWritable);
+#else
+        if (shutAt[i] & GuestPollHangUp) entry.revents = static_cast<short>(entry.revents & ~GuestPollWritable);
 #endif
         if (entry.revents) ++ready;
     };
@@ -2078,9 +2162,11 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
             if (entry.revents) ++checkedReady;
         }
         int slice = 0;
-        if (!ready && !checkedReady && !urgent) {
-            if (!sliced) slice = timeout;
-            else if (timeout < 0) slice = 1;
+        if (!ready && !checkedReady && !urgent && !refreshShut()) {
+            if (!sliced) {
+                const auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+                slice = timeout < 0 ? -1 : static_cast<int>(std::clamp<long long>(left, 0, INT_MAX));
+            } else if (timeout < 0) slice = 1;
             else {
                 const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
                 slice = static_cast<int>(std::clamp<long long>(left, 0, 1));
@@ -2098,15 +2184,18 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
             PreciseSleepUntil(timeout < 0 ? wake : std::min(deadline, wake));
         }
         int socketReady = 0;
-        for (const auto& request : native)
-            if (request.revents) ++socketReady;
+        for (std::size_t i = 0; i < watched; ++i)
+            if (native[i].revents) ++socketReady;
+        const bool woken = !readers.empty() && native[watched].revents != 0;
+        if (woken) DrainWaker(native[watched].fd);
+        const int shutReady = refreshShut();
         const bool expired = timeout >= 0 && std::chrono::steady_clock::now() >= deadline;
-        if (ready || checkedReady || urgent || socketReady || expired || !sliced) {
+        if (ready || checkedReady || urgent || socketReady || shutReady || expired || (!sliced && !woken)) {
             ready += checkedReady;
 #ifdef _WIN32
-            for (std::size_t i = 0; i < native.size(); ++i) collect(i, false);
+            for (std::size_t i = 0; i < watched; ++i) collect(i, false);
 #else
-            for (std::size_t i = 0; i < native.size(); ++i) collect(i, i >= socketCount);
+            for (std::size_t i = 0; i < watched; ++i) collect(i, i >= socketCount);
 #endif
             return ready;
         }
