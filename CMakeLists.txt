@@ -292,6 +292,9 @@ if(BUILD_TESTING)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
+        add_test(NAME relinker_seed_manifest COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_seed_manifest.py)
+        set_tests_properties(relinker_seed_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME sanitizer_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_report.py)
         add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
