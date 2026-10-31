@@ -76,6 +76,7 @@ void CancelAndFallbacks() {
     Require(sceMsgDialogOpen(&system) == 0 && sceMsgDialogGetStatus() == kStatusFinished && Session() != ModalDialogState::Showing);
     result = MsgDialogResult{};
     Require(sceMsgDialogGetResult(&result) == 0 && result.button_id == kButtonIdOk);
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrArgNull);
 
     ModalDialogSetPresenter_nid_postfix(false);
     UserMessage focusNo{MsgDialog::ButtonTypeYesNoFocusNo, 0, "Delete?"};
