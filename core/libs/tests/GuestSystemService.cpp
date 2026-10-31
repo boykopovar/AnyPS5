@@ -89,6 +89,19 @@ void TestRunningBigApp() {
     TestBigAppList(sceSystemServiceGetAppIdListOfBigApp);
 }
 
+void TestRemoteSharePlayCpuBudget() {
+    Require(!sceShellCoreUtilIsRemotePlayCpuBudgetAcquired());
+    Require(!sceShellCoreUtilIsSharePlayCpuBudgetAcquired());
+    Require(sceShellCoreUtilAcquireRemotePlayCpuBudget() == 0);
+    Require(sceShellCoreUtilIsRemotePlayCpuBudgetAcquired());
+    Require(sceShellCoreUtilReleaseRemotePlayCpuBudget() == 0);
+    Require(!sceShellCoreUtilIsRemotePlayCpuBudgetAcquired());
+    Require(sceShellCoreUtilAcquireSharePlayCpuBudget() == 0);
+    Require(sceShellCoreUtilIsSharePlayCpuBudgetAcquired());
+    Require(sceShellCoreUtilReleaseSharePlayCpuBudget() == 0);
+    Require(!sceShellCoreUtilIsSharePlayCpuBudgetAcquired());
+}
+
 void TestPlayerDialogParam() {
     alignas(8) unsigned char buffer[0x100];
     std::memset(buffer, 0xab, sizeof(buffer));
@@ -207,5 +220,6 @@ int main() {
     TestRunningBigApp();
     TestRunningAppUser();
     TestRunningAppState();
+    TestRemoteSharePlayCpuBudget();
     TestPlayerDialogParam();
 }

@@ -22,6 +22,9 @@ constexpr std::int32_t LastPSButtonEventType = 0x20000002;
 
 std::atomic<std::intptr_t> nextActivationHandle{0x1000};
 
+bool remotePlayCpuBudgetHeld = false;
+bool sharePlayCpuBudgetHeld = false;
+
 }
 
 static_assert(sizeof(ShellCoreErrorDialogParam) == 24);
@@ -547,12 +550,12 @@ int APS5_VABI sceShellCoreUtilAcquireBgmCpuBudget() {
 }
 
 int APS5_VABI sceShellCoreUtilAcquireRemotePlayCpuBudget() {
-    NotImplemented_nid_no_patch(__func__);
+    remotePlayCpuBudgetHeld = true;
     return 0;
 }
 
 int APS5_VABI sceShellCoreUtilAcquireSharePlayCpuBudget() {
-    NotImplemented_nid_no_patch(__func__);
+    sharePlayCpuBudgetHeld = true;
     return 0;
 }
 
@@ -1156,8 +1159,7 @@ bool APS5_VABI sceShellCoreUtilIsPowerSaveAlertRequested() {
 }
 
 bool APS5_VABI sceShellCoreUtilIsRemotePlayCpuBudgetAcquired() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return remotePlayCpuBudgetHeld;
 }
 
 bool APS5_VABI sceShellCoreUtilIsScreenSaverOn() {
@@ -1166,8 +1168,7 @@ bool APS5_VABI sceShellCoreUtilIsScreenSaverOn() {
 }
 
 bool APS5_VABI sceShellCoreUtilIsSharePlayCpuBudgetAcquired() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sharePlayCpuBudgetHeld;
 }
 
 int APS5_VABI sceShellCoreUtilIsShowCrashReport() {
@@ -1321,12 +1322,12 @@ int APS5_VABI sceShellCoreUtilReleaseBgmCpuBudget() {
 }
 
 int APS5_VABI sceShellCoreUtilReleaseRemotePlayCpuBudget() {
-    NotImplemented_nid_no_patch(__func__);
+    remotePlayCpuBudgetHeld = false;
     return 0;
 }
 
 int APS5_VABI sceShellCoreUtilReleaseSharePlayCpuBudget() {
-    NotImplemented_nid_no_patch(__func__);
+    sharePlayCpuBudgetHeld = false;
     return 0;
 }
 
