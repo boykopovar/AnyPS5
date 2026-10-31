@@ -789,6 +789,29 @@ void verifyMeshBarycentricRequestSerialization() {
     }
 }
 
+void verifyHashBytes() {
+    constexpr std::array<std::array<std::uint64_t, 3>, 8> expected{{
+        {0u, 0x840bc8c130ceedb6ull, 0x7e0452fcbd09083dull},
+        {1u, 0x2bb08a6e94d5ffabull, 0xe3641007415d06d1ull},
+        {7u, 0xd0ec3c76aa3e2e44ull, 0x345f41799c18a2b1ull},
+        {8u, 0xa0c4caa4a9025c5aull, 0xa3829d1fdbcf4aebull},
+        {9u, 0x5976a0604c948110ull, 0xeaeed8d5500a97a2ull},
+        {15u, 0x55bbcd3fcf37abd7ull, 0x420b82b607b1d4f9ull},
+        {16u, 0x731681f2dbac64e8ull, 0x4a9c1f25580b95a4ull},
+        {17u, 0x31a156cfac950b79ull, 0xac0b4579d052a463ull},
+    }};
+    std::array<std::byte, 17> bytes{};
+    for (std::size_t index = 0; index < bytes.size(); ++index) bytes[index] = static_cast<std::byte>(index);
+    for (const auto& sample : expected) {
+        const auto input = std::span<const std::byte>(bytes).first(sample[0]);
+        const auto hashes = ShaderRecompiler::ShaderDiskCache::PackKeyHash(input);
+        require(hashes == std::array{sample[1], sample[2]}, "paired cache hashes changed");
+        require(ShaderRecompiler::HashBytes(input, 0x5eed0001ull) == sample[1] && ShaderRecompiler::HashBytes(input, 0x5eed0002ull) == sample[2], "scalar cache hashes changed");
+    }
+    require(ShaderRecompiler::HashBytes({}) == 0u, "empty cache checksum changed");
+    require(ShaderRecompiler::ShaderDiskCache::EntryName(bytes) == "31a156cfac950b79ac0b4579d052a463.bin", "cache entry name changed");
+}
+
 void verifyKeySensitivity() {
     SampleRequest base;
     const auto key = base.Key();
@@ -2648,6 +2671,7 @@ int main(int argc, char** argv) {
         verifyEntryRoundTrip();
         verifyPrebuiltPack(directory / "packs");
         verifyArtifactStorageIsolation();
+        verifyHashBytes();
         verifyKeySensitivity();
         verifyMeshBarycentricRequestSerialization();
         verifyFloatModeSerialization();
