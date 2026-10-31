@@ -261,6 +261,37 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(guest_video_out_host_resolution_limit_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutHostResolutionLimit.cpp)
+    target_include_directories(guest_video_out_host_resolution_limit_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
+    target_link_libraries(guest_video_out_host_resolution_limit_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+    configure_windows_unwind(guest_video_out_host_resolution_limit_tests)
+    add_test(NAME guest_video_out_host_resolution_limit COMMAND guest_video_out_host_resolution_limit_tests)
+    set_tests_properties(guest_video_out_host_resolution_limit PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    add_test(NAME guest_video_out_host_resolution_height_only COMMAND guest_video_out_host_resolution_limit_tests height-only)
+    set_tests_properties(guest_video_out_host_resolution_height_only PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    add_test(NAME guest_video_out_host_resolution_width_only COMMAND guest_video_out_host_resolution_limit_tests width-only)
+    set_tests_properties(guest_video_out_host_resolution_width_only PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    add_test(NAME guest_video_out_host_resolution_four_k COMMAND guest_video_out_host_resolution_limit_tests four-k)
+    set_tests_properties(guest_video_out_host_resolution_four_k PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    add_test(NAME guest_video_out_host_resolution_malformed COMMAND guest_video_out_host_resolution_limit_tests malformed)
+    set_tests_properties(guest_video_out_host_resolution_malformed PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    add_test(NAME guest_video_out_host_resolution_disabled COMMAND guest_video_out_host_resolution_limit_tests disabled)
+    set_tests_properties(guest_video_out_host_resolution_disabled PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0)
+    if(WIN32)
+        set_tests_properties(guest_video_out_host_resolution_limit PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(guest_video_out_host_resolution_height_only PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(guest_video_out_host_resolution_width_only PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(guest_video_out_host_resolution_four_k PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(guest_video_out_host_resolution_malformed PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(guest_video_out_host_resolution_disabled PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_video_out_color_space_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutColorSpace.cpp)
     target_include_directories(guest_video_out_color_space_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_video_out_color_space_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
