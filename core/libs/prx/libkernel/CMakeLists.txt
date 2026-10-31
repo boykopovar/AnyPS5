@@ -1196,8 +1196,9 @@ if(BUILD_TESTING)
     add_test(NAME guest_itimer_pending_default COMMAND guest_itimer_tests pending-default)
     set_tests_properties(guest_itimer_pending_default PROPERTIES TIMEOUT 20 PASS_REGULAR_EXPRESSION
         "SIGALRM: a pending SIGALRM was unblocked with the default disposition; the process terminates")
+    add_test(NAME guest_itimer_short_expiry COMMAND guest_itimer_tests short-expiry)
     if(WIN32)
-        set_tests_properties(guest_itimer guest_itimer_pending_default PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_itimer guest_itimer_pending_default guest_itimer_short_expiry PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
     add_test_executable(guest_parent_process_tests ${LIBS_INCLUDE_DIR}/tests/GuestParentProcess.cpp)
