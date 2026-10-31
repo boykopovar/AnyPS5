@@ -332,6 +332,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Pipeline.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineLibrary.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineCache.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineBinaryStore.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PipelineJournal.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/RuntimeSwitches.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Resources.cpp
@@ -1697,6 +1698,20 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_test_executable(agc_pipeline_binary_store_tests EXCLUDE_FROM_ALL tests/PipelineBinaryStore.cpp Graphics/src/PipelineBinaryStore.cpp)
+target_include_directories(agc_pipeline_binary_store_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+target_link_libraries(agc_pipeline_binary_store_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_pipeline_binary_store_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_pipeline_binary_store_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_pipeline_binary_store_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_pipeline_binary_store COMMAND agc_pipeline_binary_store_tests)
+    set_tests_properties(agc_pipeline_binary_store PROPERTIES TIMEOUT 25)
+    if(WIN32)
+        set_tests_properties(agc_pipeline_binary_store PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 add_test_executable(agc_driver_recorder_tests EXCLUDE_FROM_ALL
         tests/Recorder.cpp
         tests/HostImportLifetime.cpp
@@ -1746,6 +1761,11 @@ if(BUILD_TESTING)
     add_test(NAME agc_pipeline_cache COMMAND agc_driver_recorder_tests --pipeline-cache-only)
     add_test(NAME agc_pipeline_cache_file COMMAND agc_driver_recorder_tests --pipeline-cache-file-only)
     add_test(NAME agc_pipeline_cache_header COMMAND agc_driver_recorder_tests --pipeline-cache-header-only)
+    add_test(NAME agc_pipeline_binary_vulkan COMMAND ${CMAKE_COMMAND} -DTEST=$<TARGET_FILE:agc_driver_recorder_tests> -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/PipelineBinaryRun.cmake)
+    set_tests_properties(agc_pipeline_binary_vulkan PROPERTIES TIMEOUT 25 SKIP_REGULAR_EXPRESSION "skipped, pipeline binary Vulkan test unavailable")
+    if(WIN32)
+        set_tests_properties(agc_pipeline_binary_vulkan PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     set_tests_properties(agc_pipeline_cache_header PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(agc_pipeline_cache_header PROPERTIES ENVIRONMENT_MODIFICATION
