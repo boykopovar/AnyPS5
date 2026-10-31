@@ -1091,12 +1091,13 @@ void TestWithoutAllocators() {
 }
 
 void TestOptionalVideoBuffersRespectMemoryLimit() {
-    const auto run = [](int textureLimit, int expectedTextures) {
+    const auto run = [](int textureLimit, int expectedTextures, bool unsynced) {
         SetTextureLimit(textureLimit);
         AvPlayerInitData init = InitData(nullptr);
         init.num_output_video_framebuffers = 2;
         auto* player = sceAvPlayerInit(&init);
         Check(player != nullptr, "init with limited texture memory failed");
+        if (unsynced) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode with limited texture memory rejected");
         Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source with limited texture memory failed");
         Check(WaitFor([&] { return TextureCount() == expectedTextures && sceAvPlayerIsActive(player); }), "unexpected optional video buffer count");
         AvPlayerFrameInfoEx frame{};
@@ -1106,9 +1107,13 @@ void TestOptionalVideoBuffersRespectMemoryLimit() {
         Check(TextureCount() == 0, "limited texture allocations were not released");
     };
 
-    run(2, 2);
-    run(4, 2);
-    run(6, 6);
+    run(2, 2, false);
+    run(5, 2, false);
+    run(6, 6, false);
+    run(14, 6, false);
+    run(5, 2, true);
+    run(13, 6, true);
+    run(14, 14, true);
     SetTextureLimit(std::nullopt);
 }
 
@@ -1468,6 +1473,27 @@ void TestNoSyncVideoCanLeadAudioClock() {
     Check(available, "no-sync video was gated by the audio-backed player clock");
     std::lock_guard lock(allocations.mutex);
     Check(allocations.blocks.empty(), "no-sync allocations leaked");
+}
+
+void TestNoSyncClockIgnoresEarlyAudio() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "no-sync clock init failed");
+    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "no-sync clock mode rejected");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "no-sync clock source failed");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "no-sync clock video stream failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "no-sync clock audio stream failed");
+    Check(sceAvPlayerStart(player) == 0, "no-sync clock start failed");
+    AvPlayerFrameInfo sound{};
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "no-sync clock audio unavailable");
+    const auto start = std::chrono::steady_clock::now();
+    const auto first = sound.timestamp;
+    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0 && sound.timestamp >= first + 600; }), "no-sync clock audio was not pulled ahead");
+    const auto clock = sceAvPlayerCurrentTime(player);
+    const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+    Check(sceAvPlayerClose(player) == 0, "no-sync clock close failed");
+    Check(clock <= first + elapsed + 100, "no-sync clock followed audio pulled early: " + std::to_string(clock - first) + " ms after " + std::to_string(elapsed) + " ms");
 }
 
 void TestLoopWarningWaitsForPlayback() {
@@ -2084,6 +2110,7 @@ int main(int argc, char** argv) {
         TestJumpPastTheLatestTimeReportsTheDuration();
         TestUnsyncedVideoKeepsUpWithAudio();
         TestNoSyncVideoCanLeadAudioClock();
+        TestNoSyncClockIgnoresEarlyAudio();
         TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
         TestVideoSyncTolerance();
