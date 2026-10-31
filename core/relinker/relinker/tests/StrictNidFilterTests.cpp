@@ -405,9 +405,9 @@ void filterSegmentRelativeImports() {
                 input.Text[next] = 0xc3;
                 const auto target = address32 ? 0x2000ull : 0x100002000ull;
                 const bool resolved = operation == 0x8d || (segment != 0x64 && segment != 0x65);
-                const auto expected = resolved ? std::set<std::uint64_t>{target} : std::set<std::uint64_t>{};
+                const auto expected = resolved ? std::set<std::uint64_t>{target} : input.ImportSlots;
                 require(AnalyzeStrictReachability(input).ImportSlots == expected,
-                        "Strict filter treated a segment-relative operand as a flat import");
+                        "Strict filter lost a possible segment-relative import");
                 auto bytes = elfFixture(input);
                 write<std::uint16_t>(bytes, 56, 3);
                 write<std::uint32_t>(bytes, 176, 1);
@@ -420,10 +420,70 @@ void filterSegmentRelativeImports() {
                     {"low", {}, 6, 0x300, 0x2000, 0}, {"high", {}, 6, 0x318, 0x100002000ull, 0}};
                 for (const auto filter : {Relinker::MakeUnusedNidFilter(), Relinker::MakeStrictUnusedNidFilter(testProgress)}) {
                     const auto kept = filter->Filter(references, bytes, input.Text, input.TextVaddr);
-                    require(kept.size() == expected.size() && (kept.empty() || kept[0].RelocationAddress == target),
-                            "ELF filter retained the wrong segment-relative import");
+                    std::set<std::uint64_t> keptSlots;
+                    for (const auto& reference : kept) keptSlots.insert(reference.RelocationAddress);
+                    require(keptSlots == expected, "ELF filter lost a possible segment-relative import");
                 }
             }
+        }
+    }
+}
+
+void segmentRelativeBaseAndReachability() {
+    for (const std::uint8_t segment : {0x64, 0x65}) {
+        for (const bool address32 : {false, true}) {
+            for (const bool relative : {false, true}) {
+                auto input = fixture();
+                std::vector<std::uint8_t> instruction{segment};
+                instruction.reserve(15);
+                if (address32) instruction.push_back(0x67);
+                instruction.insert(instruction.end(), {0x48, 0x8b});
+                if (relative) {
+                    instruction.push_back(0x05);
+                    const auto displacementOffset = instruction.size();
+                    instruction.resize(displacementOffset + 4);
+                    write(instruction, displacementOffset, static_cast<std::int32_t>(0x2000 - input.TextVaddr - 16 - instruction.size()));
+                } else {
+                    instruction.push_back(0x00);
+                }
+                std::copy(instruction.begin(), instruction.end(), input.Text.begin() + 16);
+                input.Text[16 + instruction.size()] = 0xc3;
+                input.Text[0] = 0xc3;
+                const std::vector<Relinker::NidReference> references = {
+                    {"zeroBase", {}, 6, 0x300, 0x2000, 0}, {"nonzeroBase", {}, 6, 0x318, 0x2008, 0}};
+                for (const bool reachable : {false, true}) {
+                    if (reachable) input.Entries[0] = input.TextVaddr + 16;
+                    const auto expected = reachable ? input.ImportSlots : std::set<std::uint64_t>{};
+                    const auto analysis = AnalyzeStrictReachability(input);
+                    require(analysis.ImportSlots == expected, "Strict filter lost unknown-base imports or treated dead access as live");
+                    const auto bytes = elfFixture(input);
+                    for (const auto filter : {Relinker::MakeUnusedNidFilter(), Relinker::MakeStrictUnusedNidFilter(testProgress)}) {
+                        const auto kept = filter->Filter(references, bytes, input.Text, input.TextVaddr);
+                        std::set<std::uint64_t> keptSlots;
+                        for (const auto& reference : kept) keptSlots.insert(reference.RelocationAddress);
+                        require(keptSlots == expected, "ELF filter lost unknown-base imports or treated dead access as live");
+                        if (reachable) {
+                            for (const std::uint64_t segmentBase : {0, 8}) {
+                                const auto linearAddress = segmentBase + 0x2000;
+                                require(keptSlots.contains(linearAddress), "Valid zero/nonzero-base import access was removed");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for (const auto opcode : {std::vector<std::uint8_t>{0x48, 0x8b, 0xc0}, std::vector<std::uint8_t>{0x0f, 0x1f, 0x00}}) {
+        for (const std::uint8_t segment : {0x64, 0x65}) {
+            auto input = fixture();
+            input.Text[0] = segment;
+            std::copy(opcode.begin(), opcode.end(), input.Text.begin() + 1);
+            input.Text[opcode.size() + 1] = 0xc3;
+            require(AnalyzeStrictReachability(input).ImportSlots.empty(), "Non-memory segment prefix disabled strict filtering");
+            const auto bytes = elfFixture(input);
+            const std::vector<Relinker::NidReference> references = {{"dead", {}, 6, 0x300, 0x2000, 0}};
+            require(Relinker::MakeUnusedNidFilter()->Filter(references, bytes, input.Text, input.TextVaddr).empty(),
+                    "Non-memory segment prefix disabled CFG filtering");
         }
     }
 }
@@ -982,6 +1042,7 @@ int main() {
         exceptionLandingPads();
         exceptionDataWithoutPersonality();
         filterSegmentRelativeImports();
+        segmentRelativeBaseAndReachability();
         filterCallbackDataImports();
         filterAndPltCompaction();
         relativeTableTargetsBounds();

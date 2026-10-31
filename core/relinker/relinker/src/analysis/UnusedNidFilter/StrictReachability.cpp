@@ -23,6 +23,7 @@ struct Region {
     std::set<VirtualAddress> Imports;
     std::vector<VirtualAddress> Instructions;
     std::size_t IndirectTransfers = 0;
+    bool UnknownSegmentAccess = false;
 };
 
 bool endsFlow(Codegen::ControlFlowKind kind) {
@@ -64,6 +65,7 @@ public:
             const auto& region = regions.at(begin);
             result.Instructions.insert(region.Instructions.begin(), region.Instructions.end());
             result.ImportSlots.insert(region.Imports.begin(), region.Imports.end());
+            if (region.UnknownSegmentAccess) result.ImportSlots.insert(input.ImportSlots.begin(), input.ImportSlots.end());
             result.IndirectTransfers += region.IndirectTransfers;
             for (const auto target : region.Edges) enqueue(target);
         }
@@ -160,6 +162,7 @@ private:
                 const auto next = address + info.Length;
                 const auto offset = static_cast<std::size_t>(address - input.TextVaddr);
                 region.Instructions.push_back(address);
+                if (info.SegmentPrefix != 0 && info.HasMemoryOperand) region.UnknownSegmentAccess = true;
                 if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                     const auto target = next + static_cast<VirtualAddress>(info.BranchDisp);
                     if (!isCode(target)) throw RelinkerException("Strict filter: direct branch leaves code", address);

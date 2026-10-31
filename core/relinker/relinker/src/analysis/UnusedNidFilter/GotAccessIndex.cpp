@@ -8,15 +8,16 @@ namespace Relinker::UnusedNidFilter {
 
 class GotAccessIndex : public IGotAccessIndex {
 public:
-    explicit GotAccessIndex(std::unordered_set<VirtualAddress> accessed)
-        : _accessed(std::move(accessed)) {}
+    explicit GotAccessIndex(std::unordered_set<VirtualAddress> accessed, bool unknownSegmentAccess)
+        : _accessed(std::move(accessed)), unknownSegmentAccess(unknownSegmentAccess) {}
 
     bool IsGotSlotAccessed(VirtualAddress gotSlotVaddr) const override {
-        return _accessed.count(gotSlotVaddr) > 0;
+        return unknownSegmentAccess || _accessed.count(gotSlotVaddr) > 0;
     }
 
 private:
     std::unordered_set<VirtualAddress> _accessed;
+    bool unknownSegmentAccess;
 };
 
 std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
@@ -29,6 +30,7 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
     }
     const Codegen::X64InstructionDecoder decoder;
     std::unordered_set<VirtualAddress> accessed;
+    bool unknownSegmentAccess = false;
 
     for (VirtualAddress va : cfg.ReachableVaddrs()) {
         if (va < textVaddr || va - textVaddr >= text.size())
@@ -38,7 +40,11 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
         if (available == 0) continue;
 
         Codegen::DecodedInstructionInfo info = decoder.DecodeInstruction(text.data() + bufOff, available);
-        if (!info.HasRipRelativeDisp || (info.SegmentPrefix != 0 && info.HasMemoryOperand)) continue;
+        if (info.SegmentPrefix != 0 && info.HasMemoryOperand) {
+            unknownSegmentAccess = true;
+            continue;
+        }
+        if (!info.HasRipRelativeDisp) continue;
 
         VirtualAddress nextVaddr = va + static_cast<VirtualAddress>(info.Length);
         std::int32_t disp = 0;
@@ -52,7 +58,7 @@ std::unique_ptr<IGotAccessIndex> BuildGotAccessIndex(
         accessed.insert(target);
     }
 
-    return std::make_unique<GotAccessIndex>(std::move(accessed));
+    return std::make_unique<GotAccessIndex>(std::move(accessed), unknownSegmentAccess);
 }
 
 }
