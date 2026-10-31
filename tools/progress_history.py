@@ -187,7 +187,8 @@ def chart(points):
     for index, (name, title, color) in enumerate(SERIES):
         top = index * (TITLE + PANEL + GAP) + TITLE
         base = top + PANEL
-        step, peak = scale(max(p[name][key] for p in points for key in ("done", "total")))
+        split = name == "libraries"
+        step, peak = scale(max(p[name].get(key, 0) for p in points for key in ("done", "total", "unobserved")))
         py = lambda v: base - v / peak * PANEL
         out.append(f'<text x="{LEFT}" y="{top - 12}" font-size="13" font-weight="bold">{title}</text>')
         for tick in range(0, peak + 1, step):
@@ -202,17 +203,30 @@ def chart(points):
         out.append(f'<polygon points="{xs[0]:.1f},{base} {line(done)} {xs[-1]:.1f},{base}" fill="{color}" opacity="0.15"/>')
         out.append(f'<polyline points="{line(total)}" fill="none" stroke="{MUTED}" stroke-width="2" stroke-dasharray="6 4"/>')
         out.append(f'<polyline points="{line(done)}" fill="none" stroke="{color}" stroke-width="2"/>')
+        if split:
+            observed = [(x, py(p[name]["total"] - p[name]["done"])) for x, p in zip(xs, points)]
+            unobserved = [(x, py(p[name].get("unobserved", 0))) for x, p in zip(xs, points)]
+            out.append(f'<polyline points="{line(observed)}" fill="none" stroke="{progress.TODO_COLOR}" stroke-width="2"/>')
+            out.append(f'<polyline points="{line(unobserved)}" fill="none" stroke="{progress.UNOBSERVED_COLOR}" stroke-width="2"/>')
         if len(points) <= MAX_DOTS:
             out += [f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{color}"/>' for x, y in done]
         last = points[-1][name]
-        declared_y, implemented_y = spread([total[-1][1], done[-1][1]])
-        out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{declared_y + 4:.1f}" fill="{MUTED}">Counted {last["total"]:,}</text>'
-                   f'<text x="{WIDTH - RIGHT + 8}" y="{implemented_y + 4:.1f}" fill="{TEXT}" font-weight="bold">'
+        labels_at = [total[-1][1], done[-1][1]] + ([observed[-1][1], unobserved[-1][1]] if split else [])
+        placed = spread(labels_at)
+        out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{placed[0] + 4:.1f}" fill="{MUTED}">Counted {last["total"]:,}</text>'
+                   f'<text x="{WIDTH - RIGHT + 8}" y="{placed[1] + 4:.1f}" fill="{TEXT}" font-weight="bold">'
                    f'<tspan fill="{color}">\u25cf</tspan> Implemented {last["done"]:,} ({last["percent"]:.0f}%)</text>')
+        if split:
+            out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{placed[2] + 4:.1f}" fill="{TEXT}">'
+                       f'<tspan fill="{progress.TODO_COLOR}">\u25cf</tspan> Observed stubs {last["total"] - last["done"]:,}</text>'
+                       f'<text x="{WIDTH - RIGHT + 8}" y="{placed[3] + 4:.1f}" fill="{TEXT}">'
+                       f'<tspan fill="{progress.UNOBSERVED_COLOR}">\u25cf</tspan> Unobserved stubs {last.get("unobserved", 0):,}</text>')
         for left, right, p in zip(edges, edges[1:], points):
             out.append(f'<rect class="hit" x="{left:.1f}" y="{top}" width="{right - left:.1f}" height="{PANEL}">'
                        f'<title>{p["date"]} · {title}\nImplemented {p[name]["done"]:,} of {p[name]["total"]:,} counted '
-                       f'({p[name]["percent"]}%)</title></rect>')
+                       f'({p[name]["percent"]}%)'
+                       + (f'\nObserved stubs {p[name]["total"] - p[name]["done"]:,}, unobserved stubs {p[name].get("unobserved", 0):,}' if split else "")
+                       + (f'\nCommit {p["commit"][:10]}' if p.get("commit") else "") + '</title></rect>')
     axis = height - AXIS + 18
     out += [f'<text class="x" x="{x:.1f}" y="{axis}" text-anchor="middle" font-size="11" fill="{MUTED}">{label}</text>'
             for x, label in labels if label]

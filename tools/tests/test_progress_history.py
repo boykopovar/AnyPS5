@@ -283,6 +283,30 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertIn("Unobserved stubs are not counted", page)
         self.assertIn("/docs/dev/PROGRESS.md#observed-imports", page)
 
+    def test_libraries_panel_draws_observed_and_unobserved_series_with_labels(self):
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        points = [{"date": "2026-01-01", "commit": sha,
+                   "libraries": {"done": 2, "total": 4, "percent": 50.0, "unobserved": 6, "declared_total": 10},
+                   "shaders": {"done": 1, "total": 1, "percent": 100.0}},
+                  {"date": "2026-01-02", "commit": sha,
+                   "libraries": {"done": 3, "total": 5, "percent": 60.0, "unobserved": 7, "declared_total": 12},
+                   "shaders": {"done": 1, "total": 1, "percent": 100.0}}]
+        svg = progress_history.chart(points)
+        ET.fromstring(svg)
+        self.assertIn(f'stroke="{progress.UNOBSERVED_COLOR}"', svg)
+        self.assertIn(f'stroke="{progress.TODO_COLOR}"', svg)
+        self.assertIn("Observed stubs 2", svg)
+        self.assertIn("Unobserved stubs 7", svg)
+        self.assertIn("Observed stubs 2, unobserved stubs 7\nCommit 0123456789", svg)
+        self.assertEqual(svg.count("Unobserved stubs"), 1)
+
+    def test_old_points_without_the_split_still_chart_with_no_unobserved_stubs(self):
+        points = [{"date": "2026-01-01", "libraries": {"done": 1, "total": 2, "percent": 50.0}, "shaders": {"done": 1, "total": 1, "percent": 100.0}}]
+        svg = progress_history.chart(points)
+        ET.fromstring(svg)
+        self.assertIn("Unobserved stubs 0", svg)
+        self.assertNotIn("Commit", svg)
+
     def test_axis_labels_fall_on_calendar_days_without_commits(self):
         start = date(2026, 8, 3).toordinal()
         skipped = {date(2026, 8, 10), date(2026, 8, 17), date(2026, 8, 31)}
