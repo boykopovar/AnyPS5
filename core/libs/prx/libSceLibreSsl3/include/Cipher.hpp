@@ -19,6 +19,7 @@ struct LibreSsl3EvpCipher {
 };
 
 static_assert(sizeof(LibreSsl3EvpCipher) == 80);
+static_assert(offsetof(LibreSsl3EvpCipher, nid) == 0);
 static_assert(offsetof(LibreSsl3EvpCipher, keyLength) == 8);
 static_assert(offsetof(LibreSsl3EvpCipher, ivLength) == 12);
 static_assert(offsetof(LibreSsl3EvpCipher, contextSize) == 48);

@@ -577,11 +577,6 @@ int APS5_VABI Unknown_aKGUCnoiE_plus_k_nid_no_patch() {
 }
 APS5_EXPORT("aKGUCnoiE+k", Unknown_aKGUCnoiE_plus_k_nid_no_patch);
 
-int APS5_VABI Unknown_aLdgrI2jAF0_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("aLdgrI2jAF0", Unknown_aLdgrI2jAF0_nid_no_patch);
-
 int APS5_VABI Unknown_aSO3Svp7umY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

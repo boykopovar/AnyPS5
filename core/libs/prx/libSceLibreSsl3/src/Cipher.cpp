@@ -16,4 +16,10 @@ int APS5_VABI EVP_CIPHER_key_length_nid_postfix(const LibreSsl3EvpCipher* cipher
     return cipher->keyLength;
 }
 
+int APS5_VABI EVP_CIPHER_nid_nid_postfix(const LibreSsl3EvpCipher* cipher) {
+    if (!cipher)
+        throw std::invalid_argument("EVP_CIPHER_nid requires a cipher");
+    return cipher->nid;
+}
+
 }
