@@ -76,6 +76,12 @@ int main() {
         Require(sceSaveDataDialogGetResult(&result) == 0, "read completed result");
         Require(sceSaveDataDialogGetResult(nullptr) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
                 "get result with null result pointer");
+        Require(sceSaveDataDialogGetResult(reinterpret_cast<SaveDataDialogResult*>(0x10)) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+                "get result with invalid pointer");
+        SaveDataDialogResult invalidDirResult{};
+        invalidDirResult.dir_name = reinterpret_cast<void*>(0x10);
+        Require(sceSaveDataDialogGetResult(&invalidDirResult) == SAVE_DATA_DIALOG_ERROR_ARG_NULL,
+                "get result with invalid directory name pointer");
         Require(result.mode == param.mode && result.result == SAVE_DATA_DIALOG_RESULT_OK &&
                 result.user_data == &context && std::strcmp(selected.data, "SDU1") == 0,
                 "save result must preserve its mode, directory and caller context");
