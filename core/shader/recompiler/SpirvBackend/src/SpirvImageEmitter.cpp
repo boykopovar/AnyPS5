@@ -813,6 +813,9 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto sint = SintStorageFormat(access.image);
+    const auto storageFormat = GetFormatInfo(access.image.conversionFormat);
+    const auto float16 = access.image.resourceClass == ImageResourceClass::Storage && access.image.numericClass == IrTextureNumericClass::Uint &&
+        (access.image.conversionFormat == IrBufferFormat::Format16Float || access.image.conversionFormat == IrBufferFormat::Format16_16Float || access.image.conversionFormat == IrBufferFormat::Format16_16_16_16Float);
     std::uint32_t values[4] = {};
     const auto dmask = EffectiveDmask(mem);
     for (std::uint32_t component = 0; component < 4u; component++) {
@@ -834,13 +837,17 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
             raw = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), RuntimeImageSwizzle(state, mem.resource, source), ConstantU32(state, component + 4u)), candidate, raw);
         }
         values[component] = integer ? raw : mem.dataBits == 16u ? EmitF16BitsToF32(state, raw) : Unary(state, spv::OpBitcast, TypeF32(state), raw);
+        if (float16 && component < storageFormat.componentCount && mem.dataBits != 16u) {
+            values[component] = EmitFormatStoreComponent(state, storageFormat, component, values[component]);
+        }
         if (component < sint.componentCount) {
             values[component] = mem.dataBits == 16u ? EmitD16StoreComponent(state, sint, component, values[component]) : EmitFormatStoreComponent(state, sint, component, values[component]);
         }
     }
     const auto texel = state.module.AllocateId();
-    state.module.AddFunction(spv::OpCompositeConstruct, integer ? TypeU32Vector(state, 4) : TypeF32Vector(state, 4), texel, values[0], values[1], values[2], values[3]);
-    return sint.format != IrBufferFormat::Invalid ? texel : PackImageTexel(ctx, access, texel);
+    const bool rawUintStorage = sint.format != IrBufferFormat::Invalid || float16;
+    state.module.AddFunction(spv::OpCompositeConstruct, integer || rawUintStorage ? TypeU32Vector(state, 4) : TypeF32Vector(state, 4), texel, values[0], values[1], values[2], values[3]);
+    return rawUintStorage ? texel : PackImageTexel(ctx, access, texel);
 }
 
 std::uint32_t PackedStoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t data) {
@@ -1422,7 +1429,7 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
     auto layer = ConstantU32(state, 0u);
     if (arrayed) {
         const auto layers = Unary(state, spv::OpBitcast, i32, extract(u32, size, 2u));
-        const auto rounded = Unary(state, spv::OpConvertFToS, i32, ext(f32, GLSLstd450Floor, {Binary(state, spv::OpFAdd, f32, extract(f32, setup.coord, 2u), f32Constant(0.5f))}));
+        const auto rounded = Unary(state, spv::OpConvertFToS, i32, ext(f32, GLSLstd450RoundEven, {extract(f32, setup.coord, 2u)}));
         layer = Unary(state, spv::OpBitcast, u32, ext(i32, GLSLstd450SClamp, {rounded, ConstantI32(state, 0), Binary(state, spv::OpISub, i32, layers, ConstantI32(state, 1))}));
     }
     auto reference = converted ? 0u : DrefValueF32(ctx, access, setup.layout);
@@ -1468,7 +1475,7 @@ void EmitEmulatedSample(SpirvValueEmitContext& ctx, const ImageEmitAccess& acces
         for (std::uint32_t channel = 3u; channel-- > 0u;) red = Select(state, f32, equal(RuntimeImageSwizzle(state, mem.resource, channel), 4u), extract(f32, texel, channel), red);
         red = Select(state, f32, equal(modeX, EmulatedCompare::AddressBorder), Select(state, f32, inside(x, width), red, borderRed), red);
         red = Select(state, f32, equal(modeY, EmulatedCompare::AddressBorder), Select(state, f32, inside(y, height), red, borderRed), red);
-        constexpr std::array<spv::Op, 6> operations{spv::OpFOrdLessThan, spv::OpFOrdEqual, spv::OpFOrdLessThanEqual, spv::OpFOrdGreaterThan, spv::OpFOrdNotEqual, spv::OpFOrdGreaterThanEqual};
+        constexpr std::array<spv::Op, 6> operations{spv::OpFOrdLessThan, spv::OpFOrdEqual, spv::OpFOrdLessThanEqual, spv::OpFOrdGreaterThan, spv::OpFUnordNotEqual, spv::OpFOrdGreaterThanEqual};
         auto result = Select(state, f32, equal(parameter(0u), 7u), one, zero);
         for (std::uint32_t index = 0; index < operations.size(); ++index) {
             const auto compared = Select(state, f32, Binary(state, operations[index], TypeBool(state), reference, red), one, zero);

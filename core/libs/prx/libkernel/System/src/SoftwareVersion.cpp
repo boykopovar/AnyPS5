@@ -21,8 +21,7 @@ constexpr std::uint32_t SdkPatchMask = 0xfff;
 extern "C" {
 
 int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_postfix(SceKernelProsperoSystemSwVersion* version) {
-    if (version == nullptr) return SCE_KERNEL_ERROR_EFAULT;
-    if (version->size != sizeof(SceKernelProsperoSystemSwVersion)) return SCE_KERNEL_ERROR_EINVAL;
+    if (version == nullptr) return 0;
     std::memset(version->versionString, 0, sizeof(version->versionString));
     std::memcpy(version->versionString, SystemSoftwareVersionString, sizeof(SystemSoftwareVersionString));
     version->version = SystemSoftwareVersion;

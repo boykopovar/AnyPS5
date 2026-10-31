@@ -51,6 +51,16 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     return nullptr;
 }
 
+VKAPI_ATTR VkResult VKAPI_CALL reloadedQueueWaitIdle(VkQueue queue) {
+    events.push_back(Name("reloaded idle ", queue));
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL reloadedProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkQueueWaitIdle") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&reloadedQueueWaitIdle);
+    return mockProc(device, name);
+}
+
 Context ContextFor(VkDevice device, PFN_vkGetDeviceProcAddr proc) {
     Context context{};
     context.device = device;
@@ -115,12 +125,36 @@ void OtherDevicesDestroyAtOnce() {
     DestroyDeferredObjects(device);
 }
 
+PFN_vkGetDeviceProcAddr TrySetUp(VkDevice device, PFN_vkGetDeviceProcAddr resolver) {
+    try {
+        return DeferDestructionToIdle(device, resolver);
+    } catch (const std::exception&) {
+        return nullptr;
+    }
+}
+
+void ALaterDeviceUsesItsOwnResolver() {
+    events.clear();
+    const auto first = Handle<VkDevice>(0x103);
+    const auto firstProc = DeferDestructionToIdle(first, mockProc);
+    DestroyDeferredObjects(first);
+    const auto second = Handle<VkDevice>(0x104);
+    const auto proc = TrySetUp(second, reloadedProc);
+    Expect(proc != nullptr, "a device set up after the last one went could not use a resolver from a reloaded Vulkan loader");
+    if (proc == nullptr) return;
+    Expect(ContextFor(second, proc).Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle") == &reloadedQueueWaitIdle, "a later device did not pass through to its own resolver");
+    Expect(reinterpret_cast<PFN_vkQueueWaitIdle>(firstProc(first, "vkQueueWaitIdle")) == &mockQueueWaitIdle, "an earlier device's wrapper passed through to a later device's resolver");
+    Expect(TrySetUp(Handle<VkDevice>(0x105), mockProc) == nullptr, "two live devices with different resolvers were accepted");
+    DestroyDeferredObjects(second);
+}
+
 }
 
 int main() {
     try {
         DeferredUntilTheQueueIsIdle();
         OtherDevicesDestroyAtOnce();
+        ALaterDeviceUsesItsOwnResolver();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;

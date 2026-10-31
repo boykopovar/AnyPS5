@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
 
 namespace AgcDriver::Graphics {
@@ -368,11 +369,10 @@ bool BufferPool::DeviceTiered(VkMemoryPropertyFlags properties) {
     return (properties & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0 && (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 && DeviceTierEnabled();
 }
 
-std::size_t BufferPool::Capacity(std::size_t bytes, VkMemoryPropertyFlags properties) {
+std::size_t BufferPool::Capacity(std::size_t bytes) {
     constexpr std::size_t smallest = 256;
     if (exactSizes()) return bytes;
     if (bytes < classLimit) return std::max(smallest, std::bit_ceil(bytes));
-    if (!DeviceTiered(properties)) return bytes;
     const auto step = std::bit_floor(bytes) >> deviceClassBits;
     return (bytes + step - 1) / step * step;
 }
@@ -392,7 +392,7 @@ BufferPool::Tier& BufferPool::tierFor(std::size_t capacity, VkMemoryPropertyFlag
 
 std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    const auto capacity = Capacity(bytes, properties);
+    const auto capacity = Capacity(bytes);
     std::lock_guard lock(mutex);
     ++clock;
     if (profile) {
@@ -411,9 +411,14 @@ std::optional<BufferAllocation> BufferPool::Take(std::size_t bytes, VkBufferUsag
         ++tier.misses;
         return std::nullopt;
     }
-    auto result = found->second.back().allocation;
-    found->second.pop_back();
-    if (found->second.empty()) tier.free.erase(found);
+    auto& slots = found->second;
+    const auto newest = std::prev(slots.end());
+    auto chosen = newest;
+    for (std::size_t scanned = 1; chosen->allocation.bufferBytes != bytes && scanned < exactSizeScan && chosen != slots.begin(); ++scanned) --chosen;
+    if (chosen->allocation.bufferBytes != bytes) chosen = newest;
+    auto result = chosen->allocation;
+    slots.erase(chosen);
+    if (slots.empty()) tier.free.erase(found);
     --tier.slots;
     tier.retainedBytes -= result.allocationBytes;
     ++tier.hits;

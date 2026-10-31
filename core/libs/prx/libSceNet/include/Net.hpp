@@ -87,7 +87,14 @@ struct NetSockInfo6 {
     std::int32_t tx_wait;
     std::int32_t reserved[2];
 };
-struct NetStatisticsInfo;
+struct NetStatisticsInfo {
+    std::int32_t kernel_mem_free_size;
+    std::int32_t kernel_mem_free_min;
+    std::int32_t packet_count;
+    std::int32_t packet_qos_count;
+    std::int32_t libnet_mem_free_size;
+    std::int32_t libnet_mem_free_min;
+};
 struct NetInterfaceStats;
 struct NetRouteInfo;
 struct NetDebugParameter;
@@ -210,6 +217,12 @@ using NetAddressCallback = void (APS5_VABI *)(void* userArg, std::int32_t event,
 using NetEventCallback = std::uint64_t (APS5_VABI*)(std::uint32_t interfaceId, std::uint64_t events, void* userData, void* waitData);
 
 extern "C" {
+
+extern const std::uint8_t sce_net_in6addr_loopback_nid_postfix[16];
+extern const std::uint8_t sce_net_in6addr_nodelocal_allnodes_nid_postfix[16];
+extern const std::uint8_t sce_net_in6addr_linklocal_allrouters_nid_postfix[16];
+extern const std::uint32_t sce_net_dummy_nid_postfix;
+
 
 int* APS5_VABI sceNetErrnoLoc(void);
 int APS5_VABI sceNetShowNetstat(void);

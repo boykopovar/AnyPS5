@@ -263,12 +263,18 @@ static void PollsAStreamWhosePeerClosed() {
     Require(server >= 0);
 
     Require(shutdown_nid_postfix(client, 1) == 0);
-    GuestPollDescriptor wait{server, In, 0};
+    GuestPollDescriptor wait{client, static_cast<short>(In | Out), 0};
+    Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == Out);
+    wait = {server, In, 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == In);
     wait = {server, static_cast<short>(In | Out), 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == (In | Out));
     wait = {server, ReadNormal, 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == ReadNormal);
+#ifndef _WIN32
+    wait = {server, static_cast<short>(In | Priority | ReadBand), 0};
+    Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == In);
+#endif
     wait = {server, Out, 0};
     Require(poll_nid_postfix(&wait, 1, 1000) == 1 && wait.revents == Out);
     char byte;
@@ -351,6 +357,16 @@ int main() {
     Require(shortWait >= std::chrono::milliseconds(20) && shortWait < std::chrono::milliseconds(200));
     Require(poll_nid_postfix(nullptr, 1, 0) == -1 && *__error_nid_postfix() == 14);
     Require(poll_nid_postfix(&single, 1, -2) == -1 && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(reinterpret_cast<GuestPollDescriptor*>(std::uintptr_t{0x10}), 1, 0) == -1 && *__error_nid_postfix() == 14);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<GuestPollDescriptor*>(page);
+    *readOnly = {-1, In, 7};
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(poll_nid_postfix(readOnly, 1, 0) == -1 && *__error_nid_postfix() == 14);
+    Require(readOnly->descriptor == -1 && readOnly->revents == 7);
     TestPipes(listener);
     PollsFilesAndDirectories(listener);
     Require(close_nid_postfix(server) == 0);

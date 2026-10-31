@@ -1001,9 +1001,8 @@ int APS5_VABI sceNpTssGetData() {
     return 0;
 }
 
-int APS5_VABI sceNpTusCreateNpTitleCtx() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpTusCreateNpTitleCtx(std::uint32_t serviceLabel, void* npId) {
+    return sceNpTssCreateNpTitleCtx(serviceLabel, static_cast<const NpId*>(npId));
 }
 
 int APS5_VABI sceNpTusGetData(int reqId, const void* targetNpId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option) {

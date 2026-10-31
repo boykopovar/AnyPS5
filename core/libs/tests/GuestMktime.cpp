@@ -58,6 +58,57 @@ static void CheckFailure(Converter convert) {
     Require(Equal(input, original), "Failed mktime changed the guest calendar");
 }
 
+static void CheckEarlyYearNormalization(Converter convert) {
+    const struct {
+        int year;
+        int mon;
+        int mday;
+        int normalizedMon;
+        int normalizedMday;
+    } inputs[] = {{68, 24, 13, 0, 13}, {68, 25, 1, 1, 1}, {69, 11, 45, 0, 14}, {67, 36, 2, 0, 2}};
+    for (const auto& item : inputs) {
+        GuestTm canonical{};
+        canonical.tm_year = item.year;
+        canonical.tm_mon = item.mon;
+        canonical.tm_mday = item.mday;
+        canonical.tm_hour = 12;
+        canonical.tm_isdst = -1;
+        GuestTm input = canonical;
+        const std::int64_t timer = convert(&input);
+        Require(timer != -1, "mktime refused a calendar that normalizes into 1970");
+        GuestTm expected{};
+        Require(localtime_s_nid_postfix(&timer, &expected) == &expected, "Local conversion failed");
+        Require(Equal(input, expected), "mktime did not normalize an early-year calendar");
+        Require(input.tm_year == 70 && input.tm_mon == item.normalizedMon && input.tm_mday == item.normalizedMday && input.tm_hour == 12,
+            "mktime normalized to the wrong date");
+    }
+}
+
+static void CheckEquivalentFutureCalendars(const char* zone) {
+    Require(setenv_nid_postfix("TZ", zone, 1) == 0, "Could not set the time zone");
+    tzset_nid_postfix();
+    constexpr std::array<Converter, 2> converters{libc_mktime_nid_postfix, mktime_nid_postfix};
+    for (auto convert : converters) {
+        for (const int year : {420, 490, 1620}) {
+            GuestTm canonical{};
+            canonical.tm_year = year;
+            canonical.tm_mon = 9;
+            canonical.tm_mday = 22;
+            canonical.tm_hour = 18;
+            canonical.tm_min = 22;
+            canonical.tm_sec = 37;
+            canonical.tm_isdst = -1;
+            GuestTm nonordinary = canonical;
+            nonordinary.tm_mon = 21;
+            nonordinary.tm_mday = -343;
+            const auto expected = convert(&canonical);
+            Require(expected != -1, "mktime refused a representable future calendar");
+            Require(convert(&nonordinary) == expected, "equivalent future calendars used different time-zone rules");
+            Require(Equal(canonical, nonordinary), "equivalent future calendars normalized to different fields");
+        }
+    }
+}
+
 static void CheckZone(const char* zone) {
     Require(setenv_nid_postfix("TZ", zone, 1) == 0, "Could not set the time zone");
     tzset_nid_postfix();
@@ -68,6 +119,7 @@ static void CheckZone(const char* zone) {
         for (const auto timer : timers) {
             CheckNormalization(convert, timer);
         }
+        CheckEarlyYearNormalization(convert);
         CheckFailure(convert);
     }
 }
@@ -76,4 +128,9 @@ int main() {
     CheckZone("UTC0");
     CheckZone("UTC-2");
     CheckZone("UTC5");
+    CheckEquivalentFutureCalendars("EST5EDT");
+#ifndef _WIN32
+    CheckEquivalentFutureCalendars("America/New_York");
+    CheckEquivalentFutureCalendars("Pacific/Kiritimati");
+#endif
 }

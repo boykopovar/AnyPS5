@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -75,8 +76,8 @@ ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
 void SetImportWatch(const Context& context, ImportWatch watch);
 
-enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment };
-inline constexpr std::size_t ImportRequesterCount = 5;
+enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget };
+inline constexpr std::size_t ImportRequesterCount = 6;
 
 struct HostImportRequesterCounts {
     std::uint64_t made = 0;
@@ -117,6 +118,10 @@ void SetHostImportDeferredSettles(bool enabled);
 std::uint64_t HostImportBudget(const VkPhysicalDeviceMemoryProperties& memory, std::uint64_t physicalBytes);
 void SetHostImportMaxBytes(std::uint64_t bytes);
 std::uint64_t HostImportLiveBytes();
+// A flip ends a frame: an import used in the current or the previous frame is never evicted for another one.
+void NoteHostImportFrame();
+std::uint64_t HostImportFramesEnded();
+std::uint64_t HostImportEpoch();
 std::uint64_t HostImportBudgetRemaining(const Context& context);
 struct HostImportSettleCounts {
     std::uint64_t submitted = 0;
@@ -272,6 +277,24 @@ struct AddressCopy {
 };
 std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t limit);
 
+class AddressCopyCounters {
+public:
+    struct Totals {
+        std::uint64_t bytes = 0;
+        std::uint64_t largest = 0;
+    };
+
+    static AddressCopyCounters& ThisThread();
+    static Totals Fold();
+    static std::uint64_t Limit();
+
+    void Count(std::uint64_t copied);
+
+private:
+    alignas(64) std::atomic<std::uint64_t> bytes{0};
+    std::atomic<std::uint64_t> largest{0};
+};
+
 class GuestBufferMemory {
 public:
     explicit GuestBufferMemory(const Context& context);
@@ -303,6 +326,7 @@ public:
     // were confirmed unchanged): the previous use's copy-back left the shadow behind, and the next
     // RecordCopyBacks copies it back again. Nothing to do without staged regions.
     void RecordStagingCopies(Recorder& recorder);
+    bool StagingDecisionsCurrent() const;
     void AddSnapshot(const GuestMemorySnapshot& snapshot);
     // Upload is the two stages below back to back. UploadPrepare needs no device lock: it merges the
     // regions, binds the image mirrors and host imports that already serve them (an import pointer is
@@ -434,6 +458,7 @@ private:
         // path it would take without staging, in both upload stages.
         bool unstaged = false;
         bool overlay = false;
+        bool adaptiveInPlace = false;
     };
 
     // How [begin, end) lies against the space's base regions.
@@ -479,6 +504,8 @@ private:
     // written element inside, and an atomic element or a size within the written-shadow window.
     // Independent of the import, so UploadPrepare and UploadFinish decide alike.
     bool stagingEligible(const Region& region, bool addressable) const;
+    bool stagingWanted(const Region& region, bool addressable) const;
+    bool adaptiveInPlace(const Region& region, bool use) const;
     bool overlayCandidate(const Region& inside, bool readOnly) const;
     void resolveOverlays();
     bool bindableInPlace(std::uint64_t offset, bool addressable) const;

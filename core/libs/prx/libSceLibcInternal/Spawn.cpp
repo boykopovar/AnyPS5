@@ -393,11 +393,13 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
     if (flags != 0) {
         if (posix_spawnattr_init(&hostAttributes) != 0) return Fault;
         usedAttributes = &hostAttributes;
-        if ((flags & SpawnFlagResetIds) != 0) posix_spawnattr_setflags(usedAttributes, POSIX_SPAWN_RESETIDS);
+        short hostFlags = 0;
+        if ((flags & SpawnFlagResetIds) != 0) hostFlags |= POSIX_SPAWN_RESETIDS;
         if ((flags & SpawnFlagSetGroup) != 0) {
-            posix_spawnattr_setflags(usedAttributes, POSIX_SPAWN_SETPGROUP);
+            hostFlags |= POSIX_SPAWN_SETPGROUP;
             posix_spawnattr_setpgroup(usedAttributes, (*attributes)->processGroup);
         }
+        posix_spawnattr_setflags(usedAttributes, hostFlags);
     }
     posix_spawn_file_actions_t hostActions;
     posix_spawn_file_actions_t* usedActions = nullptr;

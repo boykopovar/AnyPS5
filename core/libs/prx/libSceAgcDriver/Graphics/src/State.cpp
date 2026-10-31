@@ -1,6 +1,7 @@
 #include <cstdio>
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
@@ -9,6 +10,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <bit>
 #include <bitset>
@@ -230,6 +232,11 @@ constexpr std::uint32_t PixelStageRunsMask = 0x000207c7u;
 constexpr std::uint32_t AlphaToCoverageMask = ~0x0001ff00u;
 constexpr std::uint32_t AlphaToCoverageUndithered = 0x0000aa01u;
 constexpr std::uint32_t AlphaToCoverageDithered = 0x00018701u;
+constexpr std::uint32_t AlphaToCoverageTwoSampleDithered = 0x0000e701u;
+
+bool ditheredAlphaToCoverageWord(std::uint32_t word) {
+    return word == AlphaToCoverageDithered || word == AlphaToCoverageTwoSampleDithered;
+}
 
 bool alphaToCoverageDisabled(const Registers& cx) {
     const auto control = find(cx, 0x203);
@@ -240,6 +247,22 @@ bool ditheredAlphaSamplesSupported(const Registers& cx) {
     const auto config = find(cx, 0x2f8);
     const auto eqaa = find(cx, 0x201);
     return config != cx.end() && (config->second & 0x700007u) == 0x300003u && eqaa != cx.end() && (eqaa->second & 0x207777u) == 0x3303u;
+}
+
+bool twoSampleDitheredAlphaSamplesSupported(const Registers& cx) {
+    const auto config = find(cx, 0x2f8);
+    const auto eqaa = find(cx, 0x201);
+    return config != cx.end() && (config->second & 0x700007u) == 0x100001u && eqaa != cx.end() && (eqaa->second & 0x207077u) == 0x1001u && ((eqaa->second >> 8u) & 7u) <= 1u;
+}
+
+bool twoSampleDitheredAlphaLocationsSupported(const Registers& cx) {
+    const auto first = find(cx, 0x2fe);
+    if (first == cx.end() || (first->second != 0xcc44u && first->second != 0xc44cu)) return false;
+    for (std::uint32_t pixel = 1; pixel < 4; ++pixel) {
+        const auto locations = find(cx, 0x2fe + pixel * 4u);
+        if (locations == cx.end() || locations->second != first->second) return false;
+    }
+    return true;
 }
 
 bool ditheredAlphaLocationsSupported(const Registers& cx) {
@@ -415,8 +438,8 @@ VkStencilOpState stencilFace(std::uint32_t compare, std::uint32_t ops, std::uint
 DepthTarget decodeDepthPlane(const Registers& cx) {
     const auto viewRegister = find(cx, 0x002);
     const auto view = viewRegister == cx.end() ? 0u : viewRegister->second;
-    const auto viewMip = (view >> 26u) & 0xfu;
     const auto maxMip = (read(cx, 0x010) >> 16u) & 0xfu;
+    const auto viewMip = maxMip == 0 ? 0u : (view >> 26u) & 0xfu;
     const auto zFormat = read(cx, 0x010) & 3u;
     const auto stencilRegister = find(cx, 0x011);
     const auto stencilInfo = stencilRegister == cx.end() ? 0u : stencilRegister->second;
@@ -427,8 +450,9 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
     };
     DepthTarget depth{};
     depth.samples = 1u << ((read(cx, 0x010) >> 2u) & 3u);
-    depth.depthSwizzle = (read(cx, 0x010) >> 4u) & 31u;
-    depth.iterate256 = (read(cx, 0x010) & (1u << 20u)) != 0;
+    const bool gcn = ShaderRecompiler::GcnGuestShaders();
+    depth.depthSwizzle = gcn ? 0u : (read(cx, 0x010) >> 4u) & 31u;
+    depth.iterate256 = !gcn && (read(cx, 0x010) & (1u << 20u)) != 0;
     depth.firstSlice = view & 0x1fffu;
     depth.lastSlice = (view >> 13u) & 0x7ffu;
     depth.address = zFormat != 0 ? base(0x012, 0x01a) : 0;
@@ -442,9 +466,14 @@ DepthTarget decodeDepthPlane(const Registers& cx) {
             depth.htileVrsEncoding = (surface->second >> 19u) & 3u;
         }
     }
-    const auto size = read(cx, 0x007);
-    depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
-    if (maxMip == 0 && viewMip != 0) Require(false, "depth view mip " + std::to_string(viewMip) + " on a surface without mips");
+    if (gcn) {
+        const auto size = read(cx, 0x016);
+        depth.extent = {((size & 0x7ffu) + 1u) * 8u, (((size >> 11u) & 0x7ffu) + 1u) * 8u};
+    } else {
+        const auto size = read(cx, 0x007);
+        depth.extent = {(size & 0x3fffu) + 1u, ((size >> 16u) & 0x3fffu) + 1u};
+    }
+    Require(!gcn || (maxMip == 0 && viewMip == 0), "PS4 depth targets with mip levels are not implemented");
     if (maxMip != 0) {
         char message[320];
         std::snprintf(message, sizeof(message), "depth view mip %u of %u at %ux%u (DB_Z_INFO 0x%08x, DB_DEPTH_VIEW 0x%08x)", viewMip, maxMip + 1u, depth.extent.width, depth.extent.height, read(cx, 0x010), view);
@@ -581,7 +610,7 @@ constexpr std::array<std::array<std::int8_t, 2>, 2> StandardLocations2{{{4, 4}, 
 constexpr std::array<std::array<std::int8_t, 2>, 4> StandardLocations4{{{-2, -6}, {6, -2}, {-6, 2}, {2, 6}}};
 constexpr std::array<std::array<std::int8_t, 2>, 8> StandardLocations8{{{1, -3}, {-1, 3}, {5, 1}, {-3, -5}, {-5, 5}, {-7, -1}, {3, 7}, {7, -7}}};
 
-std::string nonTriangleRejection(const QueueState& queue, const char* message, bool rectangles = false) {
+std::string nonTriangleRejection(const QueueState& queue, const char* message, bool rectangles = false, bool lines = false) {
     const auto word = [](const Registers& registers, std::uint32_t offset, RegisterBank bank = RegisterBank::Context) -> std::optional<std::uint32_t> {
         const auto it = find(registers, offset, bank);
         if (it == registers.end()) return std::nullopt;
@@ -598,7 +627,7 @@ std::string nonTriangleRejection(const QueueState& queue, const char* message, b
             const auto topology = (*parameters >> 5u) & 7u;
             if ((domain != 1u && domain != 2u) || (topology != 2u && topology != 3u)) return zeroMessage(0x2db, *parameters, message);
         }
-    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u && *primitive != 21u && !(rectangles && (*primitive == 7u || *primitive == 17u))) {
+    } else if (const auto primitive = word(queue.userConfig, 0x242, RegisterBank::UserConfig); primitive && *primitive != 4u && *primitive != 5u && *primitive != 6u && *primitive != 21u && !(rectangles && (*primitive == 7u || *primitive == 17u)) && !(lines && (*primitive == 2u || *primitive == 3u))) {
         return zeroMessage(0x242, *primitive, message);
     }
     return {};
@@ -615,9 +644,9 @@ std::string singleSampleMsaaRejection(const QueueState& queue) {
         const auto offset = 0x2feu + pixel * 4u;
         if (const auto locations = word(cx, offset); locations && (*locations & 0xffu) != 0) return zeroMessage(offset, *locations, "MSAA_ENABLE on a single-sample target whose sample is off the pixel center");
     }
-    if (const auto alphaToMask = word(cx, 0x2dc); alphaToMask && (*alphaToMask & 1u) != 0 && !(*alphaToMask == AlphaToCoverageDithered && alphaToCoverageDisabled(cx))) return zeroMessage(0x2dc, *alphaToMask, "MSAA_ENABLE on a single-sample target with alpha-to-coverage");
+    if (const auto alphaToMask = word(cx, 0x2dc); alphaToMask && (*alphaToMask & 1u) != 0 && !(ditheredAlphaToCoverageWord(*alphaToMask) && alphaToCoverageDisabled(cx))) return zeroMessage(0x2dc, *alphaToMask, "MSAA_ENABLE on a single-sample target with alpha-to-coverage");
     if (const auto conservative = word(cx, 0x313); conservative && (*conservative & ~0x001f6000u) != 0) return zeroMessage(0x313, *conservative, "MSAA_ENABLE on a single-sample target with conservative rasterization");
-    return nonTriangleRejection(queue, "MSAA_ENABLE on a single-sample target for primitives other than triangles and rectangles", true);
+    return nonTriangleRejection(queue, "MSAA_ENABLE on a single-sample target for primitives other than triangles, lines and rectangles", true, true);
 }
 
 std::string singleSampleDepthScanRejection(const QueueState& queue) {
@@ -1197,7 +1226,7 @@ std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const Shad
     std::array<std::uint8_t, 32> locations{};
     const bool sampleBarycentrics = (pixel.inputAddr & (PixelInputBit(PixelInput::PerspectiveSample) | PixelInputBit(PixelInput::LinearSample))) != 0u;
     const bool samplePosition = !state.perSampleShading && (pixel.posX || pixel.posY) && pixel.positionLocation == ShaderRecompiler::PixelPositionLocation::Sample;
-    const bool mergedCentres = pixel.targetMerge.samples > 1u && (pixel.inputAddr & (PixelInputBit(PixelInput::PerspectiveCenter) | PixelInputBit(PixelInput::LinearCenter))) != 0u;
+    const bool mergedCentres = !pixel.targetMerges.empty() && pixel.targetMerges.front().samples > 1u && (pixel.inputAddr & (PixelInputBit(PixelInput::PerspectiveCenter) | PixelInputBit(PixelInput::LinearCenter))) != 0u;
     if (!sampleBarycentrics && !samplePosition && !mergedCentres) return locations;
     const auto samples = state.perSampleShading ? state.samples : 1u;
     for (std::uint32_t pixelIndex = 0; pixelIndex < 4u; ++pixelIndex) {
@@ -1237,44 +1266,24 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     validate(!vertexWorkgroup || ((value & 0x02002020u) == 0x2000u && !tessellation), "a vertex program that needs a workgroup requires PRIMGEN_EN without GS_EN, PRIMGEN_PASSTHRU_EN or tessellation");
     const bool geometry = (value & 0x20u) != 0 || vertexWorkgroup;
     validate(tessellation == ((value & 4u) != 0), "Patch topology and HS_EN disagree");
-    validate(!tessellation || !geometry, "combined tessellation and geometry is unsupported by the reference path");
-    const auto path = tessellation ? ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
+    const auto path = tessellation ? geometry ? ShaderPath::TessellationGeometry : ShaderPath::Tessellation : geometry ? ShaderPath::Geometry : ShaderPath::Vertex;
     ShaderStages result{path, value, (value & 0x00400000u) != 0 ? 32u : 64u, (read(queue.context, 0x1b6) & 0x8000u) != 0 ? 32u : 64u, {}, {}};
+    result.hullWaveSize = (value & 0x00200000u) != 0 ? 32u : 64u;
     APS5_LOG_OUT_DEBUG("DecodeShaderStages value=0x%x primitive=%u path=%u vertexWave=%u", value, primitive, static_cast<unsigned>(result.path), result.vertexWaveSize);
-    if (path == ShaderPath::Vertex) {
-        validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
-        validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
-    } else if (path == ShaderPath::Tessellation) {
-        validate((value & 0x00600020u) == 0, "wave32 tessellation or geometry amplification is unsupported");
-        validate((value & ~0x0207ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
-        const auto config = read(queue.context, 0x2d6);
-        const auto parameters = read(queue.context, 0x2db);
-        const auto primitiveGroup = find(queue.userConfig, 0x25b, RegisterBank::UserConfig);
-        ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu, parameters & 3u, (parameters >> 2u) & 7u, (parameters >> 5u) & 7u, config & 0xffu, primitiveGroup == queue.userConfig.end() ? 0u : primitiveGroup->second & 0x1ffu, primitiveGroup != queue.userConfig.end() && (primitiveGroup->second & 0x40000u) != 0u};
-        validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
-        validate(tess.patchesPerGroup != 0, "VGT_LS_HS_CONFIG.NUM_PATCHES is zero");
-        if ((parameters & ~0x000600ffu) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
-        if (!((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3))) validate(false, tessellationMessage(config, parameters, tess).c_str());
-        result.minTessellationLevel = readFloat(queue.context, 0x287);
-        result.maxTessellationLevel = readFloat(queue.context, 0x286);
-        Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");
-        result.tessellation = tess;
-    } else {
-        const bool fastLaunch = ((value >> 19u) & 3u) == 1u;
-        validate((value & ~(fastLaunch ? 0x004fec30u : 0x0047ec30u)) == 0, "unsupported geometry routing, fast launch or wave-ID state");
+    const auto meshConfiguration = [&](std::uint32_t inputPrimitive, bool fastLaunch) {
         const auto group = read(queue.userConfig, 0x25b, RegisterBank::UserConfig);
         const auto vertices = (group >> 9u) & 0x1ffu;
         const auto primitives = group & 0x1ffu;
-        validate(!fastLaunch || (!vertexWorkgroup && primitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
+        validate(!fastLaunch || (!vertexWorkgroup && inputPrimitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
         const auto maxVertices = read(queue.context, 0x1ff);
         const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
         const auto outputType = read(queue.context, 0x29b);
         validate(outputType == 2 || ((outputType == 0 || outputType == 1) && !vertexWorkgroup), "VGT_GS_OUT_PRIM_TYPE other than a triangle strip, or a point list or line strip from a geometry program, is unsupported");
         const auto outputSize = outputType == 0 ? 1u : outputType == 1 ? 2u : 3u;
-        validate((primitive == 1 || primitive == 2 || primitive == 4 || primitive == 5 || primitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
-        const auto inputSize = primitive == 1 ? 1u : primitive == 2 ? 2u : 3u;
+        validate((inputPrimitive == 1 || inputPrimitive == 2 || inputPrimitive == 4 || inputPrimitive == 5 || inputPrimitive == 6) && verticesPerPrimitive >= outputSize, "unsupported geometry input or output assembly");
+        const auto inputSize = inputPrimitive == 1 ? 1u : inputPrimitive == 2 ? 2u : 3u;
         validate(vertices >= inputSize && maxVertices != 0 && (!vertexWorkgroup || maxVertices >= inputSize) && maxVertices <= 256 && verticesPerPrimitive <= 256, "invalid geometry subgroup output");
-        const auto inputStep = primitive == 5 || primitive == 6 ? 1u : inputSize;
+        const auto inputStep = inputPrimitive == 5 || inputPrimitive == 6 ? 1u : inputSize;
         const auto outputLimit = vertexWorkgroup ? (maxVertices - inputSize) / inputStep + 1u : maxVertices / verticesPerPrimitive;
         const auto groupPrimitives = std::min({primitives, (vertices - inputSize) / inputStep + 1u, outputLimit});
         validate(groupPrimitives != 0, "geometry subgroup contains no primitives");
@@ -1287,9 +1296,61 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto threads = std::max({(groupPrimitives - 1u) * inputStep + inputSize, primitives, maxVertices, maxPrimitives});
         const auto raster = find(queue.context, 0x205);
         const auto provokingVertex = raster != queue.context.end() && (raster->second & (1u << 19u)) != 0 ? outputSize - 1u : 0u;
-        result.mesh = ShaderRecompiler::MeshConfiguration{primitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
+        return ShaderRecompiler::MeshConfiguration{inputPrimitive, groupPrimitives, (groupPrimitives - 1u) * inputStep + inputSize, maxVertices, maxPrimitives, ((threads + result.vertexWaveSize - 1u) / result.vertexWaveSize) * result.vertexWaveSize, ((resources >> 19u) & 0xffu) * 128u, provokingVertex, esgsItemSize, outputSize};
+    };
+    if (path == ShaderPath::Vertex && ShaderRecompiler::GcnGuestShaders() && (value & 0x2000u) == 0) {
+        validate(value == 0, "GCN vertex routing other than a plain VS is unsupported");
+        const auto unitStepRate = [&](std::uint32_t offset) {
+            const auto rate = find(queue.context, offset);
+            return rate == queue.context.end() || rate->second == 1u;
+        };
+        const auto components = (read(queue.shader, 0x4a, RegisterBank::Shader) >> 24u) & 3u;
+        validate(components == 0 || (unitStepRate(0x2a8) && (components == 1 || unitStepRate(0x2a9))), "GCN vertex instance step rates other than 1 are not implemented");
+        result.legacyVertex = true;
+    } else if (path == ShaderPath::Vertex) {
+        validate((value & 0x2000u) != 0, "legacy vertex routing without PRIMGEN_EN is unsupported");
+        validate((value & ~0x0247a010u) == 0 || value == 0x02002008u, "unsupported vertex routing, scheduling or wave-ID state");
+    } else if (path == ShaderPath::Tessellation || path == ShaderPath::TessellationGeometry) {
+        if (path == ShaderPath::Tessellation) validate((value & ~0x0267ed0du) == 0 && (value & 0x02002000u) == 0x02002000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation routing");
+        else validate((value & ~0x0067ed2du) == 0 && (value & 0x02002000u) == 0x2000u && (value & 3u) == 1u && ((value >> 3u) & 3u) == 1u, "unsupported tessellation and geometry routing");
+        const auto config = read(queue.context, 0x2d6);
+        const auto parameters = read(queue.context, 0x2db);
+        const auto primitiveGroup = find(queue.userConfig, 0x25b, RegisterBank::UserConfig);
+        ShaderRecompiler::TessellationConfiguration tess{(config >> 8u) & 0x3fu, (config >> 14u) & 0x3fu, parameters & 3u, (parameters >> 2u) & 7u, (parameters >> 5u) & 7u, config & 0xffu, primitiveGroup == queue.userConfig.end() ? 0u : primitiveGroup->second & 0x1ffu, primitiveGroup != queue.userConfig.end() && (primitiveGroup->second & 0x40000u) != 0u};
+        validate(tess.inputControlPoints != 0 && tess.inputControlPoints <= 32 && tess.outputControlPoints != 0 && tess.outputControlPoints <= 32, "invalid tessellation control-point counts");
+        validate(tess.patchesPerGroup != 0, "VGT_LS_HS_CONFIG.NUM_PATCHES is zero");
+        if ((parameters & ~0x000600ffu) != 0) Require(false, zeroMessage(0x2db, parameters, "VGT_TF_PARAM donut, factor detection, memory type or reserved state"));
+        if (!((tess.domain == 1 || tess.domain == 2) && (tess.partitioning == 0 || tess.partitioning == 2 || tess.partitioning == 3) && (tess.outputTopology == 2 || tess.outputTopology == 3))) validate(false, tessellationMessage(config, parameters, tess).c_str());
+        result.minTessellationLevel = readFloat(queue.context, 0x287);
+        result.maxTessellationLevel = readFloat(queue.context, 0x286);
+        Require(result.minTessellationLevel >= 0.0f && result.minTessellationLevel <= 63.0f && result.minTessellationLevel <= result.maxTessellationLevel && result.maxTessellationLevel >= 1.0f, "tessellation level clamps need 0 <= VGT_HOS_MIN_TESS_LEVEL <= 63, VGT_HOS_MAX_TESS_LEVEL >= 1 and the minimum at most the maximum");
+        result.tessellation = tess;
+        if (path == ShaderPath::TessellationGeometry) result.tessellationGeometry = meshConfiguration(4u, false);
+    } else {
+        const bool fastLaunch = ((value >> 19u) & 3u) == 1u;
+        validate((value & ~(fastLaunch ? 0x004fec30u : 0x0047ec30u)) == 0, "unsupported geometry routing, fast launch or wave-ID state");
+        result.mesh = meshConfiguration(primitive, fastLaunch);
     }
     return result;
+}
+
+std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
+    if (stage == ShaderRecompiler::ShaderStage::Fragment) return stages.fragmentWaveSize;
+    if (stage == ShaderRecompiler::ShaderStage::Local || stage == ShaderRecompiler::ShaderStage::TessellationControl) return stages.hullWaveSize;
+    return stages.vertexWaveSize;
+}
+
+std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage) {
+    if (stages.mesh) return stages.mesh;
+    if (stage == ShaderRecompiler::ShaderStage::TessellationEvaluation || stage == ShaderRecompiler::ShaderStage::Mesh) return stages.tessellationGeometry;
+    return std::nullopt;
+}
+
+std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap) {
+    const bool preRasterization = pushOffset < PipelinePushSlotBytes;
+    if (stages.mesh || (stages.tessellationGeometry && preRasterization)) return ShaderRecompiler::MeshDrawPushOffsetBytes;
+    if (stages.tessellation && preRasterization) return ShaderRecompiler::TessellationLevelPushOffsetBytes;
+    return depthRemap ? ShaderRecompiler::DepthRemapPushOffsetBytes : PipelinePushSlotBytes;
 }
 
 bool DepthResummarizeDrawsNothing(const QueueState& queue) {
@@ -1386,7 +1447,9 @@ void ApplyDepthRemap(const Context& context, State& state) {
     const auto& viewport = state.viewport;
     const bool inRange = viewport.minDepth >= 0 && viewport.minDepth <= 1 && viewport.maxDepth >= 0 && viewport.maxDepth <= 1;
     if (context.depthRangeUnrestricted || inRange) return;
-    Require(state.stages.path == ShaderPath::Vertex && !state.stages.mesh && !state.stages.tessellation, "viewport depth outside [0, 1] is remapped on the vertex path only");
+    const bool vertex = state.stages.path == ShaderPath::Vertex && !state.stages.tessellation;
+    const bool tessellation = state.stages.path == ShaderPath::Tessellation && state.stages.tessellation.has_value();
+    Require((vertex || tessellation) && !state.stages.mesh, "viewport depth outside [0, 1] is remapped on the vertex and tessellation paths only");
     Require(context.depthClamp, "viewport depth outside [0, 1] needs depth clamping to stand in for the console's clamp");
     const float clampMin = std::clamp(state.depthClampMin, 0.0f, 1.0f);
     const float clampMax = std::clamp(state.depthClampMax, 0.0f, 1.0f);
@@ -1406,6 +1469,20 @@ void ApplyDepthRemap(const Context& context, State& state) {
     state.viewport.maxDepth = clampMax;
     state.negativeOneToOne = false;
     state.depthClamp = true;
+}
+
+static bool SignedNormalizedFormat(VkFormat format) {
+    return format == VK_FORMAT_R8_SNORM || format == VK_FORMAT_R16_SNORM || format == VK_FORMAT_R8G8_SNORM || format == VK_FORMAT_R16G16_SNORM || format == VK_FORMAT_R8G8B8A8_SNORM || format == VK_FORMAT_B8G8R8A8_SNORM || format == VK_FORMAT_R16G16B16A16_SNORM;
+}
+
+static std::uint32_t NormalizedChannelMask(VkFormat format) {
+    switch (format) {
+        case VK_FORMAT_R8_SNORM:
+        case VK_FORMAT_R16_SNORM: return 0x1u;
+        case VK_FORMAT_R8G8_SNORM:
+        case VK_FORMAT_R16G16_SNORM: return 0x3u;
+        default: return 0xfu;
+    }
 }
 
 State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
@@ -1480,13 +1557,18 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
     }
     zero(cx, 0x203, shaderControlMask(read(cx, 0x1c4)), "depth export, shader coverage or ordered fragment execution");
     const auto alpha = read(cx, 0x2dc);
-    const bool alphaDisabled = alpha == AlphaToCoverageDithered && alphaToCoverageDisabled(cx);
-    result.alphaToCoverage = alpha == AlphaToCoverageUndithered || (!alphaDisabled && alpha == AlphaToCoverageDithered);
-    result.ditheredAlphaToCoverage = result.alphaToCoverage && alpha == AlphaToCoverageDithered;
+    const bool alphaDisabled = ditheredAlphaToCoverageWord(alpha) && alphaToCoverageDisabled(cx);
+    result.alphaToCoverage = alpha == AlphaToCoverageUndithered || (!alphaDisabled && ditheredAlphaToCoverageWord(alpha));
+    result.ditheredAlphaToCoverage = result.alphaToCoverage && ditheredAlphaToCoverageWord(alpha);
     if (!result.alphaToCoverage) zero(cx, 0x2dc, alphaDisabled ? AlphaToCoverageMask & ~1u : AlphaToCoverageMask, "dithered or rounded alpha-to-coverage");
-    if (result.ditheredAlphaToCoverage) {
+    if (result.ditheredAlphaToCoverage && alpha == AlphaToCoverageDithered) {
         Require(ditheredAlphaSamplesSupported(cx), "dithered alpha-to-coverage requires eight matched raster/DB_EQAA samples and one pixel iteration");
         Require(!result.customSampleLocations, "dithered alpha-to-coverage with custom sample locations is unsupported");
+    }
+    if (result.ditheredAlphaToCoverage && alpha == AlphaToCoverageTwoSampleDithered) {
+        Require(twoSampleDitheredAlphaSamplesSupported(cx), "DB_ALPHA_TO_MASK 0xe701 requires two matched raster/DB_EQAA samples and one pixel iteration");
+        Require(twoSampleDitheredAlphaLocationsSupported(cx), "DB_ALPHA_TO_MASK 0xe701 is supported only with the two-sample locations (4,4),(-4,-4) or (-4,4),(4,-4) in every pixel");
+        result.ditheredAlphaSamples = 2;
     }
     const bool depthKeepsSampleZero = result.depth && result.depth->samples == 1 && result.samples > 1;
     zero(cx, 0x292, ScanModeMask & ~1u, "scan conversion mode");
@@ -1758,7 +1840,7 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             Require(nibbles || (exportedMask & packedMask) == packedMask, "partial writes of " + packed + " color target are unsupported");
             if ((exportedMask & packedMask) != packedMask) {
                 Require(color.mipCount == 1u && color.depth == 1u && color.layers == 1u && color.arrayLastSlice == 0u, "partial writes of a mipmapped, volume or array " + std::string(PackedColorTargetName(color.packing)) + " color target are not implemented");
-                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0; }), "partial writes of more than one packed color target are not implemented");
+                Require(std::ranges::none_of(result.colors, [](const ColorTarget& other) { return other.partialWriteMask != 0; }), "partial writes of a packed color target merge into their target alone and cannot join another merged color target of the draw");
                 color.partialWriteMask = PackedWriteMask(mapping, exportedMask);
                 state.colorWriteMask = 0;
                 if (color.samples > 1u) {
@@ -1785,7 +1867,13 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         if (const auto info = read(cx, 0x31c + slot * 0xfu); state.blendEnable && (info & 0x8000u) == 0 && ((info >> 8u) & 7u) <= 1u) {
             char detail[80];
             std::snprintf(detail, sizeof(detail), " (CB_COLOR_INFO 0x%08x, CB_BLEND%u_CONTROL 0x%08x)", info, slot, blend);
-            throw std::runtime_error(std::string("AGC graphics: blending unclamped normalized color is not implemented") + detail);
+            const std::string where = detail;
+            Require(color.samples == 1u && color.packing == ShaderRecompiler::ColorExportPacking::None, "blending unclamped normalized color into a multisampled or packed color target is not implemented" + where);
+            Require(!reversed && mapping != 0xecu, "blending unclamped normalized color into a color target with a reversed or alternate component order is not implemented" + where);
+            Require(!(secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor)), "dual-source blending of unclamped normalized color is not implemented" + where);
+            Require(std::ranges::none_of(result.colors, [&](const ColorTarget& other) { return &other != &color && other.partialWriteMask != 0 && other.partialWriteMask != UnclampedBlendMask; }), "blending unclamped normalized color cannot join a partial write of a packed color target in one draw" + where);
+            Require(!SignedNormalizedFormat(color.format) || (state.colorWriteMask & NormalizedChannelMask(color.format)) == NormalizedChannelMask(color.format), "blending unclamped signed normalized color with a write mask that skips a component is not implemented, since the shader rewrites the skipped component through a float and the code -128 would become -127" + where);
+            color.partialWriteMask = UnclampedBlendMask;
         }
         result.blends[color.exportIndex] = state;
     }
@@ -1854,11 +1942,14 @@ bool DepthStencilTests(const State& state) {
     return state.depth.has_value() && (state.depthTest || state.stencilTest || state.depthBoundsTest);
 }
 
-ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state) {
-    ShaderRecompiler::TargetMerge merge;
+std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state) {
+    static_assert(VK_BLEND_FACTOR_ZERO == 0 && VK_BLEND_FACTOR_SRC_ALPHA_SATURATE == 14 && VK_BLEND_OP_ADD == 0 && VK_BLEND_OP_MAX == 4);
+    std::vector<ShaderRecompiler::TargetMerge> merges;
     for (const auto& color : state.colors) {
         if (color.partialWriteMask == 0) continue;
-        Require(merge.mask == 0 && color.exportIndex < 8u && color.samples <= 8u, "a draw merges into one packed color target at most");
+        Require(color.exportIndex < 8u && color.samples <= 8u, "a merged color target needs an MRT slot below 8 and at most 8 samples");
+        Require(std::ranges::none_of(state.colors, [&](const ColorTarget& other) { return &other != &color && other.partialWriteMask != 0 && other.address < color.address + color.bytes && color.address < other.address + other.bytes; }), "two merged color targets of one draw share memory");
+        auto& merge = merges.emplace_back();
         Require(color.samples == 1u || state.perSampleShading, "a merged multisampled color target needs per-sample shading");
         merge.target = static_cast<std::uint8_t>(color.exportIndex);
         merge.mask = color.partialWriteMask;
@@ -1866,8 +1957,21 @@ ShaderRecompiler::TargetMerge ExportTargetMerge(const State& state) {
         merge.descriptor = EncodeTextureResource(TargetMergeSurface(color));
         merge.depthStencilWrites = DepthStencilWrites(state);
         merge.depthStencilTests = DepthStencilTests(state);
+        if (color.partialWriteMask != UnclampedBlendMask) continue;
+        const auto& attachment = state.blends.at(color.exportIndex);
+        auto& blend = merge.blend;
+        blend.enabled = true;
+        blend.snorm = SignedNormalizedFormat(color.format);
+        blend.colorSource = static_cast<std::uint8_t>(attachment.srcColorBlendFactor);
+        blend.colorDestination = static_cast<std::uint8_t>(attachment.dstColorBlendFactor);
+        blend.colorOperation = static_cast<std::uint8_t>(attachment.colorBlendOp);
+        blend.alphaSource = static_cast<std::uint8_t>(attachment.srcAlphaBlendFactor);
+        blend.alphaDestination = static_cast<std::uint8_t>(attachment.dstAlphaBlendFactor);
+        blend.alphaOperation = static_cast<std::uint8_t>(attachment.alphaBlendOp);
+        blend.writeMask = static_cast<std::uint8_t>(attachment.colorWriteMask & 0xfu);
+        for (std::size_t i = 0; i < 4; ++i) blend.constants[i] = std::bit_cast<std::uint32_t>(state.blendConstants[i]);
     }
-    return merge;
+    return merges;
 }
 
 bool PartialSampleMask(const State& state) {
@@ -1977,6 +2081,7 @@ GuestTextureResource SurfaceForTarget(const ColorTarget& color) {
     surface.dccAddress = color.dccAddress != 0 ? color.dccAddress : color.chainDccAddress;
     surface.dccAlphaOnMsb = color.dccAlphaOnMsb;
     surface.dccPipeAligned = color.dccPipeAligned;
+    if (ColorTileModeIsGcn(color.tileMode)) surface.gcnPitch = surface.width;
     return surface;
 }
 DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number, std::uint32_t swap) {
@@ -1986,7 +2091,54 @@ DecodedColorFormat DecodeColorFormat(std::uint32_t format, std::uint32_t number,
 }
 
 
+ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
+    const auto stride = slot * 0xfu;
+    ColorTarget color{};
+    color.slot = slot;
+    const auto info = read(cx, 0x31c + stride);
+    const auto number = (info >> 8u) & 7u;
+    const auto swap = (info >> 11u) & 3u;
+    const auto decoded = DecodeColorFormat((info >> 2u) & 0x1fu, number, swap);
+    const auto attrib = read(cx, 0x31d + stride);
+    color.samples = 1u << ((attrib >> 12u) & 7u);
+    Require(color.samples == 1u, "multisampled GCN color targets are not implemented");
+    Require((info & 0x3u) == 0 && (info & 0x80u) == 0, "endian-swapped or linear-general GCN color targets are not implemented");
+    Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
+    const auto view = read(cx, 0x31b + stride);
+    Require((view & 0x7ffu) == 0 && ((view >> 13u) & 0x7ffu) == 0, "GCN color array slices are not implemented");
+    const auto pitch = ((read(cx, 0x319 + stride) & 0x7ffu) + 1u) * 8u;
+    const auto sliceElements = ((read(cx, 0x31a + stride) & 0x3fffffu) + 1u) * 64u;
+    color.extent = {pitch, sliceElements / pitch};
+    color.surfaceExtent = color.extent;
+    color.elementBytes = decoded.elementBytes;
+    switch (attrib & 0x1fu) {
+        case 8u: color.tileMode = ColorTileMode::Linear; break;
+        case 5u: case 13u: color.tileMode = ColorTileMode::GcnThin1D; break;
+        case 9u: color.tileMode = ColorTileMode::GcnDisplay1D; break;
+        case 10u: color.tileMode = ColorTileMode::GcnDisplay2D; break;
+        case 14u: color.tileMode = ColorTileMode::GcnThin2D; break;
+        default: throw std::runtime_error("AGC graphics: PS4 color target tile mode index " + std::to_string(attrib & 0x1fu) + " is not implemented");
+    }
+    color.mipCount = 1;
+    color.surfaceAddress = static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u;
+    color.address = color.surfaceAddress;
+    const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+    Require(layout.Bytes() == static_cast<std::size_t>(pitch) * color.extent.height * color.elementBytes, "PS4 color target pitch or slice is not padded the way its tile mode pads them");
+    color.bytes = layout.Bytes();
+    color.format = decoded.format;
+    color.componentMapping = decoded.componentMapping;
+    color.packing = decoded.packing;
+    for (std::uint32_t word = 0; word < 2; ++word) {
+        const auto clear = find(cx, 0x323 + word + stride);
+        color.clearWords[word] = clear == cx.end() ? 0u : clear->second;
+    }
+    Require(((info >> 13u) & 1u) == 0, "PS4 color target fast clear (CMASK) is not implemented");
+    GuestMemory::CheckRange(reinterpret_cast<const void*>(color.address), color.bytes, layout.Alignment(), true);
+    return color;
+}
+
 ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allowMultisampleDcc) {
+    if (ShaderRecompiler::GcnGuestShaders()) return DecodeGcnColorBuffer(cx, slot);
     const auto stride = slot * 0xfu;
     ColorTarget color{};
     color.slot = slot;
@@ -2282,7 +2434,7 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
             Require(target.samples == 1, "CB metadata pass over a multisampled color target, whose texels are on the host, is unsupported (only a CB resolve is modeled)");
         }
         Require((read(cx, 0x31c + slot * 0xfu) & 0x10000000u) == 0 || target.dccAddress != 0, "CB metadata pass over a mipmapped DCC color target, whose keys are not modeled");
-        requireCovered(target);
+        if (target.dccAddress != 0 || (target.cmaskAddress != 0 && pass.mode != ColorMetadataPass::Mode::EliminateFastClear)) requireCovered(target);
         pass.targets.push_back(target);
     }
     return pass;
@@ -2336,13 +2488,15 @@ std::string DrawRejection(const QueueState& queue, bool indexed) {
     static_cast<void>(value(cx, 0x1c4, zFormat));
     if (auto reason = nonzero(cx, 0x203, shaderControlMask(zFormat), "depth export, shader coverage or ordered fragment execution"); !reason.empty()) return reason;
     if (value(cx, 0x2dc, word)) {
-        const bool alphaDisabled = word == AlphaToCoverageDithered && alphaToCoverageDisabled(cx);
-        if ((word != AlphaToCoverageUndithered && word != AlphaToCoverageDithered) || alphaDisabled) {
+        const bool alphaDisabled = ditheredAlphaToCoverageWord(word) && alphaToCoverageDisabled(cx);
+        if ((word != AlphaToCoverageUndithered && !ditheredAlphaToCoverageWord(word)) || alphaDisabled) {
             if (auto reason = nonzero(cx, 0x2dc, alphaDisabled ? AlphaToCoverageMask & ~1u : AlphaToCoverageMask, "dithered or rounded alpha-to-coverage"); !reason.empty()) return reason;
         }
         if (!alphaDisabled && word == AlphaToCoverageDithered && !ditheredAlphaSamplesSupported(cx)) return "AGC graphics: dithered alpha-to-coverage requires eight matched raster/DB_EQAA samples and one pixel iteration";
-        if (!alphaDisabled && word == AlphaToCoverageDithered) {
-            if (!ditheredAlphaLocationsSupported(cx)) return "AGC graphics: dithered alpha-to-coverage with custom sample locations is unsupported";
+        if (!alphaDisabled && word == AlphaToCoverageTwoSampleDithered && !twoSampleDitheredAlphaSamplesSupported(cx)) return "AGC graphics: DB_ALPHA_TO_MASK 0xe701 requires two matched raster/DB_EQAA samples and one pixel iteration";
+        if (!alphaDisabled && ditheredAlphaToCoverageWord(word)) {
+            if (word == AlphaToCoverageDithered && !ditheredAlphaLocationsSupported(cx)) return "AGC graphics: dithered alpha-to-coverage with custom sample locations is unsupported";
+            if (word == AlphaToCoverageTwoSampleDithered && !twoSampleDitheredAlphaLocationsSupported(cx)) return "AGC graphics: DB_ALPHA_TO_MASK 0xe701 is supported only with the two-sample locations (4,4),(-4,-4) or (-4,4),(4,-4) in every pixel";
             std::uint32_t format = 0;
             if (value(cx, 0x1c5, format)) {
                 format &= 0xfu;

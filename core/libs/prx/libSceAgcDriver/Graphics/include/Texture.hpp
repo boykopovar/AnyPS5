@@ -65,7 +65,7 @@ public:
     // compute pass writing it and the next pass sampling it share one image and copy nothing.
     // CanCopyFrom says whether the two descriptors address the same surface compatibly.
     Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components);
-    Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D, std::uint32_t baseLayer = 0, std::shared_ptr<OwnedImage> owner = {}, VkImageUsageFlags usage = 0);
+    Texture(const Context& context, VkImage depthImage, VkFormat depthFormat, VkImageAspectFlags aspect, VkComponentMapping components, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D, std::uint32_t baseLayer = 0, std::shared_ptr<OwnedImage> owner = {}, VkImageUsageFlags usage = 0, std::uint32_t layerCount = VK_REMAINING_ARRAY_LAYERS);
     struct DepthCopyTag {};
     Texture(const Context& context, const std::shared_ptr<StorageTexture>& source, const GuestTextureResource& descriptor, VkComponentMapping components, DepthCopyTag);
     struct SrgbExpandTag {};
@@ -163,6 +163,7 @@ private:
     VkFormat blockFormat = VK_FORMAT_UNDEFINED;
     bool repackCopy = false;
     std::uint32_t copyWidth = 0, copyHeight = 0, copyLevels = 0, copyLayers = 0, copyElementBytes = 0;
+    std::uint32_t copyTexelsPerElement = 4;
 };
 
 VkFormat AttachmentProxyFormat(const Context& context, VkFormat format);
@@ -185,7 +186,7 @@ public:
     // so successive mip writes of a chain share one image and one write-back.
     VkImageView View(std::uint32_t mip);
     VkImageView FirstLayerView(std::uint32_t mip);
-    VkImageView StorageView(std::uint32_t mip, bool firstLayer);
+    VkImageView StorageView(std::uint32_t mip, bool firstLayer, bool uintStorage = false);
     VkImageView ElementView();
     VkImageView AtomicView(std::uint32_t mip, bool firstLayer);
     VkImageView Atomic64View(std::uint32_t mip, bool firstLayer);
@@ -343,6 +344,7 @@ public:
     static std::shared_ptr<StorageTexture> FindLive(std::uint64_t address, std::uint64_t bytes);
     // Whether the two surfaces differ in nothing but their address (and DCC metadata).
     bool SameSurfaceShape(const StorageTexture& other) const;
+    bool ImageCoversGuestBytes() const;
     // The copy HLE's buffer copy of one whole surface into another (VulkanDevice::CopyBuffer,
     // APS5_NO_COPY_ALIAS=1 disables): the source image's content is copied on the device into this
     // image, which is then dirty like a shader-written one (the guest bytes follow through the
@@ -356,6 +358,7 @@ public:
     const GuestTextureResource& Descriptor() const { return descriptor; }
     std::uint32_t ImageLayers() const { return geometry.imageLayers; }
     std::uint32_t ImageDepth() const { return geometry.imageDepth; }
+    VkFormat ImageFormat() const { return imageFormat; }
     // Content version: advances when the image is re-uploaded or a shader wrote it. Together with
     // Generation (the write generation guest memory was last known to match the content at) it
     // validates textures copied from this image.
@@ -380,6 +383,7 @@ public:
     inline static std::atomic<std::uint64_t> epochRefreshes{0};
     static std::uint64_t SinglePassMoves();
     static std::uint64_t SlabRetiles();
+    static std::uint64_t PaddingSeedCopies();
     static std::uint64_t RefreshesProved();
     static std::uint64_t ClearHandOvers();
     static std::uint64_t HandedOverSuperseded();
@@ -398,6 +402,7 @@ private:
     // The regions of every array layer, or of the tracked layers `layers` selects.
     std::vector<VkBufferImageCopy> CopyRegions(const std::vector<bool>* layers = nullptr) const;
     void upload(const std::vector<bool>* layers = nullptr);
+    void clearImage(VkCommandBuffer commands, VkClearColorValue value, const VkImageSubresourceRange& range);
     std::vector<bool> cpuUploadLayers(const std::vector<bool>& units) const;
     void captureGuestBytes(const std::vector<bool>* layers);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
@@ -455,6 +460,7 @@ private:
     // covered tile blocks and of linear rows, tail blocks, the bytes between mips; every byte of a
     // thick surface), ascending: a write-back keeps the guest's bytes there.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> uncoveredBytes(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs) const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> coveredBytes(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs) const;
     // The seed of a write-back's tiled scratch where its copies would carry bytes no element holds:
     // those bytes' current contents (a fresh unit shadow's, else the import's), copied into the
     // scratch before the retile, so the copies out of the scratch store them unchanged. `copied`
@@ -666,6 +672,7 @@ private:
     VkDeviceMemory proxyMemory = VK_NULL_HANDLE;
     VkImageView proxyView = VK_NULL_HANDLE;
     VkFormat storageFormat = VK_FORMAT_UNDEFINED;
+    VkFormat imageFormat = VK_FORMAT_UNDEFINED;
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
     bool drawnListed = false;

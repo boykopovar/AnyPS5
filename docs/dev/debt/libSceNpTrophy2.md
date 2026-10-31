@@ -4,6 +4,8 @@
 
 - [sceNpTrophy2GetRewardIcon](../../../core/libs/prx/libSceNpTrophy2/src/Context.cpp) (libSceNpTrophy2) - zeroes size and returns `SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND` (-2141898479): the `(int context, int handle, int reward_id, void* buffer, size_t* size)` signature and two-stage query pattern follow the bundled `Media/Plugins/PSNCore.prx` of PPSA06888 and SharpProspero; returning -2141898479 (0x80553911) when icons are unavailable is inferred from sibling calls (sceNpTrophy2GetGameIcon, sceNpTrophy2GetGroupIcon, sceNpTrophy2GetTrophyIcon) in KytyPS5 (libTrophy.cpp:464/483/502)
 - [libSceNpTrophy2](../../../core/libs/prx/libSceNpTrophy2/src/GameInfo.cpp): `sceNpTrophy2RegisterUnlockCallback` accepts a callback that is never called, as the callback's signature and when the console calls it are not known, `sceNpTrophy2UnregisterUnlockCallback` only returns success, and `sceNpTrophy2ShowTrophyList` returns success without showing a list (there is no system trophy UI; seen on PPSA15552).
+- [sceNpTrophy2RegisterContext](../../../core/libs/prx/libSceNpTrophy2/src/Context.cpp) (libSceNpTrophy2) - returns `SCE_NP_TROPHY2_OK` and ignores its arguments: it checks neither the context nor the handle and records nothing. Eight titles in my set call it.
+- [sceNpTrophy2DestroyHandle and sceNpTrophy2AbortHandle](../../../core/libs/prx/libSceNpTrophy2/src/Handle.cpp) (libSceNpTrophy2) - return `SCE_NP_TROPHY2_OK` and ignore the handle: `sceNpTrophy2CreateHandle` always hands out handle 1 and keeps no state, so there is nothing to destroy or abort. Eight titles in my set call `sceNpTrophy2DestroyHandle`; Steins;Gate Re:Boot (PPSA36591) also calls `sceNpTrophy2AbortHandle`.
 
 ### Unknown function info
 
@@ -19,3 +21,25 @@
 - [Trophy progress statistics](../../../core/libs/prx/libSceNpTrophy2/src/TrophyPackage.cpp): `max` (the largest value posted, starting from `initialValue`, or `minValue` without one), `int32` (0 to 2147483647) and a rule condition of an `eventName` and one `property` whose `comparator` is `==` and `value` an unsigned integer follow the rules a title ships for its progressive trophies, not a console measurement. Borderlands 4 (PPSA01494) feeds each one's `udsStatId` from `$._trophy_progress` of `_UpdateTrophyProgress`, through an `int32` `max` statistic and a rule on `$._trophy_id`. `latest` and the unsigned types follow KytyPS5.
 - [Platinum](../../../core/libs/prx/libSceNpTrophy2/src/TitleTrophies.cpp): an unlock through any path unlocks the platinum that the trophy names in `platinumTrophyId` once every trophy naming that platinum is unlocked, as KytyPS5 does; trophies without `platinumTrophyId` are not required. With the title's trophy data loaded, a posted `_UnlockTrophy` of a trophy that is not in the data, of a platinum or of a progressive trophy is not stored and prints a `[trophy] ignored` line, as KytyPS5 refuses them, so a progressive trophy unlocks only through its statistic; without trophy data any id of 0 or more is stored, including ids the data would make the platinum, a progressive trophy or no trophy, and the platinum is not unlocked when the trophies it needs are. The console's behaviour is not known.
 - [Damaged records](../../../core/libs/prx/libSceNpTrophy2/src/TrophyStore.cpp): a line in `_trophy/<user id>_<service label>.txt` or `.stats.txt` that is not a new `<id> <value>` pair (a blank line, a carriage return, a repeated or negative id, a value that is not a number) makes `readRecord` throw a `std::runtime_error` that names the file and the line. Every call that reads that record then throws it instead of returning, which stops the title as any throwing export does, so the title gets no return value; main returned 0 from these calls. The failed read is not kept, so each later call reads the file again and throws again until the file is fixed or deleted. The unlock record is read by `sceNpTrophy2GetTrophyInfo`, `sceNpTrophy2GetTrophyInfoArray` and `sceNpTrophy2GetGameInfo` for a created context, by `sceNpTrophy2GetGroupInfo` and `sceNpTrophy2GetGroupInfoArray` when the title's trophy data is loaded, by a `sceNpUniversalDataSystemPostEvent` of an `_UnlockTrophy` that the trophy data does not refuse, and by a statistic change when the trophy data is loaded; the stat record by a `sceNpUniversalDataSystemPostEvent` of an event that a statistics rule copies and by the trophy queries of a progressive trophy with a statistic. What the console does with a damaged record is not known.
+
+### Additional callable export inventory
+
+- [Additional callable exports](../../../core/libs/prx/libSceNpTrophy2/Export.cpp) - 15 entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
+
+| Name | NID |
+| --- | --- |
+| `sceNpTrophy2SystemBuildBgImageIconUri` | `UnbjI+AqX+A` |
+| `sceNpTrophy2SystemBuildTitleIconUri` | `2dg-TbNmKv8` |
+| `sceNpTrophy2SystemDestroyHandle` | `88V2B8r-Agw` |
+| `sceNpTrophy2SystemGetTrophyConf` | `4hpE8WXIaHs` |
+| `sceNpTrophy2SystemGetTrophyData` | `zod--HLBtbI` |
+| `sceNpTrophy2SystemGetTrophyGroupData` | `VW52w-a9TAw` |
+| `sceNpTrophy2SystemGetTrophyGroupDetails` | `+9bvXT+gv9E` |
+| `sceNpTrophy2SystemGetTrophyTitleData` | `+GPklPyQZVU` |
+| `sceNpTrophy2SystemListAllTitles` | `fl5I-yVj7vA` |
+| `sceNpTrophy2SystemListPlayedTitles` | `1SJO40vt-xk` |
+| `sceNpTrophy2SystemListTitlesByNpTitleId` | `3+DuF1o21D8` |
+| `sceNpTrophy2SystemNetSyncTitles` | `pBPp5mpE-iw` |
+| `sceNpTrophy2SystemRemoveUserDataWithServerData` | `w2Uq3rRtT9I` |
+| `sceNpTrophy2SystemUnregisterTitleSyncedCallback` | `Gqf-wNaD-mM` |
+| `sceNpTrophy2SystemUnregisterTitleUpdateCallback` | `-LSu4NCj2p4` |

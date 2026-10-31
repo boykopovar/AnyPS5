@@ -29,6 +29,13 @@ static void RequireInvalidArguments() {
     Require(sceKernelCreateSema(&rejected, "rejected", 0, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateSema(&rejected, "rejected", 0, -1, 3, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateSema(&rejected, nullptr, 0, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateSema(&rejected, "rejected", 0, 0, -1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    for (std::uint32_t attr = 3; attr <= 0x320; ++attr) {
+        if (attr >= 0x100 && attr <= 0x102) continue;
+        Require(sceKernelCreateSema(&rejected, "rejected", attr, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    }
+    for (const std::uint32_t attr : {0x1000u, 0x10000u, 0x80000000u, 0xffffffffu})
+        Require(sceKernelCreateSema(&rejected, "rejected", attr, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(rejected == nullptr);
 
     KernelSema sem = nullptr;
@@ -39,6 +46,7 @@ static void RequireInvalidArguments() {
     Require(sceKernelPollSema(sem, 100) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelPollSema(sem, 3) == SCE_KERNEL_ERROR_EBUSY);
     Require(sceKernelSignalSema(sem, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelSignalSema(sem, -1) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelPollSema(sem, 2) == SCE_OK);
     Require(sceKernelSignalSema(sem, 3) == SCE_OK);
     Require(sceKernelPollSema(sem, 3) == SCE_OK);
