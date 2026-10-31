@@ -1,5 +1,6 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
@@ -290,9 +291,69 @@ int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint
     return SYSTEM_SERVICE_OK;
 }
 
+constexpr std::uint32_t GpuLoadEmulationModeOff = 0;
+constexpr std::uint32_t GpuLoadEmulationModeNormal = 1;
+
+std::atomic<std::uint32_t> GpuLoadEmulationMode{GpuLoadEmulationModeNormal};
+
+int SetGpuLoadEmulationMode(const char* caller, std::uint32_t mode) {
+    if (mode != GpuLoadEmulationModeOff && mode != GpuLoadEmulationModeNormal) {
+        NotImplemented_nid_no_patch((std::string(caller) + ": a mode other than 0 and 1").c_str());
+    }
+    GpuLoadEmulationMode.store(mode, std::memory_order_relaxed);
+    return SYSTEM_SERVICE_OK;
+}
+
+int GetGpuLoadEmulationModeOfApp(const char* caller, std::int32_t appId) {
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch((std::string(caller) + ": application other than the running title").c_str());
+    return static_cast<int>(GpuLoadEmulationMode.load(std::memory_order_relaxed));
+}
+
+std::atomic<bool> SuspendConfirmationDialogEnabled{true};
+
 }
 
 extern "C" {
+
+int APS5_VABI sceSystemServiceEnableSuspendConfirmationDialog() {
+    SuspendConfirmationDialogEnabled.store(true, std::memory_order_relaxed);
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceDisableSuspendConfirmationDialog() {
+    SuspendConfirmationDialogEnabled.store(false, std::memory_order_relaxed);
+    return SYSTEM_SERVICE_OK;
+}
+
+bool APS5_VABI sceShellCoreUtilGetSuspendConfirmationDialogFlag(std::int32_t appId) {
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch("sceShellCoreUtilGetSuspendConfirmationDialogFlag: application other than the running title");
+    return SuspendConfirmationDialogEnabled.load(std::memory_order_relaxed);
+}
+
+int APS5_VABI sceSystemServiceSetGpuLoadEmulationMode(std::uint32_t mode) {
+    return SetGpuLoadEmulationMode("sceSystemServiceSetGpuLoadEmulationMode", mode);
+}
+
+int APS5_VABI sceSystemServiceGetGpuLoadEmulationMode() {
+    return static_cast<int>(GpuLoadEmulationMode.load(std::memory_order_relaxed));
+}
+
+int APS5_VABI sceShellCoreUtilSetGpuLoadEmulationMode(std::uint32_t mode) {
+    return SetGpuLoadEmulationMode("sceShellCoreUtilSetGpuLoadEmulationMode", mode);
+}
+
+int APS5_VABI sceShellCoreUtilGetGpuLoadEmulationMode() {
+    return static_cast<int>(GpuLoadEmulationMode.load(std::memory_order_relaxed));
+}
+
+int APS5_VABI sceShellCoreUtilSetGpuLoadEmulationModeByAppId(std::int32_t appId, std::uint32_t mode) {
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch("sceShellCoreUtilSetGpuLoadEmulationModeByAppId: application other than the running title");
+    return SetGpuLoadEmulationMode("sceShellCoreUtilSetGpuLoadEmulationModeByAppId", mode);
+}
+
+int APS5_VABI sceShellCoreUtilGetGpuLoadEmulationModeByAppId(std::int32_t appId) {
+    return GetGpuLoadEmulationModeOfApp("sceShellCoreUtilGetGpuLoadEmulationModeByAppId", appId);
+}
 
 int APS5_VABI sceSystemServiceLoadExec(const char* path, const char* const* arguments) {
     if (!path || !*path) return SYSTEM_SERVICE_ERROR_PARAMETER;

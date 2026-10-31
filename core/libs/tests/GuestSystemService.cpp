@@ -10,6 +10,8 @@
 #include <initializer_list>
 #include <limits>
 #include <stdexcept>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -106,6 +108,57 @@ void TestPlayerDialogParam() {
     Require(threw);
     Require(sceSystemServiceLaunchPlayerDialog(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     Require(sceSystemServiceLaunchPlayerDialog(buffer) == SYSTEM_SERVICE_OK);
+}
+
+void TestSuspendConfirmationDialog() {
+    const int runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    Require(sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+    Require(sceSystemServiceDisableSuspendConfirmationDialog() == SYSTEM_SERVICE_OK);
+    Require(!sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+    Require(sceSystemServiceDisableSuspendConfirmationDialog() == SYSTEM_SERVICE_OK);
+    Require(!sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+    Require(sceSystemServiceEnableSuspendConfirmationDialog() == SYSTEM_SERVICE_OK);
+    Require(sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+    std::vector<std::thread> threads;
+    for (unsigned index = 0; index < 4; ++index) {
+        threads.emplace_back([index] {
+            for (unsigned round = 0; round < 1000; ++round) {
+                const int result = ((index + round) & 1u) ? sceSystemServiceEnableSuspendConfirmationDialog() : sceSystemServiceDisableSuspendConfirmationDialog();
+                Require(result == SYSTEM_SERVICE_OK);
+            }
+        });
+    }
+    for (std::thread& thread : threads) thread.join();
+    Require(sceSystemServiceEnableSuspendConfirmationDialog() == SYSTEM_SERVICE_OK);
+    Require(sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+}
+
+void TestGpuLoadEmulationMode() {
+    const int runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 1);
+    Require(sceShellCoreUtilGetGpuLoadEmulationMode() == 1);
+    Require(sceSystemServiceSetGpuLoadEmulationMode(0) == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 0);
+    Require(sceShellCoreUtilGetGpuLoadEmulationMode() == 0);
+    Require(sceShellCoreUtilGetGpuLoadEmulationModeByAppId(runningAppId) == 0);
+    Require(sceShellCoreUtilSetGpuLoadEmulationMode(1) == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 1);
+    Require(sceShellCoreUtilSetGpuLoadEmulationModeByAppId(runningAppId, 0) == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 0);
+    Require(sceShellCoreUtilGetGpuLoadEmulationModeByAppId(runningAppId) == 0);
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 0);
+    std::vector<std::thread> threads;
+    for (unsigned index = 0; index < 4; ++index) {
+        threads.emplace_back([index] {
+            for (unsigned round = 0; round < 1000; ++round) {
+                Require(sceSystemServiceSetGpuLoadEmulationMode((index + round) & 1u) == SYSTEM_SERVICE_OK);
+                const int mode = sceSystemServiceGetGpuLoadEmulationMode();
+                Require(mode == 0 || mode == 1);
+            }
+        });
+    }
+    for (std::thread& thread : threads) thread.join();
+    Require(sceSystemServiceSetGpuLoadEmulationMode(1) == SYSTEM_SERVICE_OK);
 }
 
 }
@@ -208,4 +261,6 @@ int main() {
     TestRunningAppUser();
     TestRunningAppState();
     TestPlayerDialogParam();
+    TestGpuLoadEmulationMode();
+    TestSuspendConfirmationDialog();
 }
