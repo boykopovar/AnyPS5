@@ -37,8 +37,15 @@ def daily_commits(ref):
     return sorted(seen.items())
 
 
-def measure(sha):
+def measured_paths(sha):
     paths = [progress.PRX.relative_to(progress.ROOT).as_posix(), progress.OPCODES.relative_to(progress.ROOT).as_posix()]
+    if git("ls-tree", "-d", sha, "--", progress.OBSERVED_RELATIVE.as_posix()).strip():
+        paths.append(progress.OBSERVED_RELATIVE.as_posix())
+    return paths
+
+
+def measure(sha):
+    paths = measured_paths(sha)
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         try:
@@ -49,14 +56,15 @@ def measure(sha):
                 archive.extractall(root)
         except subprocess.CalledProcessError:
             return None
-        saved = progress.PRX, progress.OPCODES
+        saved = progress.PRX, progress.OPCODES, progress.OBSERVED
         progress.PRX, progress.OPCODES = root / paths[0], root / paths[1]
+        progress.OBSERVED = root / progress.OBSERVED_RELATIVE
         try:
             libraries, shaders = progress.collect_libraries(), progress.collect_shaders()
         except (OSError, AttributeError):
             return None
         finally:
-            progress.PRX, progress.OPCODES = saved
+            progress.PRX, progress.OPCODES, progress.OBSERVED = saved
     return {name: {key: data[key] for key in ("done", "total", "percent")}
             for name, data in (("libraries", libraries), ("shaders", shaders))}
 
@@ -68,7 +76,8 @@ def cache_signature():
         digest.update(len(content).to_bytes(8, "little"))
         digest.update(content)
     digest.update(repr((progress.PRX.relative_to(progress.ROOT).as_posix(),
-                        progress.OPCODES.relative_to(progress.ROOT).as_posix())).encode("utf-8"))
+                        progress.OPCODES.relative_to(progress.ROOT).as_posix(),
+                        progress.OBSERVED_RELATIVE.as_posix())).encode("utf-8"))
     return digest.hexdigest()
 
 

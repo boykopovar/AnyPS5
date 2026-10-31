@@ -162,6 +162,28 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertEqual(cache.read_bytes(), b"previous cache")
             self.assertEqual(list(cache.parent.iterdir()), [cache])
 
+    def test_cache_signature_names_the_manifest_directory(self):
+        signature = progress_history.cache_signature()
+        with patch.object(progress, "OBSERVED_RELATIVE", Path("docs/other")):
+            self.assertNotEqual(progress_history.cache_signature(), signature)
+
+    def test_manifests_are_measured_only_where_a_commit_has_them(self):
+        stub = "static void Stub() { NotImplemented_nid_no_patch(__func__); }\n"
+        body = "int APS5_VABI Pending() { Stub(); return 0; }\n" + stub
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", body)
+            observed = root / "docs/dev/observed"
+            observed.mkdir(parents=True)
+            (observed / "libSceExample.txt").write_text("AbCdEfGhIjK\n", encoding="utf-8")
+            commit(root, "2026-01-02", "second", body)
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES, OBSERVED=observed):
+                points = progress_history.collect("HEAD")
+                self.assertEqual(progress_history.measured_paths("HEAD")[-1], "docs/dev/observed")
+                self.assertEqual(progress_history.measured_paths("HEAD~1")[-1], "core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp")
+        self.assertEqual([(p["libraries"]["done"], p["libraries"]["total"]) for p in points], [(0, 1), (0, 0)])
+
     def test_one_point_per_day_at_the_last_commit(self):
         stub = "static void Stub() { NotImplemented_nid_no_patch(__func__); }\n"
         with tempfile.TemporaryDirectory() as directory:
