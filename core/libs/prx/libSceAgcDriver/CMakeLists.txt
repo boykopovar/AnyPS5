@@ -22,7 +22,7 @@ function(ensure_agc_glslang)
     set(ENABLE_SPVREMAPPER OFF)
     set(ENABLE_OPT OFF)
 
-    add_subdirectory(
+    add_bundled_subdirectory(
             "${CMAKE_SOURCE_DIR}/3rdparty/glslang"
             "${CMAKE_BINARY_DIR}/3rdparty/glslang"
             EXCLUDE_FROM_ALL
