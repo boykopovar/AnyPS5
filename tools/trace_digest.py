@@ -100,7 +100,7 @@ class Trace:
             elif phase == "C":
                 tid = _event_tid(event, index)
                 self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
-        self.presents.sort()
+        self.presents.sort(key=lambda present: present[0])
         for slices in self.slices.values():
             slices.sort(key=lambda entry: (entry[0], -entry[1]))
             stack = []
@@ -483,8 +483,11 @@ def main(arguments=None):
     trace = load_trace(options.trace)
     if options.thread:
         trace.select_threads(options.thread)
-    result = digest(trace, load_summary(options.summary, options.trace),
-                    stacks, options.frames, options.top)
+    summary = load_summary(options.summary, options.trace)
+    try:
+        result = digest(trace, summary, stacks, options.frames, options.top)
+    except KeyError as error:
+        parser.exit(2, f"FAIL: the summary line has no {error} field\n")
     if options.thread:
         result["thread_filter"] = sorted(set(options.thread))
     sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown(result))
