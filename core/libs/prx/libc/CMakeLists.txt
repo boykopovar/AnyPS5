@@ -45,6 +45,19 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+if(BUILD_TESTING)
+    add_test_executable(guest_bounded_search_guards_tests ${LIBS_INCLUDE_DIR}/tests/GuestBoundedSearchGuards.cpp)
+    target_include_directories(guest_bounded_search_guards_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_bounded_search_guards_tests PRIVATE libc)
+    configure_windows_unwind(guest_bounded_search_guards_tests)
+    add_test(NAME guest_bounded_search_guards COMMAND guest_bounded_search_guards_tests)
+    set_tests_properties(guest_bounded_search_guards PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_bounded_search_guards PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/General.cpp
