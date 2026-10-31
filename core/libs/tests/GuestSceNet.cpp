@@ -1423,8 +1423,8 @@ static void CheckTcpNoDelay() {
     Require(sceNetGetsockopt(stream, 6, 1, &value, &size) == 0 && value == 4);
     Require(setsockopt_nid_postfix(stream, 6, 1, &off, sizeof(off)) == 0);
     Require(sceNetGetsockopt(stream, 6, 1, &value, &size) == 0 && value == 0);
-    Require(Failed(sceNetSetsockopt(stream, 6, 2, &on, sizeof(on)), 42));
-    Require(Failed(sceNetGetsockopt(stream, 6, 2, &value, &size), 42));
+    Require(Failed(sceNetSetsockopt(stream, 6, 0x7777, &on, sizeof(on)), 42));
+    Require(Failed(sceNetGetsockopt(stream, 6, 0x7777, &value, &size), 42));
     Require(Failed(sceNetSetsockopt(datagram, 6, 1, &on, sizeof(on)), 22));
     Require(Failed(sceNetGetsockopt(datagram, 6, 1, &value, &size), 22));
     Require(Failed(sceNetSetsockopt(datagram, 6, 2, &on, sizeof(on)), 22));
