@@ -71,7 +71,7 @@ struct SurfaceGeometry {
 
     bool levelMajor = false;
     std::uint64_t GuestOffset(std::uint32_t layer, const TileMipLayout& mip) const {
-        return levelMajor ? mip.tiledOffset + static_cast<std::uint64_t>(layer) * mip.tiledSize : GuestLayerOffset(layer) + mip.tiledOffset;
+        return levelMajor ? mip.tiledOffset + static_cast<std::uint64_t>(thick ? layer / blockDepth : layer) * mip.tiledSize : GuestLayerOffset(layer) + mip.tiledOffset;
     }
     std::uint64_t GuestLayerOffset(std::uint32_t layer) const { return thick ? static_cast<std::uint64_t>(layer / blockDepth) * layerBytes : static_cast<std::uint64_t>(layer) * layerBytes; }
     std::uint64_t LinearLayerOffset(std::uint32_t layer) const { return static_cast<std::uint64_t>(layer) * sliceLinearBytes; }

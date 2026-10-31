@@ -1193,7 +1193,7 @@ static WrittenStorage WrittenStorageBytes(const GuestTextureResource& viewed, st
     const auto first = geometry.layers > 1u && geometry.imageDepth <= 1u ? std::min(viewed.baseArray, geometry.layers) : 0u;
     for (auto layer = first; layer < geometry.layers; ++layer) {
         if (!geometry.HasLayer(mip, layer)) continue;
-        const auto begin = viewed.baseAddress + geometry.GuestLayerOffset(layer) + level.tiledOffset;
+        const auto begin = viewed.baseAddress + geometry.GuestOffset(layer, level);
         for (const auto& [rangeBegin, rangeEnd] : covered) {
             if (!written.bytes.empty() && written.bytes.back().second == begin + rangeBegin) written.bytes.back().second = begin + rangeEnd;
             else written.bytes.emplace_back(begin + rangeBegin, begin + rangeEnd);

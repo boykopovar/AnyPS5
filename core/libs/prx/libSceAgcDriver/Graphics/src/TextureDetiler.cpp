@@ -152,7 +152,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     const bool gcn = IsGcnTiled(tileMode);
     std::array<std::uint32_t, 26> values{elementBytes, gcn ? 0u : BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
     if (gcn) {
-        Require(!thick, "PS4 tiled surfaces are detiled thin");
+        Require(!thick || IsGcnThick(tileMode), "PS4 thin tiled surfaces are detiled thin");
         const auto geometry = GcnTiling(tileMode, elementBytes);
         values[1] = geometry.blockBytes;
         values[2] = 2u;

@@ -60,6 +60,7 @@ TextureTileMode resolveGcnTileMode(std::uint32_t index) {
         case 9u: return TextureTileMode::kGcnDisplay1D;
         case 10u: return TextureTileMode::kGcnDisplay2D;
         case 14u: return TextureTileMode::kGcnThin2D;
+        case 19u: return TextureTileMode::kGcnThick1D;
         default: throw std::runtime_error("AGC graphics: PS4 texture tile mode index " + std::to_string(index) + " (3D or thick) is not implemented");
     }
 }
