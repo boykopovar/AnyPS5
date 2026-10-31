@@ -128,12 +128,31 @@ public:
             address.pNext = nullptr;
             address.bufferDeviceAddressCaptureReplay = VK_FALSE;
             address.bufferDeviceAddressMultiDevice = VK_FALSE;
+            std::vector<const char*> enabledExtensions;
+            if (externalHost) enabledExtensions.insert(enabledExtensions.end(), externalHostNames.begin(), externalHostNames.end());
+            bool dmaBufImport = false;
+#ifndef _WIN32
+            if (externalHost) {
+                VkDriverId driverId{};
+                if (supported(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
+                    VkPhysicalDeviceDriverProperties driver{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+                    VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &driver};
+                    function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &properties);
+                    driverId = driver.driverID;
+                }
+                dmaBufImport = driverId != VK_DRIVER_ID_NVIDIA_PROPRIETARY && supported(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && supported(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
+                if (dmaBufImport) {
+                    enabledExtensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+                    enabledExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
+                }
+            }
+#endif
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, externalHost ? &address : nullptr};
             device.queueCreateInfoCount = 1u;
             device.pQueueCreateInfos = &queue;
             device.pEnabledFeatures = &enabled;
-            device.enabledExtensionCount = externalHost ? static_cast<std::uint32_t>(externalHostNames.size()) : 0u;
-            device.ppEnabledExtensionNames = externalHost ? externalHostNames.data() : nullptr;
+            device.enabledExtensionCount = static_cast<std::uint32_t>(enabledExtensions.size());
+            device.ppEnabledExtensionNames = enabledExtensions.data();
             Check(function<PFN_vkCreateDevice>("vkCreateDevice")(context.physical, &device, nullptr, &context.device), "vkCreateDevice");
             if (externalHost) {
                 VkPhysicalDeviceExternalMemoryHostPropertiesEXT host{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT};
@@ -142,6 +161,7 @@ public:
                 context.hostImportAlignment = host.minImportedHostPointerAlignment;
                 context.bufferDeviceAddress = true;
             }
+            context.dmaBufImport = dmaBufImport;
             context.deviceProc = function<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");

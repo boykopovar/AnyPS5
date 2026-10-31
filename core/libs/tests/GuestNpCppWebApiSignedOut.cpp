@@ -11,6 +11,7 @@ static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 
 using Object = int (APS5_VABI*)(void*);
 using Call = int (APS5_VABI*)();
+using Initialize = int (*)(void*, std::uint64_t*);
 
 struct RequestFlow {
     Object transactionConstruct;
@@ -22,10 +23,32 @@ struct RequestFlow {
     Call getResponseHeaders;
     Object parameterConstruct;
     Object parameterDestroy;
-    Call initialize;
-    Call terminate;
+    Initialize initialize;
+    Object terminate;
     Call call;
 };
+
+static IntrusivePtr filterRequest{reinterpret_cast<void*>(0x1000), nullptr, nullptr};
+
+static int InitializeFriends(void* parameter, std::uint64_t* context) {
+    return _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends10initializeEPNS1_6Common10LibContextEPKc(parameter, context, "me");
+}
+
+static int InitializeBlockingUsers(void* parameter, std::uint64_t* context) {
+    return _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers10initializeEPNS1_6Common10LibContextE(parameter, context);
+}
+
+static int InitializeBasicPresences(void* parameter, std::uint64_t* context) {
+    return _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences10initializeEPNS1_6Common10LibContextEPKc(parameter, context, "me");
+}
+
+static int InitializeFilterProfanity(void* parameter, std::uint64_t* context) {
+    return _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity10initializeEPNS1_6Common10LibContextEPKcSA_NS6_12IntrusivePtrINS3_19WebApiFilterRequestEEE(parameter, context, "en-US", "0", &filterRequest);
+}
+
+static int InitializeCommunicationRestrictionStatus(void* parameter, std::uint64_t* context) {
+    return _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus10initializeEPNS1_6Common10LibContextEm(parameter, context, 1);
+}
 
 static const RequestFlow flows[] = {
     {
@@ -38,7 +61,7 @@ static const RequestFlow flows[] = {
         _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V118GetFriendsResponseEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSA_,
         _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriendsC1Ev,
         _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriendsD1Ev,
-        _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends10initializeEPNS1_6Common10LibContextEPKc,
+        InitializeFriends,
         _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends9terminateEv,
         _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi10getFriendsEiRKNS4_21ParameterToGetFriendsERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_18GetFriendsResponseEEENSA_INS8_18ResponseHeaderBaseEEEEE,
     },
@@ -52,7 +75,7 @@ static const RequestFlow flows[] = {
         _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V124GetBlockingUsersResponseEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSA_,
         _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsersC1Ev,
         _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsersD1Ev,
-        _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers10initializeEPNS1_6Common10LibContextE,
+        InitializeBlockingUsers,
         _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers9terminateEv,
         _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi16getBlockingUsersEiRKNS4_27ParameterToGetBlockingUsersERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_24GetBlockingUsersResponseEEENSA_INS8_18ResponseHeaderBaseEEEEE,
     },
@@ -66,7 +89,7 @@ static const RequestFlow flows[] = {
         _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetBasicPresencesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSA_,
         _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresencesC1Ev,
         _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresencesD1Ev,
-        _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences10initializeEPNS1_6Common10LibContextEPKc,
+        InitializeBasicPresences,
         _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences9terminateEv,
         _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi17getBasicPresencesEiRKNS4_28ParameterToGetBasicPresencesERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_25GetBasicPresencesResponseEEENSA_INS8_18ResponseHeaderBaseEEEEE,
     },
@@ -80,7 +103,7 @@ static const RequestFlow flows[] = {
         _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_15ProfanityFilter2V223FilterProfanityResponseEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSA_,
         _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanityC1Ev,
         _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanityD1Ev,
-        _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity10initializeEPNS1_6Common10LibContextEPKcSA_NS6_12IntrusivePtrINS3_19WebApiFilterRequestEEE,
+        InitializeFilterProfanity,
         _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity9terminateEv,
         _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi15filterProfanityEiRKNS4_26ParameterToFilterProfanityERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_23FilterProfanityResponseEEENSA_INS8_18ResponseHeaderBaseEEEEE,
     },
@@ -94,7 +117,7 @@ static const RequestFlow flows[] = {
         _ZNK3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEENS4_INS2_18ResponseHeaderBaseEEEE18getResponseHeadersERSA_,
         _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatusC1Ev,
         _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatusD1Ev,
-        _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus10initializeEPNS1_6Common10LibContextEm,
+        InitializeCommunicationRestrictionStatus,
         _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus9terminateEv,
         _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi33getCommunicationRestrictionStatusEiRKNS4_44ParameterToGetCommunicationRestrictionStatusERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_38CommunicationRestrictionStatusResponseEEENSA_INS8_18ResponseHeaderBaseEEEEE,
     },
@@ -161,19 +184,22 @@ static void TestRequestFlow(const RequestFlow& flow) {
     alignas(16) unsigned char parameter[0x100];
     std::memset(transaction, 0x5a, sizeof(transaction));
     std::memset(parameter, 0x5a, sizeof(parameter));
+    std::uint64_t context = 0;
+    Require(_ZN3sce2Np9CppWebApi6Common10initializeERKNS2_10InitParamsERNS2_10LibContextE(nullptr, &context) == 0);
 
     Require(flow.transactionConstruct(transaction) == 0);
     Require(flow.setOnFinishedCallback() == 0);
     Require(flow.setResponseInformationOption() == 0);
     Require(flow.parameterConstruct(parameter) == 0);
-    Require(flow.initialize() == 0);
+    Require(flow.initialize(parameter, &context) == 0);
     Require(flow.call() == NotSignedIn);
     Require(flow.start() == NotSignedIn);
     Require(flow.getResponseHeaders() == NotSignedIn);
     Require(flow.finish() == TransactionNotStarted);
-    Require(flow.terminate() == 0);
+    Require(flow.terminate(parameter) == 0);
     Require(flow.parameterDestroy(parameter) == 0);
     Require(flow.transactionDestroy(transaction) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(&context) == 0);
 }
 
 int main() {

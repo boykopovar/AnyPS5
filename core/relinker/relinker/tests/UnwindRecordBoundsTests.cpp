@@ -3,6 +3,7 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 static void Require(bool ok) { if (!ok) throw std::runtime_error("Unwind record validation failed"); }
 
@@ -93,6 +94,32 @@ int main() {
             catch (const std::exception&) { rejected = true; }
             Require(rejected);
         }
-        std::cout << "17 unwind record cases passed\n";
+        auto tableOverflow = Fixture();
+        tableOverflow[3] = 0x39;
+        tableOverflow[16] = 0x80;
+        tableOverflow[17] = 0x20;
+        tableOverflow[18] = 0x80;
+        tableOverflow[19] = 0x20;
+        Domain::ProgramHeader highLoad{}; highLoad.Type = 1; highLoad.MappedAddress = 0xFFFFFFFFFFFFF000ULL; highLoad.FileSize = 128;
+        Domain::ProgramHeader highEh = highLoad; highEh.Type = 0x6474E550; highEh.FileSize = 32;
+        bool overflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(tableOverflow, {highLoad, highEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            overflowRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(overflowRejected);
+        auto udata4Overflow = Fixture();
+        udata4Overflow[3] = 0x33;
+        Io::WriteU32(udata4Overflow, 16, 0xFFFFFFFF);
+        Io::WriteU32(udata4Overflow, 20, 0xFFFFFFFF);
+        Domain::ProgramHeader udata4HighLoad{}; udata4HighLoad.Type = 1; udata4HighLoad.MappedAddress = 0xFFFFFFFFFFFFF000ULL; udata4HighLoad.FileSize = 128;
+        Domain::ProgramHeader udata4HighEh = udata4HighLoad; udata4HighEh.Type = 0x6474E550; udata4HighEh.FileSize = 32;
+        bool udata4Rejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(udata4Overflow, {udata4HighLoad, udata4HighEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            udata4Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(udata4Rejected);
+        std::cout << "19 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

@@ -21,6 +21,7 @@
 #include <unistd.h>
 #endif
 #include "prx/libc/include/CallTrace.hpp"
+#include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -299,13 +300,7 @@ public:
 
     void Write() {
         Text("\n");
-        std::size_t written = 0;
-        while (written < _length) {
-            const ssize_t result = ::write(STDERR_FILENO, _buffer + written, _length - written);
-            if (result < 0 && errno == EINTR) continue;
-            if (result <= 0) break;
-            written += static_cast<std::size_t>(result);
-        }
+        log_file::CrashWrite(log_file::StandardError, _buffer, _length);
         _length = 0;
     }
 

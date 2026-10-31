@@ -135,6 +135,7 @@ Project switches accept `ON` or `OFF`:
 | `-DAPS5_AGC_CREATE_LOG=OFF`      | `ON`    | No effect: `sceAgcCreateShader` logs nothing on success. |
 | `-DAGC_BUILD_VISUAL_TEST=ON`     | `OFF`   | Build the standalone AGC SPIR-V visual test.     |
 | `-DANYPS5_REQUIRE_CPU_LEAD_TEST=ON` | `OFF` | With `BUILD_TESTING=ON`, also register `agc_driver_sparse_dma_buf_cpu_lead`, which runs `agc_driver_sparse_dma_buf_import_tests --require-cpu-lead` and fails instead of skipping when the nonzero-lead dma-buf CPU publish is not exercised, such as on Windows or without an accessible `/dev/udmabuf`. |
+| `-DANYPS5_LIBRESSL_ORACLE=ON`    | `OFF`   | With `BUILD_TESTING=ON`, download LibreSSL 2.5.4 from ftp.openbsd.org at build time, check its SHA-256 and register `guest_libressl_oracle`, which compares `libSceLibreSsl` and `libSceLibreSsl3` exports with it and prints the cases and differences per function. Without the flag nothing is downloaded. |
 
 GCC and Clang compile libc with `-ffp-contract=off` whatever the target CPU. Toolchains that default to x86-64-v3, such as GCC 15 on Ubuntu 26.04, would otherwise fuse `a * b + c` into FMA instructions, which changes the last bit of math results that must match the console.
 
@@ -155,6 +156,10 @@ Build configuration parameters:
 SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridden with `-D`.
 
 With `ANYPS5_USE_SYSTEM_DEPS=ON` those libraries come from the system (on Debian and Ubuntu: `libsdl2-dev`, `libfreetype-dev`, `libvulkan-dev`, `spirv-headers`, `glslang-dev`, `glslang-tools` and `spirv-tools`). A missing package, Vulkan-Headers older than 1.4.310 (the agc driver uses `VK_KHR_maintenance8`), or an SDL2 without the HIDAPI joystick driver (sdl2-compat over SDL3, or a build with HIDAPI disabled, which breaks the pad and disk-audio tests), fails the configure with an error and never falls back to the submodule. The forced SDL and FreeType settings from the root `CMakeLists.txt` do not apply with the flag ON: the system SDL2 comes with whatever its distribution enabled. The prx libraries are shared objects, so SDL2 is linked from the system as a shared library; the default build keeps its own static SDL2. `ffmpeg-core`, `libjpeg-turbo`, `stb`, `VulkanMemoryAllocator`, `LibAtrac9`, `ogg` and `vorbis` always stay bundled and still need `git submodule update --init`.
+
+## HTTP locale tests
+
+The Linux HTTP URI locale regression needs an ISO-8859-1 locale. With tests enabled, CMake uses host `localedef` and installed locale sources to generate a private `en_US.ISO8859-1` under the HTTP build directory. This runs from the checked-out PR tree, including when CI dispatches the workflow from `main`, and changes no system locales. `-DANYPS5_HTTP_TEST_LOCALE_DIR=<directory>` overrides generation. Only `guest_http_uri_locale` receives the private directory through `LOCPATH`. If `localedef` or its source data is unavailable, configuration reports it and leaves the test to probe installed locales. Without an effective Latin-1 locale the test explicitly skips; the CI skip audit rejects that loss of coverage. Windows requires `.1252`.
 
 ## ThreadSanitizer
 

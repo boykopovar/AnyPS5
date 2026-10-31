@@ -253,6 +253,35 @@ class EnvReferenceTests(unittest.TestCase):
             found["APS5_INT"][0][2:], ("integer", "42")
         )
 
+    def test_table_escapes_a_pipe_in_the_filename(self):
+        out = io.StringIO()
+        env_reference.table({"APS5_TEST": [("core/A|B.cpp", 1, "presence", "unset")]}, out)
+        self.assertIn("| `APS5_TEST` | presence | `core/A\\|B.cpp` | unset | |\n", out.getvalue())
+
+    def test_table_keeps_a_plain_filename_unchanged(self):
+        out = io.StringIO()
+        env_reference.table({"APS5_TEST": [("core/Sample.cpp", 1, "presence", "unset")]}, out)
+        self.assertEqual(out.getvalue(),
+                         "### core/Sample.cpp\n\n"
+                         "| Name | Kind | Source | Default | Description |\n"
+                         "|------|------|--------|---------|-------------|\n"
+                         "| `APS5_TEST` | presence | `core/Sample.cpp` | unset | |\n\n")
+
+    def test_table_preserves_backslashes_in_code_and_plain_cells(self):
+        out = io.StringIO()
+        env_reference.table({"APS5_TEST": [(r"core/A\|B.cpp", 1, r"a\b", r"c\|d")]}, out)
+        self.assertIn(r"| `APS5_TEST` | a\\b | `core/A\\|B.cpp` | c\\\|d | |" + "\n", out.getvalue())
+
+    def test_table_escapes_pipes_in_every_populated_column(self):
+        out = io.StringIO()
+        env_reference.table({"APS5_A|B": [("core/A|B.cpp", 1, "a|b", "c|d")]}, out)
+        self.assertIn(r"| `APS5_A\|B` | a\|b | `core/A\|B.cpp` | c\|d | |" + "\n", out.getvalue())
+
+    def test_table_normalizes_newlines_in_cells(self):
+        out = io.StringIO()
+        env_reference.table({"APS5_A\nB": [("core/A\r\nB.cpp", 1, "a\rb", "c\nd")]}, out)
+        self.assertIn("| `APS5_A B` | a b | `core/A B.cpp` | c d | |\n", out.getvalue())
+
     def test_the_default_prefixes_cover_both(self):
         root = self.fixture()
         found = env_reference.reads([root / "core"])

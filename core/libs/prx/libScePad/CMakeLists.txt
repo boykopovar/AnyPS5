@@ -1,6 +1,8 @@
 add_library(libScePad SHARED EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/InventoryExports.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PadState.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/HostVolumeState.cpp
 )
 target_include_directories(libScePad PRIVATE ${LIBS_INCLUDE_DIR})
 set_target_properties(libScePad PROPERTIES CXX_EXTENSIONS OFF)
@@ -28,4 +30,12 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pad_vibration_mode PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(pad_rumble_intensity_tests tests/PadRumbleIntensity.cpp)
+    target_include_directories(pad_rumble_intensity_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(pad_rumble_intensity_tests)
+    add_test(NAME pad_rumble_intensity COMMAND pad_rumble_intensity_tests)
+    set_tests_properties(pad_rumble_intensity PROPERTIES TIMEOUT 30)
 endif()
