@@ -185,6 +185,70 @@ static void CheckExtControllerInformation(int handle) {
     Require(scePadGetExtControllerInformation(handle + 1, extended.data()) == PAD_ERROR_INVALID_HANDLE);
 }
 
+static bool LightBarValid() {
+    std::uint32_t seen = 0;
+    PadOutputState state;
+    Require(PadFetchOutput_nid_postfix(&seen, &state));
+    return state.lightBarValid;
+}
+
+static void CheckHandleQueries(int user, int handle) {
+    constexpr int notConnected = static_cast<int>(0x80920007);
+    const int closed = handle + 1;
+    const int special = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(special > 0);
+    Require(scePadIsValidHandle(handle, PAD_PORT_TYPE_STANDARD));
+    Require(!scePadIsValidHandle(handle, PAD_PORT_TYPE_SPECIAL));
+    Require(scePadIsValidHandle(special, PAD_PORT_TYPE_SPECIAL));
+    Require(!scePadIsValidHandle(special, PAD_PORT_TYPE_STANDARD));
+    Require(!scePadIsValidHandle(closed, PAD_PORT_TYPE_STANDARD));
+    Require(!scePadIsValidHandle(0, PAD_PORT_TYPE_STANDARD));
+
+    float value = 1.0f;
+    Require(scePadGetMotionTimerUnit(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetMotionTimerUnit(closed, &value) == PAD_ERROR_INVALID_HANDLE && value == 0.0f);
+    value = 1.0f;
+    Require(scePadGetMotionTimerUnit(handle, &value) == notConnected && value == 0.0f);
+    value = 1.0f;
+    Require(scePadGetMotionTimerUnit(special, &value) == notConnected && value == 0.0f);
+
+    PadMotionSensorPosition position{1.0f, 2.0f, 3.0f};
+    Require(scePadGetMotionSensorPosition(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetMotionSensorPosition(closed, &position) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadGetMotionSensorPosition(handle, &position) == notConnected);
+    Require(position.x == 1.0f && position.y == 2.0f && position.z == 3.0f);
+
+    float radius = 1.0f;
+    Require(scePadGetSphereRadius(special, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetSphereRadius(handle, &radius) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadGetSphereRadius(special, &radius) == notConnected && radius == 1.0f);
+
+    std::uint64_t address = 7;
+    Require(scePadGetBluetoothAddress(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetBluetoothAddress(closed, &address) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadGetBluetoothAddress(handle, &address) == notConnected && address == 7);
+
+    std::array<std::uint8_t, 0x80> leonardo{};
+    std::array<std::uint8_t, 0x20> unique;
+    unique.fill(0xaa);
+    leonardo[0x5c] = 0x13;
+    Require(scePadParseUniqueDataLeonardo(handle, nullptr, reinterpret_cast<PadLeonardoUniqueData*>(unique.data())) == PAD_ERROR_INVALID_ARG);
+    Require(scePadParseUniqueDataLeonardo(handle, reinterpret_cast<const PadLeonardoData*>(leonardo.data()), nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(unique[0] == 0xaa);
+    Require(scePadParseUniqueDataLeonardo(handle, reinterpret_cast<const PadLeonardoData*>(leonardo.data()), reinterpret_cast<PadLeonardoUniqueData*>(unique.data())) == PAD_ERROR_INVALID_HANDLE);
+    for (std::size_t i = 0; i < unique.size(); ++i) Require(unique[i] == (i < 0x18 ? 0 : 0xaa));
+
+    const PadLightBarParam color{10, 20, 30};
+    Require(scePadSetLightBar(handle, &color) == PAD_OK && LightBarValid());
+    Require(scePadResetLightBarAllByPortType(3) == PAD_ERROR_INVALID_ARG);
+    Require(scePadResetLightBarAllByPortType(PAD_PORT_TYPE_SPECIAL) == PAD_OK && LightBarValid());
+    Require(scePadResetLightBarAllByPortType(PAD_PORT_TYPE_STANDARD) == PAD_OK && !LightBarValid());
+    Require(scePadSetLightBar(handle, &color) == PAD_OK && LightBarValid());
+    Require(scePadResetLightBarAll() == PAD_OK && !LightBarValid());
+    Require(scePadClose_nid_postfix(special) == PAD_OK);
+    Require(!scePadIsValidHandle(special, PAD_PORT_TYPE_SPECIAL));
+}
+
 static void CheckVirtualTouchContact() {
     PadInputState left;
     left.touchLeft = true;
@@ -767,6 +831,19 @@ int main() {
     Require(scePadGetControllerType(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadGetControllerType(PAD_HANDLE, &controllerType) == PAD_ERROR_NOT_INITIALIZED);
     Require(controllerType == -1);
+    float earlyUnit = 1.0f;
+    PadMotionSensorPosition earlyPosition{1.0f, 2.0f, 3.0f};
+    float earlyRadius = 1.0f;
+    std::uint64_t earlyAddress = 7;
+    std::array<std::uint8_t, 0x80> earlyLeonardo{};
+    std::array<std::uint8_t, 0x20> earlyUnique;
+    earlyUnique.fill(0xaa);
+    Require(scePadGetMotionTimerUnit(PAD_HANDLE, nullptr) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadGetMotionTimerUnit(PAD_HANDLE, &earlyUnit) == PAD_ERROR_NOT_INITIALIZED && earlyUnit == 1.0f);
+    Require(scePadGetMotionSensorPosition(PAD_HANDLE, &earlyPosition) == PAD_ERROR_NOT_INITIALIZED && earlyPosition.x == 1.0f && earlyPosition.y == 2.0f && earlyPosition.z == 3.0f);
+    Require(scePadGetSphereRadius(PAD_HANDLE, &earlyRadius) == PAD_ERROR_NOT_INITIALIZED && earlyRadius == 1.0f);
+    Require(scePadGetBluetoothAddress(PAD_HANDLE, &earlyAddress) == PAD_ERROR_NOT_INITIALIZED && earlyAddress == 7);
+    Require(scePadParseUniqueDataLeonardo(PAD_HANDLE, reinterpret_cast<const PadLeonardoData*>(earlyLeonardo.data()), reinterpret_cast<PadLeonardoUniqueData*>(earlyUnique.data())) == PAD_ERROR_NOT_INITIALIZED && earlyUnique[0] == 0xaa);
     Require(scePadUnknown_n3kSX62fgNo() == static_cast<int>(0x80920005));
     Require(!scePadIsValidHandle(PAD_HANDLE, PAD_PORT_TYPE_STANDARD));
     const PadVibrationParam earlyVibration{1, 2};
@@ -850,6 +927,7 @@ int main() {
     CheckTiltCorrection(handle);
     CheckAngularVelocityDeadband(handle);
     CheckTouchContact();
+    CheckHandleQueries(user, handle);
     CheckVirtualTouchContact();
     CheckTouchPadInformation(handle);
     CheckStickDeadZones(handle);

@@ -1,6 +1,7 @@
 import argparse
 import bisect
 import collections
+import os
 import shutil
 import struct
 import subprocess
@@ -317,6 +318,9 @@ def summarize(symbolizer, samples, top):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("samples", help="collapsed-stack file or address file written by a Windows sampler")
     parser.add_argument("--libs", action="append", required=True, help="directory holding the modules that ran (repeatable)")
@@ -339,7 +343,7 @@ def symbolize(parser, args):
         for source in (args.samples, args.since):
             if source is not None:
                 source = Path(source)
-                if source.resolve() == output.resolve() or (source.exists() and output.exists() and source.samefile(output)):
+                if os.path.realpath(source) == os.path.realpath(output) or (source.exists() and output.exists() and source.samefile(output)):
                     parser.error("symbolized output must be separate from the sample captures")
     samples = load(args.samples, args.thread)
     if args.since:
@@ -355,7 +359,7 @@ def symbolize(parser, args):
         module_output_alias = False
         for directory in args.libs:
             for source in Path(directory).iterdir():
-                if not source.is_file() or not (source.resolve() == output.resolve() or
+                if not source.is_file() or not (os.path.realpath(source) == os.path.realpath(output) or
                                                 (source.exists() and output.exists() and source.samefile(output))):
                     continue
                 if source.name.lower() in referenced_modules or source.suffix.lower() in (".prx", ".dll", ".exe"):

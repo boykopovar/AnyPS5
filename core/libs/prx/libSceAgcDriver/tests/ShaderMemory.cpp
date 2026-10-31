@@ -8215,11 +8215,18 @@ void verifyWaveUniformValues() {
     auto& fromGlobalLoad = emit(IrOpcode::IAdd32, IrType::U32, {&globalLoad, &uniformSum});
     auto& compare = emit(IrOpcode::ULessThan32, IrType::U1, {&laneSum, &userData});
     auto& ballot = emit(IrOpcode::Ballot, IrType::U32x4, {&compare});
+    auto& uniformPhi = emit(IrOpcode::Phi, IrType::U32, {&userData});
+    auto& uniformNext = emit(IrOpcode::IAdd32, IrType::U32, {&uniformPhi, &userData});
+    uniformPhi.AddArgument(&uniformNext);
+    auto& varyingPhi = emit(IrOpcode::Phi, IrType::U32, {&userData});
+    auto& varyingNext = emit(IrOpcode::IAdd32, IrType::U32, {&varyingPhi, &lane});
+    varyingPhi.AddArgument(&varyingNext);
+    auto& fromVaryingPhi = emit(IrOpcode::IAdd32, IrType::U32, {&varyingPhi, &userData});
     const auto uniform = WaveUniformValues(program);
-    for (const auto* value : {&userData, &uniformSum, &address, &scalarLoad, &fromScalarLoad, &ballot}) {
+    for (const auto* value : {&userData, &uniformSum, &address, &scalarLoad, &fromScalarLoad, &ballot, &uniformPhi, &uniformNext}) {
         require(uniform.contains(value), "wave-uniform values: a value every lane of the wave computes alike was not found uniform");
     }
-    for (const auto* value : {&lane, &laneSum, &laneOffsetLoad, &globalLoad, &fromGlobalLoad, &compare}) {
+    for (const auto* value : {&lane, &laneSum, &laneOffsetLoad, &globalLoad, &fromGlobalLoad, &compare, &varyingPhi, &varyingNext, &fromVaryingPhi}) {
         require(!uniform.contains(value), "wave-uniform values: a value that may differ between lanes was found uniform");
     }
 }

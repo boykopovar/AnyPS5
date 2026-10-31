@@ -75,6 +75,7 @@ The same file also accepts these settings, each at most once, in the form `Setti
 |---------|-------|---------|
 | `LeftStickDeadzone`, `RightStickDeadzone` | Whole percentage from 0 to 90 of the controller stick's travel that reads as centered. Outside it the travel is rescaled, so the stick still reaches its full range. Keyboard and mouse stick bindings are not affected. | `0` |
 | `MouseSensitivity` | Number greater than 0 and at most 10. At 1, moving the mouse 3000 counts per second tilts the stick fully, about 5 cm per second at 1600 DPI; a larger number needs less movement. | `1` |
+| `MouseStickTarget` | `Left` or `Right`. Selects which analog stick is controlled by mouse movement when `ToggleMouse` is enabled. | `Right` |
 | `MouseVerticalScale` | Number from 0.1 to 10 that multiplies vertical mouse speed, for games that pitch slower or faster than they turn. | `1` |
 | `MouseCurve` | Number from 0.2 to 5, the response exponent. Above 1 gives finer control at low speed; below 1 reaches large tilts sooner. | `1` |
 | `MouseDeadzoneOffset` | Number from 0 to 0.9, the smallest tilt any movement produces as a fraction of full tilt. Set it just above the game's own deadzone: raise it if slow movement doesn't move the camera, lower it if small movements jump. | `0.2` |
@@ -128,11 +129,17 @@ With `TriggerRampMs` above 0, a key or mouse button bound to `L2` or `R2` presse
 
 While the `Shake` input is held (X by default), the controller reports its acceleration and angular velocity swinging back and forth every 50 ms, for titles that ask the player to shake the controller. A controller's own motion sensors are used otherwise.
 
-## Mouse as the right stick
+## Mouse as an analog stick
 
-`ToggleMouse` (the middle mouse button or F7 by default; a mouse without a middle button can use F7) captures the mouse and drives the right stick from how fast the mouse moves. Capture uses raw relative input, so the pointer speed and acceleration set in the operating system don't apply. Press it again to release the mouse. Capture also ends, and every held key is let go, when the window loses focus.
+`ToggleMouse` (the middle mouse button or F7 by default; a mouse without a middle button can use F7) captures the mouse and drives the analog stick selected by `MouseStickTarget` (`Right` by default) from how fast the mouse moves. Capture uses raw relative input, so the pointer speed and acceleration set in the operating system don't apply. Press it again to release the mouse. Capture also ends, and every held key is let go, when the window loses focus.
 
 The stick tilts in the direction the mouse moves, and further the faster it moves. Speed is measured in counts per second over the time between updates, so the same hand speed gives the same tilt at any frame rate. Any movement tilts the stick at least `MouseDeadzoneOffset`, so slow movement isn't lost inside the game's own deadzone. When the mouse stops, the stick eases back and is centered `MouseDecayMs` after the last movement.
+
+To control the left analog stick with mouse movement:
+
+```ini
+MouseStickTarget = Left
+```
 
 For example, for a game with a small deadzone that needs fast turns:
 

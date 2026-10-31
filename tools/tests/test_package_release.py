@@ -98,6 +98,17 @@ class PublicHeaderPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "outside core/libs"):
             package_headers.package(self.source, self.output, "v1")
 
+    def test_header_symlink_loop_is_rejected_without_traceback(self):
+        loop = self.umbrella.with_name("Loop.hpp")
+        try:
+            loop.symlink_to("Loop.hpp")
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Loop.hpp"\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Symbolic link loop"):
+            package_headers.public_headers(self.source)
+        self.assertTrue(loop.is_symlink())
+
     def test_header_command_needs_no_build_directory(self):
         with patch.object(package_release, "ROOT", self.source):
             self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)

@@ -83,6 +83,9 @@ int main() {
     Require(sceWebBrowserDialogInitialize() == 0);
     Require(sceWebBrowserDialogOpenForPredeterminedContent(nullptr, &allowList) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogOpenForPredeterminedContent(param, nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    WebBrowserDialogAllowList badSizeAllowList = allowList;
+    badSizeAllowList.size = sizeof(badSizeAllowList) - 1;
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &badSizeAllowList) == static_cast<int>(0x80B8000Au));
     allowList.addresses[0] = nullptr;
     Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == static_cast<int>(0x80B8000Au));
     allowList.addresses[19] = "test.invalid";

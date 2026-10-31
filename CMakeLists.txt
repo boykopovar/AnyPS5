@@ -411,7 +411,7 @@ if(BUILD_TESTING)
             string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
             add_test(NAME check_compile_modes_${test_case} COMMAND ${Python3_EXECUTABLE}
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_modes.py" CheckCompileModeTests.${test_case})
-            set_tests_properties(check_compile_modes_${test_case} PROPERTIES TIMEOUT 60)
+            set_tests_properties(check_compile_modes_${test_case} PROPERTIES TIMEOUT 30)
         endforeach()
         add_test(NAME trace_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py)
