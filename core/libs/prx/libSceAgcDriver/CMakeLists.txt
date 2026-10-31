@@ -3943,8 +3943,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_frame_replay_concurrent PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-concurrent-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=8"
                 TIMEOUT 120)
+        add_test(NAME agc_driver_frame_replay_rewind COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> rewind)
+        set_tests_properties(agc_driver_frame_replay_rewind PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame-replay-rewind-capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1"
+                TIMEOUT 120)
         if(WIN32)
-            set_tests_properties(agc_driver_frame_replay_concurrent PROPERTIES ENVIRONMENT_MODIFICATION
+            set_tests_properties(agc_driver_frame_replay_concurrent agc_driver_frame_replay_rewind PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endif()
