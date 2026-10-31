@@ -1,0 +1,16 @@
+add_library(libSceFios2 SHARED EXCLUDE_FROM_ALL Export.cpp src/Runtime.cpp src/Control.cpp src/PathQueries.cpp src/PathOperations.cpp src/FileHandles.cpp src/DirectoryHandles.cpp src/Time.cpp)
+target_include_directories(libSceFios2 PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceFios2)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_fios2_tests ${LIBS_INCLUDE_DIR}/tests/GuestFios2.cpp)
+    target_include_directories(guest_fios2_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_fios2_tests PRIVATE libSceFios2 libkernel libc)
+    configure_windows_unwind(guest_fios2_tests)
+    add_test(NAME guest_fios2 COMMAND guest_fios2_tests)
+    set_tests_properties(guest_fios2 PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_fios2 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFios2>")
+    endif()
+endif()
