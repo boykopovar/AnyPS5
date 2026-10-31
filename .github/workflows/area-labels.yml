@@ -26,8 +26,21 @@ jobs:
           state=$RUNNER_TEMP/area-state.json
           [ -s "$state" ] || echo '{}' > "$state"
           config=$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/labeler.yml" --jq .sha)
-          gh pr list -R "$GITHUB_REPOSITORY" --base "${{ github.event.repository.default_branch }}" -L 1000 --json number,headRefOid \
-            --jq "map({key: (.number | tostring), value: (.headRefOid + \"-$config\")}) | from_entries" > "$RUNNER_TEMP/area-open.json"
+          gh api graphql --paginate --slurp \
+            -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" \
+            -f base="${{ github.event.repository.default_branch }}" -f query='
+              query($owner: String!, $name: String!, $base: String!, $endCursor: String) {
+                repository(owner: $owner, name: $name) {
+                  pullRequests(states: OPEN, baseRefName: $base, first: 100, after: $endCursor,
+                    orderBy: {field: CREATED_AT, direction: DESC}) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes { number headRefOid }
+                  }
+                }
+              }' | jq -c --arg config "$config" \
+              '[.[].data.repository.pullRequests.nodes[]
+                | {key: (.number | tostring), value: (.headRefOid + "-" + $config)}] | from_entries' \
+              > "$RUNNER_TEMP/area-open.json"
           jq -r --slurpfile old "$state" 'to_entries[] | select($old[0][.key] != .value) | .key' "$RUNNER_TEMP/area-open.json" | head -n 40 > "$RUNNER_TEMP/area-todo"
           jq -c --slurpfile open "$RUNNER_TEMP/area-open.json" --rawfile todo "$RUNNER_TEMP/area-todo" \
             'with_entries(select(.key | in($open[0]))) + ($open[0] | with_entries(select(.key | IN($todo | split("\n")[]))))' "$state" > "$RUNNER_TEMP/area-next.json"

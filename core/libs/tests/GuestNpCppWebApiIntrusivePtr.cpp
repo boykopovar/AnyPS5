@@ -209,6 +209,62 @@ static void TestSharedOwnership() {
     Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V122RecordScoreRequestBodyEEptEv(&owner) == nullptr);
 }
 
+static void TestMatchmakingSharedOwnership() {
+    alignas(8) unsigned char object[ObjectSize];
+    std::memset(object, 0x5a, sizeof(object));
+    WriteCount(object, 0, 1);
+    deleterCalls = 0;
+    deletedObject = nullptr;
+
+    IntrusivePtr owner;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEEC1Ev(&owner);
+
+    owner.object = object;
+    owner.deleter = RecordDelete;
+
+    IntrusivePtr argument;
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEEC1ERS7_(&argument, &owner);
+
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEEptEv(&argument) == object);
+    Require(ReadCount(object, 0) == 2);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEED1Ev(&argument);
+    Require(ReadCount(object, 0) == 1);
+    Require(deleterCalls == 0);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEED1Ev(&owner);
+    Require(ReadCount(object, 0) == 0);
+    Require(deleterCalls == 1);
+    Require(deletedObject == object);
+    Require(_ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V123SubmitTicketRequestBodyEEptEv(&owner) == nullptr);
+}
+
+static void TestMatchTeamVectorSize() {
+    int context = 0;
+    alignas(8) unsigned char object[ObjectSize];
+    std::memset(object, 0x5a, sizeof(object));
+    WriteCount(object, 0, 1);
+    deleterCalls = 0;
+    deletedObject = nullptr;
+
+    IntrusivePtr vector;
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&vector, &context);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(&vector) == 0);
+
+    IntrusivePtr filled{object, RecordDelete, &context};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE8pushBackERKS8_(&vector, &filled) == 0);
+    Require(ReadCount(object, 0) == 2);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(&vector) == 1);
+
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEED1Ev(&vector);
+    Require(ReadCount(object, 0) == 1 && deleterCalls == 0);
+
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEED1Ev(&filled);
+    Require(ReadCount(object, 0) == 0);
+    Require(deleterCalls == 1);
+    Require(deletedObject == object);
+}
+
 static void TestVectorPushBackReleasesElements() {
     int context = 0;
     alignas(8) unsigned char object[ObjectSize];
@@ -454,6 +510,8 @@ int main(int argc, char** argv) {
     for (const auto& testCase : destructors) TestDestroy(testCase);
 
     TestSharedOwnership();
+    TestMatchmakingSharedOwnership();
+    TestMatchTeamVectorSize();
     TestVectorPushBackReleasesElements();
     TestAdoptedVectorBodyDestroyedThroughDeleter();
     TestUserProfileVectorAssign();

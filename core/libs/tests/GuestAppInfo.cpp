@@ -113,6 +113,7 @@ int main(int argc, char** argv) {
     std::filesystem::remove_all(sfo);
 
     Require(sceKernelUuidCreate(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelUuidCreate(reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::uint32_t first[4]{};
     std::uint32_t second[4]{};
     Require(sceKernelUuidCreate(first) == 0 && sceKernelUuidCreate(second) == 0);
@@ -120,6 +121,7 @@ int main(int argc, char** argv) {
     Require(std::memcmp(first, second, sizeof(first)) != 0);
 
     Require(sceKernelCreateUuidV4(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateUuidV4(reinterpret_cast<std::uint8_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::uint8_t third[16]{};
     std::uint8_t fourth[16]{};
     Require(sceKernelCreateUuidV4(third) == 0 && sceKernelCreateUuidV4(fourth) == 0);
