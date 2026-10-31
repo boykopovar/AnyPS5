@@ -7,7 +7,7 @@
 
 namespace ShaderRecompiler::ImageTableAbi {
 
-inline constexpr std::uint32_t Version = 2;
+inline constexpr std::uint32_t Version = 4;
 
 inline constexpr std::uint32_t HeaderVersion = 0;
 inline constexpr std::uint32_t HeaderElementBase = 1;
@@ -49,6 +49,11 @@ inline constexpr std::uint32_t OutsideDomainPoison = 1;
 inline constexpr std::uint32_t FirstEntryPoison = 2;
 
 inline constexpr std::uint32_t MaxKeys = 65536;
+inline constexpr std::uint32_t MaxParentKeys = 524288;
+inline constexpr std::uint32_t MaxNestedKeys = 1048576;
+inline constexpr std::uint32_t MaxMapWords = 8388608;
+inline constexpr std::uint32_t PointerRecordWords = 3;
+inline constexpr std::uint64_t UncapturedPointer = 0xffffffffffffffffull;
 inline constexpr std::uint32_t MaxModes = 256;
 inline constexpr std::uint32_t ImageElementBudget = 65536;
 inline constexpr std::uint32_t SamplerElementBudget = 1024;
@@ -125,8 +130,9 @@ constexpr std::optional<std::uint32_t> ScalarBufferDword(std::uint32_t offset, s
 }
 
 constexpr std::optional<std::uint64_t> ScalarAddressDword(std::uint64_t base, std::uint32_t offset, std::uint32_t immediate) {
-    const std::uint64_t first = base + (offset & ~3u);
-    if (first < base) return std::nullopt;
+    const std::uint64_t aligned = base & ~std::uint64_t{3};
+    const std::uint64_t first = aligned + (offset & ~3u);
+    if (first < aligned) return std::nullopt;
     const std::int64_t delta = static_cast<std::int32_t>(immediate & ~3u);
     const std::uint64_t magnitude = delta < 0 ? static_cast<std::uint64_t>(-delta) : static_cast<std::uint64_t>(delta);
     if (delta < 0) return magnitude > first ? std::nullopt : std::optional<std::uint64_t>(first - magnitude);
