@@ -4916,14 +4916,36 @@ void DepthBoundsEmulationTests() {
         change(state, context, program);
         expectFailure([&] { AgcDriver::Graphics::ApplyDepthBoundsEmulation(context, state, program); }, expected);
     };
-    refuses("both bounds inside", [](auto& state, auto&, auto&) { state.minDepthBounds = 0.25f; });
-    refuses("with depth testing", [](auto& state, auto&, auto&) { state.depthTest = true; });
-    refuses("reads or exports depth", [](auto&, auto&, auto& program) { program.posZ = true; });
-    refuses("reads or exports depth", [](auto&, auto&, auto& program) { program.depthExportEnable = true; });
+    const auto discards = [&](const char* what, auto change) {
+        auto state = base;
+        state.minDepthBounds = 0.0f;
+        state.maxDepthBounds = 0.5f;
+        auto context = emulating;
+        auto program = pixel;
+        change(state, context, program);
+        const auto before = state;
+        AgcDriver::Graphics::ApplyDepthBoundsEmulation(context, state, program);
+        auto expected = before;
+        expected.depthBoundsTest = false;
+        expected.depthBoundsDiscard = true;
+        Require(state.depthBoundsDiscard && !state.depthBoundsTest && state.depthTest == expected.depthTest && state.depthCompare == expected.depthCompare && state.depthBias == expected.depthBias && state.viewport.minDepth == expected.viewport.minDepth && state.viewport.maxDepth == expected.viewport.maxDepth && state.minDepthBounds == expected.minDepthBounds && state.maxDepthBounds == expected.maxDepthBounds, what);
+    };
+    discards("bounds inside (0, 1) were not tested by the pixel program", [](auto& state, auto&, auto&) { state.minDepthBounds = 0.25f; });
+    discards("a depth bounds test with depth testing was not tested by the pixel program", [](auto& state, auto&, auto&) {
+        state.depthTest = true;
+        state.depthCompare = VK_COMPARE_OP_GREATER_OR_EQUAL;
+    });
+    discards("a pixel program that reads depth did not test the depth bounds itself", [](auto&, auto&, auto& program) { program.posZ = true; });
+    discards("a pixel program that exports depth did not test the depth bounds itself", [](auto&, auto&, auto& program) { program.depthExportEnable = true; });
+    discards("a device with an unrestricted depth range did not test the depth bounds in the pixel program", [](auto&, auto& context, auto&) { context.depthRangeUnrestricted = true; });
+    discards("a stencil test that keeps every value did not test the depth bounds in the pixel program", [](auto& state, auto&, auto&) {
+        state.minDepthBounds = 0.25f;
+        state.stencilTest = true;
+        state.stencilFront.writeMask = state.stencilBack.writeMask = 0xffu;
+    });
     refuses("normalized depth target", [](auto& state, auto&, auto&) { state.depth->format = VK_FORMAT_D16_UNORM; });
-    refuses("stays in [0, 1]", [](auto&, auto& context, auto&) { context.depthRangeUnrestricted = true; });
     refuses("depth bounds outside [0, 1]", [](auto& state, auto&, auto&) { state.maxDepthBounds = 1.5f; });
-    refuses("writes on a failed test", [](auto& state, auto&, auto&) {
+    refuses("writes stencil", [](auto& state, auto&, auto&) {
         state.stencilTest = true;
         state.stencilFront.writeMask = 0xffu;
         state.stencilFront.failOp = VK_STENCIL_OP_REPLACE;
@@ -9702,6 +9724,26 @@ void stencilRefExportTests() {
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(pushedRequest)); }, "unused push constant dword");
     pushedRequest.layout.pushConstantSizeBytes = 8u;
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(pushedRequest)); }, "crosses a stage slot");
+    {
+        const AgcDriver::Graphics::DepthTarget boundedDepth{0x10000, 0, {64, 64}, VK_FORMAT_D32_SFLOAT, 0.0f, 0};
+        for (const auto [shaderControl, code, stencil] : {std::tuple{0x53u, std::span<const std::uint32_t>(pushedDepthStencil), true}, std::tuple{0x51u, std::span<const std::uint32_t>(pushedDepthStencil), false}}) {
+            auto boundedRequest = stencilRefExportRequest(shaderControl, plain, code);
+            boundedRequest.context.userData = pushedDepth;
+            boundedRequest.context.pixel->depthBoundsDiscard = {true, AgcDriver::Graphics::DepthBoundsSourceWords(boundedDepth)};
+            const auto driverDwords = stencil ? 3u : 2u;
+            for (const auto [dwords, shaderDataPushed] : {std::pair{driverDwords + 1u, true}, std::pair{driverDwords, false}}) {
+                boundedRequest.layout = {0u, 0u, 0u, dwords * 4u};
+                const auto bounded = ShaderRecompiler::Recompile(boundedRequest);
+                const auto first = shaderDataPushed ? 1u : 0u;
+                Require(bounded.depthBoundsDword == first + (stencil ? 1u : 0u) && bounded.stencilReferenceDword == (stencil ? first : 0xffffffffu) && bounded.pushConstants.size() == (first + driverDwords) * sizeof(std::uint32_t), "the depth bounds dwords were not placed after the shader data that fits beside them, or at the stage start without it");
+                Require(shaderDataPushed || std::ranges::any_of(bounded.bindings, [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::ShaderData; }), "shader data that leaves no room for the depth bounds dwords did not move to its storage buffer");
+                const auto handle = ShaderRecompiler::PrepareShader(boundedRequest);
+                Require(ShaderRecompiler::MatchesPreparedShader(boundedRequest, *handle), "a depth bounds artifact did not match the push range it was prepared for");
+            }
+            boundedRequest.layout = {0u, 0u, 0u, (driverDwords - 1u) * 4u};
+            expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(boundedRequest)); }, "requires two unused push constant dwords");
+        }
+    }
     const std::array<std::uint32_t, 4> noStencilExport{0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u};
     auto noStencilRequest = stencilRefExportRequest(0x52u, plain, noStencilExport);
     noStencilRequest.layout.pushConstantSizeBytes = 0u;
