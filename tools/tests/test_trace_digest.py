@@ -784,6 +784,21 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("summary file not found", error.getvalue())
 
+    def test_interval_input_rejects_capture_summary(self):
+        path = Path(self.directory.name) / "intervals.jsonl"
+        path.write_text("", encoding="utf-8")
+        summary = Path(self.directory.name) / "capture.jsonl"
+        summary.write_text(json.dumps(SUMMARY) + "\n", encoding="utf-8")
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run(
+                    [sys.executable, trace_digest.__file__, str(path), "--summary", str(summary), *output],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("--summary requires an event trace, not interval summaries", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_thread_filter_keeps_frame_bounds_and_capture_summary(self):
         command = [sys.executable, trace_digest.__file__, str(self.trace)]
         result = subprocess.run([*command, "--thread", "queue worker 0x0", "--json"], capture_output=True, text=True)
