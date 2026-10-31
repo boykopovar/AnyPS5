@@ -991,6 +991,15 @@ int main(int argc, char** argv) {
     Require(sceRtcFormatRFC3339(ranges, &shifted, -1) == 0 && std::strcmp(ranges, "9999-12-31T23:59:00.00-00:01") == 0);
     Require(sceRtcInit() == 0);
     Require(sceRtcEnd() == 0);
+    Require(sceRtcGetCurrentTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentClock(reinterpret_cast<RtcDateTime*>(0x10), 0) == invalidPointer);
+    Require(sceRtcGetCurrentClockLocalTime(reinterpret_cast<RtcDateTime*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentClockUtc(reinterpret_cast<RtcDateTime*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentRawNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentAdNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcGetCurrentDebugNetworkTick(reinterpret_cast<RtcTick*>(0x10)) == invalidPointer);
+    Require(sceRtcSetCurrentTick(reinterpret_cast<const RtcTick*>(0x10)) == invalidPointer);
     for (const std::uint64_t value : {maxTick + 1, std::uint64_t{1} << 63, std::numeric_limits<std::uint64_t>::max()}) {
         const RtcTick outOfRange{value};
         Require(sceRtcSetCurrentTick(&outOfRange) == 0);
