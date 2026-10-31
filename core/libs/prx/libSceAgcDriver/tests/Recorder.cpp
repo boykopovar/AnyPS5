@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -5250,6 +5251,339 @@ void drawSnapshotUploadTests(const Device& device, Recorder& recorder) {
         snapshotRecorder.Sync();
     }
     recorder.Activate();
+}
+
+void ownedStorageSnapshotTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    constexpr std::size_t bytes = 4 * 65536;
+    constexpr std::size_t copyBytes = 65536;
+    auto context = device.GetContext();
+    Require(context.hostImportAlignment != 0 && context.hostImportAlignment <= 65536, "owned storage tests need host imports aligned within 64 KiB");
+#ifdef _WIN32
+    void* block = AllocateWatched(bytes, 65536);
+    constexpr bool reusable = true;
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+    constexpr bool reusable = false;
+#endif
+    Require(block != nullptr, "cannot allocate the owned storage fixture");
+    struct Release {
+        void* block;
+        ~Release() {
+#ifdef _WIN32
+            ReleaseWatched(block, bytes);
+#else
+            std::free(block);
+#endif
+        }
+    } release{block};
+    std::memset(block, 0x31, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto begin = address + 65536;
+    const auto element = begin + 1;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+        }
+    } unregister{context, block};
+    Require(HostImportFor(context, address, bytes) != nullptr, "the owned storage fixture was not imported");
+    ShaderRecompiler::RecompileResult program;
+    program.pushConstants.resize(4);
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {static_cast<std::uint32_t>(element), static_cast<std::uint32_t>(element >> 32u) & 0xffffu, static_cast<std::uint32_t>(copyBytes - 1), 0x31000000u};
+    binding.bufferWritten = {false};
+    program.bindings.push_back(binding);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    DescriptorCache cache(context);
+    context.descriptorCache = &cache;
+    Recorder snapshots(context);
+    snapshots.Activate();
+    {
+        ShaderResources resources(context, shader);
+        Unwatch(address, bytes);
+        Require(!Watched(begin, copyBytes), "the owned storage fixture is tracked");
+        const auto draw = [&] {
+            const auto bindings = resources.PrepareDrawBindings(snapshots);
+            Require(bindings != nullptr && bindings->snapshots.size() == 1, "the ordinary read-only storage input was not snapshotted");
+            const auto& snapshot = bindings->snapshots.front();
+            const auto contents = snapshot.Bytes();
+            Require(contents.size() == copyBytes && std::memcmp(contents.data(), reinterpret_cast<const void*>(begin), copyBytes) == 0, "the storage snapshot has stale or incorrectly adjusted bytes");
+            return snapshot.buffer;
+        };
+        BumpCollectEpoch();
+        const auto first = draw();
+        BumpCollectEpoch();
+        const auto second = draw();
+        Require((second == first) == reusable, "an unchanged untracked storage input was copied again");
+        if (!reusable) Require(draw() == second, "a host without native owned proofs lost its epoch memo");
+        auto* guest = reinterpret_cast<std::uint8_t*>(begin);
+        guest[128] ^= 0xffu;
+        if (!reusable) BumpCollectEpoch();
+        const auto cpu = draw();
+        Require(cpu != second, "the epoch memo hid a CPU store from the owned storage proof");
+        guest[0] ^= 0xffu;
+        if (!reusable) BumpCollectEpoch();
+        const auto prefix = draw();
+        Require(prefix != cpu, "the owned storage proof omitted its adjusted prefix");
+        guest[copyBytes - 1] ^= 0xffu;
+        if (!reusable) BumpCollectEpoch();
+        const auto tail = draw();
+        Require(tail != prefix, "the owned storage proof omitted its final copied byte");
+        MarkWritten(begin + 256, 4);
+        const auto gpu = draw();
+        Require(gpu != tail, "an owned storage input outlived an untracked GPU stamp");
+        MarkPossiblyWritten(begin + 512, 4);
+        Require(draw() != gpu, "an owned storage input outlived a possible GPU store");
+#ifdef _WIN32
+        const auto beforePrefixWrite = draw();
+        snapshots.OnComplete([guest] { guest[0] ^= 0x5au; });
+        snapshots.NotePendingWrite(begin, 1);
+        const auto afterPrefixWrite = draw();
+        Require(afterPrefixWrite != beforePrefixWrite && !snapshots.PendingWriteOverlaps(begin, 1), "a pending writer in the adjusted prefix was not flushed");
+#endif
+        snapshots.NotePendingWrite(element + 1024, 4);
+        Require(resources.PrepareDrawBindings(snapshots) == nullptr, "a pending writer was replaced by a CPU storage snapshot");
+        snapshots.Sync();
+#ifdef _WIN32
+        const auto beforeCollect = draw();
+        std::array<void*, copyBytes / 4096> pages{};
+        auto count = pages.size();
+        Require(GuestArena::GuestArenaCollectWrites_nid_postfix(begin, copyBytes, pages.data(), &count, true), "the storage clearing collect failed");
+        Require(draw() != beforeCollect, "a clearing collect left an owned storage snapshot reusable");
+        const auto beforeProtection = draw();
+        GuestArena::GuestArenaSetProtection_nid_postfix(begin, copyBytes, PAGE_READWRITE);
+        Require(draw() != beforeProtection, "a protection notification left an owned storage snapshot reusable");
+        GuestArena::GuestArenaPinWritable_nid_postfix(reinterpret_cast<void*>(begin), copyBytes);
+        const auto pinned = draw();
+        guest[16] ^= 0xffu;
+        Require(draw() != pinned, "a refused owned arm fell back to the stale epoch memo");
+        GuestArena::GuestArenaUnpinWritable_nid_postfix(reinterpret_cast<void*>(begin), copyBytes);
+#endif
+        const auto beforeRegistry = draw();
+        alignas(64) static std::byte other[64];
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(other, sizeof(other), true, true, true);
+        }
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(other);
+        }
+        Require(draw() != beforeRegistry, "an owned storage input outlived a registry mutation");
+        if (const auto disabled = RuntimeSwitches::Find("APS5_NO_OWNED_DRAW_SNAPSHOTS"); disabled.has_value()) {
+            RuntimeSwitches::Assign(*disabled, true);
+            BumpCollectEpoch();
+            const auto off = draw();
+            BumpCollectEpoch();
+            Require(draw() != off, "disabled owned storage snapshots still reused an untracked copy");
+            RuntimeSwitches::Assign(*disabled, false);
+        }
+        snapshots.Sync();
+    }
+#ifdef _WIN32
+    {
+        auto mixed = program;
+        auto& shared = mixed.bindings.front();
+        shared.count = 3;
+        shared.guestDescriptor.clear();
+        for (const auto [start, length] : {std::pair{address, std::size_t{256}}, std::pair{element, copyBytes - 1}, std::pair{address + 2 * copyBytes, std::size_t{256}}}) {
+            const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(start), static_cast<std::uint32_t>(start >> 32u) & 0xffffu, static_cast<std::uint32_t>(length), 0x31000000u};
+            shared.guestDescriptor.insert(shared.guestDescriptor.end(), descriptor.begin(), descriptor.end());
+        }
+        shared.bufferWritten = {false, false, false};
+        const CompiledShader threeBuffers{ShaderRecompiler::ShaderStage::Compute, &mixed, 0};
+        ShaderResources resources(context, threeBuffers);
+        Unwatch(address, bytes);
+        BumpCollectEpoch();
+        const auto first = resources.PrepareDrawBindings(snapshots);
+        Require(first != nullptr && first->snapshots.size() == 3, "the mixed storage fixture did not select all three buffers");
+        const auto last = address + 2 * copyBytes;
+        snapshots.OnComplete([last] {
+            reinterpret_cast<std::uint8_t*>(last)[0] ^= 0x5au;
+            MarkWritten(last, 1);
+        });
+        snapshots.NotePendingWrite(begin, 1);
+        const auto second = resources.PrepareDrawBindings(snapshots);
+        Require(second != nullptr && second->snapshots.size() == 3 && !snapshots.PendingWriteOverlaps(begin, 1), "the mixed storage fixture did not flush its adjusted prefix");
+        Require(second->snapshots[1].buffer == first->snapshots[1].buffer, "the disjoint completion prevented the middle owned storage hit");
+        const auto after = second->snapshots[2].Bytes();
+        Require(after.size() == 256 && std::memcmp(after.data(), reinterpret_cast<const void*>(last), after.size()) == 0, "an owned storage flush left a later epoch memo on an old tracker stamp");
+        snapshots.Sync();
+    }
+    {
+        auto overlapping = program;
+        auto& shared = overlapping.bindings.front();
+        shared.count = 2;
+        const std::array<std::uint32_t, 4> prefix{static_cast<std::uint32_t>(begin), static_cast<std::uint32_t>(begin >> 32u) & 0xffffu, 1, 0x31000000u};
+        shared.guestDescriptor.insert(shared.guestDescriptor.end(), prefix.begin(), prefix.end());
+        shared.bufferWritten.push_back(true);
+        const CompiledShader writesPrefix{ShaderRecompiler::ShaderStage::Compute, &overlapping, 0};
+        ShaderResources resources(context, writesPrefix);
+        Unwatch(address, bytes);
+        Require(resources.PrepareDrawBindings(snapshots) == nullptr, "a storage snapshot included another writable binding in its adjusted prefix");
+    }
+    const std::array ranges{std::pair{address, address + bytes}};
+    Rewatch(ranges);
+    Require(Watched(begin, copyBytes), "the containing-range fixture did not become tracked");
+    const auto proof = snapshots.ArmOwnedDrawInput(begin, copyBytes);
+    Require(!proof.words.empty(), "the containing-range fixture refused its owned proof");
+    auto held = std::make_shared<Buffer>(context, copyBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::memcpy(held->Bytes().data(), reinterpret_cast<const void*>(begin), copyBytes);
+    snapshots.KeepOwnedDrawInput(begin, copyBytes, proof, held, Recorder::SnapshotUse::Storage, 0);
+    const auto offset = std::max<std::uint64_t>(context.limits.minStorageBufferOffsetAlignment, 4);
+    reinterpret_cast<std::uint8_t*>(begin)[offset] ^= 0xffu;
+    VkDeviceSize selectedOffset = 0;
+    Require(snapshots.ReusableDrawSnapshot(begin + offset, copyBytes / 2, Recorder::SnapshotUse::Storage, nullptr, proof.since, &selectedOffset) == nullptr, "a containing-range lookup bypassed an owned storage proof");
+#endif
+    snapshots.Sync();
+    recorder.Activate();
+}
+
+void ownedDrawInputTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    using Use = Recorder::SnapshotUse;
+    constexpr std::size_t bytes = 65536;
+    constexpr std::size_t size = 256;
+#ifdef _WIN32
+    void* block = AllocateWatched(bytes, bytes);
+    Require(block != nullptr, "owned draw inputs need a write-watched arena fixture");
+    constexpr bool reusable = true;
+#else
+    void* block = std::aligned_alloc(bytes, bytes);
+    Require(block != nullptr, "cannot allocate the untracked draw input fixture");
+    constexpr bool reusable = false;
+#endif
+    struct Release {
+        void* block;
+        ~Release() {
+#ifdef _WIN32
+            ReleaseWatched(block, bytes);
+#else
+            std::free(block);
+#endif
+        }
+    } release{block};
+    auto context = device.GetContext();
+    context.drawInputsInPlace = false;
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    auto* words = static_cast<std::uint32_t*>(block);
+    for (std::uint32_t i = 0; i < bytes / sizeof(std::uint32_t); ++i) words[i] = i * 3;
+    Unwatch(address, bytes);
+    Require(!Watched(address, bytes), "the owned draw input fixture is still tracked");
+    Require(InPlaceDrawInput(context, address, size, 4) == nullptr, "the copied input fixture was bound in place");
+    const auto copy = [&](Use use = Use::Index32, std::size_t length = 256, std::size_t offset = 0) {
+        auto result = CopyDrawInput(context, &recorder, address + offset, length, 4, use);
+        Require(result.buffer != nullptr && result.buffer->Bytes().size() == length && std::memcmp(result.buffer->Bytes().data(), static_cast<const std::byte*>(block) + offset, length) == 0, "the owned draw input has stale bytes");
+        Require(result.generation == 0, "the untracked copy acquired a tracked generation");
+        return result;
+    };
+    const auto keep = [&](const DrawInputCopy& value, Use use = Use::Index32) {
+        KeepDrawInput(&recorder, address, value, use, 189);
+    };
+    const auto first = copy();
+    Require(!first.reused, "the first owned draw input was reused");
+    keep(first);
+    const auto second = copy();
+    Require(second.reused == reusable, "an unchanged untracked draw input was copied again");
+    if (reusable) Require(second.buffer == first.buffer && second.derived == 189, "an owned index lost its buffer or highest index");
+    BumpCollectEpoch();
+    Require(copy().reused == reusable, "a collect epoch lost an unchanged owned input");
+    words[5] = 0xdead;
+    const auto stored = copy();
+    Require(!stored.reused, "an owned input outlived a CPU store");
+    keep(stored);
+    Require(copy().reused == reusable, "the copy after a CPU store was not kept");
+    MarkWritten(address + 128, 4);
+    const auto marked = copy();
+    Require(!marked.reused, "an owned input outlived an untracked GPU stamp");
+    keep(marked);
+    MarkPossiblyWritten(address + 64, 4);
+    Require(!copy().reused, "an owned input outlived a possible GPU store");
+    const auto beforeStore = copy();
+    words[6] = 0xbeef;
+    keep(beforeStore);
+    Require(!copy().reused, "keeping an old copy armed it after a CPU store");
+    const auto beforeStamp = copy();
+    MarkWritten(address + 128, 4);
+    keep(beforeStamp);
+    Require(!copy().reused, "keeping an old copy refreshed its GPU stamp");
+    const auto beforePending = copy();
+    recorder.NotePendingWrite(address + 32, 4);
+    keep(beforePending);
+    Require(!copy().reused && !recorder.PendingWriteOverlaps(address, size), "an owned input survived a pending GPU writer");
+    const auto afterPending = copy();
+    keep(afterPending);
+    Require(copy().reused == reusable, "the copy after a pending writer was not kept");
+    alignas(64) static std::byte other[64];
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(other, sizeof(other), true, true, true);
+    }
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(other);
+    }
+    Require(!copy().reused, "an owned input outlived a registry mutation");
+#ifdef _WIN32
+    const auto beforeCollect = copy();
+    keep(beforeCollect);
+    std::array<void*, bytes / 4096> pages{};
+    auto count = pages.size();
+    Require(GuestArena::GuestArenaCollectWrites_nid_postfix(address, bytes, pages.data(), &count, true), "the clearing collect failed");
+    Require(!copy().reused, "an owned input outlived a clearing collect");
+    const auto beforeProtection = copy();
+    keep(beforeProtection);
+    GuestArena::GuestArenaSetProtection_nid_postfix(address, bytes, PAGE_READWRITE);
+    Require(!copy().reused, "an owned input outlived a protection notification");
+    const auto beforeReset = copy();
+    keep(beforeReset);
+    GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+    GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
+    std::memset(block, 0x29, bytes);
+    Unwatch(address, bytes);
+    Require(!copy().reused, "an owned input outlived a mapping replacement");
+    GuestArena::GuestArenaPinWritable_nid_postfix(block, bytes);
+    const auto pinned = copy();
+    keep(pinned);
+    Require(!copy().reused, "a pinned input acquired an owned proof");
+    GuestArena::GuestArenaUnpinWritable_nid_postfix(block, bytes);
+#endif
+    const auto vertex = copy(Use::Vertex);
+    keep(vertex, Use::Vertex);
+    Require(copy(Use::Vertex).reused == reusable, "the vertex copy was not kept");
+    Require(!copy(Use::Index16).reused, "an index input reused a vertex copy");
+    const auto exact = copy(Use::Vertex);
+    keep(exact, Use::Vertex);
+    Require(!copy(Use::Vertex, size / 2).reused, "a shorter owned input reused a longer copy");
+    Require(!copy(Use::Vertex, size * 2).reused, "a longer owned input reused a shorter copy");
+    Require(!copy(Use::Vertex, size, 4).reused, "an offset owned input reused another range");
+    const auto restart = copy(Use::Index32Restart);
+    keep(restart, Use::Index32Restart);
+    Require(copy(Use::Index32Restart).reused == reusable, "a restart index copy was not kept");
+    Require(!copy(Use::Index32).reused, "a non-restart input reused restart metadata");
+    if (const auto disabled = RuntimeSwitches::Find("APS5_NO_OWNED_DRAW_INPUTS"); disabled.has_value()) {
+        RuntimeSwitches::Assign(*disabled, true);
+        const auto fresh = copy();
+        keep(fresh);
+        Require(!copy().reused, "the disabled owned input path reused a copy");
+        RuntimeSwitches::Assign(*disabled, false);
+    }
+    recorder.Sync();
 }
 
 void drawInputReuseTests(const Device& device, Recorder& recorder) {
@@ -12635,6 +12969,16 @@ int main(int argc, char** argv) {
                 return 77;
             }
             std::cout << "DCC keys under unit shadows tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--owned-storage-snapshots-only") {
+            ownedStorageSnapshotTests(device, recorder);
+            std::cout << "Owned storage snapshot tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--owned-draw-inputs-only") {
+            ownedDrawInputTests(device, recorder);
+            std::cout << "Owned draw input tests passed\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-inputs-in-place-only") {

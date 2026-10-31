@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -12,6 +13,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include <algorithm>
 #include <atomic>
@@ -5799,15 +5801,22 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         const auto begin = address - item.adjustment;
         const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
         if (override == moved.end() && (bytes > maxSnapshotBytes || totalSnapshotBytes + bytes > maxSnapshotBytes)) continue;
+        const bool owned = !usesBda && override == moved.end() && bytes > uploadLimit && !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawSnapshots) && GuestArena::GuestArenaWriteWatched_nid_postfix() && !GuestMemory::Watched(begin, bytes);
+        if (owned) {
+            if (guestMemory.WritesOverlap(begin, bytes)) continue;
+            GuestMemory::FlushGpuWrites(begin, bytes);
+            stamped = false;
+            if (recorder.PendingWriteOverlaps(begin, bytes)) continue;
+        }
         const auto registryGeneration = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
         if (!stamped) {
             stamp = {GuestMemory::TrackerGeneration(), GuestMemory::CollectEpoch(), registryGeneration};
             stamped = true;
         }
         VkDeviceSize offset = 0;
-        auto buffer = recorder.UnwrittenDrawSnapshot(begin, bytes, stamp, &offset);
+        auto buffer = owned ? recorder.ReusableOwnedDrawInput(begin, bytes, Recorder::SnapshotUse::Storage, nullptr) : recorder.UnwrittenDrawSnapshot(begin, bytes, stamp, &offset);
         static const bool verifySnapshots = std::getenv("APS5_VERIFY_DRAW_SNAPSHOTS") != nullptr;
-        if (verifySnapshots && buffer != nullptr) {
+        if (verifySnapshots && !owned && buffer != nullptr) {
             static std::atomic<std::uint64_t> checked{0}, differing{0};
             const auto fast = buffer->Bytes().subspan(static_cast<std::size_t>(offset), bytes);
             VkDeviceSize slowOffset = 0;
@@ -5827,13 +5836,15 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
                 const auto generation = GuestMemory::CollectWrites(begin, bytes);
                 buffer = recorder.ReusableDrawSnapshot(begin, bytes, Recorder::SnapshotUse::Storage, nullptr, generation, &offset);
                 if (buffer == nullptr) {
+                    const auto proof = owned && generation == 0 ? recorder.ArmOwnedDrawInput(begin, bytes) : Recorder::OwnedDrawInputProof{};
                     buffer = std::make_shared<Buffer>(context, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
                     std::memcpy(buffer->Bytes().data(), reinterpret_cast<const void*>(begin), bytes);
-                    recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
+                    if (owned && generation == 0) recorder.KeepOwnedDrawInput(begin, bytes, proof, buffer, Recorder::SnapshotUse::Storage, 0);
+                    else recorder.KeepDrawSnapshot(begin, bytes, generation, registryGeneration, buffer);
                 }
             }
             if (GuestMemory::TrackerGeneration() != stamp[0]) stamped = false;
-            else if (!uploaded || stamp[1] != 0) recorder.NoteUnwrittenDrawSnapshot(begin, bytes, stamp, buffer, offset);
+            else if (!owned && (!uploaded || stamp[1] != 0)) recorder.NoteUnwrittenDrawSnapshot(begin, bytes, stamp, buffer, offset);
         }
         selected.push_back(index);
         keep({begin, std::move(buffer), offset, bytes});
