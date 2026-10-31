@@ -384,13 +384,30 @@ class ProgressTests(unittest.TestCase):
                           unobserved=1, unobserved_names=["Unseen"], done_unobserved_names=["Fresh"])
         text = "\n".join(progress.compare("System libraries", "Library", "functions", base["libraries"],
                                           self.report_snapshot(head_group)["libraries"]))
-        self.assertTrue(text.startswith("\U0001f4c9 **System libraries**: 75.0% (-25.0%, +2 implemented, +1 observed stubs, +1 unobserved stubs functions)"))
+        self.assertTrue(text.startswith("\U0001f4c9 **System libraries**: 75.0% (-25.0%, +2 implemented functions, +1 observed stubs, +1 unobserved stubs, declared 100.0% \u2192 60.0%)"))
         self.assertIn("<summary>\U0001f50d 1 implemented but not observed anywhere</summary>\n", text)
         self.assertIn("| libScePad | `Fresh` |", text)
         self.assertIn("| libScePad | `Pending` |", text)
         self.assertIn("(no measured use needs them)</summary>", text)
         self.assertIn("| libScePad | `Unseen` |", text)
         self.assertNotIn("`Imported`", text.split("implemented but not observed")[1].split("</details>")[0])
+
+    def headline(self, head_group):
+        base = self.report_snapshot(dict(self.report_library("libScePad", ["Ready"], ["Seen"]), unobserved=1, unobserved_names=["Old"]))
+        text = progress.compare("System libraries", "Library", "functions", base["libraries"], self.report_snapshot(head_group)["libraries"])
+        return text[0]
+
+    def test_report_headline_names_the_declared_figure_for_a_new_unobserved_stub(self):
+        group = dict(self.report_library("libScePad", ["Ready"], ["Seen"]), unobserved=2, unobserved_names=["New", "Old"])
+        self.assertEqual(self.headline(group), "\u2796 **System libraries**: 50.0% (+0.0%, +1 unobserved stubs, declared 33.33% \u2192 25.0%)")
+
+    def test_report_headline_for_a_new_observed_stub_has_no_declared_figure(self):
+        group = dict(self.report_library("libScePad", ["Ready"], ["Seen", "New"]), unobserved=1, unobserved_names=["Old"])
+        self.assertEqual(self.headline(group), "\U0001f4c9 **System libraries**: 33.33% (-16.67%, +1 observed stubs)")
+
+    def test_report_headline_for_a_new_implemented_function_has_no_declared_figure(self):
+        group = dict(self.report_library("libScePad", ["Ready", "New"], ["Seen"]), unobserved=1, unobserved_names=["Old"])
+        self.assertEqual(self.headline(group), "\U0001f4c8 **System libraries**: 66.67% (+16.67%, +1 implemented functions)")
 
     def test_report_table_shows_unobserved_stubs_beside_the_headline(self):
         before = self.report_snapshot(self.report_library("libScePad", ["A"], ["T"]))
@@ -471,7 +488,7 @@ class ProgressTests(unittest.TestCase):
         after = dict(self.report_library("libScePad", ["A", "B"], ["T", "U"]), done=2, todo=2)
         headline = progress.compare("System libraries", "Library", "functions", self.report_snapshot(before)["libraries"],
                                     self.report_snapshot(after)["libraries"])[0]
-        self.assertEqual(headline, "\u2796 **System libraries**: 50.0% (+0.0%, +1 implemented, +1 observed stubs functions)")
+        self.assertEqual(headline, "\u2796 **System libraries**: 50.0% (+0.0%, +1 implemented functions, +1 observed stubs)")
 
     def test_report_marks_a_headline_change_below_four_decimals(self):
         before = dict(self.report_library("libScePad", ["A"], ["T"]), done=1, todo=10000000)

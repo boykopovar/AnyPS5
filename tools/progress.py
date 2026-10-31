@@ -544,10 +544,13 @@ def compare(title, column, unit, base, head):
     exact = exact_delta(base, head) if delta == 0 else None
     shown = small_delta(exact) if exact else f"{delta:+}"
     icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
-    counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared_observed), "observed stubs"),
-                                                (len(declared_unobserved), "unobserved stubs"), (-len(regressed), "reverted"),
-                                                (-len(removed), "removed")) if n]
-    changes = f', {", ".join(counts)} {unit}' if counts else ""
+    stubs = ("observed stubs", "unobserved stubs") if column == "Library" else ("declared", "declared")
+    counts = [f"{n:+} {label}{suffix}" for n, label, suffix in ((len(implemented), "implemented", f" {unit}"), (len(declared_observed), stubs[0], ""),
+                                                              (len(declared_unobserved), stubs[1], ""), (-len(regressed), "reverted", f" {unit}"),
+                                                              (-len(removed), "removed", f" {unit}")) if n]
+    if base.get("unobserved", 0) != head.get("unobserved", 0) or declared_unobserved:
+        counts.append(f'declared {base.get("declared_percent", base["percent"])}% \u2192 {head.get("declared_percent", head["percent"])}%')
+    changes = f', {", ".join(counts)}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
