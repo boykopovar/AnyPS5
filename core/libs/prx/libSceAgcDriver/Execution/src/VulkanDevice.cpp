@@ -1275,16 +1275,25 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (rank <= selectedRank) {
             continue;
         }
+        std::uint32_t extensionCount = 0;
+        auto enumerateExtensions = state->InstanceFunction<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
+        check(enumerateExtensions(physical, nullptr, &extensionCount, nullptr), "vkEnumerateDeviceExtensionProperties");
+        std::vector<VkExtensionProperties> extensions(extensionCount);
+        check(enumerateExtensions(physical, nullptr, &extensionCount, extensions.data()), "vkEnumerateDeviceExtensionProperties");
+        extensions.resize(extensionCount);
         if (window != nullptr) {
-            std::uint32_t extensionCount = 0;
-            auto enumerateExtensions = state->InstanceFunction<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
-            check(enumerateExtensions(physical, nullptr, &extensionCount, nullptr), "vkEnumerateDeviceExtensionProperties");
-            std::vector<VkExtensionProperties> extensions(extensionCount);
-            check(enumerateExtensions(physical, nullptr, &extensionCount, extensions.data()), "vkEnumerateDeviceExtensionProperties");
             const bool supported = std::all_of(presentationExtensions.begin(), presentationExtensions.end(), [&](const char* name) {
                 return std::any_of(extensions.begin(), extensions.end(), [&](const auto& item) { return std::strcmp(item.extensionName, name) == 0; });
             });
             if (!supported) continue;
+        }
+        try {
+            const auto queryFeatures = state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2");
+            QueryBdaByteFeatures(physical, queryFeatures, extensions);
+            QueryBdaFeatures(physical, queryFeatures, extensions);
+        } catch (const std::runtime_error& error) {
+            APS5_LOG_OUT("Skipping physical device %s: %s", properties.deviceName, error.what());
+            continue;
         }
         std::uint32_t families = 0;
         auto getFamilies = state->InstanceFunction<PFN_vkGetPhysicalDeviceQueueFamilyProperties>("vkGetPhysicalDeviceQueueFamilyProperties");
