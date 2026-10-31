@@ -1145,6 +1145,7 @@ void APS5_VABI tzset_nid_postfix(void);
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer);
 int64_t APS5_VABI time_nid_postfix(int64_t* timer);
 int64_t APS5_VABI _Xtime_get_ticks_nid_postfix();
+int APS5_VABI timespec_get_nid_postfix(KernelTimespec* ts, int base);
 double APS5_VABI libc_difftime_nid_postfix(int64_t time1, int64_t time0);
 double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0);
 GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer);
