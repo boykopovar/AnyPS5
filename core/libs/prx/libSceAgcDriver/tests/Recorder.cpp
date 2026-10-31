@@ -5799,12 +5799,12 @@ bool untrackedForgetTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
-void untrackedRevalidateTests(const Device& device, Recorder& recorder) {
+bool untrackedRevalidateTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     context.nullDescriptors = device.NullDescriptors();
     if (context.hostImportAlignment == 0 || !context.nullDescriptors) {
         std::cout << "host imports or null descriptors unavailable: fast revalidation over untracked memory not tested\n";
-        return;
+        return false;
     }
     constexpr std::size_t bytes = 2 * 65536;
 #ifdef _WIN32
@@ -5832,12 +5832,14 @@ void untrackedRevalidateTests(const Device& device, Recorder& recorder) {
     } unregister{context, block};
     if (HostImportFor(context, address, bytes) == nullptr) {
         std::cout << "host import of the block refused: fast revalidation over untracked memory not tested\n";
-        return;
+        return false;
     }
     if (AgcDriver::GuestMemory::Watched(address, bytes)) {
         std::cout << "the block is write-watched: fast revalidation over untracked memory not tested\n";
-        return;
+        return false;
     }
+    const char* mode = std::getenv("APS5_WRITE_WATCH_IMPORTS");
+    std::cout << "write-watch mode covered: APS5_WRITE_WATCH_IMPORTS=" << (mode != nullptr ? mode : "unset (probed)") << ", the block is not write-watched\n";
     TextureDetiler detiler(context);
     auto imageContext = context;
     imageContext.detiler = &detiler;
@@ -5848,31 +5850,51 @@ void untrackedRevalidateTests(const Device& device, Recorder& recorder) {
         Recorder& recorder;
         ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
     } clear{context, recorder};
-    ShaderRecompiler::RecompileResult imageProgram;
-    ShaderRecompiler::DescriptorBinding imageBinding;
-    imageBinding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
-    imageBinding.role = ShaderRecompiler::DescriptorRole::GuestImages;
-    imageBinding.descriptorSet = 0;
-    imageBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
-    imageBinding.count = 1;
-    imageBinding.imageSamplers = {0};
-    imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
-    imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
-    imageProgram.bindings.push_back(imageBinding);
-    const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
-    AgcDriver::GuestMemory::BumpCollectEpoch();
-    auto sampled = std::make_shared<ShaderResources>(imageContext, imageCompute);
+    const auto scenario = [&](ShaderRecompiler::DescriptorKind kind, const char* name) {
+        ShaderRecompiler::RecompileResult imageProgram;
+        ShaderRecompiler::DescriptorBinding imageBinding;
+        imageBinding.kind = kind;
+        imageBinding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+        imageBinding.descriptorSet = 0;
+        imageBinding.binding = kind == ShaderRecompiler::DescriptorKind::StorageImage ? ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding : ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        imageBinding.count = 1;
+        imageBinding.imageSamplers = {0};
+        imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+        imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+        imageProgram.bindings.push_back(imageBinding);
+        const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
+        const std::string label = name;
+        const auto fresh = [&] {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            auto resources = std::make_shared<ShaderResources>(imageContext, imageCompute);
+            recorder.Sync();
+            return resources;
+        };
+        {
+            auto resources = fresh();
+            ShaderResources::ProofReport report;
+            Require(resources->Revalidate(std::span(&imageCompute, 1), &report), "a " + label + " template over untracked memory did not revalidate");
+            Require(report.path == ShaderResources::ProofPath::Fast, "a " + label + " template over untracked memory took the full walk in the same collect epoch");
+            Require(resources->Revalidate(std::span(&imageCompute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "a second " + label + " proof in the same collect epoch was not fast");
+            std::memset(block, 0x41, 4096);
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            static_cast<void>(resources->Revalidate(std::span(&imageCompute, 1), &report));
+            Require(report.path != ShaderResources::ProofPath::Fast, "a " + label + " template over untracked memory kept its fast proof across a store and a new collect epoch");
+        }
+        {
+            auto resources = fresh();
+            ShaderResources::ProofReport report;
+            Require(resources->Revalidate(std::span(&imageCompute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "a " + label + " template did not prove fast before the forget");
+            GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 65536);
+            static_cast<void>(resources->Revalidate(std::span(&imageCompute, 1), &report));
+            Require(report.path != ShaderResources::ProofPath::Fast, "forgetting the memory a " + label + " template covers left its fast proof standing");
+        }
+    };
+    scenario(ShaderRecompiler::DescriptorKind::SampledImage, "sampled");
+    scenario(ShaderRecompiler::DescriptorKind::StorageImage, "storage image");
     recorder.Sync();
-    ShaderResources::ProofReport report;
-    Require(sampled->Revalidate(std::span(&imageCompute, 1), &report), "a sampled template over untracked memory did not revalidate");
-    Require(report.path == ShaderResources::ProofPath::Fast, "a sampled template over untracked memory took the full walk in the same collect epoch");
-    Require(sampled->Revalidate(std::span(&imageCompute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "a second proof in the same collect epoch was not fast");
-    std::memset(block, 0x41, 4096);
-    AgcDriver::GuestMemory::BumpCollectEpoch();
-    static_cast<void>(sampled->Revalidate(std::span(&imageCompute, 1), &report));
-    Require(report.path != ShaderResources::ProofPath::Fast, "a sampled template over untracked memory kept its fast proof across a store and a new collect epoch");
-    sampled.reset();
     std::cout << "fast revalidation over untracked memory: ok\n";
+    return true;
 }
 
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
@@ -12840,8 +12862,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-revalidate-only") {
-            untrackedRevalidateTests(device, recorder);
-            return 0;
+            return untrackedRevalidateTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
             return untrackedForgetTests(device, recorder) ? 0 : 77;
