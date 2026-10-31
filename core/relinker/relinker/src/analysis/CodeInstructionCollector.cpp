@@ -500,7 +500,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     }
     std::size_t previousRoots = 0;
     std::unordered_set<Domain::VirtualAddress> decodedInstructions;
-    std::vector<std::unordered_set<Domain::VirtualAddress>> sectionReachable(codeHeaders.size());
+    std::vector<std::vector<std::uint8_t>> sectionReachable(codeHeaders.size());
     do {
         previousRoots = roots.size();
         for (std::size_t i = 0; i < codeHeaders.size(); ++i) {
@@ -511,8 +511,9 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             for (const auto root : roots) if (root >= header.MappedAddress && root - header.MappedAddress < header.FileSize) entries.push_back(root);
             if (entries.empty()) continue;
             const std::span<const std::uint8_t> text(bytes.data() + header.Offset, header.FileSize);
-            const auto graph = UnusedNidFilter::BuildControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), sectionReachable[i], [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable);
-            for (const auto address : graph->ReachableVaddrs()) {
+            auto& reached = sectionReachable[i];
+            if (reached.empty()) reached.resize(header.FileSize);
+            for (const auto address : UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable)) {
                 if (!decodedInstructions.insert(address).second) continue;
                 instructions.insert(address);
                 const auto offset = address - header.MappedAddress;
