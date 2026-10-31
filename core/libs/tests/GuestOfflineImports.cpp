@@ -38,8 +38,8 @@ int main() {
         }
     }
 
-    constexpr int network = static_cast<int>(0x80431063);
-    Require(sceHttpSendRequest(1, nullptr, 0) == network);
+    constexpr int beforeInit = static_cast<int>(0x80431001);
+    Require(sceHttpSendRequest(1, nullptr, 0) == beforeInit);
 
     constexpr int parameter = static_cast<int>(0x817D0002);
     constexpr int noEntitlement = static_cast<int>(0x817D0007);
