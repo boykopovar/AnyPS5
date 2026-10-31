@@ -486,11 +486,13 @@ double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0) {
 
 GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
+    if (timer == nullptr) return nullptr;
     return gmtime_s_nid_postfix(timer, &result);
 }
 
 GuestTm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
+    if (timer == nullptr) return nullptr;
     return localtime_s_nid_postfix(timer, &result);
 }
 
@@ -499,7 +501,10 @@ GuestTm* APS5_VABI localtime_nid_postfix(const int64_t* timer) {
 }
 
 GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
-    if (timer == nullptr || result == nullptr) return nullptr;
+    if (timer == nullptr || result == nullptr) {
+        SonyInvokeConstraintHandler("localtime_s: bad argument", nullptr, EINVAL);
+        return nullptr;
+    }
     const ZoneScope zone;
     std::tm host{};
     const int callerError = errno;
@@ -539,7 +544,10 @@ GuestTm* APS5_VABI localtime_s_nid_postfix(const int64_t* timer, GuestTm* result
 }
 
 GuestTm* APS5_VABI gmtime_s_nid_postfix(const int64_t* timer, GuestTm* result) {
-    if (timer == nullptr || result == nullptr) return nullptr;
+    if (timer == nullptr || result == nullptr) {
+        SonyInvokeConstraintHandler("gmtime_s: bad argument", nullptr, EINVAL);
+        return nullptr;
+    }
     if (!utcCalendarFields(*timer, *result)) return nullptr;
     result->tm_gmtoff = 0;
     result->tm_zone = "UTC";
