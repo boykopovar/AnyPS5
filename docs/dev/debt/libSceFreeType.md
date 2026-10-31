@@ -1,5 +1,6 @@
 # libSceFreeType technical debt
 
+- [FT_Open_Face](../../../core/libs/prx/libSceFreeType/Export.cpp) (libSceFreeType) - console signature, `FT_Open_Args` layout and errors are unverified; the adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c) with the LP64 argument layout. Only `FT_OPEN_MEMORY` and `FT_OPEN_PATHNAME` sources are supported; a path is read into memory owned by the face, as in `FT_New_Face`. `FT_OPEN_STREAM`, `FT_OPEN_DRIVER` and `FT_OPEN_PARAMS` throw because they carry guest callbacks, module handles or parameter arrays the host cannot use. Caller-owned font bytes must remain valid until the face is freed
 ### Unknown function info
 - [autofitter glyph-to-script-map](../../../core/libs/prx/libSceFreeType/src/ModuleProperties.cpp) assumes the FreeType LP64 face/map carrier and translates the guest face to its host face. The returned 16-bit map borrows host face storage and is valid only while that face is alive; the setter returns the bundled FreeType error. This is an exception to the general unsupported-property note below. Console ABI, glyph classification and firmware behavior are unverified.
 
