@@ -3,12 +3,11 @@
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstring>
 #include <atomic>
 #include <stdexcept>
-
-extern "C" [[noreturn]] void APS5_VABI __cxa_pure_virtual_nid_postfix();
 
 namespace {
 
