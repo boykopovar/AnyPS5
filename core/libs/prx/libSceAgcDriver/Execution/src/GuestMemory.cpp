@@ -1816,12 +1816,12 @@ void Unwatch(std::uint64_t address, std::size_t bytes) {
 }
 
 void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
-#ifdef _WIN32
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     if (!tracker.watched) return;
     bool restored = false;
+#ifdef _WIN32
     for (const auto& [begin, end] : ranges) {
         if (end <= begin || begin < tracker.base || end - tracker.base > tracker.size || (begin - tracker.base) % WritePageBytes != 0 || (end - tracker.base) % WritePageBytes != 0) continue;
         const auto bytes = static_cast<std::size_t>(end - begin);
@@ -1836,10 +1836,20 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
         }
         restored = true;
     }
-    if (restored) unwatchSerial.fetch_add(1, std::memory_order_release);
 #else
-    static_cast<void>(ranges);
+    // A range an import released returns to the kernel write watch; its blocks are stamped as possibly
+    // written, since nothing saw the CPU stores made while it was out.
+    for (const auto& [begin, end] : ranges) {
+        if (end <= begin) continue;
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<const void*>(begin), bytes);
+        if (!tracker.covers(begin, bytes)) continue;
+        ++tracker.generation;
+        for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) tracker.stamp(block, tracker.generation, StampKind::ImportWindow);
+        restored = true;
+    }
 #endif
+    if (restored) unwatchSerial.fetch_add(1, std::memory_order_release);
 }
 
 bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function<bool()>& import, bool staysWatched, bool importMayWriteGuest) {

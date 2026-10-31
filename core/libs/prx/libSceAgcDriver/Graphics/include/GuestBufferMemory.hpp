@@ -42,6 +42,7 @@ struct HostImport {
     bool settleOnDemand = false;
     bool dmaBuf = false;
     bool joined = false;
+    mutable std::uint64_t lastUseFrame = 0;
     std::shared_ptr<void> chunk;
     mutable std::uint64_t lastUse = 0;
     std::uint64_t lead = 0;
@@ -74,7 +75,10 @@ struct ImportProbe {
 ImportProbe ProbeImportWriteProtection(const Context& context);
 ImportProbe ProbeDmaBufImportWriteProtection(const Context& context);
 ImportWatch PrepareImportWatch(const Context& context);
-void SetImportWatch(const Context& context, ImportWatch watch);
+// Tests: override the device's import watch. `Unwatch` compares imports as `APS5_WRITE_WATCH_IMPORTS=unwatch`
+// does; the one-allocation window, the idle retirement and the storage import rule follow only where the
+// start-up probe found imports resolving the watch, or where `probed` asks for that outcome.
+void SetImportWatch(const Context& context, ImportWatch watch, bool probed = false);
 
 enum class ImportRequester : std::uint8_t { Map, Build, Access, Join, Segment, ColorTarget };
 inline constexpr std::size_t ImportRequesterCount = 6;
@@ -104,6 +108,13 @@ void ReportHostImports();
 // address)` in the import's buffer.
 const HostImport* HostImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes);
+// Tests and the flip: whether the start-up probe found host imports resolving the write watch; the idle
+// unwatched imports retired at this flip, their ranges returned to the watch.
+bool HostImportsUnwatch(const Context& context);
+std::size_t RetireIdleImports(const Context& context);
+// The import for a storage surface at [address, address + bytes): where imports unwatch, a surface still
+// in the write watch only takes an import that already exists, so its range stays watched.
+const HostImport* StorageImportFor(const Context& context, std::uint64_t address, std::size_t bytes, ImportRequester requester = ImportRequester::Access);
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes);
 void SetHostImportWindow(std::uint64_t bytes);
 // Tests: the window of one large registered range (64 MiB) and the import budget (0: the configured one).
