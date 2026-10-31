@@ -607,7 +607,6 @@ int APS5_VABI __isnormal_nid_postfix(double x) { return std::isnormal(x) ? 1 : 0
 int APS5_VABI __isnormalf_nid_postfix(float x) { return std::isnormal(x) ? 1 : 0; }
 int APS5_VABI __isinff_nid_postfix(float x) { return std::isinf(x) ? 1 : 0; }
 long double APS5_VABI nearbyintl_nid_postfix(long double x) { return std::nearbyint(x); }
-double APS5_VABI nearbyint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::nearbyint(x); }
 
 double APS5_VABI cbrt_nid_postfix(double x) {
     const std::uint32_t B1 = 715094163;
