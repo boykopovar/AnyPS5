@@ -3999,6 +3999,19 @@ bool VulkanDevice::PresentWaitsForSlots(const DisplayBuffer* buffer) const {
     return PresentableResident(graphicsContext(), *buffer, filter, pending, convert, layer) == nullptr;
 }
 
+void VulkanDevice::PrepareDisplayRead(const DisplayBuffer& buffer) const {
+    static const bool locked = std::getenv("APS5_NO_EARLY_DISPLAY_FLUSH") != nullptr;
+    if (locked) return;
+    if (buffer.tilingMode != 1 && !NoResidentPresent()) {
+        VkFilter filter = VK_FILTER_LINEAR;
+        bool pending = false;
+        bool convert = false;
+        std::uint32_t layer = 0;
+        if (PresentableResident(graphicsContext(), buffer, filter, pending, convert, layer) != nullptr) return;
+    }
+    GuestMemory::FlushGpuWrites(buffer.address, DisplayBufferSize(buffer));
+}
+
 void VulkanDevice::FlipBatches(std::uint64_t& submissions, std::uint64_t& unsignaled) const {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     submissions = state->recorder ? state->recorder->Submissions() : 0;
