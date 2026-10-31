@@ -1,3 +1,4 @@
+#include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
@@ -331,6 +332,7 @@ int main(int argc, char** argv) {
         return 2;
     }
     try {
+        if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
         if (argc == 3 && std::string(argv[2]) == "concurrent") testConcurrentCopies(argv[1]);
         else if (argc == 3 && std::string(argv[2]) == "reservation_error") testReservationError(argv[1]);
         else testCaptureAndReplay(argv[1], argc == 3);
