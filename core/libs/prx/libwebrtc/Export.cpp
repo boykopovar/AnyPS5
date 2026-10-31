@@ -1,8 +1,25 @@
 #include "prx/libwebrtc/include/Api.hpp"
+#include <charconv>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
+#include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+
+namespace {
+
+constexpr int GuestClockMonotonic = 4;
+constexpr std::int64_t NanosecondsPerSecond = 1000000000;
+
+std::int64_t TimeNanos() {
+    KernelTimespec now{};
+    if (clock_gettime_nid_postfix(GuestClockMonotonic, &now) != 0) throw std::runtime_error("rtc::TimeNanos: clock_gettime(CLOCK_MONOTONIC) failed");
+    return NanosecondsPerSecond * now.tv_sec + now.tv_nsec;
+}
+
+}
 
 extern "C" {
 
@@ -40,9 +57,19 @@ int APS5_VABI libwebrtcUnknown03(void) {
     return 0;
 }
 
-int APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+char* APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(int value, char* buffer) {
+    if (!buffer)
+        throw std::invalid_argument("FastIntToBuffer requires a buffer");
+    std::uint32_t magnitude = static_cast<std::uint32_t>(value);
+    if (value < 0) {
+        *buffer++ = '-';
+        magnitude = 0u - magnitude;
+    }
+    if (magnitude >= 10u && magnitude < 100000000u)
+        std::memset(buffer, 0, 8);
+    buffer = std::to_chars(buffer, buffer + 10, magnitude).ptr;
+    *buffer = '\0';
+    return buffer;
 }
 
 int APS5_VABI _ZN3rtc18webrtc_checks_impl8FatalLogEPKciS2_PKNS0_12CheckArgTypeEz_nid_postfix(void) {
@@ -312,9 +339,8 @@ int APS5_VABI _ZN3rtc6Thread7CurrentEv_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc10TimeMillisEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int64_t APS5_VABI _ZN3rtc10TimeMillisEv_nid_postfix() {
+    return TimeNanos() / 1000000;
 }
 
 APS5_EXPORT("qFYB-adjVIM", libwebrtcUnknown06);
@@ -353,9 +379,8 @@ int APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc10TimeMicrosEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::int64_t APS5_VABI _ZN3rtc10TimeMicrosEv_nid_postfix() {
+    return TimeNanos() / 1000;
 }
 
 APS5_EXPORT("AEjxDisAkPE", libwebrtcUnknown07);
