@@ -897,6 +897,13 @@ private:
         }
         const auto section = first->second.section;
         const auto offset = first->second.offset;
+        std::vector<unsigned char> saved;
+        for (auto it = views.lower_bound(start); it != views.end() && it->first < stop; ++it) {
+            for (std::size_t sub = 0; sub < subpages; ++sub) {
+                const auto* bytes = reinterpret_cast<const unsigned char*>(it->first + sub * subpageBytes);
+                if ((it->second.armed & (1u << sub)) != 0) saved.insert(saved.end(), bytes, bytes + subpageBytes);
+            }
+        }
         if (!unmap(GetCurrentProcess(), reinterpret_cast<void*>(start), MEM_PRESERVE_PLACEHOLDER)) fail("unmap a run of shared guest pages to split it");
         split(start, at - start);
         mapRun(start, at - start, section->handle, offset);
@@ -907,6 +914,16 @@ private:
                 DWORD previous;
                 if (from < to && !VirtualProtect(reinterpret_cast<void*>(from), to - from, part.protection, &previous)) fail("protect a split run of shared guest pages");
             }
+        }
+        const auto* before = saved.data();
+        for (auto it = views.lower_bound(start); it != views.end() && it->first < stop; ++it) {
+            std::uint8_t written = 0;
+            for (std::size_t sub = 0; sub < subpages; ++sub) {
+                if ((it->second.armed & (1u << sub)) == 0) continue;
+                if (std::memcmp(reinterpret_cast<const void*>(it->first + sub * subpageBytes), before, subpageBytes) != 0) written |= static_cast<std::uint8_t>(1u << sub);
+                before += subpageBytes;
+            }
+            if (written != 0) invalidate(*it->second.page, written);
         }
     }
 
