@@ -12484,6 +12484,18 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         mappedState.colors[0].componentMapping = 0x24;
         BuildPipelineStoreKey(mapped, context, mappedState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
         Require(mapped != original, "the component mapping did not enter the key");
+        auto legacyState = state;
+        legacyState.stages.legacyVertex = true;
+        auto legacyVertex = module(4);
+        legacyVertex.bindings = vertex.bindings;
+        const std::array<CompiledShader, 2> legacyShaders{{{Stage::Vertex, &legacyVertex, 0}, {Stage::Fragment, &fragment, PipelinePushSlotBytes}}};
+        GraphicsPipelineRecipe legacyDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(legacyState, input, layouts.View(), legacyShaders, VK_IMAGE_LAYOUT_GENERAL)), legacyDecoded), "the legacy vertex recipe does not decode");
+        std::vector<std::byte> legacyFlag, legacyKey, legacyReplayed;
+        BuildPipelineStoreKey(legacyFlag, context, legacyState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(legacyKey, context, legacyState, input, layouts.View(), legacyShaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(legacyReplayed, context, legacyDecoded.state, legacyDecoded.vertexInput, layouts.View(), legacyShaders, legacyDecoded.attachmentLayout);
+        Require(legacyFlag == original && legacyKey != original && legacyKey == legacyReplayed, "the legacy vertex selection keyed a pipeline by the state flag instead of by its vertex module");
         std::vector<std::byte> unclamped, clamped, biased;
         auto clampedState = state;
         clampedState.depthBiasClamp = 1.0f;
