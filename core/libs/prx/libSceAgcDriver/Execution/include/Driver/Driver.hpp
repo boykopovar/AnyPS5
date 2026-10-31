@@ -118,8 +118,16 @@ public:
     static std::uint64_t DrawCacheBytes();
     static ShaderMemory::PendingWrite QueryPendingSpan(std::uint64_t address, std::size_t bytes, std::span<std::byte> known);
     std::shared_ptr<const ShaderRegistry> RegisteredShaders();
+    static void SetCaptureCheckHook(void (*hook)());
 
 private:
+    class RecaptureScope {
+    public:
+        RecaptureScope();
+        ~RecaptureScope();
+        RecaptureScope(const RecaptureScope&) = delete;
+        RecaptureScope& operator=(const RecaptureScope&) = delete;
+    };
     friend class SampledReadScope;
     friend struct PendingView;
     friend struct PacketTimer;
@@ -364,6 +372,8 @@ private:
     bool recordLabelsForPacket(VulkanDevice* localDevice, std::uint32_t queue);
     void recordQueuedLabelsBeforeRead(std::uint32_t queue);
     bool recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> regions);
+    static void runCaptureCheckHook();
+    static bool capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared = {});
     void noteQueuedLabels(std::uint32_t queue);
     void recordQueuedLabelsByTry(std::uint32_t queue, std::atomic<std::uint64_t>& counter);
     static void recordQueuedLabelsFromHook();

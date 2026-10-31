@@ -189,6 +189,45 @@ bool Driver::recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const
     return false;
 }
 
+namespace {
+
+std::atomic<void (*)()> captureCheckHook{nullptr};
+
+bool& recapturing() {
+    static thread_local bool active = false;
+    return active;
+}
+
+}
+
+void Driver::SetCaptureCheckHook(void (*hook)()) {
+    captureCheckHook.store(hook, std::memory_order_release);
+}
+
+void Driver::runCaptureCheckHook() {
+    if (const auto hook = captureCheckHook.load(std::memory_order_acquire)) hook();
+}
+
+bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared) {
+    if (recapturing()) return false;
+    const bool mark = compared.size() == regions.size();
+    for (std::size_t i = 0; i < regions.size(); ++i) {
+        const auto outcome = GuestMemory::CompareMapped(regions[i].guestAddress, regions[i].bytes);
+        if (outcome == GuestMemory::Compare::Differs) return true;
+        if (mark && outcome == GuestMemory::Compare::Equal) compared[i].compared = true;
+    }
+    return false;
+}
+
+Driver::RecaptureScope::RecaptureScope() {
+    recapturing() = true;
+    ++captureChangeRetries;
+}
+
+Driver::RecaptureScope::~RecaptureScope() {
+    recapturing() = false;
+}
+
 void Driver::noteQueuedLabels(std::uint32_t queue) {
     static const bool installed = (Graphics::Recorder::SetQueuedLabelRecorder(&Driver::recordQueuedLabelsFromHook), true);
     (void)installed;

@@ -11,7 +11,7 @@ std::atomic<std::uint64_t> labelFallbacks[5] = {};
 
 std::atomic<std::uint64_t> queuedLabels{0}, labelGroups{0}, immediateLabels{0};
 
-std::atomic<std::uint64_t> packetLockRecords{0}, packetLockSubmits{0}, packetLockDeferred{0}, packetSubmitDeferred{0}, captureTryRecords{0}, captureRetries{0}, suspendPoints{0};
+std::atomic<std::uint64_t> packetLockRecords{0}, packetLockSubmits{0}, packetLockDeferred{0}, packetSubmitDeferred{0}, captureTryRecords{0}, captureRetries{0}, captureChangeRetries{0}, suspendPoints{0};
 
 std::atomic<std::uint64_t> recordTriesSkipped{0};
 
