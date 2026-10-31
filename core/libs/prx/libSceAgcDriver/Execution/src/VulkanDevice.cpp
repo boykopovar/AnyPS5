@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -431,6 +432,8 @@ struct VulkanDevice::State {
     bool float16DenormPreserve = false;
     bool float32FlushToZeroCandidate = false;
     bool float32FlushToZero = false;
+    bool float16WidenNans = false;
+    bool float16NarrowNans = false;
     bool float32DenormPreserve = false;
     bool probingFloatControls = false;
     bool demoteToHelperInvocation = false;
@@ -2336,6 +2339,25 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->float32FlushToZero = probe.mismatches == 0u;
         std::fprintf(stderr, "[float-controls] f32 denormal flush: %s (%u of %u probe results differ from the emulated flush, %.0f ms)\n", state->float32FlushToZero ? "hardware" : "emulated", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
     }
+    if (std::getenv("APS5_NO_NATIVE_F16_NANS") == nullptr) {
+        const auto probeStart = std::chrono::steady_clock::now();
+        state->probingFloatControls = true;
+        const auto probe = ProbeFloat16Conversions(*this, Target());
+        state->probingFloatControls = false;
+        state->float16WidenNans = probe.widen.probed && probe.widen.mismatches == 0u;
+        state->float16NarrowNans = probe.narrow.probed && probe.narrow.mismatches == 0u;
+        const auto describe = [](const Float16ConversionProbeDirection& direction, bool native) {
+            if (!direction.probed) return std::string("emulated (no native conversion)");
+            std::string text = std::string(native ? "native" : "emulated") + " (" + std::to_string(direction.mismatches) + " of " + std::to_string(direction.compared) + " probe results differ";
+            if (direction.first) {
+                char first[96];
+                std::snprintf(first, sizeof(first), ", first 0x%08x: 0x%08x emulated, 0x%08x native", direction.first->input, direction.first->emulated, direction.first->native);
+                text += first;
+            }
+            return text + ")";
+        };
+        std::fprintf(stderr, "[float-controls] f16 to f32 NaN results: %s; f32 to f16 NaN results: %s (%.0f ms)\n", describe(probe.widen, state->float16WidenNans).c_str(), describe(probe.narrow, state->float16NarrowNans).c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
+    }
     // A device without a window is usually replaced by the window's device before the title draws
     // (Driver::AttachWindow): its replay starts at its first draw or dispatch instead, so the
     // journal is replayed once, on the device the title draws with.
@@ -4123,6 +4145,8 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     target.float32FlushToZero = state->float32FlushToZero;
     target.fusedExactArithmetic = state->fusedExactArithmetic;
     target.float32DenormPreserve = state->float32DenormPreserve;
+    target.float16WidenNans = state->float16WidenNans;
+    target.float16NarrowNans = state->float16NarrowNans;
     return target;
 }
 
