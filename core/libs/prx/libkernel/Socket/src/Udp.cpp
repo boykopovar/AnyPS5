@@ -125,6 +125,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
     GuestSockets::SocketOptionState options;
     bool receiveShut = false;
     bool sendShut = false;
+    bool localAddressCleared = false;
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
@@ -341,7 +342,22 @@ std::int64_t ZeroPortSend(const Socket& socket, const sockaddr_storage& destinat
     if (bound && remote.sin_addr.s_addr != htonl(INADDR_ANY) && remote.sin_addr.s_addr != htonl(INADDR_BROADCAST)) return static_cast<std::int64_t>(length);
     return Fail(49);
 }
-int Disconnect(const Socket& socket) {
+int LocalAddress(Socket& socket, sockaddr_storage& address, socklen_t& size) {
+    std::unique_lock lock(socket.modeMutex, std::defer_lock);
+    if (socket.type == 2) lock.lock();
+    if (::getsockname(socket.value, reinterpret_cast<sockaddr*>(&address), &size)) return -1;
+    if (socket.type == 2 && socket.localAddressCleared) {
+        if (address.ss_family == AF_INET) reinterpret_cast<sockaddr_in&>(address).sin_addr = {};
+        else if (address.ss_family == AF_INET6) {
+            auto& v6 = reinterpret_cast<sockaddr_in6&>(address);
+            v6.sin6_addr = {};
+            v6.sin6_scope_id = 0;
+        }
+    }
+    return 0;
+}
+int Disconnect(Socket& socket) {
+    std::lock_guard lock(socket.modeMutex);
     sockaddr_storage peer{};
     socklen_t peerSize = sizeof(peer);
     if (::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &peerSize) != 0) return 0;
@@ -363,19 +379,27 @@ int Disconnect(const Socket& socket) {
 #else
     sockaddr unspecified{};
     unspecified.sa_family = AF_UNSPEC;
-    if (::connect(socket.value, &unspecified, sizeof(unspecified)) != 0) return Fail(NativeError());
+    if (::connect(socket.value, &unspecified, sizeof(unspecified)) != 0) {
+        const int error = NativeError();
+        peerSize = sizeof(peer);
+        if (::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &peerSize) == 0 || errno != ENOTCONN) return Fail(error);
+    }
 #endif
     sockaddr_storage current{};
     socklen_t currentSize = sizeof(current);
     if (::getsockname(socket.value, reinterpret_cast<sockaddr*>(&current), &currentSize) != 0) return Fail(NativeError());
-    if (PortOf(current) != 0) return 0;
+    if (PortOf(current) != 0) {
+        socket.localAddressCleared = true;
+        return 0;
+    }
     sockaddr_storage wildcard{};
     wildcard.ss_family = local.ss_family;
     PortOf(wildcard) = PortOf(local);
     if (::bind(socket.value, reinterpret_cast<sockaddr*>(&wildcard), localSize) != 0) return Fail(NativeError());
+    socket.localAddressCleared = true;
     return 0;
 }
-bool ZeroPortConnect(const Socket& socket, const void* address, std::uint32_t length) {
+bool ZeroPortConnect(Socket& socket, const void* address, std::uint32_t length) {
     if (!address || (socket.type != 1 && socket.type != 2) || (socket.family != 2 && socket.family != 28)) return false;
     const auto* bytes = static_cast<const unsigned char*>(address);
     if (length < (socket.family == 2 ? 16u : 28u) || bytes[1] != socket.family || (bytes[2] | bytes[3]) != 0) return false;
@@ -1345,11 +1369,12 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     if (socket->type == 1) RefuseClosedLoopbackAtOnce_nid_no_patch(socket->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
     if (ZeroPortConnect(*socket, address, length)) return -1;
-    {
-        std::lock_guard lock(socket->modeMutex);
-        socket->options.reportedError = 0;
-    }
-    return ::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size) ? Fail(ConnectError()) : 0;
+    std::unique_lock lock(socket->modeMutex);
+    socket->options.reportedError = 0;
+    if (socket->type != 2) lock.unlock();
+    if (::connect(socket->value, reinterpret_cast<sockaddr*>(&native), size)) return Fail(ConnectError());
+    if (socket->type == 2) socket->localAddressCleared = false;
+    return 0;
 }
 int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
     const auto socket = Lookup(descriptor);
@@ -1437,7 +1462,11 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
     const int mapped = LongMappedDualStack(*socket, address, length);
     if (mapped < 0) return -1;
     if (!Address(socket->family, address, mapped ? 28 : length, native, size)) return -1;
-    return ::bind(socket->value, reinterpret_cast<sockaddr*>(&native), size) ? Fail(NativeError()) : 0;
+    std::unique_lock lock(socket->modeMutex, std::defer_lock);
+    if (socket->type == 2) lock.lock();
+    if (::bind(socket->value, reinterpret_cast<sockaddr*>(&native), size)) return Fail(NativeError());
+    if (socket->type == 2) socket->localAddressCleared = false;
+    return 0;
 }
 namespace {
 bool AlreadyShut(NativeSocket socket, int how) {
@@ -1482,7 +1511,7 @@ int APS5_VABI getsockname_nid_postfix(int descriptor, void* address, std::uint32
     if (socket->family == GuestUnix) return UnnamedAddress(address, length);
     sockaddr_storage native{};
     socklen_t size = sizeof(native);
-    if (::getsockname(socket->value, reinterpret_cast<sockaddr*>(&native), &size)) {
+    if (LocalAddress(*socket, native, size)) {
 #ifdef _WIN32
         if (WSAGetLastError() != WSAEINVAL) return Fail(NativeError());
         native = {};
@@ -1829,11 +1858,41 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
     const GuestSendfileHeaders* headers, std::int64_t* sbytes, int flags) {
     (void)flags;
     if (offset < 0) return Fail(22);
-    if (headers && (!SendfileIovecs(headers->headers, headers->headerCount) || !SendfileIovecs(headers->trailers, headers->trailerCount)))
-        return Fail(22);
+    GuestSendfileHeaders localHeaders{};
+    std::vector<KernelIovec> headerIovecs;
+    std::vector<KernelIovec> trailerIovecs;
+    if (headers != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&localHeaders, headers, sizeof(localHeaders))) return Fail(14);
+        if (localHeaders.headers != nullptr) {
+            if (localHeaders.headerCount < 0 || localHeaders.headerCount > 1024) return Fail(22);
+            if (localHeaders.headerCount > 0) {
+                try {
+                    headerIovecs.resize(localHeaders.headerCount);
+                } catch (const std::bad_alloc&) {
+                    return Fail(12);
+                }
+                if (!GuestCopyIn_nid_no_patch(headerIovecs.data(), localHeaders.headers, headerIovecs.size() * sizeof(KernelIovec)))
+                    return Fail(14);
+                if (!SendfileIovecs(headerIovecs.data(), localHeaders.headerCount)) return Fail(22);
+            }
+        }
+        if (localHeaders.trailers != nullptr) {
+            if (localHeaders.trailerCount < 0 || localHeaders.trailerCount > 1024) return Fail(22);
+            if (localHeaders.trailerCount > 0) {
+                try {
+                    trailerIovecs.resize(localHeaders.trailerCount);
+                } catch (const std::bad_alloc&) {
+                    return Fail(12);
+                }
+                if (!GuestCopyIn_nid_no_patch(trailerIovecs.data(), localHeaders.trailers, trailerIovecs.size() * sizeof(KernelIovec)))
+                    return Fail(14);
+                if (!SendfileIovecs(trailerIovecs.data(), localHeaders.trailerCount)) return Fail(22);
+            }
+        }
+    }
     std::int64_t sent = 0;
     const auto finish = [&](int error) {
-        if (sbytes) *sbytes = sent;
+        if (sbytes != nullptr) GuestCopyOut_nid_no_patch(sbytes, &sent, sizeof(sent));
         return error ? Fail(error) : 0;
     };
     if (DescriptorIsOpen_nid_no_patch(file) && !File::IsVnode(file) && !File::IsSharedMemoryDescriptor_nid_no_patch(file)) return finish(22);
@@ -1857,8 +1916,8 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
     sockaddr_storage peer{};
     socklen_t size = sizeof(peer);
     if (::getpeername(socket->value, reinterpret_cast<sockaddr*>(&peer), &size)) return finish(57);
-    if (headers)
-        if (const int error = SendIovecs(*socket, headers->headers, headers->headerCount, sent)) return finish(error);
+    if (!headerIovecs.empty())
+        if (const int error = SendIovecs(*socket, headerIovecs.data(), static_cast<int>(headerIovecs.size()), sent)) return finish(error);
     while (received > 0) {
         if (const int error = SendAll(*socket, chunk.data(), static_cast<std::uint64_t>(received), sent)) return finish(error);
         offset += received;
@@ -1867,8 +1926,8 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
         received = read(offset, remaining);
         if (received < 0) return finish(static_cast<int>(-received));
     }
-    if (headers)
-        if (const int error = SendIovecs(*socket, headers->trailers, headers->trailerCount, sent)) return finish(error);
+    if (!trailerIovecs.empty())
+        if (const int error = SendIovecs(*socket, trailerIovecs.data(), static_cast<int>(trailerIovecs.size()), sent)) return finish(error);
     return finish(0);
 }
 static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {

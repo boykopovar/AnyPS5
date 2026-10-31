@@ -28,6 +28,7 @@ int APS5_VABI sceAvControlCheckVideoOutMode(void);
 int APS5_VABI sceAvControlSetCheckoutputMode(void);
 int APS5_VABI sceAvControlSetSystemVideoMode(void);
 int APS5_VABI sceAvControlDebugAddCallbacks(void);
+int APS5_VABI sceAvControlInit2();
 int APS5_VABI sceAvControlChangeOutputLayout(void);
 int APS5_VABI sceAvControlChangeOutputMode(void);
 int APS5_VABI sceAvControlChangeOutputModeForDiag(void);

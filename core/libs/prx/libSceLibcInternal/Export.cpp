@@ -102,6 +102,50 @@ void RegisterThreadExitHook() {
 
 extern "C" {
 
+int APS5_VABI sceLibcMspaceSetMallocCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcPafMspaceReportMemoryBlocks() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcHeapSetAddressRangeCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcPafMspaceTrim() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcHeapMutexCalloc() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcInternalSetMallocCallback() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcHeapSetTraceMarker() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcPafMspaceCheckMemoryBounds() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcHeapUnsetTraceMarker() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcHeapGetAddressRanges() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceLibcHeapMutexFree() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int Need_sceLibcInternal_nid_postfix = 1;
 
 const char* APS5_VABI getprogname_nid_postfix() {

@@ -203,6 +203,15 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     return result;
 }
 
+std::uint32_t TextureDetiler::layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer) {
+    if (layer == 0 || layout.gcnMicroTiled || !IsGcnMacroTiled(tileMode)) return 0u;
+    const auto key = (static_cast<std::uint32_t>(tileMode) << 8u) | elementBytes;
+    for (const auto& entry : gcnGeometries) {
+        if (entry.first == key) return GcnLayerBankXor(entry.second, layer);
+    }
+    return GcnLayerBankXor(gcnGeometries.emplace_back(key, GcnTiling(tileMode, elementBytes)).second, layer);
+}
+
 void TextureDetiler::checkWindow(const TileMipLayout& layout, const DetileWindow& window, std::uint32_t& columnEnd, std::uint32_t& rowEnd) const {
     Require(layout.width != 0 && layout.height != 0, "texture detiling requires a non-empty mip layout");
     Require(layout.tiledSize != 0 && layout.linearSize != 0, "texture detiling requires a non-empty mip layout");
@@ -268,7 +277,7 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     push.linearBase = window.linearBase;
     push.columnBegin = window.columnBegin;
     push.rowBegin = window.rowBegin;
-    push.pipeBankXor = window.pipeBankXor;
+    push.pipeBankXor = window.pipeBankXor ^ layerBankXor(tileMode, elementBytes, layout, slice);
     push.splitStride = layout.gcnSplitStride;
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
     const auto groupsX = (columnEnd - window.columnBegin + 7u) / 8u;
@@ -459,7 +468,7 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     push.linearBase = 0;
     push.columnBegin = window.columnBegin;
     push.rowBegin = window.rowBegin;
-    push.pipeBankXor = window.pipeBankXor;
+    push.pipeBankXor = window.pipeBankXor ^ layerBankXor(tileMode, elementBytes, layout, slice);
     push.splitStride = layout.gcnSplitStride;
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, imagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
     const auto groupsX = (columnEnd - window.columnBegin + 7u) / 8u;

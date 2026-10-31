@@ -2785,6 +2785,48 @@ void multisampledSingleClearTests() {
     Require(!match(std::span(kernel).first(21), userData, group), "a truncated kernel was taken for RADV's comp-to-single clear");
 }
 
+void htileBufferMaskClearTests() {
+    static constexpr std::array<std::uint32_t, 16> kernel{0xd7460004u, 0x04010c0cu, 0xe00c2000u, 0x80000004u, 0xbf8c3f70u, 0xd7710000u, 0x00120008u, 0xd7710001u, 0x00160209u, 0xd7710002u, 0x001a040au, 0xd7710003u, 0x001e060bu, 0xe01c2000u, 0x80000004u, 0xbf810000u};
+    ShaderRecompiler::ShaderComputeStageInfo compute{};
+    compute.numThreads = {64u, 1u, 1u};
+    compute.groupIdEnable = {true, false, false};
+    compute.threadIdComponentCount = 1u;
+    const std::array<std::uint32_t, 12> userData{0x8e350000u, 0x00100050u, 0x00004000u, 0x0004bfacu, 0u, 0u, 0u, 0u, 0x3f0u, 0x3f0u, 0x3f0u, 0x3f0u};
+    const std::array<std::uint32_t, 5> packet{0u, 0x4000u, 1u, 1u, 0x61u};
+    const auto match = [&](std::span<const std::uint32_t> code, std::span<const std::uint32_t> words, const ShaderRecompiler::ShaderComputeStageInfo& info, std::span<const std::uint32_t> dispatch, std::uint64_t indirect) {
+        return AgcDriver::Graphics::MatchHtileBufferMaskClear(code, words, info, dispatch, indirect);
+    };
+    const auto found = match(kernel, userData, compute, packet, 0);
+    Require(found.has_value() && found->address == 0x508e350000ull && found->bytes == 0x40000u && found->mask == 0x3f0u && found->value == 0u, "the buffer variant of the HTILE mask kernel was not recognized with its range, mask and value");
+    auto groups = packet;
+    groups[4] = 0x41u;
+    groups[1] = 0x100u;
+    const auto byGroups = match(kernel, userData, compute, groups, 0);
+    Require(byGroups.has_value() && byGroups->bytes == 0x40000u, "a group-count dispatch of the buffer HTILE kernel did not cover 0x100 groups of 64 records");
+    groups[1] = 0x80u;
+    Require(match(kernel, userData, compute, groups, 0)->bytes == 0x20000u, "fewer threads than records did not limit the buffer HTILE kernel's range");
+    auto other = kernel;
+    other[6] ^= 1u;
+    Require(!match(other, userData, compute, packet, 0).has_value(), "another kernel was taken for the buffer HTILE mask kernel");
+    Require(!match(std::span(kernel).first(15), userData, compute, packet, 0).has_value(), "a truncated kernel was taken for the buffer HTILE mask kernel");
+    auto mixed = userData;
+    mixed[10] = 0x3ffu;
+    Require(!match(kernel, mixed, compute, packet, 0).has_value(), "a buffer HTILE kernel with per-word masks was recognized");
+    auto format = userData;
+    format[3] = 0x0004dfacu;
+    Require(!match(kernel, format, compute, packet, 0).has_value(), "a buffer HTILE kernel through a float descriptor was recognized");
+    auto stride = userData;
+    stride[1] = 0x00080050u;
+    Require(!match(kernel, stride, compute, packet, 0).has_value(), "a buffer HTILE kernel with an 8-byte stride was recognized");
+    auto wave32 = compute;
+    wave32.numThreads = {32u, 1u, 1u};
+    Require(!match(kernel, userData, wave32, packet, 0).has_value(), "the buffer HTILE kernel matched with another group size");
+    Require(!match(kernel, userData, compute, packet, 0x1000u).has_value(), "an indirect buffer HTILE kernel dispatch was recognized");
+    auto partial = packet;
+    partial[4] = 0x63u;
+    Require(!match(kernel, userData, compute, partial, 0).has_value(), "a partial-group buffer HTILE kernel dispatch was recognized");
+}
+
 void htileDepthClearTests() {
     static constexpr std::array<std::uint32_t, 17> kernel{0xd7460000u, 0x04010c06u, 0x34000084u, 0xdc388000u, 0x04020000u, 0xbf8c3f70u, 0xd7710008u, 0x00120805u, 0xd7710009u, 0x00120a05u, 0xd771000au, 0x00120c05u, 0xd771000bu, 0x00120e05u, 0xdc788000u, 0x00020800u, 0xbf810000u};
     const std::array<std::uint32_t, 3> wave{64, 1, 1};
@@ -6280,7 +6322,15 @@ void descriptorPoolResetFailureTest() {
     const auto previous = _ZSt13set_terminatePFvvE_nid_postfix([] {
         std::_Exit(mock.descriptorResetResult == VK_SUCCESS ? 0 : 1);
     });
+#ifdef __APPLE__
+    const auto previousHost = std::set_terminate([] {
+        std::_Exit(mock.descriptorResetResult == VK_SUCCESS ? 0 : 1);
+    });
+#endif
     cache.Free(allocation);
+#ifdef __APPLE__
+    std::set_terminate(previousHost);
+#endif
     _ZSt13set_terminatePFvvE_nid_postfix(previous);
 
 }
@@ -7549,6 +7599,7 @@ struct ModuleShape {
     std::uint32_t floatControlsWidth = 0;
     std::uint32_t clipDistanceLength = 0;
     std::uint32_t cullDistanceLength = 0;
+    std::optional<spv::ExecutionModel> tessellationModel;
     bool layerOutput = false;
     bool terminateInvocation = false;
     bool omitTerminateExtension = false;
@@ -7754,6 +7805,7 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
     if (shape.layer) emit(words, spv::OpCapability, {spv::CapabilityGeometry});
     if (shape.clipDistanceLength != 0) emit(words, spv::OpCapability, {spv::CapabilityClipDistance});
     if (shape.cullDistanceLength != 0) emit(words, spv::OpCapability, {spv::CapabilityCullDistance});
+    if (shape.tessellationModel) emit(words, spv::OpCapability, {spv::CapabilityTessellation});
     if (shape.layerOutput) {
         emit(words, spv::OpCapability, {spv::CapabilityShaderViewportIndexLayerEXT});
         const std::string extension = "SPV_EXT_shader_viewport_index_layer";
@@ -7783,10 +7835,14 @@ std::vector<std::uint32_t> makeModule(const ModuleShape& shape) {
     emit(words, spv::OpMemoryModel, {spv::AddressingModelLogical, spv::MemoryModelGLSL450});
     const auto entryPointOffset = words.size();
     if (shape.vertexInput) emit(words, spv::OpEntryPoint, {spv::ExecutionModelVertex, main, 0x6e69616du, 0, output, input});
-    else emit(words, spv::OpEntryPoint, {shape.fragment ? spv::ExecutionModelFragment : spv::ExecutionModelVertex, main, 0x6e69616du, 0, output});
+    else emit(words, spv::OpEntryPoint, {shape.tessellationModel ? *shape.tessellationModel : shape.fragment ? spv::ExecutionModelFragment : spv::ExecutionModelVertex, main, 0x6e69616du, 0, output});
     words[entryPointOffset] += static_cast<std::uint32_t>(extraInterface.size()) << 16u;
     words.insert(words.end(), extraInterface.begin(), extraInterface.end());
     if (shape.fragmentMode) emit(words, spv::OpExecutionMode, {main, *shape.fragmentMode});
+    if (shape.tessellationModel == spv::ExecutionModelTessellationControl) emit(words, spv::OpExecutionMode, {main, spv::ExecutionModeOutputVertices, 3});
+    if (shape.tessellationModel == spv::ExecutionModelTessellationEvaluation) {
+        for (const auto mode : {spv::ExecutionModeQuads, spv::ExecutionModeSpacingFractionalOdd, spv::ExecutionModeVertexOrderCw}) emit(words, spv::OpExecutionMode, {main, mode});
+    }
     if (shape.fragment) emit(words, spv::OpExecutionMode, {main, spv::ExecutionModeOriginUpperLeft});
     if (shape.fragDepth) emit(words, spv::OpExecutionMode, {main, spv::ExecutionModeDepthReplacing});
     if (shape.floatControlsWidth != 0) {
@@ -8723,6 +8779,23 @@ void barycentricEmulationTests() {
         for (auto& parameter : flatVertices.fragmentParameters) parameter.flat = true;
         const std::array<CompiledShader, 4> flatPatchShaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::TessellationControl, &patches.control, 0}, {ShaderStage::TessellationEvaluation, &patches.evaluation, 0}, {ShaderStage::Fragment, &flatVertices, 0}}};
         expectFailure([&] { ValidateProvokingVertex(context, lastState, flatPatchShaders); }, "explicit per-vertex flat interpolation");
+    }
+    {
+        const auto context = mockContext();
+        auto namedVertex = vertex;
+        namedVertex.variantId = 11u;
+        auto namedFragment = fragment;
+        namedFragment.variantId = 12u;
+        const std::array<CompiledShader, 4> namedPatchShaders{{{ShaderStage::Vertex, &namedVertex, 0}, {ShaderStage::TessellationControl, &patches.control, 0}, {ShaderStage::TessellationEvaluation, &patches.evaluation, 0}, {ShaderStage::Fragment, &namedFragment, 0}}};
+        auto lastState = state;
+        lastState.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+        std::vector<std::uint64_t> firstKey;
+        std::vector<std::uint64_t> lastKey;
+        Require(ValidationKey(context, namedPatchShaders, state, firstKey) && ValidationKey(context, namedPatchShaders, lastState, lastKey), "a draw through generated barycentric tessellation stages skipped the shader validation memo");
+        Require(firstKey != lastKey, "the shader validation memo did not tell barycentric patches built for different provoking vertices apart");
+        const std::array<CompiledShader, 4> unnamedPatchShaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::TessellationControl, &patches.control, 0}, {ShaderStage::TessellationEvaluation, &patches.evaluation, 0}, {ShaderStage::Fragment, &namedFragment, 0}}};
+        std::vector<std::uint64_t> unnamedKey;
+        Require(!ValidationKey(context, unnamedPatchShaders, state, unnamedKey), "a vertex stage without a variant id entered the shader validation memo");
     }
 
     RecompileResult clipped;
@@ -11162,6 +11235,16 @@ void validationTests() {
         vertex.spirv = makeModule({.parameterOutput = true, .cullDistanceLength = 4});
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, true, false); }, "PA_CL_VS_OUT_CNTL=0x0040000f");
         AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, false, true);
+        ShaderRecompiler::RecompileResult tessVertex, tessControl, tessEvaluation;
+        tessVertex.spirv = makeModule({});
+        tessControl.spirv = makeModule({.push = true, .tessellationModel = spv::ExecutionModelTessellationControl});
+        tessEvaluation.spirv = makeModule({.cullDistanceLength = 4, .tessellationModel = spv::ExecutionModelTessellationEvaluation});
+        const std::array<AgcDriver::Graphics::CompiledShader, 4> tessShaders{{{ShaderRecompiler::ShaderStage::Local, &tessVertex, 0}, {ShaderRecompiler::ShaderStage::TessellationControl, &tessControl, 0}, {ShaderRecompiler::ShaderStage::TessellationEvaluation, &tessEvaluation, 0}, {ShaderRecompiler::ShaderStage::Fragment, &pixel, 0}}};
+        auto tessState = state;
+        tessState.stages.path = AgcDriver::Graphics::ShaderPath::Tessellation;
+        tessState.stages.tessellation = ShaderRecompiler::TessellationConfiguration{3, 3, 2, 1, 4, 128, 16, false};
+        AgcDriver::Graphics::ValidateShaders(tessShaders, tessState, subgroup, false, false, false, false, false, false, false, true);
+        expectFailure([&] { AgcDriver::Graphics::ValidateShaders(tessShaders, tessState, subgroup, false, false, false, false, false, false, true, false); }, "PA_CL_VS_OUT_CNTL=0x0040000f");
         state.paClVsOutCntl = 0;
         vertex.spirv = makeModule({.parameterOutput = true, .clipDistanceLength = 9});
         expectFailure([&] { AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false, false, false, false, false, false, true, true); }, "clip or cull distance");
@@ -12866,6 +12949,7 @@ int main(int argc, char** argv) {
         OneDimensionalColorTests();
         htileDepthClearTests();
         multisampledSingleClearTests();
+        htileBufferMaskClearTests();
         memoryValueFillTests();
         ZExportTests();
         unorm10_11_11TargetTests();
