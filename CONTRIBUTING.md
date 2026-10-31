@@ -61,6 +61,7 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 - Before starting, check that no open pull request already implements the same functions.
 - Keep the branch up to date with `main` and resolve conflicts yourself; rebasing and force-pushing is fine.
 - A pull request that conflicts with `main` and has no activity for 7 days is labeled `stale` with a reminder. It is not closed.
+- A pull request whose merge would not change `main` is labeled `already in main` with one comment, checked hourly: GitHub's test merge has the same files as its `main` commit, and no file the pull request touches has changed in `main` since. It is not closed. Close it if it is superseded, or push what is missing.
 - If a pull request needs another one first, say so on the checklist line (`Depends on: #N`; `none` otherwise).
 - If a pull request fixes a reported issue, write `Fixes #N` on its checklist line (`none` otherwise). GitHub closes the issue on merge, and the `fix error` label is added within the hour.
 - If a pull request fixes a stop or a wrong result seen on a title, name it on the checklist line with the title ID and its [Game bring-up](https://github.com/boykopovar/AnyPS5/discussions/categories/game-bring-up) discussion (`Unblocks: PPSA01325 #3232`; `none` otherwise). Reviewers review these first. Such a pull request gets the `unblocks title` label.

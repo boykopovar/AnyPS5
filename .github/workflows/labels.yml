@@ -31,6 +31,7 @@ jobs:
           force_label 'unblocks title' 0e8a16 'Names a title ID on the Unblocks line'
           force_label perf          fef2c0 'Performance change'
           force_label 'perf numbers missing' e99695 'perf pull request without a before and after summary line'
+          force_label 'already in main' c5def5 'Merging would not change main; never closed automatically'
 
           label relinker  5319e7 'core/relinker'
           label libc      fbca04 'libc'
