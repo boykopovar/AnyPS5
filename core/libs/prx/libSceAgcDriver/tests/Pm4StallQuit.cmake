@@ -1,0 +1,11 @@
+if(NOT DEFINED TEST)
+    message(FATAL_ERROR "TEST is not set")
+endif()
+
+execute_process(COMMAND "${TEST}" stall-prompt-quit RESULT_VARIABLE code OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+if(NOT code STREQUAL "124")
+    message(FATAL_ERROR "stall-prompt-quit exited with ${code} instead of 124:\n${output}${errors}")
+endif()
+if(NOT errors MATCHES "\\[stall prompt\\] quit at a stalled wait; exit code 124 \\(ANYPS5_STALL_PROMPT\\)")
+    message(FATAL_ERROR "stall-prompt-quit does not report the quit with exit code 124:\n${output}${errors}")
+endif()

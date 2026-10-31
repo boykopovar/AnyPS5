@@ -1813,6 +1813,80 @@ void testStallClock() {
     AgcDriver::DriverDetail::SetStallClock(nullptr);
 }
 
+std::chrono::steady_clock::time_point fakeStallNow = std::chrono::steady_clock::time_point(std::chrono::seconds(1000));
+std::chrono::steady_clock::time_point fakeStallClock() { return fakeStallNow; }
+std::atomic<int> stallPrompts{0};
+std::string lastStallMessage;
+AgcDriver::DriverDetail::StallChoice stallAnswer = AgcDriver::DriverDetail::StallChoice::Wait;
+
+AgcDriver::DriverDetail::StallChoice recordStallPrompt(const char* message) {
+    ++stallPrompts;
+    lastStallMessage = message;
+    return stallAnswer;
+}
+
+void testInvalidStallPrompt() {
+    expectSettingRejected("ANYPS5_STALL_PROMPT must be 0 or 1");
+}
+
+void testStallPromptOff() {
+    AgcDriver::DriverDetail::SetStallClock(fakeStallClock);
+    AgcDriver::DriverDetail::SetStallPresenter(recordStallPrompt);
+    CapturedStderr capture;
+    AgcDriver::DriverDetail::StallWatch stall(0);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    fakeStallNow += std::chrono::seconds(1);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    check(stallPrompts == 0, "a wait asked the host with ANYPS5_STALL_PROMPT unset");
+    check(stallDumpCount(capture) == 1, "a wait with the prompt unset did not dump the rings once");
+    AgcDriver::DriverDetail::SetStallPresenter(nullptr);
+    AgcDriver::DriverDetail::SetStallClock(nullptr);
+}
+
+void testStallPromptOnce() {
+    using AgcDriver::DriverDetail::StallChoice;
+    AgcDriver::DriverDetail::SetStallClock(fakeStallClock);
+    AgcDriver::DriverDetail::SetStallPresenter(recordStallPrompt);
+    CapturedStderr capture;
+    stallAnswer = StallChoice::Wait;
+    {
+        AgcDriver::DriverDetail::StallWatch stall(0);
+        stall.Check("WAIT_REG_MEM at", 0x40);
+        fakeStallNow += std::chrono::seconds(1);
+        stall.Check("WAIT_REG_MEM at", 0x40);
+        check(stallPrompts == 1, "an expired wait did not ask the host once");
+        check(lastStallMessage.find("This title has not made progress for 1 seconds") != std::string::npos, "the prompt does not say how long the title has not progressed");
+        fakeStallNow += std::chrono::seconds(5);
+        stall.Check("WAIT_REG_MEM at", 0x40);
+        check(stallPrompts == 1, "a wait answered Wait asked the host again");
+    }
+    check(stallDumpCount(capture) == 1, "the rings were not dumped once for the answered wait");
+    stallAnswer = StallChoice::Unavailable;
+    {
+        AgcDriver::DriverDetail::StallWatch stall(0);
+        stall.Check("WAIT_REG_MEM at", 0x40);
+        fakeStallNow += std::chrono::seconds(1);
+        stall.Check("WAIT_REG_MEM at", 0x40);
+        fakeStallNow += std::chrono::seconds(5);
+        stall.Check("WAIT_REG_MEM at", 0x40);
+    }
+    check(stallPrompts == 2, "a wait whose message box was unavailable asked again");
+    check(stallDumpCount(capture) == 2, "the rings were not dumped once for the wait without a message box");
+    AgcDriver::DriverDetail::SetStallPresenter(nullptr);
+    AgcDriver::DriverDetail::SetStallClock(nullptr);
+}
+
+void testStallPromptQuit() {
+    AgcDriver::DriverDetail::SetStallClock(fakeStallClock);
+    AgcDriver::DriverDetail::SetStallPresenter(recordStallPrompt);
+    stallAnswer = AgcDriver::DriverDetail::StallChoice::Quit;
+    AgcDriver::DriverDetail::StallWatch stall(0);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    fakeStallNow += std::chrono::seconds(1);
+    stall.Check("WAIT_REG_MEM at", 0x40);
+    throw std::runtime_error("the Quit answer returned instead of ending the title");
+}
+
 void testStallWatchdogRewind() {
     alignas(8) static std::uint32_t done = 0;
     static std::vector<std::uint32_t> words;
@@ -2142,7 +2216,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"rewind-trace", testRewindTailTrace}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-once", testStallPromptOnce}, {"stall-prompt-quit", testStallPromptQuit}, {"rewind-trace", testRewindTailTrace}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
