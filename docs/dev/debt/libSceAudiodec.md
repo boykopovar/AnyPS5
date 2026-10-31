@@ -6,8 +6,6 @@
 
 - [sceAudiodecDecode](../../../core/libs/prx/libSceAudiodec/src/Codecs.cpp) (libSceAudiodec) - a raw M4AAC stream carries no channel configuration, so the decoder tries the mono/stereo configuration and then configurations 3 to 7 within `ui_max_channels` until one decodes the first access unit, and keeps that one. No reference documents how the library picks the layout (shadPS4 maps the channel count straight to the configuration; SharpProspero only describes the maximum). With the stereo configuration a mono raw stream decodes as 2 channels, so 2 is reported, not 1
 
-- [sceAudiodecUnregisterCodec, sceAudiodecGetAjmContext](../../../core/libs/prx/libSceAudiodec/Export.cpp) throw on every call. Their names and NIDs are confirmed defined function exports in the pinned [PS5 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceaudiodec-2dbab67864.jsonl); signatures and behavior remain unknown. Parameterless `int` declarations are import placeholders, not verified prototypes or working implementations.
-
 - [sceAudiodecDecode](../../../core/libs/prx/libSceAudiodec/src/Codecs.cpp) (libSceAudiodec) - the HE-AAC handling follows one console measurement of an HE-AAC v2 ADTS stream: SBR output at 48 kHz in one channel with `ui_enable_heaac` 1, the 24 kHz mono core with 0. Not measured: whether the console, like FFmpeg, decodes a stream without SBR data in its first access unit as AAC-LC with `ui_enable_heaac` 1, and what it reports in `ui_sampling_freq` and `ui_heaac` with `ui_enable_heaac` 0 (here the rate of the returned PCM and 0)
 
 ### Functional
