@@ -333,6 +333,7 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return kldload_nid_postfix(paths.Unreadable()); });
     posixFault([&] { return kldstat_nid_postfix(1, paths.Unreadable()); });
     posixFault([&] { return kldstat_nid_postfix(1, paths.Boundary()); });
     const std::int32_t statVersion = 1056;
@@ -1407,6 +1408,18 @@ int main() {
     Require(kldfind_nid_postfix("") == -1 && Error() == 2);
     Require(kldfind_nid_postfix("kernel") == -1 && Error() == 2);
     Require(kldfind_nid_postfix("missing.ko") == -1 && Error() == 2);
+    Require(kldload_nid_postfix(nullptr) == -1 && Error() == 14);
+    Require(kldload_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
+    Require(kldload_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    const auto kldDirectory = "/" + root.filename().generic_string();
+    const auto kldHeader = (root / "kld-header.ko").string();
+    std::ofstream(kldHeader, std::ios::binary | std::ios::trunc) << "XELF";
+    for (const std::string name : {std::string(), std::string("nomodule"), std::string("missing.ko"), kldDirectory + "/missing.ko",
+                                   kldDirectory + "/file.txt", kldDirectory, kldDirectory + "/file.txt/child", kldDirectory + "/kld-header.ko"}) {
+        *__error_nid_postfix() = 0;
+        Require(kldload_nid_postfix(name.c_str()) == -1 && Error() == 1);
+    }
+    Require(std::filesystem::remove(kldHeader));
     Require(kldnext_nid_postfix(-1) == -1 && Error() == 2);
     Require(kldnext_nid_postfix(0) == 0);
     Require(kldnext_nid_postfix(1) == -1 && Error() == 2);
