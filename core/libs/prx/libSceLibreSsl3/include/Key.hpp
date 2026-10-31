@@ -52,4 +52,5 @@ static_assert(offsetof(LibreSsl3EvpPkey, references) == 4);
 static_assert(sizeof(LibreSsl3EcKey) == 64);
 static_assert(offsetof(LibreSsl3EcKey, references) == 48);
 static_assert(sizeof(LibreSsl3Rsa) == 152);
+static_assert(offsetof(LibreSsl3Rsa, n) == 24);
 static_assert(offsetof(LibreSsl3Rsa, references) == 104);

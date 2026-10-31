@@ -257,11 +257,6 @@ int APS5_VABI Unknown_2l_plus_JidqxyZQ_nid_no_patch() {
 }
 APS5_EXPORT("2l+JidqxyZQ", Unknown_2l_plus_JidqxyZQ_nid_no_patch);
 
-int APS5_VABI Unknown_3KZ_minus_L4y1gak_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("3KZ-L4y1gak", Unknown_3KZ_minus_L4y1gak_nid_no_patch);
-
 int APS5_VABI Unknown_3m4CmAyOXwQ_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
