@@ -9,10 +9,11 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import vulkan_validation_gate as gate
+
+PYTHON = Path(sys.executable).as_posix()
 
 
 class ReportTests(unittest.TestCase):
@@ -44,6 +45,14 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(len(tests["probe"]["missing_layers"]), 1)
         self.assertEqual(problems, ["probe"])
 
+    def test_a_test_without_the_layer_insertion_line_is_not_a_success(self):
+        inserted = '[Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (layer.json)'
+        for line, problems in ((inserted, []), ('Insert instance layer "VK_LAYER_OTHER" (layer.json)', ["probe"]), ("", ["probe"])):
+            with self.subTest(line=line):
+                tests, found = self.report('<testsuite><testcase name="probe"><system-err>' + line + '</system-err></testcase></testsuite>')
+                self.assertEqual(tests["probe"]["layer_inserted"], not problems)
+                self.assertEqual(found, problems)
+
     def test_skip_disabled_failure_and_missing_tests_are_not_successes(self):
         for body in ('<testcase name="probe"><skipped/></testcase>',
                      '<testcase name="probe" status="disabled"/>',
@@ -69,17 +78,6 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report["new_diagnostics"], {"probe": ["VUID-A-1"]})
         self.assertEqual(report["exit_code"], 1)
 
-    def test_windows_is_refused_before_output_is_created(self):
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "not-created"
-            arguments = ["--baseline", directory, "a" * 40, "--candidate", directory, "b" * 40,
-                         "--output", str(output), "--target", "fixture", "--tests", "probe", "--gpu", "fixture"]
-            with mock.patch.object(gate.os, "name", "nt"), contextlib.redirect_stderr(io.StringIO()):
-                with self.assertRaises(SystemExit) as error:
-                    gate.main(arguments)
-            self.assertEqual(error.exception.code, 2)
-            self.assertFalse(output.exists())
-
     def test_relative_command_files_follow_the_test_working_directory(self):
         for mode in ("default", "absolute", "relative"):
             for definition in (False, True):
@@ -101,21 +99,24 @@ class ReportTests(unittest.TestCase):
                     self.assertNotEqual(before, gate.artifact_hashes(build, tests, []))
 
 
-@unittest.skipUnless(os.name == "posix" and shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires POSIX, CMake, Ninja and CTest")
+@unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja") and shutil.which("ctest"), "requires CMake, Ninja and CTest")
 class FixtureTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name).resolve()
 
-    def source(self, name, message="pass", test="probe", property_text=""):
+    def source(self, name, message="pass", test="probe", property_text="", layer=True):
         source = self.root / name
         source.mkdir()
         program = 'import os, sys\nfrom pathlib import Path\n'
         program += 'assert os.environ["ANYPS5_REQUIRE_VULKAN"] == "1"\n'
         program += 'assert os.environ["ANYPS5_NO_SHADER_CACHE"] == "1"\n'
         program += 'assert os.environ["VK_INSTANCE_LAYERS"] == "VK_LAYER_KHRONOS_validation"\n'
+        program += 'assert os.environ["VK_LOADER_DEBUG"] == "layer"\n'
         program += 'assert os.environ["ANYPS5_GPU"] == "fixture"\n'
+        if layer:
+            program += 'print(\'[Vulkan Loader] INFO | LAYER:   Insert instance layer "VK_LAYER_KHRONOS_validation" (fixture)\', file=sys.stderr)\n'
         if message == "skip":
             program += 'print("skipped, synthetic unavailable device")\nsys.exit(77)\n'
         elif message == "fail":
@@ -133,7 +134,7 @@ class FixtureTests(unittest.TestCase):
             'cmake_minimum_required(VERSION 3.20)\nproject(gate_fixture NONE)\nenable_testing()\n'
             'add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/probe.py" COMMAND "${CMAKE_COMMAND}" -E copy "${CMAKE_SOURCE_DIR}/probe.py" "${CMAKE_BINARY_DIR}/probe.py" DEPENDS "${CMAKE_SOURCE_DIR}/probe.py")\n'
             'add_custom_target(fixture DEPENDS "${CMAKE_BINARY_DIR}/probe.py")\n'
-            'add_test(NAME ' + test + ' COMMAND "' + sys.executable + '" "${CMAKE_BINARY_DIR}/probe.py")\n'
+            'add_test(NAME ' + test + ' COMMAND "' + PYTHON + '" "${CMAKE_BINARY_DIR}/probe.py")\n'
             'set_tests_properties(' + test + ' PROPERTIES SKIP_RETURN_CODE 77 ' + property_text + ')\n', encoding="utf-8")
         subprocess.run(["git", "init", "-q", str(source)], check=True)
         subprocess.run(["git", "-C", str(source), "add", "."], check=True)
@@ -195,12 +196,16 @@ class IntegrationTests(FixtureTests):
             self.assertTrue(any(path.endswith("probe.py") for path in files))
             self.assertTrue((self.root / "evidence" / side / "iteration-1.xml").is_file())
 
+
+class ValidationTests(FixtureTests):
     def test_ctest_success_with_validation_errors_is_a_gate_failure(self):
         code, report = self.execute(self.source("base"), self.source("head", "Validation Error: [ VUID-Fixture-00001 ] synthetic"), "--repeat", "1")
         self.assertEqual(code, 1, report)
         self.assertTrue(all(entry["returncode"] == 0 for entry in report["iterations"]))
         self.assertEqual(report["new_diagnostics"], {"probe": ["VUID-Fixture-00001"]})
 
+
+class LayerTests(FixtureTests):
     def test_ctest_success_with_missing_layer_is_a_gate_failure(self):
         message = "WARNING: [Loader Message] layer was not found but was requested by env var VK_INSTANCE_LAYERS"
         code, report = self.execute(self.source("base", message), self.source("head"), "--repeat", "1")
@@ -213,6 +218,15 @@ class IntegrationTests(FixtureTests):
         code, report = self.execute(self.source("base"), self.source("head", message), "--repeat", "1")
         self.assertEqual(code, 1, report)
 
+    def test_ctest_success_without_layer_insertion_is_a_gate_failure(self):
+        code, report = self.execute(self.source("base"), self.source("head", layer=False), "--repeat", "1")
+        self.assertEqual(code, 1, report)
+        self.assertTrue(all(entry["returncode"] == 0 for entry in report["iterations"]))
+        self.assertEqual({entry["side"]: entry["tests"]["probe"]["layer_inserted"] for entry in report["iterations"]},
+                         {"baseline": True, "candidate": False})
+
+
+class OutputTests(FixtureTests):
     def test_large_passed_output_retains_early_and_late_validation_messages(self):
         code, report = self.execute(self.source("base"), self.source("head", "large"), "--repeat", "1")
         self.assertEqual(code, 1, report)
@@ -235,9 +249,9 @@ class AttributionTests(FixtureTests):
         baseline, candidate = self.source("base"), self.source("head", "mutate")
         cmake = candidate[0] / "CMakeLists.txt"
         text = cmake.read_text(encoding="utf-8")
-        absolute = 'add_test(NAME probe COMMAND "' + sys.executable + '" "${CMAKE_BINARY_DIR}/probe.py")'
+        absolute = 'add_test(NAME probe COMMAND "' + PYTHON + '" "${CMAKE_BINARY_DIR}/probe.py")'
         self.assertIn(absolute, text)
-        cmake.write_text(text.replace(absolute, 'add_test(NAME probe COMMAND "' + sys.executable + '" probe.py)'), encoding="utf-8")
+        cmake.write_text(text.replace(absolute, 'add_test(NAME probe COMMAND "' + PYTHON + '" probe.py)'), encoding="utf-8")
         subprocess.run(["git", "-C", str(candidate[0]), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
                         "-c", "commit.gpgSign=false", "commit", "-qam", "relative fixture"], check=True)
         candidate = candidate[0], gate.git(candidate[0], "rev-parse", "HEAD")
@@ -259,6 +273,8 @@ class AttributionTests(FixtureTests):
         self.assertEqual(code, 2, report)
         self.assertIn("artifacts changed", report["error"])
 
+
+class SetupTests(FixtureTests):
     def test_test_properties_cannot_disable_required_validation(self):
         code, report = self.execute(self.source("base"), self.source("head", property_text='ENVIRONMENT "ANYPS5_REQUIRE_VULKAN=0"'))
         self.assertEqual(code, 2, report)
@@ -297,6 +313,8 @@ class AttributionTests(FixtureTests):
         self.assertEqual(code, 2, report)
         self.assertIn("nonempty unique test names", report["error"])
 
+
+class CommandTests(FixtureTests):
     def test_unexpected_command_failure_is_retained(self):
         code, report = self.execute(self.source("base"), self.source("head", "fail"), "--repeat", "1")
         self.assertEqual(code, 1, report)
