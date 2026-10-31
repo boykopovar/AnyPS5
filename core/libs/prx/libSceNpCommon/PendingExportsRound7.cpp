@@ -316,11 +316,6 @@ int APS5_VABI _ZNK3sce2np10JsonString6GetStrEPcm(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np10Cancelable10LockCancelEPKciS3_(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -352,11 +347,6 @@ int APS5_VABI _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(void) {
 }
 
 int APS5_VABI _ZN3sce2np9EventFlag3SetEm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np9RefObjectC1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -516,11 +506,6 @@ int APS5_VABI _ZN3sce2np9EventFlagD2Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np9RefObjectD1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _sceNpAllocatorMalloc(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -577,11 +562,6 @@ int APS5_VABI _ZNK3sce2np10JsonNumber6GetNumEPcm(void) {
 }
 
 int APS5_VABI _ZN3sce2np13RingBufMemory7DestroyEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np9RefObject7ReleaseEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

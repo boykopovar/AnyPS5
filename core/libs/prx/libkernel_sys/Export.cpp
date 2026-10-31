@@ -535,6 +535,19 @@ KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFi
     return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
 }
 
+int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
+    if (!name) throw std::invalid_argument("sceKernelIsModuleLoaded: null name");
+    KernelModule handles[0x300];
+    std::size_t count = 0;
+    if (const int result = sceKernelGetModuleListInternal(handles, std::size(handles), &count)) return result;
+    for (std::size_t i = 0; i < count; ++i) {
+        ModuleInfo info{};
+        info.st_size = sizeof(info);
+        if (sceKernelGetModuleInfo(handles[i], &info) == 0 && std::strncmp(info.name, name, sizeof(info.name)) == 0) return 0;
+    }
+    return SCE_KERNEL_ERROR_ESRCH;
+}
+
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {
     return static_cast<int>(_fstat_nid_postfix(d, sb));
 }

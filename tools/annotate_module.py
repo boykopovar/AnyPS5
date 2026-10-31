@@ -142,14 +142,14 @@ class Module:
     def symbol(self, index):
         if index >= self.symbol_count:
             raise ModuleError("symbol index %d is outside the %d symbols of the module" % (index, self.symbol_count))
-        name, info, _, shndx, value, _ = self.unpack("<IBBHQQ", self.symtab + index * SYMBOL_SIZE)
+        name, info, other, shndx, value, _ = self.unpack("<IBBHQQ", self.symtab + index * SYMBOL_SIZE)
         if name >= self.strsz:
             raise ModuleError("symbol %d has a name offset %#x outside DT_STRSZ %#x" % (index, name, self.strsz))
         start = self.strtab + name
         end = self.data.find(b"\0", start, self.strtab + self.strsz)
         if end < 0:
             raise ModuleError("symbol %d has a name unterminated within DT_STRSZ %#x" % (index, self.strsz))
-        return self.data[start:end].decode("utf-8", errors="replace"), shndx, value, info & 0xF
+        return self.data[start:end].decode("utf-8", errors="replace"), shndx, value, info & 0xF, info >> 4, other & 3
 
     def check_relocation_tags(self):
         if DT_REL in self.tags:
@@ -189,8 +189,8 @@ class Module:
         found = {}
         thread_local = {}
         for index in range(1, self.symbol_count):
-            name, shndx, value, kind = self.symbol(index)
-            if shndx == 0 or not name:
+            name, shndx, value, kind, binding, visibility = self.symbol(index)
+            if shndx == 0 or not name or binding == 0 or visibility in (1, 2):
                 continue
             (thread_local if kind == STT_TLS else found).setdefault(value, []).append(name)
         return found, thread_local

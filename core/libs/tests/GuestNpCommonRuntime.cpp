@@ -9,7 +9,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -33,10 +35,13 @@ constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
 constexpr int NpStreamBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
+constexpr int NpUtilParseOutOfRange = static_cast<int>(0x8055060A);
 constexpr int NpTitleIdBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpStreamShort = static_cast<int>(0x80559E10);
 constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
 constexpr int KernelNoSuchObject = static_cast<int>(0x80020003);
+constexpr int NpJsonTooDeep = static_cast<int>(0x80550603);
+constexpr int NpServerErrorBadCode = static_cast<int>(0x80559C02);
 constexpr std::uint32_t EventFlagWaitAnd = 1;
 constexpr std::uint32_t EventFlagShared = 0x100;
 
@@ -73,6 +78,73 @@ void TestSemaphoresAndFlags() {
     Require(sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear event flag reports the busy error");
     Require(sceNpSetEventFlag(flag, 1) == 0 && sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == 0 && result == 1, "a set bit is polled");
     Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
+}
+
+void TestEventFlagClearAndCancel() {
+    KernelEventFlag flag {};
+    Require(sceNpCreateEventFlag(&flag, "NpClearFlag", 0, 0) == 0, "an event flag is created");
+    std::uint64_t result = 0;
+    Require(sceNpSetEventFlag(flag, 0b111) == 0 && sceNpClearEventFlag(flag, 0b101) == 0, "the pattern is set and masked");
+    Require(sceNpPollEventFlag(flag, 0b010, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear keeps only the bits of its pattern");
+    Require(sceNpPollEventFlag(flag, 0b101, EventFlagWaitAnd, &result) == 0 && result == 0b101, "a clear leaves the masked bits set");
+    int waiting = -1;
+    Require(sceNpCancelEventFlag(flag, 0b1000, &waiting) == 0 && waiting == 0, "a cancel reports no waiting thread");
+    Require(sceNpPollEventFlag(flag, 0b101, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a cancel replaces the old pattern");
+    Require(sceNpPollEventFlag(flag, 0b1000, EventFlagWaitAnd, &result) == 0 && result == 0b1000, "a cancel sets its pattern");
+    Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
+}
+
+struct CondWaiter {
+    PthreadMutex* mutex;
+    PthreadCond* cond;
+    int (APS5_VABI* wait)(PthreadCond*, PthreadMutex*);
+    bool ready = false;
+    bool released = false;
+};
+
+void* APS5_VABI WaitOnCondition(void* arg) {
+    auto* waiter = static_cast<CondWaiter*>(arg);
+    Require(sceNpMutexLock(waiter->mutex) == 0, "the waiter locks the mutex");
+    waiter->ready = true;
+    while (!waiter->released) Require(waiter->wait(waiter->cond, waiter->mutex) == 0, "the wait ends without an error");
+    Require(sceNpMutexUnlock(waiter->mutex) == 0, "the waiter holds the mutex after the wait");
+    return nullptr;
+}
+
+template <typename TWake>
+void WakeWaiter(PthreadCond* cond, int (APS5_VABI* wait)(PthreadCond*, PthreadMutex*), TWake wake) {
+    PthreadMutex mutex {};
+    Require(sceNpMutexInit(&mutex, "NpCondMutex", 0) == 0, "a mutex is created");
+    CondWaiter waiter {&mutex, cond, wait};
+    Pthread thread {};
+    Require(sceNpCreateThread(&thread, WaitOnCondition, &waiter, 0, 0x10000, 0, "NpCondWaiter") == 0, "the waiter is created");
+    for (bool ready = false; !ready;) {
+        Require(sceNpMutexLock(&mutex) == 0, "the main thread locks the mutex");
+        ready = waiter.ready;
+        if (!ready) {
+            Require(sceNpMutexUnlock(&mutex) == 0, "the main thread unlocks the mutex");
+            std::this_thread::yield();
+        }
+    }
+    waiter.released = true;
+    Require(wake(thread) == 0, "the waiter is signalled");
+    Require(sceNpMutexUnlock(&mutex) == 0, "the main thread unlocks the mutex");
+    Require(sceNpJoinThread(thread, nullptr) == 0, "the woken waiter is joined");
+    Require(sceNpMutexDestroy(&mutex) == 0, "the mutex is destroyed");
+}
+
+void TestConditionWakeups() {
+    PthreadCond cond {};
+    Require(sceNpCondInit(&cond, "NpCond", 0) == 0, "a condition is created");
+    WakeWaiter(&cond, sceNpCondWait, [&](Pthread) { return sceNpCondSignalAll(&cond); });
+    WakeWaiter(&cond, sceNpCondWait, [&](Pthread thread) { return sceNpCondSignalTo(&cond, thread); });
+    Require(sceNpCondDestroy(&cond) == 0, "the condition is destroyed");
+    PthreadCond lightweight {};
+    Require(sceNpLwCondInit(&lightweight, "NpLwCond") == 0, "a lightweight condition is created");
+    WakeWaiter(&lightweight, sceNpLwCondWait, [&](Pthread) { return sceNpLwCondSignal(&lightweight); });
+    WakeWaiter(&lightweight, sceNpLwCondWait, [&](Pthread) { return sceNpLwCondSignalAll(&lightweight); });
+    WakeWaiter(&lightweight, sceNpLwCondWait, [&](Pthread thread) { return sceNpLwCondSignalTo(&lightweight, thread); });
+    Require(sceNpLwCondDestroy(&lightweight) == 0, "the lightweight condition is destroyed");
 }
 
 void TestSharedEventFlags() {
@@ -296,7 +368,7 @@ void TestTitleIdObjects() {
     auto* owned = static_cast<NpTitleIdObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleIdObject), &allocator));
     _ZN3sce2np9NpTitleIdC1Ev(owned);
     using Destructor = void APS5_VABI (*)(NpTitleIdObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -457,6 +529,226 @@ void TestJsonText() {
     Require(sceNpUtilHttpUrlEncode(url, 3, "@", 1, &length) == NpUtilBufferTooSmall, "encoding needs room for the terminator");
 }
 
+int g_jsonVariant = 0;
+int g_jsonFailAt = 0;
+std::vector<std::string> g_jsonEvents;
+
+int RecordJsonEvent(std::int32_t event, std::uint32_t depth, std::int32_t element, const char* key, const void* value,
+    std::int32_t arrayIndex, const std::string& offset) {
+    std::string text = std::to_string(event) + " " + std::to_string(depth) + " " + std::to_string(element) + " ";
+    text += key != nullptr ? key : "-";
+    text += " ";
+    if (value == nullptr) {
+        text += "-";
+    } else {
+        std::uint32_t type = 0;
+        std::memcpy(&type, value, sizeof(type));
+        const char* valueText = static_cast<const char*>(value) + sizeof(type);
+        if (g_jsonVariant != 0) std::memcpy(&valueText, static_cast<const char*>(value) + 8, sizeof(valueText));
+        text += std::to_string(type) + ":" + valueText;
+        if (g_jsonVariant == 2) {
+            std::uint32_t last = 0;
+            std::memcpy(&last, static_cast<const char*>(value) + 16, sizeof(last));
+            text += ":" + std::to_string(last);
+        }
+    }
+    text += " " + std::to_string(arrayIndex) + offset;
+    g_jsonEvents.push_back(text);
+    return static_cast<int>(g_jsonEvents.size()) == g_jsonFailAt ? static_cast<int>(0x80001234) : 0;
+}
+
+int APS5_VABI OnJsonEvent(void*, std::int32_t event, std::uint32_t depth, std::int32_t element, const char* key,
+    const void* value, std::int32_t arrayIndex, void*) {
+    return RecordJsonEvent(event, depth, element, key, value, arrayIndex, "");
+}
+
+int APS5_VABI OnJsonExEvent(void*, std::int32_t event, std::uint32_t depth, std::int32_t element, const char* key,
+    const void* value, std::int32_t arrayIndex, std::uint32_t offset, void*) {
+    return RecordJsonEvent(event, depth, element, key, value, arrayIndex, " @" + std::to_string(offset));
+}
+
+bool SameEvents(const std::vector<std::string>& expected) {
+    if (g_jsonEvents == expected) return true;
+    for (const std::string& event : g_jsonEvents) std::fprintf(stderr, "  got %s\n", event.c_str());
+    return false;
+}
+
+int ParseJson(const NpJsonRuleSet* rules, const std::string& text, const std::vector<std::size_t>& chunks = {}) {
+    alignas(16) static unsigned char context[0x760];
+    g_jsonVariant = 0;
+    g_jsonEvents.clear();
+    if (sceNpJsonParseInit(context, rules, OnJsonEvent, nullptr) != 0) return -1;
+    if (chunks.empty()) return sceNpJsonParse(context, text.data(), static_cast<int>(text.size()));
+    std::size_t position = 0;
+    for (const std::size_t size : chunks) {
+        const int result = sceNpJsonParse(context, text.data() + position, static_cast<int>(size));
+        if (result != 0) return result;
+        position += size;
+    }
+    return 0;
+}
+
+void TestJsonParser() {
+    const NpJsonRule topA[] = {{1, "a", 1}, {0, "", 0}};
+    const NpJsonRule nestedB[] = {{1, "b", 0}, {0, "", 0}};
+    const NpJsonRule* nestedLevels[] = {topA, nestedB};
+    const NpJsonRuleSet nested{nestedLevels, 2};
+    const std::string nestedText = R"({"a":{"b":"hello","c":1},"x":2})";
+    const std::vector<std::string> nestedEvents = {"5 0 0 a - -1", "1 0 0 - - -1", "5 1 0 b - -1", "6 1 0 b 4:hello -1",
+        "2 0 0 - - -1"};
+    Require(ParseJson(&nested, nestedText) == 0 && SameEvents(nestedEvents), "matched keys report their object and values");
+    Require(ParseJson(&nested, nestedText, std::vector<std::size_t>(nestedText.size(), 1)) == 0 && SameEvents(nestedEvents),
+        "one byte at a time gives the same events");
+
+    const NpJsonRule flatA[] = {{1, "a", 0}, {0, "", 0}};
+    const NpJsonRule* flatLevels[] = {flatA, nestedB};
+    const NpJsonRuleSet flat{flatLevels, 2};
+    Require(ParseJson(&flat, R"({"a":{"b":"hello"},"b":1})") == 0 && SameEvents({"5 0 0 a - -1", "1 0 0 - - -1"}),
+        "an object matched without descend is skipped, close included");
+
+    const NpJsonRule element[] = {{2, nullptr, 0}, {0, "", 0}};
+    const NpJsonRule* arrayLevels[] = {flatA, element};
+    const NpJsonRuleSet array{arrayLevels, 2};
+    Require(ParseJson(&array, R"({"a":[1,"x",true,false,null,-1.5e+3]})") == 0
+            && SameEvents({"5 0 0 a - -1", "3 0 0 - - -1", "6 1 0 - 3:1 0", "6 1 0 - 4:x 1", "6 1 0 - 1: 2", "6 1 0 - 2: 3",
+                "6 1 0 - 0: 4", "6 1 0 - 3:-1.5e+3 5", "4 0 0 - - -1"}),
+        "array elements report their index and value type");
+
+    const NpJsonRule topS[] = {{1, "s", 0}, {0, "", 0}};
+    const NpJsonRule* stringLevels[] = {topS};
+    const NpJsonRuleSet strings{stringLevels, 1};
+    const std::string escaped = "{\"s\":\"\\u00e9\\ud83d\\ude00\\n\xC3\xA9\"}";
+    const std::string decoded = "5 0 0 s - -1|6 0 0 s 4:\xC3\xA9\xF0\x9F\x98\x80\n\xC3\xA9 -1";
+    const auto joined = [] {
+        std::string out;
+        for (const std::string& event : g_jsonEvents) out += (out.empty() ? "" : "|") + event;
+        return out;
+    };
+    Require(ParseJson(&strings, escaped) == 0 && joined() == decoded, "escapes and surrogate pairs decode to UTF-8");
+    const std::size_t cut = escaped.find("\\n") + 1;
+    Require(ParseJson(&strings, escaped, {cut, 2, escaped.size() - cut - 2}) == 0 && joined() == decoded,
+        "an escape and a UTF-8 sequence split between calls still decode");
+
+    const NpJsonRule anyElement[] = {{2, nullptr, 1}, {0, "", 0}};
+    const NpJsonRule* deepLevels[] = {anyElement};
+    const NpJsonRuleSet deep{deepLevels, 1};
+    Require(ParseJson(&deep, std::string(20, '[')) == NpJsonTooDeep && SameEvents({"3 0 0 - - -1"}),
+        "nesting past 16 levels is refused");
+    const NpJsonRule anyMember[] = {{1, nullptr, 1}, {0, "", 0}};
+    const NpJsonRule* memberLevels[] = {anyMember};
+    const NpJsonRuleSet members{memberLevels, 1};
+    const auto objects = [](int depth) {
+        std::string text;
+        for (int i = 1; i < depth; ++i) text += "{\"k\":";
+        text += "{\"k\":1,\"j\":2}";
+        return text + std::string(depth - 1, '}');
+    };
+    const std::string sixteen = objects(16);
+    Require(ParseJson(&members, sixteen) == 0 && SameEvents({"1 0 0 - - -1", "2 0 0 - - -1"}), "16 nested objects in one call close");
+    Require(ParseJson(&members, sixteen, {80, sixteen.size() - 80}) == 0 && SameEvents({"1 0 0 - - -1"}),
+        "a call that ends inside the 16th object loses the close, as in firmware 13.42");
+    const std::string fifteen = objects(15);
+    Require(ParseJson(&members, fifteen, {75, fifteen.size() - 75}) == 0 && SameEvents({"1 0 0 - - -1", "2 0 0 - - -1"}),
+        "a call that ends inside the 15th object keeps the close");
+    Require(ParseJson(&strings, "{\"s\":\"" + std::string(0x5FF, 'y') + "\"}") == 0 && g_jsonEvents.size() == 2,
+        "a 0x5ff byte string fits");
+    Require(ParseJson(&strings, "{\"s\":\"" + std::string(0x600, 'y') + "\"}") == NpUtilBufferTooSmall
+            && SameEvents({"5 0 0 s - -1"}),
+        "a 0x600 byte string is refused");
+    Require(ParseJson(&strings, "{\"s\":" + std::string(0x600, '1') + "}") == NpUtilBufferTooSmall, "a 0x600 digit number is refused");
+    const std::string longKey(0x7F, 'k');
+    const NpJsonRule topLong[] = {{1, longKey.c_str(), 0}, {0, "", 0}};
+    const NpJsonRule* longLevels[] = {topLong};
+    const NpJsonRuleSet longRules{longLevels, 1};
+    Require(ParseJson(&longRules, "{\"" + std::string(0x90, 'k') + "\":1}") == 0
+            && SameEvents({"5 0 0 " + longKey + " - -1", "6 0 0 " + longKey + " 3:1 -1"}),
+        "keys are cut to 0x7f bytes");
+    g_jsonFailAt = 2;
+    Require(ParseJson(&nested, R"({"a":{"b":1}})") == static_cast<int>(0x80001234) && SameEvents({"5 0 0 a - -1", "1 0 0 - - -1"}),
+        "a negative callback result stops the parse and is returned");
+    g_jsonFailAt = 0;
+    Require(sceNpJsonParseInit(nullptr, &nested, OnJsonEvent, nullptr) == NpUtilInvalid, "a null context is refused");
+
+    alignas(16) unsigned char bufContext[0x108] = {};
+    char key[0x100] = {};
+    char value[0x100] = {};
+    const NpJsonRule bufTop[] = {{1, "abc", 0}, {1, "t", 0}, {0, "", 0}};
+    const NpJsonRule* bufLevels[] = {bufTop};
+    const NpJsonRuleSet bufRules{bufLevels, 1};
+    Require(sceNpJsonParseBufInit(bufContext, &bufRules, nullptr, 4, value, 0x20, OnJsonEvent, nullptr) == NpUtilInvalid,
+        "the buffered parser needs a key buffer");
+    Require(sceNpJsonParseBufInit(bufContext, &bufRules, key, 0, value, 0x20, OnJsonEvent, nullptr) == NpUtilBufferTooSmall,
+        "the key buffer needs a size");
+    Require(sceNpJsonParseBufInit(bufContext, &bufRules, key, 4, value, 0x1F, OnJsonEvent, nullptr) == NpUtilBufferTooSmall,
+        "the value buffer needs 0x20 bytes");
+    Require(sceNpJsonParseBufInit(bufContext, &bufRules, key, 4, value, 0x20, OnJsonEvent, nullptr) == 0, "buffered init");
+    g_jsonVariant = 1;
+    g_jsonEvents.clear();
+    const std::string bufText = R"({"abcdef":1,"t":true,"abc":"0123456789012345678901234567890"})";
+    Require(sceNpJsonParseBuf(bufContext, bufText.data(), static_cast<int>(bufText.size())) == 0
+            && SameEvents({"5 0 0 abc - -1", "6 0 0 abc 3:1 -1", "5 0 1 t - -1", "6 0 1 t 1: -1", "5 0 0 abc - -1",
+                "6 0 0 abc 4:0123456789012345678901234567890 -1"}),
+        "the caller buffers cut keys and hold values, literals have empty text");
+    Require(sceNpJsonParseBufInit(bufContext, &strings, key, 4, value, 0x20, OnJsonEvent, nullptr) == 0, "buffered init again");
+    g_jsonEvents.clear();
+    const std::string tooLong = "{\"s\":\"" + std::string(0x20, 'y') + "\"}";
+    Require(sceNpJsonParseBuf(bufContext, tooLong.data(), static_cast<int>(tooLong.size())) == NpUtilBufferTooSmall,
+        "a string longer than the value buffer is refused");
+
+    alignas(16) unsigned char exContext[0x110] = {};
+    Require(sceNpJsonParseExInit(exContext, nullptr, key, 0x10, value, 0x20, OnJsonExEvent, nullptr) == 0, "ex init");
+    g_jsonVariant = 2;
+    g_jsonEvents.clear();
+    const std::string everything = R"({"a":[1,{"b":"xy"}],"c":true})";
+    Require(sceNpJsonParseEx(exContext, everything.data(), static_cast<int>(everything.size())) == 0
+            && SameEvents({"1 0 -1 - - -1 @0", "5 1 -1 a - -1 @1", "3 1 -1 - - -1 @5", "6 2 -1 - 3:1:1 0 @6",
+                "1 2 -1 - - 1 @8", "5 3 -1 b - -1 @9", "6 3 -1 b 4:xy:1 -1 @13", "2 2 -1 - - 1 @17", "4 1 -1 - - -1 @18",
+                "5 1 -1 c - -1 @20", "6 1 -1 c 1::1 -1 @24", "2 0 -1 - - -1 @28"}),
+        "without rules the extended parser reports everything with stream offsets");
+    Require(sceNpJsonParseExInit(exContext, &strings, key, 0x10, value, 0x20, OnJsonExEvent, nullptr) == 0, "ex init again");
+    g_jsonEvents.clear();
+    const std::string pieces = "{\"s\":\"" + std::string("0123456789") + "0123456789" + "0123456789" + "0123456789\",\"n\":1}";
+    Require(sceNpJsonParseEx(exContext, pieces.data(), static_cast<int>(pieces.size())) == 0
+            && SameEvents({"5 0 0 s - -1 @1", "6 0 0 s 4:0123456789012345678901234567890:0 -1 @5",
+                "6 0 0 s 4:123456789:1 -1 @5"}),
+        "a long string comes in pieces with the last one marked");
+    Require(sceNpJsonParseExInit(exContext, &strings, key, 0x10, value, 0x20, OnJsonExEvent, nullptr) == 0, "ex init for numbers");
+    g_jsonEvents.clear();
+    const std::string digits = "{\"s\":" + std::string(40, '1') + "}";
+    Require(sceNpJsonParseEx(exContext, digits.data(), static_cast<int>(digits.size())) == 0
+            && SameEvents({"5 0 0 s - -1 @1", "6 0 0 s 3:" + std::string(31, '1') + ":0 -1 @5", "6 0 0 s 3:111111111:1 -1 @5"}),
+        "a long number comes in pieces too");
+
+    const auto code = [](bool multi, std::int32_t http, const std::string& body) {
+        return multi ? sceNpServerErrorJsonMultiGetErrorCode(http, body.data(), body.size())
+                     : sceNpServerErrorJsonGetErrorCode(http, body.data(), body.size());
+    };
+    Require(code(false, 404, R"({"error":{"code":2097152}})") == static_cast<int>(0x82200000), "a server error code is returned");
+    Require(code(false, 404, R"({"error":{"code":12582912}})") == static_cast<int>(0x82FFFFFF), "codes from 0xc00000 are unknown");
+    Require(code(false, 404, R"({"error":{"code":"5"}})") == static_cast<int>(0x82F00194), "a string code falls back to the status");
+    Require(code(false, 600, R"({"error":{"code":"5"}})") == static_cast<int>(0x82FFFFFF), "a status past 599 is unknown");
+    Require(code(false, 404, R"({"code":7})") == static_cast<int>(0x82F00194), "the single form needs error.code");
+    Require(code(true, 404, R"({"code":7})") == static_cast<int>(0x82000007), "the multi form also takes a top level code");
+    Require(code(true, 404, R"({"error":{"code":8}})") == static_cast<int>(0x82000008), "the multi form takes error.code");
+    Require(code(false, 503, R"({"error":{"code":-1}})") == static_cast<int>(0x82F001F7), "a negative code falls back to the status");
+    Require(sceNpServerErrorJsonGetErrorCode(404, nullptr, 5) == static_cast<int>(0x82F00194), "no body falls back to the status");
+    alignas(16) unsigned char serverContext[0x760] = {};
+    NpServerErrorJsonResult result{};
+    Require(sceNpServerErrorJsonParseInit(serverContext, nullptr) == NpUtilInvalid, "the server error parser needs a result");
+    std::memset(&result, 0xEE, sizeof(result));
+    Require(sceNpServerErrorJsonParseInit(serverContext, &result) == 0 && result.found == 0 && result.code == -1,
+        "server error init clears the result");
+    const std::string body = R"({"error":{"code":42}})";
+    Require(sceNpServerErrorJsonParse(serverContext, body.data(), static_cast<int>(body.size())) == 0 && result.found == 1
+            && result.code == 42,
+        "the server error parser stores the code");
+    const std::string badBody = R"({"error":{"code":"x"}})";
+    Require(sceNpServerErrorJsonParseMultiInit(serverContext, &result) == 0, "multi server error init");
+    Require(sceNpServerErrorJsonParse(serverContext, badBody.data(), static_cast<int>(badBody.size())) == NpServerErrorBadCode
+            && result.found == 0,
+        "a code that is not a number stops the parse");
+}
+
 void TestTitleIds() {
     NpTitleIdParts parts {{'A', 'B', 'C', 'D', '1', '2', '3', '4', '5'}, 0, 7};
     char titleId[13] = {};
@@ -590,7 +882,7 @@ void TestMemoryStreams() {
     Require(reader.data == text && reader.size == 8 && reader.position == 0, "a reader starts at the beginning of its buffer");
     std::array<char, 8> out {};
     std::size_t count = 99;
-    Require(reinterpret_cast<Read>(reader.vtable[2])(&reader, nullptr, out.data(), 5, &count) == 0 && count == 5 &&
+    Require(reinterpret_cast<Read>(const_cast<void*>(reader.vtable[2]))(&reader, nullptr, out.data(), 5, &count) == 0 && count == 5 &&
                 std::memcmp(out.data(), "abcde", 5) == 0 && reader.position == 5,
         "a read through the vtable copies the requested bytes");
     out.fill(0);
@@ -608,7 +900,7 @@ void TestMemoryStreams() {
     std::array<char, 6> buffer {};
     NpMemoryStreamWriter writer;
     _ZN3sce2np18MemoryStreamWriterC2EPvm(&writer, buffer.data(), 6);
-    Require(reinterpret_cast<Write>(writer.vtable[2])(&writer, nullptr, "abcd", 4, &count) == 0 && count == 4 && writer.position == 4,
+    Require(reinterpret_cast<Write>(const_cast<void*>(writer.vtable[2]))(&writer, nullptr, "abcd", 4, &count) == 0 && count == 4 && writer.position == 4,
         "a write through the vtable stores the bytes");
     count = 99;
     Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "xyz", 3, &count) == NpStreamBufferTooSmall &&
@@ -627,10 +919,10 @@ void TestMemoryStreams() {
                 _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "ab", 2, &count) == 0 && writer.position == 8,
         "a writer without a buffer only counts");
 
-    reinterpret_cast<Destroy>(reader.vtable[0])(&reader);
+    reinterpret_cast<Destroy>(const_cast<void*>(reader.vtable[0]))(&reader);
     _ZN3sce2np18MemoryStreamReaderD2Ev(&reader);
     Require(reader.data == text && reader.size == 8 && reader.position == 12, "the reader destructors leave the object untouched");
-    reinterpret_cast<Destroy>(writer.vtable[0])(&writer);
+    reinterpret_cast<Destroy>(const_cast<void*>(writer.vtable[0]))(&writer);
     _ZN3sce2np18MemoryStreamWriterD2Ev(&writer);
     Require(writer.data == nullptr && writer.size == 2 && writer.position == 8, "the writer destructors leave the object untouched");
 }
@@ -759,17 +1051,96 @@ void TestStreamHelpers() {
         "Write makes a single stream call");
 }
 
+void TestRefObjects() {
+    NpRefObject object {};
+    std::memset(&object, 0x77, sizeof(object));
+    _ZN3sce2np9RefObjectC1Ev(&object);
+    Require(object.vtable != nullptr && object.refCount == 0, "a new reference-counted object has no references");
+    Require(_ZN3sce2np9RefObject6AddRefEv(&object) == 1 && _ZN3sce2np9RefObject6AddRefEv(&object) == 2 && object.refCount == 2,
+        "AddRef returns the new count");
+    Require(_ZN3sce2np9RefObject7ReleaseEv(&object) == 1 && object.refCount == 1, "Release returns the new count");
+    _ZN3sce2np9RefObjectD2Ev(&object);
+    Require(object.refCount == 1, "the destructor leaves the count alone");
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* owned = static_cast<NpRefObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpRefObject), &allocator));
+    _ZN3sce2np9RefObjectC2Ev(owned);
+    Require(_ZN3sce2np9RefObject6AddRefEv(owned) == 1 && _ZN3sce2np9RefObject6AddRefEv(owned) == 2, "an allocated object takes references");
+    Require(_ZN3sce2np9RefObject7ReleaseEv(owned) == 1 && record.released == nullptr, "releasing a reference that is not the last keeps the object");
+    Require(_ZN3sce2np9RefObject7ReleaseEv(owned) == 0 && record.released == record.block.data(),
+        "releasing the last reference deletes the object through the stored allocator");
+}
+
+void TestCommIdObjects() {
+    NpCommunicationId parts {};
+    std::memset(&parts, 0x77, sizeof(parts));
+    Require(sceNpUtilParseTitleId(&parts, "WXYZ54321_07") == 0 && std::memcmp(parts.data, "WXYZ54321", 9) == 0 && parts.term == '\0'
+            && parts.num == 7 && parts.dummy == '\0',
+        "sceNpUtilParseTitleId splits the id and its number");
+    Require(sceNpUtilParseTitleId(&parts, "WXYZ54321-07") == NpUtilParseOutOfRange && sceNpUtilParseTitleId(&parts, "WXYZ54321_007") == NpUtilParseOutOfRange
+            && sceNpUtilParseTitleId(&parts, "WXYZ") == NpUtilParseOutOfRange && sceNpUtilParseTitleId(&parts, nullptr) == NpUtilInvalid,
+        "sceNpUtilParseTitleId needs an underscore at index 9 and at most 12 characters");
+
+    NpCommIdObject commId {};
+    std::memset(&commId, 0x77, sizeof(commId));
+    _ZN3sce2np8NpCommIdC1Ev(&commId);
+    Require(commId.vtable != nullptr && _ZNK3sce2np8NpCommId7IsEmptyEv(&commId), "a default communication id is empty");
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, "WXYZ54321_42") == 0 && commId.commId.num == 42 && !_ZNK3sce2np8NpCommId7IsEmptyEv(&commId),
+        "parsing keeps the number");
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, "WXY154321_00") == NpTitleIdInvalid
+            && _ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, "WXYZ54321_0", 11) == NpTitleIdInvalid && commId.commId.num == 42,
+        "a rejected communication id leaves the object as it was");
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, "ABCD12345_09xyz", 12) == 0 && commId.commId.num == 9
+            && std::memcmp(commId.commId.data, "ABCD12345", 9) == 0,
+        "the sized parse reads only the given length");
+
+    char text[16];
+    std::memset(text, 'x', sizeof(text));
+    Require(_ZN3sce2np8NpCommId5BuildERKS1_Pcm(&commId, text, 14) == 0 && std::strcmp(text, "ABCD12345_09") == 0 && text[13] == '\0'
+            && text[14] == 'x',
+        "building writes the id and clears the rest of the buffer");
+    Require(_ZN3sce2np8NpCommId5BuildERKS1_Pcm(&commId, text, 12) == NpUtilBufferTooSmall && text[0] == '\0', "building needs 13 bytes");
+
+    NpCommIdObject copy {};
+    _ZN3sce2np8NpCommIdC1ERKS1_(&copy, &commId);
+    NpCommunicationId plain = commId.commId;
+    plain.dummy = 'q';
+    Require(_ZNK3sce2np8NpCommId6EqualsERKS1_(&copy, &commId) && _ZN3sce2npeqERKNS0_8NpCommIdERK20SceNpCommunicationId(&copy, &plain)
+            && _ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_09") && !_ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_9"),
+        "equal communication ids compare equal, ignoring the spare byte");
+    plain.num = 10;
+    Require(_ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(&plain, &copy) && !_ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(&copy, &plain),
+        "the number takes part in the comparison");
+    _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(&copy, &plain);
+    Require(copy.commId.dummy == 'q', "constructing from a plain id copies all twelve bytes");
+    _ZN3sce2np8NpCommId5ClearEv(&copy);
+    Require(_ZNK3sce2np8NpCommId7IsEmptyEv(&copy) && copy.commId.dummy == '\0', "clearing empties the communication id");
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* owned = static_cast<NpCommIdObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpCommIdObject), &allocator));
+    _ZN3sce2np8NpCommIdC1Ev(owned);
+    using Destructor = void APS5_VABI (*)(NpCommIdObject*);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
+    Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
+}
+
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
+    TestEventFlagClearAndCancel();
     TestSharedEventFlags();
     TestThreads();
+    TestConditionWakeups();
     TestHeaps();
     TestObjects();
     TestObjectsThroughStoredAllocator();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestStreamHelpers();
+    TestRefObjects();
+    TestCommIdObjects();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();
@@ -777,6 +1148,7 @@ int main() {
     TestIds();
     TestLanguagesAndDebugIds();
     TestJsonText();
+    TestJsonParser();
     TestTitleIds();
     std::puts("guest np common runtime: PASS");
 }

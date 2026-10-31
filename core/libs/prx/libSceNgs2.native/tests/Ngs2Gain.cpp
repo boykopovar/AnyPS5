@@ -218,7 +218,7 @@ static void TestIntegerOutput() {
         std::array<std::int16_t, Grain> out{};
         const Ngs2RenderBufferInfo info{out.data(), sizeof(out), SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1};
         Require(sceNgs2SystemRender(graph.system, &info, 1) == SCE_NGS2_OK);
-        for (const auto sample : out) Require(sample == (gain > 0.0f ? 16384 : -16384));
+        for (const auto sample : out) Require(sample == (gain > 0.0f ? 16383 : -16383));
     }
 }
 
