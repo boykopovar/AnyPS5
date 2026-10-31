@@ -43,6 +43,7 @@ Counts RunCase(AgcDriver::VulkanDevice& device, const char* name, std::uint32_t 
     vertexInfo.fetchEmbedded = true;
     vertexInfo.resourcesNum = 1u;
     vertexInfo.resourcesDst[0] = {0, 4, 0, 0};
+    vertexInfo.pointList = topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
     ShaderRecompiler::RecompileRequest request{{ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(vertexCode.data()), vertexCode, 0, {}}, {32u, 0u, userData, std::nullopt, std::nullopt, vertexInfo, memory}, device.Target(), {0u, 0u, 0u, 96u}};
     const auto address = reinterpret_cast<std::uintptr_t>(vertices.data());
     descriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) | (stride << 16u), records, 0x01000facu | (77u << 12u)};
@@ -63,6 +64,7 @@ Counts RunCase(AgcDriver::VulkanDevice& device, const char* name, std::uint32_t 
     state.hasColorTarget = true;
     state.renderExtent = {Extent, Extent};
     state.topology = topology;
+    state.vertexPoints = vertexInfo.pointList;
     state.viewport = {0.0f, static_cast<float>(Extent), static_cast<float>(Extent), -static_cast<float>(Extent), 0.0f, 1.0f};
     state.scissor = {{0, 0}, {Extent, Extent}};
     state.cullMode = VK_CULL_MODE_NONE;
