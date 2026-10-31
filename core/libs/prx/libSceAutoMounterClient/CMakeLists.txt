@@ -1,0 +1,15 @@
+add_library(libSceAutoMounterClient SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAutoMounterClient PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAutoMounterClient)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_automounter_client_tests ${LIBS_INCLUDE_DIR}/tests/GuestAutoMounterClient.cpp)
+    target_include_directories(guest_automounter_client_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_automounter_client_tests PRIVATE libSceAutoMounterClient libc)
+    configure_windows_unwind(guest_automounter_client_tests)
+    add_test(NAME guest_automounter_client COMMAND guest_automounter_client_tests)
+    if(WIN32)
+        set_tests_properties(guest_automounter_client PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAutoMounterClient>")
+    endif()
+endif()
