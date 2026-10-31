@@ -1715,6 +1715,8 @@ target_include_directories(agc_driver_recorder_tests PRIVATE
         ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
 )
 
+set_property(SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/tests/Recorder.cpp APPEND PROPERTY COMPILE_DEFINITIONS VK_ENABLE_BETA_EXTENSIONS)
+
 target_link_libraries(agc_driver_recorder_tests PRIVATE
         libSceAgc
         libkernel
