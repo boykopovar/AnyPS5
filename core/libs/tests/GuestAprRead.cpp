@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <algorithm>
@@ -98,6 +99,83 @@ void CheckRead(const Fixture& fixture, std::uint8_t* data, std::size_t bytes, st
         const auto expected = offset + index < FileBytes ? FileByte(offset + index) : std::uint8_t{0};
         Require(data[index] == expected, "APR returned incorrect bytes or did not zero-fill EOF");
     }
+}
+
+void WriteBytes(const std::filesystem::path& path, std::size_t bytes) {
+    std::ofstream stream(path, std::ios::binary | std::ios::trunc);
+    stream << std::string(bytes, 'x');
+    stream.close();
+    Require(!stream.fail(), "cannot create an APR resolve file");
+}
+
+void CheckResolved(std::uint32_t id, std::uint64_t bytes) {
+    FileStat stat{};
+    Require(sceKernelAprGetFileStat(id, &stat) == 0 && stat.st_size == static_cast<std::int64_t>(bytes), "APR could not stat a resolved file");
+    std::vector<char> data(bytes + 1, 0);
+    const Apr::ReadFileCommand command{{Apr::Opcode::ReadFile, sizeof(Apr::ReadFileCommand)}, id, 0, reinterpret_cast<std::uint64_t>(data.data()), bytes, 0};
+    alignas(8) std::array<std::uint8_t, sizeof(command)> memory{};
+    std::memcpy(memory.data(), &command, sizeof(command));
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, sizeof(memory), 1, sizeof(memory), memory.data()};
+    Require(sceKernelAprSubmitCommandBuffer(&buffer, 0) == 0, "APR could not read a resolved file");
+    Require(std::string(data.data(), bytes) == std::string(bytes, 'x'), "APR read wrong bytes from a resolved file");
+}
+
+void TestResolve() {
+    const std::filesystem::path directory = "apr_resolve";
+    std::error_code ignored;
+    std::filesystem::remove_all(directory, ignored);
+    std::filesystem::create_directories(directory / "sub");
+    WriteBytes(directory / "a.bin", 3);
+    WriteBytes(directory / "B.bin", 5);
+    WriteBytes(directory / "sub" / "c.bin", 7);
+    std::array<const char*, 3> paths{"/apr_resolve/a.bin", "/apr_resolve/b.BIN", "/apr_resolve/sub/c.bin"};
+    std::array<std::uint32_t, 3> ids{};
+    std::array<std::uint64_t, 3> sizes{};
+    std::uint32_t failed = 0;
+    std::uint32_t again = 0;
+    std::uint64_t size = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths.data(), 3, ids.data(), sizes.data(), &failed) == 0, "APR did not resolve absolute paths");
+    Require(sizes == std::array<std::uint64_t, 3>{3, 5, 7}, "APR resolved wrong file sizes");
+    Require(ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2], "APR gave two files the same id");
+    for (std::size_t index = 0; index < ids.size(); ++index) CheckResolved(ids[index], sizes[index]);
+    const std::string longName = "/apr_resolve/" + std::string(256, 'n');
+    const char* tooLong = longName.c_str();
+    failed = 7;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(&tooLong, 1, &again, &size, &failed) == -1 && failed == 0 && size == 0, "APR resolved a name longer than the guest limit");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths.data(), 1, &again, &size, &failed) == 0 && again == ids[0] && size == 3, "APR resolved a path again to another id");
+    WriteBytes(directory / "d.bin", 11);
+    const char* created = "/apr_resolve/d.bin";
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(&created, 1, &again, &size, &failed) == 0 && size == 11, "APR did not resolve a file created after its directory was listed");
+    std::array<const char*, 2> missing{"/apr_resolve/a.bin", "/apr_resolve/none.bin"};
+    std::array<std::uint32_t, 2> missingIds{};
+    std::array<std::uint64_t, 2> missingSizes{};
+    failed = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(missing.data(), 2, missingIds.data(), missingSizes.data(), &failed) == -1 && failed == 1 && missingSizes[1] == 0, "APR resolved a missing file");
+    std::filesystem::create_directories(directory / "case");
+    WriteBytes(directory / "case" / "E.bin", 13);
+    WriteBytes(directory / "case" / "e.bin", 17);
+    if (std::distance(std::filesystem::directory_iterator(directory / "case"), std::filesystem::directory_iterator()) == 2) {
+        std::array<const char*, 2> cased{"/apr_resolve/case/E.bin", "/apr_resolve/case/e.bin"};
+        std::array<std::uint32_t, 2> casedIds{};
+        std::array<std::uint64_t, 2> casedSizes{};
+        Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(cased.data(), 2, casedIds.data(), casedSizes.data(), &failed) == 0 && casedSizes == std::array<std::uint64_t, 2>{13, 17}, "APR mixed up two names that differ only in case");
+        CheckResolved(casedIds[0], 13);
+        CheckResolved(casedIds[1], 17);
+    }
+    std::filesystem::create_directories(directory / "first");
+    std::filesystem::create_directories(directory / "second");
+    WriteBytes(directory / "first" / "x.bin", 3);
+    WriteBytes(directory / "second" / "x.bin", 9);
+    const char* aliased = "/apr_alias/x.bin";
+    AddPathAlias_nid_no_patch("/apr_alias", std::filesystem::absolute(directory / "first").string().c_str());
+    std::uint32_t firstId = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(&aliased, 1, &firstId, &size, &failed) == 0 && size == 3, "APR did not resolve a file under an alias");
+    RemovePathAlias_nid_no_patch("/apr_alias");
+    AddPathAlias_nid_no_patch("/apr_alias", std::filesystem::absolute(directory / "second").string().c_str());
+    std::uint32_t secondId = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(&aliased, 1, &secondId, &size, &failed) == 0 && size == 9 && secondId != firstId, "APR kept resolving an alias to its previous directory");
+    RemovePathAlias_nid_no_patch("/apr_alias");
+    std::filesystem::remove_all(directory, ignored);
 }
 
 void TestRead(const Fixture& fixture, std::uint8_t* data) {
@@ -291,7 +369,7 @@ void TestSmallStack(const Fixture& fixture) {
 
 int main(int argc, char** argv) {
     try {
-        Require(argc == 2, "expected host, direct, eof, errors, streams, fault or stack");
+        Require(argc == 2, "expected host, direct, eof, errors, streams, resolve, fault or stack");
         const Fixture fixture;
         const std::string mode = argv[1];
         if (mode == "host") {
@@ -308,6 +386,8 @@ int main(int argc, char** argv) {
             TestErrors(fixture);
         } else if (mode == "streams") {
             TestStreams(fixture);
+        } else if (mode == "resolve") {
+            TestResolve();
 #ifdef _WIN32
         } else if (mode == "fault") {
             const FaultBuffer storage;
