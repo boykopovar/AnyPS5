@@ -28,7 +28,7 @@
 
 - [libSceSystemService pending exports](../../../core/libs/prx/libSceSystemService/PendingExports.cpp): unreviewed argument lists and service behavior remain unresolved. The C decompilation contains 381 of the 477 pending names; additional exports exist as direct assembly jumps, so absence from that listing does not imply absence from the module. Confirmed argument lists are being restored independently of their protected throwing bodies; remaining empty declarations must not be treated as proof of a zero-argument ABI.
 - [sceSystemServiceLaunchSystemDeeplink](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
-- [sceShellCoreUtilLaunchByUriParamInit](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
+- [sceShellCoreUtilLaunchByUriParamInit](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - the layout of the parameter block and its size are unknown. It follows firmware 13.42's libSceSystemService.sprx, read from its disassembly and run natively on x86-64 (not a console): it takes one pointer and returns nothing; a null pointer is ignored; otherwise it writes 0 as a 32-bit value at byte 0 and 0xFFFFFFFF at byte 4 and leaves later bytes unchanged
 - [sceSystemStateMgrTickVideoPlayback](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
 - [sceSystemServiceTelemetrySetData2WithUserId](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
 - [sceShellCoreUtilStartUmmDictation](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
@@ -86,7 +86,7 @@
 - [sceShellCoreUtilRequestCffUpdate](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
 - [sceShellCoreUtilGetCffConfig](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
 - [sceShellCoreUtilRemoveCffConfigFile](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
-- [sceShellCoreUtilDebugGetNumberOfCffItems](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
+- [sceShellCoreUtilDebugGetNumberOfCffItems](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - what the count means is unknown. It follows firmware 13.42's libSceSystemService.sprx, read from its disassembly and run natively on x86-64 (not a console): it writes 50 as a 32-bit value through its pointer and returns 0, or returns 0x80E30005 for a null pointer, without reading any library state
 - [sceShellCoreUtilDebugGetCffInfo](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
 - [sceShellCoreUtilDebugSetCffStatus](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
 - [sceShellCoreUtilGetPeripheralConnectionSessionId](../../../core/libs/prx/libSceSystemService/Export.cpp) (libSceSystemService) - unknown signature
