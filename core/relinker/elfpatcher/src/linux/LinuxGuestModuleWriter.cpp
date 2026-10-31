@@ -103,7 +103,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         Io::AppendU64(bytes, 0x415053354c494658ull);
         pointer(0);
         pointer(image.Init, image.HasInit);
-        pointer(image.Fini, image.Fini != 0);
+        pointer(image.Fini, image.HasFini);
         Io::AppendU64(bytes, image.InitArray.size());
         Io::AppendU64(bytes, image.FiniArray.size());
         Io::AppendU64(bytes, 0);
@@ -182,7 +182,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
         return start;
     };
     const auto finalizer = [&](std::uint64_t target) {
-        if (target == 0) return std::uint64_t{};
+        if (!image.HasFini) return std::uint64_t{};
         const auto start = address();
         std::int64_t distance = 0;
         if (!SignedDistance(target, start + 11, distance) || distance < std::numeric_limits<std::int32_t>::min() || distance > std::numeric_limits<std::int32_t>::max())
@@ -193,7 +193,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     };
     const auto init = deferInitialization ? 0 : lifecycle(image.Init);
     auto fini = deferInitialization ? 0 : finalizer(image.Fini);
-    if (deferInitialization && (image.Fini != 0 || !image.FiniArray.empty())) {
+    if (deferInitialization && (image.HasFini || !image.FiniArray.empty())) {
         fini = address();
         bytes.insert(bytes.end(), {0x48, 0x83, 0x3d});
         Io::AppendU32(bytes, stubDisplacement(lifecycleTable + 48, address() + 5));
@@ -210,7 +210,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
             Io::AppendU32(bytes, stubDisplacement(*slot, address() + 4));
             bytes.insert(bytes.end(), {0x48, 0x85, 0xc0, 0x74, 8, 0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xff, 0xd0});
         }
-        if (image.Fini != 0) {
+        if (image.HasFini) {
             bytes.insert(bytes.end(), {0x31, 0xff, 0x31, 0xf6, 0x31, 0xd2, 0xe8});
             Io::AppendU32(bytes, stubDisplacement(image.Fini, address() + 4));
         }

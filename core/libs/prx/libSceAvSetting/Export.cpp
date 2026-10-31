@@ -126,6 +126,10 @@ int APS5_VABI sceAvControlDebugAddCallbacks(void) {
     return 0;
 }
 
+int APS5_VABI sceAvControlInit2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceAvControlChangeOutputLayout() {
     NotImplemented_nid_no_patch(__func__);
     return 0;

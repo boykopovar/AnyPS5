@@ -1858,11 +1858,41 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
     const GuestSendfileHeaders* headers, std::int64_t* sbytes, int flags) {
     (void)flags;
     if (offset < 0) return Fail(22);
-    if (headers && (!SendfileIovecs(headers->headers, headers->headerCount) || !SendfileIovecs(headers->trailers, headers->trailerCount)))
-        return Fail(22);
+    GuestSendfileHeaders localHeaders{};
+    std::vector<KernelIovec> headerIovecs;
+    std::vector<KernelIovec> trailerIovecs;
+    if (headers != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&localHeaders, headers, sizeof(localHeaders))) return Fail(14);
+        if (localHeaders.headers != nullptr) {
+            if (localHeaders.headerCount < 0 || localHeaders.headerCount > 1024) return Fail(22);
+            if (localHeaders.headerCount > 0) {
+                try {
+                    headerIovecs.resize(localHeaders.headerCount);
+                } catch (const std::bad_alloc&) {
+                    return Fail(12);
+                }
+                if (!GuestCopyIn_nid_no_patch(headerIovecs.data(), localHeaders.headers, headerIovecs.size() * sizeof(KernelIovec)))
+                    return Fail(14);
+                if (!SendfileIovecs(headerIovecs.data(), localHeaders.headerCount)) return Fail(22);
+            }
+        }
+        if (localHeaders.trailers != nullptr) {
+            if (localHeaders.trailerCount < 0 || localHeaders.trailerCount > 1024) return Fail(22);
+            if (localHeaders.trailerCount > 0) {
+                try {
+                    trailerIovecs.resize(localHeaders.trailerCount);
+                } catch (const std::bad_alloc&) {
+                    return Fail(12);
+                }
+                if (!GuestCopyIn_nid_no_patch(trailerIovecs.data(), localHeaders.trailers, trailerIovecs.size() * sizeof(KernelIovec)))
+                    return Fail(14);
+                if (!SendfileIovecs(trailerIovecs.data(), localHeaders.trailerCount)) return Fail(22);
+            }
+        }
+    }
     std::int64_t sent = 0;
     const auto finish = [&](int error) {
-        if (sbytes) *sbytes = sent;
+        if (sbytes != nullptr) GuestCopyOut_nid_no_patch(sbytes, &sent, sizeof(sent));
         return error ? Fail(error) : 0;
     };
     if (DescriptorIsOpen_nid_no_patch(file) && !File::IsVnode(file) && !File::IsSharedMemoryDescriptor_nid_no_patch(file)) return finish(22);
@@ -1886,8 +1916,8 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
     sockaddr_storage peer{};
     socklen_t size = sizeof(peer);
     if (::getpeername(socket->value, reinterpret_cast<sockaddr*>(&peer), &size)) return finish(57);
-    if (headers)
-        if (const int error = SendIovecs(*socket, headers->headers, headers->headerCount, sent)) return finish(error);
+    if (!headerIovecs.empty())
+        if (const int error = SendIovecs(*socket, headerIovecs.data(), static_cast<int>(headerIovecs.size()), sent)) return finish(error);
     while (received > 0) {
         if (const int error = SendAll(*socket, chunk.data(), static_cast<std::uint64_t>(received), sent)) return finish(error);
         offset += received;
@@ -1896,8 +1926,8 @@ int APS5_VABI sendfile_nid_postfix(int file, int descriptor, std::int64_t offset
         received = read(offset, remaining);
         if (received < 0) return finish(static_cast<int>(-received));
     }
-    if (headers)
-        if (const int error = SendIovecs(*socket, headers->trailers, headers->trailerCount, sent)) return finish(error);
+    if (!trailerIovecs.empty())
+        if (const int error = SendIovecs(*socket, trailerIovecs.data(), static_cast<int>(trailerIovecs.size()), sent)) return finish(error);
     return finish(0);
 }
 static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count, int timeout) {
