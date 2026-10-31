@@ -856,6 +856,7 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("an unobserved stub otherwise", page)
         self.assertIn("so unobserved stubs do not lower it", page)
         self.assertIn("counts all its stubs as observed", page)
+        self.assertIn("/docs/dev/PROGRESS.md#observed-imports", page)
         self.assertIn("<th>Declared %</th>", page)
 
     def test_library_table_shows_each_state_and_both_percentages(self):

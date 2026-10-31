@@ -250,6 +250,7 @@ class ProgressHistoryTests(unittest.TestCase):
         page = progress_history.page([point])
         self.assertIn("their counted figure is the declared one", page)
         self.assertIn("Unobserved stubs are not counted", page)
+        self.assertIn("/docs/dev/PROGRESS.md#observed-imports", page)
 
     def test_axis_labels_fall_on_calendar_days_without_commits(self):
         start = date(2026, 8, 3).toordinal()

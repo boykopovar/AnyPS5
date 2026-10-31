@@ -479,8 +479,8 @@ def summary(libraries, shaders):
         "<p>A function is implemented when it no longer calls <code>NotImplemented_nid_no_patch</code>. "
         "A pending function is an observed stub when the NID of an audited title import names it, and an unobserved stub otherwise. "
         "The percentage counts implemented functions over implemented and observed stubs, so unobserved stubs do not lower it; "
-        "the declared percentage counts them too. A library without a file in "
-        f'<a href="{SOURCE}/docs/dev/observed">docs/dev/observed</a> counts all its stubs as observed. '
+        "the declared percentage counts them too. A library without a list of observed NIDs counts all its stubs as observed; "
+        f'<a href="{SOURCE}/docs/dev/PROGRESS.md#observed-imports">how the lists work</a>. '
         "Comparison reports separately mark implemented functions whose body only returns a constant or throws. "
         f'The total only includes functions already declared in <a href="{SOURCE}/core/libs/prx">core/libs/prx</a>, '
         "not every function exported by the PS5 firmware. Shared-source libraries are counted only at their source library. "
