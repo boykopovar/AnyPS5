@@ -12,6 +12,7 @@ static void Require(bool value, const char* message) {
 
 int main() {
     Require(sceAudioOutGetSimulatedHandleStatusInfo() == static_cast<int>(0x809B00FF), "simulated handle status info is not supported");
+    Require(sceAudioOutSetSystemDebugState() == 0, "set system debug state returns 0");
     Require(sceAudioOutGetInfoOpenNum() == 0, "open port count info returns 0");
     Require(sceAudioOutGetInfo() == 0, "port info returns 0");
     std::puts("audio out info calls: PASS");
