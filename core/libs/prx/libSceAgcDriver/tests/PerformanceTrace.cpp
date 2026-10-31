@@ -1,3 +1,6 @@
+#include <cstdlib>
+#include <optional>
+
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TraceFile.hpp"
 #include "zlib.h"
@@ -583,6 +586,35 @@ void GzipFile() {
     Check(word(bytes.size() - 4) == text.size(), "the size is wrong");
 }
 
+void Directory() {
+#ifdef _WIN32
+    const auto* previous = _wgetenv(L"APS5_TRACE_DIR");
+    struct Restore {
+        std::optional<std::wstring> value;
+        ~Restore() { _wputenv_s(L"APS5_TRACE_DIR", value ? value->c_str() : L""); }
+    } restore{previous != nullptr ? std::optional<std::wstring>(previous) : std::nullopt};
+    Check(_wputenv_s(L"APS5_TRACE_DIR", L"") == 0, "clearing the trace directory failed");
+    Check(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"."), "the default trace directory changed");
+    Check(_wputenv_s(L"APS5_TRACE_DIR", L"trace-output") == 0, "setting an ASCII trace directory failed");
+    Check(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"trace-output"), "the ASCII trace directory changed");
+    const auto expected = std::filesystem::temp_directory_path() / (L"aps5-trace-\u2122-\u65e5\u672c\u8a9e-" + std::to_wstring(Clock::now().time_since_epoch().count()));
+    Check(_wputenv_s(L"APS5_TRACE_DIR", expected.c_str()) == 0, "setting a Unicode trace directory failed");
+    const auto directory = AgcDriver::TraceFile::Directory();
+    Check(directory == expected, "the Unicode trace directory was not preserved");
+    std::filesystem::create_directories(directory);
+    struct Remove {
+        std::filesystem::path path;
+        ~Remove() { std::error_code error; std::filesystem::remove_all(path, error); }
+    } remove{directory};
+    AgcDriver::TraceFile::AppendLine(directory / "aps5-summary.jsonl", "{\"presents\":1}\n");
+    AgcDriver::TraceFile::WriteGzip(directory / "aps5-trace.json.gz", "{\"traceEvents\":[]}");
+    std::ifstream summary(expected / "aps5-summary.jsonl", std::ios::binary);
+    const std::string written((std::istreambuf_iterator<char>(summary)), std::istreambuf_iterator<char>());
+    Check(written == "{\"presents\":1}\n", "the summary was not written in the Unicode directory");
+    Check(std::filesystem::file_size(expected / "aps5-trace.json.gz") > 18, "the trace was not written in the Unicode directory");
+#endif
+}
+
 void AppendLines() {
     const auto path = std::filesystem::temp_directory_path() / ("aps5-summary-test-" + std::to_string(Clock::now().time_since_epoch().count()) + ".jsonl");
     AgcDriver::TraceFile::AppendLine(path, "{\"presents\":1}\n");
@@ -598,6 +630,7 @@ void AppendLines() {
 
 int main() {
     try {
+        Directory();
         WindowByFrames();
         WindowBySeconds();
         WindowRejects();
