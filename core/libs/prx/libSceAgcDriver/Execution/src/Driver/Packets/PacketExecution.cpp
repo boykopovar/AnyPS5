@@ -140,7 +140,7 @@ void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
     if (report && bucket != &WorkerProfile::waitMs) PerformanceCounters::AddDriverNanoseconds(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count()));
 }
 
-void Driver::execute(const Submission& submission) {
+void Driver::execute(Submission& submission) {
     auto* submissionTiming = includeTimingSubmission(submission, true);
     struct FlipHold {
         Driver& driver;
@@ -251,9 +251,18 @@ void Driver::execute(const Submission& submission) {
             if (queue0) DrawFinisher::Get().Settle();
         }
     } settleFinisher{submission.queue == 0};
+    std::size_t nextSegment = 0;
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
         if (packetEpoch()) bumpEpoch(&EpochBumps::packets);
         CheckFailure();
+        while (nextSegment < submission.indirectSegments.size() && submission.indirectSegments[nextSegment].start <= cursor) {
+            if (submission.indirectSegments[nextSegment].start == cursor && refreshIndirectSegment(submission, nextSegment)) {
+                recent.commands = submission.commands;
+                continue;
+            }
+            ++nextSegment;
+        }
+        if (cursor >= submission.commands.size()) break;
         const auto header = submission.commands[cursor];
         if (Pm4::FillerPacket(header)) { ++cursor; continue; }
         const auto count = Pm4::PacketWords(header);

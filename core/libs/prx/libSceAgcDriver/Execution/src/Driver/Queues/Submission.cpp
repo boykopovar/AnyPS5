@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/Submission.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
@@ -13,6 +14,8 @@
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
 #include "ThreadOwned.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -22,6 +25,43 @@
 namespace AgcDriver::DriverDetail {
 
 namespace {
+
+void noteIndirectSegment(Submission& submission, std::size_t start, const std::uint32_t* target, std::size_t words) {
+    if (submission.commands.size() - start != words || !std::equal(submission.commands.begin() + static_cast<std::ptrdiff_t>(start), submission.commands.end(), target)) return;
+    submission.indirectSegments.push_back({start, target, words});
+}
+
+void collectLabelDwords(std::span<const std::uint32_t> packet, std::set<std::uint64_t>& dwords) {
+    const auto opcode = (packet[0] >> 8u) & 0xffu;
+    if ((packet[0] >> 30u) != 3u || (opcode != 0x49 && opcode != 0x37)) return;
+    const auto label = Pm4::DecodeLabelWrite(packet);
+    if (!label.has_value()) return;
+    const auto bytes = label->Bytes();
+    if (label->address % 4 != 0 || bytes.size() > 64) return;
+    for (std::size_t offset = 0; offset < bytes.size(); offset += 4) dwords.insert(label->address + offset);
+}
+
+bool awaitsAny(std::span<const std::uint32_t> commands, std::size_t cursor, const std::set<std::uint64_t>& dwords) {
+    if (cursor >= commands.size()) return false;
+    const auto packet = commands.subspan(cursor, std::min<std::size_t>(Pm4::PacketWords(commands[cursor]), commands.size() - cursor));
+    const auto opcode = (packet[0] >> 8u) & 0xffu;
+    if ((opcode != 0x3c && opcode != 0x93) || packet.size() < 7) return false;
+    const auto wait = Pm4::DecodeWait(packet);
+    for (std::size_t offset = 0; offset < wait.bytes; offset += 4) {
+        if (dwords.contains(wait.address + offset)) return true;
+    }
+    return false;
+}
+
+template<typename Map>
+void shiftKeys(Map& map, std::size_t start, std::size_t end, std::ptrdiff_t delta) {
+    Map shifted;
+    for (auto& [key, value] : map) {
+        if (key >= start && key < end) continue;
+        shifted.emplace(key >= end ? static_cast<std::size_t>(static_cast<std::ptrdiff_t>(key) + delta) : key, std::move(value));
+    }
+    map = std::move(shifted);
+}
 
 bool& submitsQueue0() {
     struct SubmitsQueue0Storage {};
@@ -131,8 +171,10 @@ void Driver::noteReleasedTails(const Submission& submission) {
 void Driver::copyCommands(Submission& submission, const std::uint32_t* guest, std::size_t words) {
     submission.commands.clear();
     submission.conditionalEnds.clear();
+    submission.indirectSegments.clear();
     std::size_t budget = std::size_t{1} << 26u;
     copySegment(submission, guest, words, budget);
+    std::ranges::sort(submission.indirectSegments, {}, &Submission::IndirectSegment::start);
 }
 
 bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std::size_t words, std::size_t& budget) {
@@ -171,10 +213,12 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
             const std::size_t targetWords = guest[cursor + 10] & 0xfffffu;
             if (targetWords != 0) {
                 GuestMemory::CheckRange(target, targetWords * sizeof(std::uint32_t), alignof(std::uint32_t));
+                const auto start = submission.commands.size();
                 if (copySegment(submission, target, targetWords, budget)) {
                     require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                     return true;
                 }
+                noteIndirectSegment(submission, start, target, targetWords);
             }
             cursor += count;
             continue;
@@ -199,11 +243,13 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
                 cursor += count;
                 continue;
             }
+            const auto start = submission.commands.size();
             if (copySegment(submission, target, targetWords, budget)) {
                 require(guarded.empty(), "a REWIND inside a conditional execution range is not implemented");
                 return true;
             }
             if (chain) return false;
+            noteIndirectSegment(submission, start, target, targetWords);
             cursor += count;
             continue;
         }
@@ -220,6 +266,94 @@ bool Driver::copySegment(Submission& submission, const std::uint32_t* guest, std
     reach(words, words);
     require(guarded.empty(), "conditional execution range exceeds its command buffer");
     return false;
+}
+
+bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
+    const auto segment = submission.indirectSegments[index];
+    const auto address = reinterpret_cast<std::uint64_t>(segment.target);
+    const auto bytes = segment.words * sizeof(std::uint32_t);
+    if (DrawPipeline::Active() && DrawPipeline::Queue0().Overlaps(address, bytes)) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
+    if (DrawFinisher::Busy() && DrawFinisher::Get().PendingOverlaps(address, address + bytes)) DrawFinisher::Get().Drain();
+    std::vector<std::uint32_t> words(segment.words);
+    GuestMemory::Read(address, std::as_writable_bytes(std::span(words)), alignof(std::uint32_t));
+    const auto end = segment.start + segment.words;
+    if (std::equal(words.begin(), words.end(), submission.commands.begin() + static_cast<std::ptrdiff_t>(segment.start))) return false;
+    Submission expanded{};
+    expanded.queue = submission.queue;
+    std::size_t budget = std::size_t{1} << 26u;
+    try {
+        if (copySegment(expanded, words.data(), words.size(), budget)) return false;
+        validate(expanded, segment.target, false);
+        readRegisterLists(expanded);
+    } catch (const std::exception& error) {
+        static std::atomic<int> reported{0};
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 8) std::fprintf(stderr, "[gpu] indirect buffer 0x%llx (%zu dwords) changed since its submission but runs as copied: %s\n", static_cast<unsigned long long>(address), segment.words, error.what());
+        return false;
+    }
+    const auto inside = [&](std::size_t cursor) { return cursor >= segment.start && cursor < end; };
+    if (std::ranges::any_of(submission.flips, [&](const auto& entry) { return inside(entry.first); })) return false;
+    {
+        std::lock_guard lock(mutex);
+        for (std::size_t cursor = 0; cursor < expanded.commands.size(); cursor += Pm4::FillerPacket(expanded.commands[cursor]) ? 1u : Pm4::PacketWords(expanded.commands[cursor])) {
+            const auto* packet = expanded.commands.data() + cursor;
+            if (packet[0] == FlipPacketHeader) return false;
+            if (EopRelease(std::span(expanded.commands).subspan(cursor)) && eopFlips.contains(packet[7])) return false;
+            if (packet[0] != RenderingWaitPacketHeader) continue;
+            const std::pair<std::uint32_t, std::uint32_t> target{packet[1], packet[2]};
+            const auto prepared = segment.waits != nullptr ? segment.waits->find(target) : Submission::PreparedWaits::const_iterator{};
+            if (segment.waits == nullptr || prepared == segment.waits->end()) {
+                renderingWaitTargets.insert(target);
+                return false;
+            }
+            expanded.renderingWaits.emplace(cursor, prepared->second);
+        }
+    }
+    if (DrawPipeline::Active() && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
+    if (DrawFinisher::Busy()) DrawFinisher::Get().Drain();
+    const auto delta = static_cast<std::ptrdiff_t>(expanded.commands.size()) - static_cast<std::ptrdiff_t>(segment.words);
+    const auto moved = [&](std::size_t cursor) { return cursor >= end ? static_cast<std::size_t>(static_cast<std::ptrdiff_t>(cursor) + delta) : cursor; };
+    auto& commands = submission.commands;
+    commands.erase(commands.begin() + static_cast<std::ptrdiff_t>(segment.start), commands.begin() + static_cast<std::ptrdiff_t>(end));
+    commands.insert(commands.begin() + static_cast<std::ptrdiff_t>(segment.start), expanded.commands.begin(), expanded.commands.end());
+    shiftKeys(submission.flips, segment.start, end, delta);
+    shiftKeys(submission.renderingWaits, segment.start, end, delta);
+    for (auto& [cursor, wait] : expanded.renderingWaits) submission.renderingWaits.emplace(segment.start + cursor, std::move(wait));
+    shiftKeys(submission.registerLists, segment.start, end, delta);
+    for (auto& [cursor, list] : expanded.registerLists) submission.registerLists.emplace(segment.start + cursor, std::move(list));
+    std::map<std::size_t, std::size_t> ends;
+    for (const auto& [begin, rangeEnd] : submission.conditionalEnds) {
+        if (!inside(begin)) ends.emplace(moved(begin), moved(rangeEnd));
+    }
+    for (const auto& [begin, rangeEnd] : expanded.conditionalEnds) ends.emplace(segment.start + begin, segment.start + rangeEnd);
+    submission.conditionalEnds = std::move(ends);
+    std::set<std::size_t> held;
+    for (const auto cursor : submission.heldAtSubmit) {
+        if (!inside(cursor)) held.insert(moved(cursor));
+    }
+    submission.heldAtSubmit = std::move(held);
+    std::vector<Submission::IndirectSegment> segments(submission.indirectSegments.begin(), submission.indirectSegments.begin() + static_cast<std::ptrdiff_t>(index));
+    for (const auto& nested : expanded.indirectSegments) segments.push_back({segment.start + nested.start, nested.target, nested.words, segment.waits});
+    for (auto later = submission.indirectSegments.begin() + static_cast<std::ptrdiff_t>(index) + 1; later != submission.indirectSegments.end(); ++later) segments.push_back({moved(later->start), later->target, later->words, later->waits});
+    std::ranges::sort(segments, {}, &Submission::IndirectSegment::start);
+    submission.indirectSegments = std::move(segments);
+    std::set<std::uint64_t> written;
+    for (std::size_t cursor = 0; cursor < expanded.commands.size(); cursor += Pm4::FillerPacket(expanded.commands[cursor]) ? 1u : Pm4::PacketWords(expanded.commands[cursor])) {
+        if (Pm4::FillerPacket(expanded.commands[cursor])) continue;
+        collectLabelDwords(std::span<const std::uint32_t>(expanded.commands).subspan(cursor, std::min<std::size_t>(Pm4::PacketWords(expanded.commands[cursor]), expanded.commands.size() - cursor)), written);
+    }
+    if (!written.empty()) {
+        std::lock_guard lock(mutex);
+        auto& worker = workers[submission.queue];
+        for (const auto dword : written) {
+            submission.labelWrites.push_back(dword);
+            ++worker.unfinishedWrites[dword];
+        }
+        const auto after = segment.start + expanded.commands.size();
+        std::erase_if(submission.heldAtSubmit, [&](std::size_t cursor) { return cursor >= after && awaitsAny(submission.commands, cursor, written); });
+        for (auto& later : worker.pending) std::erase_if(later.heldAtSubmit, [&](std::size_t cursor) { return awaitsAny(later.commands, cursor, written); });
+    }
+    clearResolvedAhead();
+    return true;
 }
 
 void Driver::readRegisterLists(Submission& submission) {
@@ -288,7 +422,21 @@ void Driver::releaseFlipHold() {
 
 void Driver::reserveOutputs(Submission& submission) {
     std::set<std::uint32_t> eopTokens;
+    const auto prepare = [&](Submission::IndirectSegment& segment) {
+        auto waits = std::make_shared<Submission::PreparedWaits>();
+        for (const auto& target : renderingWaitTargets) {
+            const auto output = outputs.find(target.first);
+            if (output == outputs.end()) continue;
+            try {
+                if (auto wait = output->second->CaptureRenderingWait(target.second)) waits->emplace(target, std::move(wait));
+            } catch (const std::exception&) {
+            }
+        }
+        segment.waits = std::move(waits);
+    };
+    std::size_t nextSegment = 0;
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
+        while (nextSegment < submission.indirectSegments.size() && submission.indirectSegments[nextSegment].start <= cursor) prepare(submission.indirectSegments[nextSegment++]);
         const auto* words = submission.commands.data() + cursor;
         if (words[0] == RenderingWaitPacketHeader) {
             const auto output = outputs.find(words[1]);
@@ -296,6 +444,7 @@ void Driver::reserveOutputs(Submission& submission) {
             auto wait = output->second->CaptureRenderingWait(words[2]);
             require(wait != nullptr, "video output returned a null rendering wait");
             submission.renderingWaits.emplace(cursor, std::move(wait));
+            renderingWaitTargets.emplace(words[1], words[2]);
         }
         if (EopRelease(std::span(submission.commands).subspan(cursor))) {
             const auto token = words[7];
