@@ -795,7 +795,7 @@ double APS5_VABI log1p_nid_postfix(double x) {
             u = 1.0 + x;
             hu = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(u) >> 32);
             k = (hu >> 20) - 1023;
-            c = k > 0 ? 1.0 - (u - x) : x - (u - 1.0);
+            c = k > 0 ? 1.0 + (x - u) : x - (u - 1.0);
             c /= u;
         } else {
             u = x;
