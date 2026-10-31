@@ -12,7 +12,6 @@ namespace AgcDriver {
 
 namespace Graphics {
 enum class DccKeys;
-class StorageTexture;
 }
 
 struct DisplayBuffer {
@@ -40,7 +39,6 @@ std::array<std::byte, 4> DisplayBufferClearPixel(const DisplayBuffer& buffer, Gr
 std::size_t DisplayBufferKeyBytes(const DisplayBuffer& buffer);
 Graphics::DccKeys DisplayBufferKeys(const DisplayBuffer& buffer);
 bool ResidentServesDisplay(std::uint64_t residentBase, std::uint64_t residentDcc, Graphics::DccKeys uploadedKeys, Graphics::DccKeys filledKeys, bool hasWritesSinceFill, const std::function<Graphics::DccKeys()>& residentKeys, const DisplayBuffer& buffer);
-bool ResidentServesDisplay(const Graphics::StorageTexture& resident, const DisplayBuffer& buffer);
 
 }
 

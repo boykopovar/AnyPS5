@@ -220,8 +220,8 @@ void ResidentServesDisplayOrderTests() {
     std::vector<std::uint8_t> keys(49152, 0x00);
     buffer.dccAddress = reinterpret_cast<std::uint64_t>(keys.data());
 
-    Expect(AgcDriver::ResidentServesDisplay(0x10000, buffer.dccAddress, DccKeys::Clear0000, DccKeys::Clear0000, true, [&] { return DccKeys::Clear0000; }, buffer), "a resident written after a clear fill does not serve the display");
-    Expect(!AgcDriver::ResidentServesDisplay(0x10000, buffer.dccAddress, DccKeys::Clear0000, DccKeys::Clear0000, false, [&] { return DccKeys::Clear0000; }, buffer), "a resident cleared after its writes serves the display instead of falling back to clear");
+    Expect(AgcDriver::ResidentServesDisplay(0x10000, buffer.dccAddress, DccKeys::Clear0000, DccKeys::Clear0000, true, [&] { return DccKeys::Clear0000; }, buffer), "a resident written after a clear fill serves the display");
+    Expect(!AgcDriver::ResidentServesDisplay(0x10000, buffer.dccAddress, DccKeys::Clear0000, DccKeys::Clear0000, false, [&] { return DccKeys::Clear0000; }, buffer), "a resident with no post-fill writes falls back to the clear");
 }
 
 void ExtentTests() {
