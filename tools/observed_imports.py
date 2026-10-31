@@ -11,16 +11,14 @@ import progress
 
 OBSERVABLE = ("implemented", "partial", "stub")
 AUDIT_TOOLS = ("import_audit", "audit_dump")
-NO_EVIDENCE = "# Classified: no measured use found yet."
 HEADER = "# NIDs of {library} that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md."
 DESCRIPTION = """Maintain docs/dev/observed/<library>.txt, the NIDs of each library that any measured use shows to be needed.
 tools/progress.py counts a pending function as an observed stub when its NID is listed there and as an unobserved
 stub otherwise; a library without a file is unclassified and counts every stub as observed. 'add' merges the JSON
 written by tools/import_audit.py --json (or tools/audit_dump.py --json) into the files of the libraries that provide
 each imported NID, tagged audit with the tool and the date of the run; 'entry' adds one NID by hand and requires its
-provenance tag: audit, loader (needed before a title's own code runs) or manual (needs a written reason); 'classify'
-creates the empty manifest of a library with no evidence, which classifies it: every pending stub in it is then
-unobserved; 'check' validates the committed files, rejects unknown tags and lists the entries that have no tag."""
+provenance tag: audit, loader (needed before a title's own code runs) or manual (needs a written reason); 'check'
+validates the committed files, rejects unknown tags and lists the entries that have no tag."""
 
 
 class ManifestError(Exception):
@@ -91,8 +89,6 @@ def plan(additions, prx, observed):
             header, entries = parse(path.read_text(encoding="utf-8-sig"), str(path))
         else:
             header, entries = [HEADER.format(library=library)], {}
-        if header[:1] == [NO_EVIDENCE] and nids:
-            header = [HEADER.format(library=library)]
         added = {nid: comment for nid, comment in nids.items()
                  if nid not in entries or (progress.classify_comment(entries[nid])[0] == progress.UNTAGGED and comment)}
         if added or not path.is_file():
@@ -173,9 +169,6 @@ def main(argv=None):
     entry.add_argument("--reason", help="written reason; required for manual, optional for loader")
     entry.add_argument("--tool", choices=AUDIT_TOOLS, default="import_audit", help="for --tag audit: the tool that was run")
     entry.add_argument("--date", default=datetime.now(timezone.utc).date().isoformat(), help="for --tag audit: UTC date of the run")
-    classify = commands.add_parser("classify", help="create the empty manifest of each named library that has none")
-    classify.add_argument("libraries", nargs="*")
-    classify.add_argument("--all", action="store_true", help="every library of core/libs/prx")
     commands.add_parser("check", help="validate the committed manifests")
     args = parser.parse_args(argv)
     try:
@@ -188,19 +181,6 @@ def main(argv=None):
                 print(f"{len(notes)} entries have no provenance tag")
             print(f"{len(found)} problems in {args.observed}" if found else f"{args.observed}: all manifests are valid")
             return 1 if found else 0
-        if args.command == "classify":
-            known = libraries(args.prx)
-            chosen = sorted(known) if args.all else sorted(set(args.libraries))
-            if not chosen:
-                raise ManifestError("name the libraries to classify, or use --all")
-            unknown = sorted(set(chosen) - known)
-            if unknown:
-                raise ManifestError(f"not libraries of {args.prx}: {', '.join(unknown)}")
-            created = [name for name in chosen if not (Path(args.observed) / f"{name}.txt").exists()]
-            for name in created:
-                write(Path(args.observed) / f"{name}.txt", NO_EVIDENCE + "\n")
-            print(f"classified {len(created)} libraries with no measured use found yet; {len(chosen) - len(created)} already had a manifest")
-            return 0
         if args.command == "entry":
             if progress.NID.fullmatch(args.nid) is None:
                 raise ManifestError(f"invalid NID {args.nid!r}")

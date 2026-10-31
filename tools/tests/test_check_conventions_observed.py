@@ -93,16 +93,6 @@ class ObservedManifestTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("[observed-untagged]", result.stdout)
 
-    def test_a_new_library_without_a_manifest_fails_and_with_one_passes(self):
-        files = {"core/libs/prx/libSceNew/Export.cpp": "int APS5_VABI NewFoo() {\n    return 0;\n}\n"}
-        result = self.check(files)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("[observed-missing] ", result.stdout)
-        self.assertIn("libSceNew has no docs/dev/observed/libSceNew.txt", result.stdout)
-        result = self.check({**files, "docs/dev/observed/libSceNew.txt": "# Classified: no measured use found yet.\n"})
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertNotIn("[observed-missing]", result.stdout)
-
     def test_a_valid_inventory_listing_passes(self):
         result = self.check({"docs/dev/inventory/libSceOne.txt": f"# header\n{FIRST}  Libs-3.20\n{SECOND}  Libs-3.20\n"})
         self.assertEqual((result.returncode, self.inventory(result)), (0, ""), result.stdout + result.stderr)
