@@ -210,6 +210,14 @@ static void SocketsKeepTheirPath() {
     RequireMalformedRequestsFail(socket);
     RequireFailure(ioctl_nid_postfix(socket, IntegerArgumentRequest, nullptr), GuestEfault);
     RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, NonblockingRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, ReadableRequest, nullptr), GuestEfault);
+    RequireFailure(ioctl_nid_postfix(socket, ReadableRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(_ioctl_nid_postfix(socket, NonblockingRequest, nullptr), GuestEfault);
+    RequireFailure(_ioctl_nid_postfix(socket, NonblockingRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
+    RequireFailure(_ioctl_nid_postfix(socket, ReadableRequest, nullptr), GuestEfault);
+    RequireFailure(_ioctl_nid_postfix(socket, ReadableRequest, reinterpret_cast<void*>(std::uintptr_t{0x10})), GuestEfault);
     for (const int descriptor : {closing, duplicate, socket}) Require(close_nid_postfix(descriptor) == 0);
     Require(sceKernelFcntl(socket, GetFlags) == SceEbadf);
     Require(sceKernelFcntl(-1, GetFlags) == SceEbadf);
