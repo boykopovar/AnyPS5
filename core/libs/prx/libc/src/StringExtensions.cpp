@@ -171,6 +171,7 @@ char* APS5_VABI strtok_nid_postfix(char* text, const char* delimiters) {
 }
 
 int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address) {
+    if (text == nullptr) throw std::invalid_argument("__inet_aton: null text");
     std::uint8_t parts[3];
     std::size_t count = 0;
     std::uint64_t value = 0;
