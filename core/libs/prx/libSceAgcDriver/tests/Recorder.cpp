@@ -5707,11 +5707,11 @@ void idlePublishWaitTests(const Device& device, Recorder& recorder) {
     std::cout << "idle publish wait verified\n";
 }
 
-void untrackedForgetTests(const Device& device, Recorder& recorder) {
+bool untrackedForgetTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: untracked comparison memo not tested\n";
-        return;
+        return false;
     }
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
@@ -5750,13 +5750,19 @@ void untrackedForgetTests(const Device& device, Recorder& recorder) {
     } unregister{base, block, other};
     if (HostImportFor(base, address, surfaceBytes) == nullptr) {
         std::cout << "host import of the surface refused: untracked comparison memo not tested\n";
-        return;
+        return false;
     }
     if (AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
         std::cout << "the surface is write-watched: untracked comparison memo not tested\n";
-        return;
+        return false;
     }
+    const char* mode = std::getenv("APS5_WRITE_WATCH_IMPORTS");
+    std::cout << "write-watch mode covered: APS5_WRITE_WATCH_IMPORTS=" << (mode != nullptr ? mode : "unset (probed)") << ", the surface is not write-watched\n";
     TextureDetiler detiler(base);
+    struct Drain {
+        Recorder& recorder;
+        ~Drain() { recorder.Sync(); }
+    } drain{recorder};
     auto context = base;
     context.detiler = &detiler;
     GuestTextureResource resource{};
@@ -5786,11 +5792,11 @@ void untrackedForgetTests(const Device& device, Recorder& recorder) {
         image->Refresh();
         Require(StorageTexture::UntrackedCompares() == compares + 1, "forgetting the surface's own memory left its comparison memo standing");
     }
-    recorder.Sync();
 #ifdef _WIN32
     VirtualFree(other, 0, MEM_RELEASE);
 #endif
     std::cout << "untracked comparison memo: ok\n";
+    return true;
 }
 
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
@@ -12758,8 +12764,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
-            untrackedForgetTests(device, recorder);
-            return 0;
+            return untrackedForgetTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
             drawSnapshotCapTests(device, recorder);
