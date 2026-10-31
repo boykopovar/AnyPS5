@@ -64,40 +64,42 @@ static int validateOutputConfig(int handle, uint64_t mode, const VideoOutOutputO
     return VideoOutOutputSupport_nid_no_patch(mode, options, VideoOutDriver::Get().GetDisplayRefreshRate());
 }
 
-static void validateOpenParam(const void* param) {
-    if (param == nullptr) return;
+static int validateOpenParam(const void* param) {
+    if (param == nullptr) return 0;
     VideoOutOpenParam openParam{};
     std::memcpy(&openParam, param, offsetof(VideoOutOpenParam, affinity));
     if (openParam.firstWord != VIDEO_OUT_OPEN_PARAM_FIRST_WORD) {
-        throw std::runtime_error(std::string(__func__) + ": unsupported first word");
+        return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
     if (openParam.setPriority > 1 || openParam.setAffinity > 1) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
+        return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
     if (openParam.setPriority == 1 && (openParam.priority < VIDEO_OUT_SERVICE_THREAD_PRIORITY_HIGHEST || openParam.priority > VIDEO_OUT_SERVICE_THREAD_PRIORITY_LOWEST)) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
+        return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
     if (openParam.setAffinity == 1) {
         std::memcpy(&openParam.affinity, static_cast<const std::byte*>(param) + offsetof(VideoOutOpenParam, affinity), sizeof(openParam.affinity));
         if (openParam.affinity == 0 || (openParam.affinity & ~VIDEO_OUT_SERVICE_THREAD_AFFINITY_ALL) != 0) {
-            throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
+            return VIDEO_OUT_ERROR_INVALID_VALUE;
         }
     }
+    return 0;
 }
 
 extern "C" {
 
 int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param) try {
     if (busType == VIDEO_OUT_BUS_TYPE_HMD2_MAIN) return VIDEO_OUT_ERROR_INVALID_VALUE;
-    validateOpenParam(param);
+    const int paramStatus = validateOpenParam(param);
+    if (paramStatus != 0) return paramStatus;
     if (userId != 255 && userId != 0) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
+        return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
     if (busType != VIDEO_OUT_BUS_TYPE_MAIN && busType != VIDEO_OUT_BUS_TYPE_OVERLAY && busType != VIDEO_OUT_BUS_TYPE_SUB) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
+        return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
     if (index != 0) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_VALUE");
+        return VIDEO_OUT_ERROR_INVALID_VALUE;
     }
     const int handle = VideoOutDriver::Get().Open(busType);
     if (handle < 0) return VIDEO_OUT_ERROR_RESOURCE_BUSY;
@@ -213,13 +215,15 @@ int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status) try {
 }
 
 int APS5_VABI sceVideoOutGetResolutionStatus(int handle, VideoOutResolutionStatus* status) try {
+    const bool open = VideoOutDriver::Get().HasConfig(handle) && VideoOutDriver::Get().IsOpen(handle);
     if (status == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_ADDRESS");
+        if (!open) {
+            throw std::runtime_error(std::string(__func__) + ": a null output with an invalid handle is not measured");
+        }
+        return VIDEO_OUT_ERROR_INVALID_ADDRESS;
     }
+    if (!open) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
-    if (cfg == nullptr) {
-        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_HANDLE");
-    }
     std::unique_lock lock(cfg->mutex);
     cfg->Check();
     *status = VideoOutResolutionStatus{};

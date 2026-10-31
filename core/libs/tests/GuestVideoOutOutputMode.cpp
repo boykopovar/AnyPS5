@@ -36,6 +36,41 @@ int main() {
     Require(sceVideoOutOpen(SYSTEM_USER, HMD2_MAIN_BUS, 0, nullptr) == INVALID_VALUE);
     Require(sceVideoOutOpen(SYSTEM_USER, HMD2_MAIN_BUS, 0, zeroedOpenParam.data()) == INVALID_VALUE);
     Require(sceVideoOutOpen(0, HMD2_MAIN_BUS, 0, nullptr) == INVALID_VALUE);
+    Require(sceVideoOutOpen(123, MAIN_BUS, 0, nullptr) == INVALID_VALUE);
+    Require(sceVideoOutOpen(SYSTEM_USER, 999, 0, nullptr) == INVALID_VALUE);
+    Require(sceVideoOutOpen(SYSTEM_USER, -1, 0, nullptr) == INVALID_VALUE);
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 1, nullptr) == INVALID_VALUE);
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, -1, nullptr) == INVALID_VALUE);
+    struct TestOpenParam {
+        std::uint32_t firstWord{16};
+        std::uint32_t setPriority{0};
+        std::int32_t priority{0};
+        std::uint32_t setAffinity{0};
+        std::uint64_t affinity{0};
+    };
+    static_assert(offsetof(TestOpenParam, affinity) == 16);
+
+    TestOpenParam invalidOpenParam{};
+    invalidOpenParam.firstWord = 15;
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &invalidOpenParam) == INVALID_VALUE);
+
+    invalidOpenParam = {16, 2, 0, 0, 0};
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &invalidOpenParam) == INVALID_VALUE);
+
+    invalidOpenParam = {16, 0, 0, 2, 0};
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &invalidOpenParam) == INVALID_VALUE);
+
+    invalidOpenParam = {16, 1, 255, 0, 0};
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &invalidOpenParam) == INVALID_VALUE);
+
+    invalidOpenParam = {16, 1, 768, 0, 0};
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &invalidOpenParam) == INVALID_VALUE);
+
+    invalidOpenParam = {16, 0, 0, 1, 0};
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &invalidOpenParam) == INVALID_VALUE);
+
+    invalidOpenParam = {16, 0, 0, 1, 0x2000};
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, &invalidOpenParam) == INVALID_VALUE);
 
     int handle = 0;
     try {
