@@ -1850,7 +1850,17 @@ struct ResolvedResources {
     const ShaderResources::BuildTiming* built = nullptr;
 };
 
-ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer) {
+bool EarlyDrawKeys() {
+    static const bool enabled = std::getenv("APS5_NO_EARLY_DRAW_KEY") == nullptr;
+    return enabled;
+}
+
+bool KeyForDevice(const std::vector<std::uint32_t>& key, VkDevice device) {
+    const auto handle = reinterpret_cast<std::uint64_t>(device);
+    return key.size() >= 3 && key[0] == 0xffffffffu && key[1] == static_cast<std::uint32_t>(handle) && key[2] == static_cast<std::uint32_t>(handle >> 32u);
+}
+
+ResolvedResources resolveDrawResources(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::uint64_t indexBytes, bool recordable, DrawOutcome& outcome, DrawTimer& timer, const std::vector<std::uint32_t>* contentKey) {
     ResolvedResources resolved;
     APS5_LOG_CHARS_OUT_DEBUG("Creating ShaderResources");
     // A recordable draw whose stages' compiled content repeats an earlier one binds that build's
@@ -1866,7 +1876,13 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
     static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
     resolved.cacheable = recordable && !noDrawResourceCache && !noTextureCache && std::all_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->PipelineVariantId() != 0; }) && !ShaderResources::NeverReusable(shaders);
     if (resolved.cacheable) {
-        resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+        if (contentKey != nullptr && KeyForDevice(*contentKey, context.device)) {
+            resolved.contentKey = *contentKey;
+            static const bool verify = std::getenv("APS5_VERIFY_EARLY_DRAW_KEY") != nullptr;
+            if (verify) Require(resolved.contentKey == DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey), "the draw resource key made before the commit differs from the commit's");
+        } else {
+            resolved.contentKey = DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+        }
         if (auto cached = SharedResourceCache().Find(resolved.contentKey)) {
             const bool valid = cached->Revalidate(shaders);
             auto* recorder = Recorder::Active();
@@ -2708,6 +2724,7 @@ struct PreparedDraw {
     std::shared_ptr<const DrawRecipe>* recipeOut = nullptr;
     const DrawTraceContext* trace = nullptr;
     std::uint64_t shape = 0;
+    const std::vector<std::uint32_t>* contentKey = nullptr;
     std::vector<std::uint32_t> stencilReferences;
     std::optional<PerformanceTimer> timing;
     DrawTimer timer;
@@ -3055,7 +3072,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto* recorder = prepared.recorder = Recorder::Active();
     bool recordable = recordDraws && recorder != nullptr && dumpLimit == 0 && std::all_of(targets.begin(), targets.end(), [](const TargetBinding& binding) { return binding.resident != nullptr || binding.multisampled; });
     auto& resolved = prepared.resolved;
-    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer);
+    resolved = resolveDrawResources(context, state, draw, shaders, snapshots, indexBytes, recordable, outcome, timer, prepared.contentKey);
     auto& resources = resolved.resources;
     if (!stencilReferences.empty() && resources->ChecksFaults()) recordable = false;
     if (!stencilReferences.empty()) {
@@ -3724,7 +3741,14 @@ void drawTessellationGeometry(const Context& context, const State& state, const 
     Draw(context, meshed, captured, second, snapshots, nullptr, trace);
 }
 
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape) {
+std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders) {
+    if (!EarlyDrawKeys() || shaders.empty() || std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program == nullptr; })) return {};
+    static const bool trimKey = std::getenv("APS5_NO_DRAW_KEY_TRIM") == nullptr;
+    const auto indexBytes = static_cast<std::uint64_t>(draw.indexCount) * draw.indexSize;
+    return DrawResourceKey(context, shaders, state.color, static_cast<std::uint32_t>(state.colors.size()), draw.indexAddress, indexBytes, !trimKey);
+}
+
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipeOut, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
     const DepthCopySourceScope depthCopySource(state.depthCopySource);
     if (state.stages.tessellationGeometry) {
         drawTessellationGeometry(context, state, draw, shaders, snapshots, trace);
@@ -3735,6 +3759,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
     prepared.recipeOut = recipeOut;
     prepared.trace = trace;
     prepared.shape = shape;
+    prepared.contentKey = contentKey;
     if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
 }
 
