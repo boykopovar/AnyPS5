@@ -52,6 +52,7 @@ struct MockDevice {
     std::map<VkDeviceMemory, std::uint32_t> memoryTypes;
     std::map<VkBuffer, std::pair<VkDeviceMemory, VkDeviceSize>> bound;
     std::set<VkBuffer> liveBuffers;
+    std::map<VkImage, VkDeviceSize> imageBytes;
     std::deque<VkResult> results;
     VkDeviceSize limit = 0;
     VkResult pressureResult = VK_ERROR_OUT_OF_DEVICE_MEMORY;
@@ -137,6 +138,41 @@ VKAPI_ATTR VkDeviceAddress VKAPI_CALL mockGetBufferDeviceAddress(VkDevice, const
     return 0x100000000000ULL + reinterpret_cast<std::uintptr_t>(info->buffer) * 0x10000;
 }
 
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateImage(VkDevice, const VkImageCreateInfo* info, const VkAllocationCallbacks*, VkImage* image) {
+    *image = reinterpret_cast<VkImage>(static_cast<std::uintptr_t>(mock.next++));
+    mock.imageBytes[*image] = VkDeviceSize{info->extent.width} * info->extent.height * 4;
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockGetImageMemoryRequirements(VkDevice, VkImage image, VkMemoryRequirements* requirements) {
+    *requirements = {mock.imageBytes.at(image), 4096, 1};
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockBindImageMemory(VkDevice, VkImage image, VkDeviceMemory memory, VkDeviceSize offset) {
+    return offset + mock.imageBytes.at(image) <= mock.memoryBytes.at(memory) ? VK_SUCCESS : VK_ERROR_OUT_OF_DEVICE_MEMORY;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockCreateImageView(VkDevice, const VkImageViewCreateInfo*, const VkAllocationCallbacks*, VkImageView* view) {
+    *view = reinterpret_cast<VkImageView>(static_cast<std::uintptr_t>(mock.next++));
+    return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroyImageView(VkDevice, VkImageView, const VkAllocationCallbacks*) {}
+
+VKAPI_ATTR void VKAPI_CALL mockDestroyImage(VkDevice, VkImage image, const VkAllocationCallbacks*) {
+    Expect(mock.imageBytes.erase(image) == 1, "an unknown image was destroyed");
+}
+
+VKAPI_ATTR void VKAPI_CALL mockFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+    *properties = {};
+    properties->optimalTilingFeatures = VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL mockImageFormatProperties(VkPhysicalDevice, VkFormat, VkImageType, VkImageTiling, VkImageUsageFlags, VkImageCreateFlags, VkImageFormatProperties* properties) {
+    *properties = {{16384, 16384, 1}, 1, 1, VK_SAMPLE_COUNT_1_BIT, VkDeviceSize{1} << 32u};
+    return VK_SUCCESS;
+}
+
 PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCreateBuffer)},
@@ -148,6 +184,12 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkDestroyBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyBuffer)},
         {"vkFreeMemory", reinterpret_cast<PFN_vkVoidFunction>(mockFreeMemory)},
         {"vkGetBufferDeviceAddressKHR", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferDeviceAddress)},
+        {"vkCreateImage", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImage)},
+        {"vkGetImageMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetImageMemoryRequirements)},
+        {"vkBindImageMemory", reinterpret_cast<PFN_vkVoidFunction>(mockBindImageMemory)},
+        {"vkCreateImageView", reinterpret_cast<PFN_vkVoidFunction>(mockCreateImageView)},
+        {"vkDestroyImageView", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyImageView)},
+        {"vkDestroyImage", reinterpret_cast<PFN_vkVoidFunction>(mockDestroyImage)},
     };
     const auto it = table.find(name);
     return it == table.end() ? nullptr : it->second;
@@ -1072,6 +1114,25 @@ void ImageMemoryReclaim() {
     reclaimImageContext = nullptr;
 }
 
+void RenderTargetMemoryReuse() {
+    mock = MockDevice{};
+    auto context = mockContext();
+    context.formatProperties = mockFormatProperties;
+    context.imageFormatProperties = mockImageFormatProperties;
+    context.limits.maxFramebufferWidth = 16384;
+    context.limits.maxFramebufferHeight = 16384;
+    GetBufferPool(context);
+    ColorTarget color{};
+    color.extent = {3072, 2048};
+    color.format = VK_FORMAT_R8G8B8A8_UNORM;
+    color.bytes = 3072 * 2048 * 4;
+    { RenderTarget first(context, color, true); }
+    Expect(mock.frees == 0 && context.bufferPool->RetainedImages() == 1, "a released render target freed its image memory instead of returning it to the image pool");
+    { RenderTarget second(context, color, true); }
+    Expect(mock.allocations == 1, "a second render target of the same size allocated new image memory instead of the pooled one");
+    Expect(mock.imageBytes.empty(), "a render target leaked its image");
+}
+
 void ImageMemoryOverBudget() {
     mock = MockDevice{};
     auto context = budgetContext();
@@ -1230,6 +1291,7 @@ int main(int argc, char** argv) {
         ImageCacheReclaim();
         ImageMemoryReuse();
         ImageMemoryReclaim();
+        RenderTargetMemoryReuse();
         ImageMemoryOverBudget();
         HostPlacement();
         RefusedDevicePlacement();
