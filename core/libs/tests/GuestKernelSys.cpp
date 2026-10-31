@@ -1136,6 +1136,8 @@ int main() {
 #endif
     CheckProcessQueries();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
+    Require(is_in_sandbox_nid_postfix() == 1);
+    Require(sceKernelIsInSandbox() == 1);
     Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
     Require(profil_nid_postfix(nullptr, 0, 0, 0xFFFFFFFFu) == -1 && Error() == 22);
     Require(profil_nid_postfix(reinterpret_cast<void*>(0x10), 4096, 0, 0) == 0);
