@@ -88,6 +88,14 @@ int APS5_VABI EVP_PKEY_up_ref_nid_postfix(LibreSsl3EvpPkey* key) {
     return Retain_nid_no_patch(key->references);
 }
 
+LibreSsl3EcKey* APS5_VABI EVP_PKEY_get0_EC_KEY_nid_postfix(LibreSsl3EvpPkey* key) {
+    if (!key)
+        throw std::invalid_argument("EVP_PKEY_get0_EC_KEY requires a key");
+    if (key->type != 408)
+        return nullptr;
+    return static_cast<LibreSsl3EcKey*>(key->key);
+}
+
 int APS5_VABI EC_KEY_up_ref_nid_postfix(LibreSsl3EcKey* key) {
     if (!key)
         throw std::invalid_argument("EC_KEY_up_ref requires a key");
