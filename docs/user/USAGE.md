@@ -638,7 +638,7 @@ The audit also walks the built libraries' own host dependencies: each `.prx` und
 | `--modules <dir>` | Directory of the title's own modules; repeat for several. |
 | `--source <dir>` | `core/libs/prx` tree that is searched for throwing stubs. Defaults to this repository's. |
 | `--names <file>` | NID and name per line, as in `aerolib.csv` from [`tools/nid_names.py`](../../tools/nid_names.py); names the absent imports. Never downloaded; a name that does not hash to its NID is marked. |
-| `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. |
+| `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. [`tools/observed_imports.py add <file>`](../../tools/observed_imports.py) merges it into the observed NID lists that the [progress figure](../dev/PROGRESS.md#observed-imports) uses. |
 
 Registry `nid` fields may contain either encoded NIDs or ordinary ELF symbol names such as `strcmp`. Imports are matched against literal exports first, then against their computed NIDs when the literal lookup misses. Reports retain the original import name. Export availability does not establish that every platform loader supports that lookup path.
 
