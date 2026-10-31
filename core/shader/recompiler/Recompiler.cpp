@@ -618,7 +618,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     bool registration = request.target.registrationModules && (request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Fragment);
     program.Metadata().bindingLayoutComplete = false;
     const bool stencilReplay = request.shader.stage == ShaderStage::Fragment && std::ranges::any_of(program.Info().outputs, [](const StageOutput& output) { return output.kind == StageOutputKind::StencilRef; }) && std::ranges::find(request.target.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityStencilExportEXT)) == request.target.supportedCapabilities.end();
-    auto bindings = bindingAllocator.Allocate(program, request.layout, registration, stencilReplay);
+    const bool depthBounds = request.shader.stage == ShaderStage::Fragment && request.context.pixel.has_value() && request.context.pixel->depthBoundsDiscard.enabled;
+    auto bindings = bindingAllocator.Allocate(program, request.layout, registration, stencilReplay, depthBounds);
 
     SpirvTargetOptions targetOptions {};
     targetOptions.vulkanVersion = request.target.vulkanVersion;
@@ -694,7 +695,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     if (registration && result.spirv.size() > request.target.registrationWordLimit) {
         registration = false;
         program.Metadata().bindingLayoutComplete = false;
-        bindings = bindingAllocator.Allocate(program, request.layout, false, stencilReplay);
+        bindings = bindingAllocator.Allocate(program, request.layout, false, stencilReplay, depthBounds);
         targetOptions.registrationModules = false;
         result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions, &emitted);
     }
@@ -706,6 +707,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
         result.stencilReferences = StencilReferenceValues(program, request.context.pixel.has_value() && request.context.pixel->stencilOperationValueExport ? 8u : 0u);
         result.stencilReferenceDword = bindings.layout.stencilReferenceDword;
     }
+    if (depthBounds) result.depthBoundsDword = bindings.layout.depthBoundsDword;
 
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.windowLaneGuards = 0;
@@ -801,13 +803,14 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
     std::set<std::uint32_t> specializedIds;
     std::set<std::uint32_t> pushTypes;
     std::optional<std::uint32_t> replaySlotBytes;
+    const bool fragmentDriverPush = !artifact.stencilReferences.empty() || artifact.depthBoundsDword != PushData::NoStart;
     const auto& words = source.Words();
     if (words.size() < 5u || words[0] != spv::MagicNumber) throw std::runtime_error("invalid prepared specialization module");
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
         if (count == 0u || count > words.size() - cursor) throw std::runtime_error("truncated prepared specialization instruction");
-        if (!artifact.stencilReferences.empty() && op == spv::OpTypePointer && count == 4u && words[cursor + 2u] == spv::StorageClassPushConstant) pushTypes.insert(words[cursor + 3u]);
+        if (fragmentDriverPush && op == spv::OpTypePointer && count == 4u && words[cursor + 2u] == spv::StorageClassPushConstant) pushTypes.insert(words[cursor + 3u]);
         if (op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId) {
             if (PipelineSpecialization::IsWorkgroupOffset(words[cursor + 3u])) {
                 if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("a workgroup offset is supplied at dispatch, not prepared");
@@ -818,9 +821,14 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
             const auto found = supplied.find(words[cursor + 3u]);
             if (found == supplied.end()) throw std::runtime_error("missing prepared specialization value");
             auto value = found->second;
-            if (!artifact.stencilReferences.empty()) {
-                if (found->first == PipelineSpecialization::StencilReferenceOffset) replaySlotBytes = value / PushData::DwordCount * NativePushSlotSize;
-                if (found->first == PipelineSpecialization::StencilReferenceOffset || found->first == PipelineSpecialization::PushDataOffset) value %= PushData::DwordCount;
+            if (fragmentDriverPush) {
+                const bool driverWord = found->first == PipelineSpecialization::StencilReferenceOffset || found->first == PipelineSpecialization::DepthBoundsOffset;
+                if (driverWord) {
+                    const auto slot = value / PushData::DwordCount * NativePushSlotSize;
+                    if (replaySlotBytes && *replaySlotBytes != slot) throw std::runtime_error("the fragment push constants written by the driver lie in different stage slots");
+                    replaySlotBytes = slot;
+                }
+                if (driverWord || found->first == PipelineSpecialization::PushDataOffset) value %= PushData::DwordCount;
             }
             if (!values.emplace(words[cursor + 1u], value).second) throw std::runtime_error("duplicate prepared specialization value");
             specializedIds.insert(found->first);
@@ -840,7 +848,7 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
             if (found == values.end()) throw std::runtime_error("invalid prepared specialization constant");
             materialized.insert(materialized.end(), {(4u << 16u) | spv::OpConstant, words[cursor + 1u], words[cursor + 2u], found->second});
         } else if (op == spv::OpMemberDecorate && count == 5u && words[cursor + 3u] == spv::DecorationOffset && pushTypes.contains(words[cursor + 1u])) {
-            if (!replaySlotBytes || words[cursor + 2u] != 0u || *replaySlotBytes >= NativePushConstantSize) throw std::runtime_error("invalid stencil replay push constant slot");
+            if (!replaySlotBytes || words[cursor + 2u] != 0u || *replaySlotBytes >= NativePushConstantSize) throw std::runtime_error("invalid fragment push constant slot");
             materialized.insert(materialized.end(), words.begin() + cursor, words.begin() + cursor + count - 1u);
             materialized.push_back(*replaySlotBytes);
         } else if (!(op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId)) {
@@ -1068,6 +1076,18 @@ SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::s
 
 const ResourceSnapshot& mergeTargetImage(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults, ResourceSnapshot& merged) {
     const auto& images = variant.info.info.images;
+    const auto bounds = std::ranges::find_if(images, [](const ImageResource& candidate) { return candidate.depthBoundsSource; });
+    if (bounds != images.end() && !registrationDefaults) {
+        if (!request.context.pixel || !request.context.pixel->depthBoundsDiscard.enabled) throw std::runtime_error("ShaderRecompiler: a depth bounds variant was materialized without the depth target");
+        if (bounds + 1 != images.end() || snapshot.images.size() + 1u != images.size()) throw std::runtime_error("ShaderRecompiler: the captured images do not precede the depth bounds image");
+        merged = snapshot;
+        DescriptorValue descriptor;
+        std::ranges::copy(request.context.pixel->depthBoundsDiscard.descriptor, descriptor.dwords.begin());
+        descriptor.dwordCount = 8u;
+        descriptor.availableDwordMask = 0xffu;
+        merged.images.push_back(descriptor);
+        return merged;
+    }
     const auto mergeImage = [](const ImageResource& candidate) { return candidate.targetMerge; };
     const auto image = std::ranges::find_if(images, mergeImage);
     if (image == images.end() || registrationDefaults) return snapshot;
@@ -1141,6 +1161,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .stencilReplaySafe = artifact.stencilReplaySafe,
         .bdaWrites = artifact.bdaWrites,
         .stencilReferenceDword = artifact.stencilReferenceDword,
+        .depthBoundsDword = artifact.depthBoundsDword,
         .variantId = artifact.variantId
     };
     for (const auto reg : variant.bindings.layout.userDataRegisters) {
@@ -1155,6 +1176,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     moduleKey.clear();
     if (variant.bindings.layout.UsesPushData()) moduleKey.push_back(request.layout.pushConstantOffsetBytes / 4u);
     if (!artifact.stencilReferences.empty()) moduleKey.push_back(request.layout.pushConstantOffsetBytes / 4u + artifact.stencilReferenceDword);
+    if (artifact.depthBoundsDword != PushData::NoStart) moduleKey.push_back(request.layout.pushConstantOffsetBytes / 4u + artifact.depthBoundsDword);
     if (request.context.pixel) {
         for (const auto packing : request.context.pixel->targetExportPacking) moduleKey.push_back(static_cast<std::uint32_t>(packing));
         moduleKey.push_back(request.context.pixel->dualSourceBlend ? 1u : 0u);
@@ -1218,6 +1240,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             std::size_t index = 0;
             if (variant.bindings.layout.UsesPushData()) constants.push_back({PipelineSpecialization::PushDataOffset, moduleKey[index++]});
             if (!artifact.stencilReferences.empty()) constants.push_back({PipelineSpecialization::StencilReferenceOffset, moduleKey[index++]});
+            if (artifact.depthBoundsDword != PushData::NoStart) constants.push_back({PipelineSpecialization::DepthBoundsOffset, moduleKey[index++]});
             if (request.context.pixel) {
                 for (std::uint32_t target = 0; target < request.context.pixel->targetExportPacking.size(); ++target) constants.push_back({PipelineSpecialization::ExportPackingBase + target, moduleKey[index++]});
                 constants.push_back({PipelineSpecialization::DualSourceBlend, moduleKey[index++]});
@@ -1283,6 +1306,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     if (!artifact.stencilReferences.empty()) {
         if (artifact.stencilReferenceDword * sizeof(std::uint32_t) != result.pushConstants.size() || result.pushConstants.size() + sizeof(std::uint32_t) > request.layout.pushConstantSizeBytes) throw std::runtime_error("stencil replay push constant lies outside the stage range");
         result.pushConstants.resize(result.pushConstants.size() + sizeof(std::uint32_t));
+    }
+    if (artifact.depthBoundsDword != PushData::NoStart) {
+        if (artifact.depthBoundsDword * sizeof(std::uint32_t) != result.pushConstants.size() || result.pushConstants.size() + 2u * sizeof(std::uint32_t) > request.layout.pushConstantSizeBytes) throw std::runtime_error("the depth bounds push constants lie outside the stage range");
+        result.pushConstants.resize(result.pushConstants.size() + 2u * sizeof(std::uint32_t));
     }
     const auto& layout = variant.bindings.layout;
     if (artifact.registrationModule && request.shader.stage != ShaderStage::Fragment && layout.runtimeStateDwords != 0u) {
@@ -1776,6 +1803,8 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
             mix(merge.blend.writeMask);
             for (const auto word : merge.blend.constants) mix(word);
         }
+        mix(request.context.pixel->depthBoundsDiscard.enabled);
+        for (const auto word : request.context.pixel->depthBoundsDiscard.descriptor) mix(word);
     }
     if (request.context.vertex) {
         const auto& vertex = *request.context.vertex;
@@ -2023,9 +2052,12 @@ bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& 
     if (layout.descriptorSet != handle.artifact->layout.descriptorSet || layout.firstBinding != handle.artifact->layout.firstBinding) return false;
     if (layout.pushConstantOffsetBytes % 4u != 0u || layout.pushConstantSizeBytes % 4u != 0u || layout.pushConstantOffsetBytes > NativePushConstantSize || layout.pushConstantSizeBytes > NativePushConstantSize - layout.pushConstantOffsetBytes) return false;
     const auto words = prepared.ShaderDataDwords();
-    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words <= layout.pushConstantSizeBytes / 4u;
+    const bool stencilReplay = !handle.artifact->artifact.stencilReferences.empty();
+    const auto driverDwords = handle.artifact->artifact.depthBoundsDword != PushData::NoStart ? (stencilReplay ? 3u : 2u) : 0u;
+    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words + driverDwords <= layout.pushConstantSizeBytes / 4u;
     if (prepared.UsesPushData() != usesPush) return false;
-    if (!handle.artifact->artifact.stencilReferences.empty() && (prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u))) return false;
+    if (stencilReplay && (prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u))) return false;
+    if (handle.artifact->artifact.depthBoundsDword != PushData::NoStart && (prepared.depthBoundsDword + 2u > layout.pushConstantSizeBytes / 4u || prepared.depthBoundsDword != (usesPush ? words : 0u) + (stencilReplay ? 1u : 0u))) return false;
     if (!std::ranges::equal(key, handle.staticKey) || handle.source->code.size() != request.shader.code.size()) return false;
     return handle.source->code.data() == request.shader.code.data() || std::ranges::equal(handle.source->code, request.shader.code);
 }

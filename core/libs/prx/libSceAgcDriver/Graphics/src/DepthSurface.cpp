@@ -2972,6 +2972,12 @@ std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target) {
     return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (22u << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (type << 28u) | (target.depthSwizzle << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, word6, static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
+std::array<std::uint32_t, 8> DepthBoundsSourceWords(const DepthTarget& target) {
+    auto words = DepthCopySourceWords(target);
+    words[3] = (words[3] & ~0xfffu) | 4u | (5u << 3u) | (6u << 6u) | (7u << 9u);
+    return words;
+}
+
 bool DepthSurfaceStoreBack(const Context& context, const StorageTexture& storage) {
     std::lock_guard lock(surfacesMutex());
     for (auto& [key, entry] : layeredStorages()) {
