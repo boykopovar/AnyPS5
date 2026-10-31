@@ -19,6 +19,7 @@
 #include <string_view>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace Relinker {
 
@@ -382,10 +383,10 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         std::erase_if(roots, inTable);
     }
     if (roots.empty()) throw Domain::RelinkerException("Code analysis: no code entry points");
-    std::set<std::uint64_t> instructions;
+    std::vector<std::uint64_t> instructionList;
     const Codegen::X64InstructionDecoder decoder;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> skipped;
-    std::set<std::uint64_t> staticTargets;
+    std::vector<std::uint64_t> staticTargets;
     std::uint64_t functionBytes = 0;
     for (const auto& [begin, end] : functions) functionBytes += end - begin;
     std::uint64_t decodedBytes = 0;
@@ -412,11 +413,11 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             }
             if (info.Length == 0 || info.Length > end - address)
                 throw Domain::RelinkerException("Code analysis: instruction crosses function boundary", address);
-            instructions.emplace_hint(instructions.end(), address);
+            instructionList.push_back(address);
             addAddressTakenRoot(address, bytes.data() + offset + address - begin, info);
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                 const auto target = address + info.Length + static_cast<std::uint64_t>(info.BranchDisp);
-                staticTargets.insert(target);
+                staticTargets.push_back(target);
                 addRoot(target);
             }
             address += info.Length;
@@ -492,6 +493,8 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         }
         return false;
     };
+    std::sort(staticTargets.begin(), staticTargets.end());
+    staticTargets.erase(std::unique(staticTargets.begin(), staticTargets.end()), staticTargets.end());
     for (const auto target : staticTargets) {
         for (const auto& [skipBegin, skipEnd] : skipped) {
             if (skipBegin <= target && target < skipEnd && !decodesInSegment(target))
@@ -499,7 +502,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         }
     }
     std::size_t previousRoots = 0;
-    std::unordered_set<Domain::VirtualAddress> decodedInstructions;
+    std::vector<std::vector<bool>> decodedInstructions(codeHeaders.size());
     std::vector<std::unordered_set<Domain::VirtualAddress>> sectionReachable(codeHeaders.size());
     do {
         previousRoots = roots.size();
@@ -511,11 +514,15 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             for (const auto root : roots) if (root >= header.MappedAddress && root - header.MappedAddress < header.FileSize) entries.push_back(root);
             if (entries.empty()) continue;
             const std::span<const std::uint8_t> text(bytes.data() + header.Offset, header.FileSize);
+            auto& decoded = decodedInstructions[i];
+            if (decoded.empty()) decoded.resize(header.FileSize);
             const auto graph = UnusedNidFilter::BuildControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), sectionReachable[i], [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable);
             for (const auto address : graph->ReachableVaddrs()) {
-                if (!decodedInstructions.insert(address).second) continue;
-                instructions.insert(address);
                 const auto offset = address - header.MappedAddress;
+                if (offset >= decoded.size()) throw Domain::RelinkerException("Code analysis: reachable address outside its section", address);
+                if (decoded[offset]) continue;
+                decoded[offset] = true;
+                instructionList.push_back(address);
                 const auto info = decoder.DecodeInstruction(text.data() + offset, text.size() - offset);
                 addAddressTakenRoot(address, text.data() + offset, info);
                 if (info.HasBranchTarget && !info.HasRipRelativeDisp) addRoot(address + info.Length + static_cast<std::uint64_t>(info.BranchDisp));
@@ -523,6 +530,10 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
         }
     } while (roots.size() != previousRoots);
     report(8500);
+    std::sort(instructionList.begin(), instructionList.end());
+    instructionList.erase(std::unique(instructionList.begin(), instructionList.end()), instructionList.end());
+    std::set<std::uint64_t> instructions(instructionList.begin(), instructionList.end());
+    instructionList = {};
     std::uint64_t checked = 0;
     std::uint64_t previousEnd = 0;
     const Domain::ProgramHeader* cachedHeader = nullptr;
