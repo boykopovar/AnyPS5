@@ -275,7 +275,6 @@ int APS5_VABI sceAudioInDeviceOpenEx(void) {
 }
 
 int APS5_VABI sceAudioInChangeAppModuleState(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
