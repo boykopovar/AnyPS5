@@ -58,6 +58,19 @@ void Check(AgcDriver::VulkanDevice& device) {
     }
     alignas(256) static std::array<std::uint32_t, 4> Elsewhere{0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
     Require(!RawGraphicsDrawnIn(reinterpret_cast<std::uintptr_t>(Elsewhere.data()), reinterpret_cast<std::uintptr_t>(Elsewhere.data()) + sizeof(Elsewhere)), "unrelated code reads as drawn raw");
+    for (const auto resources : {0x8bu, 0xbu}) {
+        auto shared = queue;
+        shared.shader[resources] |= 2u << 28u;
+        DrawDecode rejected{};
+        rejected.state = draw.state;
+        bool threw = false;
+        try {
+            DecodeGraphicsPrograms(rejected, shared, registry, false, true);
+        } catch (const std::runtime_error& error) {
+            threw = std::string(error.what()).find("SHARED_VGPR_CNT") != std::string::npos;
+        }
+        Require(threw, "a graphics stage with wave-shared VGPRs was not rejected");
+    }
     const auto target = device.Target();
     std::vector<LinkedProgram> linked;
     std::vector<MemoryRegion> memory;

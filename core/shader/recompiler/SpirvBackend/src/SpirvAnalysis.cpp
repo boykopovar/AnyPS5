@@ -18,6 +18,7 @@ bool ReadsNeighbourLanes(const IrProgram& program, const IrValue& inst) {
     case IrOpcode::SwizzleU32:
     case IrOpcode::BpermuteU32:
     case IrOpcode::PermuteU32:
+    case IrOpcode::HalfSwapU32:
     case IrOpcode::Permlane16U32:
     case IrOpcode::ReadLane:
     case IrOpcode::ReadFirstLane:
@@ -69,6 +70,7 @@ bool LaneSource(const IrProgram& program, const IrValue& value) {
     case IrOpcode::Permlane16U32:
     case IrOpcode::PermuteU32:
     case IrOpcode::BpermuteU32:
+    case IrOpcode::HalfSwapU32:
     case IrOpcode::SwizzleU32:
     case IrOpcode::WriteLane:
     case IrOpcode::DataAppend:
@@ -444,7 +446,8 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             }
             case IrOpcode::SwizzleU32:
             case IrOpcode::PermuteU32:
-            case IrOpcode::BpermuteU32: {
+            case IrOpcode::BpermuteU32:
+            case IrOpcode::HalfSwapU32: {
                 requirements.subgroupBallot = true;
                 requirements.subgroupShuffle = true;
                 requirements.subgroupLocalInvocationId = true;

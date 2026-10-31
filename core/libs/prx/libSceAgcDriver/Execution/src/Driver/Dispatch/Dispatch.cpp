@@ -234,7 +234,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
 
     static const bool keyHygiene = std::getenv("APS5_NO_DISPATCH_KEY_HYGIENE") == nullptr;
     if (keyHygiene) {
-        for (const auto offset : {0x207u, 0x208u, 0x209u, 0x212u, 0x213u}) {
+        for (const auto offset : {0x207u, 0x208u, 0x209u, 0x212u, 0x213u, 0x228u}) {
             const auto found = queue.shader.find(offset);
 
             mix(found == queue.shader.end() ? (1ull << 32u) : found->second);

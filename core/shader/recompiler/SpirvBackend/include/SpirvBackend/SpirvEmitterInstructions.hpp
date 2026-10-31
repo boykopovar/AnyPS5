@@ -97,6 +97,7 @@ std::uint32_t EmitSharedIncDec(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitAppendConsume(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitBpermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitPermuteU32(SpirvValueEmitContext& ctx, const IrValue& inst);
+std::uint32_t EmitHalfSwapU32(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitReadConstBuffer(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitSwizzleU32(SpirvValueEmitContext& ctx, const IrValue& inst);
