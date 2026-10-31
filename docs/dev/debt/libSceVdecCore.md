@@ -1,6 +1,7 @@
 # libSceVdecCore technical debt
 
 ### Unknown function info
+
 - [Additional libSceVdecCore exports](../../../core/libs/prx/libSceVdecCore/Export.cpp) - the name/NID pairs below are defined exports in the [firmware 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscevdeccore-219f557635.jsonl). Their ABIs and behaviour are unknown. Parameterless `int` declarations are import-resolution placeholders, not established signatures; every call throws `NotImplemented_nid_no_patch`.
 
 | Name | NID |

@@ -3,51 +3,95 @@
 ### Unknown function info
 
 - [sceHidControlConnectHandle, sceHidControlConnectPort, sceHidControlDisconnectDevice, sceHidControlDisconnectHandle, sceHidControlDisconnectPort](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
+
 - [sceHidControlGetAuthInformation, sceHidControlGetBatteryState, sceHidControlGetDeviceId, sceHidControlGetDeviceInfo, sceHidControlGetDeviceName](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
+
 - [sceHidControlGetJediExtensionUnitInfo, sceHidControlGetJediState, sceHidControlGetSparkState, sceHidControlGetVersionInfo, sceHidControlInit](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
+
 - [sceHidControlSetApplicationFocus, sceHidControlSetHandleState, sceHidControlSetJediAudioOutPath, sceHidControlSetJediVolumeGain, sceHidControlSetProcessFocus](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
+
 - [sceHidControlSetRevokeList, sceHidControlSetRevokeList2, sceHidControlSetUserColor](../../../core/libs/prx/libSceHidControl/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceHidControl.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
+
 - [sceHidControlSetRevokeList](../../../core/libs/prx/libSceHidControl/Export.cpp) - not exported by any firmware 13.42 module, so on 13.42 an import of these NIDs resolves to nothing in the firmware; the 3.20 declarations remain for titles built against older firmware. Not measured here.
 
 - [sceHidControlEnableMicBeamForming](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetAllVibrationMute](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetVibrationTriggerEffectWeakForce](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlIsForceUpdateNeeded](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetRemoteMergeProcess](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetCollaboInputSettingOverrideProcess](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetForceAdvancedVibrationMode](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlPswUpdateIsUpdateNeeded](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlPswUpdateIsUpdateNeededForMultiDevice](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlPswUpdateIsReady](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlPswUpdateStart](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlPswUpdateGetStatus](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlPswUpdateSendData](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlPswUpdateSendAppendixData](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlPswUpdateGetReconnectStatus](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlPswUpdateGetDeviceFirmwareUpdateTelemetryData](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswState](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswBatteryState](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswDeviceName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswDeviceName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswConsoleMute](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswSpeakerVolume](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswSidetoneLevel](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswSidetoneLevel](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswEqPresetSelection](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswEqPresetSelection](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswEqPresetName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswEqPresetName](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswEqBandValues](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswEqBandValues](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswAllEqBandValues](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswResetSettings](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswNetworkLocale](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswNetworkLocale](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswDeviceNameForNearby](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlConnectPswDeviceForNearby](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswDeviceInfo](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlSetPswCommand](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswCommand](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
+
 - [sceHidControlGetPswDeviceIdFromIdxAdd](../../../core/libs/prx/libSceHidControl/Export.cpp) (libSceHidControl) - unknown signature
 
 ### Additional callable export inventory

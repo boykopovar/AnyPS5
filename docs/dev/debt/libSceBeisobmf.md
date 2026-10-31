@@ -3,6 +3,7 @@
 ### Unknown function info
 
 - [libSceBeisobmf pending exports](../../../core/libs/prx/libSceBeisobmf/Export.cpp) - these named callable exports remain among the 18 exports listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceBeisobmf.c) and cross-checked against PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+
 - [Ten box/decoder accessors](../../../core/libs/prx/libSceBeisobmf/Export.cpp) are implemented from Ghidra 12.1.4 static analysis of `libSceBeisobmf.sprx` in PS5 firmware 13.60. The layouts are not verified against a console.
   - Box accessors: `getchildbox` at 0x3190 reads `box+0x10`; `getnextbox` at 0x31a0 reads `box+0x20`; `getdiskoffset` at 0x3220 reads `box+0x80`; `getstate` at 0x3200 reads `box+0x8c`; and `gettype` at 0x3210 reads `box+0x90`.
   - Member lookup at 0x7ce0 uses the member list at `box+0x40` and cursor at `box+0x50`. Helpers 0x6ea0, 0x6ee0, and 0x6ec0 initialize, read, and advance the cursor through each member's `+0x10` link. Helper 0x7040 reads the member name at `+0x18`. `getmember_length` at 0x3130 uses helper 0x7060 to read `+0x68`; `getmember_type` at 0x3170 uses helper 0x7050 to read `+0x6c`; and `getmember_ptr` at 0x3150 uses helper 0x7000 to select inline data at `+0x58` or external data at `+0x60` when the type is `< 20` and its bit is set in mask `0x97800`.

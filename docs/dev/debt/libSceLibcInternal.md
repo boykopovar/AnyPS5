@@ -327,343 +327,667 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `sceLibcHeapMutexFree` | `jJKMkpqQr7I` |
 
 - [_sceLibcInternalThreadAtexit, _sceLibcInternalThreadDtors](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - FreeBSD `__cxa_thread_atexit` semantics assumed; a null or non-image destructor and an allocation failure throw
+
 - [_sceLibcInternalForceTlsDestructor](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - behaviour follows `sceLibcForceTlsDestructor(int)` in a title's `libc.prx` (disassembly): the calling thread's destructors whose dso belongs to the module run newest first, only if the dso's module is loaded and the dso points to itself, in up to 4 passes. The return type is unknown (that function returns nothing), 0 is returned. The module of each dso is looked up when the destructors are forced, not when they are registered as `libc.prx` does
 
 ### Functional
 
 - [makecontext](../../../core/libs/prx/libSceLibcInternal/UserContext.cpp) (libSceLibcInternal) follows FreeBSD 11's `lib/libc/amd64/gen/makecontext.c`: at most six arguments, a stack of at least `MINSIGSTKSZ` (2048) bytes, and `exit(0)` when the function returns with no `uc_link`. The console's version is not verified
+
 - [makecontext](../../../core/libs/prx/libSceLibcInternal/UserContext.cpp) (libSceLibcInternal) on Windows pins its stack writable until a later `makecontext` stack overlaps it, since nothing tells the library when the guest frees the stack
+
 - [Thread exit destructors](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) run when a libkernel thread finishes; on the main or a host thread only `_sceLibcInternalThreadDtors` runs them, as `exit` does, else they are dropped
+
 - [__opendir2](../../../core/libs/prx/libSceLibcInternal/Directory.cpp) (libSceLibcInternal, NID `KOy7MeQ7OAU`) - the device's answer to any flag is not measured; the flags follow FreeBSD 11.4's [`__opendir2`](https://github.com/freebsd/freebsd-src/blob/d106002967eff712894ab8b5337bbbff106ce5e0/lib/libc/gen/opendir.c#L76-L95)
+
 - [fdopendir](../../../core/libs/prx/libSceLibcInternal/Directory.cpp) (libSceLibcInternal) follows FreeBSD 11's [`fdopendir`](https://github.com/freebsd/freebsd-src/blob/release/11.0.0/lib/libc/gen/opendir.c#L67-L74): it sets `FD_CLOEXEC` on the descriptor first, and the stream starts at the descriptor's current position instead of the first entry. On Windows the stream skips the entries the descriptor's cursor (`lseek` or `getdirentries`) has passed, which assumes that the descriptor and the stream list a directory in the same host order; on Linux the stream is opened on a duplicate of the descriptor, which shares its position. The Linux path is not run by the tests here. As in FreeBSD, a descriptor that is not open fails with `EBADF`, one that is not a directory with `ENOTDIR` (both leave it open, and `FD_CLOEXEC` stays set on the latter), and `closedir` closes it
+
 - [fstatvfs](../../../core/libs/prx/libSceLibcInternal/FilesystemStatistics.cpp) (libSceLibcInternal) converts `_fstatfs` to the 88-byte `struct statvfs` as FreeBSD 9.2's `sfs2svfs` does (`f_bsize` from the transfer size, `f_frsize` from the block size, `f_favail` equal to `f_ffree`, `f_fsid` 0, `ST_RDONLY` and `ST_NOSUID` only). Differences: `f_namemax` is the `statfs` value, not `fpathconf(_PC_NAME_MAX)`; negative `f_bavail` and `f_ffree` wrap to unsigned without `EOVERFLOW`, as the same-width copy in FreeBSD does; inode counts are 0 on Windows, inherited from `_fstatfs`; a null output returns `EFAULT` after the descriptor is validated, where FreeBSD would fault. Layout and conversion are unverified against the PS5 library (PS5MC imports `fstatvfs` but was not run)
+
 - [posix_spawn and posix_spawnp](../../../core/libs/prx/libSceLibcInternal/Spawn.cpp) (libSceLibcInternal) create a native child running the requested program's converted image, which must be under `/app0/` (`/app0/eboot.bin` maps to the running image); `posix_spawnp` searches `PATH` as FreeBSD 11's `_execvpe`, and the FreeBSD 11.4 file actions and attributes are applied to the child. A null `argv` returns `EFAULT`; a null `envp` inherits the parent environment; guest process IDs are the host's. Limits: the child executes the conversion made at relink time; Windows redirects only descriptors 0 to 2 and starts the child on the parent's std handles; Linux applies only `POSIX_SPAWN_RESETIDS` and `POSIX_SPAWN_SETPGROUP`, other flags or a nonzero set on Windows throw. The console sandbox's effect on child creation is unverified, and null or uninitialized objects, which FreeBSD dereferences, throw. PPSA99305 (Dusklight) reaches this when SDL looks for `zenity`
+
 - [getopt, getopt_long](../../../core/libs/prx/libSceLibcInternal/Getopt.cpp) (libSceLibcInternal) follow FreeBSD 11 [getopt.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdlib/getopt.c) and [getopt_long.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/stdlib/getopt_long.c) with `GNU_COMPATIBLE`: `getopt` does not permute, `getopt_long` permutes unless `POSIXLY_CORRECT` is set in the guest environment or the option string starts with `+`, and the exported `opterr`, `optind`, `optopt`, `optreset` and `optarg` start at 1, 1, 0, 0 and null. Warnings go to the guest's current `stderr` prefixed with `__progname`, where FreeBSD's `warnx` keeps the `stderr` of its first call. A null `getopt` option string, a null argument vector or argument, a negative `optind` and an `optind` moved inside a pending permutation throw where FreeBSD faults. `getopt_long_only` is not exported. That the console's `libSceLibcInternal` uses this FreeBSD code is unverified
+
 - [posix_spawnattr_getflags, getpgroup, getschedparam, getschedpolicy, getsigdefault, getsigmask, setpgroup, setschedparam, setschedpolicy and setsigmask](../../../core/libs/prx/libSceLibcInternal/Spawn.cpp) (libSceLibcInternal) read and write the 0x30-byte attribute object at the offsets of the console's `libSceLibcInternal.sprx` (SDK 4.5x build of `J03950001`, 0x8D860 to 0x8D910: flags at 0, process group at 4, scheduling parameter at 8, policy at 0xC, default and masked signal sets at 0x10 and 0x20), which never fail there and return 0; the layout matched on a PS5 (firmware 13.60). Uninitialized attributes and null pointers, which the console dereferences, throw as the existing setters do
+
 - [sys_siglist and sys_nsig](../../../core/libs/prx/libSceLibcInternal/SignalList.cpp) (libSceLibcInternal) hold the 32 descriptions and the count of [FreeBSD 11.4](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/siglist.c#L73-L107) `siglist.c` (`NSIG` 32, signal 0 to `SIGUSR2`); the console's table was not read
+
 - [_err, _warn](../../../core/libs/prx/libSceLibcInternal/Err.cpp) and [_getprogname](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) are assumed to be the same functions as `err`, `warn` and `getprogname` and run their code; the console's module was not read. FreeBSD 11.4 defines the underscore names and makes the public names weak references to them ([`_err`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/err.c#L70-L79), [`_warn`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/err.c#L135-L144), [`_getprogname`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/getprogname.c#L10-L17))
+
 - [inet_aton, inet_addr, inet_ntoa and inet_ntoa_r](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal) follow the FreeBSD code in the console's `libSceLibcInternal.sprx` (SDK 4.5x build of `J03950001`, 0x8ADE0 to 0x8B3D0) and matched it on a PS5 (firmware 13.60) for 20 `inet_aton` inputs; a null text, which the console dereferences, throws. `inet_ntoa_r` formats through libkernel's `__inet_ntop`, so a null buffer with room for the text throws and a null buffer that is too small sets `ENOSPC`, as `__inet_ntop` does for a null destination; the console's `inet_ntoa_r` was not measured with a null buffer
+
 - [__inet_ntoa_r](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal) was not measured on the console: it runs `inet_ntoa_r`, as FreeBSD 11.4 names the function `__inet_ntoa_r` ([arpa/inet.h](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/include/arpa/inet.h#L129)) and makes `inet_ntoa_r` a weak alias of it ([inet_ntoa.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_ntoa.c#L62-L76))
 
 ### Additional PS5 3.20 imports (xdCloudy #9498)
 
 - [3.20 pending imports](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - The following PS5 3.20 inventory names are declared for import resolution only; their prototypes and behavior are unverified, and each call throws through `NotImplemented_nid_no_patch`. The source list is [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Atan`, `_Atqexit`, `_Atthreadexit`, `_CStrftime`, `_CStrxfrm`, `_CWcsxfrm`, `_Call_onceEx`, `_Closreg`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Daysto`, `_Deletegloballocale`, `_Do_call`, `_Dtento`, `_Erfc`, `_FAtan`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FDtento`, `_FErfc`, `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FRint`, `_FSincos`, `_FTan`, `_FTgamma`, `_FXp_addh`, `_FXp_addx`, `_FXp_getw`, `_FXp_invx`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FXp_ldexpx`, `_FXp_movx`, `_FXp_mulh`, `_FXp_mulx`, `_FXp_setn`, `_FXp_setw`, `_FXp_sqrtx`, `_FXp_subx`, `_Fac_tidy`, `_Fail_s`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - 
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fgpos`, `_Fofind`, `_Fofree`, `_Fopen`, `_Foprep`, `_Frprep`, `_Fspos`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fwprep`, `_Genld`, `_Gentime`, `_Getcloc`, `_Getctyptab`, `_Getdst`, `_Geterrno`, `_Getfld`, `_Getfloat`, `_Getgloballocale`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Getint`, `_Getpcostate`, `_Getpwcostate`, `_Getpwctrtab`, `_Getpwctytab`, `_Getstr`, `_Gettime`, `_Getzone`, `_Hypot`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Isdst`, `_LAtan`, `_LDtento`, `_LErfc`, `_LHypot`, `_LLogpoly`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LPlsw`, `_LPmsw`, `_LPow`, `_LQuad`, `_LQuadph`, `_LRint`, `_LSincos`, `_LTan`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LTgamma`, `_LXp_addh`, `_LXp_addx`, `_LXp_getw`, `_LXp_invx`, `_LXp_ldexpx`, `_LXp_movx`, `_LXp_mulh`, `_LXp_mulx`, `_LXp_setn`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_LXp_setw`, `_LXp_sqrtx`, `_LXp_subx`, `_Ldtob`, `_Litob`, `_Lock_spin_lock`, `_Locsum`, `_Locterm`, `_Locvar`, `_Logpoly`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Makeloc`, `_Makestab`, `_Makewct`, `_Mbtowc`, `_Mtxdst`, `_Mtxinit`, `_Mtxlock`, `_Mtxunlock`, `_Nnl`
+
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Plsw`, `_Pmsw`, `_Pow`, `_Printf`, `_Putfld`, `_Putstr`, `_Puttxt`, `_Quad`, `_Quadph`, `_Readloc`
 
 ### Additional PS5 3.20 imports (round 6)
 
 - [_ZSt8_XLgammaf](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `DWMcG8yogkY`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7collateIcE5_InitERKSt8_Locinfo](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `CKlZ-H-D1CE`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZnamSt11align_val_tRKSt9nothrow_t](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `s2eGsgUF9vk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `V2FICbvPa+s`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_thread_init](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `PJW+-O4pj6I`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt15_sceLibcLocinfoPKc](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `zugltxeIXM0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `hnGhTkIDFHg`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIwSt11char_traitsIwEED1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `XcuCO1YXaRs`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5_](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `6iDi6e2e4x8`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_istreamIwSt11char_traitsIwEED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `StJaKYTRdUE`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIwEC1ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `RrTMGyPhYU4`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIcSt11char_traitsIcEE9underflowEv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Nl6si1CfINw`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIcSt11char_traitsIcEE9_EndwriteEv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `JTwt9OTgk1k`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt6locale6globalERKS_](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `ptwhA0BQVeE`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1EPKcm](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `gOzIhGUAkME`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIcEC2Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `6DBUo0dty1k`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7collateIcEC1Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Oo1r8jKGZQ4`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [signalcontext](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `SQGxZCv3aYk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `dOKh96qQFd0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC1ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `u5yK3bGG1+w`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZTv0_n24_NSiD0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `0bGGr4zLE3w`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7codecvtIwc9_MbstatetED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `9BI3oYkCTCU`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7codecvtIcc9_MbstatetEC1Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `XhwSbwsBdx0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8numpunctIcEC1EPKcmb](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `WK24j1F3rCU`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIcSt11char_traitsIcEE9pbackfailEi](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `jerxcj2Xnbg`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `U4JP-R+-70c`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt22_Future_error_categoryD1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `xsXQD5ybREw`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [__srefill](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `fIskTFX9p68`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIwE5_InitERKSt8_Locinfo](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Zz-RfDtowlo`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `m2lChTx-9tM`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZdaPvmRKSt9nothrow_t](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `7lCihI18N9I`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [sceLibcPafMspaceMallocUsableSize](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `6JcY5RDA4jY`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC1ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `RV6sGVpYa-o`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `vu0B+BGlol4`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt5ctypeIwED1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `P0383AW3Y9A`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZdlPvmRKSt9nothrow_t](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `7VPIYFpwU2A`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [malloc_get_malloc_state](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Nmezc1Lh7TQ`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC1Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `X3DrtC2AZCI`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt18bad_variant_accessD1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `U3b5A2LEiTc`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEC1EPKcm](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `9pPbNXw5N9E`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7codecvtIcc9_MbstatetED2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `to7GggwECZU`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt8_XLgammae](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `bl0DPP6kFBk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt15underflow_errorD0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `iHILAmwYRGY`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [sceLibcMspaceGetAddressRanges](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `raRgiuQfvWk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt14overflow_errorD0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `y1dYQsc67ys`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt6locale7_LocimpC1Eb](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `6b3KIjPD33k`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [malloc_report_memory_blocks](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `0F08WOP8G3s`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8_LocinfoD2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `YXVCU6PdgZk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8numpunctIwE5_InitERKSt8_Locinfob](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `uiRALKOdAZk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_reclaim_telldir](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `7ZFy2m9rc5A`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIwSt11char_traitsIwEE9_EndwriteEv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `cV6KpJiF0Ck`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZdaPvSt11align_val_t](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `v09ZcAhZzSc`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5_](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `p1WMhxL4Wds`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [malloc_stats](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `CC-BLMBu9-I`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIcEC1ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `SD403oMc1pQ`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt10moneypunctIwLb1EED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `fWuQSVGOivA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIwSt11char_traitsIwEE9underflowEv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `hXsvfky362s`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7collateIcEC1EPKcm](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `splBMMcF3yk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIwSt11char_traitsIwEE7seekoffElNSt5_IosbIiE8_SeekdirENS4_9_OpenmodeE](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `g7gjCDEedJA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEC1ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `iTODM3uXS2s`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `8PJ9qmklj2c`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt17iostream_categoryv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `V23qt24VPVs`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7_MpunctIcEC2Emb](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `zWSNYg14Uag`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt16nested_exceptionD0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `za50kXyi3SA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_thread_init_stub](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `1kIpmZX1jw8`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt24_Iostream_error_categoryD0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `jVwxMhFRw8Q`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7_MpunctIwEC2Emb](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Pr1yLzUe230`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt23_Generic_error_categoryD0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `YBrp9BlADaA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt6locale7_LocimpC2Eb](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `zrmR88ClfOs`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `1gYJIrfHxkQ`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `CiD6-BPDZrA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `x5yAFCJRz8I`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIcSt11char_traitsIcEE5imbueERKSt6locale](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `qM0gUepGWT0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt10_GetloctxtIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEiRT0_S5_mPKT_](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `bsohl1ZrRXE`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [sceLibcPafMspaceGetFooterValue](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `kv4kgdjswN0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [sceLibcInternalMemoryGetWakeAddr](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `YrL-1y6vfyo`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7_MpunctIcED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Lzj4ws7DlhQ`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt11setiosflagsNSt5_IosbIiE9_FmtflagsE](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `L7Vnk06zC2c`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [__atomic_load_n](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Q6oqEnefZQ8`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8ios_base4InitC2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `bTQcNwRc8hE`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt4_PadD1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `XyJPhPqpzMw`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_malloc_thread_cleanup](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Sopthb9ztZI`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEED1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `h+c9OSfCAEg`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8ios_baseD1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `X9D8WWSG3As`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt9_LStrcollIwEiPKT_S2_S2_S2_PKSt8_Collvec](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `m6uU37-b27s`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC1Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `bY9Y0J3GGbA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIwED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `gMwkpZNI9Us`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9exception18_Set_raise_handlerEPFvRKS_E](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Bin7e2UR+a0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt6_MutexD1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `djHbPE+TFIo`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7codecvtIDsc9_MbstatetED1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Oeo9tUbzW7s`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIwEC1EPKcm](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `4Srtnk+NpC4`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7collateIwEC1Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `d-MOtyu8GAk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_rtld_atfork_post](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `R2QKo3hBLkw`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [malloc_finalize](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `J6FoFNydpFI`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt10unexpectedv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `lKfKm6INOpQ`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt10moneypunctIwLb0EEC1EPKcm](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `jna5sqISK4s`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt6locale7_LocimpD0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `bleKr8lOLr8`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_rtld_addr_phdr](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `5FoE+V3Aj0c`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [malloc_check_memory_bounds](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `ECOPpUQEch0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIcEC2ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `969Euioo12Q`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7collateIcEC1ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `raLgIUi3xmk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE4_PutES3_St22_String_const_iteratorISt11_String_valISt13_Simple_typesIwEEEm](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `-hrHhi-UFxs`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIcEC1EPKcm](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `W0w8TGzAu0Q`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `ZolDcuDSD0Q`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIcED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `jy9urODH0Wo`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt10moneypunctIwLb1EEC2ERKSt8_Locinfomb](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `H0a2QXvgHOk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIwSt11char_traitsIwEE5uflowEv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `VrXGNMTgNdE`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZTv0_n24_NSt13basic_istreamIwSt11char_traitsIwEED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `izmoTISVoF8`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [__kernel_sin](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `zpy7LnTL5p0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `IuFImJ5+kTk`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt8_XLgammad](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `yYk819F9TyU`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `6yplvTHbxpE`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [malloc_get_footer_value](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `SlG1FN-y0N0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5_](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `DTH1zTBrOO8`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt22_Get_future_error_whati](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `cPNeOAYgB0A`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [sceLibcInternalMemoryMutexEnable](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `h8jq9ee4h5c`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEEC1Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `13xzrgS8N4o`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [__kernel_rem_pio2](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `GLNDoAYNlLQ`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8numpunctIcED2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `xFva4yxsVW8`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7collateIcEC2EPKcm](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `VClCrMDyydE`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIwSt11char_traitsIwEE4syncEv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `+WvmZi3216M`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt18bad_variant_accessD0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `8DNJW5tX-A8`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIwSt11char_traitsIwEE7_UnlockEv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `ryl2DYMxlZ0`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7_MpunctIwED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `8UeuxGKjQr8`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt6_MutexC1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `2KNnG2Z9zJA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIwSt11char_traitsIwEE5imbueERKSt6locale](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `kmzNbhlkddA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `qkl3Siab04M`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8numpunctIcED0Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Lf6h5krl2fA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEED2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Zqc++JB04Qs`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8_LocinfoC1EiPKc](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `L1Ze94yof2I`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `6NH0xVj6p7M`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt10moneypunctIwLb0EEC1Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `McUBYCqjLMg`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIcSt11char_traitsIcEE7_UnlockEv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `yofHspnD9us`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `0Pd-K5jGcgM`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8messagesIwEC2Em](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `x8PFBjJhH7E`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt6_WinitD2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `2yOarodWACE`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt6_WinitD1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Uw3OTZFPNt4`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt10moneypunctIwLb0EEC1ERKSt8_Locinfomb](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `dHs7ndrQBiI`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7codecvtIcc9_MbstatetE5_InitERKSt8_Locinfo](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `iZCHNahj++4`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEED1Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `zkCx9c2QKBc`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZSt9_LStrcollIcEiPKT_S2_S2_S2_PKSt8_Collvec](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `X1DNtCe22Ks`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `aTjYlKCxPGo`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEEC2EPKcm](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `XBmd6G-HoYI`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt8numpunctIcEC2ERKSt8_Locinfomb](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `Cb1hI+w9nyU`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt3pmr20null_memory_resourceEv](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `eWMGI7B7Lyc`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5_](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `zTX7LL+w12Q`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt13basic_filebufIwSt11char_traitsIwEED2Ev](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `aC9OWBGjvxA`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt3pmr20set_default_resourceEPNS_15memory_resourceE](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `TKYsv0jdvRw`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
+
 - [_ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE5_InitERKSt8_Locinfo](../../../core/libs/prx/libSceLibcInternal/InventoryExports6.cpp) (libSceLibcInternal, NID `cXL+LN0lSwc`) - listed in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibcInternal.c); signature and behavior are unverified, so this parameterless declaration is for import resolution only and throws through `NotImplemented_nid_no_patch`
 
 ### Additional PS5 3.20 import declarations
 
 - [_ZNKSt8ios_base7failure8_DoraiseEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `F27xQUBtNdU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIcE3getEiiiRKSs](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `XxsPrrWJ52I` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIcE4openERKSsRKSt6locale](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `U2t+WvMQj8A` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIcE5closeEi](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `EeBQ7253LkE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIcE6do_getEiiiRKSs](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `vbgCuYKySLI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIcE7do_openERKSsRKSt6locale](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `HeBwePMtuFs` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIcE8do_closeEi](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `rRmMX83UL1E` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIwE3getEiiiRKSbIwSt11char_traitsIwESaIwEE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Ea+awuQ5Bm8` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIwE4openERKSsRKSt6locale](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `TPq0HfoACeI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIwE5closeEi](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `GGoH7e6SZSY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIwE6do_getEiiiRKSbIwSt11char_traitsIwESaIwEE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `UM6rGQxnEMg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIwE7do_openERKSsRKSt6locale](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `zSehLdHI0FA` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8messagesIwE8do_closeEi](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `AjkxQBlsOOY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE11do_groupingEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `cnNz2ftNwEU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE11do_truenameEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `nRf0VQ++OEw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE12do_falsenameEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `ozLi0i4r6ds` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE13decimal_pointEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `klWxQ2nKAHY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE13thousands_sepEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `QGSIlqfIU2c` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE16do_decimal_pointEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `JXzQGOtumdM` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE16do_thousands_sepEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `zv1EMhI7R1c` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE8groupingEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `JWplGh2O0Rs` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE8truenameEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `fXUuZEw7C24` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIcE9falsenameEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `3+VwUA8-QPI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE11do_groupingEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `2BmJdX269kI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE11do_truenameEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `nvSsAW7tcX8` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE12do_falsenameEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `-amctzWbEtw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE13decimal_pointEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `leSFwTZZuE4` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE13thousands_sepEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `2Olt9gqOauQ` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE16do_decimal_pointEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `mzRlAVX65hQ` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE16do_thousands_sepEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Utj8Sh5L0jE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE8groupingEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `VsJCpXqMPJU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE8truenameEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `3M20pLo9Gdk` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8numpunctIwE9falsenameEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `LDbKkgI-TZg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE10date_orderEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `ShlQcYrzRF8` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `T85u2sPrKOo` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `73GV+sRHbeY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `dSfKN47p6ac` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `KwJ5V3D0v3A` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE13do_date_orderEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `8PIh8BFpNYQ` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE13get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `vvA7HtdtWnY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `xzYpD5d24aA` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `ZuCHPDq-dPw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `+RuThw5axA4` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Vw03kdKZUN0` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `E7UermPZVcw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE7_GetintERS3_S5_iiRiRKSt5ctypeIcE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `8raXTYQ11cg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE8get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `OY5mqEBxP+8` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE8get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `rrqNi95bhMs` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE8get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `5L5Aft+9nZU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE10date_orderEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `nc6OsiDx630` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `SYCwZXKZQ08` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `2pJJ0dl-aPQ` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11do_get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `cRSJysDpVl4` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE11get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `A0PftWMfrhk` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE13do_date_orderEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `dP14OHWe4nI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE13get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `xy0MR+OOZI8` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE14do_get_weekdayES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `hGlkh5YpcKw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `R1ITHuTUMEI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKwSE_](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `B8c4P1vCixQ` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `64pqofAwJEg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmcc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `0MzJAexrlr4` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `r8003V6UwZg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetintERS3_S5_iiRiRKSt5ctypeIwE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `lhJWkEh-HXM` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE8get_dateES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `kwp-0uidHpw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE8get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `9TfGnN6xq-U` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE8get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Krt-A7EnHHs` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_RSt8ios_basecPK2tmPKcSB_](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `j9LU8GsuEGw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_RSt8ios_basecPK2tmcc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `qkuA-unH7PU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE6do_putES3_RSt8ios_basecPK2tmcc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `+i81FtUCarA` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_RSt8ios_basewPK2tmPKwSB_](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Sc0lXhQG5Ko` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_RSt8ios_basewPK2tmcc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Nt6eyVKm+Z4` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE6do_putES3_RSt8ios_basewPK2tmcc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Fr7j8dMsy4s` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9bad_alloc8_DoraiseEv](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `pS-t9AJblSM` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERSs](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `2fxdcyt5tGs` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERe](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `G84okRnyJJg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERSs](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `D2njLPpEt1E` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERe](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `IRVqdGwSNXE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE8_GetmfldERS3_S5_bRSt8ios_basePc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `CLT04GjI7UE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERSbIwS2_SaIwEE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `wWIsjOqfcSc` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERe](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `cx-1THpef1A` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERSbIwS2_SaIwEE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `DhXTD5eM7LQ` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_bRSt8ios_baseRNSt5_IosbIiE8_IostateERe](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `zzubCm+nDzc` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE8_GetmfldERS3_S5_bRSt8ios_basePw](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `RalOJcOXJJo` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basecRKSs](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `DR029KeWsHw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE3putES3_bRSt8ios_basece](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `65cvm2NDLmU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE6do_putES3_bRSt8ios_basecRKSs](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `OR-4zyIi2aE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE6do_putES3_bRSt8ios_basece](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `iXVrhA51z0M` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE8_PutmfldES3_bRSt8ios_basecbSsc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `d57FDzON1h0` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewRKSbIwS2_SaIwEE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `JruBeQgsAaU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE3putES3_bRSt8ios_basewe](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `fsF-tGtGsD4` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE6do_putES3_bRSt8ios_basewRKSbIwS2_SaIwEE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `GDiCYtaiUyM` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE6do_putES3_bRSt8ios_basewe](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `wVY5DpvU6PU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNKSt9money_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE8_PutmfldES3_bRSt8ios_basewbSbIwS2_SaIwEEw](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `r-JSsJQFUsY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSbIwSt11char_traitsIwESaIwEE5_CopyEmm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Ti86LmOKvr0` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSbIwSt11char_traitsIwESaIwEE5eraseEmm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `TgEb5a+nOnk` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSbIwSt11char_traitsIwESaIwEE6appendERKS2_mm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `hSUcSStZEHM` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSbIwSt11char_traitsIwESaIwEE6appendEmw](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `nF8-CM+tro4` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSbIwSt11char_traitsIwESaIwEE6assignEPKwm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `IJmeA5ayVJA` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSbIwSt11char_traitsIwESaIwEE6assignERKS2_mm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `piJabTDQRVs` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSbIwSt11char_traitsIwESaIwEE6assignEmw](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `8oO55jndPRg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSbIwSt11char_traitsIwESaIwEE6insertEmmw](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `w2GyuoXCnkw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSiD0Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `6ZDv6ZusiFg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSiD1Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `tJU-ttrsXsk` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSo6sentryC2ERSo](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `gVTWlvyBSIc` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSo6sentryD2Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `nk+0yTWvoRE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSoD0Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `lTTrDj5OIwQ` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSoD1Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `HpCeP12cuNY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSs5_CopyEmm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `9HILqEoh24E` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSs5eraseEmm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `0Ir3jiT4V6Q` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSs6appendERKSsmm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `qiR-4jx1abE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSs6appendEmc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `QqBWUNEfIAo` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSs6assignEPKcm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `xSxPHmpcNzY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSs6assignERKSsmm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `pGxNI4JKfmY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSs6assignEmc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `ikjnoeemspQ` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSs6insertEmmc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `KDgQWX1eDeo` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem10_Copy_fileEPKcS1_](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `PbCV7juCZVo` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem10_File_sizeEPKc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `SQ02ZA5E-UE` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem11_EquivalentEPKcS1_](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `XD9FmX1mavU` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem12_Current_setEPKc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Yl10kSufa5k` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem13_Current_set2EPKc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `yL8dMdCi4Ys` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem16_Last_write_timeEPKc](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `HCB1auZdcmo` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathES4_St10error_code](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `Wut42WAe7Rw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem20_Set_last_write_timeEPKcl](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `VSk+sij2mwg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem5_StatEPKcPNS_5permsE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `EBwahsMLokw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem6_LstatEPKcPNS_5permsE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `o1qlZJqrvmI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem7_RenameEPKcS1_](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `srwl1hhFoUI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem7_ResizeEPKcm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `O4mPool-pow` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10filesystem8_StatvfsEPKcRNS_10space_infoE](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `SdKk439pgjg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EE7_GetcatEPPKNSt6locale5facetEPKS1_](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `mU88GYCirhI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EEC1EPKcm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `5afBJmEfUQI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EEC1ERKSt8_Locinfomb](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `wrR3T5i7gpY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EEC1Em](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `tYBLm0BoQdQ` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EEC2EPKcm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `aNfpdhcsMWI` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EEC2ERKSt8_Locinfomb](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `uQFv8aNF8Jc` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EEC2Em](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `5DFeXjP+Plg` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EED0Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `sS5fF+fht2c` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EED1Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `3cW6MrkCKt0` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb0EED2Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `mbGmSOLXgN0` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EE7_GetcatEPPKNSt6locale5facetEPKS1_](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `BuxsERsopss` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EEC1EPKcm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `9S960jA8tB0` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EEC1ERKSt8_Locinfomb](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `TRn3cMU4mjY` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EEC1Em](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `nbTAoMwiO38` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EEC2EPKcm](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `RxJnJ-HoySc` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EEC2ERKSt8_Locinfomb](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `7e3DrnZea-Q` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EEC2Em](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `kPELiw9L-gw` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EED0Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `tcdvTUlPnL0` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EED1Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `wT+HL7oqjYc` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIcLb1EED2Ev](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `F7CUCpiasec` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.
+
 - [_ZNSt10moneypunctIwLb0EE7_GetcatEPPKNSt6locale5facetEPKS1_](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - NID `0OjBJZd9VeM` from the PS5 3.20 export inventory; prototype and behavior are unverified. Declaration is for import resolution only.

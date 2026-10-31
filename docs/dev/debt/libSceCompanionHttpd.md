@@ -3,7 +3,9 @@
 ### Unknown function info
 
 - [sceCompanionHttpdOptParamInitialize, sceCompanionHttpdInitialize](../../../core/libs/prx/libSceCompanionHttpd/Export.cpp) (libSceCompanionHttpd) - the option block is taken as 0x60 bytes: titles fill a work memory pointer at +0x08, its size at +0x10 and a temporary data mount point at +0x58 after `sceCompanionHttpdOptParamInitialize`. Its other fields and the defaults the console writes are unknown, so `sceCompanionHttpdOptParamInitialize` zeroes the 0x60 bytes and `sceCompanionHttpdInitialize` reads none of them; both reject a null block with `INVALID_PARAM`
+
 - [sceCompanionHttpdAddHeader, sceCompanionHttpdSetStatus, sceCompanionHttpdSetBody](../../../core/libs/prx/libSceCompanionHttpd/Export.cpp) (libSceCompanionHttpd) - imported by PS4 titles and added without an implementation. They fill the response of a request callback, which is never called here, so every call throws
+
 - [sceCompanionHttpdGet2ndScreenStatus, sceCompanionHttpdGetUserId, sceCompanionHttpdInitialize2, sceCompanionHttpdRegisterRequestBodyReceptionCallback, sceCompanionHttpdRegisterRequestCallback2, sceCompanionHttpdUnregisterRequestBodyReceptionCallback](../../../core/libs/prx/libSceCompanionHttpd/Export.cpp) (libSceCompanionHttpd) - the rest of the library's exports, declared without parameters and without an implementation; their signatures are not verified, so every call throws
 
 ### Functional
