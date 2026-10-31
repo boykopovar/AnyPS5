@@ -191,25 +191,28 @@ def manifest_problems(text):
     return problems
 
 
+def classify_comment(comment):
+    comment = comment.strip()
+    match = TAG_COMMENT.fullmatch(comment)
+    if not match or (match.group(2) is None and " " in comment):
+        return UNTAGGED, "", None
+    tag, detail = match.group(1), (match.group(2) or "").strip()
+    problem = None
+    if tag not in TAGS:
+        problem = f"unknown provenance tag {tag!r}; use one of {', '.join(TAGS)}"
+    elif tag == "audit" and not AUDIT_DETAIL.fullmatch(detail):
+        problem = "audit needs the tool and the date of the run: audit: import_audit YYYY-MM-DD or audit: audit_dump YYYY-MM-DD"
+    elif tag == "manual" and not detail:
+        problem = "manual needs a written reason: manual: <reason>"
+    return tag, detail, problem
+
+
 def manifest_tags(text):
     for number, line in enumerate(text.splitlines(), 1):
         entry, _, comment = line.partition("#")
-        entry, comment = entry.strip(), comment.strip()
-        if NID.fullmatch(entry) is None:
-            continue
-        match = TAG_COMMENT.fullmatch(comment)
-        if not match or (match.group(2) is None and " " in comment):
-            yield number, entry, UNTAGGED, "", None
-            continue
-        tag, detail = match.group(1), (match.group(2) or "").strip()
-        problem = None
-        if tag not in TAGS:
-            problem = f"unknown provenance tag {tag!r}; use one of {', '.join(TAGS)}"
-        elif tag == "audit" and not AUDIT_DETAIL.fullmatch(detail):
-            problem = "audit needs the tool and the date of the run: audit: import_audit YYYY-MM-DD or audit: audit_dump YYYY-MM-DD"
-        elif tag == "manual" and not detail:
-            problem = "manual needs a written reason: manual: <reason>"
-        yield number, entry, tag, detail, problem
+        entry = entry.strip()
+        if NID.fullmatch(entry) is not None:
+            yield (number, entry, *classify_comment(comment))
 
 
 def manifest_tag_problems(text):

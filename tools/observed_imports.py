@@ -2,6 +2,7 @@ import argparse
 import json
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -9,12 +10,15 @@ import nid_names
 import progress
 
 OBSERVABLE = ("implemented", "partial", "stub")
+AUDIT_TOOLS = ("import_audit", "audit_dump")
 HEADER = "# NIDs of {library} that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md."
 DESCRIPTION = """Maintain docs/dev/observed/<library>.txt, the NIDs of each library that any measured use shows to be needed.
 tools/progress.py counts a pending function as an observed stub when its NID is listed there and as an unobserved
 stub otherwise; a library without a file is unclassified and counts every stub as observed. 'add' merges the JSON
 written by tools/import_audit.py --json (or tools/audit_dump.py --json) into the files of the libraries that provide
-each imported NID; 'entry' adds one NID by hand with the evidence for it; 'check' validates the committed files."""
+each imported NID, tagged audit with the tool and the date of the run; 'entry' adds one NID by hand and requires its
+provenance tag: audit, loader (needed before a title's own code runs) or manual (needs a written reason); 'check'
+validates the committed files, rejects unknown tags and lists the entries that have no tag."""
 
 
 class ManifestError(Exception):
@@ -36,7 +40,7 @@ def parse(text, name="manifest"):
             continue
         if progress.NID.fullmatch(entry) is None:
             raise ManifestError(f"{name}:{number}: invalid NID {entry!r}")
-        if comment.strip() and not entries.get(entry):
+        if comment.strip() and (entry not in entries or progress.classify_comment(entries[entry])[0] == progress.UNTAGGED):
             entries[entry] = comment.strip()
         else:
             entries.setdefault(entry, "")
@@ -85,7 +89,8 @@ def plan(additions, prx, observed):
             header, entries = parse(path.read_text(encoding="utf-8-sig"), str(path))
         else:
             header, entries = [HEADER.format(library=library)], {}
-        added = {nid: comment for nid, comment in nids.items() if nid not in entries}
+        added = {nid: comment for nid, comment in nids.items()
+                 if nid not in entries or (progress.classify_comment(entries[nid])[0] == progress.UNTAGGED and comment)}
         if added or not path.is_file():
             entries.update(added)
             changes[path] = (render(header, entries), len(added))
@@ -118,7 +123,30 @@ def problems(prx, observed):
             found.append(f"{path}: {error}")
             continue
         found += [f"{path}:{number}: {message}" for number, message in progress.manifest_problems(text)]
+        found += [f"{path}:{number}: {message}" for number, message in progress.manifest_tag_problems(text)]
     return found
+
+
+def untagged(observed):
+    found = []
+    for path in sorted(Path(observed).glob("*.txt")) if Path(observed).is_dir() else []:
+        try:
+            text = path.read_text(encoding="utf-8-sig")
+        except (OSError, ValueError):
+            continue
+        found += [f"{path}:{number}: {entry} has no provenance tag" for number, entry in progress.manifest_untagged(text)]
+    return found
+
+
+def provenance(tag, reason, tool, day):
+    if tag == "audit":
+        if not progress.AUDIT_DETAIL.fullmatch(f"{tool} {day}"):
+            raise ManifestError(f"invalid date {day!r}; use YYYY-MM-DD")
+        return f"audit: {tool} {day}"
+    reason = " ".join((reason or "").split())
+    if tag == "manual" and not reason:
+        raise ManifestError("--tag manual needs --reason")
+    return f"{tag}: {reason}" if reason else tag
 
 
 def main(argv=None):
@@ -132,31 +160,36 @@ def main(argv=None):
     add = commands.add_parser("add", help="merge import_audit.py JSON reports into the manifests")
     add.add_argument("reports", nargs="+", type=Path)
     add.add_argument("--check", action="store_true", help="write nothing; fail when a manifest would change")
+    add.add_argument("--tool", choices=AUDIT_TOOLS, default="import_audit", help="tool that wrote the reports, recorded in the audit tag")
+    add.add_argument("--date", default=datetime.now(timezone.utc).date().isoformat(), help="UTC date of the audit run, YYYY-MM-DD (default: today)")
     entry = commands.add_parser("entry", help="add one NID by hand")
     entry.add_argument("library")
     entry.add_argument("nid")
-    entry.add_argument("--evidence", required=True, help="short reason, written as '# evidence: <reason>'")
+    entry.add_argument("--tag", required=True, choices=progress.TAGS, help="provenance: audit, loader or manual")
+    entry.add_argument("--reason", help="written reason; required for manual, optional for loader")
+    entry.add_argument("--tool", choices=AUDIT_TOOLS, default="import_audit", help="for --tag audit: the tool that was run")
+    entry.add_argument("--date", default=datetime.now(timezone.utc).date().isoformat(), help="for --tag audit: UTC date of the run")
     commands.add_parser("check", help="validate the committed manifests")
     args = parser.parse_args(argv)
     try:
         if args.command == "check":
             found = problems(args.prx, args.observed)
-            for message in found:
+            notes = untagged(args.observed)
+            for message in found + notes:
                 print(message, file=sys.stderr)
+            if notes:
+                print(f"{len(notes)} entries have no provenance tag")
             print(f"{len(found)} problems in {args.observed}" if found else f"{args.observed}: all manifests are valid")
             return 1 if found else 0
         if args.command == "entry":
             if progress.NID.fullmatch(args.nid) is None:
                 raise ManifestError(f"invalid NID {args.nid!r}")
-            reason = " ".join(args.evidence.split())
-            if not reason:
-                raise ManifestError("--evidence needs a reason")
-            additions = {args.library: {args.nid: f"evidence: {reason}"}}
+            additions = {args.library: {args.nid: provenance(args.tag, args.reason, args.tool, args.date)}}
         else:
             additions = {}
             for report in args.reports:
                 for library, nids in report_nids(report).items():
-                    additions.setdefault(library, {}).update(dict.fromkeys(nids, ""))
+                    additions.setdefault(library, {}).update(dict.fromkeys(nids, provenance("audit", None, args.tool, args.date)))
         changes = plan(additions, args.prx, args.observed)
     except ManifestError as error:
         print(f"FAIL: {error}", file=sys.stderr)
