@@ -126,9 +126,10 @@ int APS5_VABI scePfsGetPreadBlockRange(std::uint64_t size, std::uint64_t offset,
     if (layout->layoutTag != 2) return UnsupportedLayout;
     if (offset > total || size > total - offset) return OutOfRange;
     const std::uint64_t end = offset + size;
+    const std::uint64_t firstIndex = offset >> 0x12;
     const std::uint64_t lastIndex = end ? (end - 1) >> 0x12 : 0xffffffffULL;
-    if (lastIndex > 0xffffffffULL) return OutOfRange;
-    *firstBlockOut = static_cast<std::uint32_t>(offset >> 0x12);
+    if (firstIndex > 0xffffffffULL || lastIndex > 0xffffffffULL) return OutOfRange;
+    *firstBlockOut = static_cast<std::uint32_t>(firstIndex);
     *lastBlockOut = static_cast<std::uint32_t>(lastIndex);
     return 0;
 }

@@ -167,6 +167,10 @@ void PreadBlockRangeV2() {
     header.uncompressedSize = 0x4000000000000ULL;
     Require(scePfsGetPreadBlockRange(0x4000000000000ULL, 0, &first, &last, &header, table) == 0);
     Require(first == 0 && last == 0xffffffff);
+    Require(scePfsGetPreadBlockRange(0, 0x4000000000000ULL, &first, &last, &header, table) == OutOfRange);
+    header.uncompressedSize = 0x3fffffffc0000ULL;
+    Require(scePfsGetPreadBlockRange(0, 0x3fffffffc0000ULL, &first, &last, &header, table) == 0);
+    Require(first == 0xffffffff && last == 0xfffffffe);
     header.uncompressedSize = 0x80000;
     Require(scePfsGetPreadBlockRange(0x1000, 0, nullptr, &last, &header, table) == InvalidArgument);
     Require(scePfsGetPreadBlockRange(0x1000, 0, &first, nullptr, &header, table) == InvalidArgument);
