@@ -987,6 +987,7 @@ char* APS5_VABI strtok_r_nid_postfix(char* text, const char* delimiters, char** 
 char* APS5_VABI strtok_nid_postfix(char* text, const char* delimiters);
 int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address);
 std::uint32_t APS5_VABI __inet_addr_nid_postfix(const char* text);
+int APS5_VABI getsubopt_nid_postfix(char** optionp, char* const* tokens, char** valuep);
 void* APS5_VABI memset_nid_postfix(void* s, int c, size_t n);
 void APS5_VABI bzero_nid_postfix(void* destination, size_t count);
 void APS5_VABI bcopy_nid_postfix(const void* source, void* destination, size_t count);
