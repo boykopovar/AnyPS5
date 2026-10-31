@@ -424,9 +424,9 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     RequireLoaded(originalHeaders, Io::ReadU64(sourceElf, kEhdrEntryOffset), 1, PF_X, "e_entry");
     for (const auto& [relocationTable, name] : {std::pair{&dynSection.RelaData, "RELA r_offset"}, std::pair{&dynSection.RelaPltData, "JMPREL r_offset"}})
         for (std::size_t entry = 0; entry < relocationTable->size(); entry += kRelaEntrySize)
-            RequireLoaded(originalHeaders, Io::ReadU64(*relocationTable, entry), RelocationWidth(*relocationTable, entry), static_cast<std::uint32_t>(Io::ReadU64(*relocationTable, entry + 8)) == R_X86_64_NONE ? 0U : PF_W, name);
+            RequireLoaded(originalHeaders, Io::ReadU64(*relocationTable, entry), RelocationWidth(*relocationTable, entry), PF_W, name);
     if (!dynSection.RelaPltData.empty())
-        RequireLoaded(originalHeaders, originalPltGotVaddr, lazyBinding ? kLazyPltGotBytes : kPltGotEntryBytes, 0, "DT_PLTGOT");
+        RequireLoaded(originalHeaders, originalPltGotVaddr, lazyBinding ? kLazyPltGotBytes : kPltGotEntryBytes, lazyBinding ? PF_W : 0U, "DT_PLTGOT");
     const auto traced = _traceImports ? TracedImports(dynSection) : std::vector<TracedImport>{};
     const std::uint64_t base = _fixedBase.value_or(0);
     const auto address = [this, base](const std::uint64_t vaddr) {

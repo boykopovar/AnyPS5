@@ -107,14 +107,18 @@ def main():
             assert flags == [PF_R | PF_W | PF_X], ("entry-in-flagless-load", options, flags)
         pltgot_cases = [
             ("pltgot-outside", OUTSIDE, "DT_PLTGOT 0x2000 (8 bytes) does not fit inside a PT_LOAD segment",
-             "DT_PLTGOT 0x2000 (24 bytes) does not fit inside a PT_LOAD segment"),
-            ("pltgot-load-tail", 0xFF0, None, "DT_PLTGOT 0xff0 (24 bytes) does not fit inside a PT_LOAD segment"),
+             "DT_PLTGOT 0x2000 (24 bytes) does not fit inside a writable PT_LOAD segment"),
+            ("pltgot-load-tail", 0xFF0, None, "DT_PLTGOT 0xff0 (24 bytes) does not fit inside a writable PT_LOAD segment"),
             ("pltgot-lazy-fits", 0xFE8, None, None),
         ]
         for name, pltgot, eager_error, lazy_error in pltgot_cases:
             image = with_pltgot(fixture(linux=True), pltgot)
             relink(relinker, work, name, image, [], eager_error)
             relink(relinker, work, name, image, ["--lazy-binding"], lazy_error)
+        image = with_pltgot(with_load_flags(with_bss(fixture(linux=True, target=0x1FF8)), PF_R | PF_X), 0x300)
+        relink(relinker, work, "pltgot-in-code", image, [], None)
+        relink(relinker, work, "pltgot-in-code", image, ["--lazy-binding"],
+               "DT_PLTGOT 0x300 (24 bytes) does not fit inside a writable PT_LOAD segment")
         writable_cases = [
             ("relative-in-code", with_load_flags(fixture(linux=True, data_relocations=True, relocation_type=8), PF_R | PF_X),
              "RELA r_offset 0x300 (8 bytes) does not fit inside a writable PT_LOAD segment"),
@@ -126,8 +130,6 @@ def main():
              "JMPREL r_offset 0x300 (8 bytes) does not fit inside a writable PT_LOAD segment"),
             ("relative-in-rwx", fixture(linux=True, data_relocations=True, relocation_type=8), None),
             ("relative-in-flagless", with_load_flags(fixture(linux=True, data_relocations=True, relocation_type=8), 0), None),
-            ("none-in-code", with_load_flags(fixture(linux=True, data_relocations=True, relocation_type=0, symbol_bytes=0,
-                                                     symbol_index=0xFFFFFFFF), PF_R | PF_X), None),
         ]
         for name, image, error in writable_cases:
             for options in ([], ["--linux-fixed-base", "0x800000"], ["--lazy-binding"]):
