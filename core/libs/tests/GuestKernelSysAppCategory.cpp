@@ -3,10 +3,14 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 
 namespace {
 
@@ -20,6 +24,17 @@ void Require(bool condition, const char* message) {
 }
 
 int main() {
+    const auto original = std::filesystem::current_path();
+    const auto directory = original / ("kernel-sys-app-category-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(directory), "the test directory could not be created");
+    std::filesystem::current_path(directory);
+    std::filesystem::create_directories("app0/sce_sys");
+    {
+        std::ofstream param("app0/sce_sys/param.json", std::ios::binary);
+        param << R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})";
+        Require(static_cast<bool>(param), "param.json could not be written");
+    }
+
     const auto getAppCategoryType = reinterpret_cast<int (APS5_VABI*)(int, std::uint32_t*)>(&sceKernelGetAppCategoryType);
     for (const int pid : {getpid_nid_postfix(), 0}) {
         std::array<std::uint8_t, 0x58> info{};
@@ -34,6 +49,8 @@ int main() {
         Require(getAppCategoryType(pid, nullptr) == static_cast<int>(0x80020016), "a null output is not EINVAL");
     }
 
+    std::filesystem::current_path(original);
+    std::filesystem::remove_all(directory);
     std::puts("KERNEL SYS APP CATEGORY tests passed");
     return 0;
 }
