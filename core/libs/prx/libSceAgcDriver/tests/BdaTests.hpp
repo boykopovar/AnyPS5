@@ -28,6 +28,7 @@ void RunGuestAllocationTests();
 void RunGuestLeaseWaitTests();
 void RunUnmappedGapTests();
 void RunVanishedPageReadTests();
+void RunPageBlockTests();
 void RunColorTargetLayoutTests();
 void RunLiveStackAccessTests();
 
