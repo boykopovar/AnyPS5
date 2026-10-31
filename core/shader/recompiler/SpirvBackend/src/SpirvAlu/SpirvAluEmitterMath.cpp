@@ -1283,8 +1283,8 @@ std::uint32_t EmitFPLog2(SpirvEmitterState& state, std::uint32_t arg0) {
         const auto series = Log2SeriesNearOne(state, difference);
         const auto valueBits = Unary(state, spv::OpBitcast, TypeU32(state), value);
         const auto seriesBits = Unary(state, spv::OpBitcast, TypeU32(state), series);
-        const auto distance = EmitExt(state, TypeU32(state), GLSLstd450UMin, {Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), Binary(state, spv::OpISub, TypeU32(state), seriesBits, valueBits)});
-        const auto far = Binary(state, spv::OpUGreaterThan, TypeBool(state), distance, ConstantU32(state, 4u));
+        const auto biasedDifference = Binary(state, spv::OpIAdd, TypeU32(state), Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), ConstantU32(state, 4u));
+        const auto far = Binary(state, spv::OpUGreaterThan, TypeBool(state), biasedDifference, ConstantU32(state, 8u));
         return Select(state, TypeF32(state), far, series, value);
     });
 }
@@ -1310,8 +1310,8 @@ std::uint32_t CosTurnSeries(SpirvEmitterState& state, std::uint32_t turns) {
 std::uint32_t SeriesWhenFar(SpirvEmitterState& state, std::uint32_t value, std::uint32_t series) {
     const auto valueBits = Unary(state, spv::OpBitcast, TypeU32(state), value);
     const auto seriesBits = Unary(state, spv::OpBitcast, TypeU32(state), series);
-    const auto distance = EmitExt(state, TypeU32(state), GLSLstd450UMin, {Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), Binary(state, spv::OpISub, TypeU32(state), seriesBits, valueBits)});
-    return Select(state, TypeF32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), distance, ConstantU32(state, 4u)), series, value);
+    const auto biasedDifference = Binary(state, spv::OpIAdd, TypeU32(state), Binary(state, spv::OpISub, TypeU32(state), valueBits, seriesBits), ConstantU32(state, 4u));
+    return Select(state, TypeF32(state), Binary(state, spv::OpUGreaterThan, TypeBool(state), biasedDifference, ConstantU32(state, 8u)), series, value);
 }
 
 std::uint32_t TrigLinearNearZero(SpirvEmitterState& state, std::uint32_t value, std::uint32_t distance, std::uint32_t linearConstant, std::uint32_t limit) {
