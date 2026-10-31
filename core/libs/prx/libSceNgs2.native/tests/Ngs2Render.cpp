@@ -665,6 +665,42 @@ static void TestPeakMeter() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static void TestClosedWaveformCode() {
+#ifdef APS5_NGS2_PS4_LIBRARY
+    constexpr int closed = static_cast<int>(0x804A0151u);
+#else
+    constexpr int closed = static_cast<int>(0x804A8054u);
+#endif
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);
+    const auto voice = Voice(rack);
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+    const std::int16_t pcm[4] = {1, 2, 3, 4};
+    const Ngs2WaveformBlock block{0, sizeof(pcm), 0, 0, 4, 0, 0};
+    Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm, 0, 1, &block});
+    const Ngs2SamplerVoiceWaveformBlocksParam again{{sizeof(Ngs2SamplerVoiceWaveformBlocksParam), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS}, pcm, 0, 1, &block};
+    Require(sceNgs2VoiceControl(voice, &again.header) == closed);
+    const Ngs2SamplerVoiceWaveformBlocksParam empty{{sizeof(Ngs2SamplerVoiceWaveformBlocksParam), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS}, pcm, 0, 0, &block};
+    Require(sceNgs2VoiceControl(voice, &empty.header) == closed);
+    uintptr_t queued = 0;
+    Require(sceNgs2RackGetVoiceHandle(rack, 1, &queued) == SCE_NGS2_OK);
+    Control(queued, SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP, Ngs2SamplerVoiceSetupParam{{}, {SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1, 48000, 0, 0, 0}});
+    for (int i = 0; i < 4; ++i) Control(queued, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS, Ngs2SamplerVoiceWaveformBlocksParam{{}, pcm, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, 1, &block});
+    const Ngs2SamplerVoiceWaveformBlocksParam fifth{{sizeof(Ngs2SamplerVoiceWaveformBlocksParam), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS}, pcm, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE, 1, &block};
+    Require(sceNgs2VoiceControl(queued, &fifth.header) == closed);
+#ifdef APS5_NGS2_PS4_LIBRARY
+    uintptr_t bare = 0;
+    Require(sceNgs2RackGetVoiceHandle(rack, 2, &bare) == SCE_NGS2_OK);
+    for (std::uint32_t flags : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 0xCu, 0x10u, 0x20u}) {
+        const Ngs2SamplerVoiceWaveformBlocksParam neverSetUp{{sizeof(Ngs2SamplerVoiceWaveformBlocksParam), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS}, pcm, flags, 1, &block};
+        Require(sceNgs2VoiceControl(bare, &neverSetUp.header) == closed);
+    }
+    const Ngs2SamplerVoiceWaveformBlocksParam noBlocks{{sizeof(Ngs2SamplerVoiceWaveformBlocksParam), 0, SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS}, pcm, 0, 0, &block};
+    Require(sceNgs2VoiceControl(bare, &noBlocks.header) == SCE_NGS2_OK);
+#endif
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestPeakMeterHistory() {
     const auto samplerFor = [](uintptr_t system, std::uint32_t blocks, const std::vector<std::int16_t>& pcm) {
         Ngs2SamplerRackOption option{};
@@ -2259,6 +2295,7 @@ int main() {
     TestPitchAndRepeat();
     TestPeakMeter();
     TestPeakMeterHistory();
+    TestClosedWaveformCode();
     TestSubmixerMatrix();
     TestReverb();
     TestReverbSetup();
