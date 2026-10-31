@@ -436,25 +436,35 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(sscanf_nid_postfix("", "%*d", &scanned) == EOF);
     Require(sscanf_nid_postfix("  ", "%*d%d", &scanned) == EOF);
     Require(sscanf_nid_postfix("", "%d", &scanned) == EOF);
-#else
+#endif
     {
         char16_t first[8] = {};
         char16_t letter = u'!';
         Require(sscanf_nid_postfix("ab cd", "%ls %lc", first, &letter) == 2);
         Require(std::u16string(first) == u"ab" && letter == u'c');
-        Require(sscanf_nid_postfix("  xy z", "%S %C", first, &letter) == 2 && std::u16string(first) == u"xy" && letter == u'z');
+        letter = u'!';
+        Require(sscanf_nid_postfix("  xy z", "%S %C", first, &letter) == 1 && std::u16string(first) == u"xy" && letter == u'!');
+        Require(sscanf_nid_postfix("abc", "%C", &letter) == 0 && sscanf_nid_postfix("abc", "%2C", &letter) == 0 && letter == u'!');
+        int afterWide = -7;
+        int countAfterWide = -7;
+        Require(sscanf_nid_postfix("x5", "%C%d", &letter, &afterWide) == 0 && letter == u'!' && afterWide == -7);
+        Require(sscanf_nid_postfix("xy", "%C%n", &letter, &countAfterWide) == 0 && countAfterWide == -7);
+        Require(sscanf_nid_postfix("5 x", "%d %C%d", &afterWide, &letter, &countAfterWide) == 1 && afterWide == 5 && letter == u'!' && countAfterWide == -7);
+        afterWide = -7;
+        Require(sscanf_nid_postfix("", "%C", &letter) == 0 && sscanf_nid_postfix("x5", "%*C%d", &afterWide) == 0 && afterWide == -7);
+        Require(sscanf_nid_postfix("xy", "%lC", &letter) == 0 && sscanf_nid_postfix("xy", "%hC", &letter) == 0 && letter == u'!');
+        afterWide = -7;
+        Require(ScanListS("x5", "%C%d", &letter, 4u, &afterWide) == 0 && letter == u'!' && afterWide == -7);
+        Require(ScanListS("xy", "%C%n", &letter, 4u, &countAfterWide) == 0 && countAfterWide == -7);
+        Require(ScanListS("", "%C", &letter, 4u) == 0);
+        Require(sscanf_nid_postfix("abc", "%hS", first) == 1 && std::u16string(first) == u"abc");
         char16_t three[5] = {u'!', u'!', u'!', u'!', u'!'};
         Require(sscanf_nid_postfix("abcdef", "%3lc", three) == 1);
         Require(three[0] == u'a' && three[1] == u'b' && three[2] == u'c' && three[3] == u'!');
         Require(sscanf_nid_postfix("abcz", "%l[a-c]", first) == 1 && std::u16string(first) == u"abc");
         Require(sscanf_nid_postfix("ab cd", "%l[^ ]", first) == 1 && std::u16string(first) == u"ab");
         Require(sscanf_nid_postfix("]x", "%l[]x]", first) == 1 && std::u16string(first) == u"]x");
-        char16_t second[8] = {};
-        Require(sscanf_nid_postfix("\xc5\xbelu\xc5\xa5 k\xc5\xaf\xc5\x88", "%ls %ls", first, second) == 2);
-        Require(std::u16string(first) == u"\u017elu\u0165" && std::u16string(second) == u"k\u016f\u0148");
         int number = 0;
-        Require(sscanf_nid_postfix("\xc5\xbelu\xc5\xa5 7", "%2ls%*ls %d", first, &number) == 2);
-        Require(std::u16string(first) == u"\u017el" && number == 7);
         char narrowWord[8] = {};
         Require(sscanf_nid_postfix("12 ab cd", "%d %ls %7s", &number, first, narrowWord) == 3);
         Require(number == 12 && std::u16string(first) == u"ab" && std::strcmp(narrowWord, "cd") == 0);
@@ -473,14 +483,40 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         small[0] = u'!';
         Require(ScanListS("xyz", "%3lc", small, 2u) == 0 && small[0] == 0);
         Require(ScanListS("ab cd", "%*ls %l[a-z]", fits, 6u) == 1 && std::u16string(fits) == u"cd");
-        char16_t untouched[4] = {u'!', u'!', u'!', u'!'};
-        const auto rejects = [&](const char* input, const char* format) {
-            try { sscanf_nid_postfix(input, format, untouched); } catch (const std::runtime_error&) { return untouched[0] == u'!'; }
-            return false;
+        struct Case {
+            const char* input;
+            const char* format;
+            int result;
+            const char16_t* stored;
+            int error;
         };
-        Require(rejects("\xff", "%ls") && rejects("a b", "%2$ls") && rejects("\xc5\xbe", "%l[\xc5\xbe]"));
-        Require(rejects("\xf0\x9f\x98\x80", "%ls"));
+        const Case cases[] = {
+            {"\xc3\xa9", "%ls", 0, u"", 86}, {"a\xc3\xa9", "%ls", 0, u"a", 86}, {"\x80", "%ls", EOF, u"", 86},
+            {" \x80", "%ls", EOF, u"", 86}, {"\x7f\x80", "%ls", 0, u"\x7f", 86}, {"\xf0\x9f\x98\x80", "%ls", EOF, u"", 86},
+            {"\xc3", "%ls", EOF, u"", 0}, {"\xc3 x", "%ls", EOF, u"", 0}, {"a\xc3" "b", "%2ls", EOF, u"a", 0},
+            {"\xc3\xa9", "%lc", EOF, u"", 0}, {"\xc3" "a", "%2lc", 0, u"", 86}, {"\x80", "%lc", EOF, u"", 86},
+            {"\xc3\xa9", "%S", 0, u"", 86}, {"a\xc3\xa9", "%l[^ ]", 0, u"a", 86}, {"\x80", "%l[^ ]", EOF, u"", 86},
+            {"\xc3" "a", "%l[a-z]", 0, u"", 0}, {"a\xc3" "b", "%l[a-z]", 1, u"a", 0}, {"\xc3\xa9", "%l[\xc3\xa9]", 0, u"", 86},
+            {"za", "%l[z-a]", 0, u"", 0}, {"b", "%l[a-a-c]", 0, u"", 0}, {"a-c", "%l[a-a-c]", 1, u"a-c", 0}, {"+", "%l[*--]", 1, u"+", 0},
+            {"\x80", "%l[\x80-\xff]", EOF, u"", 86}, {"a\x80" "b", "%l[a\x80]", 0, u"a", 86}, {"a\xc3" "b", "%l[^\xc3]", 1, u"a", 0},
+        };
+        for (const auto& item : cases) {
+            char16_t units[8] = {u'!', u'!', u'!', u'!', u'!', u'!', u'!', u'!'};
+            *__error_nid_postfix() = 0;
+            Require(sscanf_nid_postfix(item.input, item.format, units) == item.result && *__error_nid_postfix() == item.error);
+            const std::u16string stored(item.stored);
+            Require(std::u16string(units, stored.size()) == stored && units[stored.size()] == (item.result == 1 ? u'\0' : u'!'));
+        }
+        Require(sscanf_nid_postfix("5 \xc3\xa9", "%d %ls", &number, first) == 1 && number == 5);
+        Require(sscanf_nid_postfix("x \x80", "%ls %ls", first, fits) == 1 && std::u16string(first) == u"x");
+        Require(sscanf_nid_postfix("\xc3\xa9", "%*ls") == 0 && sscanf_nid_postfix("\x80", "%*ls") == EOF);
+        Require(sscanf_nid_postfix("\xc3\xa9", "%*lc") == EOF && sscanf_nid_postfix("a\xc3", "%*ls") == EOF);
+        char16_t untouched[4] = {u'!', u'!', u'!', u'!'};
+        bool positional = false;
+        try { sscanf_nid_postfix("a b", "%2$ls", untouched); } catch (const std::runtime_error&) { positional = untouched[0] == u'!'; }
+        Require(positional);
     }
+#ifndef _WIN32
     char narrow[8] = {};
     Require(sscanf_nid_postfix("ab%", "%7[^%ls]", narrow) == 1 && std::strcmp(narrow, "ab") == 0);
 #endif
