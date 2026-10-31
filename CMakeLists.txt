@@ -299,6 +299,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_sanitizer_report.py)
         add_test(NAME select_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_select_tests.py)
+        add_test(NAME relinker_test_step COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_test_step.py)
         add_test(NAME tools_self_inspect COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_inspect_self.py)
         set_tests_properties(tools_self_inspect PROPERTIES TIMEOUT 20)
         add_test(NAME check_main_sync COMMAND ${Python3_EXECUTABLE}
