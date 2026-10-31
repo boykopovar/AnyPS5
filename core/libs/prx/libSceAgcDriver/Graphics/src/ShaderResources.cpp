@@ -2436,7 +2436,6 @@ void ShaderResources::buildComplete() {
         for (auto& source : samplerSources) source.singleLevelImage = source.mipmappedImage = false;
         for (const auto& deferred : deferredImages) resolveImageBinding(*deferred.binding, bindings[deferred.index], std::span<const std::shared_ptr<Sampler>>(samplers).subspan(deferred.firstSampler, deferred.samplerCount));
         previousSampled = {};
-        deferredImages.clear();
         applyAnisoOverride();
         // The records served their purpose: each holds the cache entry's objects as of stage A,
         // which would otherwise keep a replaced texture or an evicted storage image (and its device
@@ -2448,6 +2447,7 @@ void ShaderResources::buildComplete() {
         resolveImageTables();
         timing.bindingsMs += phase(BuildPhase::Images);
         requireGuestBuffers();
+        deferredImages.clear();
         guestMemory.UploadFinish(usesBda);
         timing.uploadMs += phase(BuildPhase::Upload);
         if (usesBda) bda = std::make_unique<BdaResources>(context, guestMemory);
@@ -3557,6 +3557,7 @@ void noteEpochProof(bool reused, bool verified, bool failed) {
 }
 
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
+    requireGuestBuffers();
     if (EpochProofs()) {
         const auto epoch = GuestMemory::CollectEpoch();
         const auto proof = GuestMemory::ProofSerial();
@@ -5905,6 +5906,25 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
 }
 
 void ShaderResources::requireGuestBuffers(std::span<const MovedBuffer> moved) const {
+    std::unique_lock gpu(GuestMemory::GpuMutex(), std::defer_lock);
+    if (!guestMemory.Writes().empty() && !deferredImages.empty() && HasResidentDepthGuards_nid_no_patch()) {
+        gpu.lock();
+        for (const auto& deferred : deferredImages) {
+            const auto& binding = *deferred.binding;
+            if (binding.kind != ShaderRecompiler::DescriptorKind::SampledImage || binding.count == 0u) continue;
+            const auto elementWords = binding.guestDescriptor.size() / binding.count;
+            for (std::uint32_t element = 0u; element < binding.count; ++element) {
+                const auto raw = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
+                std::array<std::uint32_t, 8> narrowed{};
+                const auto words = firstLayerWords(raw, binding.imageShape, narrowed, false);
+                if (IsNullTextureResource(words)) continue;
+                const auto resource = words.size() == 8u ? decodedImage(context.device, words).resource : DecodeTextureResource(words);
+                if (resource.dimension != TextureDimension::k2DMsaa || !DepthSurfaceAt(context, words, resource)) continue;
+                const auto bytes = MultisampledDepthBytes_nid_no_patch({resource.width, resource.height}, BytesPerElement(resource.format), resource.samples);
+                Require(!guestMemory.WritesOverlap(resource.baseAddress, static_cast<std::size_t>(bytes)) && (resource.dccAddress == 0u || !guestMemory.WritesOverlap(resource.dccAddress, static_cast<std::size_t>(HtileMetadataBytes({resource.width, resource.height})))), "a writable shader buffer overlaps sampled native depth");
+            }
+        }
+    }
     for (std::size_t index = 0; index < allocations.size(); ++index) {
         const auto& item = allocations[index];
         if (!item.guest) continue;
