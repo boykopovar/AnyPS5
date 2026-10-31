@@ -45,11 +45,16 @@ class PeModule:
             raise ValueError(f"{path}: not a PE file")
         _, sections, self.timestamp, symbol_table, symbol_count, optional_size, _ = struct.unpack_from("<HHIIIHH", data, pe + 4)
         optional = pe + 24
+        if optional_size < 112 or optional_size > len(data) - optional:
+            raise ValueError(f"{path}: PE32+ optional header is truncated")
         if struct.unpack_from("<H", data, optional)[0] != 0x20B:
             raise ValueError(f"{path}: not a PE32+ image")
         self.image_base = struct.unpack_from("<Q", data, optional + 24)[0]
         self.size = struct.unpack_from("<I", data, optional + 56)[0]
-        export_rva, export_size = struct.unpack_from("<II", data, optional + 112)
+        directories = struct.unpack_from("<I", data, optional + 108)[0]
+        if directories > (optional_size - 112) // 8:
+            raise ValueError(f"{path}: PE data directories exceed the optional header")
+        export_rva, export_size = struct.unpack_from("<II", data, optional + 112) if directories else (0, 0)
         self.sections = []
         for index in range(sections):
             entry = optional + optional_size + index * 40
