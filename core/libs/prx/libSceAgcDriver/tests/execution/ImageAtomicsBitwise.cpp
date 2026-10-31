@@ -127,9 +127,9 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         FillInput();
-        Run(*device, 32, device->Target());
+        Run(*device, 32, device->ComputeTarget(32));
         Check("wave32");
-        Run(*device, 64, device->Target());
+        Run(*device, 64, device->ComputeTarget(64));
         Check("wave64");
         Run(*device, 64, device->ComputeTarget(32));
         Check("wave64 split");

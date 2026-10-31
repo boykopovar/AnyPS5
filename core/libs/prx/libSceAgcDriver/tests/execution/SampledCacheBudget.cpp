@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -582,6 +584,40 @@ void viewTests(const Context& context) {
     Require(!heldView.expired() && !heldStorage.expired(), "eviction destroyed an active caller's view or image");
     again.reset();
     Require(heldView.expired() && heldStorage.expired(), "the evicted image outlived its last caller without a sampled lookup");
+}
+
+bool heapViewTests(const Context& context) {
+    if (!GpuHeapEnabled() || !context.descriptorHeap || context.hostImportAlignment == 0) return false;
+    Block block(context);
+    if (HostImportFor(context, block.Surface(0), BlockBytes) == nullptr) return false;
+    auto view = Sampled(context, block.Surface(0));
+    Require(view->ViewsStorageImage(), "a sampled texture in host-imported memory is not a view of its storage image");
+    const std::weak_ptr<Texture> viewed = view;
+    for (std::size_t surface = 1; surface < Surfaces; ++surface) CachedStorageSurface(context, Resource(block.Surface(surface)));
+    Require(!view->StorageSource()->Cached(), "the heap view's storage image was not evicted");
+    auto& heap = BindlessHeap::For(context);
+    Require(heap.TextureSlot(ShaderRecompiler::RuntimeAbi::FirstImageBinding, view, view->View(), view->Layout()).has_value(), "the view of an evicted storage image took no heap slot");
+    view.reset();
+    Require(!viewed.expired(), "the heap slot did not hold the view of the evicted storage image");
+    BindlessHeap::SweepIfDue();
+    Require(viewed.expired(), "the present after the heap became the only holder of a view of an evicted storage image kept the view, and with it the image");
+    return true;
+}
+
+void heapHeldReleaseTests(const Context& context) {
+    Block block(context);
+    auto& heap = BindlessHeap::For(context);
+    std::vector<std::weak_ptr<Texture>> held;
+    for (std::size_t surface = 0; surface < 2; ++surface) {
+        auto texture = Sampled(context, block.Surface(surface));
+        Require(heap.TextureSlot(ShaderRecompiler::RuntimeAbi::FirstImageBinding, texture, texture->View(), texture->Layout()).has_value(), "the cached sampled texture took no heap slot");
+        held.push_back(texture);
+    }
+    Require(TextureCacheUsage().sampledEntries == 2u, "the two sampled textures were not cached");
+    Require(!held[0].expired() && !held[1].expired(), "the cache and the heap slots did not keep the sampled textures");
+    const auto released = ReleaseTextureCaches(SurfaceBytes, true);
+    Require(held[0].expired() != held[1].expired(), "a memory recovery for one texture's bytes did not free exactly one of two textures that only the cache and the GPU heap held");
+    Require(released >= SurfaceBytes && TextureCacheUsage().sampledEntries == 1u, "a memory recovery did not count the texture it freed from the cache and the GPU heap, or went past its target");
 }
 
 ShaderRecompiler::RecompileResult SampledProgram(std::uint64_t address) {
@@ -1325,6 +1361,44 @@ int main(int argc, char** argv) {
         if (!memory) setenv("APS5_TEXTURE_CACHE_MIB", recover ? "16" : "1", 1);
         setenv("APS5_TEMPLATE_AUDIT_MS", "250", 0);
 #endif
+        if (mode == "heap-view") {
+#ifdef _WIN32
+            _putenv_s("APS5_GPU_HEAP", "1");
+#else
+            setenv("APS5_GPU_HEAP", "1", 1);
+#endif
+            std::unique_ptr<AgcDriver::VulkanDevice> heapDevice;
+            try {
+                heapDevice = std::make_unique<AgcDriver::VulkanDevice>();
+            } catch (const std::exception& error) {
+                if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
+                std::printf("skipped, no usable Vulkan device: %s\n", error.what());
+                return VulkanTestSkipped;
+            }
+            if (!heapDevice->GraphicsContext().descriptorHeap) {
+                std::puts("skipped, the device has no VK_EXT_descriptor_heap");
+                return VulkanTestSkipped;
+            }
+            bool tested = false;
+            {
+                const auto context = heapDevice->GraphicsContext();
+                {
+                    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                    heapHeldReleaseTests(context);
+                    ClearCachedTextures(context.device);
+                    tested = heapViewTests(context);
+                    ClearCachedTextures(context.device);
+                }
+                heapDevice->WaitIdle();
+            }
+            heapDevice.reset();
+            if (!tested) {
+                std::puts("skipped, host imports unavailable: heap views of evicted storage images not tested");
+                return VulkanTestSkipped;
+            }
+            std::puts("heap view release tests passed");
+            return 0;
+        }
         std::unique_ptr<Device> device;
         try {
             device = std::make_unique<Device>(!disableStorageImageMultisample);

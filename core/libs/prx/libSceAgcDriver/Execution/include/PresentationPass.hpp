@@ -43,6 +43,7 @@ private:
     struct Target {
         VkRenderPass renderPass = VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipeline heapPipeline = VK_NULL_HANDLE;
     };
     struct Slot {
         VkDescriptorSet set = VK_NULL_HANDLE;
@@ -71,11 +72,13 @@ private:
     void releaseDumpTarget(Slot& slot) noexcept;
     void ensureUploadImage(Slot& slot, VkExtent2D extent);
     void releaseUploadImage(Slot& slot) noexcept;
-    void draw(VkCommandBuffer commands, const Slot& slot, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, VkRect2D scissor, const std::int32_t (&parameters)[9]) const;
+    void draw(VkCommandBuffer commands, Slot& slot, const Target& target, VkFramebuffer framebuffer, VkExtent2D extent, VkRect2D scissor, const std::int32_t (&parameters)[9]) const;
     void release() noexcept;
 
     Graphics::Context context;
+    VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     VkSampler sampler = VK_NULL_HANDLE;
+    bool heap = false;
     VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;

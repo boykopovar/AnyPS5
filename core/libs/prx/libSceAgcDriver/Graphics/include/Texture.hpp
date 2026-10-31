@@ -104,6 +104,7 @@ public:
     ViewRange SampledViewRange(bool firstLayer) const { return firstLayer ? firstLayerRange : viewRange; }
     // The layout the image is kept in while sampled.
     VkImageLayout Layout() const { return layout; }
+    VkImage Image() const { return image; }
     VkDeviceSize AllocationBytes() const { return allocationBytes; }
     VkFormat ViewFormat() const { return viewFormat; }
     // Whether this texture is a view of a storage image (no snapshot of its own).
@@ -120,8 +121,12 @@ public:
     void MarkRefreshedPerUse() { perUseCopy = PerUseCopy::RemadePerUse; }
     bool Released() const { return released.load(std::memory_order_acquire); }
     void MarkReleased() { released.store(true, std::memory_order_release); }
+    std::uint32_t HeapHolds() const { return heapHolds.load(std::memory_order_relaxed); }
+    void AddHeapHold() { heapHolds.fetch_add(1, std::memory_order_relaxed); }
+    void DropHeapHold() { heapHolds.fetch_sub(1, std::memory_order_relaxed); }
 
 private:
+    std::atomic<std::uint32_t> heapHolds{0};
     void release() noexcept;
     bool refreshBlockCopy();
     bool refreshSrgbExpand();
@@ -187,6 +192,7 @@ public:
     VkImageView View(std::uint32_t mip);
     VkImageView FirstLayerView(std::uint32_t mip);
     VkImageView StorageView(std::uint32_t mip, bool firstLayer, bool uintStorage = false);
+    VkImageView UintStorageViewOrDefault(std::uint32_t mip, bool firstLayer);
     VkImageView ElementView();
     VkImageView AtomicView(std::uint32_t mip, bool firstLayer);
     VkImageView Atomic64View(std::uint32_t mip, bool firstLayer);
@@ -299,7 +305,11 @@ public:
     // Whether the storage cache holds this image (set and cleared by the cache under its mutex, the
     // clear before the eviction's flush): what a lookup of its surface would return.
     bool Cached() const { return cached.load(std::memory_order_acquire); }
-    void SetCached(bool value) { cached.store(value, std::memory_order_release); }
+    void SetCached(bool value) {
+        if (value) everCached.store(true, std::memory_order_relaxed);
+        cached.store(value, std::memory_order_release);
+    }
+    bool LeftCache() const { return everCached.load(std::memory_order_relaxed) && !cached.load(std::memory_order_acquire); }
     // The pending image whose surface starts at `address` and covers at least `bytes` (a mip chain
     // contains a descriptor of its first mips), if any; the caller decides whether the geometry fits
     // (Texture::CanCopyFrom, ResidentPresentable).
@@ -375,6 +385,7 @@ public:
     DccKeyProof& KeyProof() const { return keyProof; }
     DccRangeProof& TargetKeyProof() const { return targetKeyProof; }
     DccKeys ProvedKeys() const;
+    bool UntrackedUnchanged() const;
     bool ServesKeysAt(std::uint64_t dccAddress) const;
     // Brings the image up to date with guest memory before another use; returns whether its content
     // was still current (nothing uploaded).
@@ -694,6 +705,7 @@ private:
     // no fill may put results into this one (guarded by the live-image registry lock).
     bool released = false;
     std::atomic<bool> cached{false};
+    std::atomic<bool> everCached{false};
     // The present a consumer last proved the image current at (NoteProved).
     mutable std::atomic<std::uint64_t> provedPresent{0};
     // Hook skips of this image since FlushPending last listed it (AccessKeptByCpu), the read site

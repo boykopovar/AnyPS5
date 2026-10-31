@@ -21,6 +21,7 @@ void Driver::appendEntryRegions(const DispatchVariant& variant, std::vector<Shad
 }
 
 std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::patchDataWords(const DispatchVariant& variant, const std::vector<std::uint32_t>& words) {
+    if (variant.ringFlat != nullptr) return variant.compiled;
     auto patched = std::make_shared<ShaderRecompiler::RecompileResult>(*variant.compiled);
     auto& descriptor = patched->bindings[variant.flatBinding].guestDescriptor;
     for (std::size_t k = 0; k < variant.dataPositions.size(); ++k) {
@@ -91,6 +92,10 @@ bool Driver::vouchedValidation() {
 
 EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue, const DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& imagesFlushed, std::uint64_t& runsSynced, std::optional<SampledReadScope>& sampling, std::vector<std::pair<std::uint32_t, std::uint32_t>>* live) {
     if (live != nullptr) live->clear();
+    if (variant.compiled->deviceImageTables) {
+        const auto localDevice = device.Load();
+        if (localDevice == nullptr || !localDevice->DeviceImagesServe(program)) return EntryOutcome::DeviceImageFallback;
+    }
     if (DrawPipeline::Active()) {
         auto& pipeline = DrawPipeline::Queue0();
         if (pipeline.Busy() && pipeline.OverlapsAny(variant.runs)) pipeline.Drain(DrawPipeline::DrainReason::Capture);

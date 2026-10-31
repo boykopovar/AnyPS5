@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <bit>
 #include <cstdio>
 #include <cstdlib>
