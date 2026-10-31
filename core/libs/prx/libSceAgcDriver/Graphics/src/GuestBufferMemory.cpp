@@ -6373,12 +6373,15 @@ void GuestBufferMemory::WriteBack() {
                     else storeChanged(begin, current, reference->second);
                     continue;
                 }
-                std::vector<std::byte> current(length);
+                std::vector<std::byte> read;
+                std::span<const std::byte> current;
                 if (const auto readback = std::find_if(heapReadbacks.begin(), heapReadbacks.end(), [&](const auto& entry) { return entry.first == begin; }); readback != heapReadbacks.end()) {
                     Require(readback->second->Bytes().size() == length, "heap mirror readback does not match its write-back");
-                    std::memcpy(current.data(), readback->second->Bytes().data(), length);
+                    current = readback->second->Bytes();
                 } else {
-                    mirror.resident->ReadDevice(begin, current);
+                    read.resize(length);
+                    mirror.resident->ReadDevice(begin, read);
+                    current = read;
                 }
                 mirror.resident->Store(begin, current);
                 if (mirror.sparse) storeSparse(mirror, begin, current, reference->second);
