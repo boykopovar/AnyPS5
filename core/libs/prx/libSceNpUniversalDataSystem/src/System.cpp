@@ -9,7 +9,7 @@
 extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemInitialize(const NpUniversalDataSystemInitParam* param) {
-    if (param == nullptr) {
+    if (param == nullptr || param->size < sizeof(NpUniversalDataSystemInitParam)) {
         APS5_INVALID_ARG_EX;
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
