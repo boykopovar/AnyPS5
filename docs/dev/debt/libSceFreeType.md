@@ -1,5 +1,6 @@
 # libSceFreeType technical debt
 
+- [FT_Outline_Render](../../../core/libs/prx/libSceFreeType/src/OutlineRender.cpp) (libSceFreeType) - console signature, `FT_Raster_Params` layout and errors are unverified; the adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftoutln.c) with an LP64 parameter block (96 bytes, clip box at 64). The outline is rendered from a native copy, a bitmap target is written in place, and `gray_spans` is called with the native spans through a trampoline using the guest's calling convention. `black_spans`, `bit_test` and `bit_set` throw because the native renderer does not use them. A guest coordinate outside the host `FT_Pos` range throws on Windows, where the native type is 32 bits
 ### Unknown function info
 - [autofitter glyph-to-script-map](../../../core/libs/prx/libSceFreeType/src/ModuleProperties.cpp) assumes the FreeType LP64 face/map carrier and translates the guest face to its host face. The returned 16-bit map borrows host face storage and is valid only while that face is alive; the setter returns the bundled FreeType error. This is an exception to the general unsupported-property note below. Console ABI, glyph classification and firmware behavior are unverified.
 
