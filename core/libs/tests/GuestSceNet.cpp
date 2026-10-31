@@ -269,8 +269,20 @@ static void CheckNetstat() {
     Require(Failed(sceNetShowIfconfigWithMemory(-1), 9));
     Require(Failed(sceNetShowPolicyWithMemory(-1), 9));
     Require(Failed(sceNetShowRoute6WithMemory(-1), 9));
+    std::array<char, 8> showBuffer{'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z'};
+    Require(Failed(sceNetShowIfconfigForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), -1), 9));
+    Require(Failed(sceNetShowRouteForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), -1), 9));
+    Require(Failed(sceNetShowNetstatForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), -1), 9));
+    Require(Failed(sceNetShowNetstatExForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), -1, 0), 9));
+    Require(Failed(sceNetShowRoute6ForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), -1), 9));
     const int pool = sceNetPoolCreate("netstat", 4096, 0);
     Require(pool > 0);
+    Require(sceNetShowIfconfigForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), pool) == 0);
+    Require(showBuffer == std::array<char, 8>{'z', 'z', 'z', 'z', 'z', 'z', 'z', 'z'});
+    Require(sceNetShowRouteForBuffer(nullptr, 0, pool) == 0);
+    Require(sceNetShowNetstatForBuffer(nullptr, 0, pool) == 0);
+    Require(sceNetShowNetstatExForBuffer(nullptr, 0, pool, 1) == 0);
+    Require(sceNetShowRoute6ForBuffer(nullptr, 0, pool) == 0);
     Require(sceNetShowRouteWithMemory(pool) == 0);
     Require(sceNetShowIfconfigWithMemory(pool) == 0);
     Require(sceNetShowPolicyWithMemory(pool) == 0);
@@ -299,6 +311,11 @@ static void CheckNetstat() {
     Require(Failed(sceNetShowIfconfigWithMemory(pool), 9));
     Require(Failed(sceNetShowPolicyWithMemory(pool), 9));
     Require(Failed(sceNetShowRoute6WithMemory(pool), 9));
+    Require(Failed(sceNetShowIfconfigForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), pool), 9));
+    Require(Failed(sceNetShowRouteForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), pool), 9));
+    Require(Failed(sceNetShowNetstatForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), pool), 9));
+    Require(Failed(sceNetShowNetstatExForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), pool, 0), 9));
+    Require(Failed(sceNetShowRoute6ForBuffer(showBuffer.data(), static_cast<int>(showBuffer.size()), pool), 9));
 }
 
 static void CheckPoolStats() {
