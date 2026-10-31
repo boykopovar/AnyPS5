@@ -125,6 +125,7 @@ int APS5_VABI __kernel_rem_pio2_nid_postfix(double* x, double* y, int e0, int nx
     jx = nx - 1;
     jv = (e0 - 3) / 24;
     if (jv < 0) jv = 0;
+    if (jv + jk >= static_cast<std::int32_t>(Ipio2.size())) throw std::out_of_range("__kernel_rem_pio2: e0 " + std::to_string(e0) + " needs 2/pi digits past the 690-chunk table");
     q0 = e0 - 24 * (jv + 1);
     j = jv - jx;
     m = jx + jk;

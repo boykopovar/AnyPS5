@@ -121,6 +121,9 @@ int main() {
     Require(Throws<std::invalid_argument>(one, std::numeric_limits<int>::min(), 1, 1), "exponent that overflows", row);
     Require(Throws<std::out_of_range>({0.0, 0.0, 0.0, 0.0, 0.0}, 100, 3, 1), "zero input never terminates upstream", row);
     Require(Throws<std::out_of_range>(one, 16600, 1, 3), "exponent past the 2/pi table", row);
+    Require(Throws<std::out_of_range>(one, std::numeric_limits<int>::max(), 1, 1), "largest exponent", row);
+    Require(Throws<std::out_of_range>(one, 16491, 1, 0), "first exponent past the table for single precision", row);
+    Require(!Throws<std::exception>({3.0, 0.0, 0.0, 0.0, 0.0}, 16470, 1, 0), "exponent near the end of the table for single precision", row);
     Require(Throws<std::domain_error>({std::numeric_limits<double>::infinity(), 0.0, 0.0, 0.0, 0.0}, 100, 1, 1), "infinite chunk", row);
     Require(Throws<std::domain_error>({std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0, 0.0, 0.0}, 100, 1, 1), "NaN chunk", row);
     double y[3];
