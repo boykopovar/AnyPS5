@@ -22,7 +22,7 @@ Inclui um [relinker](../../core/relinker) que converte o executável para o form
 
 [Histórico de progresso](https://boykopovar.github.io/AnyPS5/history.html)
 
-<sub>* Bibliotecas do sistema: porcentagem das funções conhecidas pelo projeto até agora (declaradas em [core/libs/prx](../../core/libs/prx)), não de todas as funções de sistema do PS5. O total cresce à medida que mais funções são declaradas.</sub>
+<sub>* Bibliotecas do sistema: verde é implementada, vermelho é um stub observado (declarada, e um uso medido mostra que ela é necessária) e cinza é um stub não observado (declarada, sem nenhum uso medido conhecido; isso não significa que nenhum título a use; nos shaders, cinza é uma instrução não implementada). A porcentagem principal é implementadas / (implementadas + stubs observados), então os cinzas não a reduzem; o valor declarado na página de progresso conta todas as funções declaradas. Só são contadas as funções declaradas em [core/libs/prx](../../core/libs/prx), não todas as funções de sistema do PS5. Mais detalhes em [docs/dev/PROGRESS.md](../dev/PROGRESS.md#observed-imports).</sub>
 
 Estados não suportados ou inesperados lançam uma exceção C++, normalmente `std::runtime_error`. Uma exceção que nada captura imprime seu `what()` no stderr e encerra o processo.
 

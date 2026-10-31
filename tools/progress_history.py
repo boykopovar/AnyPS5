@@ -15,8 +15,10 @@ from pathlib import Path
 import progress
 
 SERIES = (("libraries", "System library functions", "#2f81f7"), ("shaders", "GPU shader instructions", "#2ea043"))
-WIDTH, LEFT, RIGHT, TITLE, PANEL, GAP, AXIS = 900, 56, 190, 34, 150, 16, 32
+WIDTH, LEFT, RIGHT, TITLE, PANEL, GAP, AXIS = 960, 56, 250, 34, 150, 16, 32
 MAX_DOTS = 45
+COUNT_KEYS = ("done", "total", "percent")
+SPLIT_KEYS = ("unobserved", "declared_total")
 BACKGROUND, GRID, TEXT, MUTED = "#0d1117", "#30363d", "#c9d1d9", "#8b949e"
 
 
@@ -37,8 +39,20 @@ def daily_commits(ref):
     return sorted(seen.items())
 
 
-def measure(sha):
+def measured_paths(sha):
     paths = [progress.PRX.relative_to(progress.ROOT).as_posix(), progress.OPCODES.relative_to(progress.ROOT).as_posix()]
+    if git("ls-tree", "-d", sha, "--", progress.OBSERVED_RELATIVE.as_posix()).strip():
+        paths.append(progress.OBSERVED_RELATIVE.as_posix())
+    return paths
+
+
+class Everything(set):
+    def __rand__(self, other):
+        return set(other)
+
+
+def measure(sha):
+    paths = measured_paths(sha)
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         try:
@@ -49,16 +63,20 @@ def measure(sha):
                 archive.extractall(root)
         except subprocess.CalledProcessError:
             return None
-        saved = progress.PRX, progress.OPCODES
+        saved = progress.PRX, progress.OPCODES, progress.OBSERVED, progress.INVENTORY, progress.observed_nids
         progress.PRX, progress.OPCODES = root / paths[0], root / paths[1]
+        progress.OBSERVED = root / progress.OBSERVED_RELATIVE
+        progress.INVENTORY = root / progress.INVENTORY_RELATIVE
+        if not progress.OBSERVED.is_dir():
+            progress.observed_nids = lambda library: Everything()
         try:
             libraries, shaders = progress.collect_libraries(), progress.collect_shaders()
         except (OSError, AttributeError):
             return None
         finally:
-            progress.PRX, progress.OPCODES = saved
-    return {name: {key: data[key] for key in ("done", "total", "percent")}
-            for name, data in (("libraries", libraries), ("shaders", shaders))}
+            progress.PRX, progress.OPCODES, progress.OBSERVED, progress.INVENTORY, progress.observed_nids = saved
+    return {"libraries": {key: libraries[key] for key in COUNT_KEYS + SPLIT_KEYS},
+            "shaders": {key: shaders[key] for key in COUNT_KEYS}}
 
 
 def cache_signature():
@@ -68,7 +86,8 @@ def cache_signature():
         digest.update(len(content).to_bytes(8, "little"))
         digest.update(content)
     digest.update(repr((progress.PRX.relative_to(progress.ROOT).as_posix(),
-                        progress.OPCODES.relative_to(progress.ROOT).as_posix())).encode("utf-8"))
+                        progress.OPCODES.relative_to(progress.ROOT).as_posix(),
+                        progress.OBSERVED_RELATIVE.as_posix())).encode("utf-8"))
     return digest.hexdigest()
 
 
@@ -91,8 +110,11 @@ def load_cache(path, signature):
         if not isinstance(counts, dict) or counts.keys() != {"libraries", "shaders"}:
             raise ValueError(f"{path}: invalid cached counts for {sha}")
         for metric in counts.values():
-            if not isinstance(metric, dict) or metric.keys() != {"done", "total", "percent"}:
+            if not isinstance(metric, dict) or metric.keys() not in ({*COUNT_KEYS}, {*COUNT_KEYS, *SPLIT_KEYS}):
                 raise ValueError(f"{path}: invalid cached metric for {sha}")
+            if SPLIT_KEYS[0] in metric and (type(metric["unobserved"]) is not int or metric["unobserved"] < 0 or
+                                            metric["declared_total"] != metric["total"] + metric["unobserved"]):
+                raise ValueError(f"{path}: inconsistent cached split for {sha}")
             done, total, percent = (metric[key] for key in ("done", "total", "percent"))
             if type(done) is not int or type(total) is not int or not 0 <= done <= total or type(percent) not in (int, float) or percent != (round(100 * done / total, 2) if total else 0):
                 raise ValueError(f"{path}: inconsistent cached metric for {sha}")
@@ -165,14 +187,16 @@ def chart(points):
     labels = [(px(d), labelled(date.fromordinal(d), span)) for d in range(first, days[-1] + 1)]
     height = len(SERIES) * (TITLE + PANEL + GAP) - GAP + AXIS
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {height}" role="img" '
-           'aria-label="Implemented and declared system library functions and GPU shader instructions over time" '
+           'aria-label="Implemented, observed and unobserved system library functions and GPU shader instructions over time" '
            f'font-family="sans-serif" font-size="12" fill="{TEXT}">',
            '<style>.hit{fill:#fff;fill-opacity:0}.hit:hover{fill-opacity:0.06}</style>',
            f'<rect width="{WIDTH}" height="{height}" rx="6" fill="{BACKGROUND}"/>']
+    line = lambda coords: " ".join(f"{x:.1f},{y:.1f}" for x, y in coords)
     for index, (name, title, color) in enumerate(SERIES):
         top = index * (TITLE + PANEL + GAP) + TITLE
         base = top + PANEL
-        step, peak = scale(max(p[name][key] for p in points for key in ("done", "total")))
+        split = name == "libraries"
+        step, peak = scale(max(p[name].get(key, 0) for p in points for key in ("done", "total", "unobserved")))
         py = lambda v: base - v / peak * PANEL
         out.append(f'<text x="{LEFT}" y="{top - 12}" font-size="13" font-weight="bold">{title}</text>')
         for tick in range(0, peak + 1, step):
@@ -183,21 +207,32 @@ def chart(points):
                 out.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{top}" y2="{base}" stroke="{GRID}" stroke-width="0.5"/>')
         done = [(x, py(p[name]["done"])) for x, p in zip(xs, points)]
         total = [(x, py(p[name]["total"])) for x, p in zip(xs, points)]
-        line = lambda coords: " ".join(f"{x:.1f},{y:.1f}" for x, y in coords)
         out.append(f'<polygon points="{xs[0]:.1f},{base} {line(done)} {xs[-1]:.1f},{base}" fill="{color}" opacity="0.15"/>')
         out.append(f'<polyline points="{line(total)}" fill="none" stroke="{MUTED}" stroke-width="2" stroke-dasharray="6 4"/>')
         out.append(f'<polyline points="{line(done)}" fill="none" stroke="{color}" stroke-width="2"/>')
+        if split:
+            observed = [(x, py(p[name]["total"] - p[name]["done"])) for x, p in zip(xs, points)]
+            unobserved = [(x, py(p[name].get("unobserved", 0))) for x, p in zip(xs, points)]
+            out.append(f'<polyline points="{line(observed)}" fill="none" stroke="{progress.TODO_COLOR}" stroke-width="2"/>')
+            out.append(f'<polyline points="{line(unobserved)}" fill="none" stroke="{progress.UNOBSERVED_COLOR}" stroke-width="2"/>')
         if len(points) <= MAX_DOTS:
             out += [f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{color}"/>' for x, y in done]
         last = points[-1][name]
-        declared_y, implemented_y = spread([total[-1][1], done[-1][1]])
-        out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{declared_y + 4:.1f}" fill="{MUTED}">Declared {last["total"]:,}</text>'
-                   f'<text x="{WIDTH - RIGHT + 8}" y="{implemented_y + 4:.1f}" fill="{TEXT}" font-weight="bold">'
+        placed = spread([total[-1][1], done[-1][1]] + ([observed[-1][1], unobserved[-1][1]] if split else []))
+        out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{placed[0] + 4:.1f}" fill="{MUTED}">Counted {last["total"]:,}</text>'
+                   f'<text x="{WIDTH - RIGHT + 8}" y="{placed[1] + 4:.1f}" fill="{TEXT}" font-weight="bold">'
                    f'<tspan fill="{color}">\u25cf</tspan> Implemented {last["done"]:,} ({last["percent"]:.0f}%)</text>')
+        if split:
+            out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{placed[2] + 4:.1f}" fill="{TEXT}">'
+                       f'<tspan fill="{progress.TODO_COLOR}">\u25cf</tspan> Observed stubs {last["total"] - last["done"]:,}</text>'
+                       f'<text x="{WIDTH - RIGHT + 8}" y="{placed[3] + 4:.1f}" fill="{TEXT}">'
+                       f'<tspan fill="{progress.UNOBSERVED_COLOR}">\u25cf</tspan> Unobserved stubs {last.get("unobserved", 0):,}</text>')
         for left, right, p in zip(edges, edges[1:], points):
             out.append(f'<rect class="hit" x="{left:.1f}" y="{top}" width="{right - left:.1f}" height="{PANEL}">'
-                       f'<title>{p["date"]} · {title}\nImplemented {p[name]["done"]:,} of {p[name]["total"]:,} declared '
-                       f'({p[name]["percent"]}%)</title></rect>')
+                       f'<title>{p["date"]} · {title}\nImplemented {p[name]["done"]:,} of {p[name]["total"]:,} counted '
+                       f'({p[name]["percent"]}%)'
+                       + (f'\nObserved stubs {p[name]["total"] - p[name]["done"]:,}, unobserved stubs {p[name].get("unobserved", 0):,}' if split else "")
+                       + (f'\nCommit {p["commit"][:10]}' if p.get("commit") else "") + '</title></rect>')
     axis = height - AXIS + 18
     out += [f'<text class="x" x="{x:.1f}" y="{axis}" text-anchor="middle" font-size="11" fill="{MUTED}">{label}</text>'
             for x, label in labels if label]
@@ -205,10 +240,25 @@ def chart(points):
     return "\n".join(out)
 
 
+def declared(point):
+    return point["libraries"].get("declared_total", point["libraries"]["total"])
+
+
+def commit_cell(point):
+    sha = point.get("commit")
+    return f'<a href="{progress.commit_url(sha)}">{sha[:10]}</a>' if sha else ""
+
+
+def row(point, previous):
+    added = f"{declared(point) - declared(previous):+}" if previous else ""
+    return (f'<tr><td>{point["date"]}</td><td>{commit_cell(point)}</td>'
+            f'<td>{point["libraries"]["done"]}/{point["libraries"]["total"]}</td><td>{point["libraries"]["percent"]}%</td>'
+            f'<td>{point["libraries"].get("unobserved", 0)}</td><td>{declared(point)}</td><td>{added}</td>'
+            f'<td>{point["shaders"]["done"]}/{point["shaders"]["total"]}</td><td>{point["shaders"]["percent"]}%</td></tr>')
+
+
 def page(points):
-    rows = "\n".join(f'<tr><td>{p["date"]}</td>' + "".join(
-        f'<td>{p[name]["done"]}/{p[name]["total"]}</td><td>{p[name]["percent"]}%</td>' for name, _, _ in SERIES) + "</tr>"
-        for p in reversed(points))
+    rows = "\n".join(row(p, q) for p, q in reversed(list(zip(points, [None] + points))))
     return "\n".join([
         '<!DOCTYPE html>',
         '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -218,14 +268,24 @@ def page(points):
         '</head><body>',
         '<h1>Progress history</h1>',
         chart(points),
-        f'<p>Each panel has its own scale: the solid line is what is implemented, the dashed line what is declared. Library '
-        'functions are declared in the <code>prx</code> sources; the shader total is the AMD RDNA 1 + RDNA 2 instruction list '
+        progress.legend_block(),
+        f'<p>Each panel has its own scale: the solid line is what is implemented, the dashed line what is counted: implemented '
+        'functions plus observed stubs, the figure the percentage uses. Unobserved stubs are not counted. Library functions are '
+        'declared in the <code>prx</code> sources; the shader total is the AMD RDNA 1 + RDNA 2 instruction list '
         f'(<a href="{progress.SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
         'One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point is measured '
         f'with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> rules and instruction list, '
-        'so the series is comparable across days. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
+        'so the series is comparable across days. Commits from before the '
+        f'<a href="{progress.SOURCE}/docs/dev/PROGRESS.md#observed-imports">observed manifests</a> have none, so every stub in them counts as observed, as it did then, and their '
+        'counted figure is the one it had then. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
         '<a href="progress.html">Back to the current progress</a>.</p>',
-        '<table><tr><th>Date</th>' + "".join(f'<th>{escape(label)}</th><th>%</th>' for _, label, _ in SERIES) + '</tr>',
+        '<p>The table lists, for each day, the commit measured, the library functions counted and the percentage, the unobserved '
+        'stubs, every function declared (implemented, observed and unobserved) and how many were declared since the previous day, '
+        'so a jump in the declared column points at the commit that added the stubs. Commits from before the observed manifests '
+        'count every stub as observed, as they did at the time, so their percentage is the old figure, not 100%.</p>',
+        '<table><tr><th>Date</th><th>Commit</th>' + "".join(
+            f'<th>{escape(label)}</th><th>%</th>' + ('<th>Unobserved stubs</th><th>Declared</th><th>Declared since previous day</th>' if name == "libraries" else "")
+            for name, label, _ in SERIES) + '</tr>',
         rows,
         '</table>',
         '</body></html>',

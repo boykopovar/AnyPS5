@@ -8,11 +8,15 @@ on:
       - CMakeLists.txt
       - core/relinker/**
       - demo/web/**
+      - docs/dev/observed/**
+      - docs/dev/inventory/**
       - tools/build_web.py
       - tools/package_release.py
       - tools/nid_names.py
+      - tools/observed_imports.py
       - tools/progress.py
       - tools/progress_history.py
+      - tools/stub_origins.py
       - tools/rdna_isa.txt
       - tools/test_web.py
   workflow_dispatch:
@@ -47,7 +51,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 tools/build_web.py --build build-wasm --release
-      - run: python3 tools/progress.py build-wasm/web
+      - run: python3 tools/progress.py --origins build-wasm/web
       - run: python3 tools/progress_history.py build-wasm/web
       - uses: actions/upload-pages-artifact@v5
         with:

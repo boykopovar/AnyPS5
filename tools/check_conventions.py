@@ -15,6 +15,7 @@ from urllib.parse import unquote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nid_names import CPP_TOKEN, NID_POSTFIX, compute_nid, source_aliases
 import env_reference
+import progress
 
 RULES = {
     "comment": ("error", "docs/dev/CONVENTIONS.md", "Comments are only for technical debt, so they need a change to docs/dev/TechnicalDebt.md or docs/dev/debt/ in the same pull request; #endif and namespace ends are always allowed"),
@@ -34,6 +35,9 @@ RULES = {
     "pr-title": ("error", "docs/dev/CONVENTIONS.md", "Pull request title is not Conventional Commits"),
     "pr-template": ("error", ".github/pull_request_template.md", "Fill in the pull request template"),
     "env-reference": ("error", "docs/dev/ENVIRONMENT.md", "Every APS5_* or ANYPS5_* name a pull request adds to the code has a row in docs/dev/ENVIRONMENT.md, a row whose name the pull request stops reading is removed, and a row the pull request removes is no longer read"),
+    "observed-manifest": ("error", "docs/dev/PROGRESS.md#observed-imports", "A file in docs/dev/observed is <library>.txt for a library of core/libs/prx, with one NID per line, sorted and without repeats; the comment after a NID is its provenance tag (audit: <tool> <date>, loader or manual: <reason>)"),
+    "inventory-manifest": ("error", "docs/dev/PROGRESS.md#observed-imports", "A file in docs/dev/inventory is <library>.txt for a library of core/libs/prx, with one '<NID> <source>' line per NID, sorted and without repeats"),
+    "observed-untagged": ("warning", "docs/dev/PROGRESS.md#observed-imports", "A NID line added to docs/dev/observed has no provenance tag: end it with # audit: <tool> <date>, # loader or # manual: <reason>"),
     "debt-length": ("warning", "CONTRIBUTING.md#documentation", "Technical debt entry over 1000 characters: state the gap first (what differs from the console, what is unverified, what throws) and keep only the behaviour it needs"),
 }
 
@@ -48,6 +52,8 @@ DEBT = "docs/dev/TechnicalDebt.md"
 DEBT_DIR = "docs/dev/debt/"
 DEBT_TARGET = re.compile(r"\]\((?:\.\./)+(core/[^)#\s]+)")
 DEBT_ENTRY_LIMIT = 1000
+OBSERVED_DIR = progress.OBSERVED_RELATIVE.as_posix() + "/"
+INVENTORY_DIR = progress.INVENTORY_RELATIVE.as_posix() + "/"
 
 CONVENTIONAL = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?!?: \S")
 STRINGS = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
@@ -338,6 +344,37 @@ class Check:
             for number, text in lines:
                 if long_debt_entry(text):
                     self.report("debt-length", path, number, f"{len(text)} characters")
+
+    def observed_manifests(self):
+        for path, status in sorted(self.status.items()):
+            if status == "D" or not path.startswith(OBSERVED_DIR):
+                continue
+            name = PurePosixPath(path).relative_to(OBSERVED_DIR.rstrip("/"))
+            if len(name.parts) != 1 or name.suffix != ".txt":
+                self.report("observed-manifest", path, 0, "expected docs/dev/observed/<library>.txt")
+                continue
+            if f"core/libs/prx/{name.stem}" not in self.dirs:
+                self.report("observed-manifest", path, 0, f"{name.stem} is not a library of core/libs/prx")
+            text = self.show(path)
+            for number, message in progress.manifest_problems(text) + progress.manifest_tag_problems(text):
+                self.report("observed-manifest", path, number, message)
+            added = {number for number, _ in self.added.get(path, [])}
+            for number, entry in progress.manifest_untagged(text):
+                if number in added:
+                    self.report("observed-untagged", path, number, entry)
+
+    def inventory_manifests(self):
+        for path, status in sorted(self.status.items()):
+            if status == "D" or not path.startswith(INVENTORY_DIR):
+                continue
+            name = PurePosixPath(path).relative_to(INVENTORY_DIR.rstrip("/"))
+            if len(name.parts) != 1 or name.suffix != ".txt":
+                self.report("inventory-manifest", path, 0, "expected docs/dev/inventory/<library>.txt")
+                continue
+            if f"core/libs/prx/{name.stem}" not in self.dirs:
+                self.report("inventory-manifest", path, 0, f"{name.stem} is not a library of core/libs/prx")
+            for number, message in progress.inventory_problems(self.show(path)):
+                self.report("inventory-manifest", path, number, message)
 
     def workflows(self):
         for path in sorted(self.status):
@@ -833,6 +870,8 @@ if __name__ == "__main__":
     check.repository()
     check.docs()
     check.debt_entries()
+    check.observed_manifests()
+    check.inventory_manifests()
     check.workflows()
     check.commits()
     check.env_reference()

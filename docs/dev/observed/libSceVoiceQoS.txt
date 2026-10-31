@@ -1,0 +1,2 @@
+# NIDs of libSceVoiceQoS that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+eZu2RP0Ma3w  # manual: reported in PR #7727

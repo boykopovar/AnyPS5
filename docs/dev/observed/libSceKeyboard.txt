@@ -1,0 +1,2 @@
+# NIDs of libSceKeyboard that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+K1A7IJp5xYc  # manual: reported in comment #6787

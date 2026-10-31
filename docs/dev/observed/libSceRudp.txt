@@ -1,0 +1,3 @@
+# NIDs of libSceRudp that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+Qignjmfgha0  # manual: found in commit e2bfacefa3
+mCQIhSmCP6o  # manual: reported in PR #7087

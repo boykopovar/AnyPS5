@@ -1,0 +1,17 @@
+# NIDs of libkernel that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+0Ma-LQjv6So  # manual: reported in PR #3323
+0NJDcQ2B8vE  # manual: reported in PR #2827
+188x57JYp0g  # manual: reported in PR #9005
+2I2RV6LyNng  # manual: reported in PR #5556
+3YnXspQNyw8  # manual: reported in PR #7229
+G-MYv5erXaU  # manual: reported in PR #3056
+Jb2uGFMr688  # manual: reported in PR #1922
+KaK52lYTBIs  # manual: reported in PR #3544
+Pdgml4rbxYk  # manual: reported in PR #2516
+RW-GEfpnsqg  # manual: reported in PR #4908
+RpQJJVKTiFM  # manual: reported in PR #279
+Wl2o5hOVZdw  # manual: reported in PR #8114
+b7uXQmnfB2s  # manual: reported in PR #6028
+cG3t15OK4Ow  # manual: reported in PR #3764
+dTnYqqLIQ6c  # manual: reported in PR #2123
+n371J5cP+uo  # manual: reported in PR #6915

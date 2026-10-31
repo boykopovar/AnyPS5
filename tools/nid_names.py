@@ -34,6 +34,12 @@ def compute_nid(symbol):
     return b64encode(digest[:8][::-1], altchars=b"+-").decode("ascii").rstrip("=")
 
 
+def nids_of(name, aliases):
+    if name in aliases:
+        return aliases[name]
+    return {compute_nid(strip_nid_postfix(name))}
+
+
 def strip_nid_postfix(name):
     return re.sub(r"_nid_disambig[0-9]+$", "", name.removesuffix(NID_POSTFIX))
 

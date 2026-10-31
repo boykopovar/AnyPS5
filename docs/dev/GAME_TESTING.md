@@ -18,6 +18,7 @@ For user options see [USAGE](../user/USAGE.md); for internals see [ARCHITECTURE]
   `tools/audit_dump.py <app0> --relinker <relinker> --libs build/core/libs/libs` (`--windows` on Windows) does the
   unwrapping, the conversion with `--registry` and the audit in one step, from every module folder above and `.prx`
   files beside `eboot.bin`, into a temporary directory (or `--work <dir>`), reading the dump only.
+  Add `--json <file>` to either and feed it to `tools/observed_imports.py add <file>` to record the NIDs the title imports in `docs/dev/observed` ([how the progress figure uses them](PROGRESS.md#observed-imports)). The files hold NIDs only: no title name, no dump path. Do not implement or declare exports without evidence from a measured use that they are needed.
 - Run one title at a time. Titles share the GPU and the controller file. Some titles start a second process (Peace Walker's `mgspw.mgspw.elf`) that can outlive a time cap on the first: check that every process of the previous run is gone.
 
 ## Launch

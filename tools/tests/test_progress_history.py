@@ -2,6 +2,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -162,6 +163,59 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertEqual(cache.read_bytes(), b"previous cache")
             self.assertEqual(list(cache.parent.iterdir()), [cache])
 
+    def test_cache_signature_names_the_manifest_directory(self):
+        signature = progress_history.cache_signature()
+        with patch.object(progress, "OBSERVED_RELATIVE", Path("docs/other")):
+            self.assertNotEqual(progress_history.cache_signature(), signature)
+
+    def test_manifests_are_measured_only_where_a_commit_has_them(self):
+        stub = "static void Stub() { NotImplemented_nid_no_patch(__func__); }\n"
+        body = "int APS5_VABI Pending() { Stub(); return 0; }\n" + stub
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", body)
+            observed = root / "docs/dev/observed"
+            observed.mkdir(parents=True)
+            (observed / "libSceExample.txt").write_text(progress.tokenizer.compute_nid("Pending") + "\n", encoding="utf-8")
+            commit(root, "2026-01-02", "second", body)
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES, OBSERVED=observed):
+                points = progress_history.collect("HEAD")
+                self.assertEqual(progress_history.measured_paths("HEAD")[-1], "docs/dev/observed")
+                self.assertEqual(progress_history.measured_paths("HEAD~1")[-1], "core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp")
+        self.assertEqual([(p["libraries"]["done"], p["libraries"]["total"]) for p in points], [(0, 1), (0, 1)])
+
+    def test_points_keep_the_observed_and_unobserved_split(self):
+        stub = "static void Stub() { NotImplemented_nid_no_patch(__func__); }\n"
+        body = "int APS5_VABI Pending() { Stub(); return 0; }\n" + stub
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "-C", directory, "init", "-q"], check=True)
+            commit(root, "2026-01-01", "first", body)
+            observed = root / "docs/dev/observed"
+            observed.mkdir(parents=True)
+            (observed / "libSceExample.txt").write_text(progress.tokenizer.compute_nid("Pending") + "\n", encoding="utf-8")
+            commit(root, "2026-01-02", "second", body)
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES, OBSERVED=observed):
+                points = progress_history.collect("HEAD")
+        self.assertEqual([(p["libraries"]["unobserved"], p["libraries"]["declared_total"]) for p in points], [(0, 1), (0, 1)])
+        self.assertEqual(sorted(points[0]["shaders"]), ["done", "percent", "total"])
+        self.assertEqual(len(points[1]["commit"]), 40)
+
+    def test_cache_accepts_old_records_and_checks_the_split(self):
+        old = {"libraries": {"done": 1, "total": 2, "percent": 50.0}, "shaders": {"done": 1, "total": 1, "percent": 100.0}}
+        new = {"libraries": {"done": 1, "total": 2, "percent": 50.0, "unobserved": 3, "declared_total": 5}, "shaders": old["shaders"]}
+        broken = {"libraries": {**new["libraries"], "declared_total": 4}, "shaders": old["shaders"]}
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "history.json"
+            for record, valid in ((old, True), (new, True), (broken, False)):
+                cache.write_text(json.dumps({"schema_version": 1, "rules": "r", "commits": {"a" * 40: record}}), encoding="utf-8")
+                if valid:
+                    self.assertEqual(progress_history.load_cache(cache, "r"), {"a" * 40: record})
+                else:
+                    with self.assertRaisesRegex(ValueError, "inconsistent cached split"):
+                        progress_history.load_cache(cache, "r")
+
     def test_one_point_per_day_at_the_last_commit(self):
         stub = "static void Stub() { NotImplemented_nid_no_patch(__func__); }\n"
         with tempfile.TemporaryDirectory() as directory:
@@ -218,9 +272,65 @@ class ProgressHistoryTests(unittest.TestCase):
         point = {"date": "2026-01-01", "libraries": {"done": 3292, "total": 3706, "percent": 88.83},
                  "shaders": {"done": 1166, "total": 1166, "percent": 100.0}}
         svg = progress_history.chart([point, {**point, "date": "2026-01-02"}])
-        self.assertIn("Declared 3,706", svg)
-        self.assertIn("Declared 1,166", svg)
+        self.assertIn("Counted 3,706", svg)
+        self.assertIn("Counted 1,166", svg)
         self.assertIn("Implemented 1,166 (100%)", svg)
+
+    def test_page_text_says_early_points_use_the_declared_figure(self):
+        point = {"date": "2026-01-01", "libraries": {"done": 1, "total": 2, "percent": 50.0},
+                 "shaders": {"done": 1, "total": 1, "percent": 100.0}}
+        page = progress_history.page([point])
+        self.assertIn("every stub in them counts as observed, as it did then", page)
+        self.assertIn("Unobserved stubs are not counted", page)
+        self.assertIn("How to read the graphs", page)
+        self.assertIn("Grey: unobserved stub", page)
+        self.assertIn("<b>Declared</b>", page)
+        self.assertIn("/docs/dev/PROGRESS.md#observed-imports", page)
+
+    def test_libraries_panel_draws_observed_and_unobserved_series_with_labels(self):
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        points = [{"date": "2026-01-01", "commit": sha,
+                   "libraries": {"done": 2, "total": 4, "percent": 50.0, "unobserved": 6, "declared_total": 10},
+                   "shaders": {"done": 1, "total": 1, "percent": 100.0}},
+                  {"date": "2026-01-02", "commit": sha,
+                   "libraries": {"done": 3, "total": 5, "percent": 60.0, "unobserved": 7, "declared_total": 12},
+                   "shaders": {"done": 1, "total": 1, "percent": 100.0}}]
+        svg = progress_history.chart(points)
+        ET.fromstring(svg)
+        self.assertIn(f'stroke="{progress.UNOBSERVED_COLOR}"', svg)
+        self.assertIn(f'stroke="{progress.TODO_COLOR}"', svg)
+        self.assertIn("Observed stubs 2", svg)
+        self.assertIn("Unobserved stubs 7", svg)
+        self.assertIn("Observed stubs 2, unobserved stubs 7\nCommit 0123456789", svg)
+        self.assertEqual(svg.count("\u25cf</tspan> Unobserved stubs 7"), 1)
+        self.assertNotIn("Unobserved library stubs", svg)
+        self.assertEqual(svg.count(">System library functions</text>"), 1)
+        self.assertEqual(svg.count("<title>2026-01-02"), 2)
+        line = re.search(rf'<polyline points="([^"]+)" fill="none" stroke="{progress.UNOBSERVED_COLOR}"', svg).group(1)
+        first_y, second_y = (float(point.split(",")[1]) for point in line.split())
+        self.assertGreater(first_y, second_y)
+        self.assertLess(second_y, 34 + 150 - 1)
+
+    def test_old_points_without_the_split_still_chart_with_no_unobserved_stubs(self):
+        points = [{"date": "2026-01-01", "libraries": {"done": 1, "total": 2, "percent": 50.0}, "shaders": {"done": 1, "total": 1, "percent": 100.0}}]
+        svg = progress_history.chart(points)
+        ET.fromstring(svg)
+        self.assertIn("Unobserved stubs 0", svg)
+        self.assertNotIn("Commit", svg)
+
+    def test_table_links_each_commit_and_shows_the_stubs_declared_since_the_previous_day(self):
+        first, second = "a" * 40, "b" * 40
+        shaders = {"done": 1, "total": 1, "percent": 100.0}
+        points = [{"date": "2026-01-01", "commit": first, "libraries": {"done": 2, "total": 4, "percent": 50.0}, "shaders": shaders},
+                  {"date": "2026-01-02", "commit": second,
+                   "libraries": {"done": 2, "total": 4, "percent": 50.0, "unobserved": 8, "declared_total": 12}, "shaders": shaders}]
+        html = progress_history.page(points)
+        self.assertIn(f'<a href="{progress.commit_url(second)}">{second[:10]}</a></td><td>2/4</td><td>50.0%</td><td>8</td><td>12</td><td>+8</td>', html)
+        self.assertIn(f'{first[:10]}</a></td><td>2/4</td><td>50.0%</td><td>0</td><td>4</td><td></td>', html)
+        self.assertIn("<th>Declared since previous day</th>", html)
+        self.assertIn("points at the commit that added the stubs", html)
+        table = html[html.index("<table>"):]
+        self.assertLess(table.index(second[:10]), table.index(first[:10]))
 
     def test_axis_labels_fall_on_calendar_days_without_commits(self):
         start = date(2026, 8, 3).toordinal()
@@ -337,7 +447,7 @@ class ProgressHistoryTests(unittest.TestCase):
             ET.fromstring(svg)
             self.assertNotIn("nan", svg.lower())
             self.assertNotIn("infinity", svg.lower())
-            self.assertIn(f"Declared {value:,}", svg)
+            self.assertIn(f"Counted {value:,}", svg)
 
     def test_cache_recursion_is_reported_as_a_path_specific_value_error(self):
         with tempfile.TemporaryDirectory() as directory:
