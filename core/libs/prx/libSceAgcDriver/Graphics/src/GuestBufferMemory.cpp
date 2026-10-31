@@ -5585,6 +5585,12 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
     }
 }
 
+void GuestBufferMemory::UploadRanges(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const {
+    for (const auto& region : regions) out.emplace_back(region.begin, region.end);
+    if (space == nullptr) return;
+    for (const auto& region : space->base) out.emplace_back(region.begin, region.end);
+}
+
 void GuestBufferMemory::completeSpaceWrites() const {
     auto* recorder = Recorder::Active();
     if (recorder == nullptr || Recorder::InCompletion() || !AnyPendingCpuWrites(context)) return;

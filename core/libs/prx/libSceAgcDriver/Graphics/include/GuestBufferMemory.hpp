@@ -395,6 +395,7 @@ public:
         std::uint64_t committedEnd;
     };
     std::vector<CutRegion> CutRegions() const;
+    void UploadRanges(std::vector<std::pair<std::uint64_t, std::uint64_t>>& out) const;
     // Every region the recorded work reads in place through a host import, as [begin, end): the
     // regions bound in place (`direct`), an address-based build's leased heaps included. A region
     // the GPU copies out of an import (gpuCopy) notes its read itself when the copy is recorded.

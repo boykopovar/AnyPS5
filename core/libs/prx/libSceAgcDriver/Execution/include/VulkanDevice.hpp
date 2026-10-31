@@ -288,7 +288,7 @@ public:
     };
     static PresentStatistics PresentCounts();
     struct PresyncStatistics {
-        std::uint64_t checked, presyncs, keyChecks, keyWaits;
+        std::uint64_t checked, presyncs, keyChecks, keyWaits, cpuWriteChecks, cpuWriteWaits;
     };
     static PresyncStatistics PresyncCounts();
     // Stage A of a dispatch's resource build, run WITHOUT GuestMemory::GpuMutex before Dispatch or

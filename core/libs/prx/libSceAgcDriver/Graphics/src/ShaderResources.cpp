@@ -3531,7 +3531,7 @@ bool AnyPendingCpuWrites(const Context& context) {
     return (context.copiedWriters != nullptr && !context.copiedWriters->empty()) || !DrawCopiedWriters()->empty() || Recorder::PendingCompletionLabels() != 0;
 }
 
-bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes) {
+bool CpuWriteSyncNeeded(const Context& context, std::uint64_t address, std::size_t bytes) {
     if (bytes == 0 || Recorder::InCompletion()) return false;
     auto* recorder = Recorder::Active();
     if (recorder == nullptr) return false;
@@ -3542,12 +3542,14 @@ bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
     const auto overlaps = [&](const auto& writers) {
         return std::any_of(writers.begin(), writers.end(), [&](const auto& writer) { return writer->CopiedWritesOverlap(address, bytes); });
     };
-    if ((context.copiedWriters != nullptr && overlaps(*context.copiedWriters)) || overlaps(*drawWriters) || (labels && recorder->PendingLabelIn(address, bytes))) {
-        Recorder::CountSync(4);
-        recorder->SyncThrough(address, bytes);
-        return true;
-    }
-    return false;
+    return (context.copiedWriters != nullptr && overlaps(*context.copiedWriters)) || overlaps(*drawWriters) || (labels && recorder->PendingLabelIn(address, bytes));
+}
+
+bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (!CpuWriteSyncNeeded(context, address, bytes)) return false;
+    Recorder::CountSync(4);
+    Recorder::Active()->SyncThrough(address, bytes);
+    return true;
 }
 
 const ShaderRecompiler::DescriptorBinding* ShaderResources::tableImages(std::span<const CompiledShader> shaders, ShaderRecompiler::ShaderStage stage) {
@@ -5511,6 +5513,16 @@ void ShaderResources::finishImageTables() {
 
 std::vector<PresyncSurface> ShaderResources::PresyncSurfaces() const {
     std::vector<PresyncSurface> surfaces;
+    static const bool cpuWrites = std::getenv("APS5_PRESYNC_CPU_WRITES") != nullptr;
+    if (cpuWrites) {
+        if (completed) {
+            for (const auto& region : directRegions) surfaces.push_back({region.begin, region.end - region.begin, false, true});
+        } else {
+            std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+            guestMemory.UploadRanges(ranges);
+            for (const auto& [begin, end] : ranges) surfaces.push_back({begin, end - begin, false, true});
+        }
+    }
     // A surface's lookup reads guest memory on the CPU unless it is served GPU-direct from a host
     // import: a storage image of imported memory uploads and refreshes from the import, and a
     // sampled texture of one views that image (SampledFromStorageEligible), so neither waits for

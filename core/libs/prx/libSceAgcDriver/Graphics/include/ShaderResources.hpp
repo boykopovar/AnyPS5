@@ -55,6 +55,7 @@ bool AnyPendingCpuWrites(const Context& context);
 bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes);
 bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words);
 bool ShaderStoresThroughAddresses(const ShaderRecompiler::SharedSpirv& spirv);
+bool CpuWriteSyncNeeded(const Context& context, std::uint64_t address, std::size_t bytes);
 void LastRecordIndices(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices);
 
 // The cached storage image of a surface (render targets use it as their resident image); brought up
@@ -162,6 +163,7 @@ struct PresyncSurface {
     std::uint64_t address;
     std::uint64_t bytes;
     bool dccKeys;
+    bool cpuWrites = false;
 };
 
 class ShaderResources {
