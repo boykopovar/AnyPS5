@@ -30,6 +30,7 @@ inline constexpr std::uint32_t RasterPrimitive = 8233u;
 inline constexpr std::uint32_t LayerExported = 8234u;
 inline constexpr std::uint32_t StencilReferenceOffset = 8235u;
 inline constexpr std::uint32_t ReversedBlend = 8236u;
+inline constexpr std::uint32_t StorePages = 8237u;
 inline constexpr std::uint32_t DepthRemapBase = 8240u;
 inline constexpr std::uint32_t DepthRemapWords = 1u;
 inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
@@ -50,6 +51,10 @@ inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint3
 
 inline constexpr bool IsWorkgroupOffset(std::uint32_t id) {
     return id >= WorkgroupOffsetBase && id < WorkgroupOffsetBase + WorkgroupOffsetWords;
+}
+
+inline constexpr bool IsDispatchSupplied(std::uint32_t id) {
+    return IsWorkgroupOffset(id) || id == StorePages;
 }
 
 }

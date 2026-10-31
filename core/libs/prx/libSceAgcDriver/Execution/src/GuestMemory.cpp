@@ -2854,11 +2854,26 @@ std::uint32_t ChangedByteStoreLimit() {
     return limit;
 }
 
+static void appendStored(std::vector<std::pair<std::uint64_t, std::uint64_t>>& stored, std::uint64_t begin, std::uint64_t end) {
+    if (!stored.empty() && stored.back().second == begin) stored.back().second = end;
+    else stored.emplace_back(begin, end);
+}
+
+static void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit, std::vector<std::pair<std::uint64_t, std::uint64_t>>* stored);
+
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
-    WriteChanged(address, current, original, ChangedByteStoreLimit());
+    writeChanged(address, current, original, ChangedByteStoreLimit(), nullptr);
 }
 
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit) {
+    writeChanged(address, current, original, byteStoreLimit, nullptr);
+}
+
+void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::vector<std::pair<std::uint64_t, std::uint64_t>>& stored) {
+    writeChanged(address, current, original, ChangedByteStoreLimit(), &stored);
+}
+
+static void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit, std::vector<std::pair<std::uint64_t, std::uint64_t>>* stored) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs();
     if (current.empty()) return;
@@ -2894,11 +2909,19 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
             }
             firstChanged = std::min(firstChanged, at + static_cast<std::size_t>(std::countr_zero(changed)));
             lastChanged = std::max(lastChanged, at + 32 - static_cast<std::size_t>(std::countl_zero(changed)));
+            if (stored == nullptr) continue;
+            for (auto bits = changed; bits != 0;) {
+                const auto first = static_cast<std::uint32_t>(std::countr_zero(bits));
+                const auto length = static_cast<std::uint32_t>(std::countr_one(bits >> first));
+                appendStored(*stored, address + at + first, address + at + first + length);
+                bits &= ~(((1u << length) - 1u) << first);
+            }
         }
         if (masked) _mm_sfence();
         for (; at < size; ++at) {
             if (current[at] == original[at]) continue;
             destination[at] = current[at];
+            if (stored != nullptr) appendStored(*stored, address + at, address + at + 1);
             firstChanged = std::min(firstChanged, at);
             lastChanged = std::max(lastChanged, at + 1);
         }

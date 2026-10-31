@@ -134,6 +134,18 @@ std::vector<std::uint32_t> MakeBdaWriteTestShader(std::uint64_t address, std::ui
     return shader;
 }
 
+std::vector<std::uint32_t> MakeBdaStoreLoadTestShader(std::uint64_t store, std::uint64_t load, std::uint32_t value, std::uint32_t bits) {
+    using namespace ShaderRecompiler;
+    auto shader = MakeShader(store, false, true, [&](SpirvValueEmitContext& ctx, const IrValue& instruction, std::uint32_t base) {
+        EmitBdaStore(ctx, instruction, base, ConstantU32(ctx.state, value), bits);
+        return std::vector<std::uint32_t>{EmitBdaRead(ctx, instruction, BdaConstant(ctx.state, load), 32u)};
+    }, 0u, true);
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    shader = ValidateAndOptimizeSpirv(shader, VK_API_VERSION_1_1, shader[1], false, false);
+#endif
+    return shader;
+}
+
 std::vector<std::uint32_t> MakeBdaFaultSequenceTestShader(std::initializer_list<ShaderRecompiler::BdaAbi::FaultReason> reasons) {
     using namespace ShaderRecompiler;
     return MakeShader(0u, false, true, [&](SpirvValueEmitContext& ctx, const IrValue&, std::uint32_t base) {

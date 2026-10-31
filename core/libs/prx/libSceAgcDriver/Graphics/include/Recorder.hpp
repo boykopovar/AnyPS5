@@ -209,6 +209,17 @@ public:
     std::uint64_t OpenBatchSerial();
     bool HasTimeline() const { return timeline != VK_NULL_HANDLE; }
     bool RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress source, VkDeviceAddress arguments, const std::array<std::uint32_t, 3>* threadGroup = nullptr);
+    struct StorePageGather {
+        VkDeviceAddress fault = 0;
+        VkDeviceAddress pages = 0;
+        VkDeviceAddress targets = 0;
+        std::uint64_t base = 0;
+        std::uint32_t count = 0;
+        std::uint32_t slots = 0;
+    };
+    void RecordStorePageGather(VkCommandBuffer commands, const StorePageGather& gather);
+    std::unique_ptr<Buffer> TakeStorePagePool(std::size_t bytes);
+    void KeepStorePagePool(std::unique_ptr<Buffer> pool);
     // Waits until every batch up to `serial` completed on the GPU. Called WITHOUT GuestMemory::GpuMutex:
     // it touches only the immutable timeline semaphore (the caller keeps the device alive). Requires
     // HasTimeline(); the debug switch APS5_NO_TIMELINE makes the device create the recorder without one.
@@ -397,6 +408,8 @@ public:
     // before). A write-back over any tracked label dword is counted on the [recorder] line (must
     // stay 0: it would mean a CPU store landed over a label recorded on the GPU).
     static void NoteWrittenBack(std::uint64_t address, std::size_t bytes);
+    static void NoteWrittenBack(std::span<const std::pair<std::uint64_t, std::uint64_t>> runs);
+    static std::uint64_t WriteBacksOverLabels();
 
     // Lock-free readers for the queue workers' packet loops and WAIT_REG_MEM polls (values of the
     // active recorder; a torn-down recorder never publishes):
@@ -748,6 +761,10 @@ private:
     int dispatchArgumentState = 0;
     VkPipelineLayout dispatchArgumentLayout = VK_NULL_HANDLE;
     VkPipeline dispatchArgumentPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout storePageGatherLayout = VK_NULL_HANDLE;
+    VkPipeline storePageGatherPipeline = VK_NULL_HANDLE;
+    AgcDriver::Mutex storePagePoolsMutex;
+    std::vector<std::unique_ptr<Buffer>> storePagePools;
     // BeginGpuTiming on the open batch without Commands() (RecordStore times its own run, which
     // Commands() would close).
     std::uint32_t beginTiming(std::uint64_t key);
@@ -848,6 +865,7 @@ private:
     std::multimap<std::uint64_t, std::uint64_t> wideLabels;
     std::uint64_t wideLabelBytes = 0;
     bool wideLabelInLocked(std::uint64_t address, std::size_t bytes) const;
+    bool pendingLabelInLocked(std::uint64_t address, std::size_t bytes) const;
     // labels.size(), readable without the table mutex: a noted write skips the mutex while the
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};

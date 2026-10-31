@@ -19,6 +19,11 @@ public:
     VkDescriptorBufferInfo Table() const;
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> TakeWrittenPages() const;
+    std::vector<GuestBufferMemory::StorePage> TakeStorePages() const;
+    bool StorePages() const { return pages != nullptr; }
+    void RecordStorePageGather(Recorder& recorder) const;
+    static std::uint32_t StorePageSlots();
     struct ImageTableFaults {
         std::uint32_t stage = 0;
         std::uint64_t shader = 0;
@@ -56,13 +61,24 @@ private:
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).
     void markWrittenPages() const;
+    void collectStorePages() const;
+    void attachStorePages() const;
     void checkSrtGuard() const;
     std::shared_ptr<Buffer> table;
     std::unique_ptr<Buffer> fault;
+    mutable std::unique_ptr<Buffer> pages;
+    VkDevice poolDevice = VK_NULL_HANDLE;
+    std::unique_ptr<Buffer> targets;
+    std::uint32_t pageSlots = 0;
+    std::uint32_t targetCount = 0;
+    std::uint64_t pageBase = 0;
+    mutable bool pagesOverflowed = false;
+    mutable std::vector<GuestBufferMemory::StorePage> storePages;
     std::size_t tableBytes = 0;
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<SrtGuardFaults> srtGuards;
+    mutable std::vector<std::pair<std::uint64_t, std::uint64_t>> writtenPages;
 };
 
 }

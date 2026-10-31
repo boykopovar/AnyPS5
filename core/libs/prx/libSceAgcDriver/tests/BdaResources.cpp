@@ -2862,6 +2862,17 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
     Require(build(0, {}) == first && MirrorCounters().heapChecks == quiet.heapChecks && MirrorCounters().sweeps == quiet.sweeps && MirrorCounters().blocksCopied == quiet.blocksCopied, "an unchanged heap range was compared block by block or the mirrors were swept again");
     guest[65536 + 9] = 0x66;
     Require(build(0, {}) == first && MirrorCounters().heapChecks > quiet.heapChecks && MirrorCounters().blocksCopied == quiet.blocksCopied + 1 && access.addressBytes(first)[65536 + 9] == std::byte{0x66}, "a CPU write after an unchanged build was missed");
+    {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.AllowAddressStores();
+        leased.Upload(true);
+        for (const auto& range : leased.AddressRanges()) {
+            if (range.end <= address || range.begin >= address + bytes) continue;
+            Require(range.permissions == ShaderRecompiler::BdaAbi::Read, "a read-only heap mirror became writable for a program that stores through addresses");
+        }
+        leased.WriteBack();
+    }
     registry(false, false);
     sweep();
     const auto swept = MirrorCounters();
@@ -2883,6 +2894,30 @@ void heapMirrorTests(const Context& context, const BdaTestAccess& access) {
     }) == device && guest[40] == 0x78, "a writable heap mirror's second write-back lost the GPU's store");
     guest[65536 + 1] = 0x79;
     Require(build(0, {}) == device && access.addressBytes(device)[40] == std::byte{0x78} && access.addressBytes(device)[65536 + 1] == std::byte{0x79}, "the writable heap mirror missed a store after a write-back");
+    {
+        GuestBufferMemory leased(context);
+        leased.AcquireRegistered();
+        leased.AllowAddressStores();
+        leased.AddWritable(address + 16, 32);
+        leased.Upload(true);
+        const auto ranges = leased.AddressRanges();
+        auto cursor = address;
+        for (auto part = std::find_if(ranges.begin(), ranges.end(), [&](const auto& range) { return range.begin == address; }); cursor < address + bytes && part != ranges.end(); ++part) {
+            Require(part->begin == cursor && part->deviceAddress == device + cursor - address && part->permissions == (ShaderRecompiler::BdaAbi::Read | ShaderRecompiler::BdaAbi::Write), "a writable heap mirror a program stores to through addresses is not writable in the BDA table");
+            cursor = part->end;
+        }
+        Require(cursor == address + bytes, "a writable heap mirror a program stores to through addresses is not wholly in the BDA table");
+        const auto stored = access.addressBytes(device);
+        stored[16] = std::byte{0x7c};
+        stored[1000] = std::byte{0x7a};
+        stored[65536 + 2000] = std::byte{0x7b};
+        guest[1000 + 8] = 0x5b;
+        leased.WriteBack();
+    }
+    Require(guest[16] == 0x7c && guest[1000] == 0x7a && guest[65536 + 2000] == 0x7b, "an address store into a writable heap mirror did not reach guest memory");
+    Require(guest[1000 + 8] == 0x5b && guest[40] == 0x78 && guest[65536 + 1] == 0x79, "the write-back of address stores rolled back a CPU store");
+    guest[65536 + 3000] = 0x5c;
+    Require(build(0, {}) == device && access.addressBytes(device)[1000] == std::byte{0x7a} && access.addressBytes(device)[65536 + 2000] == std::byte{0x7b} && access.addressBytes(device)[65536 + 3000] == std::byte{0x5c}, "a refresh of the writable heap mirror reverted the address stores");
     registry(false, true);
     sweep();
     Require(MirrorCounters().heapMirrors == before.heapMirrors, "the writable heap mirror outlived its range");

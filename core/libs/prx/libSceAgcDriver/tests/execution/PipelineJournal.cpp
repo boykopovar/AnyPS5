@@ -501,14 +501,28 @@ void ReplayRacesDispatchTests() {
     const auto words = AddressWords(compute);
     std::vector<std::vector<std::uint32_t>> codes;
     for (std::uint32_t salt = 16; salt < 16 + Pipelines; ++salt) codes.push_back(ComputeCode(salt));
+    const auto path = AgcDriver::Graphics::PipelineJournalPath();
+    const std::filesystem::path aside = path.string() + ".aside";
+    AgcDriver::Graphics::FlushPipelineJournal();
+    std::error_code error;
+    std::filesystem::rename(path, aside, error);
+    Require(!error, "cannot set the journal aside before recording the raced pipelines");
+    std::vector<ShaderRecompiler::PipelineIdentity> raced;
     {
         const auto device = OpenVulkanTestDevice();
         Require(device != nullptr, "the device recording the raced pipelines could not be opened");
         device->WaitForPipelineJournalReplay();
-        for (const auto& code : codes) device->Dispatch(CompileCompute(*device, code, words, 32), 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        for (const auto& code : codes) {
+            const auto result = CompileCompute(*device, code, words, 32);
+            raced.push_back(result.Identity());
+            device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        }
         device->WaitIdle();
         AgcDriver::Graphics::FlushPipelineJournal();
     }
+    const auto journaled = ReadJournalComputeIdentities(path);
+    const auto held = std::ranges::count_if(raced, [&](const ShaderRecompiler::PipelineIdentity& identity) { return std::ranges::find(journaled, identity) != journaled.end(); });
+    Require(held == Pipelines, "the journal holds " + std::to_string(held) + " of the " + std::to_string(Pipelines) + " raced compute pipelines under its cap, so the replay cannot race the others");
     const auto before = Snapshot();
     {
         const auto device = OpenVulkanTestDevice();
@@ -523,6 +537,11 @@ void ReplayRacesDispatchTests() {
         const auto visited = (after.journal.replayedCompute - before.journal.replayedCompute) + (after.journal.replayPresent - before.journal.replayPresent);
         Require(device->ComputePipelinesCreated() == visited, "a dispatch and the replay both built a compute pipeline: " + std::to_string(device->ComputePipelinesCreated()) + " built for " + std::to_string(visited) + " replayed");
     }
+    AgcDriver::Graphics::FlushPipelineJournal();
+    std::filesystem::remove(path, error);
+    Require(!error, "cannot remove the raced pipelines' journal");
+    std::filesystem::rename(aside, path, error);
+    Require(!error, "cannot put the journal back after the raced pipelines");
 }
 
 void NewestEntriesTests() {

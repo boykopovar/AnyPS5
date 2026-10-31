@@ -1416,6 +1416,29 @@ void completionCountTests(const Device& device, Recorder& recorder) {
     Require(memory[0] == 1 && memory[2] == (storeAlways ? 1u : 7u) && memory[16] == 1, "completion stores ran for the wrong labels (overlapped and not-imported ones store, the untouched GPU-stored one skips)");
 }
 
+void writtenBackRunTests(const Device& device, Recorder& recorder) {
+    if (std::getenv("APS5_COUNT_ALL_COMPLETION_LABELS") != nullptr || std::getenv("APS5_LABEL_STORE_ALWAYS") != nullptr) return;
+    alignas(64) static std::uint32_t memory[64];
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const std::array<std::byte, 4> value{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    Require(recorder.Idle() && Recorder::PendingCompletionLabels() == 0, "a fresh recorder reports pending completion labels");
+    recorder.OnComplete([] {});
+    recorder.AfterCompletions(base + 0x40, value, 3, 0, true);
+    recorder.AfterCompletions(base + 0x80, value, 4, 0, true);
+    const auto over = Recorder::WriteBacksOverLabels();
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 4> runs{{{base, base + 0x10}, {base + 0x18, base + 0x20}, {base + 0x60, base + 0x70}, {base + 0x80, base + 0x82}}};
+    Recorder::NoteWrittenBack(runs);
+    Require(Recorder::PendingCompletionLabels() == 1, "stored runs on both sides of a GPU-stored label counted the label between them, or missed the label a run overlaps");
+    Require(Recorder::WriteBacksOverLabels() == over + 1, "stored runs were noted over a label no run overlaps, or not over the one a run overlaps");
+    memory[16] = 7;
+    memory[32] = 7;
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    Require(Recorder::PendingCompletionLabels() == 0 && recorder.Idle(), "counts did not return to 0 at finish");
+    Require(memory[16] == 7 && memory[32] == 1, "completion stores ran for the wrong labels (the one a stored run overlaps stores, the one between runs skips)");
+}
+
 class StderrCapture {
 public:
     StderrCapture() {
@@ -12477,6 +12500,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--completion-labels-only") {
             completionCountTests(device, recorder);
+            writtenBackRunTests(device, recorder);
             afterRecordedWorkTests(device, recorder);
             directCompletionLabelTests(recorder);
             labelTests(recorder);
@@ -12699,6 +12723,7 @@ int main(int argc, char** argv) {
         spaceWriteSyncTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
+        writtenBackRunTests(device, recorder);
         afterRecordedWorkTests(device, recorder);
         directCompletionLabelTests(recorder);
         batchStampTests(recorder);

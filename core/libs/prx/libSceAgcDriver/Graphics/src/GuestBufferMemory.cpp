@@ -3240,7 +3240,7 @@ std::shared_ptr<ImageMirror> acquireMirror(const Context& context, const std::sh
         return mirror;
     }
     try {
-        mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+        mirror->buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(mirror->bytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | (heap ? VK_BUFFER_USAGE_TRANSFER_SRC_BIT : VkBufferUsageFlags{0}));
     } catch (const std::runtime_error& error) {
         if (heap) {
             std::uint64_t held = 0;
@@ -3689,6 +3689,7 @@ HeapMirrorHold HeapMirrorsWithin(std::uint64_t begin, std::uint64_t end) {
     for (auto it = state.entries.lower_bound(begin); it != state.entries.end() && it->first < end; ++it) {
         if (!it->second->heap || it->second->range.expired()) continue;
         ++hold.mirrors;
+        if (it->second->resident != nullptr) ++hold.resident;
         if (it->second->listed) hold.bytes += it->second->accounted;
     }
     return hold;
@@ -5699,8 +5700,10 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     }
     if (heapsEnd > heapsBegin) StorageTexture::PublishShadowsOnly(heapsBegin, static_cast<std::size_t>(heapsEnd - heapsBegin), PublishScope::Whole, "address-based heaps");
     if (!gpuCopies.empty()) recordGpuCopies(gpuCopies, addressable);
+    addAddressStoreSpans();
     takeHeapReferences();
     ResidentBuffer::FlushChanged(context);
+    recordHeapReferences();
     if (!profile) return;
     const auto loopUs = microsecondsSince(loopStart);
     readUs.fetch_add(refreshUs, std::memory_order_relaxed);
@@ -5926,6 +5929,28 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
     recorder->EndGpuTiming(timing, copiedBytes);
 }
 
+namespace {
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> mergeWrites(std::vector<std::pair<std::uint64_t, std::uint64_t>> writes);
+
+struct AddressStoreTally {
+    std::atomic<std::uint64_t> spanBytes{0};
+    std::atomic<std::uint64_t> comparedBytes{0};
+    std::atomic<std::uint64_t> copiedReferenceBytes{0};
+    std::atomic<std::uint64_t> readReferenceBytes{0};
+    std::atomic<std::uint64_t> gatheredBytes{0};
+    std::atomic<std::uint64_t> spilledBytes{0};
+    std::atomic<std::uint64_t> readbackBytes{0};
+    std::atomic<std::uint64_t> maskedBytes{0};
+};
+
+AddressStoreTally& AddressStoreTallies() {
+    static AddressStoreTally tally;
+    return tally;
+}
+
+}
+
 void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
     if (!uploaded || committed) return;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -5943,7 +5968,8 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             else merged.push_back(range);
         }
     }
-    for (const auto& [begin, end] : merged) {
+    const auto declaredReadbacks = mergeWrites(Pieces(writes.begin(), writes.begin() + static_cast<std::ptrdiff_t>(addressStores ? declaredWrites : writes.size())));
+    for (const auto& [begin, end] : declaredReadbacks) {
         const auto* found = owner(begin, end);
         if (found == nullptr || found->mirror == nullptr || !found->mirror->heap || !found->mirror->writable || found->mirror->resident == nullptr) continue;
         const auto& region = *found;
@@ -5961,6 +5987,7 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             heapReadbacks.emplace_back(from, region.mirror->resident->RecordReadback(commands, from, to - from));
             recorder.Keep(heapReadbacks.back().second);
             copiedBytes += to - from;
+            if (addressStores) AddressStoreTallies().readbackBytes.fetch_add(to - from, std::memory_order_relaxed);
         }
     }
     for (auto& region : regions) {
@@ -6163,6 +6190,25 @@ std::vector<ShaderRecompiler::BdaAbi::Range> GuestBufferMemory::AddressRanges() 
                 const auto* region = owner(cursor, end);
                 Require(region != nullptr && region->writable && (region->mirror == nullptr || region->mirror->writable), "runtime buffer write has no writable GPU owner");
                 part.permissions |= ShaderRecompiler::BdaAbi::Write;
+                if (addressStores && region->mirror != nullptr && region->mirror->heap && region->mirror->resident == nullptr) part.permissions |= ShaderRecompiler::BdaAbi::Masked;
+                if (addressStores && region->mirror != nullptr && region->mirror->heap && region->mirror->resident != nullptr) {
+                    const auto& resident = *region->mirror->resident;
+                    constexpr auto block = ResidentBuffer::BlockBytes;
+                    for (auto at = cursor; at < end;) {
+                        const bool bound = resident.Block(at) != nullptr;
+                        auto next = std::min(end, (at / block + 1) * block);
+                        while (next < end && (resident.Block(next) != nullptr) == bound) next = std::min(end, next + block);
+                        auto piece = part;
+                        piece.begin = at;
+                        piece.end = next;
+                        piece.deviceAddress = range.deviceAddress + (at - range.begin);
+                        if (!bound) piece.permissions |= ShaderRecompiler::BdaAbi::Spill | ShaderRecompiler::BdaAbi::Masked;
+                        merged.push_back(piece);
+                        at = next;
+                    }
+                    cursor = end;
+                    return;
+                }
             }
             merged.push_back(part);
             cursor = end;
@@ -6194,6 +6240,10 @@ std::optional<GuestBufferMemory::CachedTable> GuestBufferMemory::CachedAddressTa
     own.reserve(regions.size());
     for (const auto& region : regions) own.push_back(addressRange(region));
     auto key = AddressTableKey(writes, own);
+    for (auto at = writes.begin() + static_cast<std::ptrdiff_t>(addressStores ? declaredWrites : writes.size()); at != writes.end(); ++at) {
+        const auto* region = owner(at->first, at->second);
+        if (region != nullptr && region->mirror != nullptr && region->mirror->resident != nullptr) key.insert(key.end(), {at->first, region->mirror->resident->BoundBytes()});
+    }
     static const bool verify = std::getenv("APS5_VERIFY_BDA_TABLES") != nullptr;
     std::lock_guard lock(space->tableMutex);
     const auto found = space->tables.find(key);
@@ -6265,10 +6315,29 @@ void GuestBufferMemory::MarkDirectWrites() const {
 
 namespace {
 
-void storeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, Pieces* stored) {
+    if (stored != nullptr) GuestMemory::WriteChanged(address, current, original, *stored);
+    else GuestMemory::WriteChanged(address, current, original);
+}
+
+Pieces outside(const Pieces& runs, const Pieces& covered) {
+    Pieces result;
+    auto cover = covered.begin();
+    for (auto [begin, end] : runs) {
+        while (cover != covered.end() && cover->second <= begin) ++cover;
+        for (auto it = cover; it != covered.end() && it->first < end && begin < end; ++it) {
+            if (begin < it->first) result.emplace_back(begin, it->first);
+            begin = std::max(begin, it->second);
+        }
+        if (begin < end) result.emplace_back(begin, end);
+    }
+    return result;
+}
+
+void storeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, Pieces* stored = nullptr) {
     const auto writable = GuestMemory::DescribeCommitted(address, current.size(), true);
     if (writable.whole) {
-        GuestMemory::WriteChanged(address, current, original);
+        writeChanged(address, current, original, stored);
         return;
     }
     const auto unchanged = [&](std::uint64_t from, std::uint64_t to) {
@@ -6283,13 +6352,13 @@ void storeChanged(std::uint64_t address, std::span<const std::byte> current, std
         if (cursor < first) unchanged(cursor, first);
         const auto at = static_cast<std::size_t>(first - address);
         const auto length = static_cast<std::size_t>(last - first);
-        GuestMemory::WriteChanged(first, current.subspan(at, length), original.subspan(at, length));
+        writeChanged(first, current.subspan(at, length), original.subspan(at, length), stored);
         cursor = last;
     }
     if (cursor < address + current.size()) unchanged(cursor, address + current.size());
 }
 
-void storeSparse(ImageMirror& mirror, std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+void storeSparse(ImageMirror& mirror, std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, Pieces* stored = nullptr) {
     constexpr std::uint64_t block = 65536;
     const auto end = address + current.size();
     const auto forget = [&](std::uint64_t from, std::uint64_t to) {
@@ -6302,7 +6371,7 @@ void storeSparse(ImageMirror& mirror, std::uint64_t address, std::span<const std
         forget(cursor, first);
         const auto at = static_cast<std::size_t>(first - address);
         const auto length = static_cast<std::size_t>(last - first);
-        GuestMemory::WriteChanged(first, current.subspan(at, length), original.subspan(at, length));
+        writeChanged(first, current.subspan(at, length), original.subspan(at, length), stored);
         cursor = last;
     }
     forget(cursor, end);
@@ -6318,12 +6387,63 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> mergeWrites(std::vector<std
     return merged;
 }
 
+
+}
+
+AddressStoreStats AddressStoreCounters() {
+    const auto& tally = AddressStoreTallies();
+    return {tally.spanBytes.load(std::memory_order_relaxed), tally.comparedBytes.load(std::memory_order_relaxed), tally.copiedReferenceBytes.load(std::memory_order_relaxed), tally.readReferenceBytes.load(std::memory_order_relaxed), tally.gatheredBytes.load(std::memory_order_relaxed), tally.spilledBytes.load(std::memory_order_relaxed), tally.readbackBytes.load(std::memory_order_relaxed), tally.maskedBytes.load(std::memory_order_relaxed)};
+}
+
+void GuestBufferMemory::NoteAddressStores(std::vector<std::pair<std::uint64_t, std::uint64_t>> pages) {
+    storedPages = mergeWrites(std::move(pages));
+}
+
+void GuestBufferMemory::NoteStorePages(std::vector<StorePage> pages) {
+    std::sort(pages.begin(), pages.end(), [](const StorePage& left, const StorePage& right) { return left.address < right.address; });
+    storePageEntries = std::move(pages);
+}
+
+std::vector<GuestBufferMemory::StoreSpan> GuestBufferMemory::AddressStoreSpans() const {
+    std::vector<StoreSpan> spans;
+    if (!addressStores) return spans;
+    for (auto at = writes.begin() + static_cast<std::ptrdiff_t>(declaredWrites); at != writes.end(); ++at) {
+        const auto* region = owner(at->first, at->second);
+        if (region == nullptr || region->mirror == nullptr) continue;
+        const auto& mirror = *region->mirror;
+        spans.push_back({at->first, at->second, mirrorAddress(mirror) + (at->first - mirror.base), mirror.resident != nullptr});
+    }
+    std::sort(spans.begin(), spans.end(), [](const StoreSpan& left, const StoreSpan& right) { return left.begin < right.begin; });
+    return spans;
+}
+
+void GuestBufferMemory::addAddressStoreSpans() {
+    if (!addressStores) return;
+    declaredWrites = writes.size();
+    const auto add = [&](const Region& region) {
+        if (region.mirror == nullptr || !region.mirror->heap || !region.mirror->writable || !region.writable) return;
+        const auto served = servedEnd(region);
+        if (region.begin >= served) return;
+        if (!region.mirror->sparse) {
+            writes.emplace_back(region.begin, served);
+            return;
+        }
+        for (const auto& [first, last] : clipPieces(region.mirror->committed, region.begin, served)) writes.emplace_back(first, last);
+    };
+    if (space != nullptr) {
+        for (const auto& region : space->base) add(region);
+    }
+    for (const auto& region : regions) add(region);
 }
 
 void GuestBufferMemory::takeHeapReferences() {
     heapReferences.clear();
+    heapReferenceCopies.clear();
+    pendingReferenceCopies.clear();
     heapReadbacks.clear();
-    for (const auto& [begin, end] : mergeWrites(writes)) {
+    const bool copied = !Recorder::InCompletion() && Recorder::Active() != nullptr;
+    std::uint64_t readBytes = 0;
+    for (const auto& [begin, end] : mergeWrites(Pieces(writes.begin(), writes.begin() + static_cast<std::ptrdiff_t>(addressStores ? declaredWrites : writes.size())))) {
         const auto* found = owner(begin, end);
         if (found == nullptr || found->mirror == nullptr || !found->mirror->heap || !found->mirror->writable) continue;
         Require(end <= found->end, "written range exceeds its heap mirror");
@@ -6331,24 +6451,76 @@ void GuestBufferMemory::takeHeapReferences() {
         const auto served = std::min(end, servedEnd(*found));
         if (begin >= served) continue;
         growResident(mirror, {{begin, served}});
+        if (mirror.resident != nullptr) continue;
+        if (copied) {
+            pendingReferenceCopies.emplace_back(begin, served);
+            continue;
+        }
         std::vector<std::byte> bytes(static_cast<std::size_t>(served - begin));
-        if (mirror.resident != nullptr) mirror.resident->Read(begin, bytes);
-        else std::memcpy(bytes.data(), mirror.buffer->Bytes().data() + (begin - mirror.base), bytes.size());
+        std::memcpy(bytes.data(), mirror.buffer->Bytes().data() + (begin - mirror.base), bytes.size());
         heapReferences.emplace_back(begin, std::move(bytes));
+        readBytes += served - begin;
     }
+    if (addressStores) AddressStoreTallies().readReferenceBytes.fetch_add(readBytes, std::memory_order_relaxed);
+}
+
+void GuestBufferMemory::recordHeapReferences() {
+    if (pendingReferenceCopies.empty()) return;
+    auto* recorder = Recorder::Active();
+    Require(recorder != nullptr && !Recorder::InCompletion(), "heap mirror reference copies need an active recorder");
+    VkAccessFlags covered = 0;
+    const auto commands = recorder->Commands(&covered);
+    const auto timing = recorder->BeginGpuTiming(StagingCopyBackKey);
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+    Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
+    std::uint64_t copiedBytes = 0;
+    for (const auto& [begin, end] : pendingReferenceCopies) {
+        const auto& mirror = *owner(begin, end)->mirror;
+        const auto bytes = end - begin;
+        std::shared_ptr<Buffer> reference;
+        if (mirror.resident != nullptr) {
+            reference = mirror.resident->RecordReadback(commands, begin, bytes);
+        } else {
+            reference = std::make_shared<Buffer>(context, static_cast<std::size_t>(bytes), VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            CopyBuffer(context, commands, mirror.buffer->Handle(), begin - mirror.base, reference->Handle(), 0, bytes);
+        }
+        recorder->Keep(reference, static_cast<std::size_t>(bytes));
+        heapReferenceCopies.emplace_back(begin, std::move(reference));
+        copiedBytes += bytes;
+    }
+    pendingReferenceCopies.clear();
+    RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+    Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
+    recorder->MarkCovered(covered);
+    recorder->EndGpuTiming(timing, copiedBytes);
+    if (addressStores) AddressStoreTallies().copiedReferenceBytes.fetch_add(copiedBytes, std::memory_order_relaxed);
+}
+
+std::span<const std::byte> GuestBufferMemory::heapReference(std::uint64_t begin) {
+    if (const auto copied = std::find_if(heapReferenceCopies.begin(), heapReferenceCopies.end(), [&](const auto& entry) { return entry.first == begin; }); copied != heapReferenceCopies.end()) return copied->second->Bytes();
+    if (const auto read = std::find_if(heapReferences.begin(), heapReferences.end(), [&](const auto& entry) { return entry.first == begin; }); read != heapReferences.end()) return read->second;
+    return {};
 }
 
 void GuestBufferMemory::WriteBack() {
     Require(uploaded && !committed, "guest memory cannot be committed twice or before upload");
     const auto merged = mergeWrites(writes);
+    const auto declared = addressStores ? mergeWrites(Pieces(writes.begin(), writes.begin() + static_cast<std::ptrdiff_t>(declaredWrites))) : Pieces{};
     // The CPU keeps running while the GPU works, so storing whole ranges would roll back its writes to
     // bytes the shader never touched. Only runs that differ from the uploaded copy are stored.
     for (const auto& [begin, end] : merged) {
         const auto* found = owner(begin, end);
         Require(found != nullptr, "write-back range has no GPU owner");
         const auto& region = *found;
+        const bool storeRuns = addressStores && region.mirror != nullptr && region.mirror->heap && region.mirror->writable;
+        Pieces stored;
+        Pieces* runs = storeRuns ? &stored : nullptr;
         // Every branch below but the direct, copied-back and staged ones stores from the CPU.
-        if (region.direct == nullptr && !(region.gpuCopy && (region.copiedBack || region.deviceLocal)) && !(region.mirror != nullptr && !region.mirror->writable)) Recorder::NoteWrittenBack(begin, static_cast<std::size_t>(end - begin));
+        if (storeRuns) {
+            for (const auto& [first, last] : clipPieces(declared, begin, end)) Recorder::NoteWrittenBack(first, static_cast<std::size_t>(last - first));
+        } else if (region.direct == nullptr && !(region.gpuCopy && (region.copiedBack || region.deviceLocal)) && !(region.mirror != nullptr && !region.mirror->writable)) {
+            Recorder::NoteWrittenBack(begin, static_cast<std::size_t>(end - begin));
+        }
         if (region.direct != nullptr) {
             // The GPU wrote imported guest memory directly; page write watching did not see it.
             StorageTexture::StampKeepingNewerResults(begin, static_cast<std::size_t>(end - begin), directWritesGeneration, [&] { return GuestMemory::MarkPossiblyWritten(begin, static_cast<std::size_t>(end - begin)); });
@@ -6365,24 +6537,87 @@ void GuestBufferMemory::WriteBack() {
             if (mirror.heap && begin >= served) continue;
             const auto length = static_cast<std::size_t>((mirror.heap ? served : end) - begin);
             if (mirror.heap) {
-                const auto reference = std::find_if(heapReferences.begin(), heapReferences.end(), [&](const auto& entry) { return entry.first == begin; });
-                Require(reference != heapReferences.end() && reference->second.size() == length, "heap mirror write-back has no reference");
-                if (mirror.resident == nullptr) {
-                    const auto current = mirror.buffer->Bytes().subspan(offset, length);
-                    if (mirror.sparse) storeSparse(mirror, begin, current, reference->second);
-                    else storeChanged(begin, current, reference->second);
-                    continue;
-                }
-                std::vector<std::byte> current(length);
-                if (const auto readback = std::find_if(heapReadbacks.begin(), heapReadbacks.end(), [&](const auto& entry) { return entry.first == begin; }); readback != heapReadbacks.end()) {
-                    Require(readback->second->Bytes().size() == length, "heap mirror readback does not match its write-back");
-                    std::memcpy(current.data(), readback->second->Bytes().data(), length);
+                auto& tally = AddressStoreTallies();
+                if (storeRuns) tally.spanBytes.fetch_add(length, std::memory_order_relaxed);
+                const auto store = [&](std::uint64_t first, std::span<const std::byte> current, std::span<const std::byte> original) {
+                    if (mirror.sparse) storeSparse(mirror, first, current, original, runs);
+                    else storeChanged(first, current, original, runs);
+                };
+                const auto maskedOriginal = [](const StorePage& entry, std::uint64_t at, std::uint64_t first, std::span<const std::byte> current) {
+                    std::vector<std::byte> original(current.begin(), current.end());
+                    for (std::size_t index = 0; index < current.size(); ++index) {
+                        const auto bit = static_cast<std::size_t>(first - at) + index;
+                        if (((entry.mask[bit / 32u] >> (bit % 32u)) & 1u) != 0u) original[index] = ~current[index];
+                    }
+                    return original;
+                };
+                if (mirror.resident != nullptr) {
+                    auto& resident = *mirror.resident;
+                    const auto exact = [&](std::uint64_t first, std::span<const std::byte> current) {
+                        std::vector<std::byte> original(current.size());
+                        resident.Read(first, original);
+                        store(first, current, original);
+                        resident.Store(first, current);
+                        if (storeRuns) tally.comparedBytes.fetch_add(current.size(), std::memory_order_relaxed);
+                    };
+                    for (const auto& [first, last] : addressStores ? clipPieces(declared, begin, served) : Pieces{{begin, served}}) {
+                        const auto readback = std::find_if(heapReadbacks.begin(), heapReadbacks.end(), [&](const auto& entry) { return entry.first <= first && last - entry.first <= entry.second->Bytes().size(); });
+                        std::vector<std::byte> current(static_cast<std::size_t>(last - first));
+                        if (readback != heapReadbacks.end()) std::memcpy(current.data(), readback->second->Bytes().data() + (first - readback->first), current.size());
+                        else resident.ReadDevice(first, current);
+                        exact(first, current);
+                    }
+                    const auto pages = storeRuns && storedPages.has_value() ? clipPieces(*storedPages, begin, served) : Pieces{};
+                    constexpr std::uint64_t page = ShaderRecompiler::BdaAbi::StorePageBytes;
+                    for (const auto& [from, to] : pages) {
+                        for (auto at = from / page * page; at < to; at += page) {
+                            const auto first = std::max(at, from);
+                            const auto last = std::min(at + page, to);
+                            const auto entry = std::lower_bound(storePageEntries.begin(), storePageEntries.end(), at, [](const StorePage& candidate, std::uint64_t address) { return candidate.address < address; });
+                            const bool found = entry != storePageEntries.end() && entry->address == at;
+                            std::vector<std::byte> current(static_cast<std::size_t>(last - first));
+                            if (found) std::memcpy(current.data(), entry->data.data() + (first - at), current.size());
+                            if (resident.Block(first) == nullptr) {
+                                Require(found, "a page stored through an address into an unbound heap mirror block has no store page");
+                                store(first, current, maskedOriginal(*entry, at, first, current));
+                                tally.spilledBytes.fetch_add(current.size(), std::memory_order_relaxed);
+                                tally.comparedBytes.fetch_add(current.size(), std::memory_order_relaxed);
+                                continue;
+                            }
+                            if (found) {
+                                tally.gatheredBytes.fetch_add(current.size(), std::memory_order_relaxed);
+                            } else {
+                                Require(!Recorder::InCompletion(), "a page stored through an address into a resident heap mirror was not gathered");
+                                resident.ReadDevice(first, current);
+                                tally.readbackBytes.fetch_add(current.size(), std::memory_order_relaxed);
+                            }
+                            exact(first, current);
+                        }
+                    }
                 } else {
-                    mirror.resident->ReadDevice(begin, current);
+                    const auto mapped = [&](std::uint64_t first, std::uint64_t last) { return mirror.buffer->Bytes().subspan(static_cast<std::size_t>(first - mirror.base), static_cast<std::size_t>(last - first)); };
+                    for (const auto& [first, last] : addressStores ? clipPieces(declared, begin, served) : Pieces{{begin, served}}) {
+                        const auto reference = heapReference(first);
+                        Require(reference.size() == last - first, "heap mirror write-back has no reference");
+                        if (storeRuns) tally.comparedBytes.fetch_add(last - first, std::memory_order_relaxed);
+                        store(first, mapped(first, last), reference);
+                    }
+                    const auto pages = storeRuns && storedPages.has_value() ? clipPieces(*storedPages, begin, served) : Pieces{};
+                    constexpr std::uint64_t page = ShaderRecompiler::BdaAbi::StorePageBytes;
+                    for (const auto& [from, to] : pages) {
+                        for (auto at = from / page * page; at < to; at += page) {
+                            const auto first = std::max(at, from);
+                            const auto last = std::min(at + page, to);
+                            const auto entry = std::lower_bound(storePageEntries.begin(), storePageEntries.end(), at, [](const StorePage& candidate, std::uint64_t address) { return candidate.address < address; });
+                            Require(entry != storePageEntries.end() && entry->address == at, "a page stored through an address into a copy-backed heap mirror has no store mask");
+                            const auto current = mapped(first, last);
+                            store(first, current, maskedOriginal(*entry, at, first, current));
+                            tally.maskedBytes.fetch_add(current.size(), std::memory_order_relaxed);
+                            tally.comparedBytes.fetch_add(current.size(), std::memory_order_relaxed);
+                        }
+                    }
                 }
-                mirror.resident->Store(begin, current);
-                if (mirror.sparse) storeSparse(mirror, begin, current, reference->second);
-                else storeChanged(begin, current, reference->second);
+                if (runs != nullptr) Recorder::NoteWrittenBack(outside(stored, declared));
                 continue;
             }
             const auto current = mirror.buffer->Bytes().subspan(offset, length);
@@ -6436,7 +6671,10 @@ void GuestBufferMemory::WriteBack() {
     lease.clear();
     space.reset();
     heapReferences.clear();
+    heapReferenceCopies.clear();
     heapReadbacks.clear();
+    storedPages.reset();
+    storePageEntries.clear();
 }
 
 std::optional<std::vector<std::pair<std::uint64_t, std::uint64_t>>> GuestBufferMemory::DirectRegions() const {
