@@ -53,6 +53,9 @@ int main() {
 
     Require(sceSslGetCaList(context, nullptr) == invalidValue);
     Require(sceSslFreeCaList(context, nullptr) == invalidArg);
+    SceSsl::CaList emptyList{};
+    Require(sceSslFreeCaList(context, &emptyList) == 0);
+    Require(emptyList.certs == nullptr && emptyList.num == 0);
 
     void* handle = &marker;
     SceSsl::CaList list{&handle, 3};
@@ -143,6 +146,9 @@ int main() {
 
     Require(sceSslGetCaList(context, nullptr) == invalidValue);
     Require(sceSslFreeCaList(context, nullptr) == invalidArg);
+    Require(sceSslFreeCaList(12345, &emptyList) == invalidId);
+    Require(sceSslFreeCaList(context, &emptyList) == invalidId);
+    Require(emptyList.certs == nullptr && emptyList.num == 0);
     list = {&handle, 3};
     Require(sceSslGetCaList(context, &list) == invalidId);
     Require(list.certs == &handle && list.num == 3);
@@ -150,7 +156,8 @@ int main() {
     certs = {&certificateMarker, 3, &marker};
     Require(sceSslGetCaCerts(context, &certs) == invalidId);
     Require(certs.certs == &certificateMarker && certs.num == 3 && certs.pool == &marker);
-    Require(Throws([&] { sceSslFreeCaList(context, &list); }));
+    Require(sceSslFreeCaList(context, &list) == invalidId);
+    Require(list.certs == &handle && list.num == 3);
     for (const std::uint32_t sdkVersion : {0u, 0x074fffffu, 0x07500000u, 0x09000000u}) {
         std::memcpy(parameters.data() + 16, &sdkVersion, sizeof(sdkVersion));
         Require(sceSslUnloadCert(context) == (sdkVersion < 0x07500000 ? 0 : invalidId));

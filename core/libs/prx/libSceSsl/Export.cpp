@@ -816,8 +816,10 @@ int APS5_VABI sceSslFreeCaList(int sslCtxId, SceSsl::CaList* list) {
     if (!list) return ErrorInvalidArg;
     auto& state = State();
     std::lock_guard lock(state.mutex);
-    auto& context = GetContext(sslCtxId);
+    const auto foundCtx = state.contexts.find(sslCtxId);
+    if (foundCtx == state.contexts.end()) return ErrorInvalidId;
     if (!list->certs && list->num == 0) return 0;
+    auto& context = *foundCtx->second;
     const auto found = context.caLists.find(list->certs);
     if (found == context.caLists.end() || list->num < 0 || static_cast<std::size_t>(list->num) != found->second.count)
         throw std::invalid_argument("Invalid SSL CA list allocation");
