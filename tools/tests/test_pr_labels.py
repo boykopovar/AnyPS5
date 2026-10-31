@@ -1,3 +1,4 @@
+import subprocess
 import contextlib
 import copy
 import io
@@ -31,6 +32,90 @@ def summary(commit):
 
 def pr(title="fix: x", body="", labels=()):
     return {"number": 7, "title": title, "body": body, "labels": list(labels), "state": "open"}
+
+
+class LabelPlanJsonTests(unittest.TestCase):
+    def test_batch_error_is_reported_and_later_items_continue(self):
+        import subprocess
+        records = [{"number": n, "title": "fix(core): example", "body": "", "labels": [], "state": "open"} for n in (1, 2)]
+        def process(repo, pr, dry_run, comment):
+            self.assertTrue(dry_run)
+            self.assertFalse(comment)
+            if pr["number"] == 1:
+                raise subprocess.CalledProcessError(1, ["gh"], stderr="read failed")
+            return set(), set(), False
+        output = io.StringIO()
+        with patch.object(pr_labels, "repository", return_value="test/repo"), patch.object(pr_labels, "gh", return_value=json.dumps(records)), patch.object(pr_labels, "process", side_effect=process) as run, contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(pr_labels.main(["--all", "--dry-run", "--json"]), 1)
+        data = json.loads(output.getvalue())
+        self.assertEqual(data["failed"], [1])
+        self.assertEqual(len(data["plans"]), 2)
+        self.assertEqual(data["plans"][0]["error"], "read failed")
+        self.assertEqual(run.call_count, 2)
+
+    def test_json_requires_dry_run_before_any_access(self):
+        with patch.object(pr_labels, "gh", side_effect=AssertionError("unexpected access")), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            pr_labels.main(["--pr", "42", "--json"])
+        self.assertEqual(error.exception.code, 2)
+
+    def test_plan_reads_only_and_records_comment(self):
+        data = {"number": 42, "title": "perf(core): reduce work", "body": "", "labels": [], "state": "open"}
+        calls = []
+        def gh(*args):
+            calls.append(args)
+            if args == ("api", "repos/test/repo/pulls/42"):
+                return json.dumps(data)
+            if args[:2] == ("api", "--paginate"):
+                return "0"
+            raise AssertionError(args)
+        output = io.StringIO()
+        with patch.object(pr_labels, "repository", return_value="test/repo"), patch.object(pr_labels, "gh", side_effect=gh), contextlib.redirect_stdout(output):
+            self.assertEqual(pr_labels.main(["--pr", "42", "--dry-run", "--json"]), 0)
+        row = json.loads(output.getvalue())["plans"][0]
+        self.assertEqual(row["add"], sorted([pr_labels.PERF_LABEL, pr_labels.MISSING_LABEL]))
+        self.assertEqual(row["remove"], [])
+        self.assertEqual(row["comment_marker"], pr_labels.MARKER)
+        self.assertEqual(len(calls), 2)
+
+    def test_plan_rows_match_the_text_plan(self):
+        body = "Unblocks: PPSA01325"
+        records = [
+            {"number": 11, "title": "fix(core): x", "body": "", "labels": [{"name": n} for n in ("perf numbers missing", "unblocks title", "perf", "bug")], "state": "open"},
+            {"number": 12, "title": "perf(core): x", "body": body, "labels": [], "state": "open"},
+            {"number": 13, "title": "fix(core): x", "body": "", "labels": [], "state": "open"},
+        ]
+        def gh(*args):
+            if args[:2] == ("api", "--paginate") and "pulls?" in args[2]:
+                return json.dumps(records)
+            if args[:2] == ("api", "--paginate") and args[2] == "repos/test/repo/issues/42/comments":
+                return "1"
+            if args == ("api", "repos/test/repo/pulls/42"):
+                return json.dumps(dict(records[1], number=42))
+            if args[:2] == ("api", "--paginate"):
+                raise subprocess.CalledProcessError(1, ["gh"], stderr="read failed")
+            raise AssertionError(args)
+        class Descending(set):
+            def __iter__(self):
+                return iter(sorted(set.__iter__(self), reverse=True))
+        original = pr_labels.process
+        def process(repo, pr, dry_run, comment):
+            if pr["number"] == 13:
+                raise subprocess.CalledProcessError(1, ["gh"], stderr="read failed")
+            add, remove, post = original(repo, pr, dry_run, comment)
+            return Descending(add), Descending(remove), post
+        for argv, expected, code in (
+            (["--all"], {"repository": "test/repo", "failed": [13], "plans": [
+                {"number": 11, "add": [], "remove": sorted(pr_labels.MANAGED), "comment_marker": None},
+                {"number": 12, "add": sorted(pr_labels.MANAGED), "remove": [], "comment_marker": None},
+                {"number": 13, "error": "read failed"}]}, 1),
+            (["--pr", "42"], {"repository": "test/repo", "failed": [], "plans": [
+                {"number": 42, "add": sorted(pr_labels.MANAGED), "remove": [], "comment_marker": None}]}, 0),
+        ):
+            with self.subTest(argv=argv):
+                output = io.StringIO()
+                with patch.object(pr_labels, "repository", return_value="test/repo"), patch.object(pr_labels, "gh", side_effect=gh), patch.object(pr_labels, "process", side_effect=process), contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(pr_labels.main(argv + ["--dry-run", "--json"]), code)
+                self.assertEqual(json.loads(output.getvalue()), expected)
 
 
 class TitleIdTests(unittest.TestCase):
@@ -268,6 +353,9 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+
 
 
 if __name__ == "__main__":
