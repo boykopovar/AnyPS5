@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstring>
 #include <string>
+#include <vector>
 #include <cerrno>
 #include <cstdlib>
 #include <memory>
@@ -17,6 +18,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/ScanWideField.hpp"
@@ -34,6 +36,15 @@ int __isoc99_vfscanf(std::FILE*, const char*, std::va_list);
 #endif
 
 namespace {
+
+constexpr std::size_t secureSizeMax = (std::size_t{1} << 61) - 1;
+constexpr int secureViolationResult = -23;
+constexpr int guestEinval = 22;
+constexpr int guestErange = 34;
+
+void ReportConstraint(const char* message) {
+    SonyInvokeConstraintHandler(message, nullptr, guestEinval);
+}
 
 #ifndef _WIN32
 bool RequiresGuestFormatting(const char* format) {
@@ -251,6 +262,16 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
     bool converted = false;
     const char* cursor = format;
     const auto finish = [](int result) { return result; };
+    const auto violation = [&](const char* message) {
+        ReportConstraint(message);
+        return converted ? assigned : secureViolationResult;
+    };
+    const auto sizedTarget = [&](void*& target, std::size_t& capacity) -> const char* {
+        target = nextPointer();
+        if (target == nullptr) return "scanf_s: bad %c, %s, or %[ argument";
+        capacity = static_cast<std::size_t>(nextCapacity());
+        return capacity > secureSizeMax ? "scanf_s: bad %c, %s, or %[ size" : nullptr;
+    };
     while (*cursor != '\0') {
         if (std::isspace(static_cast<unsigned char>(*cursor))) {
             while (std::isspace(static_cast<unsigned char>(*cursor))) ++cursor;
@@ -261,7 +282,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             const char expected = *cursor == '%' ? '%' : *cursor;
             cursor += *cursor == '%' ? 2 : 1;
             if (expected == '%') while (std::isspace(source.Peek())) source.Skip();
-            if (source.Peek() != static_cast<unsigned char>(expected)) return finish(!converted && source.Peek() == EOF ? EOF : assigned);
+            if (source.Peek() != static_cast<unsigned char>(expected)) return finish(!converted && source.Peek() == EOF && (expected == '%' || !secure || !TSource::Contiguous) ? EOF : assigned);
             source.Skip();
             continue;
         }
@@ -288,7 +309,10 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         if (conversion == 'n') {
             if (!suppress) {
                 void* target = nextPointer();
-                if (target == nullptr) return EOF;
+                if (target == nullptr) {
+                    if constexpr (TSource::Contiguous) if (secure) return violation("scanf_s: bad %n argument");
+                    return EOF;
+                }
                 const auto count = source.Consumed();
                 if (length == "hh") *static_cast<signed char*>(target) = static_cast<signed char>(count);
                 else if (length == "h") *static_cast<short*>(target) = static_cast<short>(count);
@@ -298,6 +322,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                     std::memcpy(target, &value, sizeof(value));
                 } else throw std::invalid_argument("Invalid scan count length");
             }
+            if (TSource::Contiguous && secure) converted = true;
             continue;
         }
 #ifndef _WIN32
@@ -308,19 +333,20 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             if (kind == 's') {
                 while (std::isspace(static_cast<unsigned char>(*field))) ++field;
             }
-            if (*field == '\0') return finish(converted ? assigned : EOF);
-            auto* target = suppress ? nullptr : static_cast<char16_t*>(nextPointer());
-            unsigned long limit = ULONG_MAX;
+            char16_t* target = nullptr;
+            std::size_t capacity = 0;
             if (secure && !suppress) {
-                const auto capacity = static_cast<unsigned long>(nextCapacity());
-                limit = kind == 'c' ? capacity : (capacity == 0 ? 0 : capacity - 1);
-                if (limit == 0 || (kind == 'c' && (width == 0 ? 1 : width) > limit)) {
-                    if (capacity != 0) target[0] = u'\0';
-                    return finish(assigned);
-                }
+                void* pointer = nullptr;
+                if (const char* message = sizedTarget(pointer, capacity)) return violation(message);
+                target = static_cast<char16_t*>(pointer);
+            } else if (!suppress) {
+                target = static_cast<char16_t*>(nextPointer());
             }
-            const unsigned long wanted = width != 0 ? width : (kind == 'c' ? 1 : ULONG_MAX);
-            const unsigned long taken = std::min(wanted, limit);
+            if (*field == '\0') return finish(converted ? assigned : EOF);
+            const bool bounded = secure && !suppress;
+            if (bounded && capacity == 0) return finish(assigned);
+            const std::size_t wanted = width != 0 ? width : (kind == 'c' ? 1 : SIZE_MAX);
+            const std::size_t taken = bounded ? std::min(wanted, capacity) : wanted;
             std::u16string text;
             const auto accepts = [&](char32_t point) {
                 if (kind == 's') return point >= 0x80 || !std::isspace(static_cast<int>(point));
@@ -335,13 +361,15 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                 field += size;
             }
             if (text.empty()) return finish(assigned);
-            if (target != nullptr && kind != 'c' && wanted > limit && text.size() == limit && *field != '\0') {
-                char32_t point = 0;
-                LibcDetail::ReadWideScanCharacter(field, &point);
-                if (accepts(point)) {
-                    target[0] = u'\0';
-                    return finish(assigned);
+            if (bounded && kind == 'c') {
+                for (std::size_t skipped = text.size(); skipped < wanted && *field != '\0'; ++skipped) {
+                    char32_t point = 0;
+                    field += LibcDetail::ReadWideScanCharacter(field, &point);
                 }
+            }
+            if (bounded && kind != 'c' && text.size() >= capacity) {
+                std::memcpy(target, text.data(), capacity * sizeof(char16_t));
+                return finish(assigned);
             }
             if (target != nullptr) {
                 std::memcpy(target, text.data(), text.size() * sizeof(char16_t));
@@ -353,6 +381,69 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             continue;
         }
 #endif
+        if constexpr (TSource::Contiguous) if (secure) {
+            const bool sized = conversion == 's' || conversion == 'c' || conversion == '[';
+            void* target = nullptr;
+            std::size_t capacity = 0;
+            if (!suppress) {
+                if (sized) {
+                    if (const char* message = sizedTarget(target, capacity)) return violation(message);
+                } else {
+                    target = nextPointer();
+                    if (target == nullptr && std::strchr("diouxXpaAeEfFgG", conversion) == nullptr)
+                        throw std::invalid_argument("Null sscanf_s destination for a conversion without a measured constraint");
+                }
+            }
+            const char* const input = source.Remaining();
+            const char* field = input;
+            if (conversion != 'c' && conversion != '[') {
+                while (std::isspace(static_cast<unsigned char>(*field))) ++field;
+            }
+            if (*field == '\0') return finish(converted ? assigned : EOF);
+            const bool bounded = sized && !suppress;
+            if (bounded && capacity == 0) return finish(assigned);
+            const std::size_t element = length == "l" ? sizeof(char16_t) : 1;
+            std::size_t taken = width;
+            std::size_t overrun = 0;
+            if (bounded) {
+                const std::size_t wanted = width != 0 ? width : (conversion == 'c' ? 1 : SIZE_MAX);
+                const std::size_t available = std::strlen(field);
+                taken = std::min({wanted, capacity, available});
+                if (conversion == 'c' && element != 1) overrun = std::min(wanted, available) - taken;
+            }
+            std::vector<unsigned char> text(bounded ? (taken + 1) * element : 0);
+            alignas(16) unsigned char scratch[32];
+            void* destination = bounded ? static_cast<void*>(text.data()) : target != nullptr ? target : scratch;
+            std::string directive = "%";
+            if (suppress) directive += '*';
+            if (taken != 0) directive += std::to_string(taken);
+            directive += HostLength(length, conversion);
+            directive += specifier;
+            directive += "%n";
+            int consumed = -1;
+            const int matched = source.Scan(directive.c_str(), suppress, destination, &consumed);
+            if (consumed < 0 || (!suppress && matched != 1)) return finish(!converted && *input == '\0' ? EOF : assigned);
+            if (!suppress && target == nullptr)
+                return violation(std::strchr("aAeEfFgG", conversion) != nullptr ? "scanf_s: bad floating-point argument" : "scanf_s: bad integer argument");
+            if (bounded) {
+                std::size_t stored = taken;
+                if (conversion != 'c') {
+                    stored = 0;
+                    while (stored < taken && !std::all_of(text.begin() + static_cast<std::ptrdiff_t>(stored * element),
+                        text.begin() + static_cast<std::ptrdiff_t>((stored + 1) * element), [](unsigned char byte) { return byte == 0; })) ++stored;
+                    if (stored >= capacity) {
+                        std::memcpy(target, text.data(), capacity * element);
+                        return finish(assigned);
+                    }
+                    ++stored;
+                }
+                std::memcpy(target, text.data(), stored * element);
+            }
+            source.Advance(consumed + static_cast<std::ptrdiff_t>(overrun));
+            converted = true;
+            if (!suppress) ++assigned;
+            continue;
+        }
         if (conversion != 'c' && conversion != '[') {
             while (std::isspace(source.Peek())) source.Skip();
             if (source.Peek() == EOF) return finish(converted ? assigned : EOF);
@@ -429,9 +520,12 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
 }
 
 template <typename NextPointer, typename NextCapacity>
-int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer nextPointer, NextCapacity nextCapacity) {
-    if (buffer == nullptr) return EOF;
-    return ScanSource(StringSource(buffer), format, secure, nextPointer, nextCapacity);
+int ScanGuest(const char* buffer, const char* format, const char* secureName, NextPointer nextPointer, NextCapacity nextCapacity) {
+    if (buffer == nullptr || format == nullptr) {
+        if (secureName != nullptr) ReportConstraint(secureName);
+        return EOF;
+    }
+    return ScanSource(StringSource(buffer), format, secureName != nullptr, nextPointer, nextCapacity);
 }
 
 template <typename NextPointer, typename NextCapacity>
@@ -638,7 +732,7 @@ int APS5_VABI vsscanf_nid_postfix(const char* input, const char* format, VaList*
     format = CutAtQuadScanDirective(format, head);
     if (ScansWideInProcess(format)) {
         LibcDetail::FormatArguments arguments(args);
-        return ScanGuest(input, format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
+        return ScanGuest(input, format, nullptr, [&] { return arguments.Next<void*>(); }, [] { return std::size_t{0}; });
     }
     std::va_list copy;
     va_copy(copy, *reinterpret_cast<std::va_list*>(args));
@@ -662,7 +756,7 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
     va_start(args, format);
     std::string head;
     format = CutAtQuadScanDirective(format, head);
-    const int result = ScansWideInProcess(format) ? ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
+    const int result = ScansWideInProcess(format) ? ScanGuest(input, format, nullptr, [&] { return va_arg(args, void*); }, [] { return std::size_t{0}; })
                                                   : HostVsscanf(input, format, args);
     va_end(args);
     return result;
@@ -674,7 +768,7 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
 int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = ScanGuest(buffer, format, true, [&] { return __builtin_va_arg(args, void*); }, [&] { return __builtin_va_arg(args, unsigned int); });
+    const int result = ScanGuest(buffer, format, "sscanf_s: bad argument", [&] { return __builtin_va_arg(args, void*); }, [&] { return __builtin_va_arg(args, std::size_t); });
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -684,7 +778,7 @@ int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) 
 int APS5_VABI sscanf_s_nid_postfix(const char* buffer, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
-    const int result = ScanGuest(buffer, format, true, [&] { return va_arg(args, void*); }, [&] { return va_arg(args, unsigned int); });
+    const int result = ScanGuest(buffer, format, "sscanf_s: bad argument", [&] { return va_arg(args, void*); }, [&] { return va_arg(args, std::size_t); });
     va_end(args);
     return result;
 }
@@ -731,21 +825,59 @@ int APS5_VABI vsnprintf_nid_postfix(char* str, size_t size, const char* format, 
 #endif
 }
 
-static int FormatSecure(char* buffer, size_t size, const char* format, const void* args) {
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    int result = -1;
-    if (buffer != nullptr && format != nullptr && args != nullptr && size != 0 && size <= RsizeMax) {
-        try {
-            result = LibcDetail::FormatWindows(buffer, size, format, args, nullptr, true);
-        } catch (const LibcDetail::FormatConstraintViolation&) {
-        }
+static int FormatSecure(const char* badArgument, const char* badFormat, char* buffer, size_t size, const char* format, const void* args) {
+    if (buffer == nullptr || size == 0 || size > secureSizeMax) {
+        ReportConstraint(badArgument);
+        return -1;
     }
-    if (result < 0 && buffer != nullptr && size != 0 && size <= RsizeMax) buffer[0] = 0;
-    return result;
+    if (format == nullptr) {
+        buffer[0] = 0;
+        ReportConstraint(badFormat);
+        return -1;
+    }
+    try {
+        return LibcDetail::FormatWindows(buffer, size, format, args, nullptr, true);
+    } catch (const LibcDetail::FormatConstraintViolation& violation) {
+        buffer[0] = 0;
+        ReportConstraint(violation.what());
+        return secureViolationResult;
+    }
+}
+
+static int FormatTerminated(const char* badArgument, const char* badFormat, const char* overflow, char* buffer, size_t size, const char* format, const void* args) {
+    if (buffer == nullptr || size == 0 || size > secureSizeMax) {
+        ReportConstraint(badArgument);
+        return 0;
+    }
+    if (format == nullptr) {
+        buffer[0] = 0;
+        ReportConstraint(badFormat);
+        return 0;
+    }
+    std::string text;
+    bool violated = false;
+    try {
+        LibcDetail::FormatWindows(nullptr, 0, format, args, &text, true);
+    } catch (const LibcDetail::FormatConstraintViolation& violation) {
+        std::memcpy(buffer, text.data(), std::min(text.size(), size - 1));
+        buffer[0] = 0;
+        ReportConstraint(violation.what());
+        violated = true;
+    }
+    if (!violated && text.size() < size) {
+        std::memcpy(buffer, text.c_str(), text.size() + 1);
+        return static_cast<int>(text.size());
+    }
+    if (!violated) {
+        std::memcpy(buffer, text.data(), size - 1);
+        buffer[0] = 0;
+    }
+    if (!violated || text.size() >= size) SonyInvokeConstraintHandler(overflow, nullptr, guestErange);
+    return 0;
 }
 
 int APS5_VABI vsnprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
-    return FormatSecure(buffer, size, format, args);
+    return FormatSecure("vsnprintf_s: bad argument", "vsnprintf_s: bad format argument", buffer, size, format, args);
 }
 
 static int WriteSecure(FileStream* stream, const char* format, const void* args) {
@@ -794,13 +926,25 @@ int APS5_VABI fprintf_s_nid_postfix(FileStream* stream, const char* format, ...)
 
 int APS5_VABI vsscanf_s_nid_postfix(const char* buffer, const char* format, VaList* args) {
     LibcDetail::FormatArguments arguments(args);
-    return ScanGuest(buffer, format, true, [&] { return arguments.Next<void*>(); }, [&] { return arguments.Next<unsigned int>(); });
+    return ScanGuest(buffer, format, "vsscanf_s: bad argument", [&] { return arguments.Next<void*>(); }, [&] { return arguments.Next<std::size_t>(); });
 }
 
 int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    const int result = FormatSecure(buffer, size, format, args);
+    const int result = FormatSecure("snprintf_s: bad argument", "snprintf_s: bad format argument", buffer, size, format, args);
+    __builtin_sysv_va_end(args);
+    return result;
+}
+
+int APS5_VABI vsprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
+    return FormatTerminated("vsprintf_s: bad argument", "vsprintf_s: bad format argument", "vsprintf_s: buffer overflow", buffer, size, format, args);
+}
+
+int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+    const int result = FormatTerminated("sprintf_s: bad argument", "sprintf_s: bad format argument", "sprintf_s: buffer overflow", buffer, size, format, args);
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -818,22 +962,17 @@ int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
 
 int APS5_VABI vsscanf_s_nid_postfix(const char* buffer, const char* format, VaList* args) {
     LibcDetail::FormatArguments arguments(args);
-    return ScanGuest(buffer, format, true, [&] { return arguments.Next<void*>(); }, [&] { return arguments.Next<unsigned int>(); });
+    return ScanGuest(buffer, format, "vsscanf_s: bad argument", [&] { return arguments.Next<void*>(); }, [&] { return arguments.Next<std::size_t>(); });
 }
 
 int APS5_VABI vsprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
-    if (RequiresGuestFormatting(format)) return LibcDetail::FormatWindows(buffer, size, format, args);
-    std::va_list copy;
-    va_copy(copy, *reinterpret_cast<std::va_list*>(args));
-    const int result = std::vsnprintf(buffer, size, format, copy);
-    va_end(copy);
-    return result;
+    return FormatTerminated("vsprintf_s: bad argument", "vsprintf_s: bad format argument", "vsprintf_s: buffer overflow", buffer, size, format, args);
 }
 
 int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
-    const int result = RequiresGuestFormatting(format) ? LibcDetail::FormatWindows(buffer, size, format, args) : std::vsnprintf(buffer, size, format, args);
+    const int result = FormatTerminated("sprintf_s: bad argument", "sprintf_s: bad format argument", "sprintf_s: buffer overflow", buffer, size, format, args);
     va_end(args);
     return result;
 }
@@ -841,7 +980,7 @@ int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* forma
 int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
-    const int result = FormatSecure(buffer, size, format, args);
+    const int result = FormatSecure("snprintf_s: bad argument", "snprintf_s: bad format argument", buffer, size, format, args);
     va_end(args);
     return result;
 }
