@@ -1561,7 +1561,7 @@ ImportRun joinedRun(const GuestAllocations::Lease& lease, std::uint64_t begin, s
     auto run = crossedRun(lease, begin, end);
     if (run.ranges.empty()) return run;
     if (std::all_of(run.ranges.begin(), run.ranges.end(), [window](const auto& range) { return range->bytes > window; })) return run;
-    if (begin == run.base) return run;
+    if (begin == run.base || run.bytes <= window) return run;
     return {};
 }
 
@@ -1996,10 +1996,19 @@ std::vector<ImportPiece> budgetedImportPieces(const Context& context, HostImport
 }
 
 const HostImport* importJoined(const Context& context, HostImports& state, std::uint64_t begin, std::uint64_t end, const GuestAllocations::Lease& lease) {
-    if (const auto* low = peekImport(state, begin, begin + 1); low != nullptr && low->joined) begin = low->base;
-    if (const auto* high = peekImport(state, end - 1, end); high != nullptr && high->joined) end = high->base + high->bytes;
+    const auto* low = peekImport(state, begin, begin + 1);
+    const auto* high = peekImport(state, end - 1, end);
+    const auto previousBegin = low != nullptr && low->joined ? low->base : begin;
+    const auto previousEnd = high != nullptr && high->joined ? high->base + high->bytes : end;
+    if (low != nullptr) begin = low->base;
+    if (high != nullptr) end = high->base + high->bytes;
     auto run = joinedRun(lease, begin, end);
     if (run.ranges.empty()) return nullptr;
+    const auto window = importWindow.load(std::memory_order_relaxed);
+    if (run.bytes > window && !std::all_of(run.ranges.begin(), run.ranges.end(), [window](const auto& range) { return range->bytes > window; })) {
+        const auto previous = crossedRun(lease, previousBegin, previousEnd);
+        if (previousBegin != previous.base || !sameRun(previous, run)) return nullptr;
+    }
     if (const auto failed = state.failedJoins.find(run.base); failed != state.failedJoins.end() && sameRun(failed->second, run)) return nullptr;
     const auto existing = state.imports.find(run.base);
     const bool existed = existing != state.imports.end() && sameRun(existing->second, run);
