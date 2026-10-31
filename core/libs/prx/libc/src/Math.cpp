@@ -2142,7 +2142,8 @@ long double APS5_VABI _LCosh_nid_postfix(long double x, long double y) {
     if (magnitude > MaximumExponentSpan * (Ln2High + Ln2Low))
         return std::scalbn(scale, INT_MAX);
     const int exponent = static_cast<int>(magnitude * InverseLn2);
-    const long double reduced = std::fma(-exponent, Ln2Low, std::fma(-exponent, Ln2High, magnitude));
+    const long double negatedExponent = -exponent;
+    const long double reduced = std::fma(negatedExponent, Ln2Low, std::fma(negatedExponent, Ln2High, magnitude));
     return std::scalbn(scale * (0.5L * std::exp(reduced)), scaleExponent + exponent);
 }
 
@@ -2166,7 +2167,8 @@ long double APS5_VABI _LSinh_nid_postfix(long double x, long double y) {
     if (magnitude > MaximumExponentSpan * (Ln2High + Ln2Low))
         return sign * std::scalbn(scale, INT_MAX);
     const int exponent = static_cast<int>(magnitude * InverseLn2);
-    const long double reduced = std::fma(-exponent, Ln2Low, std::fma(-exponent, Ln2High, magnitude));
+    const long double negatedExponent = -exponent;
+    const long double reduced = std::fma(negatedExponent, Ln2Low, std::fma(negatedExponent, Ln2High, magnitude));
     return sign * std::scalbn(scale * (0.5L * std::exp(reduced)), scaleExponent + exponent);
 }
 
