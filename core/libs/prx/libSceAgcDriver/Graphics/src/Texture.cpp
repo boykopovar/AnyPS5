@@ -59,6 +59,11 @@ void OwnedImage::Allocate(const Context& device, const VkMemoryAllocateInfo& all
 
 namespace {
 
+Recorder* recorderFor(const Context& context) {
+    auto* recorder = Recorder::Active();
+    return recorder != nullptr && recorder->Device() == context.device ? recorder : nullptr;
+}
+
 // APS5_PROFILE_DRAW: accumulate texture setup phases and report every 200 textures.
 struct TextureProfile {
     double allocate = 0, read = 0, gpu = 0, view = 0;
@@ -3625,7 +3630,7 @@ std::uint64_t StorageTexture::writeBackWindows(std::span<const ImportSegment> se
     const bool scratchUsed = std::any_of(directRanges.begin(), directRanges.end(), [](const auto& range) { return range.first == range.second; }) || std::any_of(slabPieces.begin(), slabPieces.end(), [](const SlabPieces& pieces) { return !pieces.copies.empty(); }) || std::any_of(importCopies.begin(), importCopies.end(), [](const auto& copies) { return !copies.empty(); }) || !saves.empty() || !padding.copies.empty() || !seeds.empty();
     auto tiledScratch = scratchUsed ? std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(scratchTotal), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : nullptr;
     detiler.BeginBatch();
-    auto* recorder = Recorder::Active();
+    auto* recorder = recorderFor(context);
     std::unique_ptr<CommandBatch> batch;
     VkCommandBuffer commands = VK_NULL_HANDLE;
     VkAccessFlags covered = 0;
@@ -4230,7 +4235,7 @@ void waitForIdlePublish(const char* reason) {
 
 }
 
-bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited) {
+bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except, const char* reason, PublishScope scope, bool* published, bool waited, VkDevice device) {
     static_cast<void>(FlushDepthPlanes(address, bytes));
     if (published != nullptr) *published = false;
     const auto nothingToStore = [&] {
@@ -4271,7 +4276,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         const auto* exempt = refreshing;
         for (auto it = pending.textures.MayOverlap(address, bytes) ? pending.textures.begin() : pending.textures.end(); it != pending.textures.end();) {
             auto* texture = *it;
-            if (texture != except && texture != exempt && texture->overlaps(address, bytes)) {
+            if (texture != except && texture != exempt && (device == VK_NULL_HANDLE || texture->context.device == device) && texture->overlaps(address, bytes)) {
                 if (!texture->pendingUnitInside(address, bytes)) {
                     pretestSkipped.fetch_add(1, std::memory_order_relaxed);
                     ++it;
@@ -4464,7 +4469,7 @@ void StorageTexture::commitStoredSave(const std::vector<std::uint32_t>& units) {
     if (units.empty()) return;
     const auto ticket = ++lastSaveTicket;
     for (const auto unit : units) savedTicket[unit] = ticket;
-    auto* recorder = Recorder::Active();
+    auto* recorder = recorderFor(context);
     if (recorder == nullptr) {
         applyStoredSave(ticket, units);
         return;
@@ -4505,7 +4510,8 @@ void StorageTexture::awaitStoredSave(const std::vector<bool>* layers) {
         last = std::max(last, layerBegin(unit) + layerBytes(unit));
     }
     if (last <= first) return;
-    auto* recorder = Recorder::Active();
+    auto* recorder = recorderFor(context);
+    if (recorder == nullptr) recorder = context.recorder;
     Require(recorder != nullptr, "a write-back's saved guest bytes are pending without a recorder");
     recorder->SyncThrough(first, static_cast<std::size_t>(last - first));
     const auto outstanding = [&] {
@@ -4637,10 +4643,10 @@ void StorageTexture::FlushDumpSelected(const char* reason) {
     for (const auto& [address, bytes] : ranges) static_cast<void>(FlushPending(address, bytes, nullptr, reason));
 }
 
-void StorageTexture::FlushAllPending(const char* reason) {
+void StorageTexture::FlushAllPending(const char* reason, VkDevice device) {
     std::optional<PublishOnCpuScope> onCpu;
     if (reason != nullptr && std::strcmp(reason, "idle") == 0) onCpu.emplace();
-    static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason));
+    static_cast<void>(FlushPending(0, std::numeric_limits<std::size_t>::max(), nullptr, reason, PublishScope::Whole, nullptr, false, device));
 }
 
 std::size_t StorageTexture::StoreSmallPending(const char* reason) {
@@ -6221,7 +6227,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             padding = {};
         }
         detiler.BeginBatch();
-        auto* recorder = Recorder::Active();
+        auto* recorder = recorderFor(context);
         std::unique_ptr<CommandBatch> batch;
         VkCommandBuffer commands = VK_NULL_HANDLE;
         auto timing = Recorder::NoTiming;

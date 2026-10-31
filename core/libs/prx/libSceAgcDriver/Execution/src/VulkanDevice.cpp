@@ -2498,7 +2498,7 @@ void VulkanDevice::StoreIdleResults(bool reapFirst) {
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    Graphics::StorageTexture::FlushAllPending("idle");
+    Graphics::StorageTexture::FlushAllPending("idle", state->device);
     SubmitRecorded(reapFirst);
 }
 
@@ -2575,7 +2575,7 @@ bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) c
 
 int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst) {
     static const bool storeAtLabel = Graphics::StorageTexture::StoreAtLabelRequested(std::getenv("APS5_STORE_AT_LABEL"));
-    if (storeAtLabel) Graphics::StorageTexture::FlushAllPending("label");
+    if (storeAtLabel) Graphics::StorageTexture::FlushAllPending("label", state->device);
     if (queue == 0) static_cast<void>(Graphics::StorageTexture::StoreDrawnLinear("label"));
     Graphics::StorageTexture::StoreReadbackBeforeLabel("readback before label");
     if (!state->recorder || bytes.empty() || bytes.size() > 65536 || address % 4 != 0 || bytes.size() % 4 != 0) return 4;
@@ -3535,7 +3535,7 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const Displ
         }
     }
     static const bool storeAtFlip = Graphics::StorageTexture::StoreAtFlipRequested(std::getenv("APS5_STORE_AT_FLIP"));
-    if (storeAtFlip) Graphics::StorageTexture::FlushAllPending("flip");
+    if (storeAtFlip) Graphics::StorageTexture::FlushAllPending("flip", state->device);
     else Graphics::StorageTexture::FlushDumpSelected("flip");
     auto& dumps = Dumps();
     const bool passthrough = state->surfaceColorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;

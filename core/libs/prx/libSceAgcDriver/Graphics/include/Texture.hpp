@@ -216,8 +216,8 @@ public:
     // any unit was: a reader of the import must sync for a publish as for a store. Only images
     // with a pending unit inside the range are stored (APS5_NO_FLUSH_PRETEST=1 lists every
     // overlapping pending image, as before).
-    static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr, bool waited = false);
-    static void FlushAllPending(const char* reason);
+    static bool FlushPending(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr, const char* reason = "memory access", PublishScope scope = PublishScope::Whole, bool* published = nullptr, bool waited = false, VkDevice device = VK_NULL_HANDLE);
+    static void FlushAllPending(const char* reason, VkDevice device = VK_NULL_HANDLE);
     static bool WaitForFlushing(std::uint64_t address, std::size_t bytes, const StorageTexture* except = nullptr);
     static void SaveBeforeUnwatch(std::uint64_t address, std::size_t bytes);
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
