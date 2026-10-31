@@ -143,6 +143,42 @@ class ReleasePackageTests(unittest.TestCase):
         self.addCleanup(patch.stopall)
         patch.object(package_release, "ROOT", self.source, create=True).start()
 
+    def test_sanitizer_notices_in_patched_and_unpatched_archives(self):
+        (self.source / "core/libs/prx/libSceAddressSanitizer").mkdir()
+        (self.unpatched.parent / "libSceAddressSanitizer.prx").write_bytes(b"unpatched sanitizer")
+        (self.library.parent / "libSceAddressSanitizer.prx").write_bytes(b"sanitizer")
+        notices = {
+            "LICENSE.TXT": ("compiler-rt.txt", b"upstream compiler-rt licence"),
+            "lib/asan_anyps5/NOTICE": ("compiler-rt-anyps5-notice.txt", b"modified port source attribution"),
+            "lib/asan_anyps5/LICENSE.GPL-2.0": ("compiler-rt-anyps5-gpl2.txt", b"port GPLv2 licence"),
+        }
+        for source, (_, content) in notices.items():
+            path = self.source / "3rdparty/compiler-rt" / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        package_release.package("linux", self.build, self.output, "v1")
+        for stem in ("prx-linux-v1", "prx-linux-unpatched-v1"):
+            with zipfile.ZipFile(self.output / f"{stem}.zip") as archive:
+                for name, content in notices.values():
+                    self.assertEqual(archive.read(f"libs/licenses/{name}"), content)
+            with tarfile.open(self.output / f"{stem}.tar.gz") as archive:
+                for name, content in notices.values():
+                    self.assertEqual(archive.extractfile(f"libs/licenses/{name}").read(), content)
+        for source in notices:
+            path = self.source / "3rdparty/compiler-rt" / source
+            content = path.read_bytes()
+            for replacement in (None, b""):
+                with self.subTest(source=source, replacement=replacement):
+                    if replacement is None:
+                        path.unlink()
+                    else:
+                        path.write_bytes(replacement)
+                    before = {file.name: file.read_bytes() for file in self.output.iterdir()}
+                    with self.assertRaisesRegex(RuntimeError, "Missing or empty release file"):
+                        package_release.package("linux", self.build, self.output, "v1")
+                    self.assertEqual(before, {file.name: file.read_bytes() for file in self.output.iterdir()})
+                    path.write_bytes(content)
+
     def test_unpatched_archives_preserve_originals_and_exclude_stale_files(self):
         (self.unpatched.parent / "libRemoved.prx").write_bytes(b"obsolete")
         before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in (self.library, self.unpatched, self.implib)}

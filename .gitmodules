@@ -67,6 +67,10 @@
 [submodule "3rdparty/nghttp2"]
 	path = 3rdparty/nghttp2
 	url = https://github.com/nghttp2/nghttp2.git
+[submodule "3rdparty/compiler-rt"]
+	path = 3rdparty/compiler-rt
+	url = https://github.com/PrivacyOnion/compiler-rt.git
+	shallow = true
 [submodule "3rdparty/quickjs"]
 	path = 3rdparty/quickjs
 	url = https://github.com/quickjs-ng/quickjs.git

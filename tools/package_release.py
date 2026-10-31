@@ -78,6 +78,12 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/vorbis/COPYING", "libs/licenses/vorbis.txt"))
     if expected & {"libSceOpusDec.prx", "libSceOpusCeltDec.prx"}:
         licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
+    if "libSceAddressSanitizer.prx" in expected:
+        licenses.extend((ROOT / source, destination) for source, destination in (
+            ("3rdparty/compiler-rt/LICENSE.TXT", "libs/licenses/compiler-rt.txt"),
+            ("3rdparty/compiler-rt/lib/asan_anyps5/NOTICE", "libs/licenses/compiler-rt-anyps5-notice.txt"),
+            ("3rdparty/compiler-rt/lib/asan_anyps5/LICENSE.GPL-2.0", "libs/licenses/compiler-rt-anyps5-gpl2.txt"),
+        ))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
