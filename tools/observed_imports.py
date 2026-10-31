@@ -9,8 +9,8 @@ import nid_names
 import progress
 
 OBSERVABLE = ("implemented", "partial", "stub")
-HEADER = "# NIDs of {library} that audited titles import. One per line, sorted; see docs/dev/PROGRESS.md."
-DESCRIPTION = """Maintain docs/dev/observed/<library>.txt, the NIDs of each library that audited titles import.
+HEADER = "# NIDs of {library} that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md."
+DESCRIPTION = """Maintain docs/dev/observed/<library>.txt, the NIDs of each library that any measured use shows to be needed.
 tools/progress.py counts a pending function as an observed stub when its NID is listed there and as an unobserved
 stub otherwise; a library without a file is unclassified and counts every stub as observed. 'add' merges the JSON
 written by tools/import_audit.py --json (or tools/audit_dump.py --json) into the files of the libraries that provide

@@ -14,15 +14,15 @@ A library with no scanned definitions and no shared sources, such as one whose `
 
 ## Observed imports
 
-A function is in one of three states. An implemented function does not call `NotImplemented_nid_no_patch`. A pending function is an observed stub when its NID is listed in the library's manifest, and an unobserved stub when it is not. The word is "unobserved", not "unused": the evidence is only that no audited title imports the function, which does not prove that no title ever calls it.
+A function is in one of three states. An implemented function does not call `NotImplemented_nid_no_patch`. A NID is observed when any measured use shows it is needed, anywhere: the imports of any title or module, any dump or audit run, and what is needed before a title's own code runs, such as what the loader or system startup requires. A pending function is an observed stub when its NID is listed in the library's manifest, and an unobserved stub when it is not. The word is "unobserved", not "unused": the evidence is only that no measured use has shown the function to be needed, which does not prove that nothing ever calls it.
 
 The library percentage is implemented functions over implemented functions plus observed stubs, so unobserved stubs do not lower it. Every implemented function counts, observed or not, so implementing a function never lowers a number. The figure that counts every declared function is kept next to it and nothing is hidden: `progress.json` has `declared_total` and `declared_percent` beside `total` and `percent`, and the progress page has an Implemented, Observed stubs and Unobserved stubs column for each library plus a Declared % column. The map draws unobserved stubs in a dimmer colour and has a legend.
 
 A manifest is `docs/dev/observed/<library>.txt`, named after a directory of `core/libs/prx`. It holds one 11-character NID per line, sorted and without repeats. `#` starts a comment, and a whole-line comment can head the file. The files hold only NIDs, never title names, so they do not identify the dumps they came from. A NID is matched to a function the way `tools/import_audit.py` matches it: from the name, or from the `APS5_EXPORT` alias, ignoring the `_nid_postfix` and `_nid_disambigN` suffixes.
 
-A library with no manifest file is unclassified and behaves as before this rule: all its stubs count as observed. A manifest that exists, even one with no entries, classifies the library. A manifest is only as complete as the titles that were audited, so a library only changes state when someone adds its file. A classified library also lists, in `done_unobserved_names`, the implemented functions no manifest names; comparisons report them as "implemented but not observed by any title".
+A library with no manifest file is unclassified and behaves as before this rule: all its stubs count as observed. A manifest that exists, even one with no entries, classifies the library. A manifest is only as complete as the measurements behind it, so a library only changes state when someone adds its file. A classified library also lists, in `done_unobserved_names`, the implemented functions no manifest names; comparisons report them as "implemented but not observed anywhere".
 
-[`tools/observed_imports.py`](../../tools/observed_imports.py) maintains the files. Audit a title, then merge the JSON of the audit:
+[`tools/observed_imports.py`](../../tools/observed_imports.py) maintains the files. Audit a title or a module, then merge the JSON of the audit; use `entry` for a NID that another measurement shows is needed:
 
 ```sh
 python3 tools/import_audit.py REGISTRY... --libs BUILT_PRX_DIR --json audit.json
@@ -35,7 +35,7 @@ python3 tools/observed_imports.py check
 
 `add` writes the NIDs of every implemented, partial and stub import to the manifest of each library that provides it, sorted and merged with what is there; it rejects a library that is not in `core/libs/prx` and a malformed NID, and writes nothing when it fails. `add --check` writes nothing and fails when a manifest would change. `entry` adds one NID with a `# evidence: <reason>` comment. `check` validates the committed files, as does the `observed-manifest` rule of [`tools/check_conventions.py`](../../tools/check_conventions.py) for the files a pull request changes.
 
-The import audit reads what the relinker resolves at load time, so it misses functions a title looks up at run time with `sceKernelDlsym` by name. A manifest can therefore undercount, and an unobserved stub can still be called by some title. Add such a NID by hand with the evidence, and do not implement or declare exports that no title imports without evidence that one needs them: [`tools/stubgen.py`](../../tools/stubgen.py) output for NIDs no title imports is inventory only.
+The import audit reads what the relinker resolves at load time, so it misses functions a title looks up at run time with `sceKernelDlsym` by name. A manifest can therefore undercount, and an unobserved stub can still be called by some title; the same holds for needs that no audit or other measurement has reached yet. Add such a NID by hand with the evidence, and do not implement or declare exports without evidence from a measured use that they are needed: [`tools/stubgen.py`](../../tools/stubgen.py) output for NIDs with no such evidence is inventory only.
 
 ## History
 

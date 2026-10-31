@@ -22,7 +22,7 @@ Includes a [relinker](core/relinker) that converts executable to the target syst
 
 [Progress history](https://boykopovar.github.io/AnyPS5/history.html)
 
-<sub>* System libraries: implemented functions as a percentage of those plus the stubs that an audited title imports (observed stubs); stubs no audited title imports are not counted, and the progress page also shows the declared figure that counts them. Only functions declared in [core/libs/prx](core/libs/prx) are counted, not every PS5 system function. See [Progress reporting](docs/dev/PROGRESS.md#observed-imports).</sub>
+<sub>* System libraries: implemented functions as a percentage of those plus the stubs that a measured use shows to be needed (observed stubs); stubs no measured use needs yet are not counted, and the progress page also shows the declared figure that counts them. Only functions declared in [core/libs/prx](core/libs/prx) are counted, not every PS5 system function. See [Progress reporting](docs/dev/PROGRESS.md#observed-imports).</sub>
 
 Unsupported or unexpected states throw a C++ exception, usually `std::runtime_error`. An exception that nothing catches prints its `what()` to stderr and ends the process.
 

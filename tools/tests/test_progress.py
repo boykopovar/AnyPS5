@@ -385,10 +385,10 @@ class ProgressTests(unittest.TestCase):
         text = "\n".join(progress.compare("System libraries", "Library", "functions", base["libraries"],
                                           self.report_snapshot(head_group)["libraries"]))
         self.assertTrue(text.startswith("\U0001f4c9 **System libraries**: 75.0% (-25.0%, +2 implemented, +1 observed stubs, +1 unobserved stubs functions)"))
-        self.assertIn("<summary>\U0001f50d 1 implemented but not observed by any title</summary>\n", text)
+        self.assertIn("<summary>\U0001f50d 1 implemented but not observed anywhere</summary>\n", text)
         self.assertIn("| libScePad | `Fresh` |", text)
         self.assertIn("| libScePad | `Pending` |", text)
-        self.assertIn("(no audited title imports them)</summary>", text)
+        self.assertIn("(no measured use needs them)</summary>", text)
         self.assertIn("| libScePad | `Unseen` |", text)
         self.assertNotIn("`Imported`", text.split("implemented but not observed")[1].split("</details>")[0])
 

@@ -477,7 +477,7 @@ def summary(libraries, shaders):
         'Raw numbers: <a href="progress.json">progress.json</a>.</p>',
         table("System libraries", "Library", libraries, states=True),
         "<p>A function is implemented when it no longer calls <code>NotImplemented_nid_no_patch</code>. "
-        "A pending function is an observed stub when the NID of an audited title import names it, and an unobserved stub otherwise. "
+        "A pending function is an observed stub when any measured use shows its NID is needed, and an unobserved stub otherwise. "
         "The percentage counts implemented functions over implemented and observed stubs, so unobserved stubs do not lower it; "
         "the declared percentage counts them too. A library without a list of observed NIDs counts all its stubs as observed; "
         f'<a href="{SOURCE}/docs/dev/PROGRESS.md#observed-imports">how the lists work</a>. '
@@ -551,9 +551,9 @@ def compare(title, column, unit, base, head):
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
-    lines += details("🔍", "implemented but not observed by any title", column, unseen)
+    lines += details("🔍", "implemented but not observed anywhere", column, unseen)
     lines += details("🆕", "declared as observed stubs", column, declared_observed)
-    lines += details("👻", "declared as unobserved stubs (no audited title imports them)", column, declared_unobserved)
+    lines += details("👻", "declared as unobserved stubs (no measured use needs them)", column, declared_unobserved)
     lines += details("⚠️", "went back to stubs", column, regressed)
     lines += details("🗑️", "removed", column, removed)
     lines += details("🔗", "now sharing sources", column, shared)
