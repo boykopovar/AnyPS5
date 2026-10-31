@@ -1595,12 +1595,12 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
-    if ((!buffer && length) || (address && !addressLength)) return Fail(14);
+    if (!buffer && length) return Fail(14);
     const GuestArena::HostWrite destination(length == 0 ? nullptr : buffer, static_cast<std::size_t>(length));
     if (!destination.Open()) return Fail(14);
     if (const int answered = ReceiveAnsweredHere(*socket, length); answered >= 0) {
         if (answered > 0) return Fail(answered);
-        if (address) *addressLength = 0;
+        if (address && addressLength) *addressLength = 0;
         return 0;
     }
     sockaddr_storage native{};
@@ -1612,11 +1612,11 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(length);
 #endif
     if (result < 0) return Fail(NativeError());
-    if (address && socket->family == GuestUnix) {
+    if (address && addressLength && socket->family == GuestUnix) {
         if (socket->type == 1) *addressLength = 0; else UnnamedAddress(address, addressLength);
         return result;
     }
-    if (address) {
+    if (address && addressLength) {
         if (native.ss_family == AF_INET || native.ss_family == AF_INET6) GuestAddress(native, address, addressLength);
         else *addressLength = 0;
     }

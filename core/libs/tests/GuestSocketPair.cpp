@@ -170,6 +170,10 @@ int main(int argc, char** argv) {
     std::uint32_t fromLength = sizeof(from);
     Require(recvfrom_nid_postfix(pair[1], received, sizeof(received), 0, from, &fromLength) == sizeof(ping) && fromLength == 0);
     Require(std::strcmp(received, ping) == 0);
+    Require(send_nid_postfix(pair[0], ping, sizeof(ping), 0) == sizeof(ping));
+    char withoutLength[8]{};
+    Require(recvfrom_nid_postfix(pair[1], withoutLength, sizeof(withoutLength), 0, from, nullptr) == sizeof(ping) && std::strcmp(withoutLength, ping) == 0);
+    Require(recvfrom_nid_postfix(pair[1], withoutLength, 0, 0, from, nullptr) == 0);
 
     Require(fcntl_nid_postfix(pair[1], 3) == 2);
     Require(fcntl_nid_postfix(pair[0], 1) == 0 && fcntl_nid_postfix(pair[1], 1) == 0);
