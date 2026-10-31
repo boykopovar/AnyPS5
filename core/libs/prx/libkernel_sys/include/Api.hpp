@@ -229,7 +229,7 @@ int APS5_VABI sceKernelEventLogWrite(void);
 int APS5_VABI sceKernelExpectedHddFormat(void);
 int APS5_VABI sceKernelFlock(void);
 int APS5_VABI sceKernelGetACInfoAllForCoredump(void);
-int APS5_VABI sceKernelGetAppCategoryType(void);
+int APS5_VABI sceKernelGetAppCategoryType(int pid, std::uint32_t* category);
 int APS5_VABI sceKernelGetAppInfoByAppId(void);
 int APS5_VABI sceKernelGetAppState(void);
 int APS5_VABI sceKernelGetAslrStatus(void);
