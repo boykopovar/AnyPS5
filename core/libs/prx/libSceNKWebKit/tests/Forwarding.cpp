@@ -4,10 +4,11 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <stdexcept>
 
-extern "C" std::uint64_t NotImplementedCalls_nid_no_patch();
+extern "C" std::uint64_t APS5_VABI NotImplementedCalls_nid_no_patch();
 
 extern "C" {
 int APS5_VABI JSRemoteInspectorDisableAutoStart();
