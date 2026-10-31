@@ -1,5 +1,6 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "GcnOpcodeTables.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -18,6 +19,7 @@ std::atomic<bool> g_gcnGuestShaders{false};
 constexpr std::uint32_t LiteralSource = 0xffu;
 constexpr std::uint32_t VccSdst = 106u;
 constexpr std::uint32_t NullSoffset = 0x7du;
+constexpr std::uint32_t MaxSmemByteOffset = 0xfffffu;
 constexpr std::uint32_t LinkedCallSopk = 0x16u;
 constexpr std::uint32_t CodeEndSopp = 0x1fu;
 constexpr std::uint32_t SetRegImmSopk = 0x15u;
@@ -108,12 +110,18 @@ Encoded encodeSmrd(std::span<const std::uint32_t> code, std::uint32_t index, std
     const auto sbase = (word >> 9u) & 0x3fu;
     const bool immediate = ((word >> 8u) & 1u) != 0;
     const auto offset = word & 0xffu;
-    if (!immediate && offset == LiteralSource) unsupported("SMRD literal-offset", opcode, programCounter);
+    const bool literalOffset = !immediate && offset == LiteralSource;
     Encoded out;
-    out.gcnWords = 1;
+    out.gcnWords = literalOffset ? 2u : 1u;
     out.rdnaWords = 2;
     out.words[0] = (0x3du << 26u) | (*mapped << 18u) | (sdst << 6u) | sbase;
-    out.words[1] = immediate ? (NullSoffset << 25u) | (offset * 4u) : (offset << 25u);
+    if (literalOffset) {
+        const auto dwords = literalAt(code, index + 1, programCounter);
+        if (dwords > MaxSmemByteOffset / 4u) unsupported("SMRD literal offset past the RDNA offset range,", opcode, programCounter);
+        out.words[1] = (NullSoffset << 25u) | (dwords * 4u);
+    } else {
+        out.words[1] = immediate ? (NullSoffset << 25u) | (offset * 4u) : (offset << 25u);
+    }
     return out;
 }
 
@@ -281,6 +289,24 @@ Encoded encodeMubuf(std::span<const std::uint32_t> code, std::uint32_t index, st
     return out;
 }
 
+Encoded encodeMtbuf(std::span<const std::uint32_t> code, std::uint32_t index, std::uint32_t programCounter) {
+    if (index + 1 >= code.size()) throw std::out_of_range("truncated GCN MTBUF instruction");
+    const auto word0 = code[index];
+    const auto opcode = (word0 >> 16u) & 7u;
+    if (((word0 >> 15u) & 1u) != 0) unsupported("MTBUF addr64", opcode, programCounter);
+    const auto dataFormat = (word0 >> 19u) & 0xfu;
+    const auto numberFormat = (word0 >> 23u) & 7u;
+    const auto format = GcnBufferFormats()[(dataFormat << 3u) | numberFormat];
+    if (format == 0) {
+        throw UnsupportedInstructionError("GCN MTBUF opcode " + std::to_string(opcode) + " at program counter " + std::to_string(programCounter) + " uses data format " + std::to_string(dataFormat) + " with number format " + std::to_string(numberFormat) + ", which has no RDNA buffer format");
+    }
+    Encoded out;
+    out.words[0] = replaceBits(word0, 19, 7, format);
+    out.words[1] = replaceBits(code[index + 1], 21, 1, 0);
+    out.rdnaWords = out.gcnWords = 2;
+    return out;
+}
+
 Encoded encodeMimg(std::span<const std::uint32_t> code, std::uint32_t index, std::uint32_t programCounter) {
     if (index + 1 >= code.size()) throw std::out_of_range("truncated GCN MIMG instruction");
     const auto word0 = code[index];
@@ -321,7 +347,7 @@ Encoded encodeGcn(std::span<const std::uint32_t> code, std::uint32_t index, std:
         case 0x38u: return encodeMubuf(code, index, programCounter);
         case 0x3eu: return encodePassThrough(code, index, 2, "EXP");
         case 0x37u: unsupported("FLAT", (word >> 18u) & 0x7fu, programCounter);
-        case 0x3au: unsupported("MTBUF", (word >> 16u) & 7u, programCounter);
+        case 0x3au: return encodeMtbuf(code, index, programCounter);
         case 0x3cu: return encodeMimg(code, index, programCounter);
         default: break;
     }
@@ -343,6 +369,10 @@ RdnaInstruction DecodeGcnInstruction(std::uint32_t programCounter, std::span<con
     const auto encoded = encodeGcn(code, wordIndex, programCounter);
     auto instruction = DecodeRdnaEncodedInstruction(programCounter, std::span<const std::uint32_t>(encoded.words.data(), encoded.rdnaWords), 0);
     instruction.wordCount = encoded.gcnWords;
+    const auto word = code[wordIndex];
+    const bool vop1RsqClamp = (word >> 25u) == 0x3fu && ((word >> 9u) & 0xffu) == 0x2cu;
+    const bool vop3RsqClamp = (word >> 26u) == 0x34u && ((word >> 17u) & 0x1ffu) == 0x1acu;
+    if (vop1RsqClamp || vop3RsqClamp) instruction.op = RdnaOpcode::VRsqClampF32;
     return instruction;
 }
 

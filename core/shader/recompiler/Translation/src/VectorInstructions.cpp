@@ -1079,6 +1079,8 @@ bool TranslationContext::emitVector(const RdnaInstruction& inst) {
         return floatUnary(inst, IrOpcode::FPLog2);
     case RdnaOpcode::VRsqF32:
         return floatUnary(inst, IrOpcode::FPRecipSqrt32);
+    case RdnaOpcode::VRsqClampF32:
+        return floatUnaryClampInfinity(inst, IrOpcode::FPRecipSqrt32);
     case RdnaOpcode::VSqrtF32:
         return floatUnary(inst, IrOpcode::FPSqrt);
     case RdnaOpcode::VSinF32:
