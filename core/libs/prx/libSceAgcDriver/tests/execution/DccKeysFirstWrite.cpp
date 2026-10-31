@@ -1016,9 +1016,14 @@ void RunCpuWriteAfterWritebackPresent(AgcDriver::VulkanDevice& device, std::uint
         Require(what.find("swapchain") != std::string::npos, "unexpected presentation failure: " + what);
     }
 
-    const auto snapshot = image->Original();
-    Require(snapshot.size() == SurfaceBytes, "resident snapshot size mismatch");
-    Require(snapshot[0] == std::byte{0x77}, "presented resident did not reflect CPU write after writeback");
+    if (AgcDriver::GuestMemory::Watched(surface, SurfaceBytes)) {
+        Require(AgcDriver::GuestMemory::UnchangedSince(surface, SurfaceBytes, image->GenerationFor(surface, SurfaceBytes)), "presented resident was not refreshed after CPU write");
+    } else {
+        Require(image->GuestSnapshotValid(), "untracked resident kept no guest snapshot");
+        const auto snapshot = image->Original();
+        Require(snapshot.size() == SurfaceBytes, "resident snapshot size mismatch");
+        Require(snapshot[0] == std::byte{0x77}, "presented resident did not reflect CPU write after writeback");
+    }
 }
 
 int main() {
