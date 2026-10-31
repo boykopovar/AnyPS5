@@ -120,14 +120,18 @@ def package(root, output, version):
         except OSError as promotion_error:
             restore_error = None
             unrestored = []
+            leftovers = []
             for name in reversed(replaced):
                 try:
                     (output / name).unlink(missing_ok=True)
                 except OSError as error:
                     restore_error = restore_error or error
+                    leftovers.append(name)
             for name in reversed(backed_up):
                 try:
                     (previous / name).replace(output / name)
+                    if name in leftovers:
+                        leftovers.remove(name)
                 except OSError as error:
                     restore_error = restore_error or error
                     unrestored.append(name)
@@ -136,6 +140,10 @@ def package(root, output, version):
                 if unrestored:
                     preserve_staging = True
                     message += f"; unrestored backups {', '.join(unrestored)} retained at {previous}"
+                if leftovers:
+                    preserve_staging = True
+                    paths = ", ".join(str(output / name) for name in leftovers)
+                    message += f"; promoted archives could not be removed and remain at {paths}; remaining staged archives retained at {staging}"
                 raise RuntimeError(message) from restore_error
             raise
     finally:
