@@ -865,6 +865,45 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     return value;
 }
 
+static void CheckLog10EdgeFlags() {
+    for (const double input : {-1.0, -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::quiet_NaN()}) {
+        errno = 0;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::isnan(log10_nid_postfix(input)) && errno == EDOM && std::fetestexcept(FE_INVALID) != 0);
+    }
+    for (const double input : {0.0, -0.0}) {
+        errno = 1234;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(log10_nid_postfix(input) == -std::numeric_limits<double>::infinity() && errno == 1234 && std::fetestexcept(FE_DIVBYZERO) == 0);
+    }
+}
+static void CheckLog10ConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0xfff0000000000000ull, 0}, {0x8000000000000000ull, 0xfff0000000000000ull, 0},
+        {0x0000000000000001ull, 0xc07434e6420f4374ull, 0}, {0x8000000000000001ull, 0xfff8000000000000ull, EDOM},
+        {0x000fffffffffffffull, 0xc0733a7146f72a42ull, 0}, {0x0010000000000000ull, 0xc0733a7146f72a42ull, 0},
+        {0x3ff0000000000000ull, 0x0000000000000000ull, 0}, {0x3fefffffffffffffull, 0xbc8bcb7b1526e50full, 0},
+        {0x3ff0000000000001ull, 0x3c9bcb7b1526e50dull, 0}, {0x3ff00000fffffffeull, 0x3e9bcb7a36937eb6ull, 0},
+        {0x3ff6a09e00000000ull, 0x3fc3441254d07a4eull, 0}, {0x4024000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x408f400000000000ull, 0x4008000000000000ull, 0}, {0x3fb999999999999aull, 0xbff0000000000000ull, 0},
+        {0x7fefffffffffffffull, 0x40734413509f79ffull, 0}, {0x7ff0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0xbff0000000000000ull, 0xfff8000000000000ull, EDOM}, {0xfff0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0}, {0xfff8000000000002ull, 0xfff8000000000002ull, EDOM},
+        {0x4003a67d5567227bull, 0x3fd8fa5a3b281494ull, 0}, {0x4047f462f020acdeull, 0x3ffae2ff9b87b792ull, 0},
+        {0x3ff9e926ec917ab6ull, 0x3fcacc4f022be644ull, 0}, {0x40bb970e057a80b2ull, 0x400ecabc9e60637cull, 0},
+        {0x4052444de3537dcfull, 0x3ffdd1cefbc9b58cull, 0}, {0x401d69da29dc587bull, 0x3febba41e2e308e6ull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(log10_nid_postfix(std::bit_cast<double>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
 static void CheckExpm1ConsoleBits() {
     constexpr struct {
         std::uint64_t input;
@@ -1262,6 +1301,7 @@ static void CheckExpm1ScalingRounding() {
     }
     _mm_setcsr(savedCsr);
 }
+
 
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
@@ -2606,6 +2646,8 @@ int main() {
     CheckScalbnErrno();
     CheckNearbyintl();
     CheckCbrtConsoleBits();
+    CheckLog10ConsoleBits();
+    CheckLog10EdgeFlags();
     CheckLogbConsoleBits();
     CheckExpm1ConsoleBits();
     CheckLog1pConsoleBits();
@@ -2621,6 +2663,7 @@ int main() {
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckExpm1ScalingRounding();
+    CheckLog10ConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
