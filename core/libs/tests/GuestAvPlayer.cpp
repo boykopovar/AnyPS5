@@ -810,7 +810,7 @@ void CheckVideoPicture(const AvPlayerFrameInfoEx& info) {
     Check(video.width == 112 && video.height == 64 && video.pitch == Pitch, "unexpected frame geometry");
     Check(video.crop_left_offset == 0 && video.crop_top_offset == 0 && video.crop_right_offset == Pitch - Width && video.crop_bottom_offset == 4, "unexpected crop offsets");
     Check(video.luma_bit_depth == 8 && video.chroma_bit_depth == 8, "unexpected bit depth");
-    Check(std::fabs(video.aspect_ratio - 1.0f) < 0.01f, "unexpected aspect ratio");
+    Check(video.aspect_ratio == 0.0f, "unexpected aspect ratio");
     Check(std::memcmp(video.language_code, "eng", 4) == 0, "missing video language");
     const int index = FrameIndex(info.timestamp);
     Check(index >= 0 && index < FrameCount, "frame timestamp out of range");
@@ -884,7 +884,7 @@ void CheckStreamInfoEx(AvPlayerInternal* player) {
             Check(video.width == 112 && video.height == 64 && video.pitch == Pitch, "unexpected extended video geometry");
             Check(video.crop_left_offset == 0 && video.crop_top_offset == 0 && video.crop_right_offset == Pitch - Width && video.crop_bottom_offset == 4, "unexpected extended crop offsets");
             Check(video.luma_bit_depth == 8 && video.chroma_bit_depth == 8 && !video.video_full_range_flag, "unexpected extended video format");
-            Check(std::fabs(video.aspect_ratio - static_cast<float>(Width) / Height) < 0.01f, "unexpected extended aspect ratio");
+            Check(video.aspect_ratio == 0.0f, "unexpected extended aspect ratio");
             Check(std::memcmp(video.language_code, "eng", 4) == 0, "unexpected extended video language");
         } else {
             const bool english = index == EnglishAudioStream;
@@ -1198,9 +1198,8 @@ void CheckAspectRatios(std::span<const std::uint8_t> movie, bool videoOnly, floa
 }
 
 void TestSampleAspect() {
-    constexpr float Display = static_cast<float>(Width) / Height;
-    CheckAspectRatios(Movie, false, Display, 1.0f, "a stream without a sample aspect ratio");
-    CheckAspectRatios(AnamorphicMovie, true, Display * 16.0f / 15.0f, 16.0f / 15.0f, "a 16:15 sample aspect ratio");
+    CheckAspectRatios(Movie, false, 0.0f, 0.0f, "a stream without a sample aspect ratio");
+    CheckAspectRatios(AnamorphicMovie, true, 16.0f / 15.0f, 16.0f / 15.0f, "a 16:15 sample aspect ratio");
 }
 
 void TestWithoutAllocators() {

@@ -66,14 +66,12 @@ bool IsStreamSupported(const AVStream& stream) {
     return codec == AV_CODEC_ID_H264 || codec == AV_CODEC_ID_HEVC || codec == AV_CODEC_ID_AAC || codec == AV_CODEC_ID_VP9 || codec == AV_CODEC_ID_OPUS;
 }
 
-float SampleAspect(AVRational sampleAspect) {
-    return sampleAspect.num > 0 && sampleAspect.den > 0 ? static_cast<float>(av_q2d(sampleAspect)) : 1.0f;
+bool HasAspect(AVRational sampleAspect) {
+    return sampleAspect.num > 0 && sampleAspect.den > 0;
 }
 
-float DisplayAspect(int width, int height, AVRational sampleAspect) {
-    if (width <= 0 || height <= 0) return 0.0f;
-    const double pixel = sampleAspect.num > 0 && sampleAspect.den > 0 ? av_q2d(sampleAspect) : 1.0;
-    return static_cast<float>(width * pixel / height);
+float SampleAspect(AVRational sampleAspect) {
+    return HasAspect(sampleAspect) ? static_cast<float>(av_q2d(sampleAspect)) : 0.0f;
 }
 
 class FileReplacementStream {
@@ -639,7 +637,7 @@ private:
         if (info.type == StreamTypeVideo) {
             info.details.video.width = AlignUp(static_cast<std::uint32_t>(parameters->width), VideoHeightAlignment);
             info.details.video.height = AlignUp(static_cast<std::uint32_t>(parameters->height), VideoHeightAlignment);
-            info.details.video.aspect_ratio = DisplayAspect(parameters->width, parameters->height, parameters->sample_aspect_ratio);
+            info.details.video.aspect_ratio = SampleAspect(parameters->sample_aspect_ratio);
             std::memcpy(info.details.video.language_code, language, sizeof(language));
         } else {
             info.details.audio.channel_count = static_cast<std::uint16_t>(parameters->ch_layout.nb_channels);
@@ -1074,7 +1072,7 @@ private:
         info.timestamp = timestamp;
         info.details.video.width = alignedWidth;
         info.details.video.height = alignedHeight;
-        info.details.video.aspect_ratio = SampleAspect(frame.sample_aspect_ratio);
+        info.details.video.aspect_ratio = SampleAspect(HasAspect(frame.sample_aspect_ratio) ? frame.sample_aspect_ratio : format->streams[index]->codecpar->sample_aspect_ratio);
         std::memcpy(info.details.video.language_code, streamLanguage(index), sizeof(info.details.video.language_code));
         info.details.video.crop_left_offset = static_cast<std::uint32_t>(frame.crop_left);
         info.details.video.crop_right_offset = static_cast<std::uint32_t>(frame.crop_right) + pitch - width;

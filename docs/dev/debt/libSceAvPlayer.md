@@ -16,7 +16,7 @@
 
 - [Paused initial video](../../../core/libs/prx/libSceAvPlayer/src/Source.cpp) (libSceAvPlayer) keeps the first picture available when audio has already established the playback epoch before the caller pauses. Further pictures of that epoch stay blocked, as after a paused jump. The console's exact initial preparation ordering has not been measured.
 
-- [AvPlayer frame aspect ratio](../../../core/libs/prx/libSceAvPlayer/src/Source.cpp) (libSceAvPlayer) - the `aspect_ratio` of a video frame is the stream's sample aspect ratio (1.0 when the stream gives none), while the stream info keeps width / height, as in [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/avplayer/avplayer_source.cpp). A title that sizes its video quad from the frame value drew it (9/16)^2 too small with width / height; the console's own definition of the field is unknown
+- [AvPlayer frame aspect ratio](../../../core/libs/prx/libSceAvPlayer/src/Source.cpp) (libSceAvPlayer) - the `aspect_ratio` of the stream info is the stream's sample aspect ratio, and that of a video frame is the picture's sample aspect ratio, falling back to the stream's; both are 0.0 when no ratio is given. This follows [BunnyFl's reading of firmware 13.42](https://github.com/boykopovar/AnyPS5/pull/9937#issuecomment-6396994223) (emulator execution and code reading, H.264 only, no console run). AnyPS5 reads the ratio through FFmpeg, which does not tell an `aspect_ratio_idc` of 0 (1.0 on the console) from missing aspect information, nor apply the older mapping for titles built with an SDK below 6.00; HEVC and VP9 are unchecked. A title that sizes its video quad from the frame value drew it (9/16)^2 too small when it was width / height.
 
 ### Functional
 
