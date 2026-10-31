@@ -6,6 +6,7 @@ on:
     paths:
       - core/libs/prx/**
       - docs/dev/observed/**
+      - docs/dev/inventory/**
       - core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp
 
 permissions:
@@ -26,12 +27,13 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Deploy Pages if the progress changed
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          python3 tools/progress.py "$RUNNER_TEMP/progress"
+          python3 tools/progress.py --origins "$RUNNER_TEMP/progress"
           site=$(gh api "repos/$GH_REPO/pages" --jq .html_url)
           if curl -fsSL "${site%/}/progress.json?$GITHUB_SHA" -o "$RUNNER_TEMP/deployed.json" &&
             cmp -s "$RUNNER_TEMP/deployed.json" "$RUNNER_TEMP/progress/progress.json"; then

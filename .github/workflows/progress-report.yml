@@ -8,6 +8,8 @@ on:
       - 'tools/nid_names.py'
       - 'tools/progress.py'
       - 'tools/rdna_isa.txt'
+      - 'tools/stub_origins.py'
+      - 'docs/dev/inventory/**'
       - 'docs/dev/observed/**'
       - '.github/workflows/progress-report.yml'
 
@@ -28,7 +30,7 @@ jobs:
           out=$RUNNER_TEMP/out report=$RUNNER_TEMP/report
           git worktree add --detach "$RUNNER_TEMP/base" HEAD^1
           python3 tools/progress.py --root "$RUNNER_TEMP/base" "$out/base"
-          python3 tools/progress.py "$out/head"
+          python3 tools/progress.py --origins "$out/head"
           mkdir "$report"
           echo "$PR" > "$report/pr"
           body=$(python3 tools/progress.py --compare "$out/base/progress.json" "$out/head/progress.json")
