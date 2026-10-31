@@ -233,6 +233,15 @@ class ObservedStubTests(unittest.TestCase):
         self.assertEqual(group["todo_names"], ["First", "Second"])
         self.assertEqual(group["unobserved_names"], [])
 
+    def test_implemented_functions_without_an_observed_nid_are_listed(self):
+        source = ("int APS5_VABI Ready() { return 0; }\n"
+                  "int APS5_VABI Imported() { return 0; }\n")
+        observed = frozenset({progress.tokenizer.compute_nid("Imported")})
+        group = self.scan(source, observed)
+        self.assertEqual(group["done_names"], ["Imported", "Ready"])
+        self.assertEqual(group["done_unobserved_names"], ["Ready"])
+        self.assertNotIn("done_unobserved_names", self.scan(source))
+
     def test_an_alias_export_is_observed_under_its_nid(self):
         alias = "AbCdEfGhIjK"
         source = (f'APS5_EXPORT("{alias}", Renamed);\n'

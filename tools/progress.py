@@ -209,6 +209,8 @@ def scan_library(path, observed=None):
              "done": len(done), "todo": len(todo), "unobserved": len(unobserved),
              "done_names": sorted(done), "todo_names": sorted(todo), "unobserved_names": sorted(unobserved),
              "inert_names": sorted(inert)}
+    if observed is not None:
+        group["done_unobserved_names"] = sorted(name for name in done if not tokenizer.nids_of(name, aliases) & observed)
     if not (done or todo or unobserved):
         cmake = path / "CMakeLists.txt"
         texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
