@@ -159,6 +159,9 @@ def parse_elf(data):
 
 
 def place_segments(data, headers, records):
+    for header in headers:
+        if header["type"] == PT_NULL:
+            header.update(flags=0, offset=0, vaddr=0, size=0, memory=0, align=0, source=0)
     loads = [header for header in headers if header["type"] == PT_LOAD]
     used = set()
     placed = set()
