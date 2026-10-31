@@ -2,24 +2,12 @@
 
 #include <bit>
 #include <climits>
-#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 
 namespace {
 
-struct Bignum {
-    std::uint64_t* d;
-    std::int32_t top;
-    std::int32_t dmax;
-    std::int32_t neg;
-    std::int32_t flags;
-};
-
-static_assert(sizeof(Bignum) == 24);
-static_assert(offsetof(Bignum, top) == 8);
-
-int BitCount(const Bignum* number) {
+int BitCount(const LibreSsl3Bignum* number) {
     if (!number)
         throw std::invalid_argument("RSA_bits requires a modulus");
     if (number->top == 0)
@@ -41,7 +29,7 @@ extern "C" {
 int APS5_VABI RSA_bits_nid_postfix(const LibreSsl3Rsa* rsa) {
     if (!rsa)
         throw std::invalid_argument("RSA_bits requires a key");
-    return BitCount(static_cast<const Bignum*>(rsa->n));
+    return BitCount(static_cast<const LibreSsl3Bignum*>(rsa->n));
 }
 
 }

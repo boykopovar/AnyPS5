@@ -12,4 +12,5 @@ struct LibreSsl3Bignum {
 };
 
 static_assert(sizeof(LibreSsl3Bignum) == 24);
+static_assert(offsetof(LibreSsl3Bignum, top) == 8);
 static_assert(offsetof(LibreSsl3Bignum, neg) == 16);
