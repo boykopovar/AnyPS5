@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -33,6 +34,9 @@ constexpr int NpOutOfRange = static_cast<int>(0x8055800E);
 constexpr int NpInvalidArgument = static_cast<int>(0x80558009);
 constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
+constexpr int NpObjectAlreadyInitialized = static_cast<int>(0x80559E03);
+constexpr int NpTimedOut = static_cast<int>(0x8055800B);
+constexpr int NpCanceled = static_cast<int>(0x80558010);
 constexpr int NpStreamBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
 constexpr int NpUtilParseOutOfRange = static_cast<int>(0x8055060A);
@@ -249,6 +253,87 @@ void TestObjectsThroughStoredAllocator() {
     record.fail = true;
     Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
         "a failed array allocation returns null");
+}
+
+struct EventFlagWaiter {
+    NpEventFlagObject* flag;
+    std::atomic<bool> started {false};
+    std::atomic<bool> done {false};
+    int result = 0;
+};
+
+void* APS5_VABI WaitOnEventFlag(void* arg) {
+    auto* waiter = static_cast<EventFlagWaiter*>(arg);
+    waiter->started = true;
+    std::uint64_t pattern = 0;
+    waiter->result = _ZN3sce2np9EventFlag4WaitEmjPmj(waiter->flag, 0x80, EventFlagWaitAnd, &pattern, 0);
+    waiter->done = true;
+    return nullptr;
+}
+
+void TestEventFlagObjects() {
+    NpEventFlagObject flag {};
+    _ZN3sce2np9EventFlagC1Ev(&flag);
+    bool refused = false;
+    try {
+        _ZN3sce2np9EventFlag3SetEm(&flag, 1);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(flag.vtable != nullptr && flag.state == 0 && refused, "an event flag asserts that it is created before use");
+    Require(_ZN3sce2np9EventFlag6CreateEPKcj(&flag, "NpEventFlagObject", 0) == 0 && flag.state == 1, "an event flag is created");
+    Require(_ZN3sce2np9EventFlag6CreateEPKcj(&flag, "NpEventFlagObject", 0) == NpObjectAlreadyInitialized
+        && _ZN3sce2np9EventFlag4OpenEPKc(&flag, "NpEventFlagObject") == NpObjectAlreadyInitialized, "a second Create or Open is refused");
+
+    std::uint64_t pattern = 0;
+    Require(_ZN3sce2np9EventFlag4PollEmjPm(&flag, 1, EventFlagWaitAnd, &pattern) == NpEventFlagBusy, "polling a clear bit reports busy");
+    Require(_ZN3sce2np9EventFlag3SetEm(&flag, 5) == 0 && _ZN3sce2np9EventFlag4PollEmjPm(&flag, 4, EventFlagWaitAnd, &pattern) == 0 && pattern == 5,
+        "a set bit is polled");
+    Require(_ZN3sce2np9EventFlag4WaitEmjPmj(&flag, 8, EventFlagWaitAnd, &pattern, 1000) == NpTimedOut, "a timed wait for a clear bit times out");
+    pattern = 0;
+    Require(_ZN3sce2np9EventFlag4WaitEmjPmj(&flag, 1, EventFlagWaitAnd, &pattern, 0) == 0 && pattern == 5, "a wait without a timeout returns for a set bit");
+    Require(_ZN3sce2np9EventFlag5ClearEm(&flag, 4) == 0 && _ZN3sce2np9EventFlag4PollEmjPm(&flag, 1, EventFlagWaitAnd, &pattern) == NpEventFlagBusy
+        && _ZN3sce2np9EventFlag4PollEmjPm(&flag, 4, EventFlagWaitAnd, &pattern) == 0, "Clear keeps only the bits of its pattern");
+
+    EventFlagWaiter waiter {&flag};
+    Pthread thread {};
+    Require(sceNpCreateThread(&thread, WaitOnEventFlag, &waiter, 0, 0x10000, 0, "NpEventFlagWaiter") == 0, "a waiting thread is created");
+    while (!waiter.started) std::this_thread::yield();
+    bool cancelOk = true;
+    for (int attempt = 0; attempt < 2000 && !waiter.done; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        cancelOk &= _ZN3sce2np9EventFlag6CancelEm(&flag, 4) == 0;
+    }
+    void* value = nullptr;
+    Require(cancelOk && sceNpJoinThread(thread, &value) == 0 && waiter.result == NpCanceled, "Cancel ends a wait with 0x80558010");
+    Require(_ZN3sce2np9EventFlag4PollEmjPm(&flag, 4, EventFlagWaitAnd, &pattern) == 0, "Cancel sets the pattern it is given");
+    KernelUseconds timeout = 1000;
+    Require(sceNpWaitEventFlag(flag.flag, 8, EventFlagWaitAnd, &pattern, &timeout) == NpTimedOut, "sceNpWaitEventFlag maps the kernel timeout");
+    _ZN3sce2np9EventFlag7DestroyEv(&flag);
+    Require(flag.state == 0, "Destroy leaves the event flag uninitialized");
+
+    NpEventFlagObject creator {};
+    NpEventFlagObject opened {};
+    _ZN3sce2np9EventFlagC1Ev(&creator);
+    _ZN3sce2np9EventFlagC1Ev(&opened);
+    Require(_ZN3sce2np9EventFlag6CreateEPKcj(&creator, "NpEventFlagShared", EventFlagShared) == 0
+        && _ZN3sce2np9EventFlag4OpenEPKc(&opened, "NpEventFlagShared") == 0 && opened.state == 2, "a shared event flag is opened by name");
+    Require(_ZN3sce2np9EventFlag3SetEm(&opened, 2) == 0 && _ZN3sce2np9EventFlag4PollEmjPm(&creator, 2, EventFlagWaitAnd, &pattern) == 0,
+        "a bit set through the opened object is seen by the creator");
+    const KernelEventFlag openedHandle = opened.flag;
+    _ZN3sce2np9EventFlag7DestroyEv(&opened);
+    Require(sceNpCloseEventFlag(openedHandle) == KernelNoSuchObject && sceNpSetEventFlag(creator.flag, 1) == 0,
+        "Destroy closes an opened event flag and leaves the creator's");
+    _ZN3sce2np9EventFlag7DestroyEv(&creator);
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* owned = static_cast<NpEventFlagObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpEventFlagObject), &allocator));
+    _ZN3sce2np9EventFlagC1Ev(owned);
+    Require(_ZN3sce2np9EventFlag6CreateEPKcj(owned, "NpEventFlagOwned", 0) == 0, "an allocated event flag is created");
+    using Destructor = void APS5_VABI (*)(NpEventFlagObject*);
+    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
 void TestTitleIdObjects() {
@@ -1067,6 +1152,7 @@ int main() {
     TestHeaps();
     TestObjects();
     TestObjectsThroughStoredAllocator();
+    TestEventFlagObjects();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestStreamHelpers();

@@ -151,11 +151,6 @@ int APS5_VABI _ZN3sce2np7RingBuf15CheckoutForReadEPm(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np9EventFlag4OpenEPKc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np13NpTitleSecret5ClearEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -246,16 +241,6 @@ int APS5_VABI _ZN3sce2np9WorkQueue15GetFinishedItemENS0_14WorkItemStatusE(void) 
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np9EventFlag4PollEmjPm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np9EventFlagD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np9LocalFile6RemoveEPKc(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -342,11 +327,6 @@ int APS5_VABI _ZN3sce2np6ThreadD1Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np9EventFlag3SetEm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -481,11 +461,6 @@ int APS5_VABI _ZN3sce2np12HttpTemplateC2Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np9EventFlag6CreateEPKcj(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient15RegisterServiceEPKNS1_17ServiceClientInfoE(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -497,11 +472,6 @@ int APS5_VABI _ZN3sce2np8WorkItemD0Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np9SemaphoreD2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np9EventFlagD2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -582,11 +552,6 @@ int APS5_VABI _ZN3sce2np4PathD2Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np4CondD1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np9EventFlag7DestroyEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
