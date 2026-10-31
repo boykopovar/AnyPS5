@@ -41,6 +41,9 @@ class ObservedManifestTests(unittest.TestCase):
     def findings(self, result):
         return "\n".join(line for line in result.stdout.splitlines() if "[observed-manifest]" in line)
 
+    def inventory(self, result):
+        return "\n".join(line for line in result.stdout.splitlines() if "[inventory-manifest]" in line)
+
     def test_a_sorted_manifest_with_comments_passes(self):
         result = self.check({"docs/dev/observed/libSceOne.txt": f"# header\n{FIRST}  # loader\n{SECOND}  # manual: by name\n"})
         self.assertEqual((result.returncode, self.findings(result)), (0, ""), result.stdout + result.stderr)
@@ -89,6 +92,23 @@ class ObservedManifestTests(unittest.TestCase):
                             {"docs/dev/observed/libSceOne.txt": f"{FIRST}\n"})
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("[observed-untagged]", result.stdout)
+
+    def test_a_valid_inventory_listing_passes(self):
+        result = self.check({"docs/dev/inventory/libSceOne.txt": f"# header\n{FIRST}  Libs-3.20\n{SECOND}  Libs-3.20\n"})
+        self.assertEqual((result.returncode, self.inventory(result)), (0, ""), result.stdout + result.stderr)
+
+    def test_inventory_problems_fail_with_their_line(self):
+        result = self.check({"docs/dev/inventory/libSceOne.txt": f"{SECOND}  src\n{FIRST}  src\n{FIRST}  src\nshort\n"})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for expected in (":2: error: [inventory-manifest] ", "is not in sorted order", "duplicate NID", ":4: error"):
+            self.assertIn(expected, self.inventory(result))
+
+    def test_inventory_listings_need_a_library_and_a_plain_name(self):
+        for name, expected in (("libSceGone.txt", "libSceGone is not a library of core/libs/prx"), ("libSceOne.csv", "expected docs/dev/inventory/<library>.txt")):
+            with self.subTest(name=name):
+                result = self.check({f"docs/dev/inventory/{name}": f"{FIRST}  src\n"})
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(expected, self.inventory(result))
 
     def test_a_manifest_the_pull_request_does_not_touch_is_not_rechecked(self):
         result = self.check({"README.txt": "x\n"}, {"docs/dev/observed/libSceOne.txt": f"{SECOND}\n{FIRST}\n"})
