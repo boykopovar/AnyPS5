@@ -544,7 +544,7 @@ VkResult createImportBuffer(const Context& context, VkExternalMemoryHandleTypeFl
     info.size = size;
     info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    return context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, buffer);
+    return context.CreateBuffer(&info, nullptr, buffer);
 }
 
 const char* bindImport(const Context& context, HostImport& entry, VkExternalMemoryHandleTypeFlagBits handleType, const void* import, std::uint32_t importTypes, bool& allocated, VkResult& failure) {
@@ -568,7 +568,7 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     if (handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) shareDmaBufImport(context, info, families, false);
 #endif
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) return failed("vkCreateBuffer", result);
+    if (const auto result = context.CreateBuffer(&info, nullptr, &buffer); result != VK_SUCCESS) return failed("vkCreateBuffer", result);
     entry.buffer = buffer;
     VkMemoryRequirements requirements{};
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, entry.buffer, &requirements);
@@ -752,7 +752,7 @@ const char* createChunkedDmaBufImport(const Context& context, HostImport& entry,
     ImportFamilies families;
     shareDmaBufImport(context, info, families, false);
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) {
+    if (const auto result = context.CreateBuffer(&info, nullptr, &buffer); result != VK_SUCCESS) {
         failure = result;
         return "vkCreateBuffer";
     }
@@ -806,7 +806,7 @@ VkMemoryRequirements dmaBufBufferRequirements(const Context& context, const Host
     ImportFamilies families;
     shareDmaBufImport(context, info, families, (flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0);
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) throwSparseImport(entry, "vkCreateBuffer", result);
+    if (const auto result = context.CreateBuffer(&info, nullptr, &buffer); result != VK_SUCCESS) throwSparseImport(entry, "vkCreateBuffer", result);
     VkMemoryRequirements requirements{};
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
     if (kept != nullptr) {
@@ -1045,7 +1045,7 @@ const char* prepareSettleBatch(const Context& context, ImportSettle& settle, Set
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = VkDeviceSize{settleBatchCount} * settleBatchCopies * 4u;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        if ((result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &settle.batchTarget)) != VK_SUCCESS) {
+        if ((result = context.CreateBuffer(&info, nullptr, &settle.batchTarget)) != VK_SUCCESS) {
             settle.batchTarget = VK_NULL_HANDLE;
             return "vkCreateBuffer (settle batch)";
         }
@@ -3577,8 +3577,12 @@ bool WaitForLeasesAndImports(std::uintptr_t address, std::size_t bytes) {
         const auto target = state.newestLeaseSerial;
         if (recorder != nullptr && recorder == state.leaseRecorder && target > state.finishedLeaseSerial) {
             Recorder::CountSync(4);
-            recorder->Submit();
-            recorder->FinishUpTo(target);
+            if (recorder->AsyncLaneActive()) {
+                recorder->FinishThroughOpened(target);
+            } else {
+                recorder->Submit();
+                recorder->FinishUpTo(target);
+            }
             state.finishedLeaseSerial = target;
             synced = true;
         } else if (recorder != nullptr && !recorder->Idle()) {
@@ -3697,9 +3701,8 @@ void FinishLeaseWork() {
     auto* recorder = Recorder::Active();
     const auto target = state.newestLeaseSerial;
     if (recorder == nullptr || recorder != state.leaseRecorder || target <= recorder->CompletedThrough()) return;
-    if (target >= recorder->OpenSerial()) recorder->Submit();
     Recorder::AnnounceSyncSite(__builtin_return_address(0));
-    recorder->FinishUpTo(target);
+    recorder->FinishThroughOpened(target);
 }
 
 LeaseStats LeaseCounters() {
@@ -3875,7 +3878,7 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
         info.size = bytes;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        if ((probe.result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &destination)) != VK_SUCCESS) return "vkCreateBuffer";
+        if ((probe.result = context.CreateBuffer(&info, nullptr, &destination)) != VK_SUCCESS) return "vkCreateBuffer";
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, destination, &requirements);
         if (requirements.memoryTypeBits == 0) return "the destination memory type";
@@ -5967,6 +5970,7 @@ void GuestBufferMemory::recordGpuCopies(std::span<Region* const> copies, bool ad
             prelude = true;
         }
     }
+    const Recorder::CommandBorrow commandBorrow(recorder, commands);
     const auto timing = prelude ? Recorder::NoTiming : recorder->BeginGpuTiming(StagingCopyInKey);
     if (Recorder::BarrierValidate()) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
@@ -6073,6 +6077,7 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
     std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
     bool recording = false;
     VkCommandBuffer commands = VK_NULL_HANDLE;
+    std::optional<Recorder::CommandBorrow> commandBorrow;
     auto timing = Recorder::NoTiming;
     std::uint64_t copiedBytes = 0;
     if (!writes.empty()) {
@@ -6093,6 +6098,7 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             if (from >= to || std::any_of(heapReadbacks.begin(), heapReadbacks.end(), [&](const auto& entry) { return entry.first == from; })) continue;
             if (!recording) {
                 commands = recorder.Commands();
+                commandBorrow.emplace(&recorder, commands);
                 timing = recorder.BeginGpuTiming(StagingCopyBackKey);
                 RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
                 Recorder::CountBarriers(Recorder::CommandClass::StagingOut);
@@ -6113,6 +6119,7 @@ void GuestBufferMemory::RecordCopyBacks(Recorder& recorder) {
             if (!recording) {
                 VkAccessFlags covered = 0;
                 commands = recorder.Commands(&covered);
+                commandBorrow.emplace(&recorder, commands);
                 timing = recorder.BeginGpuTiming(StagingCopyBackKey);
                 // The shader's stores into the buffer (whichever stage made them) precede the copy.
                 constexpr BarrierMask leading{VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT};

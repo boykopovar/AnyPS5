@@ -52,6 +52,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/AsyncCompute.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
@@ -94,7 +95,7 @@
 
 namespace AgcDriver {
 
-DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents) {
+DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents, bool asyncCompute, bool deferredDestruction) {
     DeviceQueuePlan plan;
     const auto count = static_cast<std::uint32_t>(families.size());
     if (settles) {
@@ -120,22 +121,58 @@ DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> famili
             plan.mainCount = *index + 1;
         }
     }
-    if (!sparseBinding) return plan;
     const auto taken = [&](std::uint32_t index) { return plan.settle && index == plan.settleFamily ? plan.settleIndex + 1 : 0u; };
-    const auto binds = [&](std::uint32_t index) { return index != family && families[index].queueCount > taken(index) && (families[index].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) != 0; };
-    for (std::uint32_t i = 0; i < count && plan.sparseFamily == VK_QUEUE_FAMILY_IGNORED; ++i) {
-        if (binds(i) && families[i].queueFlags == VK_QUEUE_SPARSE_BINDING_BIT) plan.sparseFamily = i;
+    if (sparseBinding) {
+        const auto binds = [&](std::uint32_t index) { return index != family && families[index].queueCount > taken(index) && (families[index].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) != 0; };
+        for (std::uint32_t i = 0; i < count && plan.sparseFamily == VK_QUEUE_FAMILY_IGNORED; ++i) {
+            if (binds(i) && families[i].queueFlags == VK_QUEUE_SPARSE_BINDING_BIT) plan.sparseFamily = i;
+        }
+        for (std::uint32_t i = 0; i < count && plan.sparseFamily == VK_QUEUE_FAMILY_IGNORED; ++i) {
+            if (binds(i)) plan.sparseFamily = i;
+        }
+        if (plan.sparseFamily != VK_QUEUE_FAMILY_IGNORED) {
+            plan.sparseIndex = taken(plan.sparseFamily);
+            plan.sparseBinding = true;
+        } else {
+            plan.sparseBinding = family < count && (families[family].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) != 0;
+        }
     }
-    for (std::uint32_t i = 0; i < count && plan.sparseFamily == VK_QUEUE_FAMILY_IGNORED; ++i) {
-        if (binds(i)) plan.sparseFamily = i;
-    }
-    if (plan.sparseFamily != VK_QUEUE_FAMILY_IGNORED) {
-        plan.sparseIndex = taken(plan.sparseFamily);
-        plan.sparseBinding = true;
-    } else {
-        plan.sparseBinding = family < count && (families[family].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) != 0;
+    if (asyncCompute && !deferredDestruction && family < count) {
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (i == family || (families[i].queueFlags & VK_QUEUE_COMPUTE_BIT) == 0 || (families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0 || families[i].timestampValidBits == 0) continue;
+            const auto index = std::max(taken(i), plan.sparseFamily == i ? plan.sparseIndex + 1 : 0u);
+            if (index >= families[i].queueCount) continue;
+            plan.async = true;
+            plan.asyncFamily = i;
+            plan.asyncIndex = index;
+            plan.asyncTimestampValidBits = families[i].timestampValidBits;
+            break;
+        }
     }
     return plan;
+}
+
+DeviceQueueCreateInfos::DeviceQueueCreateInfos(const DeviceQueuePlan& plan, std::uint32_t family) {
+    const auto add = [&](std::uint32_t queueFamily, std::uint32_t queues) {
+        for (std::uint32_t i = 0; i < count; ++i) {
+            if (infos[i].queueFamilyIndex != queueFamily) continue;
+            infos[i].queueCount = std::max(infos[i].queueCount, queues);
+            return;
+        }
+        Graphics::Require(count < infos.size(), "too many device queue families");
+        auto& info = infos[count++];
+        info = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+        info.queueFamilyIndex = queueFamily;
+        info.queueCount = queues;
+    };
+    add(family, plan.mainCount);
+    if (plan.settle) add(plan.settleFamily, plan.settleIndex + 1);
+    if (plan.sparseFamily != VK_QUEUE_FAMILY_IGNORED) add(plan.sparseFamily, plan.sparseIndex + 1);
+    if (plan.async) add(plan.asyncFamily, plan.asyncIndex + 1);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        priorities[i].assign(infos[i].queueCount, 1.0f);
+        infos[i].pQueuePriorities = priorities[i].data();
+    }
 }
 
 namespace {
@@ -489,6 +526,11 @@ struct VulkanDevice::State {
     VkQueue sparseQueue = VK_NULL_HANDLE;
     std::mutex sparseQueueMutex;
     VkQueue settleQueue = VK_NULL_HANDLE;
+    VkQueue asyncQueue = VK_NULL_HANDLE;
+    std::uint32_t asyncFamily = VK_QUEUE_FAMILY_IGNORED;
+    std::uint32_t asyncQueueIndex = 0;
+    std::uint32_t asyncTimestampValidBits = 0;
+    std::shared_ptr<Graphics::AsyncCommandBuffers> asyncCommands;
     std::uint32_t settleFamily = 0;
     VkCommandPool settlePool = VK_NULL_HANDLE;
     std::mutex settleQueueMutex;
@@ -695,13 +737,13 @@ struct VulkanDevice::State {
         return workgroupMemory;
     }
 
-    void CreateMarkerBuffer() {
+    void CreateMarkerBuffer(const Graphics::Context& context) {
         bufferMarker = DeviceFunction<PFN_vkCmdWriteBufferMarkerAMD>("vkCmdWriteBufferMarkerAMD");
         VkBufferCreateInfo buffer{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         buffer.size = 2 * sizeof(std::uint32_t);
         buffer.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         buffer.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        check(DeviceFunction<PFN_vkCreateBuffer>("vkCreateBuffer")(device, &buffer, nullptr, &markerBuffer), "vkCreateBuffer buffer markers");
+        check(context.CreateBuffer(&buffer, nullptr, &markerBuffer), "vkCreateBuffer buffer markers");
         VkMemoryRequirements requirements{};
         DeviceFunction<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(device, markerBuffer, &requirements);
         std::uint32_t memoryType = memoryProperties.memoryTypeCount;
@@ -1760,12 +1802,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->capabilities.push_back(5283);
         state->spirvExtensions.push_back("SPV_EXT_mesh_shader");
     }
-    const float priority = 1.0f;
-    VkDeviceQueueCreateInfo queueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-    queueInfo.queueFamilyIndex = family;
-    queueInfo.queueCount = 1;
-    queueInfo.pQueuePriorities = &priority;
-    const float priorities[3]{1.0f, 1.0f, 1.0f};
 #ifdef _WIN32
     const bool settles = true;
 #else
@@ -1780,8 +1816,6 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         getFamilies(selected, &families, queues.data());
     }
     VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-    deviceInfo.queueCreateInfoCount = 1;
-    deviceInfo.pQueueCreateInfos = &queueInfo;
     VkPhysicalDeviceFeatures available{};
     state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(selected, &available);
     require(available.vertexPipelineStoresAndAtomics && available.fragmentStoresAndAtomics, "graphics shader buffer writes and atomics are unavailable");
@@ -1812,30 +1846,14 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     // Guest shaders routinely read past descriptor ranges; robust access turns that into zeros
     // instead of a GPU fault that loses the device.
     enabled.robustBufferAccess = available.robustBufferAccess;
-    const auto plan = PlanDeviceQueues(queues, family, settles, available.sparseBinding == VK_TRUE, window != nullptr);
+    const bool asyncRequested = Graphics::Recorder::AsyncLaneRing() != 0;
+    const auto plan = PlanDeviceQueues(queues, family, settles, available.sparseBinding == VK_TRUE, window != nullptr, asyncRequested, state->deferDestruction);
     const bool settleQueue = plan.settle;
     const auto settleFamily = plan.settleFamily;
     const auto settleIndex = plan.settleIndex;
-    VkDeviceQueueCreateInfo queueInfos[3]{queueInfo, {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO}, {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO}};
-    queueInfos[0].queueCount = plan.mainCount;
-    queueInfos[0].pQueuePriorities = plan.mainCount > 1 ? priorities : &priority;
-    deviceInfo.queueCreateInfoCount = 1;
-    const auto addQueue = [&](std::uint32_t queueFamily, std::uint32_t index) {
-        for (std::uint32_t info = 1; info < deviceInfo.queueCreateInfoCount; ++info) {
-            if (queueInfos[info].queueFamilyIndex != queueFamily) continue;
-            queueInfos[info].queueCount = std::max(queueInfos[info].queueCount, index + 1);
-            queueInfos[info].pQueuePriorities = queueInfos[info].queueCount == 2 ? priorities : &priority;
-            return;
-        }
-        auto& added = queueInfos[deviceInfo.queueCreateInfoCount++];
-        added = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
-        added.queueFamilyIndex = queueFamily;
-        added.queueCount = index + 1;
-        added.pQueuePriorities = added.queueCount == 2 ? priorities : &priority;
-    };
-    if (plan.settle && plan.settleFamily != family) addQueue(plan.settleFamily, plan.settleIndex);
-    if (plan.sparseFamily != VK_QUEUE_FAMILY_IGNORED) addQueue(plan.sparseFamily, plan.sparseIndex);
-    deviceInfo.pQueueCreateInfos = queueInfos;
+    DeviceQueueCreateInfos queueInfos(plan, family);
+    deviceInfo.queueCreateInfoCount = queueInfos.count;
+    deviceInfo.pQueueCreateInfos = queueInfos.infos.data();
     state->sparseFamily = plan.sparseFamily;
     state->sparseIndex = plan.sparseIndex;
     state->sparseBinding = plan.sparseBinding;
@@ -2195,6 +2213,18 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, 0, &state->queue);
     state->queueFamily = family;
+    if (plan.async) {
+        state->asyncFamily = plan.asyncFamily;
+        state->asyncQueueIndex = plan.asyncIndex;
+        state->asyncTimestampValidBits = plan.asyncTimestampValidBits;
+        state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, plan.asyncFamily, plan.asyncIndex, &state->asyncQueue);
+        if (state->asyncQueue != VK_NULL_HANDLE) state->asyncCommands = std::make_shared<Graphics::AsyncCommandBuffers>();
+        APS5_LOG_OUT("Async compute queue family=%u index=%u timestampBits=%u", plan.asyncFamily, plan.asyncIndex, plan.asyncTimestampValidBits);
+    } else if (asyncRequested && state->deferDestruction) {
+        APS5_LOG_CHARS_OUT("Async compute queue unavailable: deferred destruction requires one lane");
+    } else if (asyncRequested) {
+        APS5_LOG_CHARS_OUT("Async compute queue unavailable: no spare compute-only queue with timestamp support; one lane");
+    }
     if (plan.present) {
         state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, family, plan.presentIndex, &state->presentQueue);
         APS5_LOG_OUT("Presentation queue family=%u index=%u", family, plan.presentIndex);
@@ -2205,7 +2235,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     if (state->sparseFamily != VK_QUEUE_FAMILY_IGNORED) state->DeviceFunction<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(state->device, state->sparseFamily, state->sparseIndex, &state->sparseQueue);
     if (checkpoints) state->checkpointMarker = state->DeviceFunction<PFN_vkCmdSetCheckpointNV>("vkCmdSetCheckpointNV");
-    if (bufferMarkers) state->CreateMarkerBuffer();
+    if (bufferMarkers) state->CreateMarkerBuffer(graphicsContext());
     if (deviceFault || checkpoints || bufferMarkers) {
         const auto faultInfo = deviceFault ? state->DeviceFunction<PFN_vkGetDeviceFaultInfoEXT>("vkGetDeviceFaultInfoEXT") : nullptr;
         const auto checkpointData = checkpoints ? state->DeviceFunction<PFN_vkGetQueueCheckpointDataNV>("vkGetQueueCheckpointDataNV") : nullptr;
@@ -2506,7 +2536,7 @@ void VulkanDevice::SubmitRecorded(bool reapFirst) {
     // Not for cross-queue submitters: a retired batch's write-back may sync a later batch under the
     // mutex (see the header), which a poller or compute worker must never do for queue 0.
     if (reapFirst && OpportunisticReap()) state->recorder->Reap();
-    state->recorder->Submit();
+    state->recorder->SubmitAllLanes();
 }
 
 bool VulkanDevice::CanWaitUnlocked() const {
@@ -2524,7 +2554,10 @@ void VulkanDevice::WaitRecorded(std::uint64_t serial) {
 }
 
 std::uint64_t VulkanDevice::SubmittedEpoch() const {
-    return state->recorder ? state->recorder->NewestSubmitted() : 0;
+    if (!state->recorder) return 0;
+    const auto serial = state->recorder->NewestSubmitted();
+    state->recorder->PrepareWait(serial);
+    return serial;
 }
 
 bool VulkanDevice::WaitRecordedFor(std::uint64_t serial, std::uint64_t timeoutNanos) {
@@ -2570,6 +2603,7 @@ bool VulkanDevice::StoresPendingOver(std::uint64_t address, std::size_t bytes) c
 }
 
 int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stamp, std::uint32_t queue, bool reapFirst) {
+    const Graphics::Recorder::LaneScope laneScope(Graphics::Recorder::LaneOfQueue(queue));
     static const bool storeAtLabel = Graphics::StorageTexture::StoreAtLabelRequested(std::getenv("APS5_STORE_AT_LABEL"));
     if (storeAtLabel) Graphics::StorageTexture::FlushAllPending("label");
     if (queue == 0) static_cast<void>(Graphics::StorageTexture::StoreDrawnLinear("label"));
@@ -2673,6 +2707,7 @@ void VulkanDevice::NoteHtileMask(const Graphics::HtileMaskClear& clear) const {
 }
 
 bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
+    const Graphics::Recorder::LaneSwitch mainLane(state->recorder.get(), 0);
     static const bool syncDumps = std::getenv("APS5_SYNC_SAMPLE_DUMPS") != nullptr || std::getenv("APS5_NO_GPU_SAMPLE_DUMPS") != nullptr;
     if (syncDumps) return false;
     if (!state->recorder) return false;
@@ -2694,6 +2729,7 @@ bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
 }
 
 bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::span<const std::uint32_t, 4> pattern) {
+    const Graphics::Recorder::LaneSwitch mainLane(state->recorder.get(), 0);
     if (!state->recorder || bytes == 0 || bytes % 16 != 0 || address % 16 != 0) return false;
     auto& recorder = *state->recorder;
     // Finished batches are retired first (one fence status check, as WriteLabelOnGpu does): their
@@ -2796,6 +2832,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
             std::memcpy(seed->Bytes().data(), pattern.data(), 16);
             recorder.Keep(seed);
             const auto chain = recorder.Commands();
+            const Graphics::Recorder::CommandBorrow commandBorrow(&recorder, chain);
             const auto copyBuffer = context.Resolved(&Graphics::DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
             const VkBufferCopy first{0, 0, 16};
             copyBuffer(chain, seed->Handle(), patternBuffer->Handle(), 1, &first);
@@ -2816,6 +2853,7 @@ bool VulkanDevice::FillBuffer(std::uint64_t address, std::size_t bytes, std::spa
     recorder.FlushStoresOverlapping(address, bytes);
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
+    const Graphics::Recorder::CommandBorrow commandBorrow(&recorder, commands);
     const auto timing = recorder.BeginGpuTiming(CommandClass::Fill);
     if (Graphics::Recorder::BarrierValidate()) {
         const std::pair<std::uint64_t, std::uint64_t> range{address, address + bytes};
@@ -3114,6 +3152,7 @@ VulkanDevice::CopyOutcome VulkanDevice::CopyBuffer(std::uint64_t destination, st
     recorder.FlushStoresOverlapping(destination, bytes);
     VkAccessFlags covered = 0;
     const auto commands = recorder.Commands(&covered);
+    const Graphics::Recorder::CommandBorrow commandBorrow(&recorder, commands);
     // The class range covers the barriers too; the program-keyed range inside it is the transfer.
     const auto classTiming = recorder.BeginGpuTiming(CommandClass::Copy);
     if (Graphics::Recorder::BarrierValidate()) {
@@ -4248,6 +4287,15 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.sparseQueue = state->sparseQueue;
     context.sparseQueueMutex = &state->sparseQueueMutex;
     context.settleQueue = state->settlePool != VK_NULL_HANDLE ? state->settleQueue : VK_NULL_HANDLE;
+    context.asyncQueue = state->asyncQueue;
+    context.asyncFamily = state->asyncFamily;
+    context.asyncQueueIndex = state->asyncQueueIndex;
+    context.asyncTimestampValidBits = state->asyncTimestampValidBits;
+    context.asyncCommands = state->asyncCommands;
+    if (state->asyncQueue != VK_NULL_HANDLE) {
+        context.bufferSharingFamilies = {state->queueFamily, state->asyncFamily};
+        context.bufferSharingFamilyCount = 2;
+    }
     context.settlePool = state->settlePool;
     context.settleFamily = state->settleFamily;
     context.settleQueueMutex = &state->settleQueueMutex;
@@ -4333,6 +4381,7 @@ std::optional<std::string> VulkanDevice::KnownDrawRejection(const Graphics::Stat
 }
 
 void VulkanDevice::ColorMetadataPass(const Graphics::ColorMetadataPass& pass) {
+    const Graphics::Recorder::LaneSwitch mainLane(state->recorder.get(), 0);
     Graphics::RunColorMetadataPass(graphicsContext(), pass);
 }
 
@@ -4375,6 +4424,7 @@ bool VulkanDevice::PrebuildGraphicsLibraries(const Graphics::ShaderStages& stage
 }
 
 void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace, std::uint64_t shape) {
+    const Graphics::Recorder::LaneSwitch mainLane(state->recorder.get(), 0);
     startJournalReplay();
     for (const auto& shader : shaders) {
         require(shader.program != nullptr, "missing compiled shader");
@@ -4936,6 +4986,7 @@ void VulkanDevice::NoteDrawRecipeMiss(DrawRecipePrecheck miss) {
 }
 
 RecipeOutcome VulkanDevice::DrawFromRecipe(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const DrawTraceContext* trace) {
+    const Graphics::Recorder::LaneSwitch mainLane(state->recorder.get(), 0);
     PerformanceTimer timing("Vulkan.DrawFromRecipe");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto& counters = Recipes().kinds[static_cast<std::size_t>(RecipeKind::Draw)];
@@ -4995,6 +5046,7 @@ std::uint64_t VulkanDevice::presync(std::span<const Graphics::PresyncSurface> su
                 texelsPending = texelsPending || !surface.dccKeys;
             }
             if (open) serial = state->recorder->SubmitAndEpoch();
+            state->recorder->PrepareWait(serial);
         }
     }
     if (serial != 0) {
@@ -5268,11 +5320,26 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
     const bool overlapCapable = overlapQueue != 0 && Graphics::Recorder::DispatchOverlapEnabled() && arguments == 0 && argumentImport == nullptr && record.threadGroup == std::array<std::uint32_t, 3>{} && record.shader->program->workgroupMemoryDwords == 0 && state->checkpointMarker == nullptr && state->bufferMarker == nullptr && record.x <= groupLimit[0] && record.y <= groupLimit[1] && record.z <= groupLimit[2] && !resources.HasHostGpuCopies();
     std::vector<Graphics::Recorder::RunAccess> runAccesses;
     if (overlapCapable) resources.RunAccesses(runAccesses);
+    const bool laneEdges = recorder.AsyncLaneActive();
+    const int lane = laneEdges ? Graphics::Recorder::ThreadLane() : 0;
+    if (laneEdges) {
+        const int other = 1 - lane;
+        const bool refresh = record.dataRefresh != RecordedDispatch::DataRefresh::None;
+        const bool differs = refresh && (record.dataRefresh == RecordedDispatch::DataRefresh::Words || resources.DataWordsHash() != record.dataWordsHash);
+        const bool afterRefresh = resources.dataWriterLane == other;
+        const bool beforeRefresh = (resources.dataReaderLanes & (1u << other)) != 0 && ((differs && resources.DataWordsDiffer(*record.shader)) || record.threadGroup != std::array<std::uint32_t, 3>{});
+        if (afterRefresh || beforeRefresh) {
+            recorder.OrderAfterLane(other);
+            resources.dataWriterLane = -1;
+            resources.dataReaderLanes = 0;
+        }
+    }
     VkAccessFlags covered = 0;
     bool overlapped = false;
     const std::array<const void*, 2> runOwners{record.resources.get(), resources.MemoryOwner()};
     auto commands = overlapCapable && unordered ? recorder.OverlapCommands(overlapQueue, runOwners, runAccesses, &covered, overlapped) : recorder.Commands(&covered);
     if (overlapCapable && !overlapped && resources.HasGpuCopies() && Graphics::Recorder::BatchedStagingEnabled() && !Graphics::Recorder::BarrierValidate()) commands = recorder.SplitForRun();
+    const Graphics::Recorder::CommandBorrow commandBorrow(&recorder, commands);
     constexpr VkAccessFlags runLeadingCovered = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     if (overlapCapable && !overlapped && (covered & runLeadingCovered) != runLeadingCovered) covered = 0;
     recordStep(PhaseRecordCommands);
@@ -5297,11 +5364,16 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             ++d.templateRefreshed;
             d.templateRevalidateMs += record.revalidateMs;
             record.refreshed = true;
+            if (laneEdges) {
+                resources.dataWriterLane = lane;
+                resources.dataReaderLanes = 0;
+            }
         } else {
             ++d.templateSameWords;
         }
         recordStep(PhaseRecordDataRefresh);
     }
+    if (laneEdges) resources.dataReaderLanes = static_cast<std::uint8_t>(resources.dataReaderLanes | (1u << lane));
     std::shared_ptr<Graphics::Buffer> threadArguments;
     if (record.threadGroup != std::array<std::uint32_t, 3>{}) {
         const auto data = resources.shaderDataBuffer(*record.shader);
@@ -5318,6 +5390,10 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             context.Resolved(&Graphics::DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, data, limitByte, sizeof(record.threadLimit), record.threadLimit.data());
         }
         resources.forgetShaderDataWords(*record.shader);
+        if (laneEdges) {
+            resources.dataWriterLane = lane;
+            resources.dataReaderLanes = static_cast<std::uint8_t>(1u << lane);
+        }
         covered = 0;
     }
     using CommandClass = Graphics::Recorder::CommandClass;
@@ -5589,6 +5665,8 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::computePipeline(const Grap
 }
 
 VulkanDevice::IndirectOutcome VulkanDevice::dispatch(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t programAddress, std::shared_ptr<PreparedDispatch> prepared, std::shared_ptr<const Recipe>* recipeOut, const std::array<std::uint32_t, 3>& threadGroup, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear) {
+    const auto requestedLane = Graphics::Recorder::ThreadLane();
+    const Graphics::Recorder::LaneSwitch laneSwitch(state->recorder.get(), requestedLane == 0 || Graphics::AsyncDispatchEligible(shader, threadGroup != std::array<std::uint32_t, 3>{}, state->bufferMarker != nullptr) ? requestedLane : 0);
     startJournalReplay();
     for (const auto& binding : shader.bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
@@ -5940,6 +6018,8 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
 }
 
 RecipeOutcome VulkanDevice::DispatchRecipe(const ShaderRecompiler::RecompileResult& shader, std::uint32_t x, std::uint32_t y, std::uint32_t z, std::uint64_t arguments, std::uint64_t programAddress, const std::shared_ptr<RecipeHit>& hit, IndirectOutcome& outcome, const std::shared_ptr<PreparedDispatch>& verify, bool refreshByWords, const std::array<std::uint32_t, 3>& threadGroup) {
+    const auto requestedLane = Graphics::Recorder::ThreadLane();
+    const Graphics::Recorder::LaneSwitch laneSwitch(state->recorder.get(), requestedLane == 0 || Graphics::AsyncDispatchEligible(shader, threadGroup != std::array<std::uint32_t, 3>{}, state->bufferMarker != nullptr) ? requestedLane : 0);
     state->recorder->BoundKeptBytes();
     ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
     PerformanceTimer timing("Vulkan.DispatchRecipe");

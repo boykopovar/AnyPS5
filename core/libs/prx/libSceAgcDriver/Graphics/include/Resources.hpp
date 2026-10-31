@@ -72,6 +72,7 @@ void CopyBuffer(const Context& context, VkCommandBuffer commands, VkBuffer sourc
 
 // Records a global memory barrier.
 void RecordMemoryBarrier(const Context& context, VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess);
+void FilterCommandBarrier(const Context& context, VkCommandBuffer commands, VkPipelineStageFlags& sourceStage, VkPipelineStageFlags& destinationStage, VkAccessFlags& sourceAccess, VkAccessFlags& destinationAccess);
 
 // Resolves every DeviceFunctions entry point of the context's device (once, at device setup).
 void FillDeviceFunctions(const Context& context, DeviceFunctions& functions);

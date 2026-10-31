@@ -20,6 +20,10 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_BARRIER_BATCH",
 };
 
+constexpr std::array<std::pair<std::string_view, std::string_view>, 1> RuntimeSwitchRefused{{
+    {"APS5_ASYNC_LANE", "it selects queues when the device is created; changing lanes would lose recorded label dependencies"},
+}};
+
 struct SwitchValues {
     std::array<std::atomic<bool>, SwitchCount> set{};
     SwitchValues() {
@@ -94,6 +98,9 @@ AbSchedule::Config AbSchedule::Parse(std::string_view ab, std::string_view start
         const auto name = Trim(list.substr(0, plus));
         if (name.empty()) throw std::invalid_argument("APS5_AB: an empty switch name in '" + std::string(ab) + "'");
         const auto found = RuntimeSwitches::Find(name);
+        for (const auto& [refused, reason] : RuntimeSwitchRefused) {
+            if (name == refused) throw std::invalid_argument("APS5_AB: " + std::string(name) + " cannot change while the title runs: " + std::string(reason));
+        }
         if (!found.has_value()) throw std::invalid_argument("APS5_AB: " + std::string(name) + " cannot change while the title runs; switches the A/B can change: " + FlippableList());
         if (std::find(config.switches.begin(), config.switches.end(), *found) != config.switches.end()) throw std::invalid_argument("APS5_AB: " + std::string(name) + " is listed twice");
         config.switches.push_back(*found);

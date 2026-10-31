@@ -13,10 +13,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/AsyncCompute.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -607,6 +609,8 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         GuestMemory::TagGpuLockSite(indirectArguments != 0 ? GuestMemory::GpuLockSite::Indirect : GuestMemory::GpuLockSite::Dispatch);
         std::lock_guard gpuLock(GuestMemory::GpuMutex());
         phaseTiming.Phase(PhaseLockWait);
+        const auto requestedLane = Graphics::Recorder::ThreadLane();
+        const Graphics::Recorder::LaneSwitch laneSwitch(Graphics::Recorder::Active(), requestedLane == 0 || Graphics::AsyncDispatchEligible(compiled, threadGroup != std::array<std::uint32_t, 3>{}) ? requestedLane : 0);
 
         recordLabelsForPacket(localDevice.get(), submission.queue);
         phaseTiming.Phase(PhaseLabels);

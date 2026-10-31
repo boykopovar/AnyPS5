@@ -151,7 +151,7 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
         bufferInfo.size = bytes;
         bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer pixel function LDS");
+        Check(context.CreateBuffer(&bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer pixel function LDS");
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, pool.buffer, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
@@ -249,7 +249,7 @@ void PrepareMeshWindow(const Context& context) {
         bufferInfo.size = bytes;
         bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer mesh window");
+        Check(context.CreateBuffer(&bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer mesh window");
         VkMemoryRequirements requirements{};
         context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, pool.buffer, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
@@ -585,6 +585,7 @@ void recordCmaskClear(const Context& context, Recorder& recorder, const HostImpo
     if (AnyShadowedOverlaps(address, bytes)) PublishShadow(address, bytes, PublishScope::Whole, PublishReason::Keys);
     recorder.FlushKeyStoresOverlapping(address, bytes);
     const auto commands = recorder.Commands();
+    Recorder::CommandBorrow commandBorrow586(&recorder, commands);
     if (resident != nullptr && !resident->Cached()) recorder.KeepBytes(resident.get(), static_cast<std::size_t>(resident->BudgetBytes()));
     recorder.Keep(resident);
     context.detiler->DispatchCmaskClear(commands, import.buffer, HostImportOffset(import, address), bytes, view, color.extent.width, color.extent.height, color.elementBytes, color.clearWords, color.dccAddress == 0);
@@ -2483,6 +2484,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     outcome.passBegun = !continued;
     outcome.passBreak = start.reason;
     const auto commands = start.commands;
+    Recorder::CommandBorrow commandBorrow(recorder, commands);
     if (!continued) {
         recorder->PrepareSampleSlot();
         PerformanceTrace::Count(PerformanceTrace::RenderPassScope);
@@ -2616,6 +2618,7 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     }
     recorder->LeaveRenderPassOpen(passKey, drawTiming, fenced, passAccess, std::move(storeProxies));
     timer.phase(PhaseRecord);
+    commandBorrow.Release();
     keepRecordedDraw(*recorder, record.resources, std::move(record.pipeline), std::move(record.framebuffer), inputs, std::move(record.targets), std::move(record.targetSlices), state.scissor, std::move(scratch), std::move(checkRecords), record.listed, record.completion, outcome);
     timer.phase(PhaseKeep);
     if (record.waited) {
@@ -3408,6 +3411,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     // A queued label store over such memory likewise (Recorder::RecordStore).
     if (recorded && recorder->HasQueuedStores() && (resources->HoldsLease() || recorder->AnyQueuedStore(touches))) recorder->FlushStores();
     const auto commands = recorded ? recorder->Commands() : batch->Handle();
+    Recorder::CommandBorrow commandBorrow3408(recorded ? recorder : nullptr, commands);
     if (recorded) recorder->PrepareSampleSlot();
     APS5_LOG_CHARS_OUT_DEBUG("CommandBatch created");
     // The draw's [gputime] class range: from its first barrier to the download barrier.
@@ -3586,6 +3590,7 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT | inputs.shaderStages, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &download, 0, nullptr, 0, nullptr);
     countBarrier();
     if (recorded) recorder->EndGpuTiming(drawTiming);
+    commandBorrow3408.Release();
     APS5_LOG_CHARS_OUT_DEBUG("Download barrier recorded");
     APS5_LOG_CHARS_OUT_DEBUG("SubmitAndWait");
     timer.phase(PhaseRecord);

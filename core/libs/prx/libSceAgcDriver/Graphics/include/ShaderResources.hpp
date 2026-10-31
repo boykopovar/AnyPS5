@@ -670,6 +670,8 @@ private:
     bool importsReconcilable = false;
     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
     std::uint64_t dataWordsHash = 14695981039346656037ull;
+    int dataWriterLane = -1;
+    std::uint8_t dataReaderLanes = 0;
     void rehashDataWords();
     std::vector<std::pair<std::uint32_t, std::uint32_t>> pushPatches;
     std::vector<DataPatch> dataPatches;
