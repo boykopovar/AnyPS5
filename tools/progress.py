@@ -739,7 +739,8 @@ def main(argv=None):
         if args.json:
             print(json.dumps({"libraries": libraries, "shaders": shaders}, indent=2))
         else:
-            print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%)')
+            declared = f', declared {libraries["declared_percent"]}% with {libraries["unobserved"]} unobserved stubs' if libraries["unobserved"] else ""
+            print(f'libraries {libraries["done"]}/{libraries["total"]} ({libraries["percent"]}%){declared}')
             print(f'shaders {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
         return 0
     finally:

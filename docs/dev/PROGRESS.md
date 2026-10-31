@@ -55,7 +55,7 @@ Implemented definitions are also classified as behaviourally empty when their bo
 
 ## One library
 
-`--module NAME` limits the library totals to those directories under `core/libs/prx`. Repeat the flag to include several. A name that is not a directory is an error. Shader counts stay complete. A shared-source wrapper is included only when its own directory is named. `--json` prints the object written to `progress.json` on stdout, instead of the two summary lines. Either flag makes the output directory optional. Without them the directory is still required, and a run that names only the directory still writes the whole tree.
+`--module NAME` limits the library totals to those directories under `core/libs/prx`. Repeat the flag to include several. A name that is not a directory is an error. Shader counts stay complete. A shared-source wrapper is included only when its own directory is named. `--json` prints the object written to `progress.json` on stdout, instead of the two summary lines. The libraries line adds the declared percentage and the number of unobserved stubs when there are any. Either flag makes the output directory optional. Without them the directory is still required, and a run that names only the directory still writes the whole tree.
 
 ## Verification
 

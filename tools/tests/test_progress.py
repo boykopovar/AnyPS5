@@ -915,6 +915,13 @@ class ProgressTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unknown libraries: libSceNope, libSceMissing"):
             progress.select_libraries(libraries, ["libScePad", "libSceNope", "libSceMissing", "libSceNope"])
 
+    def test_summary_lines_name_the_declared_figure_only_when_stubs_are_unobserved(self):
+        _, shaders = self.library_snapshot()
+        libraries = progress.summarize([{"name": "libA", "label": "A", "done": 1, "todo": 1, "unobserved": 2}])
+        code, output = self.run_main(["--module", "libA"], libraries, shaders)
+        self.assertEqual(code, 0)
+        self.assertEqual(output.splitlines()[0], "libraries 1/2 (50.0%), declared 25.0% with 2 unobserved stubs")
+
     def test_json_and_module_do_not_require_an_output_directory(self):
         libraries, shaders = self.library_snapshot()
         code, output = self.run_main(["--json", "--module", "libScePad"], libraries, shaders)
