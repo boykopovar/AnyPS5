@@ -625,7 +625,10 @@ int APS5_VABI sysctlbyname_nid_postfix(const char* name, void* oldValue, std::si
         return CopyOut(block, sizeof(block), oldValue, oldLength);
     }
     if (std::strcmp(name, "vm.overcommit") == 0) {
-        if (newValue != nullptr) throw std::runtime_error(std::string(__func__) + ": setting vm.overcommit");
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
         static constexpr int overcommit = 0;
         return CopyOut(&overcommit, sizeof(overcommit), oldValue, oldLength);
     }
