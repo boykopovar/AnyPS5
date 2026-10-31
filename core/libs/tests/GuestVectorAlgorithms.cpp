@@ -169,6 +169,65 @@ static void CheckFindAndCount() {
     Require(__std_find_trivial_unsized_4_nid_postfix(words + 8, 42) == words + 12);
 }
 
+template<typename TValue>
+static void CheckFindCountVector(const void* (APS5_VABI* find)(const void*, const void*, TValue),
+                                 std::size_t (APS5_VABI* count)(const void*, const void*, TValue)) {
+    const TValue target = static_cast<TValue>(0xa5);
+    for (const std::size_t length : {0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 65}) {
+        std::vector<TValue> storage(length + 2, static_cast<TValue>(1));
+        auto* first = storage.data() + 1;
+        auto* last = first + length;
+        if (length > 15) {
+            first[15] = target;
+            first[length - 1] = target;
+            Require(find(first, last, target) == first + 15);
+            Require(count(first, last, target) == (length - 1 == 15 ? 1 : 2));
+        } else if (length) {
+            first[length - 1] = target;
+            Require(find(first, last, target) == first + length - 1);
+            Require(count(first, last, target) == 1);
+        } else {
+            Require(find(first, last, target) == last);
+            Require(count(first, last, target) == 0);
+        }
+        Require(find(first, last, static_cast<TValue>(0xfe)) == last);
+    }
+}
+
+using MinElementFunction = const void* (APS5_VABI*)(const void*, const void*, bool);
+
+template<typename TValue>
+static void CheckMinElementVector(MinElementFunction function, bool isSigned,
+                                  TValue fill, TValue minimum, std::size_t length) {
+    std::vector<TValue> values(length, fill);
+    values[35] = minimum;
+    values[length - 1] = minimum;
+    Require(function(values.data(), values.data() + values.size(), isSigned) == values.data() + 35);
+    Require(function(values.data(), values.data(), isSigned) == values.data());
+}
+
+template<typename TValue>
+static void CheckMinElementTail(MinElementFunction function, bool isSigned, TValue fill, TValue minimum) {
+    std::vector<TValue> values(64 / sizeof(TValue) + 3, fill);
+    values.back() = minimum;
+    Require(function(values.data(), values.data() + values.size(), isSigned) == &values.back());
+}
+
+static void CheckVectorizedHelpers() {
+    CheckFindCountVector<std::uint8_t>(__std_find_trivial_1_nid_postfix, __std_count_trivial_1_nid_postfix);
+    CheckFindCountVector<std::uint16_t>(__std_find_trivial_2_nid_postfix, __std_count_trivial_2_nid_postfix);
+    CheckFindCountVector<std::uint32_t>(__std_find_trivial_4_nid_postfix, __std_count_trivial_4_nid_postfix);
+    CheckFindCountVector<std::uint64_t>(__std_find_trivial_8_nid_postfix, __std_count_trivial_8_nid_postfix);
+
+    constexpr std::size_t Length = 96;
+    CheckMinElementVector<std::int8_t>(__std_min_element_1_nid_postfix, true, 20, -5, Length);
+    CheckMinElementVector<std::uint8_t>(__std_min_element_1_nid_postfix, false, 250, 2, Length);
+    CheckMinElementVector<std::int16_t>(__std_min_element_2_nid_postfix, true, 30000, -42, Length);
+    CheckMinElementVector<std::uint16_t>(__std_min_element_2_nid_postfix, false, UINT16_MAX, 2, Length);
+    CheckMinElementTail<std::int8_t>(__std_min_element_1_nid_postfix, true, 20, -5);
+    CheckMinElementTail<std::uint16_t>(__std_min_element_2_nid_postfix, false, UINT16_MAX, 2);
+}
+
 static void CheckSignedMax64Value() {
     const std::int64_t edges[] = {INT64_MIN, INT64_MIN + 1, -0x100000001ll, -0x100000000ll, -1, 0, 1, 0x7fffffff, 0xffffffff, 0x100000000, INT64_MAX - 1, INT64_MAX};
     for (const auto& left : edges) {
@@ -437,6 +496,7 @@ int main() {
     CheckSizedHelpers();
     CheckUnsignedMax32Value();
     CheckFindAndCount();
+    CheckVectorizedHelpers();
     CheckUnsignedMin32Value();
     CheckUnsizedRescan();
     CheckSignedMax64Value();
