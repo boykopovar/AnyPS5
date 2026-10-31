@@ -1,4 +1,5 @@
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
+#include <codegen/x86/BitPermutationLowering.hpp>
 #include <codegen/x86/DecodedInstruction.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <codegen/x86/Sse4aLowering.hpp>
@@ -159,7 +160,7 @@ bool _validWait(const DecodedInstruction& instr) {
 
 class Amd64OnlyInstructionMatcher : public IAmd64OnlyInstructionMatcher {
 public:
-    explicit Amd64OnlyInstructionMatcher(const Amd64OnlyTarget target) : _target(target) {}
+    explicit Amd64OnlyInstructionMatcher(const Amd64OnlyTarget target, const bool lowerBitPermutation) : _target(target), _lowerBitPermutation(lowerBitPermutation) {}
 
     [[nodiscard]] std::optional<Amd64OnlyMatch> Match(
         const std::uint8_t* data,
@@ -180,6 +181,7 @@ public:
 
 private:
     Amd64OnlyTarget _target;
+    bool _lowerBitPermutation;
     Sse4aLowering _lowering;
     Sha256Lowering _sha256Lowering;
     Sha1Lowering _sha1Lowering;
@@ -263,6 +265,8 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::_matchRosetta(const D
     }
     if (instr.IsClwb())
         return _inPlace(kClwb, instr.Length, {});
+    if (const auto bits = _lowerBitPermutation ? DecodeBitPermutation(instr.Data, instr.Length) : std::nullopt; bits && CanLowerBitPermutation(*bits))
+        return _trampoline(bits->Deposit ? "PDEP" : "PEXT", instr.Length, _outOfLine(instr.Length, trailing, [&](StubBodyBuilder& body) { EmitBitPermutation(body, *bits); }));
     if (instr.IsXsaveopt()) {
         std::vector<std::uint8_t> replacement(instr.Data, instr.Data + instr.Length);
         replacement[instr.OpcodeOffset() + 2] &= static_cast<std::uint8_t>(~(2u << X64OpcodeConstants::ModRmRegShift));
@@ -312,6 +316,10 @@ const char* Amd64OnlyInstructionMatcher::_emitOutOfLine(StubBodyBuilder& body, c
             return nullptr;
         _emitRdpru(body);
         return kRdpru.Name;
+    }
+    if (const auto bits = _target == Amd64OnlyTarget::Rosetta && _lowerBitPermutation ? DecodeBitPermutation(instr.Data, instr.Length) : std::nullopt; bits && CanLowerBitPermutation(*bits)) {
+        EmitBitPermutation(body, *bits);
+        return bits->Deposit ? "PDEP" : "PEXT";
     }
     if (instr.IsMcommit()) {
         if (!_validWait(instr))
@@ -464,8 +472,8 @@ std::optional<Amd64OnlyMatch> Amd64OnlyInstructionMatcher::Match(
 
 }
 
-std::unique_ptr<IAmd64OnlyInstructionMatcher> MakeAmd64OnlyInstructionMatcher(const Amd64OnlyTarget target) {
-    return std::make_unique<Amd64OnlyInstructionMatcher>(target);
+std::unique_ptr<IAmd64OnlyInstructionMatcher> MakeAmd64OnlyInstructionMatcher(const Amd64OnlyTarget target, const bool lowerBitPermutation) {
+    return std::make_unique<Amd64OnlyInstructionMatcher>(target, lowerBitPermutation);
 }
 
 }

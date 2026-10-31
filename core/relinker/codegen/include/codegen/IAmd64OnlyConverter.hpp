@@ -16,7 +16,7 @@ public:
     [[nodiscard]] virtual ConvertResult Convert(std::vector<std::uint8_t> fileBytes, const std::vector<Domain::ProgramHeader>& segments) const = 0;
 };
 
-std::unique_ptr<IAmd64OnlyConverter> MakeAmd64OnlyConverter(Amd64OnlyTarget target = Amd64OnlyTarget::Intel, std::function<void(std::uint64_t, std::uint64_t)> progress = {});
+std::unique_ptr<IAmd64OnlyConverter> MakeAmd64OnlyConverter(Amd64OnlyTarget target = Amd64OnlyTarget::Intel, std::function<void(std::uint64_t, std::uint64_t)> progress = {}, bool lowerBitPermutation = false);
 
 }
 

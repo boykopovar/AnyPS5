@@ -41,6 +41,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     Domain::InputProgress inputProgress(progress, Io::Utf8Path(input.InputPath));
     static_assert(std::endian::native == std::endian::little);
     if (options.Target != TargetSystem::Linux && options.Target != TargetSystem::Windows && options.Target != TargetSystem::MacOs) throw Domain::RelinkerException("Unknown target system");
+    if (options.LowerBitPermutation && !options.ToRosetta) throw Domain::RelinkerException("Bit permutation lowering requires Rosetta conversion");
     if (options.ToRosetta && (!options.ToIntel || options.Target == TargetSystem::Windows)) throw Domain::RelinkerException("Rosetta conversion requires Intel lowering and a non-Windows target");
     if (options.UnusedFilterLevel > 2) throw Domain::RelinkerException("Unused NID filter level must be 0, 1 or 2");
     if (options.FrameRedZone && options.Target != TargetSystem::Windows) throw Domain::RelinkerException("Red-zone framing requires a Windows target: only Windows exception dispatch writes below RSP");
@@ -70,7 +71,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
     std::vector<Codegen::TrampolineSite> trampolines;
     if (options.ToIntel) {
         const auto segments = Relinker::ElfReader(sourceBytes).ReadProgramHeaders();
-        auto converted = Codegen::MakeAmd64OnlyConverter(options.ToRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); })->Convert(std::move(sourceBytes), segments);
+        auto converted = Codegen::MakeAmd64OnlyConverter(options.ToRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { inputProgress.Report({Domain::ProgressStage::Lowering, {}, completed, total}); }, options.LowerBitPermutation)->Convert(std::move(sourceBytes), segments);
         sourceBytes = std::move(converted.Bytes);
         trampolines = std::move(converted.Trampolines);
         GamePatch::CheckOverlaps(options.TargetName, patchedRanges, {.Reports = converted.Reports, .Trampolines = trampolines});
@@ -147,7 +148,7 @@ ConversionOutput Conversion::Convert(ConversionInput input, const ConversionOpti
 
     std::vector<Relinker::GuestArtifact> guestArtifacts;
     if (!input.Modules.empty()) {
-        guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, options.ToRosetta, *syscallScanner, options.LazyBinding, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress);
+        guestArtifacts = Relinker::GuestModuleBuilder().Build(input.InputPath, input.OutputPath, result.DynamicSection, windows, macos, options.ToIntel, options.ToRosetta, *syscallScanner, options.LazyBinding, options.RunPath, options.ExcludedModules, input.ModuleRoot, input.RuntimeDirectories, std::move(input.Modules), inputProgress, options.LowerBitPermutation);
     }
 
     auto byteWriter = std::make_shared<Io::ByteWriter>();

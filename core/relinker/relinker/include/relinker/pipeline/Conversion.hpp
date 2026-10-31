@@ -15,6 +15,7 @@ struct ConversionOptions {
     std::uint32_t UnusedFilterLevel = 0;
     bool ToIntel = false;
     bool ToRosetta = false;
+    bool LowerBitPermutation = false;
     bool FrameRedZone = false;
     bool SkipSyscallCheck = false;
     bool TrapSdkSyscallStubs = false;
