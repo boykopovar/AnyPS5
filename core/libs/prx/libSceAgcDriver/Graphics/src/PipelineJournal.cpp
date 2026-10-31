@@ -47,7 +47,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 12u;
+constexpr std::uint32_t FileFormat = 13u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -800,7 +800,7 @@ public:
 
     void RecordCompute(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) {
         if (!Enabled() || !bound.load(std::memory_order_acquire)) return;
-        const auto identity = shader.Identity();
+        const auto identity = DescribedPipelineIdentity(shader);
         if (identity.Empty()) return;
         Pending pending;
         pending.kind = ComputeRecord;
@@ -918,7 +918,7 @@ private:
                     bool decoded = !decode;
                     if (decode && !loaded.indexModules.contains(identity)) {
                         ShaderRecompiler::RecompileResult result;
-                        decoded = ShaderRecompiler::ShaderDiskCache::DecodeResult(payload.subspan(20), result) && result.Identity() == identity;
+                        decoded = ShaderRecompiler::ShaderDiskCache::DecodeResult(payload.subspan(20), result) && (static_cast<ShaderRecompiler::ShaderStage>(stage) == ShaderRecompiler::ShaderStage::Compute ? DescribedPipelineIdentity(result) : result.Identity()) == identity;
                         if (decoded) loaded.modules.emplace(identity, LoadedModule{static_cast<ShaderRecompiler::ShaderStage>(stage), payloadOffset, record.payloadBytes, record.payloadHash});
                         else ++dropped;
                     }
@@ -1392,7 +1392,7 @@ private:
         auto bytes = std::make_shared<std::vector<std::byte>>(static_cast<std::size_t>(module.payloadBytes));
         if (loaded.file == nullptr || !loaded.file->Read(module.payloadOffset, *bytes) || ShaderRecompiler::HashBytes(*bytes) != module.payloadHash) return nullptr;
         auto result = std::make_shared<ShaderRecompiler::RecompileResult>();
-        if (!ShaderRecompiler::ShaderDiskCache::DecodeResult(std::span<const std::byte>(*bytes).subspan(20), *result, bytes) || !(result->Identity() == identity)) return nullptr;
+        if (!ShaderRecompiler::ShaderDiskCache::DecodeResult(std::span<const std::byte>(*bytes).subspan(20), *result, bytes) || !((module.stage == ShaderRecompiler::ShaderStage::Compute ? DescribedPipelineIdentity(*result) : result->Identity()) == identity)) return nullptr;
         return result;
     }
 

@@ -12283,6 +12283,29 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         subgroup.hostSubgroupSize = 64;
         Require(!(subgroup.Identity() == constFirst.Identity()), "the host subgroup size did not enter the identity");
         Require(ShaderRecompiler::RecompileResult{}.Identity().Empty(), "a result without a module has an identity");
+        Require(DescribedPipelineIdentity(ShaderRecompiler::RecompileResult{}).Empty(), "a result without a module has a described identity");
+        const auto withTable = [&](Role role, std::uint32_t elements, std::uint32_t buffers) {
+            auto result = module(1);
+            result.bindings.push_back(makeBinding(Role::GuestBuffers, 0, buffers, std::vector<std::uint32_t>(4 * buffers)));
+            auto table = makeBinding(role, role == Role::ImageStorageTable ? ShaderRecompiler::RuntimeAbi::ImageStorageTableBinding : ShaderRecompiler::RuntimeAbi::ImageTableBinding, elements, std::vector<std::uint32_t>(8 * elements));
+            table.kind = role == Role::SamplerTable ? Kind::Sampler : role == Role::ImageStorageTable ? Kind::StorageImage : Kind::SampledImage;
+            result.bindings.push_back(std::move(table));
+            return result;
+        };
+        auto plain = module(1);
+        plain.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 2, std::vector<std::uint32_t>(8)));
+        Require(DescribedPipelineIdentity(plain) == plain.Identity(), "the described identity of a result without tables differs from its identity");
+        for (const auto role : {Role::ImageTable, Role::ImageStorageTable, Role::SamplerTable}) {
+            const auto small = withTable(role, 10, 1);
+            const auto large = withTable(role, 20, 1);
+            Require(!(small.Identity() == large.Identity()), "the table's element count did not enter the identity");
+            Require(DescribedPipelineIdentity(small) == DescribedPipelineIdentity(large), "a table's element count entered the described identity, which the fixed-capacity layout does not see");
+            Require(!(DescribedPipelineIdentity(small) == DescribedPipelineIdentity(withTable(role, 10, 2))), "a buffer binding's count did not enter the described identity");
+            auto specializedTable = withTable(role, 10, 1);
+            specializedTable.specialization.push_back({3, 4});
+            Require(!(DescribedPipelineIdentity(specializedTable) == DescribedPipelineIdentity(small)), "specialization constants did not enter the described identity");
+        }
+        Require(!(DescribedPipelineIdentity(withTable(Role::ImageTable, 10, 1)) == DescribedPipelineIdentity(withTable(Role::ImageStorageTable, 10, 1))), "a sampled and a storage image table share a described identity");
     }
     mock = MockVulkan{};
     auto context = mockContext();
@@ -12591,6 +12614,30 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
             Require(recovered != nullptr, "the replay after the external append did not start");
             recovered->Wait();
             Require(PipelineJournalTotals().loadedModules == 5 && PipelineJournalTotals().loadedRecipes == 4 && PipelineJournalTotals().droppedRecords == 0, "the external append and torn-tail recovery did not replay cleanly");
+        }
+        {
+            const auto tableResult = [&](std::uint32_t elements) {
+                auto result = module(5);
+                result.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, std::vector<std::uint32_t>(4)));
+                auto table = makeBinding(Role::ImageTable, ShaderRecompiler::RuntimeAbi::ImageTableBinding, elements, std::vector<std::uint32_t>(8 * elements));
+                table.kind = Kind::SampledImage;
+                result.bindings.push_back(std::move(table));
+                return result;
+            };
+            auto ahead = StartPipelineJournalReplay(context, fingerprint, hooks);
+            Require(ahead != nullptr, "the replay before the table variants did not start");
+            ahead->Wait();
+            const auto before = PipelineJournalTotals();
+            RecordComputePipeline(tableResult(10), false);
+            RecordComputePipeline(tableResult(20), false);
+            FlushPipelineJournal();
+            const auto recordedTables = PipelineJournalTotals();
+            Require(recordedTables.recordedCompute == before.recordedCompute + 1 && recordedTables.recordedModules == before.recordedModules + 1 && recordedTables.writeFailures == 0, "compute results that differ only in their image table's element count were recorded as two pipelines");
+            auto reread = StartPipelineJournalReplay(context, fingerprint, hooks);
+            Require(reread != nullptr, "the replay after the table variants did not start");
+            reread->Wait();
+            const auto reloadedTables = PipelineJournalTotals();
+            Require(reloadedTables.droppedRecords == 0 && reloadedTables.loadedModules == before.loadedModules + 1 && reloadedTables.replayRejected == 0 && reloadedTables.replayFailed == 0, "the journal did not reload the table variant's module under its described identity");
         }
         {
             const auto before = PipelineJournalTotals();
