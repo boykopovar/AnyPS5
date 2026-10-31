@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libc/include/Api.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -435,6 +436,7 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
 }
 
 int GuestSockets::Close(int descriptor) {
+    const GuestDescriptorAccess descriptorLock(descriptor, GuestDescriptorAccess::Mode::Close);
     std::shared_ptr<Socket> released;
     {
         std::lock_guard lock(socketsMutex);
@@ -572,6 +574,7 @@ extern "C" int KernelReserveSocketNumber_nid_no_patch(std::uintptr_t native) {
 }
 
 extern "C" void KernelReleaseSocketNumber_nid_no_patch(int number) {
+    const GuestDescriptorAccess descriptorLock(number, GuestDescriptorAccess::Mode::Change);
     ReleaseNumber(number);
 }
 
@@ -815,7 +818,92 @@ int SocketSendFlags(Socket& socket, int flags) {
     std::lock_guard lock(socket.modeMutex);
     return NativeSendFlags(socket.options.noSignal ? flags | GuestNoSignal : flags);
 }
+int ReceiveNative(Socket& socket, void* buffer, int length, int flags, sockaddr* address, socklen_t* addressLength) {
+#ifdef _WIN32
+    const bool cancellable = ThreadCancel::IoActive();
+    bool nonblocking = (flags & GuestDontWait) != 0;
+    std::int64_t timeout = 0;
+    {
+        std::lock_guard lock(socket.modeMutex);
+        nonblocking = nonblocking || socket.options.nonblocking;
+        timeout = socket.options.receiveTimeout;
+    }
+    if (cancellable) {
+        if (timeout != 0) ThreadCancel::IoNoRestart();
+        const bool waitAll = socket.type == 1 && (flags & GuestWaitAll) != 0 && !nonblocking;
+        if (waitAll && (flags & GuestPeek) != 0) {
+            WSASetLastError(WSAEOPNOTSUPP);
+            return -1;
+        }
+        int transferred = 0;
+        for (;;) {
+            OVERLAPPED operation{};
+            operation.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            if (!operation.hEvent) {
+                WSASetLastError(WSAENOBUFS);
+                return transferred != 0 ? transferred : -1;
+            }
+            struct Event {
+                HANDLE handle;
+                ~Event() {
+                    const int error = WSAGetLastError();
+                    CloseHandle(handle);
+                    WSASetLastError(error);
+                }
+            } event{operation.hEvent};
+            struct Pending {
+                Socket& socket;
+                OVERLAPPED& operation;
+                static void Interrupt(void* argument) noexcept {
+                    auto& pending = *static_cast<Pending*>(argument);
+                    CancelIoEx(reinterpret_cast<HANDLE>(pending.socket.value), &pending.operation);
+                }
+            } pending{socket, operation};
+            DWORD done = 0;
+            DWORD nativeFlags = static_cast<DWORD>(NativeReceiveFlags(flags & ~GuestWaitAll, socket.type));
+            int result = -1;
+            int error = WSAEINTR;
+            {
+                ThreadCancel::IoWait wait(Pending::Interrupt, &pending);
+                if (!ThreadCancel::IoInterrupted()) {
+                    WSABUF destination{static_cast<ULONG>(length - transferred),
+                        transferred == 0 ? static_cast<char*>(buffer) : static_cast<char*>(buffer) + transferred};
+                    const int started = address
+                        ? WSARecvFrom(socket.value, &destination, 1, &done, &nativeFlags, address, addressLength, &operation, nullptr)
+                        : WSARecv(socket.value, &destination, 1, &done, &nativeFlags, &operation, nullptr);
+                    error = started == 0 ? 0 : WSAGetLastError();
+                    if (error == WSA_IO_PENDING) {
+                        const auto milliseconds = nonblocking ? 0 : timeout == 0 ? INFINITE : static_cast<DWORD>(std::min<std::int64_t>(
+                            ((timeout >> 32) * 1000) + ((static_cast<std::uint64_t>(static_cast<std::uint32_t>(timeout)) * 1000 + 0xffffffffu) >> 32), INFINITE - 1));
+                        const DWORD waited = WaitForSingleObject(operation.hEvent, milliseconds);
+                        if (waited != WAIT_OBJECT_0) Pending::Interrupt(&pending);
+                        const BOOL completed = WSAGetOverlappedResult(socket.value, &operation, &done, TRUE, &nativeFlags);
+                        error = completed ? 0 : WSAGetLastError();
+                        if (waited == WAIT_TIMEOUT && error == WSA_OPERATION_ABORTED) error = WSAEWOULDBLOCK;
+                    }
+                    if (error == WSA_OPERATION_ABORTED && ThreadCancel::IoInterrupted()) error = WSAEINTR;
+                    if (error == 0) result = static_cast<int>(done);
+                }
+            }
+            WSASetLastError(error);
+            if (result < 0) return transferred != 0 ? transferred : result;
+            transferred += result;
+            if (!waitAll || result == 0 || transferred == length || ThreadCancel::IoInterrupted()) return transferred;
+        }
+    }
+    return address
+        ? ::recvfrom(socket.value, static_cast<char*>(buffer), length, NativeReceiveFlags(flags, socket.type), address, addressLength)
+        : ::recv(socket.value, static_cast<char*>(buffer), length, NativeReceiveFlags(flags, socket.type));
+#else
+    return ThreadCancel::Native([&] { return address
+        ? static_cast<int>(::recvfrom(socket.value, buffer, length, NativeReceiveFlags(flags, socket.type), address, addressLength))
+        : static_cast<int>(::recv(socket.value, buffer, length, NativeReceiveFlags(flags, socket.type))); });
+#endif
+}
 int WaitForTransfer(Socket& socket, bool send, int flags) {
+#ifdef _WIN32
+    if (!send && ThreadCancel::IoActive()) return 0;
+#endif
     if ((flags & GuestDontWait) != 0) {
 #ifdef _WIN32
         NativePollDescriptor entry{};
@@ -833,9 +921,11 @@ int WaitForTransfer(Socket& socket, bool send, int flags) {
         timeout = send ? socket.options.sendTimeout : socket.options.receiveTimeout;
     }
     if (timeout == 0) return 0;
+    ThreadCancel::IoNoRestart();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(timeout >> 32) +
         std::chrono::nanoseconds((static_cast<std::int64_t>(static_cast<std::uint32_t>(timeout)) * 1000000000) >> 32);
     for (;;) {
+        if (ThreadCancel::IoInterrupted()) return 4;
         const auto left = deadline - std::chrono::steady_clock::now();
         if (left <= std::chrono::steady_clock::duration::zero()) return 35;
         const int milliseconds = static_cast<int>(std::min<std::int64_t>(std::chrono::ceil<std::chrono::milliseconds>(left).count(), INT_MAX));
@@ -847,7 +937,7 @@ int WaitForTransfer(Socket& socket, bool send, int flags) {
         if (ready != 0) return 0;
 #else
         entry.events = static_cast<short>(send ? POLLOUT : POLLIN);
-        const int ready = ::poll(&entry, 1, milliseconds);
+        const int ready = ThreadCancel::Native([&] { return ::poll(&entry, 1, milliseconds); });
         if (ready > 0 || (ready < 0 && errno != EINTR)) return 0;
 #endif
     }
@@ -1436,7 +1526,7 @@ std::int64_t APS5_VABI send_nid_postfix(int descriptor, const void* buffer, std:
     const auto result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags));
     return result < 0 ? Fail(SendError(socket->type)) : result;
 }
-std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags) {
+static std::int64_t Receive(int descriptor, void* buffer, std::uint64_t length, int flags) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
@@ -1446,8 +1536,7 @@ std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint6
     if (!destination.Open()) return Fail(14);
     if (const int answered = ReceiveAnsweredHere(*socket, length); answered >= 0) return answered == 0 ? 0 : Fail(answered);
     if (const int waited = WaitForTransfer(*socket, false, flags)) return Fail(waited);
-    const auto result = ::recv(socket->value, static_cast<char*>(buffer), static_cast<int>(length),
-        NativeReceiveFlags(flags, socket->type));
+    const auto result = ReceiveNative(*socket, buffer, static_cast<int>(length), flags, nullptr, nullptr);
 #ifdef _WIN32
     if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) return static_cast<std::int64_t>(length);
 #endif
@@ -1589,7 +1678,7 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     }
     return result < 0 ? Fail(SendError(socket->type)) : result;
 }
-std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length,
+static std::int64_t ReceiveFrom(int descriptor, void* buffer, std::uint64_t length,
     int flags, void* address, std::uint32_t* addressLength) {
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
@@ -1606,8 +1695,7 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     sockaddr_storage native{};
     socklen_t size = sizeof(native);
     if (const int waited = WaitForTransfer(*socket, false, flags)) return Fail(waited);
-    auto result = ::recvfrom(socket->value, static_cast<char*>(buffer), static_cast<int>(length),
-        NativeReceiveFlags(flags, socket->type), reinterpret_cast<sockaddr*>(&native), &size);
+    auto result = ReceiveNative(*socket, buffer, static_cast<int>(length), flags, reinterpret_cast<sockaddr*>(&native), &size);
 #ifdef _WIN32
     if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(length);
 #endif
@@ -1745,7 +1833,7 @@ static std::vector<unsigned char> ArrivalTimestamps(const Socket& socket, int ke
     if (micro) append(2, seconds, nanoseconds / 1000);
     return records;
 }
-std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
+static std::int64_t ReceiveMessage(int descriptor, GuestMsghdr* message, int flags) {
     GuestMsghdr header{};
     if (!message || !ReadGuest(&header, message, sizeof(header))) return Fail(14);
     if (header.iovLength < 0 || header.iovLength > 1024) return Fail(40);
@@ -1754,6 +1842,8 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     header.iov = vectors.data();
     const auto total = MessageLength(&header);
     if (total < 0) return -1;
+    const File::IoDescriptor retained(descriptor);
+    if (retained.Value() < 0) return -1;
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
@@ -1772,8 +1862,7 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
     if (!shut && (total != 0 || socket->type == 1 || ReadableNow(*socket))) {
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags)) return Fail(waited);
-        received = ::recvfrom(socket->value, buffer.data(), static_cast<int>(buffer.size()),
-            NativeReceiveFlags(flags, socket->type), reinterpret_cast<sockaddr*>(&native), &size);
+        received = ReceiveNative(*socket, buffer.data(), static_cast<int>(buffer.size()), flags, reinterpret_cast<sockaddr*>(&native), &size);
         if (received < 0) {
 #ifdef _WIN32
             if (!records || WSAGetLastError() != WSAEMSGSIZE) return Fail(NativeError());
@@ -2129,9 +2218,23 @@ extern "C" bool GuestSocketReadGuest_nid_no_patch(void* destination, const void*
     return ::ReadGuest(destination, source, bytes);
 }
 
+std::int64_t APS5_VABI recv_nid_postfix(int descriptor, void* buffer, std::uint64_t length, int flags) {
+    return ThreadCancel::Io([&] { return File::WithIoDescriptor(descriptor, [&](int descriptor) {
+        return Receive(descriptor, buffer, length, flags);
+    }); });
+}
+std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length,
+    int flags, void* address, std::uint32_t* addressLength) {
+    return ThreadCancel::Io([&] { return File::WithIoDescriptor(descriptor, [&](int descriptor) {
+        return ReceiveFrom(descriptor, buffer, length, flags, address, addressLength);
+    }); });
+}
+std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
+    return ThreadCancel::Io([&] { return ReceiveMessage(descriptor, message, flags); });
+}
 std::int64_t GuestSockets::Read(int descriptor, void* buffer, std::size_t length) {
     if (length == 0) return IsOpen(descriptor) ? 0 : Fail(9);
-    return recv_nid_postfix(descriptor, buffer, std::min<std::size_t>(length, INT_MAX), 0);
+    return Receive(descriptor, buffer, std::min<std::size_t>(length, INT_MAX), 0);
 }
 
 std::int64_t GuestSockets::Write(int descriptor, const void* buffer, std::size_t length) {

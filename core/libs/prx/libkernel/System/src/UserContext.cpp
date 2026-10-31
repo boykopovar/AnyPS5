@@ -225,6 +225,8 @@ int APS5_VABI Aps5GetcontextFinish_nid_no_patch(UserUcontext* context, const Reg
     machine.len = sizeof(UserMcontext);
     machine.fpformat = FpFormatXmm;
     machine.ownedfp = FpOwnedFpu;
+    const auto identity = JumpBuffer::GuestContextCapture_nid_no_patch(frame->rsp);
+    std::memcpy(machine.spare, &identity, sizeof(identity));
     std::memcpy(machine.fpstate, frame->fxsave, sizeof(frame->fxsave));
     std::memcpy(context, &captured, offsetof(UserUcontext, link));
     return 0;
@@ -270,6 +272,9 @@ enum class FpuSource { Context, Current, Initial };
     mxcsr &= HostMxcsrMask();
     std::memcpy(frame.fxsave + FxsaveMxcsr, &mxcsr, sizeof(mxcsr));
     sigprocmask_nid_postfix(GuestSigSetmask, context->sigmask, nullptr);
+    JumpBuffer::Context identity{};
+    std::memcpy(&identity, machine.spare, sizeof(identity));
+    JumpBuffer::GuestIoStackRestore_nid_no_patch(machine.rsp, JumpBuffer::GuestContextIdentify_nid_no_patch(identity, machine.rsp));
 
     Aps5ContextRestore_nid_no_patch(&frame);
 }

@@ -999,7 +999,6 @@ int APS5_VABI sceNetSocketClose(int s) {
         if (!GuestSocketIsOpen_nid_no_patch(s)) return fail(NET_EBADF);
         return close_nid_postfix(s) == 0 ? 0 : fail(*__error_nid_postfix());
     }
-    KernelReleaseSocketNumber_nid_no_patch(s);
     if (native) {
 #ifdef _WIN32
         ::shutdown(native->value, SD_BOTH);
@@ -1007,6 +1006,7 @@ int APS5_VABI sceNetSocketClose(int s) {
         ::shutdown(native->value, SHUT_RDWR);
 #endif
     }
+    KernelReleaseSocketNumber_nid_no_patch(s);
     g_cv.NotifyAll();
     return 0;
 }

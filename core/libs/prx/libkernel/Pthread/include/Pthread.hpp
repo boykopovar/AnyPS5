@@ -125,6 +125,8 @@ struct PthreadAttrPrivate {
     int _scope = GUEST_SCOPE_SYSTEM;
 };
 
+namespace ThreadCancel { class IoWait; }
+
 inline std::atomic<std::int64_t> nextThreadId{100000};
 
 struct PthreadPrivate {
@@ -161,7 +163,7 @@ struct PthreadPrivate {
     std::string name;
     std::atomic<bool> _finished;
     void* _retval;
-    bool _detached;
+    std::atomic<bool> _detached;
     bool _adopted;
     Pthread* _handleStorage;
     std::atomic<bool> _joined;
@@ -170,6 +172,7 @@ struct PthreadPrivate {
     TimedWait::Condition _join_cv;
     std::atomic<bool> cancelPending{false};
     std::mutex cancelLock;
+    ThreadCancel::IoWait* cancelIo = nullptr;
     TimedWait::Condition* cancelWait = nullptr;
     bool cancelWaitExiting = false;
 

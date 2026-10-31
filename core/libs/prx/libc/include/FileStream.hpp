@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <type_traits>
+#include "prx/libc/include/DescriptorAccess.hpp"
 #ifdef _WIN32
 #include <io.h>
 #include "prx/libc/include/FileLock.hpp"
@@ -34,6 +36,35 @@ extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
 extern "C" int _IO_switch_to_get_mode(std::FILE* stream);
 #endif
 extern "C" int DuplicateHostDescriptor_nid_no_patch(int descriptor);
+extern "C" void LibcRegisterClosedDescriptors_nid_no_patch(void* (*begin)(int descriptor), void (*end)(void* closing));
+extern "C" void* BeginClosingDescriptor_nid_no_patch(int descriptor);
+extern "C" void EndClosingDescriptor_nid_no_patch(void* closing);
+
+class ClosingDescriptor {
+public:
+    ClosingDescriptor([[maybe_unused]] std::FILE* stream, int descriptor)
+#ifdef _WIN32
+        : _stream(stream), _access(descriptor, GuestDescriptorAccess::Mode::Change), _closing(BeginClosingDescriptor_nid_no_patch(descriptor)) {}
+#else
+        : _access(descriptor, GuestDescriptorAccess::Mode::Change), _closing(BeginClosingDescriptor_nid_no_patch(descriptor)) {}
+#endif
+    ~ClosingDescriptor() { EndClosingDescriptor_nid_no_patch(_closing); }
+    ClosingDescriptor(const ClosingDescriptor&) = delete;
+    ClosingDescriptor& operator=(const ClosingDescriptor&) = delete;
+
+private:
+#ifdef _WIN32
+    struct LockedStream {
+        explicit LockedStream(std::FILE* value) : stream(value) { ::_lock_file(stream); }
+        ~LockedStream() { ::_unlock_file(stream); }
+        LockedStream(const LockedStream&) = delete;
+        LockedStream& operator=(const LockedStream&) = delete;
+        std::FILE* stream;
+    } _stream;
+#endif
+    GuestDescriptorAccess _access;
+    void* _closing;
+};
 
 struct GuestFilePrefix {
     unsigned char* position = nullptr;
@@ -60,7 +91,53 @@ static constexpr const char* FOPEN_MSG_OPEN_FAILED = "open failed";
 extern "C" int KeepHostStandardError_nid_no_patch();
 #endif
 
+extern "C" bool TryLockNativeStream_nid_no_patch(std::FILE* stream);
+
 class FileStream {
+    class NativeLock {
+        std::FILE* handle;
+    public:
+        explicit NativeLock(std::FILE* handle, bool closing = false) : handle(handle) {
+            if (!handle) return;
+            if (closing && FileStreamCloseHookActive_nid_no_patch()) {
+#ifdef _WIN32
+                const bool acquired = TryLockNativeStream_nid_no_patch(handle);
+                const int descriptor = ::_fileno(handle);
+#else
+                const bool acquired = ::ftrylockfile(handle) == 0;
+                const int descriptor = ::fileno(handle);
+#endif
+                FileStreamCloseEventForTest_nid_no_patch(descriptor, acquired ? 3 : 2);
+                if (acquired) return;
+            }
+#ifdef _WIN32
+            ::_lock_file(handle);
+#else
+            ::flockfile(handle);
+#endif
+        }
+        ~NativeLock() {
+            if (!handle) return;
+#ifdef _WIN32
+            ::_unlock_file(handle);
+#else
+            ::funlockfile(handle);
+#endif
+        }
+        NativeLock(const NativeLock&) = delete;
+        NativeLock& operator=(const NativeLock&) = delete;
+        void Forget() { handle = nullptr; }
+        void Retain(std::FILE* value) { handle = value; }
+        int Close() {
+#ifdef _WIN32
+            const int result = ::_fclose_nolock(handle);
+            ::_unlock_file(std::exchange(handle, nullptr));
+            return result;
+#else
+            return std::fclose(std::exchange(handle, nullptr));
+#endif
+        }
+    };
     // Only the macro-accessed FreeBSD prefix is exposed. The remaining guest
     // FILE area is reserved; host state lives beyond it and is never a guest FILE*.
     GuestFilePrefix _guest{};
@@ -179,6 +256,7 @@ public:
             return Adopt(open(filename, mode));
         }
         auto* previous = GetHandle();
+        NativeLock streamLock(previous, true);
         _guest = {};
         guestError = false;
         randomDevice = false;
@@ -191,10 +269,12 @@ public:
         if (std::exchange(directory, false)) ForgetDirectoryStream_nid_no_patch(replaced);
         auto* const standard = HostStandardHandle_nid_no_patch(replaced);
         GuestFileLockForget_nid_no_patch(replaced);
+        std::optional<ClosingDescriptor> closing(std::in_place, previous, replaced);
         if (open && !filename.empty()) {
             if (!IsHostStandard()) {
                 _handle = nullptr;
-                std::fclose(previous);
+                streamLock.Close();
+                closing.reset();
                 _handle = open(filename, mode);
             } else {
                 std::wstring resetMode;
@@ -234,9 +314,13 @@ public:
         KeepStandardHandle_nid_no_patch(replaced, standard);
 #else
         if (::fileno(previous) == 2) KeepHostStandardError_nid_no_patch();
+        const bool hostStandard = IsHostStandard();
+        const ClosingDescriptor closing(previous, ::fileno(previous));
         const int kept = IsHostStandard() ? DuplicateHostDescriptor_nid_no_patch(::fileno(previous)) : -1;
         if (kept >= 0) ::flockfile(previous);
+        if (!hostStandard) streamLock.Forget();
         _handle = std::freopen(filename.c_str(), mode, previous);
+        if (!hostStandard && _handle) streamLock.Retain(_handle);
         if (kept >= 0) RestoreHostStandard(previous, kept);
 #endif
         return Adopt(_handle);
@@ -379,11 +463,16 @@ public:
 
     int Close() {
         GetHandle();
+        NativeLock streamLock(_handle, true);
 #ifdef _WIN32
         GuestFileLockForget_nid_no_patch(::_fileno(_handle));
         if (std::exchange(directory, false)) ForgetDirectoryStream_nid_no_patch(::_fileno(_handle));
+        const ClosingDescriptor closing(_handle, ::_fileno(_handle));
+#else
+        const ClosingDescriptor closing(_handle, ::fileno(_handle));
 #endif
-        const int result = std::fclose(std::exchange(_handle, nullptr));
+        const int result = streamLock.Close();
+        _handle = nullptr;
         _guest.flags = 0;
         _guest.descriptor = -1;
         lowSurrogate = 0;

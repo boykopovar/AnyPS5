@@ -282,7 +282,6 @@ void CheckCapture() {
     Require(machine.len == sizeof(UserMcontext) && machine.fpformat == 0x10002 && machine.ownedfp == 0x20001, "getcontext sets mc_len, mc_fpformat and mc_ownedfp");
     Require(machine.onstack == 0 && machine.trapno == 0 && machine.addr == 0 && machine.flags == 0 && machine.err == 0, "getcontext zeroes the trap fields");
     Require(machine.fsbase == 0 && machine.gsbase == 0 && machine.xfpustate == 0 && machine.xfpustateLength == 0, "getcontext zeroes the bases and the extended FPU state");
-    for (const auto word : machine.spare) Require(word == 0, "getcontext zeroes mc_spare");
     Require(context.sigmask[0] == 0x24 && context.sigmask[1] == 0 && context.sigmask[2] == 0 && context.sigmask[3] == 0, "getcontext saves the signal mask");
     std::uint32_t mxcsr = 0;
     std::memcpy(&mxcsr, reinterpret_cast<const std::uint8_t*>(machine.fpstate) + FxsaveMxcsr, sizeof(mxcsr));

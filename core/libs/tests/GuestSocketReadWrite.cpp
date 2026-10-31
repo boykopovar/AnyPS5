@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -110,8 +111,15 @@ int main() {
     Require(close_nid_postfix(client) == 0);
     Require(Readable(server, In | Hup) && read_nid_postfix(server, received, sizeof(received)) == 0);
     Require(sceKernelRead(server, received, sizeof(received)) == 0);
-    std::int64_t written = 0;
-    for (int i = 0; i < 100 && written >= 0; ++i) written = write_nid_postfix(server, request, sizeof(request));
+    std::int64_t written = write_nid_postfix(server, request, sizeof(request));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while ((written >= 0 || *__error_nid_postfix() != 32) && std::chrono::steady_clock::now() < deadline) {
+        Require(written >= 0 || *__error_nid_postfix() == 35 || *__error_nid_postfix() == 54);
+        GuestPollDescriptor disconnected{server, 0, 0};
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+        Require(poll_nid_postfix(&disconnected, 1, static_cast<int>(left > 0 ? left : 0)) >= 0);
+        written = write_nid_postfix(server, request, sizeof(request));
+    }
     Require(written == -1 && *__error_nid_postfix() == 32);
     Require(close_nid_postfix(server) == 0);
     *__error_nid_postfix() = 0;

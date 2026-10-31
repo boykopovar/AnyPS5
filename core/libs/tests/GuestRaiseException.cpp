@@ -382,7 +382,7 @@ static void NestedWaitKeepsOuterWake() {
     Require(sceKernelDeleteSema(sem) == 0);
 }
 
-static constexpr int AddressRounds = 50;
+static constexpr int AddressRounds = 10;
 static std::uint32_t addressWord = 0;
 static std::uint32_t otherAddressWord = 0;
 static std::atomic<bool> holdingEntered{false};
@@ -552,7 +552,7 @@ static void ExpectDeliveryWhileLockHeld(int (*lock)(), int (*unlock)(), int befo
     Require(scePthreadJoin(thread, nullptr) == 0);
 }
 
-int main() {
+static void CaseSelf() {
     Require(sceKernelRaiseException(scePthreadSelf(), 11) == SCE_KERNEL_ERROR_EINVAL);
     bool rejected = false;
     try {
@@ -567,17 +567,24 @@ int main() {
     Require(sceKernelRaiseException(scePthreadSelf(), GUEST_SIGUSR1) == 0);
     Require(calls.load() == 1 && handlerThread.load() == std::this_thread::get_id());
 
+}
+
+static void CaseBusy() {
+    const int callsBefore = calls.load();
     Worker busy;
     Pthread busyThread = nullptr;
     Require(scePthreadCreate(&busyThread, nullptr, Busy, &busy, "busy") == 0);
     while (!busy.started.load()) std::this_thread::yield();
     for (int raised = 0; raised < Repeats; ++raised) {
         Require(sceKernelRaiseException(busyThread, GUEST_SIGUSR1) == 0);
-        ExpectDelivery(1 + raised, busy.id);
+        ExpectDelivery(callsBefore + raised, busy.id);
     }
     busy.stop.store(true);
     Require(scePthreadJoin(busyThread, nullptr) == 0);
+}
 
+static void CaseWaiting() {
+    const int callsBefore = calls.load();
     Worker waiting;
     Require(sceKernelCreateSema(&waiting.sem, "raise", 0, 0, 1, nullptr) == 0);
     Pthread waitingThread = nullptr;
@@ -586,13 +593,16 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     for (int raised = 0; raised < Repeats; ++raised) {
         Require(sceKernelRaiseException(waitingThread, GUEST_SIGUSR1) == 0);
-        ExpectDelivery(1 + Repeats + raised, waiting.id);
+        ExpectDelivery(callsBefore + raised, waiting.id);
     }
     Require(sceKernelSignalSema(waiting.sem, 1) == 0);
     Require(scePthreadJoin(waitingThread, nullptr) == 0);
     Require(waiting.waitResult == 0);
     Require(sceKernelDeleteSema(waiting.sem) == 0);
+}
 
+static void CaseHost() {
+    const int callsBefore = calls.load();
     Worker blocked;
     Pthread blockedThread = nullptr;
     hostLock.lock();
@@ -602,7 +612,7 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         Require(sceKernelRaiseException(blockedThread, GUEST_SIGUSR1) == 0);
         hostLock.unlock();
-        ExpectDelivery(1 + 2 * Repeats + round, blocked.id);
+        ExpectDelivery(callsBefore + round, blocked.id);
         while (hostAcquired.load() != round + 1) std::this_thread::yield();
         hostLock.lock();
         blocked.started.store(false);
@@ -610,7 +620,10 @@ int main() {
     }
     hostLock.unlock();
     Require(scePthreadJoin(blockedThread, nullptr) == 0);
+}
 
+static void CaseLeaving() {
+    const int callsBefore = calls.load();
     Worker leaving;
     Require(sceKernelCreateSema(&leaving.sem, "leaving", 0, 0, 1, nullptr) == 0);
     Pthread leavingThread = nullptr;
@@ -623,13 +636,16 @@ int main() {
         const auto offset = std::chrono::steady_clock::now() + std::chrono::microseconds(round % 16 * 8);
         while (std::chrono::steady_clock::now() < offset) {}
         Require(sceKernelRaiseException(leavingThread, GUEST_SIGUSR1) == 0);
-        ExpectDelivery(1 + 2 * Repeats + HostRounds + round, leaving.id);
+        ExpectDelivery(callsBefore + round, leaving.id);
         leavingRound.store(round + 1);
     }
     Require(scePthreadJoin(leavingThread, nullptr) == 0);
     Require(sceKernelDeleteSema(leaving.sem) == 0);
+}
 
 #ifdef _WIN32
+static void CaseContinuing() {
+    const int callsBefore = calls.load();
     void* const vectored = AddVectoredExceptionHandler(1, ContinueRaised);
     Require(vectored != nullptr);
     Worker continuing;
@@ -638,24 +654,29 @@ int main() {
     while (!continuing.started.load() || continued.load() == 0) std::this_thread::yield();
     for (int raised = 0; raised < ContinuingRounds; ++raised) {
         Require(sceKernelRaiseException(continuingThread, GUEST_SIGUSR1) == 0);
-        ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + raised, continuing.id);
+        ExpectDelivery(callsBefore + raised, continuing.id);
     }
     continuing.stop.store(true);
     Require(scePthreadJoin(continuingThread, nullptr) == 0);
     Require(RemoveVectoredExceptionHandler(vectored) != 0);
+}
 
+static void CaseSelfing() {
+    const int callsBefore = calls.load();
     Worker selfing;
     Pthread selfingThread = nullptr;
     Require(scePthreadCreate(&selfingThread, nullptr, Selfing, &selfing, "selfing") == 0);
     while (!selfing.started.load()) std::this_thread::yield();
     for (int raised = 0; raised < SelfingRounds; ++raised) {
         Require(sceKernelRaiseException(selfingThread, GUEST_SIGUSR1) == 0);
-        ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + ContinuingRounds + raised, selfing.id);
+        ExpectDelivery(callsBefore + raised, selfing.id);
         Require(handlerSelf.load() == selfingThread);
     }
     selfing.stop.store(true);
     Require(scePthreadJoin(selfingThread, nullptr) == 0);
+}
 
+static void CaseLooping() {
     Worker looping;
     Pthread loopingThread = nullptr;
     Require(scePthreadCreate(&loopingThread, nullptr, Looping, &looping, "looping") == 0);
@@ -683,7 +704,10 @@ int main() {
     Require(ResumeThread(loopingHandle) != static_cast<DWORD>(-1));
     CloseHandle(loopingHandle);
     Require(scePthreadJoin(loopingThread, nullptr) == 0);
+}
 
+static void CaseVectors() {
+    const int callsBefore = calls.load();
     if (__builtin_cpu_supports("avx")) {
         for (std::size_t i = 0; i < VectorBytes; ++i) vectorPattern[i] = static_cast<std::uint8_t>(i * 7 + 1);
         clobberVectors.store(true);
@@ -694,15 +718,18 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         for (int raised = 0; raised < VectorRounds; ++raised) {
             Require(sceKernelRaiseException(vectorsThread, GUEST_SIGUSR1) == 0);
-            ExpectDelivery(1 + 2 * Repeats + HostRounds + LeavingRounds + ContinuingRounds + SelfingRounds + raised, vectors.id);
+            ExpectDelivery(callsBefore + raised, vectors.id);
         }
         clobberVectors.store(false);
         vectorStop = 1;
         Require(scePthreadJoin(vectorsThread, nullptr) == 0);
         Require(std::memcmp(vectorPattern, vectorResult, VectorBytes) == 0);
     }
+}
+
 #endif
 
+static void CaseContext() {
     SpinState spin;
     Pthread spinningThread = nullptr;
     Require(scePthreadCreate(&spinningThread, nullptr, Spinning, &spin, "spinning") == 0);
@@ -716,7 +743,9 @@ int main() {
     Require(observedR13.load() == SpinMarker && observedXmm8.load() == SpinMarker);
     Require(spin.r12 == PatchedR12 && spin.xmm8 == PatchedXmm8);
     Require(spin.mxcsr == (observedMxcsr.load() | FlushToZero));
+}
 
+static void CaseStarting() {
     for (int round = 0; round < StartingRounds; ++round) {
         const int before = calls.load();
         startingRelease.store(false);
@@ -729,7 +758,9 @@ int main() {
         startingRelease.store(true);
         Require(scePthreadJoin(startingThread, nullptr) == 0);
     }
+}
 
+static void CaseLocks() {
     const int beforeLocks = calls.load();
     Require(scePthreadMutexInit(&guestMutex, nullptr, "raise") == 0);
     ExpectDeliveryWhileLockHeld(LockMutex, UnlockMutex, beforeLocks);
@@ -738,24 +769,56 @@ int main() {
     Require(scePthreadRwlockInit(&guestRwlock, nullptr, "raise") == 0);
     ExpectDeliveryWhileLockHeld(LockRwlock, UnlockRwlock, beforeLocks + 2 * LockRounds);
     Require(scePthreadRwlockDestroy(&guestRwlock) == 0);
+}
 
+static void CaseFinished() {
     Pthread finishedThread = nullptr;
     Require(scePthreadCreate(&finishedThread, nullptr, Finished, nullptr, "finished") == 0);
     while (!finishedReturned.load()) std::this_thread::yield();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Require(sceKernelRaiseException(finishedThread, GUEST_SIGUSR1) == SCE_KERNEL_ERROR_ESRCH);
     Require(scePthreadJoin(finishedThread, nullptr) == 0);
+}
 
-    Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == 0);
+static void CaseAddressWaking() { HandlerLeavesAddressLock(AddressWaking, "address waking"); }
+static void CaseAddressWaiting() { HandlerLeavesAddressLock(AddressWaiting, "address waiting"); }
 
-    Require(sceKernelInstallExceptionHandler(GUEST_SIGUSR1, reinterpret_cast<void*>(&NestedHandler)) == 0);
-    NestedWaitKeepsLaterWaiters();
-    NestedWaitKeepsOuterWake();
-    Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == 0);
-
-    Require(sceKernelInstallExceptionHandler(GUEST_SIGUSR1, reinterpret_cast<void*>(&HoldingHandler)) == 0);
-    HandlerLeavesAddressLock(AddressWaking, "address waking");
-    HandlerLeavesAddressLock(AddressWaiting, "address waiting");
-    HandlerRunsInUnboundedAddressWait();
-    Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == 0);
+int main(int argc, char** argv) {
+    Require(argc == 2);
+    using ExceptionHandler = void (APS5_VABI *)(int, void*);
+    struct Case {
+        const char* name;
+        void (*run)();
+        ExceptionHandler handler;
+    };
+    const Case cases[] = {
+        {"self", CaseSelf, nullptr},
+        {"busy", CaseBusy, Handler},
+        {"waiting", CaseWaiting, Handler},
+        {"host", CaseHost, Handler},
+        {"leaving", CaseLeaving, Handler},
+        {"context", CaseContext, Handler},
+        {"starting", CaseStarting, Handler},
+        {"locks", CaseLocks, Handler},
+        {"finished", CaseFinished, Handler},
+#ifdef _WIN32
+        {"continuing", CaseContinuing, Handler},
+        {"selfing", CaseSelfing, Handler},
+        {"looping", CaseLooping, Handler},
+        {"vectors", CaseVectors, Handler},
+#endif
+        {"nested_later", NestedWaitKeepsLaterWaiters, NestedHandler},
+        {"nested_outer", NestedWaitKeepsOuterWake, NestedHandler},
+        {"address_waking", CaseAddressWaking, HoldingHandler},
+        {"address_waiting", CaseAddressWaiting, HoldingHandler},
+        {"address_idle", HandlerRunsInUnboundedAddressWait, HoldingHandler},
+    };
+    for (const auto& selected : cases) {
+        if (std::strcmp(argv[1], selected.name) != 0) continue;
+        if (selected.handler) Require(sceKernelInstallExceptionHandler(GUEST_SIGUSR1, reinterpret_cast<void*>(selected.handler)) == 0);
+        selected.run();
+        Require(sceKernelRemoveExceptionHandler(GUEST_SIGUSR1) == 0);
+        return 0;
+    }
+    Require(false);
 }

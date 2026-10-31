@@ -22,6 +22,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #ifdef _WIN32
 #include <fcntl.h>
@@ -382,14 +383,34 @@ Entry& Materialize(int fd) {
 }
 
 int ChangeStatus(int fd, Kind kind, int mask, int value, const char* function) {
-    std::lock_guard lock(g_mutex);
-    auto& status = *Materialize(fd).status;
-    const int next = (status & ~mask) | (value & mask);
-    const int changed = status ^ next;
-    if ((changed & Asynchronous) && (kind == Kind::Pipe || kind == Kind::Socket || kind == Kind::Device)) Unsupported(function, "O_ASYNC", kind, fd);
-    ApplyHostStatus(fd, kind, changed, next, function);
-    status = next;
-    return 0;
+    for (;;) {
+        std::vector<std::unique_ptr<GuestDescriptorAccess>> admissions;
+        std::unique_lock lock(g_mutex);
+        auto& status = *Materialize(fd).status;
+        const int next = (status & ~mask) | (value & mask);
+        const int changed = status ^ next;
+#ifdef _WIN32
+        if ((changed & Append) && kind == Kind::File) {
+            bool blocked = false;
+            for (const auto& [descriptor, entry] : g_entries) {
+                if (entry.status.get() != &status) continue;
+                admissions.push_back(std::make_unique<GuestDescriptorAccess>(descriptor, GuestDescriptorAccess::Mode::Update, std::defer_lock));
+                if (!admissions.back()->TryLock()) { blocked = true; break; }
+            }
+            if (blocked) {
+                auto waiting = std::move(admissions.back());
+                lock.unlock();
+                admissions.clear();
+                waiting->Lock();
+                continue;
+            }
+        }
+#endif
+        if ((changed & Asynchronous) && (kind == Kind::Pipe || kind == Kind::Socket || kind == Kind::Device)) Unsupported(function, "O_ASYNC", kind, fd);
+        ApplyHostStatus(fd, kind, changed, next, function);
+        status = next;
+        return 0;
+    }
 }
 
 int CurrentStatus(int fd) {

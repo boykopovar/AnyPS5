@@ -5,6 +5,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <vector>
 #include <algorithm>
@@ -293,7 +294,12 @@ struct QueuedDelivery {
     std::atomic<bool> taken{false};
     std::atomic<bool> waiting{false};
     std::atomic<int> references{1};
+    QueuedDelivery* next = nullptr;
 };
+
+thread_local QueuedDelivery* ioDeliveries = nullptr;
+void DeliverIoCallbacks();
+void RetireIoCallbacks();
 
 void ReleaseQueued(QueuedDelivery* queued) {
     if (queued != nullptr && queued->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete queued;
@@ -301,6 +307,11 @@ void ReleaseQueued(QueuedDelivery* queued) {
 
 void CALLBACK WaitingEntry(ULONG_PTR parameter) {
     auto* queued = reinterpret_cast<QueuedDelivery*>(parameter);
+    if (ThreadCancel::DeferIoCallback(DeliverIoCallbacks, RetireIoCallbacks)) {
+        queued->next = ioDeliveries;
+        ioDeliveries = queued;
+        return;
+    }
     const auto handler = queued->handler;
     const int signum = queued->signum;
     const bool claimed = !queued->taken.exchange(true, std::memory_order_acq_rel);
@@ -309,6 +320,20 @@ void CALLBACK WaitingEntry(ULONG_PTR parameter) {
     CONTEXT context{};
     RtlCaptureContext(&context);
     Deliver(handler, signum, context);
+}
+
+void DeliverIoCallbacks() {
+    while (auto* queued = ioDeliveries) {
+        ioDeliveries = queued->next;
+        WaitingEntry(reinterpret_cast<ULONG_PTR>(queued));
+    }
+}
+
+void RetireIoCallbacks() {
+    while (auto* queued = ioDeliveries) {
+        ioDeliveries = queued->next;
+        ReleaseQueued(queued);
+    }
 }
 
 static_assert(HomeArea + 8 == 40, "Aps5RedirectedEntryStub finds the delivery 40 bytes above its stack pointer");
@@ -739,6 +764,7 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
             const bool accepted = QueueWaitingDelivery(native, queued);
             ResumeThread(native);
             if (!accepted) throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the waiting thread");
+            ThreadCancel::WakeIoDelivery(thread);
             return Attempt::Delivered;
         }
         const bool restoring = RestoringContext(delivery.context.Rip);
@@ -943,6 +969,7 @@ void ToHost(const GuestMcontext& m, mcontext_t& host) {
 }
 
 void Deliver(int signum, siginfo_t*, void* context) {
+    if (ThreadCancel::DeferIoSignal(signum)) return;
     if (TimedWait::DeferDelivery(signum)) return;
     const auto handler = Handler(RaisedSignal);
     if (handler == nullptr) {
