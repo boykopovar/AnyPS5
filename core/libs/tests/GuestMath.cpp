@@ -2429,7 +2429,30 @@ static void CheckLogbConsoleBits() {
     }
 }
 
+static void CheckFdimFlags() {
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    for (const double same : {infinity, -infinity}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint64_t>(fdim_nid_postfix(same, same)) == 0 && std::fetestexcept(FE_INVALID) != 0);
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(static_cast<float>(same), static_cast<float>(same))) == 0 && std::fetestexcept(FE_INVALID) != 0);
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(fdim_nid_postfix(3.0, 1.0) == 2.0 && fdim_nid_postfix(1.0, 3.0) == 0.0 && fdim_nid_postfix(infinity, 1.0) == infinity && fdim_nid_postfix(-infinity, 1.0) == 0.0);
+    Require(fdimf_nid_postfix(3.0f, 1.0f) == 2.0f && fdimf_nid_postfix(1.0f, 3.0f) == 0.0f);
+    Require(std::isnan(fdim_nid_postfix(nan, 1.0)) && std::isnan(fdim_nid_postfix(1.0, nan)) && std::isnan(fdimf_nid_postfix(1.0f, std::numeric_limits<float>::quiet_NaN())));
+    Require(std::fetestexcept(FE_INVALID) == 0);
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint64_t>(fdim_nid_postfix(-1e308, 1e308)) == 0 && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(fdim_nid_postfix(1e308, -1e308) == infinity && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+    std::feclearexcept(FE_ALL_EXCEPT);
+    Require(std::bit_cast<std::uint32_t>(fdimf_nid_postfix(-3e38f, 3e38f)) == 0 && std::fetestexcept(FE_OVERFLOW | FE_INEXACT) == (FE_OVERFLOW | FE_INEXACT));
+}
+
 int main() {
+    CheckFdimFlags();
     CheckFloatClassification();
     CheckDinkumwareConstants();
     CheckNoConversionZero();

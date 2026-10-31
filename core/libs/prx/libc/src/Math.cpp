@@ -679,8 +679,16 @@ long double APS5_VABI fminl_nid_postfix(long double x, long double y) { return G
 double APS5_VABI fmax_nid_postfix(double x, double y) { return GuestFmax(x, y); }
 float APS5_VABI fmaxf_nid_postfix(float x, float y) { return GuestFmax(x, y); }
 long double APS5_VABI fmaxl_nid_postfix(long double x, long double y) { return GuestFmax(x, y); }
-double APS5_VABI fdim_nid_postfix(double x, double y) { return std::fdim(x, y); }
-float APS5_VABI fdimf_nid_postfix(float x, float y) { return std::fdim(x, y); }
+double APS5_VABI fdim_nid_postfix(double x, double y) {
+    if (std::isnan(x) || std::isnan(y)) return std::fdim(x, y);
+    const double difference = x - y;
+    return difference > 0.0 ? difference : 0.0;
+}
+float APS5_VABI fdimf_nid_postfix(float x, float y) {
+    if (std::isnan(x) || std::isnan(y)) return std::fdim(x, y);
+    const float difference = x - y;
+    return difference > 0.0f ? difference : 0.0f;
+}
 long double APS5_VABI acosl_nid_postfix(long double x) { return std::acos(x); }
 long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); }
 long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
