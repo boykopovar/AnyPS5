@@ -216,6 +216,69 @@ std::int64_t APS5_VABI WideCollateHash(const GuestLocale::CollateFacet*, const c
 
 const GuestLocale::CollateVtable g_wideCollateVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideCollateCompare, WideCollateTransform, WideCollateHash};
 
+GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
+    if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
+    const std::size_t length = std::strlen(source);
+    char* data = result->buffer;
+    std::size_t capacity = GuestStringInlineCapacity;
+    if (length > GuestStringInlineCapacity) {
+        capacity = length | GuestStringCapacityMask;
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
+    }
+    if (length != 0) std::memcpy(data, source, length);
+    data[length] = 0;
+    if (data != result->buffer) result->pointer = data;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+const char g_wideNumpunctGrouping[] = "";
+const std::uint16_t g_wideNumpunctFalseName[] = {'f', 'a', 'l', 's', 'e', 0};
+const std::uint16_t g_wideNumpunctTrueName[] = {'t', 'r', 'u', 'e', 0};
+
+GuestLocale::String* APS5_VABI AssignWideCString(GuestLocale::String* result, const std::uint16_t* source) {
+    if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
+    std::size_t length = 0;
+    while (source[length] != 0) ++length;
+    const auto bytes = length * GuestWideCharacterSize;
+    char* data = result->buffer;
+    std::size_t capacity = GuestWideInlineCapacity;
+    if (length > GuestWideInlineCapacity) {
+        capacity = length | GuestWideInlineCapacity;
+        data = static_cast<char*>(GuestLocale::AllocateStringStorage((capacity + 1) * GuestWideCharacterSize));
+    }
+    if (bytes != 0) std::memcpy(data, source, bytes);
+    data[bytes] = 0;
+    data[bytes + 1] = 0;
+    if (data != result->buffer) result->pointer = data;
+    result->size = length;
+    result->capacity = capacity;
+    return result;
+}
+
+std::uint16_t APS5_VABI WideNumpunctDecimalPoint(const GuestLocale::WideNumpunctFacet* self) {
+    return self->decimalPoint;
+}
+
+std::uint16_t APS5_VABI WideNumpunctThousandsSep(const GuestLocale::WideNumpunctFacet* self) {
+    return self->thousandsSep;
+}
+
+GuestLocale::String* APS5_VABI WideNumpunctGrouping(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self) {
+    return AssignCString(result, self->grouping);
+}
+
+GuestLocale::String* APS5_VABI WideNumpunctFalsename(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self) {
+    return AssignWideCString(result, self->falsename);
+}
+
+GuestLocale::String* APS5_VABI WideNumpunctTruename(GuestLocale::String* result, const GuestLocale::WideNumpunctFacet* self) {
+    return AssignWideCString(result, self->truename);
+}
+
+const GuestLocale::WideNumpunctVtable g_wideNumpunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, WideNumpunctDecimalPoint, WideNumpunctThousandsSep, WideNumpunctGrouping, WideNumpunctFalsename, WideNumpunctTruename};
+
 bool APS5_VABI CodecvtAlwaysNoconv(const GuestLocale::Facet*) {
     return true;
 }
@@ -240,23 +303,6 @@ std::size_t APS5_VABI CodecvtLength(GuestLocale::Facet*, std::uint64_t*, const c
 }
 
 const GuestLocale::CodecvtVtable g_codecvtVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, CodecvtAlwaysNoconv, CodecvtConstantOne, CodecvtConstantOne, CodecvtNoConversion, CodecvtNoConversion, CodecvtUnshift, CodecvtLength};
-
-GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
-    if (result == nullptr || source == nullptr) throw std::invalid_argument("numpunct string: null argument");
-    const std::size_t length = std::strlen(source);
-    char* data = result->buffer;
-    std::size_t capacity = GuestStringInlineCapacity;
-    if (length > GuestStringInlineCapacity) {
-        capacity = length | GuestStringCapacityMask;
-        data = static_cast<char*>(GuestLocale::AllocateStringStorage(capacity + 1));
-    }
-    if (length != 0) std::memcpy(data, source, length);
-    data[length] = 0;
-    if (data != result->buffer) result->pointer = data;
-    result->size = length;
-    result->capacity = capacity;
-    return result;
-}
 
 char APS5_VABI NumpunctDecimalPoint(const GuestLocale::NumpunctFacet* self) {
     return self->decimalPoint;
@@ -634,6 +680,7 @@ std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_
 std::uint64_t _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14] {};
 std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix = 0;
+std::uint64_t _ZNSt8numpunctIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
@@ -753,6 +800,15 @@ std::size_t APS5_VABI _ZNSt8numpunctIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_po
     if (facet != nullptr && *facet == nullptr) {
         auto* punct = static_cast<GuestLocale::NumpunctFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::NumpunctFacet)));
         *punct = {{&g_numpunctVtable.facet, 0, 0}, "", '.', ',', "false", "true"};
+        *facet = &punct->base;
+    }
+    return 4;
+}
+
+std::size_t APS5_VABI _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
+    if (facet != nullptr && *facet == nullptr) {
+        auto* punct = static_cast<GuestLocale::WideNumpunctFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::WideNumpunctFacet)));
+        *punct = {{&g_wideNumpunctVtable.facet, 0, 0}, g_wideNumpunctGrouping, '.', ',', g_wideNumpunctFalseName, g_wideNumpunctTrueName};
         *facet = &punct->base;
     }
     return 4;
