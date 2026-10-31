@@ -31,6 +31,7 @@ extern std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsI
 extern std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17];
 extern std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[14];
 extern std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14];
+extern std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[13];
 
 }
 
@@ -96,6 +97,16 @@ static void CheckCollateVtableObject() {
     Require(vtable->transform(&result, &facet, "abc", "abc" + 3) == &result);
     Require(result.size == 3 && result.capacity == 15 && std::memcmp(result.buffer, "abc", 3) == 0);
     Require(vtable->hash(&facet, "abc", "abc" + 3) == -1792535898324117685LL);
+}
+
+static void CheckCodecvtVtableObject() {
+    Require(sizeof(_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) == kCodecvtCharVtableSlots * sizeof(std::uintptr_t));
+    for (std::uintptr_t& slot : _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) {
+        Require(slot == 0);
+        slot = 0x1111;
+        Require(slot == 0x1111);
+        slot = 0;
+    }
 }
 
 static void CheckGuestCalls() {
@@ -576,6 +587,7 @@ int main() {
     CheckNumGetWideVtableObject();
     CheckNumPutVtableObject();
     CheckCtypeVtableObject();
+    CheckCodecvtVtableObject();
     _Locksyslock_nid_postfix();
     _Locksyslock_nid_postfix();
     _Unlocksyslock_nid_postfix();
