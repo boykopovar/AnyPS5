@@ -1477,6 +1477,30 @@ void deferredFailureReportTests(Recorder& recorder) {
     Require(DeferredFailureLines(recorder, 12, plain) == 12, "unaligned BDA reports limited the printing of other deferred failures");
 }
 
+void completionLabelWaitTests(const Device& device, Recorder& recorder) {
+    const auto& context = device.GetContext();
+    alignas(64) static std::uint32_t memory[64];
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const std::array<std::byte, 4> value{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    const bool countAll = std::getenv("APS5_COUNT_ALL_COMPLETION_LABELS") != nullptr || std::getenv("APS5_LABEL_STORE_ALWAYS") != nullptr;
+    struct Finish {
+        Recorder& recorder;
+        ~Finish() { recorder.Sync(); }
+    } finish{recorder};
+    static_cast<void>(recorder.Commands());
+    recorder.AfterCompletions(base, value, 11, 0, true);
+    recorder.AfterCompletions(base + 0x80, value, 12, 0, false);
+    Require(Recorder::PendingCompletionLabels() != 0 && recorder.PendingLabelIn(base, 0x40) && recorder.PendingWriteOverlaps(base, 0x40), "the GPU-stored label is not pending beside a CPU-stored one");
+    Require(CompletePendingCpuWrites(context, base, 0x40) == countAll, "a label the GPU stores in the stream made a bound range wait");
+    if (!countAll) {
+        Recorder::NoteWrittenBack(base, 4);
+        Require(CompletePendingCpuWrites(context, base, 0x40), "a GPU-stored label under a CPU write-back did not make the range wait");
+    }
+    static_cast<void>(recorder.Commands());
+    recorder.AfterCompletions(base + 0x80, value, 13, 0, false);
+    Require(CompletePendingCpuWrites(context, base + 0x80, 4) && Recorder::PendingCompletionLabels() == 0, "a label the CPU stores at completion did not make its range wait");
+}
+
 void directCompletionLabelTests(Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t size = 65536;
@@ -12477,6 +12501,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--completion-labels-only") {
             completionCountTests(device, recorder);
+            completionLabelWaitTests(device, recorder);
             afterRecordedWorkTests(device, recorder);
             directCompletionLabelTests(recorder);
             labelTests(recorder);
@@ -12699,6 +12724,7 @@ int main(int argc, char** argv) {
         spaceWriteSyncTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
+        completionLabelWaitTests(device, recorder);
         afterRecordedWorkTests(device, recorder);
         directCompletionLabelTests(recorder);
         batchStampTests(recorder);
