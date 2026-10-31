@@ -1839,6 +1839,54 @@ int main() {
         Require(fchmodat_nid_postfix(base, "chmod-link.txt/child", 0600, 0) == -1 && Error() == 20);
         Require(RemoveSymlink(chmodLink) && RemoveSymlink(chmodDangling) && RemoveSymlink(chmodLoopA) && RemoveSymlink(chmodLoopB));
     }
+    const auto prefixDangling = (root / "prefix-dangling").string();
+    const auto prefixLoopA = (root / "prefix-loop-a").string();
+    const auto prefixLoopB = (root / "prefix-loop-b").string();
+    if (symlink_nid_postfix("prefix-missing", prefixDangling.c_str()) == 0) {
+        Require(symlink_nid_postfix("prefix-loop-b", prefixLoopA.c_str()) == 0 && symlink_nid_postfix("prefix-loop-a", prefixLoopB.c_str()) == 0);
+        FileStat prefixStatus{};
+        char prefixBuffer[16]{};
+        const auto belowDangling = prefixDangling + "/child";
+        const auto belowLoop = prefixLoopA + "/child";
+        Require(stat_nid_postfix(belowDangling.c_str(), &prefixStatus) == -1 && Error() == 2);
+        Require(lstat_nid_postfix(belowDangling.c_str(), &prefixStatus) == -1 && Error() == 2);
+        Require(chmod_nid_postfix(belowDangling.c_str(), 0600) == -1 && Error() == 2);
+        Require(utimes_nid_postfix(belowDangling.c_str(), nullptr) == -1 && Error() == 2);
+        Require(unlink_nid_postfix(belowDangling.c_str()) == -1 && Error() == 2);
+        Require(open_nid_postfix(belowDangling.c_str(), 0, 0) == -1 && Error() == 2);
+        Require(fchmodat_nid_postfix(base, "prefix-dangling/child", 0600, 0) == -1 && Error() == 2);
+        Require(readlink_nid_postfix(belowDangling.c_str(), prefixBuffer, sizeof(prefixBuffer)) == -1 && Error() == 2);
+        Require(linkat_nid_postfix(-100, belowDangling.c_str(), -100, (root / "prefix-linked").string().c_str(), 0x400) == -1 && Error() == 2);
+        Require(stat_nid_postfix(belowLoop.c_str(), &prefixStatus) == -1 && Error() == 62);
+        const auto prefixThroughFile = (root / "prefix-through-file").string();
+        Require(symlink_nid_postfix("file.txt/x", prefixThroughFile.c_str()) == 0);
+        const auto belowThroughFile = prefixThroughFile + "/child";
+        Require(stat_nid_postfix(belowThroughFile.c_str(), &prefixStatus) == -1 && Error() == 20);
+        Require(chmod_nid_postfix(belowThroughFile.c_str(), 0600) == -1 && Error() == 20);
+        Require(fchmodat_nid_postfix(base, "prefix-through-file/child", 0600, 0) == -1 && Error() == 20);
+#ifdef _WIN32
+        std::filesystem::create_directories(root / "prefix-up" / "deep");
+        { std::ofstream file(root / "prefix-up" / "f2"); file << "x"; }
+        const auto upDirectory = (root / "prefix-up-link").string();
+        const auto upFile = (root / "prefix-up" / "deep" / "pa").string();
+        const auto createHostLink = [](const std::string& link, const wchar_t* target, DWORD flags) {
+            return CreateSymbolicLinkW(std::filesystem::path(link).c_str(), target, flags | SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+        };
+        Require(createHostLink(upDirectory, L"prefix-up\\deep", SYMBOLIC_LINK_FLAG_DIRECTORY) && createHostLink(upFile, L"..\\f2\\x", 0));
+        const auto belowUp = upDirectory + "/pa/child";
+        Require(stat_nid_postfix(belowUp.c_str(), &prefixStatus) == -1 && Error() == 20);
+        Require(RemoveSymlink(upFile) && RemoveSymlink(upDirectory));
+#endif
+        const auto prefixChainEnd = (root / "prefix-chain-end").string();
+        const auto prefixChainStart = (root / "prefix-chain-start").string();
+        Require(symlink_nid_postfix("file.txt/x", prefixChainEnd.c_str()) == 0);
+        Require(symlink_nid_postfix("prefix-chain-end", prefixChainStart.c_str()) == 0);
+        const auto belowChain = prefixChainStart + "/child";
+        Require(stat_nid_postfix(belowChain.c_str(), &prefixStatus) == -1 && Error() == 20);
+        Require(RemoveSymlink(prefixChainStart) && RemoveSymlink(prefixChainEnd));
+        Require(RemoveSymlink(prefixThroughFile));
+        Require(RemoveSymlink(prefixDangling) && RemoveSymlink(prefixLoopA) && RemoveSymlink(prefixLoopB));
+    }
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);
     Require(fchown_nid_postfix(base, 0, 0xFFFFFFFFu) == 0);
