@@ -220,6 +220,17 @@ class ObservedManifestTests(unittest.TestCase):
             with self.subTest(line=line), self.assertRaisesRegex(ValueError, rf":2: invalid NID {re.escape(repr(line))}"):
                 self.read("# header\n" + line + "\n")
 
+    def test_problems_name_malformed_duplicate_and_unsorted_entries(self):
+        text = "# header\nBbBbBbBbBbB\nAaAaAaAaAaA\nBbBbBbBbBbB\nshort\nCcCcCcCcCcC  # evidence: by name\n"
+        self.assertEqual(progress.manifest_problems(text), [
+            (3, "AaAaAaAaAaA is not in sorted order after BbBbBbBbBbB"),
+            (4, "duplicate NID BbBbBbBbBbB"),
+            (5, "invalid NID 'short'")])
+
+    def test_problems_accept_sorted_unique_entries_with_comments(self):
+        self.assertEqual(progress.manifest_problems("# header\nAaAaAaAaAaA\n\nBbBbBbBbBbB  # evidence: by name\n"), [])
+        self.assertEqual(progress.manifest_problems(""), [])
+
 
 class ObservedStubTests(unittest.TestCase):
     def scan(self, source, observed=None):

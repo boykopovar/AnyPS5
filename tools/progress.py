@@ -165,12 +165,31 @@ def inert_wrappers(text):
         names |= found
 
 
+def manifest_entries(text):
+    for number, line in enumerate(text.splitlines(), 1):
+        entry = line.split("#", 1)[0].strip()
+        if entry:
+            yield number, entry
+
+
+def manifest_problems(text):
+    problems, seen, previous = [], set(), ""
+    for number, entry in manifest_entries(text):
+        if NID.fullmatch(entry) is None:
+            problems.append((number, f"invalid NID {entry!r}"))
+            continue
+        if entry in seen:
+            problems.append((number, f"duplicate NID {entry}"))
+        elif entry < previous:
+            problems.append((number, f"{entry} is not in sorted order after {previous}"))
+        seen.add(entry)
+        previous = max(previous, entry)
+    return problems
+
+
 def read_manifest(path):
     observed = set()
-    for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
-        entry = line.split("#", 1)[0].strip()
-        if not entry:
-            continue
+    for number, entry in manifest_entries(path.read_text(encoding="utf-8-sig")):
         if NID.fullmatch(entry) is None:
             raise ValueError(f"{path}:{number}: invalid NID {entry!r}")
         observed.add(entry)
