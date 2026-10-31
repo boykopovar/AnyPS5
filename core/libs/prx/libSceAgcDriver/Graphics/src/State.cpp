@@ -2101,7 +2101,8 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     const auto decoded = DecodeColorFormat((info >> 2u) & 0x1fu, number, swap);
     const auto attrib = read(cx, 0x31d + stride);
     color.samples = 1u << ((attrib >> 12u) & 7u);
-    Require(color.samples == 1u, "multisampled GCN color targets are not implemented");
+    Require(color.samples <= 8u, "GCN color targets with more than eight samples are not implemented");
+    Require((1u << ((attrib >> 15u) & 3u)) == color.samples, "GCN color targets with fewer fragments than samples (EQAA) are not implemented");
     Require((info & 0x3u) == 0 && (info & 0x80u) == 0, "endian-swapped or linear-general GCN color targets are not implemented");
     Require((info & 0x8000u) != 0 || number == 7 || number == 4 || number == 5, "unclamped normalized color is unsupported");
     const auto view = read(cx, 0x31b + stride);
@@ -2132,7 +2133,13 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         const auto clear = find(cx, 0x323 + word + stride);
         color.clearWords[word] = clear == cx.end() ? 0u : clear->second;
     }
-    Require(((info >> 13u) & 1u) == 0, "PS4 color target fast clear (CMASK) is not implemented");
+    Require(color.samples > 1u || ((info >> 13u) & 1u) == 0, "PS4 color target fast clear (CMASK) is not implemented");
+    if (color.samples > 1u && (info & 0x6000u) != 0) {
+        color.cmaskAddress = static_cast<std::uint64_t>(read(cx, 0x31f + stride)) << 8u;
+        Require(color.cmaskAddress != 0, "a multisampled GCN color target with fast clear or FMASK compression has no CMASK address");
+        color.cmaskBytes = (static_cast<std::size_t>(read(cx, 0x320 + stride) & 0x3fffu) + 1u) * 128u;
+        color.cmaskFastClear = (info & 0x2000u) != 0;
+    }
     GuestMemory::CheckRange(reinterpret_cast<const void*>(color.address), color.bytes, layout.Alignment(), true);
     return color;
 }
@@ -2333,7 +2340,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
 
 namespace {
 
-bool drawCovers(const Registers& cx, VkExtent2D extent) {
+bool drawCovers(const Registers& cx, VkExtent2D extent, const ColorTarget* gcnTarget = nullptr) {
     const auto viewportControl = read(cx, 0x206);
     if (viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
     const auto xs = std::fabs(readFloat(cx, 0x10f));
@@ -2345,6 +2352,10 @@ bool drawCovers(const Registers& cx, VkExtent2D extent) {
     intersect(covered, cx, 0x81, false);
     intersect(covered, cx, 0x90, false);
     if ((read(cx, 0x292) & 2u) != 0) intersect(covered, cx, 0x94, false);
+    if (gcnTarget != nullptr && covered.offset.x == 0 && covered.offset.y == 0 && xo - xs <= 0.0f && yo - ys <= 0.0f) {
+        const VkExtent2D visible{std::min({extent.width, covered.extent.width, static_cast<std::uint32_t>(std::max(0.0f, xo + xs))}), std::min({extent.height, covered.extent.height, static_cast<std::uint32_t>(std::max(0.0f, yo + ys))})};
+        if (visible.width != 0 && visible.height != 0 && ColorTargetLayout(visible.width, visible.height, gcnTarget->tileMode, gcnTarget->elementBytes).Bytes() == gcnTarget->bytes) extent = visible;
+    }
     const auto width = static_cast<float>(extent.width);
     const auto height = static_cast<float>(extent.height);
     const bool viewportCovers = xo - xs <= 0.0f && xo + xs >= width && yo - ys <= 0.0f && yo + ys >= height;
@@ -2409,7 +2420,7 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
     const auto samples = resolve && rasterizerSamples && multisampleRaster ? decodeSamples(cx) : 1u;
     if (!resolve) zero(cx, 0x2f8, ~0u, "multisampling or coverage conversion");
     zero(cx, 0x80, ~0u, "window offset");
-    const auto requireCovered = [&](const ColorTarget& target) { Require(drawCovers(cx, target.extent), "CB metadata pass over part of a color target"); };
+    const auto requireCovered = [&](const ColorTarget& target) { Require(drawCovers(cx, target.extent, ColorTileModeIsGcn(target.tileMode) ? &target : nullptr), "CB metadata pass over part of a color target"); };
     if (resolve) {
         const auto source = DecodeColorBuffer(cx, 0);
         const auto destination = DecodeColorBuffer(cx, 1);
