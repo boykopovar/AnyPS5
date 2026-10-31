@@ -1,5 +1,7 @@
 # libSceNpManager technical debt
 
+- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
+
 ### Silent stubs
 
 - [sceNpUnregisterPlusEventCallback](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 whether or not a callback was registered, as `sceNpUnregisterPremiumEventCallback` does: `sceNpRegisterPlusEventCallback` keeps no callback, and a signed-out user gets no plus events

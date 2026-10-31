@@ -135,6 +135,7 @@ Project switches accept `ON` or `OFF`:
 | `-DAPS5_AGC_CREATE_LOG=OFF`      | `ON`    | No effect: `sceAgcCreateShader` logs nothing on success. |
 | `-DAGC_BUILD_VISUAL_TEST=ON`     | `OFF`   | Build the standalone AGC SPIR-V visual test.     |
 | `-DANYPS5_REQUIRE_CPU_LEAD_TEST=ON` | `OFF` | With `BUILD_TESTING=ON`, also register `agc_driver_sparse_dma_buf_cpu_lead`, which runs `agc_driver_sparse_dma_buf_import_tests --require-cpu-lead` and fails instead of skipping when the nonzero-lead dma-buf CPU publish is not exercised, such as on Windows or without an accessible `/dev/udmabuf`. |
+| `-DANYPS5_LIBRESSL_ORACLE=ON`    | `OFF`   | With `BUILD_TESTING=ON`, download LibreSSL 2.5.4 from ftp.openbsd.org at build time, check its SHA-256 and register `guest_libressl_oracle`, which compares `libSceLibreSsl` and `libSceLibreSsl3` exports with it and prints the cases and differences per function. Without the flag nothing is downloaded. |
 
 GCC and Clang compile libc with `-ffp-contract=off` whatever the target CPU. Toolchains that default to x86-64-v3, such as GCC 15 on Ubuntu 26.04, would otherwise fuse `a * b + c` into FMA instructions, which changes the last bit of math results that must match the console.
 

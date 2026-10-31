@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceWebBrowserDialog/include/InventoryExports.hpp"
 #include "prx/libSceWebBrowserDialog/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
@@ -162,5 +164,14 @@ int APS5_VABI sceWebBrowserDialogSetZoom() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("8r4EJ3FiX4w", libSceWebBrowserDialogUnknown_8r4EJ3FiX4w_nid_no_patch);
 
 }
