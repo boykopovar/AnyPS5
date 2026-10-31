@@ -2623,7 +2623,7 @@ int VulkanDevice::WriteLabelOnGpu(std::uint64_t address, std::span<const std::by
     // range stored this way sync through its batch first (the label is a pending write of its batch
     // and counted in PendingCompletionLabels). Debug aid: APS5_DRAIN_COMPLETION_LABELS=1 drains
     // (reason 2) instead and stores the label on the CPU.
-    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty();
+    const bool listed = !state->copiedWriters->empty() || !Graphics::DrawCopiedWriters()->empty() || Graphics::Recorder::PendingGuestStateCompletions() != 0;
     if (drain) {
         if (listed) return 2;
     } else if (const bool storesPending = Graphics::Recorder::PendingCompletionStores() != 0; bytes.size() <= 8 ? (listed || storesPending) : (storesPending && recorder.CompletionLabelIn(address, bytes.size()))) {
@@ -5428,7 +5428,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         recorder.OnComplete([kept, htileClear = record.htileClear] {
             kept->CheckFaults();
             if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(htileClear->first, htileClear->second);
-        });
+        }, resources.UpdatesGuestStateAtCompletion());
     } else if (completionNeeded) {
         // Listed for DispatchIndirect until the write-back ran (a non-reusable object, so once).
         auto writers = state->copiedWriters;
@@ -5438,7 +5438,7 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
             writers->erase(std::remove(writers->begin(), writers->end(), kept), writers->end());
             kept->WriteBackBuffers();
             if (htileClear.has_value()) Graphics::CompleteHtileDepthClear(htileClear->first, htileClear->second);
-        });
+        }, resources.UpdatesGuestStateAtCompletion());
         // Listed after the registration: a throw there leaves nothing that would pin the CPU path forever.
         if (resources.HasCopiedWrites()) writers->push_back(kept);
     }

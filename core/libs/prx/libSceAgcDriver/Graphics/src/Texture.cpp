@@ -4471,7 +4471,7 @@ void StorageTexture::commitStoredSave(const std::vector<std::uint32_t>& units) {
     }
     recorder->OnComplete([texture = weak_from_this(), bytes = savedBytes, ticket, units] {
         if (auto alive = texture.lock()) alive->applyStoredSave(ticket, units);
-    });
+    }, true);
 }
 
 void StorageTexture::applyStoredSave(std::uint64_t ticket, const std::vector<std::uint32_t>& units) {

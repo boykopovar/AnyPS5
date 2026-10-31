@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -102,6 +103,8 @@ int main() {
         Store(*device, source);
         Require(StorageTexture::FindPending(AddressOf(source), SurfaceBytes) != nullptr, "the compute store left no pending image over the source");
 
+        bool held = false;
+        std::uint64_t epoch = 0;
         {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
             const auto outcome = device->CopyBuffer(AddressOf(destination), AddressOf(source), SurfaceBytes, 0, std::numeric_limits<std::size_t>::max(), 0, 0, 0, [](std::span<const std::byte>, std::uint64_t) {});
@@ -110,12 +113,20 @@ int main() {
                 return VulkanTestSkipped;
             }
             const std::uint32_t value = LabelValue;
+            held = AgcDriver::Graphics::Recorder::PendingGuestStateCompletions() != 0 || AgcDriver::Graphics::Recorder::PendingCompletionStores() != 0;
             const int reason = device->WriteLabelOnGpu(AddressOf(const_cast<std::uint32_t*>(label)), std::as_bytes(std::span(&value, 1)), 1, 0);
-            if (reason != 0) {
-                std::printf("skipped, the label was not recorded on the GPU (reason %d)\n", reason);
-                return VulkanTestSkipped;
-            }
-            device->SubmitRecorded(true);
+            Require(reason == (held ? 5 : 0), "the label after the image copy took reason " + std::to_string(reason) + (held ? " while a completion that updates guest state was pending" : " while no completion was pending"));
+            std::printf("the label after the image copy was %s\n", held ? "stored at the reap" : "recorded on the GPU");
+            if (held) epoch = device->SubmitAndEpoch();
+            else device->SubmitRecorded(true);
+        }
+        if (held) {
+            if (device->CanWaitUnlocked()) device->WaitRecorded(epoch);
+            else std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            Require(*label == 0, "the held label is visible before the batch of the image copy was reaped");
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            device->ReapRecorded(epoch);
+            Require(AgcDriver::Graphics::Recorder::PendingGuestStateCompletions() == 0, "the guest state completions outlived the reap of their batch");
         }
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (*label != LabelValue) {
