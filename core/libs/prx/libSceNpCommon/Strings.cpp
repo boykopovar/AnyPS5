@@ -410,7 +410,7 @@ int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, 
 }
 
 int APS5_VABI sceNpStrBuildHex(char* dst, std::size_t size, const void* src, std::size_t length, bool uppercase) {
-    if (size <= length * 2) return NP_ERROR_BUFFER_TOO_SMALL;
+    if (size == 0 || length > (size - 1) / 2) return NP_ERROR_BUFFER_TOO_SMALL;
     const auto* bytes = static_cast<const std::uint8_t*>(src);
     for (std::size_t i = 0; i < length; ++i) {
         dst[i * 2] = HexDigit(bytes[i] >> 4, uppercase);
