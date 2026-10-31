@@ -122,15 +122,18 @@ int APS5_VABI sceNpAuthGetIdToken(int req_id, const void* param, void* id_token)
 
 int APS5_VABI sceNpAuthPollAsync(int req_id, int* result) {
  if (!result) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
- std::lock_guard lock(g_requestMutex);
- auto it = g_requests.find(req_id);
- if (it == g_requests.end()) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
- if (!it->second.isAsync || !it->second.processed) return ORBIS_NP_AUTH_ERROR_INVALID_ID;
- if (!it->second.polled) {
-  it->second.polled = true;
-  return NP_POLL_ASYNC_RUNNING;
+ int res = 0;
+ {
+  std::lock_guard lock(g_requestMutex);
+  auto it = g_requests.find(req_id);
+  if (it == g_requests.end()) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
+  if (!it->second.isAsync || !it->second.processed) return ORBIS_NP_AUTH_ERROR_INVALID_ID;
+  if (!it->second.polled) {
+   it->second.polled = true;
+   return NP_POLL_ASYNC_RUNNING;
+  }
+  res = it->second.result;
  }
- const int res = it->second.result;
  if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  return NP_POLL_ASYNC_FINISHED;
 }
@@ -152,11 +155,14 @@ int APS5_VABI sceNpAuthSetTimeout(std::int32_t requestId, std::int32_t resolveRe
 
 int APS5_VABI sceNpAuthWaitAsync(int req_id, int* result) {
  if (!result) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
- std::lock_guard lock(g_requestMutex);
- auto it = g_requests.find(req_id);
- if (it == g_requests.end()) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
- if (!it->second.isAsync || !it->second.processed) return ORBIS_NP_AUTH_ERROR_INVALID_ID;
- const int res = it->second.result;
+ int res = 0;
+ {
+  std::lock_guard lock(g_requestMutex);
+  auto it = g_requests.find(req_id);
+  if (it == g_requests.end()) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
+  if (!it->second.isAsync || !it->second.processed) return ORBIS_NP_AUTH_ERROR_INVALID_ID;
+  res = it->second.result;
+ }
  if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  return NP_POLL_ASYNC_FINISHED;
 }
