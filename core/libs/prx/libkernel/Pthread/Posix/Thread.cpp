@@ -1,6 +1,7 @@
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <cstdint>
@@ -323,6 +324,15 @@ struct RegisterPthreadOnLoad {
             reinterpret_cast<decltype(sync.condWait)>(scePthreadCondWait),
             reinterpret_cast<decltype(sync.condSignal)>(scePthreadCondSignal),
             reinterpret_cast<decltype(sync.condBroadcast)>(scePthreadCondBroadcast),
+            reinterpret_cast<decltype(sync.rwlockInit)>(scePthreadRwlockInit),
+            reinterpret_cast<decltype(sync.rwlockDestroy)>(scePthreadRwlockDestroy),
+            reinterpret_cast<decltype(sync.rwlockRdlock)>(scePthreadRwlockRdlock),
+            reinterpret_cast<decltype(sync.rwlockWrlock)>(scePthreadRwlockWrlock),
+            reinterpret_cast<decltype(sync.rwlockTryrdlock)>(scePthreadRwlockTryrdlock),
+            reinterpret_cast<decltype(sync.rwlockTrywrlock)>(scePthreadRwlockTrywrlock),
+            reinterpret_cast<decltype(sync.rwlockTimedrdlock)>(scePthreadRwlockTimedrdlock),
+            reinterpret_cast<decltype(sync.rwlockTimedwrlock)>(scePthreadRwlockTimedwrlock),
+            reinterpret_cast<decltype(sync.rwlockUnlock)>(scePthreadRwlockUnlock),
             reinterpret_cast<decltype(sync.detach)>(scePthreadDetach),
             reinterpret_cast<decltype(sync.join)>(scePthreadJoin),
             scePthreadYield,

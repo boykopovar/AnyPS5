@@ -702,6 +702,83 @@ int APS5_VABI _ZNSt8__sce_v214_Cnd_broadcastEPP12pthread_cond_nid_postfix(void**
     return threadSuccess;
 }
 
+int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(const Xtime* target) {
+    if (!target)
+        APS5_INVALID_ARG_EX;
+    const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
+    const std::uint64_t nowSeconds = ticks / 1000000;
+    const std::int64_t nowNanos = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec) + static_cast<std::uint64_t>(target->nsec / nanosPerSecond);
+    std::int64_t nanos = target->nsec % nanosPerSecond;
+    if (nanos < 0) {
+        nanos += nanosPerSecond;
+        --seconds;
+    }
+    if (nanos < nowNanos) {
+        nanos += nanosPerSecond;
+        --seconds;
+    }
+    seconds -= nowSeconds;
+    nanos -= nowNanos;
+    if (static_cast<std::int64_t>(seconds) < 0 || (seconds == 0 && nanos <= 0)) {
+        seconds = 0;
+        nanos = 0;
+    }
+    return static_cast<int>(static_cast<std::uint32_t>(seconds) * 1000000u + static_cast<std::uint32_t>((nanos + 999) / 1000));
+}
+
+static int SharedMutexResult(int result) {
+    if (result == 0) return threadSuccess;
+    if ((static_cast<std::uint32_t>(result) & 0xffff0000u) == 0x80020000u) return result & 0xffff;
+    return 1;
+}
+
+int APS5_VABI _Smtx_init_with_name_nid_postfix(void** smtx, const char* name) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockInit(smtx, nullptr, SyncObjectName(name)));
+}
+
+int APS5_VABI _Smtx_init_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockInit(smtx, nullptr, "SceLibc_V2Smtx"));
+}
+
+int APS5_VABI _Smtx_destroy_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockDestroy(smtx));
+}
+
+int APS5_VABI _Smtx_lock_exclusive_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockWrlock(smtx));
+}
+
+int APS5_VABI _Smtx_lock_shared_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockRdlock(smtx));
+}
+
+int APS5_VABI _Smtx_try_lock_exclusive_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockTrywrlock(smtx));
+}
+
+int APS5_VABI _Smtx_try_lock_shared_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockTryrdlock(smtx));
+}
+
+int APS5_VABI _Smtx_timedlock_exclusive_nid_postfix(void** smtx, const Xtime* target) {
+    const int timeout = _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(target);
+    return SharedMutexResult(PthreadSync(__func__).rwlockTimedwrlock(smtx, static_cast<unsigned int>(timeout)));
+}
+
+int APS5_VABI _Smtx_timedlock_shared_nid_postfix(void** smtx, const Xtime* target) {
+    const int timeout = _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(target);
+    return SharedMutexResult(PthreadSync(__func__).rwlockTimedrdlock(smtx, static_cast<unsigned int>(timeout)));
+}
+
+int APS5_VABI _Smtx_unlock_exclusive_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockUnlock(smtx));
+}
+
+int APS5_VABI _Smtx_unlock_shared_nid_postfix(void** smtx) {
+    return SharedMutexResult(PthreadSync(__func__).rwlockUnlock(smtx));
+}
+
 int APS5_VABI _ZNSt8__sce_v212_Thrd_detachEP7pthread_nid_postfix(void* thread) {
     return PthreadSync(__func__).detach(thread) == 0 ? threadSuccess : threadError;
 }
