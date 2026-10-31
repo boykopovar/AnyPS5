@@ -121,12 +121,19 @@ def source_files(root):
         yield path
 
 
+def cpp_reads(text):
+    return CPP_TOKEN.sub(lambda match: re.sub(r"[^\r\n]", " ", match.group())
+                         if match.lastgroup in ("comment", "raw", "char") else match.group(), text)
+
+
 def reads(roots, prefixes=PREFIXES):
     found = {}
     for root in roots:
         for path in source_files(root):
             try:
                 text = path.read_text(encoding="utf-8")
+                if path.suffix != ".py":
+                    text = cpp_reads(text)
             except (OSError, UnicodeDecodeError) as error:
                 raise ValueError(f"cannot read {path.as_posix()}: {error}") from error
             matches = line_reads(text, prefixes)
