@@ -13,6 +13,9 @@
 namespace AgcDriver::Pm4 {
 
 constexpr std::size_t GdsBytes = 0x10000;
+constexpr std::size_t GdsOrderedTurnOffset = GdsBytes;
+constexpr std::size_t GdsOrderedTimeoutsOffset = GdsBytes + 4;
+constexpr std::size_t GdsBindingBytes = GdsBytes + 8;
 std::uint64_t GdsAddress();
 
 struct DrawParameters {

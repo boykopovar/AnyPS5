@@ -2146,9 +2146,9 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 } else if (binding.role == ShaderRecompiler::DescriptorRole::Gds) {
                     Require(binding.count == 1 && binding.guestDescriptor.empty(), "invalid GDS descriptor contract");
                     const auto gds = Pm4::GdsAddress();
-                    guestMemory.AddWritable(gds, Pm4::GdsBytes, true);
+                    guestMemory.AddWritable(gds, Pm4::GdsBindingBytes, true);
                     item.allocations.push_back(allocations.size());
-                    allocations.push_back({gds, Pm4::GdsBytes, true, nullptr, ShaderRecompiler::DescriptorRole::ShaderData, true});
+                    allocations.push_back({gds, Pm4::GdsBindingBytes, true, nullptr, ShaderRecompiler::DescriptorRole::ShaderData, true});
                 } else {
                     Require(binding.count == 1, "shader data and flattened SRT descriptors must not be arrays");
                     Require(!binding.guestDescriptor.empty(), "empty shader data descriptor");

@@ -292,7 +292,7 @@ bool TranslationContext::dsOrderedCount(const RdnaInstruction& inst) {
     IrValue& activeLo = ir.GetExecLo();
     IrValue& activeHi = ir.GetExecHi();
     const auto opcode = (flags & 0x10u) != 0u ? IrOpcode::DataOrderedSwap : IrOpcode::DataOrderedCount;
-    IrValue& result = ir.Emit(opcode, IrOpcodeType(opcode), {&address, &active, &activeLo, &activeHi, &amount.Value()}, addMemoryInfo(memory, inst.programCounter));
+    IrValue& result = ir.Emit(opcode, IrOpcodeType(opcode), {&address, &active, &activeLo, &activeHi, &amount.Value(), &ir.Constant(flags)}, addMemoryInfo(memory, inst.programCounter));
     writeOperand(inst.destination, &result);
     return true;
 }

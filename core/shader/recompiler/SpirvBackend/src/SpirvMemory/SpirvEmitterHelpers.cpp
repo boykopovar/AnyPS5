@@ -9,6 +9,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvInputOutput.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
+#include <tuple>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -214,6 +215,17 @@ void DefineInputs(SpirvEmitterState& state) {
         }
         state.numWorkgroupsVariable = DefineInterfaceVariable(state, TypeU32Vector(state, 3u), spv::StorageClassInput, "gl_NumWorkGroups");
         state.module.AddAnnotation(spv::OpDecorate, state.numWorkgroupsVariable, spv::DecorationBuiltIn, spv::BuiltInNumWorkgroups);
+    }
+    if (state.requirements.orderedAppend) {
+        for (const auto& [kind, components, name] : {std::tuple{StageInputKind::WorkgroupId, 3u, "gl_WorkGroupID"}, std::tuple{StageInputKind::LocalInvocationIndex, 1u, "gl_LocalInvocationIndex"}}) {
+            if (std::none_of(state.inputs.begin(), state.inputs.end(), [kind](const SpirvInputBinding& input) { return input.kind == kind; })) {
+                state.inputs.push_back(SpirvInputBinding {{kind, 0u, components, name, false}});
+            }
+        }
+        if (state.numWorkgroupsVariable == 0u) {
+            state.numWorkgroupsVariable = DefineInterfaceVariable(state, TypeU32Vector(state, 3u), spv::StorageClassInput, "gl_NumWorkGroups");
+            state.module.AddAnnotation(spv::OpDecorate, state.numWorkgroupsVariable, spv::DecorationBuiltIn, spv::BuiltInNumWorkgroups);
+        }
     }
     const bool pixelStage = state.program.Resources().stage == IrShaderStage::Pixel;
     const bool emulated = pixelStage && state.program.Metadata().barycentricEmulation;

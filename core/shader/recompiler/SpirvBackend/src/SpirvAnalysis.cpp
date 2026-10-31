@@ -409,6 +409,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                     requirements.ldsLock = true;
                     requirements.subgroupBallot = true;
                 }
+                if ((inst->Opcode() == IrOpcode::DataOrderedCount || inst->Opcode() == IrOpcode::DataOrderedSwap) && kind == ResourceKind::Gds && program.Resources().stage == IrShaderStage::Compute) {
+                    requirements.orderedAppend = true;
+                }
                 if (sharedAccess == SharedAccess::Append || sharedAccess == SharedAccess::Consume) {
                     requirements.subgroupBallot = true;
                     requirements.subgroupShuffle = true;

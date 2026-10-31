@@ -542,6 +542,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.fullSubgroups);
     writer.Value(result.functionLdsBuffer);
     writer.Value(result.meshWindowBuffer);
+    writer.Value(result.orderedAppend);
     writer.Values(std::span<const std::uint32_t>(result.parameterExports));
     writer.List(result.fragmentParameters, [](Writer& out, const FragmentParameter& parameter) {
         out.Value(parameter.location);
@@ -607,6 +608,7 @@ void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.fullSubgroups);
     reader.Value(result.functionLdsBuffer);
     reader.Value(result.meshWindowBuffer);
+    reader.Value(result.orderedAppend);
     reader.Values(result.parameterExports);
     reader.List(result.fragmentParameters, 10, [](Reader& in, FragmentParameter& parameter) {
         in.Value(parameter.location);
