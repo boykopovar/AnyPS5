@@ -62,8 +62,10 @@ build-wasm/
 venv/
 env/
 ENV/
+/.local/
 
 __pycache__/
+*.pyc
 *.pyo
 *.pyd
 *.egg

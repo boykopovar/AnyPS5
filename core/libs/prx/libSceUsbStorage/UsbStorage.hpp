@@ -49,6 +49,9 @@ struct UsbStorageDeviceInfo {
 using UsbStorageCallback = void (APS5_VABI *)(const UsbStorageEvent* event, void* userData);
 
 extern "C" {
+int APS5_VABI sceUsbStorageClearFakeMapLockForDebug();
+int APS5_VABI sceUsbStorageCheckSystemDefaultMountPoint();
+
 std::int32_t APS5_VABI sceUsbStorageInit(void* attr);
 std::int32_t APS5_VABI sceUsbStorageTerm(void);
 std::int32_t APS5_VABI sceUsbStorageRegisterCallback(std::int32_t eventType, UsbStorageCallback callback, void* arg);

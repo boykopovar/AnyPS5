@@ -1,5 +1,25 @@
 # libScePad technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libScePad/InventoryExports.cpp) - 13 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. These NIDs are absent from the pinned public 3.20 catalogue. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `1YXygubV1Gc` |
+| `Unknown` | `3LNwlXW4f54` |
+| `Unknown` | `7xA+hFtvBCA` |
+| `Unknown` | `KY0hSB+Uyfo` |
+| `Unknown` | `Ql4q5ePNaw0` |
+| `Unknown` | `UeUUvNOgXKU` |
+| `Unknown` | `XFqNcPu1meI` |
+| `Unknown` | `eqldkyw7GAo` |
+| `Unknown` | `ickjfjk9okM` |
+| `Unknown` | `qJgegDoE0g8` |
+| `Unknown` | `r2S7Nuicg8s` |
+| `Unknown` | `wMvV6XbeFd0` |
+| `Unknown` | `ybhL4IoyGZA` |
+
 ### Silent stubs
 
 - [scePadEnableExtensionPort](../../../core/libs/prx/libScePad/Export.cpp) returns success without changing extension-port state. The boolean argument is recovered; connected-device behavior is not modeled.
@@ -21,6 +41,7 @@
 - [scePadOpen](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - port types 3 and 4 throw: a payload process on a PS5 (firmware 13.60) let them past the type check, but it cannot open a port for its own logged-in user (0x809b0081), so what they open is unknown. The argument checks it did reach are followed: types 1, 5, 6, 255 and -1, and 16 for a user other than the system user, fail with `INVALID_ARG` before the user is looked at, user -1 with 0x809b0001 on types 0, 2, 3 and 4 and on index 1, and index 1 of a logged-in user with 0x809b0003; whether index 1 of types 3 and 4 fails the same way was not measured; the payload never tried type 16 with the system user (255), which opens the remote control port as below. Of 21 calls in ten titles checked, all pass index 0 and no param; 15 pass type 0, three type 2 (PPSA01494, PPSA30839, PPSA31162) and three a type from a register or field (PPSA18194, PPSA25286)
 - [scePadVrControllerReadState](../../../core/libs/prx/libScePad/Export.cpp) - the 104-byte output layout is recovered, including buttons, stick, triggers, touch fields, motion, connection state and timestamp. Touch-value semantics and kernel report production remain incomplete; the export still throws.
 - [scePadVrControllerReadCombinedState](../../../core/libs/prx/libScePad/Export.cpp) - the two handle arguments and 128-byte output are recovered; output field semantics remain incomplete.
+- [scePadParseUniqueDataLeonardo and the DualShock 4 queries](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - like the other pad calls, they reject the handle opened on the remote port (type 16) with `INVALID_HANDLE` (see the remote control port entry), while firmware 13.42 checks the port type stored with each handle. The behaviour comes from firmware 13.42's libScePad.sprx, read from disassembly and compared by running the firmware functions natively on random handle tables, not measured on a console. The answers follow the firmware for the one DualSense (`054c:0ce6`) reported here: scePadGetMotionTimerUnit, scePadGetMotionSensorPosition and scePadGetSphereRadius return data only for DualShock 4 models (`05c4`, `0bb2`), scePadGetBluetoothAddress only for `03d5`, `05c4`, `0bb2` and `0c5e`, and scePadParseUniqueDataLeonardo only for the Access controller (`0e5f`).
 - [scePadSetVibrationMode](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - modes 1 to 3 and 5 are accepted and stored. On a PS5 (firmware 13.60) the call returns `0x80920005` before `scePadInit`, then rejects a mode of 0 or below with `INVALID_ARG` before it checks the handle, and returns `INVALID_HANDLE` for a bad handle with any higher mode; whether an open handle accepts modes above 3 was not measured, since the payload could not open a pad; 5 is accepted because PPSA25286 passes it on its open handle at start-up; the meanings of modes 3 and 5 are unknown (PPSA21480 calls it with 3 right after `scePadOpen` and aborts on failure; [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/main/src/SharpProspero/Interop/Pad/Pad.cs) names only 1 and 2). The stored mode has no other effect
 - [scePadIsRemoteController](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - the name hashes to NID `fCWdlnmB1Ks`; the signature `(int handle, bool* remote)` comes from PPSA16064, which zeroes a byte, passes its address after `scePadGetControllerInformation` and ignores the result. The error codes follow the other pad calls. Controllers are local devices, so the answer is always false
 - [scePadIsDS4Connected, scePadIsBlasterConnected and scePadIsMoveConnected](../../../core/libs/prx/libScePad/Export.cpp) (libScePad) - the `bool (int handle)` signatures are recovered; the library reports one DualSense to every title (see Touchpad resolution below), so no DualShock 4, Blaster or Move controller is ever behind a handle and each call answers false for any handle. The console's answer for an invalid handle is not measured
