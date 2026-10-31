@@ -635,6 +635,8 @@ std::uint64_t _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_n
 std::uintptr_t _ZTVSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[14] {};
 std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
+std::uintptr_t _ZTVSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kTimePutCharVtableSlots] {};
+std::uintptr_t _ZTVSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[kTimePutWideVtableSlots] {};
 std::uintptr_t _ZTVSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[13] {};
 std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17] {};
