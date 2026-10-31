@@ -84,10 +84,6 @@ bool ScansWideInProcess(const char* format) {
     return true;
 }
 
-void RejectGuestWideScan(const char* format) {
-    if (HasGuestWideScan(format)) NotImplemented_nid_no_patch("fscanf 16-bit wide conversion on Linux");
-}
-
 bool IsWideScan(const std::string& length, char conversion) {
     return conversion == 'S' || conversion == 'C' || (length == "l" && (conversion == 's' || conversion == 'c' || conversion == '['));
 }
@@ -211,6 +207,12 @@ public:
     std::ptrdiff_t Consumed() const { return position - start; }
     const char* Remaining() const { return position; }
 
+#ifndef _WIN32
+    std::size_t PeekWide(char32_t* point) const {
+        return *position == '\0' ? 0 : LibcDetail::ReadWideScanCharacter(position, point);
+    }
+#endif
+
     int Scan(const char* directive, bool suppress, void* target, int* consumed) const {
         return suppress ? HostSscanf(position, directive, consumed) : HostSscanf(position, directive, target, consumed);
     }
@@ -238,6 +240,26 @@ public:
 
     void Advance(std::ptrdiff_t count) { consumed += count; }
     std::ptrdiff_t Consumed() const { return consumed; }
+
+#ifndef _WIN32
+    std::size_t PeekWide(char32_t* point) const {
+        char bytes[5] = {};
+        int next = std::fgetc(file);
+        if (next == EOF) return 0;
+        const std::size_t length = std::max<std::size_t>(LibcDetail::WideScanCharacterLength(static_cast<unsigned char>(next)), 1);
+        std::size_t size = 0;
+        while (true) {
+            bytes[size++] = static_cast<char>(next);
+            if (size == length || (next = std::fgetc(file)) == EOF) break;
+            if ((next & 0xC0) != 0x80) {
+                std::ungetc(next, file);
+                break;
+            }
+        }
+        for (std::size_t index = size; index != 0; --index) std::ungetc(static_cast<unsigned char>(bytes[index - 1]), file);
+        return LibcDetail::ReadWideScanCharacter(bytes, point);
+    }
+#endif
 
     int Scan(const char* directive, bool suppress, void* target, int* count) const {
         return suppress ? HostFscanf(file, directive, count) : HostFscanf(file, directive, target, count);
@@ -301,14 +323,12 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             continue;
         }
 #ifndef _WIN32
-        if constexpr (TSource::Contiguous) if (IsWideScan(length, conversion)) {
-            const char* const input = source.Remaining();
+        if (IsWideScan(length, conversion)) {
             const char kind = conversion == 'S' ? 's' : conversion == 'C' ? 'c' : conversion;
-            const char* field = input;
             if (kind == 's') {
-                while (std::isspace(static_cast<unsigned char>(*field))) ++field;
+                while (std::isspace(source.Peek())) source.Skip();
             }
-            if (*field == '\0') return finish(converted ? assigned : EOF);
+            if (source.Peek() == EOF) return finish(converted ? assigned : EOF);
             auto* target = suppress ? nullptr : static_cast<char16_t*>(nextPointer());
             unsigned long limit = ULONG_MAX;
             if (secure && !suppress) {
@@ -327,18 +347,17 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                 if (kind == '[') return LibcDetail::InWideScanset(specifier, point);
                 return true;
             };
-            while (text.size() < taken && *field != '\0') {
+            while (text.size() < taken) {
                 char32_t point = 0;
-                const std::size_t size = LibcDetail::ReadWideScanCharacter(field, &point);
-                if (!accepts(point)) break;
+                const std::size_t size = source.PeekWide(&point);
+                if (size == 0 || !accepts(point)) break;
                 text.push_back(static_cast<char16_t>(point));
-                field += size;
+                for (std::size_t index = 0; index < size; ++index) source.Skip();
             }
             if (text.empty()) return finish(assigned);
-            if (target != nullptr && kind != 'c' && wanted > limit && text.size() == limit && *field != '\0') {
+            if (target != nullptr && kind != 'c' && wanted > limit && text.size() == limit) {
                 char32_t point = 0;
-                LibcDetail::ReadWideScanCharacter(field, &point);
-                if (accepts(point)) {
+                if (source.PeekWide(&point) != 0 && accepts(point)) {
                     target[0] = u'\0';
                     return finish(assigned);
                 }
@@ -348,7 +367,6 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                 if (kind != 'c') target[text.size()] = u'\0';
                 ++assigned;
             }
-            source.Advance(field - input);
             converted = true;
             continue;
         }
@@ -446,7 +464,7 @@ int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPoin
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToReading()) return EOF;
 #ifndef _WIN32
-    RejectGuestWideScan(format);
+    if (HasGuestWideScan(format)) LibcDetail::RequireNoPositionalWideScan(format);
 #endif
     const int result = ScanSource(StreamSource(native), format, true, nextPointer, nextCapacity);
     stream->SyncStatus();
@@ -545,10 +563,10 @@ int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
     const int result = LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);
     __builtin_sysv_va_end(args);
 #else
-    RejectGuestWideScan(format);
     std::va_list args;
     va_start(args, format);
-    const int result = HostVfscanf(native, format, args);
+    const int result = ScansWideInProcess(format) ? ScanSource(StreamSource(native), format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
+                                                  : HostVfscanf(native, format, args);
     va_end(args);
 #endif
     stream->SyncStatus();
@@ -874,11 +892,16 @@ int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList
 #ifdef _WIN32
     const int result = LibcDetail::ScanFileWindows_nid_no_patch(native, format, args);
 #else
-    RejectGuestWideScan(format);
-    std::va_list copy;
-    va_copy(copy, *reinterpret_cast<std::va_list*>(args));
-    const int result = HostVfscanf(native, format, copy);
-    va_end(copy);
+    int result = 0;
+    if (ScansWideInProcess(format)) {
+        LibcDetail::FormatArguments arguments(args);
+        result = ScanSource(StreamSource(native), format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
+    } else {
+        std::va_list copy;
+        va_copy(copy, *reinterpret_cast<std::va_list*>(args));
+        result = HostVfscanf(native, format, copy);
+        va_end(copy);
+    }
 #endif
     stream->SyncStatus();
     stream->KeepDirectoryReadError(result == -1);
