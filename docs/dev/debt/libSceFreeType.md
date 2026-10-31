@@ -1,5 +1,9 @@
 # libSceFreeType technical debt
 
+### Build
+
+- [FT_Library_Version and FT_Get_TrueType_Engine_Type](../../../core/libs/prx/libSceFreeType/src/BuildInfo.cpp) have no console ABI or build-option verification. They query the native library backing the guest handle, following bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c); the version therefore describes that backend, not an identified console release. A null library yields version 0.0.0 and engine type NONE.
+
 ### Unknown function info
 - [autofitter glyph-to-script-map](../../../core/libs/prx/libSceFreeType/src/ModuleProperties.cpp) assumes the FreeType LP64 face/map carrier and translates the guest face to its host face. The returned 16-bit map borrows host face storage and is valid only while that face is alive; the setter returns the bundled FreeType error. This is an exception to the general unsupported-property note below. Console ABI, glyph classification and firmware behavior are unverified.
 

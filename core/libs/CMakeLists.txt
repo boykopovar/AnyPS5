@@ -272,6 +272,8 @@ elseif(TARGET mimalloc)
     list(APPEND PATCHED_OUTPUTS ${PATCHED_DIR}/libmimalloc.dylib)
 endif()
 
+include(prx/libSceFreeType/BuildInfo.cmake)
+
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 
 include(prx/libSceLibreSsl/ProtocolSelection.cmake)
