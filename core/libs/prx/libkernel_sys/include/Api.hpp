@@ -158,7 +158,7 @@ int APS5_VABI pthread_resume_user_context_np_nid_postfix(void);
 int APS5_VABI pthread_set_user_context_np_nid_postfix(void);
 int APS5_VABI pthread_single_np_nid_postfix(void);
 int APS5_VABI pthread_suspend_all_np_nid_postfix(void);
-int APS5_VABI pthread_suspend_np_nid_postfix(void);
+int APS5_VABI pthread_suspend_np_nid_postfix(Pthread thread);
 int APS5_VABI pthread_suspend_user_context_np_nid_postfix(void);
 int APS5_VABI pthread_switch_add_np_nid_postfix(void);
 int APS5_VABI pthread_switch_delete_np_nid_postfix(void);
