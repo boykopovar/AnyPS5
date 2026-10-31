@@ -19,15 +19,6 @@
 #include <unordered_set>
 #include <vector>
 
-namespace AudioPropagation {
-struct ReportRegistration {
-    ReportHandler handler = nullptr;
-    void* userData = nullptr;
-    std::uint64_t generation = 0;
-    std::size_t activeCalls = 0;
-};
-}
-
 namespace {
 
 using namespace AudioPropagation;
