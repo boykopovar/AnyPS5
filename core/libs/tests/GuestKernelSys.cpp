@@ -1,5 +1,6 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libSceAmpr/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
@@ -1015,16 +1016,33 @@ void CheckDescriptorPathconf(F fn, int descriptor) {
 }
 
 template <typename F>
+void CheckPipeBufferPathconf(F fn, int descriptor) {
+    Require(fn(descriptor, 6) == 512);
+    Require(fn(descriptor, 53) == 200112);
+    for (const int name : {0, 1, 4, 5, 7, 8, 12, 18, 54, 55, 61, -1})
+        Require(fn(descriptor, name) == -1 && Error() == 22);
+}
+
+template <typename F>
 void CheckPipePathconf(F fn) {
     int ends[2]{-1, -1};
     Require(pipe_nid_postfix(ends) == 0);
-    for (const int end : ends) {
-        Require(fn(end, 6) == 512);
-        Require(fn(end, 53) == 200112);
-        for (const int name : {0, 1, 4, 5, 7, 8, 12, 18, 54, 55, 61, -1})
-            Require(fn(end, name) == -1 && Error() == 22);
-    }
+    for (const int end : ends) CheckPipeBufferPathconf(fn, end);
     Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
+}
+
+template <typename F>
+void CheckSocketPathconf(F fn) {
+    for (const int type : {1, 2}) {
+        const int descriptor = socket_nid_postfix(2, type, 0);
+        Require(descriptor >= 0);
+        CheckPipeBufferPathconf(fn, descriptor);
+        Require(close_nid_postfix(descriptor) == 0);
+        const int net = sceNetSocket("pathconf", 2, type, 0);
+        Require(net >= 0);
+        CheckPipeBufferPathconf(fn, net);
+        Require(sceNetSocketClose(net) == 0);
+    }
 }
 
 int Kenv(int what, const char* name, const char* value, int len) {
@@ -1180,6 +1198,9 @@ int main() {
     CheckDescriptorPathconf(_fpathconf_nid_postfix, descriptor);
     CheckPipePathconf(fpathconf_nid_postfix);
     CheckPipePathconf(_fpathconf_nid_postfix);
+    Require(sceNetInit_nid_postfix() == 0);
+    CheckSocketPathconf(fpathconf_nid_postfix);
+    CheckSocketPathconf(_fpathconf_nid_postfix);
     const int kqueueDescriptor = kqueue_nid_postfix();
     Require(kqueueDescriptor >= 0);
     CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
