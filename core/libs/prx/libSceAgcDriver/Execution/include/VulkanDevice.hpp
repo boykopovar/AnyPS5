@@ -233,6 +233,7 @@ public:
     bool DualSrcBlend() const;
     bool PrimitiveListRestart() const;
     bool SamplerFilterMinmax() const;
+    bool SamplerMirrorClampToEdge() const;
     bool ConservativeRasterization() const;
     VkShaderStageFlags SubgroupStages() const;
     bool ProvokingVertexLast() const;
