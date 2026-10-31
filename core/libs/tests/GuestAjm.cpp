@@ -2003,9 +2003,9 @@ void TestConsoleBufferJobs(std::uint32_t context) {
 
     void* at = sceAjmBatchJobControlBufferRa(batch.data(), instance, version | CONTROL_START, &start, sizeof(start), result, sizeof(result), &context);
     Require(at == batch.data() + 64);
-    Require(BatchWord(batch, 0) == instance << 6 && BatchWord(batch, 4) == 56);
-    Require(BatchWord(batch, 8) == 6 && BatchWord(batch, 24) == 2 && BatchWord(batch, 28) == sizeof(start));
-    Require(BatchWord(batch, 40) == (3u | (0x2000u << 6)) && BatchWord(batch, 44) == 0x6001 && BatchWord(batch, 48) == 18);
+    Require(BatchWord(batch, 0) == (0xCC000000u | (instance << 6)) && BatchWord(batch, 4) == 56);
+    Require(BatchWord(batch, 8) == 0xCDCDCDC6 && BatchWord(batch, 24) == 0xCDCDCDC2 && BatchWord(batch, 28) == sizeof(start));
+    Require(BatchWord(batch, 40) == (0xCC000003u | (0x2000u << 6)) && BatchWord(batch, 44) == 0x6001 && BatchWord(batch, 48) == 0xCDCDCDD2);
     at = sceAjmBatchJobRunBufferRa(at, instance, version | sidebandStream | runMultipleFrames, stream.data(), 1024, pcm.data(), 1024 * 2, &single, sizeof(single), nullptr);
     Require(at == batch.data() + 128);
     Require(BatchWord(batch, 68) == 56 && BatchWord(batch, 72) == 0xCDCDCDC1 && BatchWord(batch, 88) == (0xCC000004u | (0x8000u << 6)) && BatchWord(batch, 96) == 0xCDCDCDD1 && BatchWord(batch, 112) == 0xCDCDCDD2);
@@ -2213,9 +2213,95 @@ void TestRunBufferRaLayout(RunBufferRa runBufferRa) {
     }
 }
 
+using ControlBufferRa = void* (APS5_VABI*)(void*, std::uint32_t, std::uint64_t, const void*, std::size_t, void*, std::size_t, void*);
+using RunSplitBufferRa = void* (APS5_VABI*)(void*, std::uint32_t, std::uint64_t, const AjmBuffer*, std::size_t, const AjmBuffer*, std::size_t, void*, std::size_t, void*);
+
+void TestControlBufferRaLayout(ControlBufferRa controlBufferRa) {
+    std::uint8_t sidebandInput[0x30];
+    std::uint8_t sidebandOutput[0x20];
+    std::uint8_t returnAddress[1];
+    const auto address = [](const void* pointer) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)); };
+
+    std::vector<std::uint8_t> batch(0x50, 0xCC);
+    Require(controlBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, sidebandInput, sizeof(sidebandInput), sidebandOutput, sizeof(sidebandOutput), returnAddress) == batch.data() + 0x40);
+    Require(BatchWord(batch, 0x00) == 0xCC48D140 && BatchWord(batch, 0x04) == 0x38);
+    Require(BatchWord(batch, 0x08) == 0xCCCCCCC6 && BatchWord(batch, 0x0C) == 0 && BatchPointer(batch, 0x10) == address(returnAddress));
+    Require(BatchWord(batch, 0x18) == 0xCCCCCCC2 && BatchWord(batch, 0x1C) == 0x30 && BatchPointer(batch, 0x20) == address(sidebandInput));
+    Require(BatchWord(batch, 0x28) == 0xCC180003 && BatchWord(batch, 0x2C) == 0xE7FF);
+    Require(BatchWord(batch, 0x30) == 0xCCCCCCD2 && BatchWord(batch, 0x34) == 0x20 && BatchPointer(batch, 0x38) == address(sidebandOutput));
+    Require(std::all_of(batch.begin() + 0x40, batch.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+
+    std::fill(batch.begin(), batch.end(), 0xCC);
+    Require(controlBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, sidebandInput, sizeof(sidebandInput), sidebandOutput, sizeof(sidebandOutput), nullptr) == batch.data() + 0x30);
+    Require(BatchWord(batch, 0x00) == 0xCC48D140 && BatchWord(batch, 0x04) == 0x28 && BatchWord(batch, 0x08) == 0xCCCCCCC2 && BatchWord(batch, 0x18) == 0xCC180003 && BatchWord(batch, 0x20) == 0xCCCCCCD2);
+
+    const std::pair<std::uint64_t, std::uint64_t> masked[] = {
+        {0x000060000000E7FF, 0xCC1800030000E7FF},
+        {0x0000800000001001, 0xCC00000300000001},
+        {0x8000000000000000, 0xCC00000300000000},
+        {0x0000000000000000, 0xCC00000300000000},
+    };
+    for (const auto& [flags, words] : masked) {
+        std::fill(batch.begin(), batch.end(), 0xCC);
+        Require(controlBufferRa(batch.data(), 0x12345, flags, sidebandInput, sizeof(sidebandInput), sidebandOutput, sizeof(sidebandOutput), returnAddress) == batch.data() + 0x40);
+        Require(BatchWord(batch, 0x28) == static_cast<std::uint32_t>(words >> 32) && BatchWord(batch, 0x2C) == static_cast<std::uint32_t>(words));
+    }
+}
+
+void TestRunSplitBufferRaLayout(RunSplitBufferRa runSplitBufferRa) {
+    std::uint8_t first[0x40];
+    std::uint8_t second[0x60];
+    std::uint8_t third[0x80];
+    std::uint8_t fourth[0xA0];
+    std::uint8_t sideband[0x20];
+    std::uint8_t returnAddress[1];
+    const AjmBuffer inputs[2] = {{first, sizeof(first)}, {second, sizeof(second)}};
+    const AjmBuffer outputs[2] = {{third, sizeof(third)}, {fourth, sizeof(fourth)}};
+    const auto address = [](const void* pointer) { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer)); };
+
+    std::vector<std::uint8_t> batch(0x80, 0xCC);
+    Require(runSplitBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, inputs, 2, outputs, 2, sideband, sizeof(sideband), returnAddress) == batch.data() + 0x70);
+    Require(BatchWord(batch, 0x00) == 0xCC48D140 && BatchWord(batch, 0x04) == 0x68);
+    Require(BatchWord(batch, 0x08) == 0xCCCCCCC6 && BatchWord(batch, 0x0C) == 0 && BatchPointer(batch, 0x10) == address(returnAddress));
+    Require(BatchWord(batch, 0x18) == 0xCCCCCCC1 && BatchWord(batch, 0x1C) == 0x40 && BatchPointer(batch, 0x20) == address(first));
+    Require(BatchWord(batch, 0x28) == 0xCCCCCCC1 && BatchWord(batch, 0x2C) == 0x60 && BatchPointer(batch, 0x30) == address(second));
+    Require(BatchWord(batch, 0x38) == 0xCC380004 && BatchWord(batch, 0x3C) == 0x1FFF);
+    Require(BatchWord(batch, 0x40) == 0xCCCCCCD1 && BatchWord(batch, 0x44) == 0x80 && BatchPointer(batch, 0x48) == address(third));
+    Require(BatchWord(batch, 0x50) == 0xCCCCCCD1 && BatchWord(batch, 0x54) == 0xA0 && BatchPointer(batch, 0x58) == address(fourth));
+    Require(BatchWord(batch, 0x60) == 0xCCCCCCD2 && BatchWord(batch, 0x64) == 0x20 && BatchPointer(batch, 0x68) == address(sideband));
+    Require(std::all_of(batch.begin() + 0x70, batch.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+
+    std::fill(batch.begin(), batch.end(), 0xCC);
+    Require(runSplitBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, inputs, 2, outputs, 2, sideband, sizeof(sideband), nullptr) == batch.data() + 0x60);
+    Require(BatchWord(batch, 0x04) == 0x58 && BatchWord(batch, 0x08) == 0xCCCCCCC1 && BatchWord(batch, 0x28) == 0xCC380004);
+
+    std::fill(batch.begin(), batch.end(), 0xCC);
+    Require(runSplitBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, nullptr, 0, nullptr, 0, sideband, sizeof(sideband), returnAddress) == batch.data() + 0x30);
+    Require(BatchWord(batch, 0x04) == 0x28 && BatchWord(batch, 0x08) == 0xCCCCCCC6 && BatchWord(batch, 0x18) == 0xCC380004 && BatchWord(batch, 0x20) == 0xCCCCCCD2);
+    std::fill(batch.begin(), batch.end(), 0xCC);
+    Require(runSplitBufferRa(batch.data(), 0x12345, 0xFFFFFFFFFFFFFFFF, nullptr, 0, nullptr, 0, sideband, sizeof(sideband), nullptr) == batch.data() + 0x20);
+    Require(BatchWord(batch, 0x04) == 0x18 && BatchWord(batch, 0x08) == 0xCC380004 && BatchWord(batch, 0x10) == 0xCCCCCCD2);
+
+    const std::pair<std::uint64_t, std::uint64_t> masked[] = {
+        {0x000060000000E7FF, 0xCC180004000007FF},
+        {0x0000800000001001, 0xCC20000400001001},
+        {0x8000000000000000, 0xCC00000400000000},
+        {0x0000000000000000, 0xCC00000400000000},
+    };
+    for (const auto& [flags, words] : masked) {
+        std::fill(batch.begin(), batch.end(), 0xCC);
+        Require(runSplitBufferRa(batch.data(), 0x12345, flags, inputs, 2, outputs, 2, sideband, sizeof(sideband), returnAddress) == batch.data() + 0x70);
+        Require(BatchWord(batch, 0x38) == static_cast<std::uint32_t>(words >> 32) && BatchWord(batch, 0x3C) == static_cast<std::uint32_t>(words));
+    }
+}
+
 void TestConsoleRunBufferRa(const char* ajmiLibrary) {
     TestRunBufferRaLayout(sceAjmBatchJobRunBufferRa);
     TestRunBufferRaLayout(reinterpret_cast<RunBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunBufferRa_nid_disambig1")));
+    TestControlBufferRaLayout(sceAjmBatchJobControlBufferRa);
+    TestControlBufferRaLayout(reinterpret_cast<ControlBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobControlBufferRa_nid_disambig1")));
+    TestRunSplitBufferRaLayout(sceAjmBatchJobRunSplitBufferRa);
+    TestRunSplitBufferRaLayout(reinterpret_cast<RunSplitBufferRa>(ResolveExport(ajmiLibrary, "sceAjmBatchJobRunSplitBufferRa_nid_disambig1")));
 }
 
 int StartBufferRefused(std::uint32_t context, const void* batch, std::size_t size, AjmBatchError& error) {
