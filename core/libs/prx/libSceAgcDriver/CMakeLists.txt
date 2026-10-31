@@ -422,6 +422,10 @@ add_shader_recompiler(shader_recompiler_agc_driver libc
         ${agcShaderCacheGuardSources}
 )
 
+target_include_directories(libSceAgcDriver INTERFACE
+        $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
+)
+
 target_link_libraries(libSceAgcDriver PRIVATE
         shader_recompiler_agc_driver
         decoder_png
