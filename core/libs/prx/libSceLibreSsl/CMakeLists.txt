@@ -2,7 +2,7 @@ add_library(libSceLibreSsl SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/E
 target_include_directories(libSceLibreSsl PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl PRIVATE mbedcrypto)
 configure_windows_unwind(libSceLibreSsl)
-target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/GeneralName.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_x509_errors_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslX509Errors.cpp)
@@ -103,6 +103,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_stack PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_stack PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libressl_general_name_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslGeneralName.cpp)
+    target_include_directories(guest_libressl_general_name_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_general_name_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_general_name_tests)
+    add_test(NAME guest_libressl_general_name COMMAND guest_libressl_general_name_tests)
+    set_tests_properties(guest_libressl_general_name PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_general_name PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
