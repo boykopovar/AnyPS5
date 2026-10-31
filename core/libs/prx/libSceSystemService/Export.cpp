@@ -972,4 +972,10 @@ int APS5_VABI sceShellCoreUtilIsBgmPlaying(void) {
     return 0;
 }
 
+APS5_EXPORT("M+KwxF0amiw", sceSystemServiceUnknown_M_KwxF0amiw);
+int APS5_VABI sceSystemServiceUnknown_M_KwxF0amiw(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }
