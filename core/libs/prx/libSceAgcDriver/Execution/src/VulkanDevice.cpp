@@ -429,6 +429,7 @@ struct VulkanDevice::State {
     bool narrowSubgroupClock = false;
     bool float64DenormPreserve = false;
     bool float16DenormPreserve = false;
+    bool coupledF16F64Denorms = false;
     bool float32FlushToZeroCandidate = false;
     bool float32FlushToZero = false;
     bool float32DenormPreserve = false;
@@ -1784,8 +1785,14 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     enabled.shaderInt64 = VK_TRUE;
     enabled.shaderFloat64 = available.shaderFloat64 && floatControls.shaderSignedZeroInfNanPreserveFloat64;
     if (enabled.shaderFloat64) state->capabilities.push_back(spv::CapabilityFloat64);
+    state->coupledF16F64Denorms = enabled.shaderFloat64 && floatControls.denormBehaviorIndependence == VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_32_BIT_ONLY &&
+        floatControls.shaderDenormPreserveFloat16 == VK_TRUE && floatControls.shaderDenormPreserveFloat64 == VK_TRUE;
+    if (state->coupledF16F64Denorms) {
+        state->float16DenormPreserve = true;
+        std::fprintf(stderr, "[float-controls] f16 and f64 denormals share one mode on this device: DenormPreserve 16 and 64 are declared together\n");
+    }
     state->float64DenormPreserve = enabled.shaderFloat64 && floatControls.shaderDenormPreserveFloat64 == VK_TRUE &&
-        floatControls.denormBehaviorIndependence == VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL;
+        (floatControls.denormBehaviorIndependence == VK_SHADER_FLOAT_CONTROLS_INDEPENDENCE_ALL || state->coupledF16F64Denorms);
     if (state->float64DenormPreserve && std::find(state->capabilities.begin(), state->capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDenormPreserve)) == state->capabilities.end()) state->capabilities.push_back(spv::CapabilityDenormPreserve);
     enabled.vertexPipelineStoresAndAtomics = VK_TRUE;
     enabled.fragmentStoresAndAtomics = VK_TRUE;
@@ -4135,6 +4142,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.narrowSubgroupClock = state->narrowSubgroupClock;
     target.float64DenormPreserve = state->float64DenormPreserve;
     target.float16DenormPreserve = state->float16DenormPreserve;
+    target.coupledF16F64Denorms = state->coupledF16F64Denorms;
     target.spannedWaves = state->spannedWaves;
     target.depthRangeRemap = !state->depthRangeUnrestricted;
     target.fixedPushSlots = state->graphicsPipelineLibrary;

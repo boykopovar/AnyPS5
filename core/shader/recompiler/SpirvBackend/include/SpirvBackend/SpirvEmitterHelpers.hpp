@@ -152,6 +152,7 @@ std::uint32_t EmitClassMaskF32(SpirvEmitterState& state, std::uint32_t value, st
 std::uint32_t EmitMinMaxF32Value(SpirvEmitterState& state, std::uint32_t lhs, std::uint32_t rhs, bool maxValue);
 std::uint32_t EmitTrigCycleF32(SpirvEmitterState& state, std::uint32_t src, bool preserveSignedZero);
 void EmitF16DenormPreserve(SpirvEmitterState& state);
+void EmitF64DenormPreserve(SpirvEmitterState& state);
 std::uint32_t EmitF16BitsToF32(SpirvEmitterState& state, std::uint32_t bits);
 std::uint32_t EmitF16BitsToF32AnyNan(SpirvEmitterState& state, std::uint32_t bits);
 std::uint32_t EmitF16BitsToF32Decoded(SpirvEmitterState& state, std::uint32_t bits);

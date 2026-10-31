@@ -20,7 +20,7 @@ void require(bool condition, const std::string& message) {
 
 constexpr std::array<std::uint32_t, 4> CvtF16F32Store{0x7e021500u, 0xe0700000u, 0x80000100u, 0xbf810000u};
 
-std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> capabilities) {
+std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> capabilities, bool coupled = false) {
     const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
     const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
     RecompileRequest request{};
@@ -38,6 +38,9 @@ std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> capabilities
     request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
     request.target.maxWorkgroupInvocations = 1024;
     request.target.maxWorkgroupSharedMemoryBytes = 49152;
+    request.target.float16DenormPreserve = coupled;
+    request.target.float64DenormPreserve = coupled;
+    request.target.coupledF16F64Denorms = coupled;
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     auto result = Recompile(request);
@@ -50,6 +53,7 @@ struct Usage {
     bool float16Capability = false;
     bool roundingModeRte16 = false;
     bool denormPreserve16 = false;
+    bool denormPreserve64 = false;
 };
 
 Usage scan(std::span<const std::uint32_t> words) {
@@ -64,6 +68,7 @@ Usage scan(std::span<const std::uint32_t> words) {
             if (words[cursor + 2] == spv::ExecutionModeRoundingModeRTE) usage.roundingModeRte16 = true;
             if (words[cursor + 2] == spv::ExecutionModeDenormPreserve) usage.denormPreserve16 = true;
         }
+        if (op == spv::OpExecutionMode && count == 4 && words[cursor + 2] == spv::ExecutionModeDenormPreserve && words[cursor + 3] == 64u) usage.denormPreserve64 = true;
         cursor += count;
     }
     return usage;
@@ -74,6 +79,9 @@ void verifyNative() {
     const auto usage = scan(recompile(capabilities));
     require(usage.floatConverts != 0 && usage.float16Capability, "a device that rounds 16-bit floats to nearest even did not get OpFConvert to f16");
     require(usage.roundingModeRte16 && usage.denormPreserve16, "native f16 conversion without the 16-bit RoundingModeRTE and DenormPreserve execution modes");
+    require(!usage.denormPreserve64, "native f16 conversion declared DenormPreserve 64 on a device with independent f16 and f64 modes");
+    const auto coupled = scan(recompile(capabilities, true));
+    require(coupled.floatConverts != 0 && coupled.denormPreserve16 && coupled.denormPreserve64, "native f16 conversion with coupled f16 and f64 denormal modes did not declare DenormPreserve 16 and 64 together");
 }
 
 void verifyEmulated() {
@@ -92,6 +100,6 @@ int main() {
         std::fprintf(stderr, "Float16Conversion: %s\n", error.what());
         return 1;
     }
-    std::puts("Float16Conversion: native and emulated f16 conversion selected by device capabilities");
+    std::puts("Float16Conversion: native and emulated f16 conversion selected by device capabilities, coupled denormal modes declared together");
     return 0;
 }

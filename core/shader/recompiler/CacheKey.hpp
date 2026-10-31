@@ -346,6 +346,7 @@ private:
         append(key, value.registrationWordLimit);
         append(key, value.vertexSubgroups);
         append(key, value.float16DenormPreserve);
+        append(key, value.coupledF16F64Denorms);
         append(key, value.spannedWaves);
         append(key, value.robustBufferAccess2);
         append(key, value.float32FlushToZero);
