@@ -43,11 +43,6 @@ int APS5_VABI sceCesJisGetLevel(void) {
     return 0;
 }
 
-int APS5_VABI sceCesJiscsToUcs(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharCode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -123,11 +118,6 @@ int APS5_VABI sceCesSJisUcsProfileSetSbcs(void) {
     return 0;
 }
 
-
-int APS5_VABI sceCesUcsToJiscs(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI sceCesUhcUcsProfileSetSbcs(void) {
     NotImplemented_nid_no_patch(__func__);

@@ -3,10 +3,12 @@
 #include <cstddef>
 #include <algorithm>
 #include <bit>
+#include <charconv>
 #include <cstring>
 #include <iterator>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 #include "SceTypes.hpp"
@@ -1657,6 +1659,81 @@ int utf32ToSbc(const uint32_t* utf32, const uint8_t* profile, uint8_t* sbc) {
     return scalarToSbc(loadUnit<uint32_t, BigEndian>(utf32), profile, sbc);
 }
 
+std::string hexCode(uint32_t value) {
+    char digits[8];
+    const auto end = std::to_chars(digits, digits + sizeof digits, value, 16).ptr;
+    return "0x" + std::string(digits, end);
+}
+
+constexpr uint32_t JISCS_PLANE1 = 0x03010000;
+constexpr uint32_t JISCS_X0213_PLANE2 = 0x03020000;
+constexpr uint32_t JISCS_X0212 = 0x04000000;
+
+bool isJiscsProfile(const void* profile) {
+    return isSjis(profile) || isEucJp(profile) || isJis2004(profile);
+}
+
+bool isJisGraphic(uint32_t byte) {
+    return byte >= 0x21 && byte <= 0x7E;
+}
+
+bool isMeasuredJiscs(uint32_t jiscs) {
+    return jiscs <= 0xFF || (jiscs >> 16 <= 2 && isJisGraphic(jiscs >> 8 & 0xFF) && isJisGraphic(jiscs & 0xFF));
+}
+
+JisStrict jisX0208Strictness(const void* profile) {
+    return isSjisX0208(profile) ? JisStrict::Sjis : isEucJpX0208(profile) ? JisStrict::Euc : JisStrict::None;
+}
+
+uint32_t jiscsCell(uint32_t base, uint32_t cell) {
+    return base | (cell / 94 + 1) << 8 | (cell % 94 + 1);
+}
+
+int jiscsToUnicode(const void* profile, uint32_t jiscs, uint32_t& code) {
+    if (jiscs <= 0xFF) {
+        const auto byte = static_cast<uint8_t>(jiscs);
+        if (byte <= 0x9F) code = isSjisX0208(profile) ? sjisX0208Single(byte) : byte;
+        else if (byte >= 0xA1 && byte <= 0xDF && hasSs2(profile)) code = 0xFF61 + (byte - 0xA1);
+        else return CES_ERROR_UNASSIGNED_CODE;
+        return 0;
+    }
+    if (jiscs >> 16 != 0) return CES_ERROR_ILLEGAL_CODE;
+    const uint32_t index = jisIndex(static_cast<uint16_t>(jiscs));
+    code = isJis2004(profile) ? JisX0213::PLANE1[index] : jisX0208ToUnicode(jisX0208Strictness(profile), index);
+    return code != 0 ? 0 : CES_ERROR_UNASSIGNED_CODE;
+}
+
+int unicodeToJiscs(const void* profile, uint32_t code, uint32_t& jiscs) {
+    const bool strictSjis = isSjisX0208(profile);
+    if (strictSjis && (code == 0x00A5 || code == 0x203E)) {
+        jiscs = code == 0x00A5 ? 0x5C : 0x7E;
+        return 0;
+    }
+    if (code <= 0x9F && !(strictSjis && (code == 0x5C || code == 0x7E))) {
+        jiscs = code;
+        return 0;
+    }
+    if (code >= 0xFF61 && code <= 0xFF9F) {
+        if (!hasSs2(profile)) return CES_ERROR_UNASSIGNED_CODE;
+        jiscs = 0xA1 + (code - 0xFF61);
+        return 0;
+    }
+    if (isJis2004(profile)) {
+        const auto& reverse = jis2004Reverse();
+        const auto found = std::lower_bound(reverse.begin(), reverse.end(), code, [](const Jis2004Cell& entry, uint32_t value) { return entry.code < value; });
+        if (found == reverse.end() || found->code != code || (found->plane == JIS_X0212_PLANE && isSjis2004(profile))) return CES_ERROR_UNASSIGNED_CODE;
+        jiscs = jiscsCell(found->plane == JIS_X0212_PLANE ? JISCS_X0212 : found->plane == 2 ? JISCS_X0213_PLANE2 : JISCS_PLANE1, found->cell);
+        return 0;
+    }
+    const JisStrict strict = jisX0208Strictness(profile);
+    if (strict == JisStrict::None) code = jisAlias(code);
+    const auto& reverse = jisReverse(strict);
+    const auto found = std::lower_bound(reverse.begin(), reverse.end(), static_cast<uint16_t>(code), [](const JisCell& entry, uint16_t value) { return entry.code < value; });
+    if (found == reverse.end() || found->code != code || (found->supplementary && !hasSs3(profile))) return CES_ERROR_UNASSIGNED_CODE;
+    jiscs = jiscsCell(found->supplementary ? JISCS_X0212 : JISCS_PLANE1, found->cell);
+    return 0;
+}
+
 }
 
 extern "C" {
@@ -2713,6 +2790,34 @@ void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet) {
     if (!sheet) return nullptr;
     std::memcpy(sheet, SJIS2004_TAG, sizeof(SJIS2004_TAG));
     return sheet;
+}
+
+int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* ucs) {
+    if (!isMeasuredJiscs(jiscs)) throw std::runtime_error("sceCesJiscsToUcs: code " + hexCode(jiscs) + " is neither a single byte nor a row and cell 0x21-0x7E of planes 0-2; its form is not implemented");
+    if (ucs) *ucs = 0;
+    if (!profile) return CES_ERROR_INVALID_PROFILE;
+    if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesJiscsToUcs: a profile other than the eight JIS profiles is not implemented");
+    uint32_t code = 0;
+    const int result = jiscsToUnicode(profile, jiscs, code);
+    if (result != 0) return result;
+    if (!ucs) return CES_ERROR_INVALID_DST_BUFFER;
+    *ucs = code;
+    return 0;
+}
+
+int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jiscs) {
+    if (jiscs) *jiscs = 0;
+    if (!isScalar(ucs)) return CES_ERROR_ILLEGAL_CODE;
+    if (ucs > 0xFFFF && ucs >> 16 != 2) throw std::runtime_error("sceCesUcsToJiscs: code point " + hexCode(ucs) + " outside the BMP and plane 2 is not implemented");
+    if (!profile) return CES_ERROR_INVALID_PROFILE;
+    if (!isJiscsProfile(profile)) throw std::runtime_error("sceCesUcsToJiscs: a profile other than the eight JIS profiles is not implemented");
+    if (ucs > 0xFFFF && !isJis2004(profile)) throw std::runtime_error("sceCesUcsToJiscs: plane 2 with a JIS X 0208 profile is not implemented");
+    uint32_t code = 0;
+    const int result = unicodeToJiscs(profile, ucs, code);
+    if (result != 0) return result;
+    if (!jiscs) return CES_ERROR_INVALID_DST_BUFFER;
+    *jiscs = code;
+    return 0;
 }
 
 void* APS5_VABI sceCesUcsProfileInitIso2022JpRfc1468(void* sheet) {
