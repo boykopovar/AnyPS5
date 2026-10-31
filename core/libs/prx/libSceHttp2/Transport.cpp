@@ -259,6 +259,8 @@ struct Request::State {
     int status = 0;
     std::string contentEncoding;
     bool inflatedGzip = false;
+    std::vector<std::pair<std::string, std::string>> blockHeaders;
+    std::string allHeaders;
     int blockStatus = 0;
     int networkResult = 0;
     int socket = -1;
@@ -450,6 +452,7 @@ struct Request::State {
             if (frame->hd.stream_id == state.stream) {
                 Require(!state.ready, "sceHttp2: response trailers are not implemented");
                 state.blockStatus = 0;
+                state.blockHeaders.clear();
                 state.hasLength = false;
                 state.contentLength = 0;
             }
@@ -472,6 +475,7 @@ struct Request::State {
                 state.hasLength = true;
             }
             if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
+            if (key != ":status") state.blockHeaders.emplace_back(std::string(key), std::string(text));
         });
     }
 
@@ -488,6 +492,9 @@ struct Request::State {
                     "sceHttp2: automatic redirects are not implemented");
                 Require(!state.settings.auth || (state.status != 401 && state.status != 407), "sceHttp2: authentication is not implemented");
                 state.ready = true;
+                state.allHeaders = "HTTP/2.0 " + std::to_string(state.status) + " HTTP2 NO PHRASE\r\n";
+                for (const auto& [key, value] : state.blockHeaders) state.allHeaders += key + ": " + value + "\r\n";
+                state.allHeaders += "\r\n";
             }
             if ((frame->hd.type == NGHTTP2_HEADERS || frame->hd.type == NGHTTP2_DATA) &&
                 (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)) {
@@ -696,6 +703,15 @@ int Request::ContentLength(int* kind, std::uint64_t* length) {
     }
     *kind = state->hasLength ? 0 : 1;
     *length = state->hasLength ? state->contentLength : 0;
+    return 0;
+}
+
+int Request::Headers(char** header, std::size_t* size) {
+    auto lock = state->Lock();
+    if (state->networkResult) return state->networkResult;
+    Require(header && size && state->ready, "sceHttp2GetAllResponseHeaders: null output or response unavailable");
+    *header = state->allHeaders.data();
+    *size = state->allHeaders.size();
     return 0;
 }
 
