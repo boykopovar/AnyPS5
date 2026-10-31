@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceMouse/include/mouse_structs.h"
 
 extern "C" {
 
@@ -19,8 +20,8 @@ int APS5_VABI sceMouseMbusInit();
 int APS5_VABI sceMouseSetHandType();
 int APS5_VABI sceMouseSetPointerSpeed();
 int APS5_VABI sceMouseSetProcessPrivilege();
-int APS5_VABI sceMouseReadAbsolutePosition();
-int APS5_VABI sceMouseSetAbsoluteHighPrecisionMode();
-int APS5_VABI sceMouseSetAbsoluteVirtualScreenSize();
+int APS5_VABI sceMouseReadAbsolutePosition(std::int32_t handle, MouseAbsoluteData* data, std::int32_t num);
+int APS5_VABI sceMouseSetAbsoluteHighPrecisionMode(std::int32_t handle, std::int32_t mode);
+int APS5_VABI sceMouseSetAbsoluteVirtualScreenSize(std::int32_t handle, std::int32_t size);
 
 }
