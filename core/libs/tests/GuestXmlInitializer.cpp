@@ -147,10 +147,92 @@ void TestInitializer() {
     }
 }
 
+struct SharedBlocks {
+    std::vector<void*> blocks;
+    std::string log;
+};
+
+struct NamedAllocator {
+    XmlMemAllocator base;
+    char name;
+    void* userData;
+    SharedBlocks* shared;
+    std::size_t failAt = 0;
+    std::size_t allocations = 0;
+};
+
+void* APS5_VABI NamedAllocate(XmlMemAllocator* self, std::size_t size, void* userData) {
+    auto* allocator = reinterpret_cast<NamedAllocator*>(self);
+    Require(userData == allocator->userData, "allocate receives this allocator's user data");
+    ++allocator->allocations;
+    allocator->shared->log += std::string(1, allocator->name) + "a" + std::to_string(size) + " ";
+    if (allocator->allocations == allocator->failAt) return nullptr;
+    void* block = std::malloc(size);
+    std::memset(block, 0xcd, size);
+    allocator->shared->blocks.push_back(block);
+    return block;
+}
+
+void APS5_VABI NamedDeallocate(XmlMemAllocator* self, void* pointer, void* userData) {
+    auto* allocator = reinterpret_cast<NamedAllocator*>(self);
+    Require(userData == allocator->userData, "deallocate receives this allocator's user data");
+    std::size_t index = 0;
+    while (index < allocator->shared->blocks.size() && allocator->shared->blocks[index] != pointer) ++index;
+    Require(index < allocator->shared->blocks.size(), "deallocate receives a live block");
+    allocator->shared->log += std::string(1, allocator->name) + "f" + std::to_string(index) + " ";
+    std::free(pointer);
+    allocator->shared->blocks[index] = nullptr;
+}
+
+const XmlMemAllocatorVtable g_namedVtable{TestDestroy, TestDestroy, NamedAllocate, NamedDeallocate};
+
+void TestTwoAllocators() {
+    SharedBlocks shared;
+    NamedAllocator first{{&g_namedVtable}, 'A', reinterpret_cast<void*>(0x1234), &shared};
+    NamedAllocator second{{&g_namedVtable}, 'B', reinterpret_cast<void*>(0x5678), &shared};
+    const XmlInitParameter firstParameter{&first.base, first.userData, {0x10000, 0x7777}};
+    const XmlInitParameter secondParameter{&second.base, second.userData, {0x10000, 0x7777}};
+    XmlHandle a{nullptr};
+    XmlHandle b{nullptr};
+    struct Pair {
+        const char* label;
+        XmlHandle* self;
+        const XmlInitParameter* parameter;
+        bool initialize;
+        std::size_t failAt;
+        int result;
+        bool selfSet;
+        const char* log;
+    };
+    const Pair steps[] = {
+        {"A third allocation fails", &a, &firstParameter, true, 3, static_cast<int>(0x80851000), true, "Aa32 Aa16 Aa200 "},
+        {"B initializes without an engine block", &b, &secondParameter, true, 0, 0, true, "Ba32 Ba16 "},
+        {"A frees B's wrapper with its own allocator", &a, &firstParameter, false, 0, 0, false, "Af3 Af0 "},
+        {"B frees only its own block", &b, &secondParameter, false, 0, 0, false, "Bf2 "},
+        {"B initializes with an engine block", &b, &secondParameter, true, 0, 0, true, "Ba32 Ba16 Ba200 "},
+        {"B terminates", &b, &secondParameter, false, 0, 0, false, "Bf6 Bf5 Bf4 "},
+    };
+    for (const Pair& step : steps) {
+        shared.log.clear();
+        auto* allocator = step.parameter == &firstParameter ? &first : &second;
+        allocator->failAt = step.failAt == 0 ? 0 : allocator->allocations + step.failAt;
+        const int result = step.initialize ? Initialize(step.self, step.parameter) : Terminate(step.self, step.parameter);
+        const bool selfSet = step.self->impl != nullptr;
+        if (result != step.result || selfSet != step.selfSet || shared.log != step.log) {
+            std::fprintf(stderr, "%s: result %#x set %d log '%s'\n", step.label, static_cast<unsigned>(result), selfSet ? 1 : 0, shared.log.c_str());
+            Require(false, step.label);
+        }
+    }
+    for (void* block : shared.blocks) {
+        if (block != nullptr) std::free(block);
+    }
+}
+
 }
 
 int main() {
     TestMemAllocatorBase();
+    TestTwoAllocators();
     TestInitializer();
     std::puts("guest_xml_initializer: all checks passed");
     return 0;
