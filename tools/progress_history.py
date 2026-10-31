@@ -178,21 +178,18 @@ def chart(points):
     xs = [px(d) for d in days]
     edges = [LEFT] + [(a + b) / 2 for a, b in zip(xs, xs[1:])] + [WIDTH - RIGHT]
     labels = [(px(d), labelled(date.fromordinal(d), span)) for d in range(first, days[-1] + 1)]
-    panels = SERIES + (("unobserved", "Unobserved library stubs: no measured use is known", progress.UNOBSERVED_COLOR),)
-    height = len(panels) * (TITLE + PANEL + GAP) - GAP + AXIS
+    height = len(SERIES) * (TITLE + PANEL + GAP) - GAP + AXIS
     out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {height}" role="img" '
            'aria-label="Implemented, observed and unobserved system library functions and GPU shader instructions over time" '
            f'font-family="sans-serif" font-size="12" fill="{TEXT}">',
            '<style>.hit{fill:#fff;fill-opacity:0}.hit:hover{fill-opacity:0.06}</style>',
            f'<rect width="{WIDTH}" height="{height}" rx="6" fill="{BACKGROUND}"/>']
     line = lambda coords: " ".join(f"{x:.1f},{y:.1f}" for x, y in coords)
-    for index, (name, title, color) in enumerate(panels):
+    for index, (name, title, color) in enumerate(SERIES):
         top = index * (TITLE + PANEL + GAP) + TITLE
         base = top + PANEL
-        stubs = name == "unobserved"
-        metric = "libraries" if stubs else name
-        values = [p[metric].get("unobserved", 0) for p in points] if stubs else None
-        step, peak = scale(max(values) if stubs else max(p[name][key] for p in points for key in ("done", "total")))
+        split = name == "libraries"
+        step, peak = scale(max(p[name].get(key, 0) for p in points for key in ("done", "total", "unobserved")))
         py = lambda v: base - v / peak * PANEL
         out.append(f'<text x="{LEFT}" y="{top - 12}" font-size="13" font-weight="bold">{title}</text>')
         for tick in range(0, peak + 1, step):
@@ -201,39 +198,28 @@ def chart(points):
         for x, label in labels:
             if label:
                 out.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{top}" y2="{base}" stroke="{GRID}" stroke-width="0.5"/>')
-        if stubs:
-            hidden = [(x, py(v)) for x, v in zip(xs, values)]
-            out.append(f'<polygon points="{xs[0]:.1f},{base} {line(hidden)} {xs[-1]:.1f},{base}" fill="{color}" opacity="0.15"/>')
-            out.append(f'<polyline points="{line(hidden)}" fill="none" stroke="{color}" stroke-width="2"/>')
-            if len(points) <= MAX_DOTS:
-                out += [f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{color}"/>' for x, y in hidden]
-            out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{hidden[-1][1] + 4:.1f}" fill="{TEXT}" font-weight="bold">'
-                       f'<tspan fill="{color}">\u25cf</tspan> Unobserved stubs {values[-1]:,}</text>')
-            for left, right, p in zip(edges, edges[1:], points):
-                out.append(f'<rect class="hit" x="{left:.1f}" y="{top}" width="{right - left:.1f}" height="{PANEL}">'
-                           f'<title>{p["date"]} · Unobserved stubs {p["libraries"].get("unobserved", 0):,} of '
-                           f'{declared(p):,} declared functions'
-                           + (f'\nCommit {p["commit"][:10]}' if p.get("commit") else "") + '</title></rect>')
-            continue
         done = [(x, py(p[name]["done"])) for x, p in zip(xs, points)]
         total = [(x, py(p[name]["total"])) for x, p in zip(xs, points)]
         out.append(f'<polygon points="{xs[0]:.1f},{base} {line(done)} {xs[-1]:.1f},{base}" fill="{color}" opacity="0.15"/>')
         out.append(f'<polyline points="{line(total)}" fill="none" stroke="{MUTED}" stroke-width="2" stroke-dasharray="6 4"/>')
         out.append(f'<polyline points="{line(done)}" fill="none" stroke="{color}" stroke-width="2"/>')
-        split = name == "libraries"
         if split:
             observed = [(x, py(p[name]["total"] - p[name]["done"])) for x, p in zip(xs, points)]
+            unobserved = [(x, py(p[name].get("unobserved", 0))) for x, p in zip(xs, points)]
             out.append(f'<polyline points="{line(observed)}" fill="none" stroke="{progress.TODO_COLOR}" stroke-width="2"/>')
+            out.append(f'<polyline points="{line(unobserved)}" fill="none" stroke="{progress.UNOBSERVED_COLOR}" stroke-width="2"/>')
         if len(points) <= MAX_DOTS:
             out += [f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3" fill="{color}"/>' for x, y in done]
         last = points[-1][name]
-        placed = spread([total[-1][1], done[-1][1]] + ([observed[-1][1]] if split else []))
+        placed = spread([total[-1][1], done[-1][1]] + ([observed[-1][1], unobserved[-1][1]] if split else []))
         out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{placed[0] + 4:.1f}" fill="{MUTED}">Counted {last["total"]:,}</text>'
                    f'<text x="{WIDTH - RIGHT + 8}" y="{placed[1] + 4:.1f}" fill="{TEXT}" font-weight="bold">'
                    f'<tspan fill="{color}">\u25cf</tspan> Implemented {last["done"]:,} ({last["percent"]:.0f}%)</text>')
         if split:
             out.append(f'<text x="{WIDTH - RIGHT + 8}" y="{placed[2] + 4:.1f}" fill="{TEXT}">'
-                       f'<tspan fill="{progress.TODO_COLOR}">\u25cf</tspan> Observed stubs {last["total"] - last["done"]:,}</text>')
+                       f'<tspan fill="{progress.TODO_COLOR}">\u25cf</tspan> Observed stubs {last["total"] - last["done"]:,}</text>'
+                       f'<text x="{WIDTH - RIGHT + 8}" y="{placed[3] + 4:.1f}" fill="{TEXT}">'
+                       f'<tspan fill="{progress.UNOBSERVED_COLOR}">\u25cf</tspan> Unobserved stubs {last.get("unobserved", 0):,}</text>')
         for left, right, p in zip(edges, edges[1:], points):
             out.append(f'<rect class="hit" x="{left:.1f}" y="{top}" width="{right - left:.1f}" height="{PANEL}">'
                        f'<title>{p["date"]} · {title}\nImplemented {p[name]["done"]:,} of {p[name]["total"]:,} counted '
