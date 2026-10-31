@@ -307,6 +307,11 @@ void gcnTilingTests() {
         reject([] { ComputeGcnMipLayout(TextureTileMode::kGcnThin1D, 14u, 212u, 35u, 216u, false, 1u); }, "is not padded the way its tile mode pads a row");
     }
     {
+        const auto mips = ComputeGcnMipLayout(TextureTileMode::kGcnThin1D, 20u, 68u, 68u, 128u, true, 7u);
+        Require(mips[0].tiledSize == 128u * 128u * 4u && mips[1].tiledOffset == 0x10000u && mips[2].tiledOffset == 0x14000u, "a POW2_PAD PS4 mip chain pads the rows of level 0");
+        Require(ComputeGcnMipLayout(TextureTileMode::kGcnThin1D, 20u, 68u, 68u, 128u, true, 1u)[0].tiledSize == 128u * 72u * 4u, "a single POW2_PAD PS4 level keeps its micro-tile rows");
+    }
+    {
         const auto mips = ComputeGcnMipLayout(TextureTileMode::kGcnDisplay2D, 56u, 256u, 256u, 256u, false, 4u);
         Require(!mips[0].gcnMicroTiled && !mips[1].gcnMicroTiled && mips[2].gcnMicroTiled && mips[3].gcnMicroTiled, "PS4 2D tiled mips switch to 1D tiling below one macro tile");
         Require(mips[0].tiledOffset == 0u && mips[1].tiledOffset == 256u * 256u * 4u && mips[1].blocksPerRow == 1u, "PS4 mips follow level 0 in order");
