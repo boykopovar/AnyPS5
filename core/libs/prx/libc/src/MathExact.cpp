@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <bit>
 #include <cerrno>
 #include <climits>
 #include <cmath>
@@ -7,6 +8,7 @@
 #include <cstring>
 #include <emmintrin.h>
 #include <limits>
+#include <stdexcept>
 
 #include "prx/libc/include/General.hpp"
 
@@ -77,6 +79,109 @@ T Remainder(T x, T y) {
 
 int Exponent(std::int64_t exponent) {
     return static_cast<int>(std::clamp<std::int64_t>(exponent, INT_MIN, INT_MAX));
+}
+
+void StoreExtended(long double* value, const ExtendedBits& bits) {
+    unsigned char bytes[sizeof(long double)] = {};
+    std::memcpy(bytes, value, sizeof(bytes));
+    std::memcpy(bytes, &bits.mantissa, sizeof(bits.mantissa));
+    std::memcpy(bytes + 8, &bits.signExponent, sizeof(bits.signExponent));
+    std::memcpy(value, bytes, sizeof(bytes));
+}
+
+bool ExtendedNan(const ExtendedBits& bits) {
+    return (bits.signExponent & 0x7fff) == 0x7fff && (bits.mantissa & 0x7fffffffffffffffull) != 0;
+}
+
+long double ExtendedValue(const ExtendedBits& bits) {
+    const int exponent = bits.signExponent & 0x7fff;
+    const long double magnitude = std::ldexp(static_cast<long double>(bits.mantissa), (exponent == 0 ? 1 : exponent) - 16383 - 63);
+    return (bits.signExponent & 0x8000) != 0 ? -magnitude : magnitude;
+}
+
+template<typename TBits, int FractionBits, int ExponentBits>
+short DropFraction(void* value, short scale) {
+    constexpr TBits Sign = TBits{1} << (FractionBits + ExponentBits);
+    constexpr TBits FractionMask = (TBits{1} << FractionBits) - 1;
+    constexpr int Maximum = (1 << ExponentBits) - 1;
+    constexpr int Bias = (1 << (ExponentBits - 1)) - 2;
+    TBits bits;
+    std::memcpy(&bits, value, sizeof(bits));
+    const int field = static_cast<int>((bits >> FractionBits) & Maximum);
+    if (field == Maximum) return (bits & FractionMask) != 0 ? NotANumber : Infinite;
+    if ((bits & ~Sign) == 0) return Zero;
+    const short drop = static_cast<short>(Bias + FractionBits + 1 - field - scale);
+    if (drop <= 0) return Zero;
+    if (drop > FractionBits) {
+        bits &= Sign;
+        std::memcpy(value, &bits, sizeof(bits));
+        return Finite;
+    }
+    const TBits mask = (TBits{1} << drop) - 1;
+    const TBits lost = bits & mask;
+    bits &= ~mask;
+    std::memcpy(value, &bits, sizeof(bits));
+    return lost != 0 ? Finite : Zero;
+}
+
+template<typename TFloat>
+short ResultCode(TFloat value) {
+    if (std::isinf(value)) return Infinite;
+    return value == 0 ? Zero : Finite;
+}
+
+template<typename TFloat>
+short ScaleBinary(TFloat* value, std::int64_t exponent) {
+    if (std::isnan(*value)) return NotANumber;
+    if (std::isinf(*value)) return Infinite;
+    if (*value == 0) return Zero;
+    ErrnoGuard guard;
+    *value = std::ldexp(*value, static_cast<int>(std::clamp<std::int64_t>(exponent, -100000, 100000)));
+    return ResultCode(*value);
+}
+
+template<typename TFloat>
+short UnscaleBinary(short* exponent, TFloat* value) {
+    *exponent = 0;
+    if (std::isnan(*value)) return NotANumber;
+    if (std::isinf(*value)) return Infinite;
+    if (*value == 0) return Zero;
+    int unscaled = 0;
+    *value = std::frexp(*value, &unscaled);
+    *exponent = static_cast<short>(unscaled);
+    return Finite;
+}
+
+template<typename TBits, int FractionBits>
+short NormalizeFraction(void* value) {
+    constexpr TBits FractionMask = (TBits{1} << FractionBits) - 1;
+    constexpr TBits Sign = TBits{1} << (sizeof(TBits) * CHAR_BIT - 1);
+    TBits bits;
+    std::memcpy(&bits, value, sizeof(bits));
+    TBits fraction = bits & FractionMask;
+    short exponent = 1;
+    if (fraction != 0) {
+        const int shift = FractionBits + 1 - static_cast<int>(std::bit_width(fraction));
+        exponent = static_cast<short>(1 - shift);
+        fraction = (fraction << shift) & FractionMask;
+    }
+    bits = (bits & Sign) | fraction;
+    std::memcpy(value, &bits, sizeof(bits));
+    return exponent;
+}
+
+template<typename TFloat>
+int Compare(TFloat x, TFloat y) {
+    if (x < y) return 1;
+    if (x > y) return 4;
+    return 2;
+}
+
+template<typename TFloat>
+TFloat FusedPolynomial(TFloat x, const TFloat* table, int degree) {
+    TFloat result = table[0];
+    for (int index = 1; index <= degree; ++index) result = std::fma(result, x, table[index]);
+    return result;
 }
 
 }
@@ -249,5 +354,88 @@ int APS5_VABI _Dclass_nid_postfix(double x) { return TestFloat(x); }
 int APS5_VABI _FDclass_nid_postfix(float x) { return TestFloat(x); }
 int APS5_VABI _LDclass_nid_postfix(long double x) { return TestExtended(Bits(x)); }
 short APS5_VABI _LDsign_nid_postfix(long double x) { return static_cast<short>(Bits(x).signExponent & 0x8000); }
+
+short APS5_VABI _Dint_nid_postfix(double* value, short scale) { return DropFraction<std::uint64_t, 52, 11>(value, scale); }
+short APS5_VABI _FDint_nid_postfix(float* value, short scale) { return DropFraction<std::uint32_t, 23, 8>(value, scale); }
+
+short APS5_VABI _LDint_nid_postfix(long double* value, short scale) {
+    ExtendedBits bits = Bits(*value);
+    const int field = bits.signExponent & 0x7fff;
+    if (field == 0x7fff) return ExtendedNan(bits) ? NotANumber : Infinite;
+    if (bits.mantissa == 0) return Zero;
+    const short drop = static_cast<short>(0x3ffe + 64 - field - scale);
+    if (drop <= 0) return Zero;
+    if (drop >= 64) {
+        StoreExtended(value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        return Finite;
+    }
+    const std::uint64_t mask = (std::uint64_t{1} << drop) - 1;
+    const std::uint64_t lost = bits.mantissa & mask;
+    bits.mantissa &= ~mask;
+    StoreExtended(value, bits);
+    return lost != 0 ? Finite : Zero;
+}
+
+short APS5_VABI _Dscale_nid_postfix(double* value, std::int64_t exponent) { return ScaleBinary(value, exponent); }
+short APS5_VABI _FDscale_nid_postfix(float* value, std::int64_t exponent) { return ScaleBinary(value, exponent); }
+
+short APS5_VABI _LDscale_nid_postfix(long double* value, std::int64_t exponent) {
+    const ExtendedBits bits = Bits(*value);
+    if ((bits.signExponent & 0x7fff) == 0x7fff) return ExtendedNan(bits) ? NotANumber : Infinite;
+    if (bits.mantissa == 0) {
+        StoreExtended(value, {0, static_cast<std::uint16_t>(bits.signExponent & 0x8000)});
+        return Zero;
+    }
+    *value = ExtendedValue(bits);
+    const short code = ScaleBinary(value, exponent);
+    if (code == Zero) *value = 0.0L;
+    return code;
+}
+
+short APS5_VABI _Dunscale_nid_postfix(short* exponent, double* value) { return UnscaleBinary(exponent, value); }
+short APS5_VABI _FDunscale_nid_postfix(short* exponent, float* value) { return UnscaleBinary(exponent, value); }
+
+short APS5_VABI _LDunscale_nid_postfix(short* exponent, long double* value) {
+    const ExtendedBits bits = Bits(*value);
+    if ((bits.signExponent & 0x7fff) == 0x7fff) {
+        *exponent = 0;
+        return ExtendedNan(bits) ? NotANumber : Infinite;
+    }
+    if (bits.mantissa == 0) {
+        *exponent = 0;
+        return Zero;
+    }
+    *value = ExtendedValue(bits);
+    return UnscaleBinary(exponent, value);
+}
+
+short APS5_VABI _Dnorm_nid_postfix(std::uint16_t* words) { return NormalizeFraction<std::uint64_t, 52>(words); }
+short APS5_VABI _FDnorm_nid_postfix(std::uint16_t* words) { return NormalizeFraction<std::uint32_t, 23>(words); }
+
+short APS5_VABI _LDnorm_nid_postfix(std::uint16_t* words) {
+    std::uint64_t mantissa;
+    std::memcpy(&mantissa, words, sizeof(mantissa));
+    if (mantissa == 0) throw std::invalid_argument("_LDnorm: a zero significand never returns on the console");
+    const int shift = std::countl_zero(mantissa);
+    mantissa <<= shift;
+    std::memcpy(words, &mantissa, sizeof(mantissa));
+    return static_cast<short>(-shift);
+}
+
+int APS5_VABI _Fpcomp_nid_postfix(double x, double y) { return std::isnan(x) || std::isnan(y) ? 0 : Compare(x, y); }
+int APS5_VABI _FFpcomp_nid_postfix(float x, float y) { return std::isnan(x) || std::isnan(y) ? 0 : Compare(x, y); }
+int APS5_VABI _LFpcomp_nid_postfix(long double x, long double y) { return ExtendedNan(Bits(x)) || ExtendedNan(Bits(y)) ? 0 : Compare(x, y); }
+
+double APS5_VABI _Poly_nid_postfix(double x, const double* table, int degree) { return FusedPolynomial(x, table, degree); }
+float APS5_VABI _FPoly_nid_postfix(float x, const float* table, int degree) { return FusedPolynomial(x, table, degree); }
+
+long double APS5_VABI _LPoly_nid_postfix(long double x, const long double* table, int degree) {
+    long double result = table[0];
+    for (int index = 1; index <= degree; ++index) {
+        result *= x;
+        result += table[index];
+    }
+    return result;
+}
 
 }
