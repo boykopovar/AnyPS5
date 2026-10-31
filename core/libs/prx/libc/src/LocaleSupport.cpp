@@ -610,6 +610,7 @@ int APS5_VABI tolower_nid_postfix(int c) { return ConvertCharacter(c, false); }
 std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14] {};
+std::uintptr_t _ZTVSt5ctypeIwE_nid_postfix[18] {};
 std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt7collateIcE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7collateIcE_nid_postfix[9] {
