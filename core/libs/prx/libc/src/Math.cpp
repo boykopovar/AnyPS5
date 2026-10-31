@@ -299,6 +299,11 @@ long double ClearLowMantissaWord(long double value) {
     return value;
 }
 
+long double SumAtCallerPrecision(long double high, long double low) {
+    volatile long double sum = high;
+    return sum + low;
+}
+
 constexpr long double AsinNumeratorCoefficients[] = {
     1.66666666666666666631e-01L, -4.16313987993683104320e-01L, 3.69068046323246813704e-01L, -1.36213932016738603108e-01L,
     1.78324189708471965733e-02L, -2.19216428382605211588e-04L, -7.10526623669075243183e-06L,
@@ -310,6 +315,7 @@ constexpr long double AsinDenominatorCoefficients[] = {
 constexpr long double HalfPiHigh = 1.57079632679489661926e+00L;
 constexpr long double HalfPiLow = -2.50827880633416601173e-20L;
 constexpr long double QuarterPiHigh = 7.85398163397448309628e-01L;
+const volatile long double Pi = 3.14159265358979323846264338327950280e+00L;
 
 long double AsinNumerator(long double t) {
     const auto& p = AsinNumeratorCoefficients;
@@ -681,7 +687,46 @@ float APS5_VABI fmaxf_nid_postfix(float x, float y) { return GuestFmax(x, y); }
 long double APS5_VABI fmaxl_nid_postfix(long double x, long double y) { return GuestFmax(x, y); }
 double APS5_VABI fdim_nid_postfix(double x, double y) { return std::fdim(x, y); }
 float APS5_VABI fdimf_nid_postfix(float x, float y) { return std::fdim(x, y); }
-long double APS5_VABI acosl_nid_postfix(long double x) { return std::acos(x); }
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunSoft, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice 
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_acosl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_acosl.c */
+long double APS5_VABI acosl_nid_postfix(long double x) {
+    const ExtendedParts parts = SplitExtended(x);
+    const int exponent = parts.signExponent & 0x7fff;
+    const bool negative = (parts.signExponent & 0x8000) != 0;
+    if (exponent >= 0x3fff) {
+        if (exponent == 0x3fff && (parts.mantissa & 0x7fffffffffffffffull) == 0) return negative ? SumAtCallerPrecision(Pi, 2.0L * HalfPiLow) : 0.0L;
+        std::feraiseexcept(FE_INVALID);
+        errno = EDOM;
+        return (x - x) / (x - x);
+    }
+    if (exponent < 0x3ffe) {
+        if (exponent < 0x3fff - 65) return SumAtCallerPrecision(HalfPiHigh, HalfPiLow);
+        const long double z = x * x;
+        const long double r = AsinNumerator(z) / AsinDenominator(z);
+        return HalfPiHigh - (x - (HalfPiLow - x * r));
+    }
+    if (negative) {
+        const long double z = (1.0L + x) * 0.5L;
+        const long double s = std::sqrt(z);
+        const long double r = AsinNumerator(z) / AsinDenominator(z);
+        return Pi - 2.0L * (s + (r * s - HalfPiLow));
+    }
+    const long double z = (1.0L - x) * 0.5L;
+    const long double s = std::sqrt(z);
+    const long double high = ClearLowMantissaWord(s);
+    const long double correction = (z - high * high) / (s + high);
+    const long double r = AsinNumerator(z) / AsinDenominator(z);
+    return 2.0L * (high + (r * s + correction));
+}
 long double APS5_VABI acoshl_nid_postfix(long double x) { return std::acosh(x); }
 long double APS5_VABI asinhl_nid_postfix(long double x) { return std::asinh(x); }
 long double APS5_VABI atanhl_nid_postfix(long double x) { return std::atanh(x); }
@@ -1956,7 +2001,89 @@ double APS5_VABI tanh_nid_postfix(double x) {
     return jx >= 0 ? z : -z;
 }
 float APS5_VABI tanhf_nid_postfix(float x) { return std::tanh(x); }
-long double APS5_VABI atanl_nid_postfix(long double x) { return std::atan(x); }
+/*-
+ * Copyright (c) 2008 David Schultz <das@FreeBSD.ORG>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/ld80/invtrig.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/ld80/invtrig.c */
+constexpr long double AtanCoefficients[] = {
+    0xaaaaaaaaaaaaaa9fp-65L, -0xcccccccccccc62bcp-66L, 0x9249249248b81e3fp-66L, -0xe38e38e3316f3de5p-67L, 0xba2e8b8dc280726ap-67L,
+    -0x9d89d5b4c6847ec4p-67L, 0x8888461d3099c677p-67L, -0xf0e8ee0f5328dc29p-68L, 0xd73ea84d24bae54ap-68L, -0xc08fa381dcd9213ap-68L,
+    0xa54a26f4095f2a3ap-68L, -0xeea2d8d059ef3ad6p-69L, 0xcc82292ab894b051p-70L,
+};
+constexpr long double AtanHigh[] = {0xed63382b0dda7b45p-65L, 0xc90fdaa22168c235p-64L, 0xfb985e940fb4d900p-64L, 0xc90fdaa22168c235p-63L};
+constexpr long double AtanLow[] = {0xdfc88bd978751a07p-130L, -0xece675d1fc8f8cbbp-130L, 0xf10f5e197793c283p-129L, -0xece675d1fc8f8cbbp-129L};
+/*
+ * ====================================================
+ * Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Developed at SunPro, a Sun Microsystems, Inc. business.
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/s_atanl.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/s_atanl.c */
+long double APS5_VABI atanl_nid_postfix(long double x) {
+    const ExtendedParts parts = SplitExtended(x);
+    const int exponent = parts.signExponent & 0x7fff;
+    const bool negative = (parts.signExponent & 0x8000) != 0;
+    if (exponent >= 0x3fff + 65) {
+        if (exponent == 0x7fff && (parts.mantissa & 0x7fffffffffffffffull) != 0) return x + x;
+        return negative ? SumAtCallerPrecision(-AtanHigh[3], -AtanLow[3]) : SumAtCallerPrecision(AtanHigh[3], AtanLow[3]);
+    }
+    const int head = (exponent << 8) | static_cast<int>((parts.mantissa >> 55) & 0xff);
+    int index = -1;
+    if (head < ((0x3fff - 2) << 8) + 0xc0) {
+        if (1.0e300 + x > 1.0L && exponent < 0x3fff - 32) return x;
+    } else {
+        x = std::fabs(x);
+        if (head < (0x3fff << 8) + 0x30) {
+            if (head < ((0x3fff - 1) << 8) + 0x60) {
+                index = 0;
+                x = (2.0L * x - 1.0L) / (2.0L + x);
+            } else {
+                index = 1;
+                x = (x - 1.0L) / (x + 1.0L);
+            }
+        } else if (head < ((0x3fff + 1) << 8) + 0x38) {
+            index = 2;
+            x = (x - 1.5L) / (1.0L + 1.5L * x);
+        } else {
+            index = 3;
+            x = -1.0L / x;
+        }
+    }
+    const auto& a = AtanCoefficients;
+    const long double z = x * x;
+    const long double w = z * z;
+    const long double even = z * (a[0] + w * (a[2] + w * (a[4] + w * (a[6] + w * (a[8] + w * (a[10] + w * a[12]))))));
+    const long double odd = w * (a[1] + w * (a[3] + w * (a[5] + w * (a[7] + w * (a[9] + w * a[11])))));
+    if (index < 0) return x - x * (even + odd);
+    const long double result = AtanHigh[index] - ((x * (even + odd) - AtanLow[index]) - x);
+    return negative ? -result : result;
+}
 long double APS5_VABI sinl_nid_postfix(long double x) { return std::sin(x); }
 long double APS5_VABI cosl_nid_postfix(long double x) { return std::cos(x); }
 long double APS5_VABI tanl_nid_postfix(long double x) { return std::tan(x); }
