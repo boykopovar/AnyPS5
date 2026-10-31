@@ -3,6 +3,7 @@
 #include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <set>
 
@@ -249,6 +250,9 @@ std::size_t FindEmbeddedDataTableEnd(std::span<const std::uint8_t> code, Virtual
 }
 
 std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, VirtualAddress codeAddress, std::size_t* tableEnd, std::size_t unwindEnd) {
+    if (code.size() > std::numeric_limits<VirtualAddress>::max() - codeAddress) {
+        throw RelinkerException("Text section range exceeds the address space");
+    }
     const Codegen::X64InstructionDecoder decoder;
     std::vector<TableLoad> loads;
     std::vector<bool> instructionStarts(code.size() + 1, false);
@@ -298,6 +302,9 @@ std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, Vi
 }
 
 std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8_t> segment, VirtualAddress segmentVAddr, const std::vector<std::pair<VirtualAddress, VirtualAddress>>& functions) {
+    if (segment.size() > std::numeric_limits<VirtualAddress>::max() - segmentVAddr) {
+        throw RelinkerException("Text section range exceeds the address space");
+    }
     std::vector<RelativeJumpTable> tables;
     const auto segmentEnd = segmentVAddr + segment.size();
     const Codegen::X64InstructionDecoder decoder;

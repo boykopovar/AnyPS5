@@ -204,6 +204,50 @@ void Run(AgcDriver::VulkanDevice& device) {
     ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request)); }, "does not refer to registered code");
 }
 
+void DumpSelection(AgcDriver::VulkanDevice& device) {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 1> code{0xffffffffu};
+    const std::vector<std::byte> header(2048, std::byte{0x5a});
+    RecompileRequest request{{ShaderStage::Compute, 0x12345cafeull, code, 0x20000, header},
+        {32, 0, {}, ShaderComputeStageInfo{{1, 1, 1}, 0, {}, false, 1, {}}, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
+    const char* previous = std::getenv("APS5_DUMP_SHADERS");
+    const std::string saved = previous != nullptr ? previous : "";
+    const auto setCapture = [](const char* value) {
+#ifdef _WIN32
+        Require(_putenv_s("APS5_DUMP_SHADERS", value) == 0, "cannot set shader capture");
+#else
+        Require(setenv("APS5_DUMP_SHADERS", value, 1) == 0, "cannot set shader capture");
+#endif
+    };
+    const auto written = [](const std::string& name) {
+        const bool exists = std::ifstream(name, std::ios::binary).is_open();
+        std::remove(name.c_str());
+        return exists;
+    };
+    const std::string excludedPath = "shader_12345cafe_excluded.req";
+    const std::string listedPath = "shader_12345cafe_listed.req";
+    const std::string otherPath = "shader_feedface_unlisted.req";
+    std::remove(excludedPath.c_str());
+    std::remove(listedPath.c_str());
+    std::remove(otherPath.c_str());
+    setCapture("feedface");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_excluded").empty(), "a program outside the APS5_DUMP_SHADERS list was named as dumped");
+    Require(!written(excludedPath), "a program outside the APS5_DUMP_SHADERS list was dumped");
+    setCapture("feedface,0x12345CAFE");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_excluded") == excludedPath, "a program dropped by an earlier list was not dumped once listed");
+    Require(written(excludedPath), "a listed program's request was not written after an earlier list dropped it");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_listed") == listedPath, "a listed program was not dumped");
+    Require(written(listedPath), "a listed program's request was not written");
+    setCapture("12345cafe,not-an-address");
+    Require(AgcDriver::DriverDetail::Driver::dumpRequest(0xfeedfaceull, request, "_unlisted") == otherPath, "a value that is not an address list did not dump every program");
+    Require(written(otherPath), "a value that is not an address list did not write the request");
+#ifdef _WIN32
+    Require(_putenv_s("APS5_DUMP_SHADERS", saved.c_str()) == 0, "cannot restore shader capture");
+#else
+    Require((previous != nullptr ? setenv("APS5_DUMP_SHADERS", saved.c_str(), 1) : unsetenv("APS5_DUMP_SHADERS")) == 0, "cannot restore shader capture");
+#endif
+}
+
 void FailureCapture(AgcDriver::VulkanDevice& device) {
     using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 1> code{0xffffffffu};
@@ -1619,6 +1663,7 @@ int main(int argc, char** argv) {
         Run(*device);
         RegisteredVertexWorkgroup(device->Target());
         FailureCapture(*device);
+        DumpSelection(*device);
         PendingRegistrationPreparation(*device);
         AwaitedRegistrationPreparation();
         Require(argc != 2 || std::string_view(argv[1]) != "--fail-before-registration", "injected failure before registration");

@@ -15,3 +15,30 @@
 - [sceBgftServiceIntPlayGoCheckDiscIniChunksInstall and sceBgftServiceIntPlayGoStartDataDiscInstall](../../../core/libs/prx/libSceBgft/Export.cpp) (libSceBgft) - The list is the intersection of the export table of the console's libSceBgft (function symbols only), the pinned aerolib names and the functions not yet defined anywhere in the repo; names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceBgft.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified.
 - [sceBgftServiceIntSetTaskVisible, sceBgftServiceIntUploadGetAvailableTaskCount, sceBgftServiceIntUploadGetTaskInfo and sceBgftServiceIntUploadHideTask](../../../core/libs/prx/libSceBgft/Export.cpp) (libSceBgft) - The list is the intersection of the export table of the console's libSceBgft (function symbols only), the pinned aerolib names and the functions not yet defined anywhere in the repo; names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceBgft.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified.
 - [sceBgftServiceIntUploadSetStartState and sceBgftServiceIntUploadSetUploadError](../../../core/libs/prx/libSceBgft/Export.cpp) (libSceBgft) - The list is the intersection of the export table of the console's libSceBgft (function symbols only), the pinned aerolib names and the functions not yet defined anywhere in the repo; names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceBgft.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified.
+
+### Additional callable export inventory
+
+- [Additional exports](../../../core/libs/prx/libSceBgft/Export.cpp) - 12 import-resolution declarations (7 named candidates and 5 unresolved NIDs). All entries call `NotImplemented_nid_no_patch`. Parameterless `int` declarations do not establish parameter or return ABI; no runtime implementation or title unblock is claimed.
+
+#### Membership and identity evidence
+
+The inspected `PT_SCE_MODULEPARAM` record contains version words `0x13590001` at offset `0x10` and `0x13600007` at offset `0x14`. The 13.60 label refers to the latter SDK-formatted word, not independently authenticated retail firmware or an introduction date. The [reproducible static audit](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298) records the extraction/filtering procedure and the observed NID-set digest. Each row below was read as a defined `STT_FUNC` entry; RVA and size are symbol-table values, not runtime addresses or function bytes.
+
+Unique function NIDs in the inspected module: **82**. SHA-256 of sorted unique NIDs (one ASCII NID plus LF per row): `1febc3e107d7f24aae994a6d92ab071e4d8aa5ec34b5a4cc70ab8980ee463d10`. All 12 proposed NIDs are members of that set.
+
+Candidate names marked **aerolib** occur in the [repository-pinned table](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv). Names marked **public candidate** occur in the [public ps5rs identity database at commit `2304be5131221bae0dac24b9767cabffda33f747`](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Every named candidate was recomputed with the repository NID algorithm and matched to a function NID in the inspected table; no name was assigned by ordinal or adjacent address. Those databases support spelling, not firmware attribution, prototypes or behavior. Unresolved names remain explicit NID aliases.
+
+| Candidate / unresolved | NID | Name evidence | ELF RVA | Symbol bytes |
+| --- | --- | --- | --- | ---: |
+| `sceBgftServiceIntDownloadClearAllInstalled` | `XEJKc+Ivvm4` | public candidate | `0x340` | 18 |
+| `sceBgftServiceIntDownloadClearInstalled` | `bmSUGdmdJto` | public candidate | `0x360` | 21 |
+| `sceBgftServiceIntDownloadPauseGroupTasks` | `cHMDnBGpQoo` | public candidate | `0x440` | 17 |
+| `sceBgftServiceIntDownloadResumeGroupTasks` | `Ys2nTRwMM8M` | public candidate | `0x460` | 17 |
+| `sceBgftServiceIntDownloadStartGroupTasks` | `3DeLtzqsmG8` | public candidate | `0x430` | 15 |
+| `sceBgftServiceIntDownloadUnregisterCompleteTask` | `TAee3wrD-M0` | public candidate | `0x320` | 14 |
+| `sceBgftServiceIntUploadUnregisterCompleteTask` | `I9k+LTS1OlI` | public candidate | `0x640` | 14 |
+| `Unknown` | `3cvL6QTobNg` | unresolved | `0x810` | 17 |
+| `Unknown` | `4JQKNtsVDpg` | unresolved | `0x830` | 18 |
+| `Unknown` | `85axuUkg9eE` | unresolved | `0x480` | 23 |
+| `Unknown` | `fJnnIc5sHOU` | unresolved | `0x2f0` | 18 |
+| `Unknown` | `tBOVSvi9EjY` | unresolved | `0x530` | 17 |

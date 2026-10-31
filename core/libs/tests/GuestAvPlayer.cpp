@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <new>
@@ -1263,6 +1264,27 @@ void TestRestartAfterPausedJumpKeepsClockRunning() {
     Check(sceAvPlayerClose(player) == 0, "close failed");
 }
 
+void TestJumpPastTheLatestTimeReportsTheDuration() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    std::uint64_t duration = 0;
+    for (const auto stream : {VideoStream, EnglishAudioStream}) {
+        AvPlayerStreamInfo info{};
+        Check(sceAvPlayerGetStreamInfo(player, stream, &info) == 0, "stream info failed");
+        duration = std::max(duration, info.duration);
+    }
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Check(sceAvPlayerJumpToTime(player, std::numeric_limits<std::uint64_t>::max()) == 0, "jump to the latest time failed");
+    Check(sceAvPlayerStart(player) == 0, "start failed");
+    const auto current = sceAvPlayerCurrentTime(player);
+    Check(current == duration, "current time " + std::to_string(current) + " after a jump to the latest time, expected the duration " + std::to_string(duration));
+    Check(sceAvPlayerClose(player) == 0, "close failed");
+}
+
 void TestPausedPreparationAfterAudioStarts(std::uint32_t syncMode) {
     Events events;
     auto init = InitData(&events);
@@ -2059,6 +2081,7 @@ int main(int argc, char** argv) {
         TestPs5ExtendedInitLayout();
         TestAutoStartKeepsStartedPlayback();
         TestRestartAfterPausedJumpKeepsClockRunning();
+        TestJumpPastTheLatestTimeReportsTheDuration();
         TestUnsyncedVideoKeepsUpWithAudio();
         TestNoSyncVideoCanLeadAudioClock();
         TestLoopWarningWaitsForPlayback();

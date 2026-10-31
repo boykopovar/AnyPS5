@@ -25,6 +25,7 @@ using ThreadDestructorFunction = void (APS5_VABI*)(void*);
 extern "C" {
 
 void* APS5_VABI fdopendir_nid_postfix(int fd);
+void* APS5_VABI __opendir2_nid_postfix(const char* name, int flags);
 void APS5_VABI err_set_file_nid_postfix(FileStream* stream);
 void APS5_VABI err_set_exit_nid_postfix(ErrExit function);
 void APS5_VABI vwarnc_nid_postfix(int code, const char* format, VaList* args);
@@ -97,10 +98,21 @@ bool APS5_VABI _ZNSt10filesystem12_Current_getERA260_c_nid_postfix(char* target)
 char* APS5_VABI _ZNSt10filesystem9_Read_dirERA260_cPvRNS_9file_typeE_nid_postfix(char* target, void* handle, int* type);
 void* APS5_VABI _ZNSt10filesystem9_Open_dirERA260_cPKcRiRNS_9file_typeE_nid_postfix(char* target, const char* path, int* error, int* type);
 int APS5_VABI _ZNSt10filesystem10_Close_dirEPv_nid_postfix(void* handle);
-void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcSt10error_code_nid_postfix();
-void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathESt10error_code_nid_postfix();
 int APS5_VABI __std_init_once_begin_initialize_clr_nid_postfix(void** once, unsigned long flags, int* pending, void** context);
 int APS5_VABI __std_init_once_complete_clr_nid_postfix(void** once, unsigned long flags, void* context);
 [[noreturn]] void APS5_VABI __std_init_once_link_alternate_names_and_abort_nid_postfix();
+
+int APS5_VABI sceLibcMspaceSetMallocCallback();
+int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();
+int APS5_VABI sceLibcHeapSetAddressRangeCallback();
+int APS5_VABI sceLibcPafMspaceTrim();
+int APS5_VABI sceLibcHeapMutexCalloc();
+int APS5_VABI sceLibcInternalSetMallocCallback();
+int APS5_VABI sceLibcHeapSetTraceMarker();
+int APS5_VABI sceLibcPafMspaceCheckMemoryBounds();
+int APS5_VABI sceLibcHeapUnsetTraceMarker();
+int APS5_VABI sceLibcHeapGetAddressRanges();
+int APS5_VABI sceLibcHeapMutexFree();
+
 
 }
