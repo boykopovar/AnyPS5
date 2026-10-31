@@ -301,6 +301,22 @@ int APS5_VABI sceAppContentDownload1Shrink(void) {
     return 0;
 }
 
+int APS5_VABI sceAppContentDownload2Expand(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceAppContentDownload2Shrink(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
+int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(const char* entitlementId, AppContentAddcontInfo* info) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!entitlementId || !info) return SCE_APP_CONTENT_ERROR_PARAMETER;
