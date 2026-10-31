@@ -75,10 +75,16 @@ void Require(const bool condition) {
     if (!condition) throw std::runtime_error("Unexpected parsed value");
 }
 
-void RejectSections(Bytes bytes) {
+void RejectSections(Bytes bytes, const std::string& expectedMessage = "", const std::uint64_t expectedOffset = std::numeric_limits<std::uint64_t>::max()) {
     try {
         Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
-    } catch (const Relinker::RelinkerException&) {
+    } catch (const Relinker::RelinkerException& error) {
+        if (!expectedMessage.empty()) {
+            Require(std::string(error.what()).find(expectedMessage) != std::string::npos);
+        }
+        if (expectedOffset != std::numeric_limits<std::uint64_t>::max()) {
+            Require(error.FailureOffset == expectedOffset);
+        }
         return;
     }
     throw std::runtime_error("Invalid section metadata was accepted");
@@ -202,9 +208,17 @@ int main() {
             }
         }},
         {"section name table index", [] {
-            auto bytes = Fixture();
-            Write<std::uint16_t>(bytes, 62, 3);
-            RejectSections(std::move(bytes));
+            for (const std::uint16_t index : {std::uint16_t{3}, std::uint16_t{4}, std::numeric_limits<std::uint16_t>::max()}) {
+                auto bytes = Fixture();
+                Write<std::uint16_t>(bytes, 62, index);
+                RejectSections(std::move(bytes), "Section header string table index out of bounds", 0x3e);
+            }
+            for (const std::uint16_t index : {std::uint16_t{1}, std::numeric_limits<std::uint16_t>::max()}) {
+                auto zeroSections = Fixture();
+                Write<std::uint16_t>(zeroSections, 60, 0);
+                Write<std::uint16_t>(zeroSections, 62, index);
+                RejectSections(std::move(zeroSections), "Section header string table index out of bounds", 0x3e);
+            }
         }},
         {"section name table type", [] {
             auto bytes = Fixture();
