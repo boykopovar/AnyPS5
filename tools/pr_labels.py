@@ -16,6 +16,8 @@ NONE = re.compile(r"[-*_ \t\r\n]*none\b", re.I)
 PERF = re.compile(r"perf(\(|!?:)")
 FENCE = re.compile(r"(?:```|~~~)[^\r\n]*\r?\n(.*?)(?:```|~~~)", re.S)
 MARKER = "<!-- pr-labels-perf -->"
+REMINDER = "<!-- pr-labels-perf-reminder -->"
+COMMIT = re.compile(r"[0-9a-f]{7,40}")
 UNBLOCKS_LABEL = "unblocks title"
 PERF_LABEL = "perf"
 MISSING_LABEL = "perf numbers missing"
@@ -23,6 +25,7 @@ MANAGED = {UNBLOCKS_LABEL, PERF_LABEL, MISSING_LABEL}
 WRITE_PAUSE = 1.0
 COMMENT = (f"{MARKER}\nThis pull request is labeled `perf`, so it needs the summary line of a capture on `main` and one with the change, "
            "from the same title, scene and machine, as the Performance report form asks. "
+           "Both lines must record the same configuration: GPU, driver, OS, resolution, window and `APS5_*` switches. "
            "Please paste both `aps5-summary.jsonl` lines, attach the two traces and add the output of `tools/trace_digest.py`.")
 
 
@@ -47,20 +50,64 @@ def is_perf(title):
     return bool(PERF.match(title or ""))
 
 
-def has_numbers(body):
+def summaries(body):
     body = strip_comments(body)
     candidates = [line.strip() for line in body.splitlines()] + [block.strip() for block in FENCE.findall(body)]
-    commits = set()
+    found = {}
     for text in candidates:
         if not text.startswith("{"):
             continue
         try:
             summary = json.loads(text)
             if isinstance(summary, dict):
-                commits.add(performance_compare.validate(summary)["commit"])
+                summary = performance_compare.validate(summary)
+                found.setdefault(summary["commit"], summary)
         except (ValueError, RecursionError):
             continue
-    return len(commits) >= 2
+    return list(found.values())
+
+
+def matching_pair(body):
+    found = summaries(body)
+    for index, before in enumerate(found):
+        for after in found[index + 1:]:
+            try:
+                if not performance_compare.compare(before, after)["configuration_differences"]:
+                    return before, after
+            except (ValueError, OverflowError, KeyError, TypeError):
+                continue
+    return None
+
+
+def has_numbers(body):
+    return matching_pair(body) is not None
+
+
+def on_main(repo, commit):
+    if not COMMIT.fullmatch(commit):
+        return False
+    try:
+        return gh("api", f"repos/{repo}/compare/{commit}...main", "--jq", ".status").strip() in ("ahead", "identical")
+    except subprocess.CalledProcessError:
+        return False
+
+
+def trace_name(summary):
+    return summary["trace"].replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def reminders(repo, body):
+    pair = matching_pair(body)
+    if pair is None:
+        return []
+    notes = []
+    if not any(on_main(repo, summary["commit"]) for summary in pair):
+        notes.append("Neither summary line's commit is on `main`. The baseline capture should come from a `main` commit.")
+    text = "\n".join(line for line in FENCE.sub("", strip_comments(body)).splitlines() if not line.strip().startswith("{"))
+    missing = sorted({name for name in map(trace_name, pair) if name and name not in text})
+    if missing:
+        notes.append("Attach the traces named in the summary lines: " + ", ".join(f"`{name}`" for name in missing) + ".")
+    return notes
 
 
 def labels_for(pr):
@@ -111,9 +158,9 @@ def pull(data):
             "labels": [label["name"] for label in data["labels"]], "state": data["state"]}
 
 
-def commented(repo, number):
+def commented(repo, number, marker=MARKER):
     out = gh("api", "--paginate", f"repos/{repo}/issues/{number}/comments",
-             "--jq", f'[.[] | select(.body | contains("{MARKER}"))] | length')
+             "--jq", f'[.[] | select(.body | contains("{marker}"))] | length')
     return sum(int(count) for count in out.split())
 
 
@@ -133,7 +180,13 @@ def process(repo, pr, dry_run, comment=True):
             gh(*args)
         if post:
             gh("api", "-X", "POST", f"repos/{repo}/issues/{pr['number']}/comments", "-f", f"body={COMMENT}")
-    return add, remove, post
+    notes = []
+    if comment and is_perf(pr["title"]) and has_numbers(pr["body"]) and not commented(repo, pr["number"], REMINDER):
+        notes = reminders(repo, pr["body"])
+    if notes and not dry_run:
+        body = REMINDER + "\nThe summary lines match. Before review, please also check:\n" + "\n".join(f"- {note}" for note in notes)
+        gh("api", "-X", "POST", f"repos/{repo}/issues/{pr['number']}/comments", "-f", f"body={body}")
+    return add, remove, post or bool(notes)
 
 
 def main(argv=None):

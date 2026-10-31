@@ -122,6 +122,58 @@ class LabelTests(unittest.TestCase):
         self.assertEqual(pr_labels.labels_for(pr("fix: x", "Unblocks: none", ["unblocks title", "other"])), (set(), {"unblocks title"}))
 
 
+def differing(commit, **changes):
+    record = copy.deepcopy(SUMMARY)
+    record["commit"] = commit
+    record.update(changes)
+    return json.dumps(record)
+
+
+class PairTests(unittest.TestCase):
+    def test_lines_with_a_different_configuration_do_not_count(self):
+        self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + differing("b", gpu="Other GPU")))
+        self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + differing("b", env={"APS5_TRACE_FRAMES": "600:4", "APS5_X": "1"})))
+
+    def test_a_matching_pair_among_more_lines_counts(self):
+        body = "\n".join([summary("a"), differing("b", resolution="1280x720"), summary("c")])
+        before, after = pr_labels.matching_pair(body)
+        self.assertEqual((before["commit"], after["commit"]), ("a", "c"))
+
+
+class ReminderTests(unittest.TestCase):
+    def notes(self, body, statuses):
+        def fake(*args):
+            commit = args[1].split("/compare/")[1].split("...")[0]
+            if statuses.get(commit) is None:
+                raise pr_labels.subprocess.CalledProcessError(1, "gh", stderr="HTTP 404")
+            return statuses[commit] + "\n"
+        with patch.object(pr_labels, "gh", side_effect=fake):
+            return pr_labels.reminders("o/r", body)
+
+    def test_nothing_to_remind_with_a_main_baseline_and_attached_traces(self):
+        body = summary("aaaaaaa") + "\n" + summary("bbbbbbb") + "\n[aps5-trace-abc123-7.json.gz](https://github.com/user-attachments/files/1/aps5-trace-abc123-7.json.gz)"
+        self.assertEqual(self.notes(body, {"aaaaaaa": "ahead", "bbbbbbb": "diverged"}), [])
+
+    def test_no_commit_on_main_is_reminded(self):
+        body = summary("aaaaaaa") + "\n" + summary("bbbbbbb") + "\naps5-trace-abc123-7.json.gz"
+        notes = self.notes(body, {"aaaaaaa": "diverged"})
+        self.assertEqual(len(notes), 1)
+        self.assertIn("on `main`", notes[0])
+
+    def test_a_trace_named_only_inside_a_summary_line_is_reminded(self):
+        notes = self.notes(summary("aaaaaaa") + "\n" + summary("bbbbbbb"), {"aaaaaaa": "identical"})
+        self.assertEqual(notes, ["Attach the traces named in the summary lines: `aps5-trace-abc123-7.json.gz`."])
+
+    def test_a_commit_that_is_not_a_hash_is_not_looked_up(self):
+        calls = []
+        with patch.object(pr_labels, "gh", side_effect=lambda *args: calls.append(args)):
+            self.assertFalse(pr_labels.on_main("o/r", "../x"))
+        self.assertEqual(calls, [])
+
+    def test_no_reminder_without_a_matching_pair(self):
+        self.assertEqual(self.notes(summary("aaaaaaa"), {}), [])
+
+
 class ProcessTests(unittest.TestCase):
     def run_process(self, pull, comments=0, dry_run=False, comment=True):
         calls = []
@@ -170,6 +222,40 @@ class ProcessTests(unittest.TestCase):
         result, calls = self.run_process(pr("perf: x", body, ["perf", "perf numbers missing"]), comments=1)
         self.assertEqual(result, (set(), {"perf numbers missing"}, False))
         self.assertEqual(calls, [("pr", "edit", "7", "-R", "o/r", "--remove-label", "perf numbers missing")])
+
+    def test_reminder_posted_once_for_matching_numbers(self):
+        body = summary("aaaaaaa") + "\n" + summary("bbbbbbb")
+        pull = pr("perf: x", body, ["perf"])
+        calls = []
+
+        def fake(*args):
+            calls.append(args)
+            if "/compare/" in args[1]:
+                return "diverged\n"
+            return ""
+        with patch.object(pr_labels, "gh", side_effect=fake), patch.object(pr_labels, "commented", return_value=0):
+            result = pr_labels.process("o/r", pull, False, True)
+        self.assertTrue(result[2])
+        posted = [call for call in calls if call[:3] == ("api", "-X", "POST")]
+        self.assertEqual(len(posted), 1)
+        self.assertIn(pr_labels.REMINDER, posted[0][-1])
+        self.assertIn("on `main`", posted[0][-1])
+        self.assertIn("aps5-trace-abc123-7.json.gz", posted[0][-1])
+        calls.clear()
+        with patch.object(pr_labels, "gh", side_effect=fake), patch.object(pr_labels, "commented", return_value=1):
+            result = pr_labels.process("o/r", pull, False, True)
+        self.assertEqual(calls, [])
+        self.assertFalse(result[2])
+
+    def test_reminder_not_posted_in_a_dry_run(self):
+        calls = []
+
+        def fake(*args):
+            calls.append(args)
+            return "diverged\n"
+        with patch.object(pr_labels, "gh", side_effect=fake), patch.object(pr_labels, "commented", return_value=0):
+            pr_labels.process("o/r", pr("perf: x", summary("aaaaaaa") + "\n" + summary("bbbbbbb"), ["perf"]), True, True)
+        self.assertFalse([call for call in calls if call[:3] == ("api", "-X", "POST")])
 
     def test_dry_run_writes_nothing(self):
         result, calls = self.run_process(pr("perf: x", TEMPLATE), dry_run=True)
