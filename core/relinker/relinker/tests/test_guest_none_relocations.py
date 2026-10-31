@@ -76,6 +76,31 @@ def change_tag(image, tag, value=None, replacement=None):
     raise AssertionError(f"Missing dynamic tag {tag:#x}")
 
 
+def duplicate_sce_dynamic_data(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    sce_offset = None
+    for index in range(phnum):
+        offset = 64 + index * 56
+        if struct.unpack_from("<I", image, offset)[0] == 0x61000000:
+            sce_offset = offset
+            break
+    if sce_offset is None:
+        insert_at = 64 + phnum * 56
+        if insert_at + 112 > len(image):
+            image.extend(bytes(insert_at + 112 - len(image)))
+        struct.pack_into("<IIQQQQQQ", image, insert_at, 0x61000000, 0, 0x800, 0, 0, 0x600, 0x600, 1)
+        struct.pack_into("<IIQQQQQQ", image, insert_at + 56, 0x61000000, 0, 0x800, 0, 0, 0x600, 0x600, 1)
+        struct.pack_into("<H", image, 56, phnum + 2)
+        return image
+    insert_at = 64 + phnum * 56
+    if insert_at + 56 > len(image):
+        image.extend(bytes(insert_at + 56 - len(image)))
+    image[insert_at:insert_at + 56] = image[sce_offset:sce_offset + 56]
+    struct.pack_into("<H", image, 56, phnum + 1)
+    return image
+
+
 def unsized_lifecycle(rela, sce, initial):
     image = module(rela, sce=sce, lifecycle=True, initial=initial)
     return change_tag(change_tag(image, 27, replacement=0x61000001), 28, replacement=0x61000001)
@@ -138,6 +163,7 @@ def invalid_cases(sce):
     ambiguous = module(plt=[NOOP], sce=sce)
     yield "ambiguous-plt-format", change_tag(ambiguous, 0x61000027 if sce else 3, value=7,
                                             replacement=20 if sce else 0x6100002b), "Missing or ambiguous dynamic tag"
+    yield "duplicate-sce-dynamic-data", duplicate_sce_dynamic_data(module([NOOP], sce=sce)), "Duplicate SCE dynamic data"
 
 
 def main():
