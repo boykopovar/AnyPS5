@@ -1843,7 +1843,7 @@ void testStallPromptOff() {
     AgcDriver::DriverDetail::SetStallClock(nullptr);
 }
 
-void testStallPromptOnce() {
+void testStallPromptRearm() {
     using AgcDriver::DriverDetail::StallChoice;
     AgcDriver::DriverDetail::SetStallClock(fakeStallClock);
     AgcDriver::DriverDetail::SetStallPresenter(recordStallPrompt);
@@ -1854,14 +1854,24 @@ void testStallPromptOnce() {
         stall.Check("WAIT_REG_MEM at", 0x40);
         fakeStallNow += std::chrono::seconds(1);
         stall.Check("WAIT_REG_MEM at", 0x40);
-        check(stallPrompts == 1, "an expired wait did not ask the host once");
+        check(stallPrompts == 1, "an expired wait did not ask the host");
         check(lastStallMessage.find("This title has not made progress for 1 seconds") != std::string::npos, "the prompt does not say how long the title has not progressed");
+        fakeStallNow += std::chrono::milliseconds(999);
+        stall.Check("WAIT_REG_MEM at", 0x40);
+        check(stallPrompts == 1, "a wait asked the host again before a period had passed after Wait");
+        fakeStallNow += std::chrono::milliseconds(1);
+        stall.Check("WAIT_REG_MEM at", 0x40);
+        check(stallPrompts == 2, "a wait that expired again after Wait did not ask the host again");
+        fakeStallNow += std::chrono::seconds(1);
+        stall.Check("WAIT_REG_MEM at", 0x40);
+        check(stallPrompts == 3, "a wait did not ask the host a third time");
         fakeStallNow += std::chrono::seconds(5);
         stall.Check("WAIT_REG_MEM at", 0x40);
-        check(stallPrompts == 1, "a wait answered Wait asked the host again");
+        check(stallPrompts == 3, "a wait asked the host more than three times");
     }
     check(stallDumpCount(capture) == 1, "the rings were not dumped once for the answered wait");
     stallAnswer = StallChoice::Unavailable;
+    stallPrompts = 0;
     {
         AgcDriver::DriverDetail::StallWatch stall(0);
         stall.Check("WAIT_REG_MEM at", 0x40);
@@ -1870,7 +1880,7 @@ void testStallPromptOnce() {
         fakeStallNow += std::chrono::seconds(5);
         stall.Check("WAIT_REG_MEM at", 0x40);
     }
-    check(stallPrompts == 2, "a wait whose message box was unavailable asked again");
+    check(stallPrompts == 1, "a wait whose message box was unavailable asked again");
     check(stallDumpCount(capture) == 2, "the rings were not dumped once for the wait without a message box");
     AgcDriver::DriverDetail::SetStallPresenter(nullptr);
     AgcDriver::DriverDetail::SetStallClock(nullptr);
@@ -2216,7 +2226,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-once", testStallPromptOnce}, {"stall-prompt-quit", testStallPromptQuit}, {"rewind-trace", testRewindTailTrace}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-quit", testStallPromptQuit}, {"rewind-trace", testRewindTailTrace}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
