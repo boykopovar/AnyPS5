@@ -297,8 +297,9 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 if ((info >> 32) == 0 || (symbol.Info & 15) == 6 || (relocation != 1 && addend != 0) || (symbol.Section == 0 && symbol.Name.empty())) fail("Invalid guest symbol relocation");
             } else {
                 const auto& symbol = image.Symbols[info >> 32];
-                ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && tls != nullptr;
-                if (((info >> 32) == 0 && tls == nullptr) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
+                const bool hasTlsBlock = tls != nullptr && tls->MemorySize != 0;
+                ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && hasTlsBlock;
+                if (((info >> 32) == 0 && !hasTlsBlock) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || ((symbol.Info & 15) == 6 && symbol.Section != 0 && !hasTlsBlock) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
             }
             const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
