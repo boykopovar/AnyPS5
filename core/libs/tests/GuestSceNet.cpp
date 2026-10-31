@@ -817,6 +817,89 @@ static void CheckStreamReceiveTimeout() {
     for (const int descriptor : {client, accepted, listener}) Require(sceNetSocketClose(descriptor) == 0);
 }
 
+static void CheckConnectTimeout() {
+    const int listener = sceNetSocket("connect-timeout", 2, 1, 6);
+    Require(listener >= 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0 && sceNetListen(listener, 1) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(listener, address.data(), &size) == 0);
+    const int client = sceNetSocket("connect-timeout-client", 2, 1, 6);
+    Require(client >= 0);
+    int value = -1;
+    std::uint32_t length = sizeof(value);
+    Require(sceNetGetsockopt(client, 0xffff, 0x1109, &value, &length) == 0 && length == sizeof(value) && value == 0);
+    const int negative = -1;
+    Require(Failed(sceNetSetsockopt(client, 0xffff, 0x1109, &negative, sizeof(negative)), 22));
+    const int timeout = 1500000;
+    Require(sceNetSetsockopt(client, 0xffff, 0x1109, &timeout, sizeof(timeout)) == 0);
+    Require(sceNetGetsockopt(client, 0xffff, 0x1109, &value, &length) == 0 && length == sizeof(value) && value == timeout);
+    Require(sceNetConnect(client, address.data(), address.size()) == 0);
+    const int accepted = sceNetAccept(listener, nullptr, nullptr);
+    Require(accepted >= 0);
+    const int receiveTimeout = 50000;
+    Require(sceNetSetsockopt(client, 0xffff, 0x1106, &receiveTimeout, sizeof(receiveTimeout)) == 0);
+    char buffer[8]{};
+    const auto start = std::chrono::steady_clock::now();
+    Require(Failed(sceNetRecv(client, buffer, sizeof(buffer), 0), 35));
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40));
+    Require(sceNetSocketClose(accepted) == 0 && sceNetSocketClose(listener) == 0);
+    const int refused = sceNetSocket("connect-timeout-refused", 2, 1, 6);
+    Require(refused >= 0 && sceNetSetsockopt(refused, 0xffff, 0x1109, &timeout, sizeof(timeout)) == 0);
+    Require(Failed(sceNetConnect(refused, address.data(), address.size()), 61));
+    for (const int descriptor : {client, refused}) Require(sceNetSocketClose(descriptor) == 0);
+}
+
+static void CheckConnectTimeoutExpiry() {
+    const int listener = sceNetSocket("connect-expiry", 2, 1, 6);
+    Require(listener >= 0);
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(sceNetBind_nid_postfix(listener, address.data(), address.size()) == 0 && sceNetListen(listener, 0) == 0);
+    std::uint32_t size = address.size();
+    Require(sceNetGetsockname(listener, address.data(), &size) == 0);
+    const int timeout = 100000;
+    std::vector<int> queued;
+    int pending = -1;
+    auto waited = std::chrono::steady_clock::duration::zero();
+    while (pending < 0) {
+        Require(queued.size() < 64);
+        const int client = sceNetSocket("connect-expiry-client", 2, 1, 6);
+        Require(client >= 0 && sceNetSetsockopt(client, 0xffff, 0x1109, &timeout, sizeof(timeout)) == 0);
+        const auto start = std::chrono::steady_clock::now();
+        auto attempt = std::async(std::launch::async, [client, &address] {
+            return sceNetConnect(client, address.data(), address.size());
+        });
+        Require(attempt.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
+        int result = -1;
+        try {
+            result = attempt.get();
+        } catch (const std::runtime_error&) {
+        }
+        if (result == 0) {
+            queued.push_back(client);
+        } else {
+            waited = std::chrono::steady_clock::now() - start;
+            pending = client;
+        }
+    }
+    Require(!queued.empty() && waited >= std::chrono::milliseconds(80));
+    int value = -1;
+    std::uint32_t length = sizeof(value);
+    Require(sceNetGetsockopt(pending, 0xffff, 0x1200, &value, &length) == 0 && value == 0);
+    Require(sceNetGetsockopt(pending, 0xffff, 0x1007, &value, &length) == 0 && value == 0);
+#ifndef _WIN32
+    const int receiveTimeout = 50000;
+    Require(sceNetSetsockopt(pending, 0xffff, 0x1106, &receiveTimeout, sizeof(receiveTimeout)) == 0);
+    char buffer[8]{};
+    const auto start = std::chrono::steady_clock::now();
+    Require(Failed(sceNetRecv(pending, buffer, sizeof(buffer), 0), 35));
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40));
+#endif
+    Require(sceNetSocketClose(pending) == 0);
+    for (const int descriptor : queued) Require(sceNetSocketClose(descriptor) == 0);
+    Require(sceNetSocketClose(listener) == 0);
+}
+
 static void CheckMicrosecondTimeouts(int receiver) {
     const int receiveTimeout = 50000;
     const int sendTimeout = 70000;
@@ -2470,6 +2553,8 @@ int main() {
     Require(select_nid_postfix(1, stdio_readable, nullptr, nullptr, poll_now) == 0 && stdio_readable[0] == 0);
     CheckReceiveTimeout(udp_receiver, udp_sender, address);
     CheckStreamReceiveTimeout();
+    CheckConnectTimeout();
+    CheckConnectTimeoutExpiry();
     CheckMicrosecondTimeouts(udp_receiver);
     CheckMessages(udp_receiver, udp_sender, address);
     CheckOverlappingReceiveVectors(udp_receiver, udp_sender, address);
