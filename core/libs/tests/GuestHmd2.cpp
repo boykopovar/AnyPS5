@@ -66,8 +66,8 @@ void TestNamedCallsBeforeInitialize() {
     Require(sceHmd2GazeSetUserCalibrationData(nullptr) == Hmd2::ParameterNull, "gaze user calibration data before initialization");
     Require(sceHmd2GazeObjectSelectionInitialize(nullptr) == Hmd2::ParameterNull, "gaze object selection before initialization");
     Require(sceHmd2GazeObjectSelectionTerminate() == Hmd2::Error002C, "gaze object selection terminate before initialization");
-    Require(sceHmd2ReprojectionSetUserEventStart(nullptr, 0) == Hmd2::ReprojectionNotInitialized, "reprojection user event start before initialization");
-    Require(sceHmd2ReprojectionSetUserEventEnd(nullptr, 0) == Hmd2::ReprojectionNotInitialized, "reprojection user event end before initialization");
+    Require(sceHmd2ReprojectionSetUserEventStart(0, 0) == Hmd2::ReprojectionNotInitialized, "reprojection user event start before initialization");
+    Require(sceHmd2ReprojectionSetUserEventEnd(0, 0) == Hmd2::ReprojectionNotInitialized, "reprojection user event end before initialization");
     Require(sceHmd2ReprojectionClearUserEventStart() == Hmd2::ReprojectionNotInitialized, "reprojection user event start clear before initialization");
     Require(sceHmd2ReprojectionClearUserEventEnd() == Hmd2::ReprojectionNotInitialized, "reprojection user event end clear before initialization");
     Require(sceHmd2InternalTrackingOpen() == 0 && sceHmd2InternalTrackingClose() == 0, "tracking open and close before initialization");
