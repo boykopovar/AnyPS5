@@ -267,8 +267,8 @@ void branchAcrossSignedBoundary() {
     header.MemorySize = header.FileSize;
     Io::WriteU64(image, 24, 0x8000000000000000);
     const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
-    require(instructions.contains(0x8000000000000000), "Lost the entry above the signed boundary");
-    require(instructions.contains(0x7ffffffffffffff0), "Lost the branch target below the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x8000000000000000ull), "Lost the entry above the signed boundary");
+    require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
 }
 
 class FailingProgress final : public Domain::IProgress {

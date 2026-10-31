@@ -299,7 +299,7 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
         }
         if (header.Type != 1 || (header.Flags & 1) == 0) continue;
         std::uint64_t decodedEnd = 0;
-        for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
+        for (auto instruction = std::lower_bound(instructions.begin(), instructions.end(), header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
             const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
