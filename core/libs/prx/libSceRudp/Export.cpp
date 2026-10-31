@@ -582,4 +582,8 @@ int APS5_VABI sceRudpSetMaxSegmentSize(uint16_t mss) {
     return 0;
 }
 
+int APS5_VABI sceRudpGetContextBufferStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

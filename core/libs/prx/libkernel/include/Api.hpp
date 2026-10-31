@@ -261,6 +261,7 @@ int APS5_VABI mlockall_nid_postfix(int flags);
 int APS5_VABI munlockall_nid_postfix();
 int APS5_VABI msync_nid_postfix(void* address, std::size_t length, int flags);
 int APS5_VABI madvise_nid_postfix(void* address, std::size_t length, int advice);
+int APS5_VABI posix_madvise_nid_postfix(void* address, std::size_t length, int advice);
 int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char* vec);
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
 int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
@@ -388,6 +389,7 @@ int APS5_VABI sceKernelGetModuleList(KernelModule* handles, std::size_t count, s
 int APS5_VABI sceKernelGetModuleList2(KernelModule* handles, std::size_t count, std::size_t* actual);
 int APS5_VABI sceKernelGetModuleInfo(KernelModule handle, ModuleInfo* info);
 int APS5_VABI sceKernelGetModuleInfo2(KernelModule handle, ModuleInfo* info);
+KernelModule APS5_VABI sceKernelGetExecutableModuleHandle();
 std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void** address, std::size_t* size);
 std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(InternalSegmentInfo* result);
 int APS5_VABI pthread_attr_destroy_nid_postfix(PthreadAttr* attr);

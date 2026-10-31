@@ -191,6 +191,27 @@ class TimelineTests(unittest.TestCase):
                     self.assertTrue(loop.is_symlink())
                     self.assertFalse((root / "command").exists())
 
+    def test_excessively_nested_timelines_are_usage_errors(self):
+        depth = sys.getrecursionlimit() + 64
+        for _ in range(8):
+            try:
+                json.loads("[" * depth + "]" * depth)
+            except RecursionError:
+                break
+            depth *= 2
+        else:
+            self.fail("JSON decoder accepted every bounded nesting probe")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command"
+            timeline.write_text("[" * (depth + 128) + "]" * (depth + 128), encoding="utf-8")
+            result = self.run_cli(timeline, output)
+            self.assertEqual(result.returncode, 2)
+            self.assertTrue(result.stderr.startswith("pad_timeline: "), result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertNotIn("must contain version and events", result.stderr)
+            self.assertFalse(output.exists())
+
     def test_output_directory_validation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

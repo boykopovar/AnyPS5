@@ -25,6 +25,16 @@ static void Require(bool value, const char* message) {
     std::exit(1);
 }
 
+template<typename TAction>
+static void RequireInvalidArgument(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false, message);
+}
+
 template<typename TChar>
 using Prefix = int (APS5_VABI*)(const TChar**, TChar**);
 
@@ -152,6 +162,18 @@ static void Check(Prefix<TChar> function, unsigned payloadLimit = 256) {
 }
 
 template<typename TChar>
+static void CheckNull(Prefix<TChar> function) {
+    TChar sentinel{};
+    TChar* end = &sentinel;
+    RequireInvalidArgument([&] { function(nullptr, &end); }, "null cursor");
+    RequireInvalidArgument([&] { function(nullptr, nullptr); }, "null cursor without end pointer");
+    const TChar* input = nullptr;
+    RequireInvalidArgument([&] { function(&input, &end); }, "null input");
+    RequireInvalidArgument([&] { function(&input, nullptr); }, "null input without end pointer");
+    Require(input == nullptr && end == &sentinel, "null arguments leave the outputs unchanged");
+}
+
+template<typename TChar>
 static void CheckConcurrent(Prefix<TChar> function) {
     std::array<std::thread, 4> workers;
     for (auto& worker : workers) {
@@ -195,12 +217,14 @@ int main(int argc, char** argv) {
     if (wide) {
         const auto prefix = reinterpret_cast<Prefix<char16_t>>(function);
         Check(prefix);
+        CheckNull(prefix);
         CheckConcurrent(prefix);
     } else {
         const auto prefix = reinterpret_cast<Prefix<char>>(function);
         Check(prefix);
+        CheckNull(prefix);
         CheckConcurrent(prefix);
     }
-    std::printf("%s: prefix codes, pointer updates, input/output bounds and guarded reads passed\n", name.c_str());
+    std::printf("%s: prefix codes, pointer updates, input/output bounds, null arguments and guarded reads passed\n", name.c_str());
     return 0;
 }
