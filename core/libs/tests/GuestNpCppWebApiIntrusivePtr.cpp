@@ -390,7 +390,38 @@ static void TestUserProfileVectorAssign() {
 }
 
 static void TestUserProfileModelAndTransaction() {
-    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfileC1EPNS1_6Common10LibContextE() == 0);
+    std::uint8_t profile[0xd0];
+    std::memset(profile, 0xa5, sizeof(profile));
+    std::uint64_t context = 0;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfileC1EPNS1_6Common10LibContextE(profile, &context) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile13onlineIdIsSetEv(profile) == false);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile19personalDetailIsSetEv(profile) == false);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile25isOfficiallyVerifiedIsSetEv(profile) == false);
+    const bool verified = true;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfile23setIsOfficiallyVerifiedERKb(profile, &verified) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile25isOfficiallyVerifiedIsSetEv(profile));
+    unsigned char onlineId[0x14];
+    std::memset(onlineId, 0x61, sizeof(onlineId));
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfile11setOnlineIdERK13SceNpOnlineId(profile, onlineId) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile13onlineIdIsSetEv(profile));
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfileD1Ev(profile) == profile);
+
+    std::uint8_t presence[0x28];
+    std::memset(presence, 0xa5, sizeof(presence));
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresenceC1EPNS1_6Common10LibContextE(presence, &context) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence17onlineStatusIsSetEv(presence) == false);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence14inContextIsSetEv(presence) == false);
+    const std::uint64_t accountId = 0x1234;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence12setAccountIdERKm(presence, &accountId) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence12getAccountIdEv(presence) == 0x1234);
+    const bool inContext = true;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence12setInContextERKb(presence, &inContext) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence12getInContextEv(presence));
+    const std::uint32_t status = 2;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence15setOnlineStatusERKNS3_12OnlineStatusE(presence, &status) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence17onlineStatusIsSetEv(presence));
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence15getOnlineStatusEv(presence) == 2);
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresenceD1Ev(presence) == presence);
 
     std::uint64_t transaction[0x20];
     std::memset(transaction, 0xa5, sizeof(transaction));
