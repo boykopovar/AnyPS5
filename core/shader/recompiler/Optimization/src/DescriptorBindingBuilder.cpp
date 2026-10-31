@@ -313,6 +313,22 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
         if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffsetBase + index, unnormalized.samplers[index] ? 1u : 0u});
         if (SamplesBaseLevelIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::UnnormalizedBaseLevelBase + index, unnormalized.samplers[index] ? 1u : 0u});
+        if ((info.samplers[index].uses & SamplerUseGatherLod) != 0u && info.samplers[index].table == NoTable) {
+            const auto& words = snapshot.samplers.at(index).dwords;
+            const auto mipNone = ((words[2] >> 26u) & 3u) == 0u;
+            const auto state = (words[1] & 0xffffffu) | ((words[0] & 0x3fu) << 24u) | (mipNone ? 1u << 30u : 0u);
+            const auto bias = static_cast<float>(static_cast<std::int32_t>(((words[2] & 0x3fffu) ^ 0x2000u) - 0x2000u)) / 256.0f;
+            plan.specialization.push_back({PipelineSpecialization::GatherLodBase + index, state});
+            plan.specialization.push_back({PipelineSpecialization::GatherLodBiasBase + index, std::bit_cast<std::uint32_t>(bias)});
+        }
+    }
+    for (const auto& pair : info.sampledPairs) {
+        if ((info.samplers.at(pair.sampler).uses & SamplerUseGatherLod) == 0u || info.images.at(pair.image).table != NoTable) continue;
+        const auto& words = snapshot.images.at(pair.image).dwords;
+        const auto minLod = (words[1] >> 8u) & 0xfffu;
+        const auto base = ((words[3] >> 12u) & 0xfu) * 256u;
+        const PipelineSpecializationConstant constant{PipelineSpecialization::GatherImageMinLodBase + pair.image, minLod > base ? minLod - base : 0u};
+        if (std::ranges::find(plan.specialization, constant) == plan.specialization.end()) plan.specialization.push_back(constant);
     }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
