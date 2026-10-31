@@ -242,6 +242,32 @@ int main() {
             lebRejected = std::string(error.what()).find("overflowing LEB128 value") != std::string::npos;
         }
         Require(lebRejected);
-        std::cout << "26 unwind record cases passed\n";
+        std::vector<std::uint8_t> lsdaUdata8Bytes(0x400, 0);
+        Io::WriteU32(lsdaUdata8Bytes, 0x200, 25);
+        lsdaUdata8Bytes[0x208] = 1;
+        std::copy(std::begin(ciePrefix), std::end(ciePrefix), lsdaUdata8Bytes.begin() + 0x209);
+        lsdaUdata8Bytes[0x212] = 0;
+        Io::WriteU64(lsdaUdata8Bytes, 0x213, 0x1000);
+        lsdaUdata8Bytes[0x21B] = 0x44;
+        lsdaUdata8Bytes[0x21C] = 0;
+        Io::WriteU32(lsdaUdata8Bytes, 0x220, 33);
+        Io::WriteU32(lsdaUdata8Bytes, 0x224, 0x24);
+        Io::WriteU64(lsdaUdata8Bytes, 0x228, 0xFFFFFFFFFFFFF000ULL);
+        Io::WriteU64(lsdaUdata8Bytes, 0x230, 0x20);
+        lsdaUdata8Bytes[0x238] = 8;
+        Io::WriteU64(lsdaUdata8Bytes, 0x239, 0x1000);
+        lsdaUdata8Bytes[0x300] = 1;
+        lsdaUdata8Bytes[0x302] = 3;
+        Io::WriteU64(lsdaUdata8Bytes, 0x304, 0x200);
+        Io::WriteU32(lsdaUdata8Bytes, 0x30C, 1);
+        Io::WriteU64(lsdaUdata8Bytes, 0x310, 0xFFFFFFFFFFFFF000ULL);
+        Io::WriteU64(lsdaUdata8Bytes, 0x318, 0x220);
+        bool lsdaUdata8Rejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaUdata8Bytes, {lsdaLoad, lsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaUdata8Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(lsdaUdata8Rejected);
+        std::cout << "27 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
