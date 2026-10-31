@@ -1406,7 +1406,7 @@ int APS5_VABI dl_iterate_phdr_nid_postfix(int (*callback)(dl_phdr_info*, std::si
 [[noreturn]] void APS5_VABI _Exit_nid_postfix(int code);
 [[noreturn]] void APS5_VABI catchReturnFromMain_nid_postfix(int status);
 [[noreturn]] void APS5_VABI quick_exit_nid_postfix(int status);
-[[noreturn]] void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
+void APS5_VABI _ZSt14_Throw_C_errori_nid_postfix(int code);
 [[noreturn]] char* APS5_VABI fgetln_nid_postfix(FileStream*, std::size_t*);
 [[noreturn]] void APS5_VABI _Assert_nid_postfix(const char* message, const char* location);
 [[noreturn]] void APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(int code);
