@@ -58,6 +58,13 @@ std::uint32_t CreateInterpolantValueFlatDefault(std::uint32_t psWord, const Shad
     return ((psWord & 0x00700000u) == 0x00400000u) ? (value | 0x00000020u) : value;
 }
 
+std::uint32_t ApplyInterpolantDefaultValue0100(std::uint32_t value, std::uint32_t psWord) {
+    constexpr std::uint32_t encoded[4] = {0u, 2u, 1u, 3u};
+    value &= ~0x00000300u;
+    value |= encoded[(psWord >> 28u) & 0x3u] << 8u;
+    return value;
+}
+
 int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader* gs, const Shader* ps, CreateInterpolantValueFn createValue, bool fillIdentityTail) {
     if (regs == nullptr) {
         throw std::runtime_error(std::string(fn) + ": regs is null");
@@ -122,6 +129,37 @@ extern "C" {
 
 int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
     return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValue, true);
+}
+
+int APS5_VABI sceAgcUpdateInterpolantMapping_0100(ShaderRegister* regs, const Shader* vs, const Shader* ps) {
+    if (regs == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": regs is null");
+    }
+    if (ps == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": ps is null");
+    }
+    if (ps->num_input_semantics > InterpolantRegisterCount) {
+        throw std::runtime_error(std::string(__func__) + ": input semantic count exceeds 32");
+    }
+    if (ps->num_input_semantics == 0) {
+        return 0;
+    }
+    if (ps->input_semantics == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": ps->input_semantics is null but num_input_semantics != 0");
+    }
+    if (vs == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": vs is null");
+    }
+    if (vs->num_output_semantics != 0 && vs->output_semantics == nullptr) {
+        throw std::runtime_error(std::string(__func__) + ": vs->output_semantics is null but num_output_semantics != 0");
+    }
+    for (std::uint32_t i = 0; i < ps->num_input_semantics; ++i) {
+        const ShaderSemantic& psSemantic = ps->input_semantics[i];
+        const std::uint32_t psWord = ShaderSemanticWord(psSemantic);
+        const ShaderSemantic* vsSemantic = FindOutputSemantic(vs, psSemantic.semantic);
+        SetInterpolantRegister(regs, i, ApplyInterpolantDefaultValue0100(CreateInterpolantValue(psWord, vsSemantic), psWord));
+    }
+    return 0;
 }
 
 int APS5_VABI sceAgcCreateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
