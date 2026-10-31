@@ -2129,7 +2129,45 @@ void CheckAdoptLatestEpoch() {
     Require(keptOwn, "adopting the newest collect epoch moved a thread off its own");
 }
 
-int main() {
+void CheckGenerationWrap() {
+    constexpr std::uint64_t Wrap = std::uint64_t{1} << 32u;
+    constexpr std::size_t bytes = 192 * Block;
+    void* memory = AllocateWatched(bytes);
+    void* scratch = AllocateWatched(Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    const auto other = reinterpret_cast<std::uint64_t>(scratch);
+    std::memset(memory, 0x11, bytes);
+    std::memset(scratch, 0x11, Block);
+    BumpCollectEpoch();
+    Require(CollectWrites(base, bytes) != 0 && CollectWrites(other, Block) != 0, "the wrap fixture was not collected");
+    AdvanceTrackerGenerationForTest(Wrap - 4);
+    BumpCollectEpoch();
+    const auto before = CollectWritesUncached(base, bytes);
+    Require(before >= Wrap - 4 && before < Wrap, "the stamp before the crossing was not taken just below 2^32");
+    Require(UnchangedSince(base, bytes, before), "a range nothing wrote after its collect reports a change");
+    for (int store = 0; store < 8; ++store) MarkWritten(other, 4);
+    Require(TrackerGeneration() > Wrap, "the tracker generation did not cross 2^32");
+    const auto middle = base + bytes / 2;
+    const auto stored = MarkWritten(middle, 4);
+    Require(stored > Wrap && stored > before, "a driver store after 2^32 returned a stamp not newer than one taken before");
+    Require(!UnchangedSince(base, bytes, before), "a driver store after 2^32 was reported unchanged over whole coarse runs");
+    Require(!UnchangedSince(middle, Block, before), "a driver store after 2^32 was reported unchanged in its block");
+    Require(WrittenSince(base, bytes, before) && StoredOver(middle, 4, before), "a driver store after 2^32 was not seen as written since the earlier stamp");
+    Require(NewestStamp(middle, Block) > before, "the newest stamp after 2^32 is not newer than the earlier stamp");
+    Require(!StoredAllSince_nid_no_patch(middle, 4, stored) && StoredAllSince_nid_no_patch(middle, 4, before), "the driver piece of a store after 2^32 lost its generation");
+    Require(UnchangedSince(base, bytes / 2, before) && UnchangedSince(base, bytes, stored), "a store after 2^32 changed other blocks or a later stamp");
+    static_cast<volatile std::uint8_t*>(memory)[bytes - 1] = 0x22;
+    const auto last = base + bytes - Block;
+    Require(CollectWritesUncached(last, Block) > Wrap, "a collect after 2^32 returned a wrapped generation");
+    Require(!UnchangedSince(last, Block, before) && !UnchangedSinceCollected(last, Block, before), "a CPU store after 2^32 was reported unchanged");
+    std::array<std::uint64_t, 3> generations{before, before, before};
+    std::array<std::uint8_t, 3> changed{};
+    std::array<std::uint8_t, 3> cpu{};
+    Require(ChangedBlocks(base + bytes - 3 * Block, 3 * Block, generations, changed, cpu), "the changed-block query over the wrap fixture failed");
+    Require(changed[0] == BlockUnchanged && changed[2] == BlockWritten && cpu[0] == 0 && cpu[2] == 1, "per-block changes after 2^32 were misreported");
+}
+
+int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
         if (std::wstring_view(GetCommandLineW()).ends_with(MetadataCommitMode)) {
@@ -2139,6 +2177,11 @@ int main() {
         if (!WriteWatched()) {
             std::cout << "no write watching: skipped\n";
             return 77;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--generation-wrap") {
+            CheckGenerationWrap();
+            std::cout << "generation wrap test passed\n";
+            return 0;
         }
 #ifdef _WIN32
         if (std::wstring_view(GetCommandLineW()).ends_with(HostHoleMode)) {
