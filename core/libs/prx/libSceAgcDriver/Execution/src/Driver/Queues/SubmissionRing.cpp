@@ -290,7 +290,7 @@ void DumpSubmissionRings(std::string_view reason) {
     require(dump(reason, false), "cannot write the PM4 ring dump to stderr");
 }
 
-void StallWatch::Check(const char* waiter, std::uint64_t value) {
+void StallWatch::Check(const char* waiter, std::uint64_t value, std::unique_lock<std::mutex>* held) {
     if (finished) return;
     const auto period = StallWatchdogPeriod();
     if (period.count() == 0) return;
@@ -313,10 +313,12 @@ void StallWatch::Check(const char* waiter, std::uint64_t value) {
     char message[320];
     std::snprintf(message, sizeof(message), "This title has not made progress for %lld seconds (queue 0x%x %s 0x%llx).\n\nWait keeps it running. Quit stops it; the submission rings are on stderr.", static_cast<long long>(period.count()), queue, waiter, static_cast<unsigned long long>(value));
     if (stallPromptOpen.exchange(true)) return;
+    if (held != nullptr) held->unlock();
     const auto choice = stallPresenter.load()(message);
     stallPromptOpen.store(false);
     switch (choice) {
         case StallChoice::Wait:
+            if (held != nullptr) held->lock();
             if (++prompts == MaxStallPrompts) finished = true;
             since = stallClock.load()();
             return;
@@ -325,6 +327,7 @@ void StallWatch::Check(const char* waiter, std::uint64_t value) {
             std::fflush(stderr);
             LibcTerminate_nid_no_patch(StallQuitExitCode);
         case StallChoice::Unavailable:
+            if (held != nullptr) held->lock();
             std::fputs("[stall prompt] no message box is available; the rings are printed only\n", stderr);
             finished = true;
             return;
