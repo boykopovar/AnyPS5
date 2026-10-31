@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include <algorithm>
 #include <climits>
 #include <cmath>
 #include <cstdarg>
@@ -9,7 +10,42 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+#include <iterator>
 #include <string>
+#include <utility>
+#include <vector>
+
+using ListedFormatter = int (APS5_VABI *)(char16_t*, std::size_t, const char16_t*, VaList*);
+
+static int APS5_VABI FormatList(ListedFormatter formatter, char16_t* buffer, std::size_t size, const char16_t* format, ...) {
+#ifdef _WIN32
+    __builtin_sysv_va_list args;
+    __builtin_sysv_va_start(args, format);
+#else
+    std::va_list args;
+    va_start(args, format);
+#endif
+    const int result = formatter(buffer, size, format, reinterpret_cast<VaList*>(args));
+#ifdef _WIN32
+    __builtin_sysv_va_end(args);
+#else
+    va_end(args);
+#endif
+    return result;
+}
+
+static std::vector<std::pair<std::string, int>> g_violations;
+
+static void APS5_VABI RecordViolation(const char* message, void* pointer, int error) {
+    if (pointer != nullptr) std::abort();
+    g_violations.emplace_back(message, error);
+}
+
+static bool Reported(std::vector<std::pair<std::string, int>> expected) {
+    const bool matches = g_violations == expected;
+    g_violations.clear();
+    return matches;
+}
 
 static int APS5_VABI Format(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
 #ifdef _WIN32
@@ -157,35 +193,81 @@ static void CheckGroupingFlag() {
 }
 
 static void CheckSecureWideBoundary() {
-    constexpr std::size_t wideRsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
+    constexpr std::size_t rsizeMax = (std::size_t{1} << 61) - 1;
     char16_t buffer[4];
-    for (auto& unit : buffer) unit = u'x';
+    const auto reset = [&] {
+        buffer[0] = u'x';
+        buffer[1] = u'y';
+        g_violations.clear();
+    };
 
-    buffer[0] = u'x';
-    buffer[1] = u'y';
-    Require(swprintf_s_nid_postfix(buffer, wideRsizeMax, u"%n") < 0 && buffer[0] == 0, "swprintf_s accepted-boundary failure clears");
+    reset();
+    Require(swprintf_s_nid_postfix(buffer, rsizeMax, u"%n") == 0 && buffer[0] == 0, "swprintf_s accepted-boundary failure clears");
     Require(buffer[1] == u'y', "swprintf_s does not clear beyond the first unit");
-
-    buffer[0] = u'x';
-    buffer[1] = u'y';
-    Require(swprintf_s_nid_postfix(buffer, wideRsizeMax + 1, u"%n") < 0 && buffer[0] == u'x' && buffer[1] == u'y',
+    reset();
+    Require(swprintf_s_nid_postfix(buffer, rsizeMax + 1, u"%n") == 0 && buffer[0] == u'x' && buffer[1] == u'y',
         "swprintf_s oversized size leaves the buffer untouched");
 
-    buffer[0] = u'x';
-    buffer[1] = u'y';
-    Require(vswprintf_s_nid_postfix(buffer, wideRsizeMax, u"%n", nullptr) < 0 && buffer[0] == 0, "vswprintf_s accepted-boundary failure clears");
-    buffer[0] = u'x';
-    buffer[1] = u'y';
-    Require(vswprintf_s_nid_postfix(buffer, wideRsizeMax + 1, u"%n", nullptr) < 0 && buffer[0] == u'x' && buffer[1] == u'y',
+    reset();
+    Require(vswprintf_s_nid_postfix(buffer, rsizeMax, u"%n", nullptr) < 0 && buffer[0] == 0, "vswprintf_s accepted-boundary failure clears");
+    reset();
+    Require(vswprintf_s_nid_postfix(buffer, rsizeMax + 1, u"%n", nullptr) == 0 && buffer[0] == u'x' && buffer[1] == u'y',
         "vswprintf_s oversized size leaves the buffer untouched");
 
-    buffer[0] = u'x';
-    buffer[1] = u'y';
-    Require(vsnwprintf_s_nid_postfix(buffer, wideRsizeMax, u"%n", nullptr) < 0 && buffer[0] == 0, "vsnwprintf_s accepted-boundary failure clears");
-    buffer[0] = u'x';
-    buffer[1] = u'y';
-    Require(vsnwprintf_s_nid_postfix(buffer, wideRsizeMax + 1, u"%n", nullptr) < 0 && buffer[0] == u'x' && buffer[1] == u'y',
+    reset();
+    Require(vsnwprintf_s_nid_postfix(buffer, rsizeMax, u"%n", nullptr) < 0 && buffer[0] == 0, "vsnwprintf_s accepted-boundary failure clears");
+    reset();
+    Require(vsnwprintf_s_nid_postfix(buffer, rsizeMax + 1, u"%n", nullptr) < 0 && buffer[0] == u'x' && buffer[1] == u'y',
         "vsnwprintf_s oversized size leaves the buffer untouched");
+    g_violations.clear();
+}
+
+static void CheckSecureWideConstraints() {
+    constexpr std::size_t rsizeMax = (std::size_t{1} << 61) - 1;
+    struct Function {
+        const char* name;
+        bool terminated;
+        bool listed;
+        ListedFormatter formatter;
+    };
+    const Function functions[] = {{"swprintf_s", true, false, nullptr}, {"snwprintf_s", false, false, nullptr},
+        {"vswprintf_s", true, true, vswprintf_s_nid_postfix}, {"vsnwprintf_s", false, true, vsnwprintf_s_nid_postfix}};
+    char16_t buffer[16];
+    const auto holds = [&](const std::u16string& expected) { return std::u16string(buffer, expected.size()) == expected; };
+    for (const auto& function : functions) {
+        const std::string name = function.name;
+        const auto print = [&](char16_t* destination, std::size_t size, const char16_t* format, auto... args) {
+            if (destination == buffer) std::fill(std::begin(buffer), std::end(buffer), u'~');
+            if (function.listed) return FormatList(function.formatter, destination, size, format, args...);
+            return function.terminated ? swprintf_s_nid_postfix(destination, size, format, args...) : snwprintf_s_nid_postfix(destination, size, format, args...);
+        };
+        const int violation = function.terminated ? 0 : -1;
+        const int conversion = function.terminated ? 0 : -23;
+        Require(print(buffer, 16, u"ab%d", 7) == 3 && holds(std::u16string(u"ab7\0~", 5)) && Reported({}), "fits");
+        Require(print(buffer, rsizeMax, u"a") == 1 && holds(std::u16string(u"a\0~", 3)) && Reported({}), "largest size");
+        if (function.terminated) {
+            Require(print(buffer, 3, u"ab%d", 7) == 0 && holds(std::u16string(u"\0b~", 3)) && Reported({{name + ": buffer overflow", 34}}), "overflow");
+            Require(print(buffer, 1, u"ab%d", 7) == 0 && holds(std::u16string(u"\0~", 2)) && Reported({{name + ": buffer overflow", 34}}), "size 1");
+        } else {
+            Require(print(buffer, 3, u"ab%d", 7) == 3 && holds(std::u16string(u"ab\0~", 4)) && Reported({}), "truncated");
+        }
+        for (const std::size_t size : {std::size_t{0}, rsizeMax + 1, SIZE_MAX}) {
+            Require(print(buffer, size, u"ab%d", 7) == violation && holds(u"~") && Reported({{name + ": bad argument", 22}}), "bad size");
+        }
+        Require(print(nullptr, 16, u"ab%d", 7) == violation && Reported({{name + ": bad argument", 22}}), "null buffer");
+        Require(print(buffer, 16, nullptr) == violation && holds(std::u16string(u"\0~", 2)) && Reported({{name + ": bad format argument", 22}}), "null format");
+        int written = -7;
+        Require(print(buffer, 16, u"ab%n", &written) == conversion && holds(std::u16string(u"\0b~", 3)) && written == -7 &&
+            Reported({{"wprintf_s: %n disallowed", 22}}), "%n");
+        Require(print(buffer, 16, u"a%s", static_cast<const char*>(nullptr)) == conversion && holds(std::u16string(u"\0~", 2)) &&
+            Reported({{"wprintf_s: bad %s argument", 22}}), "null %s");
+        Require(print(buffer, 16, u"a%ls", static_cast<const char16_t*>(nullptr)) == conversion && holds(std::u16string(u"\0~", 2)) &&
+            Reported({{"wprintf_s: bad %ls argument", 22}}), "null %ls");
+        const bool past = print(buffer, 2, u"abc%n", &written) == conversion && holds(std::u16string(u"\0~", 2));
+        Require(past && !g_violations.empty() && g_violations.back() == (function.terminated ? std::make_pair(name + ": buffer overflow", 34)
+            : std::make_pair(std::string("wprintf_s: %n disallowed"), 22)) && g_violations.size() == (function.terminated ? 2u : 1u), "%n past the end");
+        g_violations.clear();
+    }
 }
 
 static void CheckFloat() {
@@ -335,6 +417,7 @@ static void CheckNanSign() {
 }
 
 int main() {
+    set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&RecordViolation));
     CheckAlternateOctalZero();
     CheckBounded();
     CheckNanSign();
@@ -344,6 +427,7 @@ int main() {
     CheckSwprintf();
     CheckFloat();
     CheckSecureWideBoundary();
+    CheckSecureWideConstraints();
     CheckWcsftime();
     Check(u"%.2s", "\xc3\xa9\xc3\xa8", u"\u00e9\u00e8");
     Check(u"%.1s", "\xc3\xa9\xc3\xa8", u"\u00e9");
