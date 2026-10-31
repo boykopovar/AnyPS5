@@ -260,8 +260,34 @@ void CheckUnwindInfo() {
 
 }
 
+void CheckAcceptedIdSet() {
+    constexpr std::size_t kAcceptedCount = 141;
+    constexpr std::uint16_t kAcceptedWithoutName[] = {
+        0x0111, 0x0117, 0x011c, 0x011d, 0x011e, 0x011f, 0x0121, 0x0122, 0x0123, 0x0124, 0x0129,
+        0x012c, 0x012d, 0x012e, 0x0133, 0x0134, 0x0136, 0x013a, 0x013b, 0x013c, 0x013d,
+    };
+    std::size_t accepted = 0;
+    for (std::uint32_t id = 0; id <= 0xffff; ++id) {
+        const std::uint16_t value = static_cast<std::uint16_t>(id);
+        if (sceSysmoduleIsLoaded(value) != kInvalidValue) {
+            ++accepted;
+            continue;
+        }
+        Require(sceSysmoduleLoadModule(value) == kInvalidValue);
+        Require(sceSysmoduleUnloadModule(value) == kInvalidValue);
+    }
+    Require(accepted == kAcceptedCount);
+    for (const std::uint16_t id : kAcceptedWithoutName) {
+        Require(kModuleTable.find(id) == kModuleTable.end());
+        Require(sceSysmoduleIsLoaded(id) == 0);
+        Require(sceSysmoduleLoadModule(id) == 0);
+        Require(sceSysmoduleUnloadModule(id) == 0);
+    }
+}
+
 int main() {
     CheckUnknownIds();
+    CheckAcceptedIdSet();
     Require(sceSysmoduleIsLoaded(0) == kInvalidValue);
     Require(sceSysmoduleLoadModule(0) == kInvalidValue);
     Require(sceSysmoduleUnloadModule(0) == kInvalidValue);
