@@ -37,6 +37,7 @@ RULES = {
     "env-reference": ("error", "docs/dev/ENVIRONMENT.md", "Every APS5_* or ANYPS5_* name a pull request adds to the code has a row in docs/dev/ENVIRONMENT.md, a row whose name the pull request stops reading is removed, and a row the pull request removes is no longer read"),
     "observed-manifest": ("error", "docs/dev/PROGRESS.md#observed-imports", "A file in docs/dev/observed is <library>.txt for a library of core/libs/prx, with one NID per line, sorted and without repeats; the comment after a NID is its provenance tag (audit: <tool> <date>, loader or manual: <reason>)"),
     "inventory-manifest": ("error", "docs/dev/PROGRESS.md#observed-imports", "A file in docs/dev/inventory is <library>.txt for a library of core/libs/prx, with one '<NID> <source>' line per NID, sorted and without repeats"),
+    "observed-missing": ("error", "docs/dev/PROGRESS.md#observed-imports", "Every library of core/libs/prx has a manifest in docs/dev/observed; a new library without evidence gets an empty one: python3 tools/observed_imports.py classify <library>"),
     "observed-untagged": ("warning", "docs/dev/PROGRESS.md#observed-imports", "A NID line added to docs/dev/observed has no provenance tag: end it with # audit: <tool> <date>, # loader or # manual: <reason>"),
     "debt-length": ("warning", "CONTRIBUTING.md#documentation", "Technical debt entry over 1000 characters: state the gap first (what differs from the console, what is unverified, what throws) and keep only the behaviour it needs"),
 }
@@ -362,6 +363,13 @@ class Check:
             for number, entry in progress.manifest_untagged(text):
                 if number in added:
                     self.report("observed-untagged", path, number, entry)
+
+    def observed_coverage(self):
+        added = {PurePosixPath(path).parts[3] for path, status in self.status.items()
+                 if status in ("A", "R") and path.startswith("core/libs/prx/") and len(PurePosixPath(path).parts) > 4}
+        for name in sorted(added):
+            if f"{OBSERVED_DIR}{name}.txt" not in self.tree:
+                self.report("observed-missing", f"core/libs/prx/{name}", 0, f"{name} has no docs/dev/observed/{name}.txt")
 
     def inventory_manifests(self):
         for path, status in sorted(self.status.items()):
@@ -871,6 +879,7 @@ if __name__ == "__main__":
     check.docs()
     check.debt_entries()
     check.observed_manifests()
+    check.observed_coverage()
     check.inventory_manifests()
     check.workflows()
     check.commits()
