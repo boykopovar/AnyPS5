@@ -321,6 +321,7 @@ public:
     void AllowDeviceStaging() { stagingAllowed = true; }
     void DisallowAddressStaging() { addressStaging = false; }
     void AllowAdjustedRegions() { adjustedRegions = true; }
+    void AllowAddressStores() { addressStores = true; }
     // Records the copy-in of every staged region anew for another use of this upload (a resource
     // cache hit, from ShaderResources::Revalidate, under GuestMemory::GpuMutex, once the imports
     // were confirmed unchanged): the previous use's copy-back left the shadow behind, and the next
@@ -512,11 +513,13 @@ private:
     // Records the import-to-buffer copies of the given gpuCopy regions into the open batch, with
     // the barriers that order them after earlier recorded writes and before the shaders reading them.
     void recordGpuCopies(std::span<Region* const> copies, bool addressable);
+    void addAddressStoreSpans();
     void takeHeapReferences();
     Context context;
     bool stagingAllowed = false;
     bool addressStaging = true;
     bool adjustedRegions = false;
+    bool addressStores = false;
     GuestAllocations::Lease lease;
     // The cached address space this build maps through (its lease pins the ranges); `regions` then
     // holds only the regions outside it (V#s, snapshots, ranges copied per build).

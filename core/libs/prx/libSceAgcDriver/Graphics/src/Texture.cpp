@@ -1509,6 +1509,7 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
         layerGeneration.assign(trackedLayers, 0);
         layerPending.assign(trackedLayers, false);
         layerOriginal.assign(trackedLayers, true);
+        layerWrittenSinceFill.assign(trackedLayers, false);
         savedTicket.assign(trackedLayers, 0);
         sliceLinearBytes = geometry.sliceLinearBytes;
         const auto linearBytes = sliceLinearBytes * arrayLayers;
@@ -2442,7 +2443,8 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // clear code make every result dead on hardware too. Without a generation (no tracking) a
     // unit's stamps say nothing, so it is stored.
     const auto droppable = [&](std::uint32_t unit) {
-        if (keysChanged && IsDccClear(keys)) return true;
+        if (keysChanged && IsDccClear(keys) && (!IsDccClear(filledKeys) || filledKeys != keys || !HasWritesSinceFill(unit))) return true;
+        if (!blockUnits) return false;
         if (compared) return stampedBlocks.at(unit) == GuestMemory::BlockWritten;
         if (!tracked || layerGeneration[unit] == 0 || unit >= stampedBlocks.size() || stampedBlocks[unit] != GuestMemory::BlockWritten) return false;
         const auto begin = layerBegin(unit);
@@ -2478,7 +2480,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         }
         if (changed[layer]) {
             pendingResults = true;
-            if (blockUnits && droppable(layer)) {
+            if (droppable(layer)) {
                 CaptureTrace::Log("drop-unit image=%llx unit=%u generation=%llu stamped=%d keys=%d", static_cast<unsigned long long>(descriptor.baseAddress), layer, static_cast<unsigned long long>(layerGeneration[layer]), layer < stampedBlocks.size() && stampedBlocks[layer] != 0, static_cast<int>(keys));
                 layerPending[layer] = false;
                 dropped = true;
@@ -3851,7 +3853,7 @@ void StorageTexture::MarkDirty() {
 }
 
 void StorageTexture::MarkSliceDirty(std::uint32_t slice, std::uint32_t count) {
-    if (geometry.thick || geometry.imageLayers <= 1 || count == 0 || slice >= geometry.imageLayers || count > geometry.imageLayers - slice || geometry.layerBytes == 0 || trackedLayerBytes == 0 || descriptor.dccAddress != 0) {
+    if (geometry.thick || geometry.imageLayers <= 1 || count == 0 || slice >= geometry.imageLayers || count > geometry.imageLayers - slice || geometry.layerBytes == 0 || trackedLayerBytes == 0) {
         MarkDirty();
         return;
     }
@@ -3861,6 +3863,11 @@ void StorageTexture::MarkSliceDirty(std::uint32_t slice, std::uint32_t count) {
     if (first >= last) {
         MarkDirty();
         return;
+    }
+    if (descriptor.dccAddress != 0 && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle) && !IsDccClear(filledKeys)) {
+        traceKeyStore("first write", descriptor, guestBytes);
+        MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+        uploadedKeys = DccKeys::Uncompressed;
     }
     markLayersPending(first, last - first);
 }
@@ -3921,6 +3928,10 @@ void StorageTexture::noteLayersBehind(std::uint32_t firstLayer, std::uint32_t la
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
+    if (layerWrittenSinceFill.size() != trackedLayers) layerWrittenSinceFill.assign(trackedLayers, false);
+    for (std::uint32_t layer = first; layer < first + count && layer < layerWrittenSinceFill.size(); ++layer) {
+        layerWrittenSinceFill[layer] = true;
+    }
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
     std::vector<bool> unsaved;
     bool anyUnsaved = false;
@@ -5305,6 +5316,8 @@ std::size_t StorageTexture::NoteKeysFill(std::uint64_t address, std::size_t byte
     for (auto* texture : live.textures) {
         if (!texture->keysFillMatches(address, bytes, overlapped)) continue;
         texture->filledKeys = keys;
+        texture->writesAtFill = texture->writes;
+        texture->layerWrittenSinceFill.assign(texture->trackedLayers, false);
         ++covered;
         if (traceKeys && IsDccClear(keys)) std::fprintf(stderr, "[dcc-keys] %s key fill over 0x%llx+0x%llx (uploaded %s, dirty %d)\n", DccKeysName(keys), static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), DccKeysName(texture->uploadedKeys), texture->dirty ? 1 : 0);
         if (refillDisabled || !IsDccClear(keys) || texture->uploadedKeys != keys) continue;
@@ -5691,9 +5704,14 @@ void StorageTexture::MarkWholeWritten() {
 }
 
 void StorageTexture::MarkUnitsWritten(const std::vector<bool>& units) {
-    if (!blockUnits || descriptor.dccAddress != 0 || units.size() != trackedLayers || std::all_of(units.begin(), units.end(), [](bool unit) { return unit; })) {
+    if (!blockUnits || units.size() != trackedLayers || std::all_of(units.begin(), units.end(), [](bool unit) { return unit; })) {
         MarkWholeWritten();
         return;
+    }
+    if (descriptor.dccAddress != 0 && (IsDccClear(uploadedKeys) || uploadedKeys == DccKeys::ClearSingle) && !IsDccClear(filledKeys)) {
+        traceKeyStore("first write", descriptor, guestBytes);
+        MarkDccUncompressed(context, descriptor.dccAddress, guestBytes, DccKeyCount(descriptor, guestBytes));
+        uploadedKeys = DccKeys::Uncompressed;
     }
     const auto runs = unitRuns(units);
     if (runs.empty()) return;

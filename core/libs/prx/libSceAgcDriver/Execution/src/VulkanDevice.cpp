@@ -345,7 +345,19 @@ struct ComputePipelineKey {
     ShaderRecompiler::PipelineIdentity identity;
     bool pushConstants = false;
     auto operator<=>(const ComputePipelineKey&) const = default;
-    static ComputePipelineKey Of(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) { return {shader.Identity(), pushConstants}; }
+    static ComputePipelineKey Of(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) {
+        auto identity = shader.Identity();
+        if (identity.Empty() && !shader.spirv.empty()) {
+            std::uint64_t low = 0xcbf29ce484222325ull;
+            std::uint64_t high = 0x100000001b3ull;
+            for (const auto word : shader.spirv) {
+                low = (low ^ word) * 0x100000001b3ull;
+                high = (high ^ (static_cast<std::uint64_t>(word) * 0x9e3779b97f4a7c15ull)) * 0xc2b2ae3d27d4eb4full;
+            }
+            identity = {low, high};
+        }
+        return {identity, pushConstants};
+    }
 };
 
 constexpr std::uint64_t WorkgroupMemoryGranule = 1u << 20u;
@@ -3388,6 +3400,9 @@ std::shared_ptr<Graphics::StorageTexture> PresentableResident(const Graphics::Co
     pending = resident != nullptr;
     convert = false;
     layer = 0;
+    if (resident == nullptr) {
+        resident = Graphics::StorageTexture::FindLive(buffer.address, DisplayBufferSize(buffer));
+    }
     if (resident == nullptr) return resident;
     const auto path = ResidentPresentable(context, *resident, buffer, filter, layer);
     if (path == ResidentPresent::None) resident.reset();
@@ -3402,14 +3417,7 @@ Graphics::DccKeys ResidentKeys(const Graphics::StorageTexture& resident) {
 }
 
 bool ResidentServesDisplay(const Graphics::StorageTexture& resident, const DisplayBuffer& buffer) {
-    const auto keys = DisplayBufferKeys(buffer);
-    if (keys == Graphics::DccKeys::ClearRegister) {
-        char message[320];
-        std::snprintf(message, sizeof(message), "VideoOut: display buffer 0x%llx reads register-clear DCC keys at 0x%llx over the pending image 0x%llx (DCC 0x%llx, filled keys %s): whether its results precede the clear is not modeled", static_cast<unsigned long long>(buffer.address), static_cast<unsigned long long>(buffer.dccAddress), static_cast<unsigned long long>(resident.Descriptor().baseAddress), static_cast<unsigned long long>(resident.Descriptor().dccAddress), Graphics::DccKeysName(resident.FilledKeys()));
-        throw std::runtime_error(message);
-    }
-    if (Graphics::IsDccClear(resident.FilledKeys()) && resident.FilledKeys() == keys) return false;
-    return Graphics::KeysServeSurface(resident.Descriptor().dccAddress, resident.UploadedKeys(), resident.FilledKeys(), buffer.dccAddress, [&] { return ResidentKeys(resident); }, [&] { return keys; });
+    return ResidentServesDisplay(resident.Descriptor().baseAddress, resident.Descriptor().dccAddress, resident.UploadedKeys(), resident.FilledKeys(), resident.HasWritesSinceFill(), [&] { return ResidentKeys(resident); }, buffer);
 }
 
 bool ResidentKeysMoved(const Graphics::StorageTexture& resident) {
@@ -3579,13 +3587,13 @@ bool VulkanDevice::PresentDisplayBuffer(const DisplayBuffer& buffer, const Displ
             resident.reset();
             convert = false;
         }
-        if (!pending) {
-            ++notPending;
-        } else if (resident == nullptr) {
-            ++unsuitable;
-        } else {
+        if (resident != nullptr) {
             if (RefreshPresented(*resident, buffer, layer)) ++refreshedPresents;
             ++residentPresents;
+        } else if (pending) {
+            ++unsuitable;
+        } else {
+            ++notPending;
         }
     }
     const auto cleared = buffer.dccAddress != 0 && resident == nullptr ? CompressedClearPixel(buffer, bytes) : std::nullopt;
@@ -3966,11 +3974,11 @@ std::size_t VulkanDevice::FlipInFlight() {
     static const std::size_t count = [] {
         if (std::getenv("APS5_SYNC_FLIP") != nullptr) return std::size_t{0};
         const char* value = std::getenv("APS5_FLIP_INFLIGHT");
-        if (value == nullptr) return std::size_t{1};
+        if (value == nullptr) return std::size_t{2};
         const long parsed = std::strtol(value, nullptr, 10);
         if (parsed >= 0 && parsed <= 2) return static_cast<std::size_t>(parsed);
-        std::fprintf(stderr, "[present] APS5_FLIP_INFLIGHT=%s refused (0, 1 or 2 presentations may trail on the GPU); using 1\n", value);
-        return std::size_t{1};
+        std::fprintf(stderr, "[present] APS5_FLIP_INFLIGHT=%s refused (0, 1 or 2 presentations may trail on the GPU); using 2\n", value);
+        return std::size_t{2};
     }();
     return count;
 }

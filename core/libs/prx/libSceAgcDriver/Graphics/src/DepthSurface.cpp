@@ -105,7 +105,7 @@ struct DepthSamplingState {
 };
 
 bool htileProvesClear(std::uint32_t word, bool depthOnly, float clearDepth) {
-    if ((word & 15u) == 15u) return false;
+    if ((word & 15u) == 15u && word != 0xffffffffu) return false;
     const auto depth = depthOnly ? word : word & 0xfffff00fu;
     if (depth == 0u) return clearDepth == 0.0f;
     if (depth == (depthOnly ? 0xfffffff0u : 0xfffc0000u)) return clearDepth == 1.0f;
@@ -119,12 +119,13 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
         return state;
     };
     if (target.samples != 2u && target.samples != 4u && target.samples != 8u) return refuse("unsupported native depth sample count");
-    if (target.format != VK_FORMAT_D16_UNORM && target.format != VK_FORMAT_D32_SFLOAT) return refuse("native multisample stencil or depth format import is not implemented");
+    if (target.format != VK_FORMAT_D16_UNORM && target.format != VK_FORMAT_D32_SFLOAT && target.format != VK_FORMAT_D32_SFLOAT_S8_UINT && target.format != VK_FORMAT_D24_UNORM_S8_UINT) return refuse("native multisample stencil or depth format import is not implemented");
     if (target.depthSwizzle != 24u || target.firstSlice != 0u || target.lastSlice != 0u) return refuse("native multisample depth arrays or non-Z_X layout are not implemented");
     if ((target.pipeBankXor & ~0xcf00u) != 0u) return refuse("unsupported native multisample depth XOR");
     if (target.address == 0u || (target.address & 65535u) != 0u) return refuse("native multisample depth base is not aligned");
-    if (target.stencilAddress != 0u || target.htileStencil) return refuse("native multisample stencil import is not implemented");
-    if (target.htileAddress == 0u || (target.htileAddress & 255u) != 0u || !target.htilePipeAligned || target.htileVrsEncoding != 0u) return refuse("native multisample depth initial import requires pipe-aligned HTILE without VRS");
+    if ((target.stencilAddress != 0u && !target.htileDepthOnly) || target.htileStencil) return refuse("native multisample stencil import is not implemented");
+    if (target.htileAddress == 0u || (target.htileAddress & 255u) != 0u || (!target.htilePipeAligned && !target.htileDepthOnly)) return refuse("native multisample depth initial import requires pipe-aligned or depth-only HTILE");
+    if (target.htileVrsEncoding != 0u && !target.htileDepthOnly) return refuse("native multisample depth initial import requires HTILE without VRS");
     if (target.clearDepth != 0.0f && target.clearDepth != 1.0f) return refuse("native multisample depth initial clear value is not implemented");
     state.initial = {{{target.address, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(target.extent, target.format == VK_FORMAT_D16_UNORM ? 2u : 4u, target.samples)), 0u}, {target.htileAddress, static_cast<std::size_t>(HtileMetadataBytes(target.extent)), 0u}}};
     for (const auto& range : state.initial) {
@@ -144,6 +145,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     }
     std::vector<std::uint32_t> metadata(htile.bytes / sizeof(std::uint32_t));
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(metadata)), 256u);
+    if (!target.htilePipeAligned && std::adjacent_find(metadata.begin(), metadata.end(), [](std::uint32_t first, std::uint32_t second) { return first != second; }) != metadata.end()) return refuse("native multisample depth HTILE that is not pipe-aligned holds more than one word");
     for (const auto word : metadata) {
         if (!htileProvesClear(word, target.htileDepthOnly, target.clearDepth)) return refuse("native multisample depth initial HTILE does not prove its clear value");
     }
@@ -384,7 +386,10 @@ public:
             clearGeneration = 0u;
             pendingClear = 0u;
         }
-        Require(GuestMemory::UnchangedSinceAll(sampling.initial), "guest writes over native multisample depth are not implemented");
+        for (std::size_t index = 0u; index < sampling.initial.size(); ++index) {
+            if (index == 1u && target.htileDepthOnly) continue;
+            Require(GuestMemory::UnchangedSince(sampling.initial[index].address, sampling.initial[index].bytes, sampling.initial[index].generation), "guest writes over native multisample depth are not implemented");
+        }
     }
 
     void CheckResource(const GuestTextureResource& resource) const {

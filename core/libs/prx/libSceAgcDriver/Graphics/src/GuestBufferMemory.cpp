@@ -2625,6 +2625,17 @@ void reserveHeapBytes(std::uint64_t address, std::uint64_t bytes, std::uint64_t 
     for (int attempt = 0;; ++attempt) {
         {
             std::lock_guard lock(state.mutex);
+            if (attempt != 0) {
+                for (auto it = state.entries.begin(); it != state.entries.end();) {
+                    if (it->second.use_count() <= 1) {
+                        if (it->second->heap) unlistMirror(state, *it->second);
+                        it = state.entries.erase(it);
+                        ++state.version;
+                        continue;
+                    }
+                    ++it;
+                }
+            }
             std::uint64_t held = state.heapBytes;
             if (const auto found = state.entries.find(address); found != state.entries.end() && found->second->heap && found->second->listed) held -= found->second->accounted;
             if (held + need <= heapMirrorBudget()) {
@@ -2633,6 +2644,7 @@ void reserveHeapBytes(std::uint64_t address, std::uint64_t bytes, std::uint64_t 
             }
             if (attempt != 0) throw std::runtime_error(heapMirrorError(address, bytes, held, "past the budget"));
         }
+        Spaces().current.store(nullptr);
         sweepMirrors();
     }
 }
@@ -5274,7 +5286,10 @@ void GuestBufferMemory::resolveOverlays() {
         if (regions[index].overlay) members.push_back(index);
     }
     if (members.empty()) return;
-    std::vector<bool> drop(regions.size(), space == nullptr);
+    std::vector<bool> drop(regions.size(), false);
+    if (space == nullptr) {
+        for (const auto member : members) drop[member] = true;
+    }
     std::sort(members.begin(), members.end(), [&](std::size_t left, std::size_t right) { return regions[left].begin < regions[right].begin; });
     for (std::size_t first = 0; space != nullptr && first < members.size();) {
         Region cluster{regions[members[first]].begin, regions[members[first]].end, true, {}, nullptr};
@@ -5699,6 +5714,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     }
     if (heapsEnd > heapsBegin) StorageTexture::PublishShadowsOnly(heapsBegin, static_cast<std::size_t>(heapsEnd - heapsBegin), PublishScope::Whole, "address-based heaps");
     if (!gpuCopies.empty()) recordGpuCopies(gpuCopies, addressable);
+    addAddressStoreSpans();
     takeHeapReferences();
     ResidentBuffer::FlushChanged(context);
     if (!profile) return;
@@ -6318,6 +6334,24 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> mergeWrites(std::vector<std
     return merged;
 }
 
+}
+
+void GuestBufferMemory::addAddressStoreSpans() {
+    if (!addressStores) return;
+    const auto add = [&](const Region& region) {
+        if (region.mirror == nullptr || !region.mirror->heap || !region.mirror->writable || !region.writable) return;
+        const auto served = servedEnd(region);
+        if (region.begin >= served) return;
+        if (!region.mirror->sparse) {
+            writes.emplace_back(region.begin, served);
+            return;
+        }
+        for (const auto& [first, last] : clipPieces(region.mirror->committed, region.begin, served)) writes.emplace_back(first, last);
+    };
+    if (space != nullptr) {
+        for (const auto& region : space->base) add(region);
+    }
+    for (const auto& region : regions) add(region);
 }
 
 void GuestBufferMemory::takeHeapReferences() {
