@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <bit>
 #include <cerrno>
 #include <cfenv>
@@ -1927,6 +1928,71 @@ static void CheckAtanhf() {
     *__error_nid_postfix() = 0;
 }
 
+static void CheckLog1pf() {
+    const struct { std::uint32_t input; double expected; } cases[] = {
+        {0x00000000u, 0.0}, {0x80000000u, -0.0}, {0x00000001u, 0x1p-149},
+        {0x33800000u, 0x1p-24}, {0xb3800000u, -0x1p-24},
+        {0x3e4ccccdu, 0.1823215567939546}, {0x3f000000u, 0.4054651081081644},
+        {0x3f800000u, 0.6931471805599453}, {0x41200000u, 2.3978952727983707},
+        {0xbf7fffffu, -16.63553227383404},
+    };
+    for (const auto& test : cases) {
+        const float input = std::bit_cast<float>(test.input);
+        const float result = log1pf_nid_postfix(input);
+        Require(std::abs(static_cast<double>(result) - test.expected) <= std::max(1e-45, std::abs(test.expected) * 2e-7));
+        if (input == 0.0f) Require(std::signbit(result) == std::signbit(input));
+    }
+    Require(std::isinf(log1pf_nid_postfix(-1.0f)) && log1pf_nid_postfix(-1.0f) < 0.0f);
+    Require(std::isnan(log1pf_nid_postfix(-2.0f)));
+    Require(log1pf_nid_postfix(std::numeric_limits<float>::infinity()) == std::numeric_limits<float>::infinity());
+    Require(std::isnan(log1pf_nid_postfix(std::numeric_limits<float>::quiet_NaN())));
+}
+
+static void CheckLog1pfBitExact() {
+    const struct { std::uint32_t input; std::uint32_t expected; } cases[] = {
+        {0x00000000u, 0x00000000u},
+        {0x80000000u, 0x80000000u},
+        {0x00000001u, 0x00000001u},
+        {0x80000001u, 0x80000001u},
+        {0x337fffffu, 0x337fffffu},
+        {0x33800000u, 0x33800000u},
+        {0x33800001u, 0x33800001u},
+        {0xb37fffffu, 0xb37fffffu},
+        {0xb3800000u, 0xb3800000u},
+        {0xb3800001u, 0xb3800001u},
+        {0xb3000001u, 0xb3000001u},
+        {0xb7904001u, 0xb7904052u},
+        {0xb7ffffffu, 0xb800007fu},
+        {0xb8000000u, 0xb8000080u},
+        {0xb8000001u, 0xb8000081u},
+        {0x37ffffffu, 0x37fffeffu},
+        {0x38000000u, 0x37ffff00u},
+        {0x38000001u, 0x37ffff02u},
+        {0xbe95f618u, 0xbeb17216u},
+        {0xbe95f619u, 0xbeb17217u},
+        {0xbe95f61au, 0xbeb17218u},
+        {0xbea00000u, 0xbebfd7d2u},
+        {0xbf000000u, 0xbf317218u},
+        {0xbf400000u, 0xbfb17218u},
+        {0xbf7ffffeu, 0xc17f1402u},
+        {0xbf7fffffu, 0xc1851592u},
+        {0x3ed413cfu, 0x3eb1721au},
+        {0x3ed413d0u, 0x3eb1721au},
+        {0x3ed413d1u, 0x3eb1721bu},
+        {0x3f800000u, 0x3f317218u},
+        {0x40000000u, 0x3f8c9f54u},
+        {0x40400000u, 0x3fb17218u},
+        {0x59ffffffu, 0x4212f27cu},
+        {0x5a000000u, 0x4212f27cu},
+        {0x5a000001u, 0x4212f27cu},
+        {0x7f7fffffu, 0x42b17218u},
+    };
+    for (const auto& test : cases) {
+        const std::uint32_t result = std::bit_cast<std::uint32_t>(log1pf_nid_postfix(std::bit_cast<float>(test.input)));
+        Require(result == test.expected);
+    }
+}
+
 static void CheckFloatClassification() {
     Require(_FInf_nid_postfix.bits[0] == 0x7f800000u && _FNan_nid_postfix.bits[0] == 0x7fc00000u);
     for (int word = 1; word < 4; ++word) Require(_FInf_nid_postfix.bits[word] == 0 && _FNan_nid_postfix.bits[word] == 0);
@@ -2428,8 +2494,109 @@ static void CheckLogbConsoleBits() {
         Require(std::bit_cast<std::uint32_t>(logbf_nid_postfix(std::bit_cast<float>(item.input))) == item.expected && errno == 1234);
     }
 }
+static void CheckExpfConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t expected;
+        int error;
+    } cases[] = {
+        {0x3c0001e7u, 0x3f810104u, 0}, {0x3f000306u, 0x3fd30bcau, 0}, {0x4020050du, 0x4142fae2u, 0}, {0x42a00707u, 0x792d17d8u, 0},
+        {0xbf40091eu, 0x3ef1d16au, 0}, {0xc2a00b0bu, 0x05bbd45eu, 0}, {0x00000000u, 0x3f800000u, 0}, {0x80000000u, 0x3f800000u, 0},
+        {0x00000001u, 0x3f800000u, 0}, {0x38800000u, 0x3f800200u, 0}, {0x3f800000u, 0x402df854u, 0}, {0x42b17217u, 0x7f7fff84u, 0},
+        {0x42b17218u, 0x7f800000u, ERANGE}, {0x7f7fffffu, 0x7f800000u, ERANGE}, {0x7f800000u, 0x7f800000u, 0}, {0xff800000u, 0x00000000u, 0},
+        {0xc2aeac50u, 0x007fffe6u, 0}, {0xc2b00000u, 0x0041edc4u, 0}, {0xc2cff1b5u, 0x00000000u, 0}, {0xc2cff1b6u, 0x00000000u, ERANGE},
+        {0xff7fffffu, 0x00000000u, ERANGE}, {0x7fc00001u, 0x7fc00001u, 0}, {0xffc00002u, 0xffc00002u, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(expf_nid_postfix(std::bit_cast<float>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
+static void CheckErffConsoleBits() {
+    struct Case {
+        std::uint32_t input;
+        std::uint32_t expected;
+        int error;
+    };
+    constexpr Case erfCases[] = {
+        {0x00000000u, 0x00000000u, 0}, {0x80000000u, 0x80000000u, 0}, {0x00000001u, 0x00000001u, 0}, {0x03ffffffu, 0x04106ebau, 0},
+        {0x04000000u, 0x04106ebau, 0}, {0x317fffffu, 0x31906ebau, 0}, {0x31800000u, 0x31906ebau, 0}, {0x391c2317u, 0x39302e8cu, 0},
+        {0x3e000327u, 0x3e0fb28eu, 0}, {0x3e800000u, 0x3e8d7aa7u, 0}, {0x3f000555u, 0x3f05442au, 0}, {0x3f57ffffu, 0x3f4468e6u, 0},
+        {0x3f580000u, 0x3f4468e7u, 0}, {0x3f800000u, 0x3f57bb3du, 0}, {0xbf800000u, 0xbf57bb3du, 0}, {0x3f9fffffu, 0x3f6c432eu, 0},
+        {0x3fa00000u, 0x3f6c432fu, 0}, {0x40000000u, 0x3f7ecd71u, 0}, {0xc0000000u, 0xbf7ecd71u, 0}, {0x4036db6cu, 0x3f7ffc82u, 0},
+        {0x4036db6du, 0x3f7ffc82u, 0}, {0x4036db6eu, 0x3f7ffc82u, 0}, {0x40800000u, 0x3f800000u, 0}, {0xc0800000u, 0xbf800000u, 0},
+        {0x40bfffffu, 0x3f800000u, 0}, {0x40c00000u, 0x3f800000u, 0}, {0xc0c00000u, 0xbf800000u, 0}, {0x41200000u, 0x3f800000u, 0},
+        {0x41dfffffu, 0x3f800000u, 0}, {0x41e00000u, 0x3f800000u, 0}, {0xc1e00000u, 0xbf800000u, 0}, {0x23800000u, 0x23906ebau, 0},
+        {0x237fffffu, 0x23906ebau, 0}, {0x7f7fffffu, 0x3f800000u, 0}, {0x7f800000u, 0x3f800000u, 0}, {0xff800000u, 0xbf800000u, 0},
+        {0x7fc00001u, 0x7fc00001u, 0}, {0xffc00002u, 0xffc00002u, 0},
+    };
+    constexpr Case erfcCases[] = {
+        {0x00000000u, 0x3f800000u, 0}, {0x80000000u, 0x3f800000u, 0}, {0x00000001u, 0x3f800000u, 0}, {0x03ffffffu, 0x3f800000u, 0},
+        {0x04000000u, 0x3f800000u, 0}, {0x317fffffu, 0x3f800000u, 0}, {0x31800000u, 0x3f800000u, 0}, {0x391c2317u, 0x3f7ff4fdu, 0},
+        {0x3e000327u, 0x3f5c135cu, 0}, {0x3e800000u, 0x3f3942acu, 0}, {0x3f000555u, 0x3ef577abu, 0}, {0x3f57ffffu, 0x3e6e5c68u, 0},
+        {0x3f580000u, 0x3e6e5c66u, 0}, {0x3f800000u, 0x3e21130bu, 0}, {0xbf800000u, 0x3febdd9eu, 0}, {0x3f9fffffu, 0x3d9de68du, 0},
+        {0x3fa00000u, 0x3d9de68au, 0}, {0x40000000u, 0x3b9947b0u, 0}, {0xc0000000u, 0x3fff66b8u, 0}, {0x4036db6cu, 0x385f9bccu, 0},
+        {0x4036db6du, 0x385f9bb8u, 0}, {0x4036db6eu, 0x385f9ba3u, 0}, {0x40800000u, 0x32846ee9u, 0}, {0xc0800000u, 0x40000000u, 0},
+        {0x40bfffffu, 0x23c67c56u, 0}, {0x40c00000u, 0x23c67c0bu, 0}, {0xc0c00000u, 0x40000000u, 0}, {0x41200000u, 0x00000002u, 0},
+        {0x41dfffffu, 0x00000000u, ERANGE}, {0x41e00000u, 0x00000000u, 0}, {0xc1e00000u, 0x40000000u, 0}, {0x23800000u, 0x3f800000u, 0},
+        {0x237fffffu, 0x3f800000u, 0}, {0x7f7fffffu, 0x00000000u, 0}, {0x7f800000u, 0x00000000u, 0}, {0xff800000u, 0x40000000u, 0},
+        {0x7fc00001u, 0x7fc00001u, 0}, {0xffc00002u, 0xffc00002u, 0},
+    };
+    for (const auto& item : erfCases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(erff_nid_postfix(std::bit_cast<float>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+    for (const auto& item : erfcCases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(erfcf_nid_postfix(std::bit_cast<float>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
+
+static void CheckTanhfConsoleBits() {
+    constexpr std::uint32_t cases[][2] = {
+        {0x3c00012cu, 0x3c000082u}, {0x3e000327u, 0x3dfeb2ffu}, {0x3f000555u, 0x3eeca303u}, {0x3fc007c2u, 0x3f67ba9au},
+        {0x40801412u, 0x3f7fd443u}, {0xbf400dddu, 0xbf22a163u}, {0xc0101094u, 0xbf7a62ccu}, {0x3a000c01u, 0x3a000c01u},
+        {0x00000000u, 0x00000000u}, {0x80000000u, 0x80000000u}, {0x00000001u, 0x00000001u}, {0x39000000u, 0x39000000u},
+        {0x3f800000u, 0x3f42f7d6u}, {0xbf800000u, 0xbf42f7d6u}, {0x41100000u, 0x3f800000u}, {0x410fffffu, 0x3f7fffffu},
+        {0xc1100000u, 0xbf800000u}, {0x7f7fffffu, 0x3f800000u}, {0x7f800000u, 0x3f800000u}, {0xff800000u, 0xbf800000u},
+        {0x7fc00001u, 0x7fc00001u}, {0xffc00002u, 0xffc00002u},
+    };
+    for (const auto& [input, expected] : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(tanhf_nid_postfix(std::bit_cast<float>(input))) == expected && errno == 1234);
+    }
+}
+
+static void CheckExpm1fConsoleBits() {
+    constexpr struct {
+        std::uint32_t input;
+        std::uint32_t expected;
+        int error;
+    } cases[] = {
+        {0x3c00012cu, 0x3c008184u, 0}, {0x3e000327u, 0x3e085ba4u, 0}, {0x3eb17218u, 0x3ed413cdu, 0}, {0x3eb17219u, 0x3ed413ceu, 0},
+        {0x3f000555u, 0x3f261b64u, 0}, {0x3f851591u, 0x3fea09e4u, 0}, {0x3f851592u, 0x3fea09e6u, 0}, {0x40801412u, 0x4256eda6u, 0},
+        {0x41a00707u, 0x4de823d5u, 0}, {0x42a00707u, 0x792d17d8u, 0}, {0xbe800d0du, 0xbe629660u, 0}, {0xbf400dddu, 0xbf071989u, 0},
+        {0xc0101094u, 0xbf650b8bu, 0}, {0xc1800f0fu, 0xbf7ffffeu, 0}, {0x32ffffffu, 0x32ffffffu, 0}, {0x33000000u, 0x33000000u, 0},
+        {0x00000000u, 0x00000000u, 0}, {0x80000000u, 0x80000000u, 0}, {0x00000001u, 0x00000001u, 0}, {0x3f800000u, 0x3fdbf0a8u, 0},
+        {0xbf800000u, 0xbf21d2a7u, 0}, {0x42b17217u, 0x7f7fff84u, 0}, {0x42b17218u, 0x7f800000u, ERANGE}, {0x42b17220u, 0x7f800000u, ERANGE},
+        {0x7f7fffffu, 0x7f800000u, ERANGE}, {0x7f800000u, 0x7f800000u, 0}, {0xff800000u, 0xbf800000u, 0}, {0xc195b843u, 0xbf800000u, 0},
+        {0xc195b844u, 0xbf800000u, 0}, {0xc2000000u, 0xbf800000u, 0}, {0xff7fffffu, 0xbf800000u, 0}, {0x4195b844u, 0x4cfffff9u, 0},
+        {0x7fc00001u, 0x7fc00001u, 0}, {0xffc00002u, 0xffc00002u, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(expm1f_nid_postfix(std::bit_cast<float>(item.input))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
 
 int main() {
+    CheckExpfConsoleBits();
     CheckFloatClassification();
     CheckDinkumwareConstants();
     CheckNoConversionZero();
@@ -2604,6 +2771,8 @@ int main() {
     CheckFegetenv();
     CheckLongDouble();
     CheckScalbnErrno();
+    CheckErffConsoleBits();
+    CheckExpfConsoleBits();
     CheckNearbyintl();
     CheckCbrtConsoleBits();
     CheckLogbConsoleBits();
@@ -2622,6 +2791,8 @@ int main() {
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckExpm1ScalingRounding();
     CheckAsinl();
+    CheckTanhfConsoleBits();
+    CheckExpm1fConsoleBits();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
     Require(nextafterf_nid_postfix(1.f, 2.f) == 0x1.000002p0f && nextafterf_nid_postfix(1.f, 0.f) == 0x1.fffffep-1f);
@@ -2754,6 +2925,8 @@ int main() {
     CheckSinhf();
     CheckAtanhf();
     CheckLogfConsoleBits();
+    CheckLog1pf();
+    CheckLog1pfBitExact();
     CheckHypotSpecialValue();
     CheckAtanfConsoleBits();
     CheckAtan2fConsoleBits();
