@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -72,6 +73,21 @@ ConsoleTimeZone HostTimeZone() {
     const int summerMinutes = summer ? 60 : 0;
 #endif
     return {static_cast<int>(offset.count()) - summerMinutes, summer};
+}
+
+std::mutex appSuspendBlockMutex;
+int appSuspendBlocks = 0;
+
+int WriteStatus(bool* status, bool value, const char* function) {
+    if (status == nullptr) NotImplemented_nid_no_patch((std::string(function) + " with a null output").c_str());
+    *status = value;
+    return SYSTEM_SERVICE_OK;
+}
+
+int WriteStatusOrRefuse(bool* status, bool value, int nullOutputError) {
+    if (status == nullptr) return nullOutputError;
+    *status = value;
+    return SYSTEM_SERVICE_OK;
 }
 
 constexpr char MainExecutable[] = "/app0/eboot.bin";
@@ -351,6 +367,119 @@ int APS5_VABI sceSystemServiceGetStatus(SystemServiceStatus* status) {
  }
  *status = SystemServiceStatus{};
  return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilBlockAppSuspend(const char* reason) {
+    if (reason == nullptr) NotImplemented_nid_no_patch("sceLncUtilBlockAppSuspend with a null reason");
+    std::lock_guard lock(appSuspendBlockMutex);
+    ++appSuspendBlocks;
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilUnblockAppSuspend(const char* reason) {
+    std::lock_guard lock(appSuspendBlockMutex);
+    if (appSuspendBlocks == 0) return SCE_KERNEL_ERROR_EBUSY;
+    if (reason == nullptr) NotImplemented_nid_no_patch("sceLncUtilUnblockAppSuspend with a null reason while a block is held");
+    --appSuspendBlocks;
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilEnableSuspendNotification() {
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceLncUtilDisableSuspendNotification() {
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceEnableSuspendNotification() {
+    return sceLncUtilEnableSuspendNotification();
+}
+
+int APS5_VABI sceSystemServiceDisableSuspendNotification() {
+    return sceLncUtilDisableSuspendNotification();
+}
+
+int APS5_VABI sceShellCoreUtilGetRemotePlayStatus(bool* active) {
+    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+int APS5_VABI sceSystemServiceGetRemoteplayStatus(bool* active) {
+    return sceShellCoreUtilGetRemotePlayStatus(active);
+}
+
+int APS5_VABI sceShellCoreUtilGetSharePlayStatus(bool* active) {
+    return WriteStatusOrRefuse(active, false, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+bool APS5_VABI sceShellCoreUtilIsGameLiveStreamingOnAir() {
+    return false;
+}
+
+bool APS5_VABI sceSystemServiceIsGameLiveStreamingOnAir() {
+    return sceShellCoreUtilIsGameLiveStreamingOnAir();
+}
+
+int APS5_VABI sceShellCoreUtilGetGameLiveStreamingStatus(bool* active) {
+    return WriteStatusOrRefuse(active, sceShellCoreUtilIsGameLiveStreamingOnAir(), SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
+}
+
+bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
+    return false;
+}
+
+bool APS5_VABI sceSystemServiceIsShellUiFgAndGameBgCpuMode() {
+    return sceLncUtilIsShellUiFgAndGameBgCpuMode();
+}
+
+bool APS5_VABI sceShellCoreUtilIsImposeScreenOverlaid() {
+    return false;
+}
+
+bool APS5_VABI sceShellCoreUtilIsScreenSaverOn() {
+    return false;
+}
+
+bool APS5_VABI sceSystemServiceIsScreenSaverOn() {
+    return sceShellCoreUtilIsScreenSaverOn();
+}
+
+bool APS5_VABI sceSystemStateMgrIsShellUIShutdownInProgress() {
+    return false;
+}
+
+int APS5_VABI sceShellCoreUtilGetSocialScreenStatus(bool* active) {
+    return WriteStatus(active, false, __func__);
+}
+
+int APS5_VABI sceShellCoreUtilIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
+    if (adjusted == nullptr) NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted with a null output");
+    if (userId != static_cast<std::uint32_t>(USER_SERVICE_INITIAL_USER_ID)) {
+        NotImplemented_nid_no_patch("sceShellCoreUtilIsEyeToEyeDistanceAdjusted for a user other than the logged-in user");
+    }
+    *adjusted = 0;
+    return SYSTEM_SERVICE_OK;
+}
+
+int APS5_VABI sceSystemServiceIsEyeToEyeDistanceAdjusted(std::uint32_t userId, std::uint8_t* adjusted) {
+    if (adjusted == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
+    return sceShellCoreUtilIsEyeToEyeDistanceAdjusted(userId, adjusted);
+}
+
+bool APS5_VABI sceSystemStateMgrIsBdDriveReady() {
+    return false;
+}
+
+bool APS5_VABI sceShellCoreUtilIsUsbMassStorageMounted(std::uint32_t) {
+    return false;
+}
+
+bool APS5_VABI sceShellCoreUtilIsExternalStorageAppMoveInProgress() {
+    return false;
+}
+
+int APS5_VABI sceLncUtilIsPs2Emu(bool* emulated) {
+    return WriteStatusOrRefuse(emulated, false, LNC_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
 int APS5_VABI sceSystemServiceHideSplashScreen(void) {
