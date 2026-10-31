@@ -291,7 +291,7 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         if (index >= voice.customPitchShift.size() || voice.rack->customModuleIds[index] != SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) APS5_INVALID_ARG_EX;
         const auto& pitch = ParamAs<Ngs2CustomVoicePitchShiftParam>(param);
         auto& state = voice.customPitchShift[index];
-        state.ratio = std::exp2(static_cast<float>(std::clamp(pitch.cents, -1200, 1200)) / 1200.0f);
+        state.ratio = static_cast<float>(std::exp2(static_cast<long double>(static_cast<float>(std::clamp(pitch.cents, -1200, 1200)) / 1200.0f)));
         state.bypassMask = pitch.bypass_mask;
         state.changed = true;
         return;
