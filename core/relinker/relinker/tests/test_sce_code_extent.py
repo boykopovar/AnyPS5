@@ -181,6 +181,12 @@ def entry_overlap_fixture():
     return image, plt
 
 
+def lea_into_tls_fixture():
+    image, plt = fixture(gap=0x80, pointer_target=0x240, gap_bytes=(0x240, TLS_LOAD), tls=True)
+    image[FUNCTION:FUNCTION + 8] = lea_function(0x244) + b"\xc3"
+    return image, plt
+
+
 def lea_fixture(target, gap_bytes):
     image, plt = fixture(early_function=True, gap_bytes=gap_bytes)
     image[FUNCTION:FUNCTION + 8] = lea_function(target) + b"\xc3"
@@ -232,6 +238,8 @@ def main():
                 absent_bytes=TLS_LOAD)
             run(relinker, work, "sce-pointer-to-far-tls-load-without-tls-" + target,
                 fixture(gap=0x140, pointer_target=0x310, gap_bytes=(0x310, TLS_LOAD)), "Guest TLS access without", target)
+            run(relinker, work, "sce-tls-rewrite-over-data-target-" + target, lea_into_tls_fixture(),
+                "TLS rewrite would overwrite an executable entry point (offset 0x244)", target)
             run(relinker, work, "sce-code-before-plt-" + target, fixture(gap=0x40, gap_entry=True),
                 "Unsupported " + ("Windows" if target == "windows" else "macOS") + " guest TLS instruction", target)
             run(relinker, work, "sce-plt-before-code-" + target, fixture(plt_at=PLT_BEFORE_CODE), target=target)
