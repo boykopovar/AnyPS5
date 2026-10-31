@@ -2047,6 +2047,29 @@ struct JpegDecImageInfo {
     std::uint32_t output_image_height;
 };
 
+struct JpegDecInputChunk {
+    const void* data;
+    std::uint32_t size;
+    std::uint32_t reserved;
+};
+
+using JpegDecInputCallback = std::int32_t (APS5_VABI *)(JpegDecInputChunk*, void*);
+
+struct JpegDecInputControlParam {
+    JpegDecInputCallback input;
+    void* input_argument;
+    void* image_mem_addr;
+    void* coefficient_mem_addr;
+    std::uint32_t image_mem_size;
+    std::uint32_t coefficient_mem_size;
+    std::uint16_t operation;
+    std::uint16_t down_scale;
+    std::uint16_t pixel_format;
+    std::uint16_t alpha_value;
+    std::uint32_t image_pitch;
+    std::uint32_t reserved;
+};
+
 struct PlayGoInitParams {
     const void* buf_addr;
     std::uint32_t buf_size;
