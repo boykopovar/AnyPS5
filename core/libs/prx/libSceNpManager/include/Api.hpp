@@ -6,6 +6,13 @@ using NpStateCallback = void (APS5_VABI *)(int userId, uint32_t state, NpId* npI
 
 using NpStateCallbackA = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
 
+struct NpPeerAddressA {
+    std::uint64_t accountId;
+    std::uint32_t platform;
+    std::uint8_t padding[4];
+};
+static_assert(sizeof(NpPeerAddressA) == 16);
+
 extern "C" {
 
 int APS5_VABI sceNpAsmAbort(void);
@@ -69,11 +76,11 @@ int APS5_VABI sceNpIdMapperCreateRequest(void);
 int APS5_VABI sceNpIdMapperDeleteRequest(int reqId);
 int APS5_VABI sceNpIdMapperNpIdToAccountId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra);
 int APS5_VABI sceNpIdMapperOnlineIdToAccountId(int reqId, int userId, const void* input, void* output, std::uint32_t value, std::uint8_t flag, std::uint64_t extra);
-int APS5_VABI sceNpInGameMessageAbortHandle(void);
+int APS5_VABI sceNpInGameMessageAbortHandle(std::int32_t libCtxId, std::int32_t handleId);
 int APS5_VABI sceNpInGameMessageCheckCallback(void);
 int APS5_VABI sceNpInGameMessageGetMemoryPoolStatistics(void);
-int APS5_VABI sceNpInGameMessagePrepareA(void);
-int APS5_VABI sceNpInGameMessageSendDataA(void);
+int APS5_VABI sceNpInGameMessagePrepareA(std::int32_t libCtxId, std::int32_t handleId, const void* reserved, void* callback, void* userArg);
+int APS5_VABI sceNpInGameMessageSendDataA(std::int32_t libCtxId, const NpPeerAddressA* to, const NpPeerAddressA* from, const void* message);
 int APS5_VABI sceNpIntGetAppType(void);
 int APS5_VABI sceNpIntGetGamePresenceStatus(void);
 int APS5_VABI sceNpIntGetNpTitleId(void);
@@ -206,12 +213,12 @@ int APS5_VABI sceNpGetSandboxInfo(void* sandboxInfo);
 int APS5_VABI sceNpUnknown_8weiQyIdI3A(int userId, const NpOnlineId* buffer);
 int APS5_VABI sceNpUnknown_WxLcN76q19o(void);
 int APS5_VABI sceNpCheckCallbackForLib();
-int APS5_VABI sceNpInGameMessageCreateHandle();
-int APS5_VABI sceNpInGameMessageDeleteHandle();
-int APS5_VABI sceNpInGameMessageInitialize();
+int APS5_VABI sceNpInGameMessageCreateHandle(std::int32_t libCtxId);
+int APS5_VABI sceNpInGameMessageDeleteHandle(std::int32_t libCtxId, std::int32_t handleId);
+int APS5_VABI sceNpInGameMessageInitialize(std::size_t poolSize, void* option);
 int APS5_VABI sceNpInGameMessagePrepare();
 int APS5_VABI sceNpInGameMessageSendData();
-int APS5_VABI sceNpInGameMessageTerminate();
+int APS5_VABI sceNpInGameMessageTerminate(std::int32_t libCtxId);
 int APS5_VABI sceNpSnsFacebookCreateRequest();
 int APS5_VABI sceNpSnsFacebookDeleteRequest();
 int APS5_VABI sceNpSnsFacebookGetAccessToken();
