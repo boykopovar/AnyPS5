@@ -2077,6 +2077,20 @@ bool deferredSettleTests(const Device& device) {
         HostImportFor(context, largeAddress, settledBytes);
         return false;
     }
+    {
+        constexpr std::size_t pairBytes = 2 * unit;
+        void* pair = AllocateWatched(pairBytes, unit);
+        struct ReleasePair {
+            void* pair;
+            ~ReleasePair() { ReleaseWatched(pair, pairBytes); }
+        } releasePair{pair};
+        const auto pairAddress = reinterpret_cast<std::uint64_t>(pair);
+        registerRange(pair, pairBytes);
+        const auto* pairImport = HostImportFor(context, pairAddress, pairBytes);
+        Require(pairImport != nullptr && !pairImport->unwatched && Watched(pairAddress, pairBytes), "(d) a 128 KiB import did not settle at the import");
+        unregisterRange(pair);
+        HostImportFor(context, pairAddress, pairBytes);
+    }
     const auto address = reinterpret_cast<std::uint64_t>(small);
     std::memset(small, 0x11, unit);
     registerRange(small, unit);
