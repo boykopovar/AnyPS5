@@ -62,6 +62,8 @@ private:
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};
     VideoOutTelemetry::PadChangeFilter telemetryFilter;
     AgcDriver::PadStatusProvider statusProvider;
+    bool padCaptured = false;
+    bool hostFocusSynced = false;
 };
 
 #endif

@@ -47,6 +47,22 @@ struct NpIdFull {
     std::uint8_t reserved[8];
 };
 
+struct NpJsonRule {
+    std::uint64_t kind;
+    const char* key;
+    std::uint64_t descend;
+};
+
+struct NpJsonRuleSet {
+    const NpJsonRule* const* levels;
+    std::uint64_t count;
+};
+
+using NpJsonCallback = int(APS5_VABI*)(void* context, std::int32_t event, std::uint32_t depth, std::int32_t element,
+    const char* key, const void* value, std::int32_t arrayIndex, void* user);
+using NpJsonExCallback = int(APS5_VABI*)(void* context, std::int32_t event, std::uint32_t depth, std::int32_t element,
+    const char* key, const void* value, std::int32_t arrayIndex, std::uint32_t offset, void* user);
+
 struct NpKernelMemory {
     std::uint64_t size;
     std::uint64_t reserved;
@@ -58,10 +74,58 @@ struct NpMemoryHeap {
     NpHeap heap;
 };
 
+struct NpServerErrorJsonResult {
+    std::uint8_t found;
+    std::int32_t code;
+};
+
 struct NpTitleIdParts {
     char id[9];
     char reserved;
     std::uint8_t index;
+};
+
+struct NpMemoryStreamReader {
+    const void* const* vtable;
+    const void* data;
+    std::size_t size;
+    std::size_t position;
+};
+
+struct NpMemoryStreamWriter {
+    const void* const* vtable;
+    void* data;
+    std::size_t size;
+    std::size_t position;
+};
+
+struct NpStreamReader {
+    const void* const* vtable;
+};
+
+struct NpStreamWriter {
+    const void* const* vtable;
+};
+
+struct NpStreamCtx {
+    const void* const* vtable;
+};
+
+struct NpRefObject {
+    const void* const* vtable;
+    std::int32_t refCount;
+};
+
+struct NpCommunicationId {
+    char data[9];
+    char term;
+    std::uint8_t num;
+    char dummy;
+};
+
+struct NpCommIdObject {
+    const void* const* vtable;
+    NpCommunicationId commId;
 };
 
 struct NpTitleIdObject {
@@ -70,6 +134,9 @@ struct NpTitleIdObject {
 };
 
 extern "C" {
+
+int APS5_VABI sceNpGetSandboxMode();
+int APS5_VABI sceNpUtilGetSandboxMode();
 
 int APS5_VABI sceNpCmpOnlineId(const NpOnlineId* onlineId1, const NpOnlineId* onlineId2);
 int APS5_VABI sceNpCmpNpIdInOrder(const NpIdFull* npId1, const NpIdFull* npId2, std::int32_t* order);
@@ -96,18 +163,21 @@ int APS5_VABI sceNpCloseSema(void);
 int APS5_VABI sceNpGetNavSdkVersion(void);
 int APS5_VABI sceNpIntGetPlatformType(void);
 int APS5_VABI sceNpIntSetPlatformType(void);
-int APS5_VABI sceNpJsonParse(void);
-int APS5_VABI sceNpJsonParseBuf(void);
-int APS5_VABI sceNpJsonParseBufInit(void);
-int APS5_VABI sceNpJsonParseEx(void);
-int APS5_VABI sceNpJsonParseExInit(void);
-int APS5_VABI sceNpJsonParseInit(void);
+int APS5_VABI sceNpJsonParse(void* guestContext, const char* data, int length);
+int APS5_VABI sceNpJsonParseBuf(void* guestContext, const char* data, int length);
+int APS5_VABI sceNpJsonParseBufInit(void* guestContext, const NpJsonRuleSet* rules, char* key,
+    std::size_t keySize, char* value, std::size_t valueSize, NpJsonCallback callback, void* user);
+int APS5_VABI sceNpJsonParseEx(void* guestContext, const char* data, int length);
+int APS5_VABI sceNpJsonParseExInit(void* guestContext, const NpJsonRuleSet* rules, char* key,
+    std::size_t keySize, char* value, std::size_t valueSize, NpJsonExCallback callback, void* user);
+int APS5_VABI sceNpJsonParseInit(void* guestContext, const NpJsonRuleSet* rules, NpJsonCallback callback,
+    void* user);
 int APS5_VABI sceNpOpenSema(void);
-int APS5_VABI sceNpServerErrorJsonGetErrorCode(void);
-int APS5_VABI sceNpServerErrorJsonMultiGetErrorCode(void);
-int APS5_VABI sceNpServerErrorJsonParse(void);
-int APS5_VABI sceNpServerErrorJsonParseInit(void);
-int APS5_VABI sceNpServerErrorJsonParseMultiInit(void);
+int APS5_VABI sceNpServerErrorJsonGetErrorCode(std::int32_t httpStatus, const char* json, std::size_t length);
+int APS5_VABI sceNpServerErrorJsonMultiGetErrorCode(std::int32_t httpStatus, const char* json, std::size_t length);
+int APS5_VABI sceNpServerErrorJsonParse(void* guestContext, const char* data, int length);
+int APS5_VABI sceNpServerErrorJsonParseInit(void* guestContext, NpServerErrorJsonResult* result);
+int APS5_VABI sceNpServerErrorJsonParseMultiInit(void* guestContext, NpServerErrorJsonResult* result);
 int APS5_VABI sceNpSetPlatformType(void);
 int APS5_VABI sceNpUtilCanonicalizeNpIdForPs4(void);
 int APS5_VABI sceNpUtilCanonicalizeNpIdForPsp2(void);
@@ -239,7 +309,6 @@ int APS5_VABI _sceNpAllocatorExRealloc(void);
 int APS5_VABI _ZN3sce2np8WorkItem6CancelEi(void);
 int APS5_VABI _ZN3sce2np9WorkQueue11GetItemByIdEi(void);
 int APS5_VABI _ZN3sce2np14JsonDocBuilderC2ERKNS0_9JsonValueE(void);
-int APS5_VABI _ZN3sce2np18MemoryStreamReaderD0Ev(void);
 int APS5_VABI _ZN3sce2np7RingBuf4dtorEv(void);
 int APS5_VABI _ZThn16_N3sce2np9HttpTransD0Ev(void);
 int APS5_VABI _ZN3sce2np10MemoryFileD0Ev(void);
@@ -253,7 +322,6 @@ int APS5_VABI _ZN3sce2np8WorkItem10SetRunningEv(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient21CreateRequestForAsyncEPiiPKvm(void);
 int APS5_VABI _ZN3sce2np18HttpConnectionPool13InvalidateAllEv(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient21DeleteRequestForAsyncEii(void);
-int APS5_VABI _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(void);
 int APS5_VABI _ZN3sce2np15CancelableScopeD1Ev(void);
 int APS5_VABI _ZN3sce2np8JsonFileD2Ev(void);
 int APS5_VABI _ZN3sce2np9JsonArray12AddItemArrayEPPS1_(void);
@@ -270,7 +338,6 @@ int APS5_VABI _ZN3sce2np12HttpTemplateD1Ev(void);
 int APS5_VABI _ZN3sce2np9WorkQueueD2Ev(void);
 int APS5_VABI _ZThn16_N3sce2np9HttpTrans5WriteEPNS0_6HandleEPKvmPm(void);
 int APS5_VABI _ZN3sce2np10EventQueue4ctorEv(void);
-int APS5_VABI _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(void);
 int APS5_VABI _ZN3sce2np20BufferedStreamReaderD1Ev(void);
 int APS5_VABI _ZN3sce2np3ipc10IpmiClient7ConnectEPKvm(void);
 int APS5_VABI _ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(void);
@@ -297,16 +364,13 @@ int APS5_VABI _ZN3sce2np15CancelableScopeD0Ev(void);
 int APS5_VABI _ZN3sce2np10Cancelable7DestroyEv(void);
 int APS5_VABI _ZThn8_N3sce2np9LocalFileD1Ev(void);
 int APS5_VABI _ZNK3sce2np10JsonString6GetStrEPcm(void);
-int APS5_VABI _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(void);
 int APS5_VABI _ZN3sce2np10Cancelable10LockCancelEPKciS3_(void);
 int APS5_VABI _ZN3sce2np8WorkItem10SetPendingEv(void);
 int APS5_VABI _ZN3sce2np7Callout4StopEv(void);
 int APS5_VABI _ZN3sce2np7RingBuf14CheckinForReadEm(void);
-int APS5_VABI _ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPKvmPm(void);
 int APS5_VABI _ZN3sce2np6ThreadD1Ev(void);
 int APS5_VABI _ZN3sce2npeqERK12SceNpTitleIdRKNS0_9NpTitleIdE(void);
 int APS5_VABI _ZN3sce2np9EventFlag3SetEm(void);
-int APS5_VABI _ZN3sce2np9RefObjectC1Ev(void);
 int APS5_VABI _ZNK3sce2np7RingBuf6IsFullEv(void);
 int APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(void);
 int APS5_VABI _ZN3sce2np9LocalFileD0Ev(void);
@@ -327,7 +391,6 @@ int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient7ConnectEPKvm(void);
 int APS5_VABI _ZN3sce2np7RingBufC1Ev(void);
 int APS5_VABI _ZN3sce2np10MemoryFileD1Ev(void);
 int APS5_VABI _ZN3sce2np9HttpTrans21GetResponseStatusCodeEPNS0_6HandleEPi(void);
-int APS5_VABI _ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleElPl(void);
 int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(void);
 int APS5_VABI _ZN3sce2np14CalloutContextD1Ev(void);
 int APS5_VABI _ZN3sce2np5Mutex7DestroyEv(void);
@@ -338,11 +401,8 @@ int APS5_VABI _ZN3sce2np9EventFlag6CreateEPKcj(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient15RegisterServiceEPKNS1_17ServiceClientInfoE(void);
 int APS5_VABI _ZN3sce2np8WorkItemD0Ev(void);
 int APS5_VABI _ZN3sce2np9SemaphoreD2Ev(void);
-int APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(void);
 int APS5_VABI _ZN3sce2np9EventFlagD2Ev(void);
-int APS5_VABI _ZN3sce2np9RefObjectD1Ev(void);
 int APS5_VABI _sceNpAllocatorMalloc(void);
-int APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(void);
 int APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(void);
 int APS5_VABI _ZN3sce2np13RingBufMemory6IsInitEv(void);
 int APS5_VABI _ZN3sce2np7RingBufD0Ev(void);
@@ -350,16 +410,13 @@ int APS5_VABI _sceNpHeapMalloc(void);
 int APS5_VABI _ZN3sce2np12HttpTemplate7DestroyEv(void);
 int APS5_VABI _ZN3sce2np15CancelableScope5BeginEPNS0_6HandleEPKciS5_(void);
 int APS5_VABI _ZNK3sce2np10EventQueue6IsInitEv(void);
-int APS5_VABI _ZN3sce2np18MemoryStreamWriterD1Ev(void);
 int APS5_VABI _ZN3sce2np8JsonBool5ClearEv(void);
 int APS5_VABI _ZN3sce2np9LocalFile8TruncateEl(void);
 int APS5_VABI _ZNK3sce2np10JsonNumber6GetNumEPcm(void);
 int APS5_VABI _ZN3sce2np13RingBufMemory7DestroyEv(void);
-int APS5_VABI _ZN3sce2np9RefObject7ReleaseEv(void);
 int APS5_VABI _ZN3sce2np9LocalFileC1Ev(void);
 int APS5_VABI _ZN3sce2np7RingBufD2Ev(void);
 int APS5_VABI _ZN3sce2np4PathD2Ev(void);
-int APS5_VABI _ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPvmPm(void);
 int APS5_VABI _ZN3sce2np4CondD1Ev(void);
 int APS5_VABI _ZN3sce2np9EventFlag7DestroyEv(void);
 int APS5_VABI _ZN3sce2np9HttpTransC1EP16SceNpAllocatorEx(void);
@@ -371,11 +428,22 @@ int APS5_VABI _ZN3sce2np9LocalFile5CloseEv(void);
 int APS5_VABI _ZNK3sce2np10JsonString9GetLengthEv(void);
 int APS5_VABI _ZN3sce2np10EventQueueD0Ev(void);
 int APS5_VABI _ZN3sce2np8JsonNull5ClearEv(void);
-int APS5_VABI _ZN3sce2np18MemoryStreamWriterD2Ev(void);
 int APS5_VABI _ZN3sce2np4Time12GetUserClockEPS1_(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient12AbortRequestEii(void);
 int APS5_VABI _ZNK3sce2np5Mutex6IsInitEv(void);
 
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size);
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderC2EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size);
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD1Ev(NpMemoryStreamReader* self);
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD2Ev(NpMemoryStreamReader* self);
+void APS5_VABI _ZN3sce2np18MemoryStreamReaderD0Ev(NpMemoryStreamReader* self);
+int APS5_VABI _ZN3sce2np18MemoryStreamReader4ReadEPNS0_6HandleEPvmPm(NpMemoryStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read);
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterC1EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size);
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterC2EPvm(NpMemoryStreamWriter* self, void* data, std::size_t size);
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD1Ev(NpMemoryStreamWriter* self);
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD2Ev(NpMemoryStreamWriter* self);
+void APS5_VABI _ZN3sce2np18MemoryStreamWriterD0Ev(NpMemoryStreamWriter* self);
+int APS5_VABI _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(NpMemoryStreamWriter* self, void* handle, const void* data, std::size_t size, std::size_t* written);
 void APS5_VABI _ZN3sce2np9NpTitleIdC1Ev(NpTitleIdObject* self);
 void APS5_VABI _ZN3sce2np9NpTitleIdC2Ev(NpTitleIdObject* self);
 void APS5_VABI _ZN3sce2np9NpTitleIdC1ERKS1_(NpTitleIdObject* self, const NpTitleIdObject* other);
@@ -402,6 +470,51 @@ bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdES3_(const NpTitleIdObject* lhs, con
 bool APS5_VABI _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(const NpTitleId* lhs, const NpTitleIdObject* rhs);
 bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs);
 
+int APS5_VABI _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read);
+int APS5_VABI _ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPvmPm(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read);
+int APS5_VABI _ZN3sce2np12StreamReader7ReadAllEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read);
+int APS5_VABI _ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPl(NpStreamReader* self, void* handle, std::int64_t* skipped);
+int APS5_VABI _ZN3sce2np12StreamReader7SkipAllEPNS0_6HandleEPNS0_9StreamCtxEPl(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t* skipped);
+int APS5_VABI _ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPvmPm(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read);
+int APS5_VABI _ZN3sce2np12StreamReader8ReadDataEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read);
+int APS5_VABI _ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleElPl(NpStreamReader* self, void* handle, std::int64_t size, std::int64_t* skipped);
+int APS5_VABI _ZN3sce2np12StreamReader8SkipDataEPNS0_6HandleEPNS0_9StreamCtxElPl(NpStreamReader* self, void* handle, NpStreamCtx* ctx, std::int64_t size, std::int64_t* skipped);
+int APS5_VABI _ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEcl(NpStreamWriter* self, void* handle, char fill, std::int64_t size);
+int APS5_VABI _ZN3sce2np12StreamWriter15WriteFilledDataEPNS0_6HandleEPNS0_9StreamCtxEcl(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, char fill, std::int64_t size);
+int APS5_VABI _ZN3sce2np12StreamWriter5WriteEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* data, std::size_t size, std::size_t* written);
+int APS5_VABI _ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPKvmPm(NpStreamWriter* self, void* handle, const void* data, std::size_t size, std::size_t* written);
+int APS5_VABI _ZN3sce2np12StreamWriter9WriteDataEPNS0_6HandleEPNS0_9StreamCtxEPKvmPm(NpStreamWriter* self, void* handle, NpStreamCtx* ctx, const void* data, std::size_t size, std::size_t* written);
+void APS5_VABI _ZN3sce2np9RefObjectC1Ev(NpRefObject* self);
+void APS5_VABI _ZN3sce2np9RefObjectC2Ev(NpRefObject* self);
+void APS5_VABI _ZN3sce2np9RefObjectD1Ev(NpRefObject* self);
+void APS5_VABI _ZN3sce2np9RefObjectD2Ev(NpRefObject* self);
+void APS5_VABI _ZN3sce2np9RefObjectD0Ev(NpRefObject* self);
+int APS5_VABI _ZN3sce2np9RefObject6AddRefEv(NpRefObject* self);
+int APS5_VABI _ZN3sce2np9RefObject7ReleaseEv(NpRefObject* self);
+int APS5_VABI sceNpUtilParseTitleId(NpCommunicationId* parts, const char* titleId);
+void APS5_VABI _ZN3sce2np8NpCommIdC1Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommIdC2Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommIdC1ERKS1_(NpCommIdObject* self, const NpCommIdObject* other);
+void APS5_VABI _ZN3sce2np8NpCommIdC2ERKS1_(NpCommIdObject* self, const NpCommIdObject* other);
+void APS5_VABI _ZN3sce2np8NpCommIdC1ERK20SceNpCommunicationId(NpCommIdObject* self, const NpCommunicationId* commId);
+void APS5_VABI _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(NpCommIdObject* self, const NpCommunicationId* commId);
+void APS5_VABI _ZN3sce2np8NpCommIdD1Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommIdD2Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommIdD0Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommId5ClearEv(NpCommIdObject* self);
+bool APS5_VABI _ZNK3sce2np8NpCommId7IsEmptyEv(const NpCommIdObject* self);
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsEPKc(const NpCommIdObject* self, const char* commId);
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERKS1_(const NpCommIdObject* self, const NpCommIdObject* other);
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(const NpCommIdObject* self, const NpCommunicationId* commId);
+int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKc(NpCommIdObject* out, const char* text);
+int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char* text, std::size_t length);
+int APS5_VABI _ZN3sce2np8NpCommId5BuildERKS1_Pcm(const NpCommIdObject* commId, char* text, std::size_t size);
+bool APS5_VABI _ZN3sce2npeqERKNS0_8NpCommIdES3_(const NpCommIdObject* lhs, const NpCommIdObject* rhs);
+bool APS5_VABI _ZN3sce2npeqERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCommunicationId* lhs, const NpCommIdObject* rhs);
+bool APS5_VABI _ZN3sce2npeqERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdES3_(const NpCommIdObject* lhs, const NpCommIdObject* rhs);
+bool APS5_VABI _ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCommunicationId* lhs, const NpCommIdObject* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs);
 [[noreturn]] void APS5_VABI sceNpPanic(void);
 
 }

@@ -189,11 +189,23 @@ int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, Ker
     return PosixThread::ToErrno(scePthreadGetschedparam(thread, policy, param));
 }
 
-static Pthread SchedTarget(int pid, const char* function) {
-    if (pid == 0) return scePthreadSelf();
-    if (pid != getpid_nid_postfix()) return nullptr;
-    if (IsInitialPthread_nid_no_patch()) return scePthreadSelf();
-    throw std::runtime_error(std::string(function) + ": the main thread is selected by the own pid from another thread, which is not modelled");
+static std::unique_lock<std::mutex> SchedTarget(int pid, Pthread& thread, const char* function) {
+    if (pid == 0) {
+        thread = scePthreadSelf();
+        return LockLiveGuestThread(thread);
+    }
+    if (pid != getpid_nid_postfix()) return {};
+    if (IsInitialPthread_nid_no_patch()) {
+        thread = scePthreadSelf();
+        return LockLiveGuestThread(thread);
+    }
+#ifndef __APPLE__
+    auto lock = LockMainGuestThread_nid_no_patch(thread);
+    if (lock.owns_lock()) return lock;
+    throw std::runtime_error(std::string(function) + ": the own pid selects the main thread, which has not called scePthreadSelf or has exited");
+#else
+    throw std::runtime_error(std::string(function) + ": the own pid selects the guest main thread, which is not identified on macOS");
+#endif
 }
 
 static int SchedFailure(int error) {
@@ -206,31 +218,30 @@ static bool InSchedRange(int policy, int priority) {
 }
 
 int APS5_VABI sched_getparam_nid_postfix(int pid, KernelSchedParam* param) {
-    const Pthread thread = SchedTarget(pid, "sched_getparam");
-    if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
-    int policy = 0;
     KernelSchedParam current{};
-    if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &policy, &current))) return SchedFailure(error);
+    {
+        Pthread thread = nullptr;
+        const auto live = SchedTarget(pid, thread, "sched_getparam");
+        if (!live.owns_lock()) return SchedFailure(PosixThread::GUEST_ESRCH);
+        current.sched_priority = thread->priority.load(std::memory_order_relaxed);
+    }
     if (!param || !GuestCopyOut_nid_no_patch(param, &current, sizeof(current))) return SchedFailure(PosixThread::GUEST_EFAULT);
     return 0;
 }
 
 int APS5_VABI sched_getscheduler_nid_postfix(int pid) {
-    const Pthread thread = SchedTarget(pid, "sched_getscheduler");
-    if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
-    int policy = 0;
-    KernelSchedParam current{};
-    if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &policy, &current))) return SchedFailure(error);
-    return policy;
+    Pthread thread = nullptr;
+    const auto live = SchedTarget(pid, thread, "sched_getscheduler");
+    if (!live.owns_lock()) return SchedFailure(PosixThread::GUEST_ESRCH);
+    return thread->schedPolicy.load(std::memory_order_relaxed);
 }
 
 int APS5_VABI sched_setparam_nid_postfix(int pid, const KernelSchedParam* param) {
     if (!param) return SchedFailure(PosixThread::GUEST_EFAULT);
     KernelSchedParam requested{};
     if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return SchedFailure(PosixThread::GUEST_EFAULT);
-    const Pthread thread = SchedTarget(pid, "sched_setparam");
-    if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
-    const auto live = LockLiveGuestThread(thread);
+    Pthread thread = nullptr;
+    const auto live = SchedTarget(pid, thread, "sched_setparam");
     if (!live.owns_lock()) return SchedFailure(PosixThread::GUEST_ESRCH);
     const int policy = thread->schedPolicy.load(std::memory_order_relaxed);
     if (policy != GUEST_SCHED_FIFO && policy != GUEST_SCHED_RR)
