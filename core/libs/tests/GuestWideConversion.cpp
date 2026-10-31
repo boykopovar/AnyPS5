@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cerrno>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -95,6 +96,26 @@ static void CheckDinkumwareConversions() {
     CheckConversion<double>(_WStod_nid_postfix, u"\u30001", 0, 0.0, 0, 0, "_WStod does not skip a non-ASCII space");
     CheckConversion<float>(_WStof_nid_postfix, u" 1.5", 2, 150.0f, 4, 0, "_WStof scales by a power of ten");
     CheckConversion<long double>(_WStold_nid_postfix, u"-2.5e1", 3, -25000.0L, 6, 0, "_WStold scales by a power of ten");
+}
+
+template<typename TFloat>
+static void CheckDinkumwareNoConversion(TFloat (APS5_VABI *parse)(const char16_t*, char16_t**, std::int64_t)) {
+    const struct { const char16_t* text; bool negative; } cases[]{
+        {u"", false}, {u" ", false}, {u"z", false}, {u"+", false}, {u"+z", false},
+        {u"-", true}, {u"-z", true}, {u" \t-.", true}, {u"-i", false}, {u"-n", false},
+        {u"-+1", true}, {u"--1", true}, {u"- 5", true}, {u"\t-.", true}, {u"-\u3000", true}
+    };
+    for (const auto& test : cases) {
+        for (const std::int64_t scale : {std::int64_t{0}, std::int64_t{-10}, std::int64_t{10}, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max()}) {
+            for (const int saved : {0, ERANGE, 97}) for (const bool nullEnd : {false, true}) {
+                char16_t* end = nullptr;
+                *__error_nid_postfix() = saved;
+                const TFloat value = parse(test.text, nullEnd ? nullptr : &end, scale);
+                Require(value == 0 && std::signbit(value) == test.negative, "Dinkumware no-conversion zero sign");
+                Require((nullEnd || end == test.text) && *__error_nid_postfix() == saved, "Dinkumware no-conversion end and errno");
+            }
+        }
+    }
 }
 
 static void CheckClassification() {
@@ -298,6 +319,9 @@ static void CheckUnsizedScan() {
 int main() {
     CheckStoul();
     CheckDinkumwareConversions();
+    CheckDinkumwareNoConversion(_WStod_nid_postfix);
+    CheckDinkumwareNoConversion(_WStof_nid_postfix);
+    CheckDinkumwareNoConversion(_WStold_nid_postfix);
     CheckClassification();
     CheckScan();
     CheckUnsizedScan();
