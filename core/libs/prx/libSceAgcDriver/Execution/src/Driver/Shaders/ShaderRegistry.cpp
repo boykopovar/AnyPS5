@@ -124,7 +124,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
         snapshot.code.resize(std::min(available, std::max<std::size_t>(64, previous * 2)));
         drain(address + previous * sizeof(std::uint32_t), (snapshot.code.size() - previous) * sizeof(std::uint32_t));
         GuestMemory::Read(address + previous * sizeof(std::uint32_t),
-            std::as_writable_bytes(std::span(snapshot.code).subspan(previous)), alignof(std::uint32_t));
+            std::as_writable_bytes(std::span(snapshot.code.Mutable()).subspan(previous)), alignof(std::uint32_t));
         try {
             const auto decoded = ShaderRecompiler::RdnaInstructionDecoder{}.Decode(snapshot.code);
             if (const auto tail = ShaderRecompiler::FindUserDataTail(decoded, 0u, 106u)) snapshot.userDataTailRegister = tail->userDataRegister;
@@ -1130,7 +1130,8 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
 }
 namespace {
 
-std::optional<ShaderRecompiler::ShaderFloatMode> DecodeFloatMode(const Registers& registers, std::uint8_t type) {
+template<typename TRegisters>
+std::optional<ShaderRecompiler::ShaderFloatMode> DecodeFloatMode(const TRegisters& registers, std::uint8_t type) {
     std::uint32_t rsrc1;
     std::uint32_t fp16OverflowBit;
     switch (type) {
@@ -1178,7 +1179,7 @@ Shader ReadHeader(const ShaderSnapshot& snapshot) {
     return header;
 }
 
-RegisteredShaderState DecodeRegisteredState(const ShaderSnapshot& snapshot, RegisteredShaderState state = {{}, InitialContextRegisters(), {{0x24a, 0}, {0x24b, 0}}}) {
+DecodedShaderState DecodeRegisteredState(const ShaderSnapshot& snapshot, DecodedShaderState state = {{}, InitialContextRegisters(), {{0x24a, 0}, {0x24b, 0}}}) {
     const auto header = ReadHeader(snapshot);
     for (const auto reg : ReadHeaderArray(snapshot, header.sh_registers, header.num_sh_registers)) {
         state.shader.insert_or_assign(reg.offset, reg.value);
@@ -1424,9 +1425,9 @@ PreparedAtUse PrepareDeferredAbis(const ShaderSnapshot& snapshot, std::unique_lo
         const auto device = abi.device.lock();
         if (device == nullptr || snapshot.registeredState == nullptr) continue;
         QueueState state{};
-        state.shader = snapshot.registeredState->shader;
-        state.context = snapshot.registeredState->context;
-        state.userConfig = snapshot.registeredState->userConfig;
+        state.shader = snapshot.registeredState->shader.Expand();
+        state.context = snapshot.registeredState->context.Expand();
+        state.userConfig = snapshot.registeredState->userConfig.Expand();
         for (const auto& [offset, value] : abi.context) state.context[offset] = value;
         for (const auto& [offset, value] : abi.primitive) state.userConfig[offset] = value;
         try {
@@ -2108,9 +2109,9 @@ void Driver::ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegist
     }
     require(snapshot->registeredState != nullptr, "registered shader state is missing");
     QueueState state{};
-    state.shader = snapshot->registeredState->shader;
-    state.context = snapshot->registeredState->context;
-    state.userConfig = snapshot->registeredState->userConfig;
+    state.shader = snapshot->registeredState->shader.Expand();
+    state.context = snapshot->registeredState->context.Expand();
+    state.userConfig = snapshot->registeredState->userConfig.Expand();
     for (const auto reg : context) state.context[reg.offset] = reg.value;
     for (const auto reg : primitive) state.userConfig[reg.offset] = reg.value;
     const auto localDevice = device.Load();
@@ -2361,9 +2362,9 @@ ShaderSnapshot PrepareNullPixelProgram(const VulkanDevice& device) {
     nullRegisteredState.context.insert_or_assign(0x1b4u, 0x2u);
     null.registeredState = std::make_shared<const RegisteredShaderState>(std::move(nullRegisteredState));
     QueueState nullState{};
-    nullState.shader = null.registeredState->shader;
-    nullState.context = null.registeredState->context;
-    nullState.userConfig = null.registeredState->userConfig;
+    nullState.shader = null.registeredState->shader.Expand();
+    nullState.context = null.registeredState->context.Expand();
+    nullState.userConfig = null.registeredState->userConfig.Expand();
     null.prepared->entries = PrepareRegistered(null, device, nullState, true);
     return null;
 }
@@ -2410,7 +2411,7 @@ void Driver::RegisterShader(const Shader* shader) {
     require(!RawGraphicsDrawnIn(reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(code) + fields.shader_size), "a shader was registered over a graphics program that was drawn without registration");
     ShaderSnapshot snapshot{reinterpret_cast<std::uintptr_t>(code), reinterpret_cast<std::uintptr_t>(shader), fields.type, {}, {}};
     snapshot.code.resize(fields.shader_size / sizeof(std::uint32_t));
-    std::memcpy(snapshot.code.data(), code, fields.shader_size);
+    std::memcpy(snapshot.code.Mutable().data(), code, fields.shader_size);
     snapshot.header.resize(fields.header_size);
     std::memcpy(snapshot.header.data(), static_cast<const void*>(shader), fields.header_size);
 
@@ -2445,7 +2446,9 @@ void Driver::RegisterShader(const Shader* shader) {
         if (shaders != nullptr) {
             if (const auto found = shaders->find(snapshot.codeAddress); found != shaders->end()) {
                 for (const auto& current : found->second) {
-                    if (current->registeredState == nullptr || current->type != snapshot.type || current->code != snapshot.code || *current->registeredState != *snapshot.registeredState) continue;
+                    if (current->code != snapshot.code) continue;
+                    snapshot.code = current->code;
+                    if (current->registeredState == nullptr || current->type != snapshot.type || *current->registeredState != *snapshot.registeredState) continue;
                     snapshot.registeredState = current->registeredState;
                     break;
                 }
@@ -2453,9 +2456,9 @@ void Driver::RegisterShader(const Shader* shader) {
         }
     }
     QueueState registered{};
-    registered.shader = snapshot.registeredState->shader;
-    registered.context = snapshot.registeredState->context;
-    registered.userConfig = snapshot.registeredState->userConfig;
+    registered.shader = snapshot.registeredState->shader.Expand();
+    registered.context = snapshot.registeredState->context.Expand();
+    registered.userConfig = snapshot.registeredState->userConfig.Expand();
     std::shared_ptr<RegisteredPreparation> preparation;
     if (LazyShaderPreparation()) {
         static_cast<void>(PlanRegistered(snapshot, *localDevice, registered, true, &snapshot.prepared->deferred));

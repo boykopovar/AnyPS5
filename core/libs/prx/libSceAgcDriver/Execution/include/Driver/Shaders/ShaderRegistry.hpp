@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <span>
@@ -17,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -171,10 +173,102 @@ struct PreparedShaders : PreparedShaderState {
     std::vector<std::size_t> convertedSamples;
 };
 
-struct RegisteredShaderState {
+class SharedCode {
+public:
+    SharedCode() = default;
+    SharedCode(std::vector<std::uint32_t> values) : words(std::make_shared<std::vector<std::uint32_t>>(std::move(values))) {}
+    SharedCode(std::initializer_list<std::uint32_t> values) : SharedCode(std::vector<std::uint32_t>(values)) {}
+    template<std::input_iterator TIterator>
+    SharedCode(TIterator first, TIterator last) : SharedCode(std::vector<std::uint32_t>(first, last)) {}
+
+    operator const std::vector<std::uint32_t>&() const { return Words(); }
+    [[nodiscard]] const std::vector<std::uint32_t>& Words() const { return words != nullptr ? *words : none(); }
+    [[nodiscard]] const std::uint32_t* data() const { return Words().data(); }
+    [[nodiscard]] std::size_t size() const { return Words().size(); }
+    [[nodiscard]] bool empty() const { return Words().empty(); }
+    [[nodiscard]] const std::uint32_t* begin() const { return Words().data(); }
+    [[nodiscard]] const std::uint32_t* end() const { return Words().data() + Words().size(); }
+    [[nodiscard]] std::uint32_t operator[](std::size_t index) const { return Words()[index]; }
+    [[nodiscard]] bool SharesWith(const SharedCode& other) const { return words != nullptr && words == other.words; }
+    bool operator==(const SharedCode& other) const { return words == other.words || Words() == other.Words(); }
+    bool operator==(const std::vector<std::uint32_t>& other) const { return Words() == other; }
+
+    std::vector<std::uint32_t>& Mutable() {
+        if (words == nullptr) words = std::make_shared<std::vector<std::uint32_t>>();
+        else if (words.use_count() > 1) words = std::make_shared<std::vector<std::uint32_t>>(*words);
+        return *words;
+    }
+    void resize(std::size_t count) { Mutable().resize(count); }
+    template<typename TIterator>
+    void assign(TIterator first, TIterator last) { Mutable().assign(first, last); }
+
+private:
+    static const std::vector<std::uint32_t>& none() {
+        static const std::vector<std::uint32_t> none;
+        return none;
+    }
+
+    std::shared_ptr<std::vector<std::uint32_t>> words;
+};
+
+class RegisterList {
+public:
+    using Entry = std::pair<std::uint32_t, std::uint32_t>;
+    using const_iterator = std::vector<Entry>::const_iterator;
+
+    RegisterList() = default;
+    explicit RegisterList(const Registers& registers) {
+        entries.reserve(registers.size());
+        registers.ForEach([&](std::uint32_t offset, std::uint32_t value) { entries.emplace_back(offset, value); });
+    }
+
+    [[nodiscard]] Registers Expand() const {
+        Registers registers;
+        if (!entries.empty()) registers.emplace(entries.back().first, entries.back().second);
+        for (const auto& [offset, value] : entries) registers.emplace(offset, value);
+        return registers;
+    }
+    [[nodiscard]] const_iterator begin() const { return entries.begin(); }
+    [[nodiscard]] const_iterator end() const { return entries.end(); }
+    [[nodiscard]] const_iterator find(std::uint32_t offset) const {
+        const auto found = std::lower_bound(entries.begin(), entries.end(), offset, [](const Entry& entry, std::uint32_t wanted) { return entry.first < wanted; });
+        return found != entries.end() && found->first == offset ? found : entries.end();
+    }
+    [[nodiscard]] std::uint32_t at(std::uint32_t offset) const {
+        const auto found = find(offset);
+        if (found == end()) throw std::out_of_range("register is not set");
+        return found->second;
+    }
+    [[nodiscard]] std::size_t size() const { return entries.size(); }
+    [[nodiscard]] bool empty() const { return entries.empty(); }
+    template<class TVisit>
+    void ForEach(TVisit&& visit) const {
+        for (const auto& [offset, value] : entries) visit(offset, value);
+    }
+    void emplace(std::uint32_t offset, std::uint32_t value) {
+        const auto found = std::lower_bound(entries.begin(), entries.end(), offset, [](const Entry& entry, std::uint32_t wanted) { return entry.first < wanted; });
+        if (found == entries.end() || found->first != offset) entries.insert(found, {offset, value});
+    }
+
+    bool operator==(const RegisterList&) const = default;
+
+private:
+    std::vector<Entry> entries;
+};
+
+struct DecodedShaderState {
     Registers shader;
     Registers context;
     Registers userConfig;
+};
+
+struct RegisteredShaderState {
+    RegisteredShaderState() = default;
+    RegisteredShaderState(const DecodedShaderState& decoded) : shader(decoded.shader), context(decoded.context), userConfig(decoded.userConfig) {}
+
+    RegisterList shader;
+    RegisterList context;
+    RegisterList userConfig;
 
     bool operator==(const RegisteredShaderState&) const = default;
 };
@@ -183,7 +277,7 @@ struct ShaderSnapshot {
     std::uint64_t codeAddress;
     std::uint64_t headerAddress;
     std::uint8_t type;
-    std::vector<std::uint32_t> code;
+    SharedCode code;
     std::vector<std::byte> header;
     std::shared_ptr<PreparedShaders> prepared = std::make_shared<PreparedShaders>();
     std::shared_ptr<const RegisteredShaderState> registeredState;
