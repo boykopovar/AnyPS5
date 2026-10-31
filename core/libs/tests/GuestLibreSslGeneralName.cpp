@@ -39,7 +39,7 @@ void* APS5_VABI Allocate(std::size_t bytes) {
 
 void APS5_VABI Free(void* pointer) {
     if (!pointer) return;
-    Require(live.erase(pointer) == 1); // catches wrong-allocator and double-free
+    Require(live.erase(pointer) == 1);
     const auto it = wipes.find(pointer);
     if (it != wipes.end()) {
         const auto* bytes = static_cast<const unsigned char*>(pointer);
@@ -82,7 +82,7 @@ unsigned char* Bytes(std::size_t size, std::size_t wipeLength = 0) {
 Asn1String* String(int size = 7, int flags = 0) {
     auto* result = New<Asn1String>();
     result->length = size;
-    result->type = 22; // ASN1_IA5STRING
+    result->type = 22;
     result->flags = flags;
     if (size > 0 && !(flags & 0x10)) result->data = Bytes(static_cast<std::size_t>(size), static_cast<std::size_t>(size));
     return result;
@@ -145,7 +145,7 @@ void TestSimpleNames() {
     GENERAL_NAME_free_nid_postfix(Name(1, string));
     CheckClean();
 
-    // NDEF strings borrow their buffer. They release only the string wrapper.
+
     std::array<unsigned char, 6> borrowed{1, 2, 3, 4, 5, 6};
     string = String(0, 0x10);
     string->length = static_cast<int>(borrowed.size());
@@ -161,7 +161,7 @@ void TestOtherName() {
         other->typeId = Object();
         other->value = New<Any>();
         other->value->type = type;
-        if (type == 6) other->value->value = Object(0x09); // owned OID, borrowed names
+        if (type == 6) other->value->value = Object(0x09);
         if (type == 12) other->value->value = String();
         if (type == -4) {
             auto* nested = New<Any>();
@@ -172,7 +172,7 @@ void TestOtherName() {
         GENERAL_NAME_free_nid_postfix(Name(0, other));
         CheckClean();
     }
-    // The enclosing OID may be static while the OTHERNAME structure is owned.
+
     auto* other = New<Other>();
     static LibreSslAsn1Object staticOid{};
     other->typeId = &staticOid;
@@ -197,7 +197,7 @@ void TestDirectoryName() {
     auto* buffer = New<Buffer>();
     buffer->capacity = 16;
     buffer->length = 4;
-    buffer->data = reinterpret_cast<char*>(Bytes(16, 16)); // wipe capacity, not length
+    buffer->data = reinterpret_cast<char*>(Bytes(16, 16));
     name->bytes = buffer;
     auto* entry = New<NameEntry>();
     entry->object = Object();
@@ -206,7 +206,7 @@ void TestDirectoryName() {
     another->object = Object(0x01);
     another->value = String();
     name->entries = Stack({entry, nullptr, another});
-    name->canonical = Bytes(12); // X509_NAME frees without wiping canon_enc
+    name->canonical = Bytes(12);
     name->canonicalLength = 12;
     GENERAL_NAME_free_nid_postfix(Name(4, name));
     CheckClean();
@@ -215,7 +215,7 @@ void TestDirectoryName() {
 void TestOidAndStack() {
     GENERAL_NAME_free_nid_postfix(Name(8, Object()));
     CheckClean();
-    // A dynamically created OID can own its data but not its wrapper.
+
     static LibreSslAsn1Object staticOid{};
     staticOid.length = 5;
     staticOid.flags = 0x08;
@@ -228,16 +228,16 @@ void TestOidAndStack() {
     freed.clear();
     GENERAL_NAMES_free_nid_postfix(Stack({first, nullptr, last}));
     CheckClean();
-    Require(freed.size() >= 8); // children, their data, the element array and stack
+    Require(freed.size() >= 8);
     GENERAL_NAMES_free_nid_postfix(Stack({}));
     CheckClean();
 
     auto* unusual = Name(42, nullptr);
-    GENERAL_NAME_free_nid_postfix(unusual); // out-of-range choice still frees wrapper
+    GENERAL_NAME_free_nid_postfix(unusual);
     CheckClean();
 }
 
-} // namespace
+}
 
 int main() {
     InitializeHeap();

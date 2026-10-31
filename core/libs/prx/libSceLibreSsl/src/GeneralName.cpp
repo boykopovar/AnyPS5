@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <stdexcept>
 
-// LibreSSL 2.5.4: x509v3/v3_genn.c, asn1/tasn_fre.c, asn1/asn1_lib.c,
-// asn1/a_object.c, and asn1/x_name.c (openbsd 2e2c612066aa993717528a0249c15c51128d61cb).
-// The free routines operate on guest allocations, not host OpenSSL objects.
+
+
+
 
 static_assert(sizeof(LibreSslGeneralName) == 16);
 static_assert(offsetof(LibreSslGeneralName, value) == 8);
@@ -67,8 +67,8 @@ static_assert(sizeof(X509NameEntry) == 24 && offsetof(X509NameEntry, set) == 16)
 static_assert(sizeof(X509Name) == 40 && offsetof(X509Name, bytes) == 16);
 static_assert(offsetof(X509Name, canonical) == 24);
 
-// Keep writes observable: unlike a normal memset this cannot be eliminated
-// after the guest allocator is called, matching LibreSSL's explicit_bzero.
+
+
 void Wipe(void* pointer, std::size_t size) {
     auto* bytes = static_cast<volatile unsigned char*>(pointer);
     for (std::size_t i = 0; i < size; ++i) bytes[i] = 0;
@@ -125,7 +125,7 @@ void FreeX509Name(X509Name* name) {
     sk_pop_free_nid_postfix(name->entries, +[](void* pointer) APS5_VABI {
         auto* entry = static_cast<X509NameEntry*>(pointer);
         if (!entry) return;
-        // ASN1 SEQUENCE fields are released in reverse declaration order.
+
         FreeString(entry->value);
         FreeObject(entry->object);
         free_nid_postfix(entry);
@@ -134,14 +134,14 @@ void FreeX509Name(X509Name* name) {
     free_nid_postfix(name);
 }
 
-} // namespace
+}
 
 extern "C" {
 
 void APS5_VABI GENERAL_NAME_free_nid_postfix(LibreSslGeneralName* name) {
     if (!name) return;
     switch (name->type) {
-    case 0: { // OTHERNAME: object identifier and an ASN1_TYPE
+    case 0: {
         auto* other = static_cast<OtherName*>(name->value);
         if (other) {
             FreeAny(other->value);
@@ -150,17 +150,17 @@ void APS5_VABI GENERAL_NAME_free_nid_postfix(LibreSslGeneralName* name) {
         }
         break;
     }
-    case 1: // EMAIL
-    case 2: // DNS
-    case 3: // X400 (raw ASN.1 sequence)
-    case 6: // URI
-    case 7: // IP address
+    case 1:
+    case 2:
+    case 3:
+    case 6:
+    case 7:
         FreeString(static_cast<Asn1String*>(name->value));
         break;
-    case 4: // X509_NAME: cached bytes, entries, canonical encoding
+    case 4:
         FreeX509Name(static_cast<X509Name*>(name->value));
         break;
-    case 5: { // EDIPARTYNAME
+    case 5: {
         auto* edi = static_cast<EdiPartyName*>(name->value);
         if (edi) {
             FreeString(edi->partyName);
@@ -169,10 +169,10 @@ void APS5_VABI GENERAL_NAME_free_nid_postfix(LibreSslGeneralName* name) {
         }
         break;
     }
-    case 8: // Registered OID
+    case 8:
         FreeObject(static_cast<LibreSslAsn1Object*>(name->value));
         break;
-    default: // Unknown ASN.1 choice: LibreSSL frees only the enclosing CHOICE
+    default:
         break;
     }
     free_nid_postfix(name);
