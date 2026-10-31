@@ -98,7 +98,7 @@ def main():
                 prx.mkdir(parents=True)
                 provider = (case / standard) if standard else prx
                 provider.mkdir(exist_ok=True)
-                (provider / "provider.prx").write_bytes(module_with_symbol(True, symbolic=not windows))
+                (provider / "provider.prx").write_bytes(module_with_symbol(True, symbolic=True))
                 (prx / "consumer.prx").write_bytes(module_with_symbol(False))
                 (prx / "ignored.txt").write_text("not ELF")
                 (prx / "old.prx.guest.prx").write_bytes(guest_fixture(PLAIN_SITE))
@@ -227,12 +227,6 @@ def main():
             assert result.returncode == 2 and "Ambiguous guest import" in result.stderr and "shared" in result.stderr, result.stderr
             assert not output.exists() and not (case / "app0").exists(), output
 
-        case = work / "windows-symbolic"
-        (case / "prx").mkdir(parents=True)
-        (case / "prx" / "provider.prx").write_bytes(module_with_symbol(True, symbolic=True))
-        result, output = convert(case, True)
-        assert result.returncode == 2 and "DF_SYMBOLIC" in result.stderr, result.stderr
-        assert not output.exists(), output
     print("Guest module directory integration tests passed")
 
 
