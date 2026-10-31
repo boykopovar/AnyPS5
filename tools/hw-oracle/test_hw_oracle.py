@@ -730,6 +730,167 @@ class HipRuntimeTests(unittest.TestCase):
         self.assertEqual(Path(hw_oracle.hip_runtime().__file__), hw_oracle.HERE / "oracle_hip.py")
 
 
+class VulkanRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.runner = self.root / "agc_oracle_runner"
+        self.runner.write_bytes(b"runner")
+        environment = {key: value for key, value in os.environ.items()
+                       if key not in ("HW_ORACLE_VULKAN_RUNNER", "HW_ORACLE_TARGET")}
+        environment["HW_ORACLE_RUNTIME"] = "vulkan"
+        patcher = patch.dict(os.environ, environment, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_runtime_is_selected_only_explicitly(self):
+        self.assertIn("vulkan", hw_oracle.RUNTIMES)
+        self.assertEqual(hw_oracle.runtime(), "vulkan")
+        with patch.dict(os.environ, {"HW_ORACLE_RUNTIME": ""}):
+            self.assertNotEqual(hw_oracle.runtime(), "vulkan")
+
+    def test_missing_runner_fails_before_assembly(self):
+        for value in (None, "", str(self.root / "missing")):
+            with self.subTest(value=value), patch.object(hw_oracle, "assemble", side_effect=AssertionError("assembler called")) as assemble, \
+                    patch.object(hw_oracle, "target", side_effect=AssertionError("target lookup")) as target:
+                if value is None:
+                    os.environ.pop("HW_ORACLE_VULKAN_RUNNER", None)
+                else:
+                    os.environ["HW_ORACLE_VULKAN_RUNNER"] = value
+                with self.assertRaises(SystemExit) as exited:
+                    hw_oracle.run("s_nop 0", [(0, 0, 0, 0)], **MODES)
+                self.assertIn("HW_ORACLE_VULKAN_RUNNER", str(exited.exception))
+                assemble.assert_not_called()
+                target.assert_not_called()
+
+    def test_run_dispatches_through_the_runner_with_the_oracle_convention(self):
+        os.environ["HW_ORACLE_VULKAN_RUNNER"] = str(self.runner)
+        calls = []
+
+        def dispatch(command, **kwargs):
+            calls.append((command, kwargs))
+            data = Path(command[3]).read_bytes()
+            self.assertEqual(data[:16], hw_oracle.struct.pack("<4I", 1, 2, 3, 4))
+            self.assertEqual(data[-5:], b"extra")
+            Path(command[4]).write_bytes(bytes(int(command[2]) * 64))
+
+        with patch.object(hw_oracle, "assemble", return_value=self.root / "kernel.co"), \
+                patch.object(hw_oracle, "oracle", side_effect=AssertionError("oracle built")), \
+                patch.object(hw_oracle.subprocess, "run", side_effect=dispatch):
+            results = hw_oracle.run("s_nop 0", [(1, 2, 3, 4)], b"extra", **MODES)
+        self.assertEqual(results, [(0,) * 16])
+        self.assertEqual(len(calls), 1)
+        command, kwargs = calls[0]
+        self.assertEqual([command[0], command[1], command[2], command[5]],
+                         [str(self.runner), str(self.root / "kernel.co"), "32", "16"])
+        self.assertEqual(Path(command[3]).name, "in.bin")
+        self.assertEqual(Path(command[4]).name, "out.bin")
+        self.assertTrue(kwargs["check"])
+        self.assertIs(kwargs["stdout"], sys.stderr)
+
+    def test_rows_are_padded_to_whole_waves_and_chunked(self):
+        os.environ["HW_ORACLE_VULKAN_RUNNER"] = str(self.runner)
+        for wave64, expected in ((False, [1024, 32]), (True, [512, 512, 64])):
+            sizes = []
+
+            def dispatch(command, **kwargs):
+                sizes.append(int(command[2]))
+                Path(command[4]).write_bytes(bytes(int(command[2]) * 64))
+
+            with self.subTest(wave64=wave64), patch.object(hw_oracle, "assemble", return_value=self.root / "kernel.co"), \
+                    patch.object(hw_oracle.subprocess, "run", side_effect=dispatch):
+                results = hw_oracle.run("s_nop 0", [(index, 0, 0, 0) for index in range(1025)], wave64=wave64, **MODES)
+            self.assertEqual(sizes, expected)
+            self.assertEqual(len(results), 1025)
+
+    def test_output_size_is_checked(self):
+        os.environ["HW_ORACLE_VULKAN_RUNNER"] = str(self.runner)
+
+        def dispatch(command, **kwargs):
+            Path(command[4]).write_bytes(bytes(int(command[2]) * 64 - 4))
+
+        with patch.object(hw_oracle, "assemble", return_value=self.root / "kernel.co"), \
+                patch.object(hw_oracle.subprocess, "run", side_effect=dispatch), \
+                self.assertRaisesRegex(ValueError, "Oracle output size"):
+            hw_oracle.run("s_nop 0", [(0, 0, 0, 0)], **MODES)
+
+    def test_coarse_is_rejected(self):
+        os.environ["HW_ORACLE_VULKAN_RUNNER"] = str(self.runner)
+        with patch.object(hw_oracle, "assemble", side_effect=AssertionError("assembler called")), \
+                self.assertRaisesRegex(ValueError, "coarse"):
+            hw_oracle.run("s_nop 0", [(0, 0, 0, 0)], coarse=True, **MODES)
+
+    def test_target_needs_override_off_windows_and_probes_hip_on_windows(self):
+        with patch.object(hw_oracle.os, "name", "posix"), \
+                patch.object(hw_oracle, "hip_runtime", side_effect=AssertionError("HIP probe")), \
+                patch.object(hw_oracle, "oracle", side_effect=AssertionError("GPU probe")):
+            with self.assertRaises(SystemExit) as exited:
+                hw_oracle.target()
+            self.assertIn("HW_ORACLE_TARGET", str(exited.exception))
+            with patch.dict(os.environ, {"HW_ORACLE_TARGET": "gfx1036"}):
+                self.assertEqual(hw_oracle.target(), "gfx1036")
+
+        class Runtime:
+            @staticmethod
+            def target():
+                return "gfx1010"
+
+        with patch.object(hw_oracle.os, "name", "nt"), patch.object(hw_oracle, "hip_runtime", return_value=Runtime):
+            self.assertEqual(hw_oracle.target(), "gfx1010")
+
+    def test_assembly_backend_follows_the_host(self):
+        class Runtime:
+            @staticmethod
+            def assemble(source, isa_target, wave64):
+                return b"comgr code"
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"HW_ORACLE_TARGET": "gfx1036"}):
+            work = Path(tmp)
+            with patch.object(hw_oracle.os, "name", "nt"), patch.object(hw_oracle, "hip_runtime", return_value=Runtime), \
+                    patch.object(hw_oracle.subprocess, "run", side_effect=AssertionError("clang called")):
+                self.assertEqual(hw_oracle.assemble("s_nop 0", work, False, **MODES).read_bytes(), b"comgr code")
+            with patch.object(hw_oracle.os, "name", "posix"), patch.object(hw_oracle, "hip_runtime", side_effect=AssertionError("comgr called")), \
+                    patch.object(hw_oracle, "tool", side_effect=lambda name: name), \
+                    patch.object(hw_oracle.subprocess, "run") as run:
+                hw_oracle.assemble("s_nop 0", work, True, **MODES)
+            commands = [call.args[0] for call in run.call_args_list]
+            self.assertEqual([command[0] for command in commands], ["clang", "ld.lld"])
+            self.assertIn("-mcpu=gfx1036", commands[0])
+            self.assertIn("-mwavefrontsize64", commands[0])
+
+    def test_validate_only_does_not_touch_the_runner(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body, rows = Path(directory) / "body.s", Path(directory) / "rows.txt"
+            body.write_text("s_nop 0", encoding="utf-8")
+            rows.write_text("1 2 3 4\n", encoding="utf-8")
+            argv = ["hw_oracle.py", str(body), str(rows), "--validate-only", "--json"]
+            argv += [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+            with patch("sys.argv", argv), patch.object(hw_oracle, "vulkan_runner", side_effect=AssertionError("runner lookup")), \
+                    patch.object(hw_oracle, "run", side_effect=AssertionError("run")), \
+                    patch.object(hw_oracle, "target", side_effect=AssertionError("target lookup")), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(hw_oracle.main(), 0)
+        self.assertTrue(json.loads(output.getvalue())["validation_only"])
+
+    def test_json_report_names_the_runtime(self):
+        os.environ["HW_ORACLE_TARGET"] = "gfx1036"
+        with tempfile.TemporaryDirectory() as directory:
+            body, rows = Path(directory) / "body.s", Path(directory) / "rows.txt"
+            body.write_text("s_nop 0", encoding="utf-8")
+            rows.write_text("1 2 3 4\n", encoding="utf-8")
+            argv = ["hw_oracle.py", str(body), str(rows), "--json"]
+            argv += [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+            for selected in ("vulkan", "hsa"):
+                with self.subTest(runtime=selected), patch.dict(os.environ, {"HW_ORACLE_RUNTIME": selected}), \
+                        patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[(0,) * 16]), \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    hw_oracle.main()
+                report = json.loads(output.getvalue())
+                self.assertEqual(report["runtime"], selected)
+                self.assertEqual(report["assembly_target"], "gfx1036")
+
+
 class HipOracleTests(unittest.TestCase):
     def setUp(self):
         import oracle_hip
