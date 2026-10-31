@@ -50,6 +50,8 @@ class ReferenceErrorTests(unittest.TestCase):
             if image is not None:
                 (providers / "libc.prx").write_bytes(image)
             artifact = root / "evidence"
+            relinker = root / "relinker"
+            relinker.write_bytes(b"relinker")
 
             def stage(args, output):
                 destination = output / "libs"
@@ -57,7 +59,7 @@ class ReferenceErrorTests(unittest.TestCase):
                 runner.stage_libraries(destination, args.build, args.toolchain, ["libc.prx"])
                 return 0
 
-            arguments = ["reference", "--host", "--build", str(root / "build"), "--relinker", sys.executable,
+            arguments = ["reference", "--host", "--build", str(root / "build"), "--relinker", str(relinker),
                          "--toolchain", str(root / "build"), "--output", str(artifact)]
             errors, output = io.StringIO(), io.StringIO()
             with mock.patch.object(sys, "argv", arguments), mock.patch.object(runner, "run", side_effect=stage), \

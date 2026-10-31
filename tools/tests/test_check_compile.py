@@ -746,7 +746,9 @@ class CheckCompileResponseTests(CheckCompileFixture):
         source = self.source("unit.c")
         response = self.build / "flags.rsp"
         recorder = self.compiler("import json, sys\nprint(json.dumps(sys.argv[1:]))\n")
-        arguments = [compiler, "-wrapper", sys.executable + "," + str(recorder),
+        launcher = shutil.which("py")
+        wrapper = f"{launcher},-3,{recorder}" if launcher else f"{sys.executable},{recorder}"
+        arguments = [compiler, "-wrapper", wrapper,
                      "-c", str(source), "-o", str(self.build / "unit.o"), "@flags.rsp"]
         cases = (
             ('"-DVALUE=A\nB"', ["VALUE=A\nB"], False),

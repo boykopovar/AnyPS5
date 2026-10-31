@@ -94,7 +94,9 @@ class ReportTests(unittest.TestCase):
                         "name": "WORKING_DIRECTORY",
                         "value": str(working if mode == "absolute" else working.relative_to(build)),
                     }]
-                    tests = [{"name": "probe", "command": [sys.executable, argument], "properties": properties}]
+                    command = build / "probe-command"
+                    command.write_bytes(b"probe")
+                    tests = [{"name": "probe", "command": [str(command), argument], "properties": properties}]
                     before = gate.artifact_hashes(build, tests, [])
                     self.assertIn(str(script.resolve()), before)
                     script.write_text("changed", encoding="utf-8")
