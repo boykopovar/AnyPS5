@@ -2152,9 +2152,10 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     zero(cx, 0x31d + stride, ~0x3f000u, "color destination alpha override or other CB_COLOR_ATTRIB modes");
     color.coverageSamples = 1u << ((attrib >> 12u) & 7u);
     Require(color.coverageSamples <= 8u, "color targets with more than eight samples are unsupported");
-    color.samples = 1u << ((attrib >> 15u) & 3u);
-    Require(color.samples <= color.coverageSamples, "color targets with more fragments than samples are unsupported");
-    Require(color.samples == color.coverageSamples || color.samples == 1u, "color targets with more than one but fewer fragments than samples (EQAA) are unsupported");
+    const auto fragments = 1u << ((attrib >> 15u) & 3u);
+    Require(fragments <= color.coverageSamples, "color targets with more fragments than samples are unsupported");
+    color.samples = fragments == 1u ? 1u : color.coverageSamples;
+    if (fragments > 1u && fragments < color.coverageSamples) color.eqaaFragments = fragments;
     const auto multisampleInfo = color.coverageSamples > 1 ? 0x0c006000u : 0u;
     // ROUND_MODE (bit 18) only affects unorm rounding and packed float truncation. With DCC_ENABLE (bit 28) the target is written
     if ((info & ~(0x00039f7cu | 0x00040000u | 0x10000000u | 0x00002000u | multisampleInfo)) != 0) throw std::runtime_error("AGC graphics: color compression, DCC, endian conversion, nonstandard rounding or color optimization is unsupported (CB_COLOR_INFO 0x" + [&] { char text[16]; std::snprintf(text, sizeof(text), "%08x", info); return std::string(text); }() + ")");
@@ -2295,6 +2296,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             color.fmaskAddress = address - color.fmaskPipeBankXor;
         }
     }
+    Require(color.eqaaFragments == 0 || ((info & 0x4000u) != 0 && color.fmaskAddress != 0 && (info & 0x10000000u) == 0), "color targets with fewer fragments than samples (EQAA) are supported only with FMASK (CB_COLOR_INFO COMPRESSION and an FMASK base) and without DCC");
     if (color.coverageSamples > color.samples && (info & 0x4000u) != 0) {
         const auto fmaskHigh = find(cx, 0x3a0 + slot);
         color.fmaskAddress = (((fmaskHigh == cx.end() ? 0ull : static_cast<std::uint64_t>(fmaskHigh->second & 0xffu)) << 40u) | (static_cast<std::uint64_t>(read(cx, 0x321 + stride)) << 8u)) & ~0xffffull;
