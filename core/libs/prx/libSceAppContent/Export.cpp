@@ -301,34 +301,42 @@ int APS5_VABI sceAppContentAppParamGetString(void) {
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload0Expand(void) {
-    NotImplemented_nid_no_patch(__func__);
+static int ExpandDownloadPartition(const char* mountPoint, size_t size) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)size;
+    const auto directory = ResolvePath_nid_no_patch(mountPoint);
+    if (std::filesystem::create_directories(directory)) RecordWrittenPath_nid_no_patch(directory);
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload0Shrink(void) {
-    NotImplemented_nid_no_patch(__func__);
+static int ShrinkDownloadPartition(size_t size) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)size;
     return 0;
 }
 
-int APS5_VABI sceAppContentDownload1Expand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentDownload0Expand(size_t size) {
+    return ExpandDownloadPartition("/download0", size);
 }
 
-int APS5_VABI sceAppContentDownload1Shrink(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentDownload0Shrink(size_t size) {
+    return ShrinkDownloadPartition(size);
 }
 
-int APS5_VABI sceAppContentDownload2Expand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentDownload1Expand(size_t size) {
+    return ExpandDownloadPartition("/download1", size);
 }
 
-int APS5_VABI sceAppContentDownload2Shrink(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentDownload1Shrink(size_t size) {
+    return ShrinkDownloadPartition(size);
+}
+
+int APS5_VABI sceAppContentDownload2Expand(size_t size) {
+    return ExpandDownloadPartition("/download2", size);
+}
+
+int APS5_VABI sceAppContentDownload2Shrink(size_t size) {
+    return ShrinkDownloadPartition(size);
 }
 
 APS5_EXPORT("SWVxsi-ZBlw", sceAppContentUnknown_SWVxsi_ZBlw);
