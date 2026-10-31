@@ -490,7 +490,7 @@ private:
     // else from the import (`discard`: the image has no layout yet, a whole-surface first upload).
     // The write-back retiles into the import's unit shadow where a slab takes the piece
     // (`shadowed` receives those guest ranges, `imported` the pieces written to the import).
-    std::uint64_t uploadWindows(const HostImport& import, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard = false);
+    std::uint64_t uploadWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs, bool discard = false);
     std::uint64_t writeBackWindows(std::span<const ImportSegment> segments, std::span<const std::pair<std::uint64_t, std::uint64_t>> keep, std::uint64_t firstStored, std::uint64_t lastStored, std::vector<ShadowedRange>& shadowed, std::vector<std::pair<std::uint64_t, std::uint64_t>>& imported, Buffer* save = nullptr);
     struct DrawnRect {
         std::uint32_t left = 0;

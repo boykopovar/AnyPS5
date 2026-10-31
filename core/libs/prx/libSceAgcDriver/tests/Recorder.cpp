@@ -7195,6 +7195,233 @@ void writeBackBlockTests(const Device& device, Recorder& recorder) {
     std::cout << "write-back blocks: ok\n";
 }
 
+void uploadBlockTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0 || 65536 % base.hostImportAlignment != 0) {
+        std::cout << "host imports unavailable: upload blocks not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t window = std::size_t{8} << 20u;
+    struct Case {
+        const char* name;
+        std::size_t offset;
+        std::size_t registeredEnd;
+        std::size_t segments;
+        std::size_t importWindow;
+    };
+    const Case cases[] = {
+        {"a 64 KiB R_X 1024x1024 image over 64 adjacent 64 KiB pieces", 0, 4u << 20u, 0, window},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces", piece, (4u << 20u) + 2 * piece, 2, window},
+        {"a 64 KiB R_X 1024x1024 image at 64 KiB over 66 adjacent 64 KiB pieces in 2 MiB import windows", piece, (4u << 20u) + 2 * piece, 3, std::size_t{2} << 20u},
+    };
+    struct Window {
+        ~Window() { SetHostImportWindow(0); }
+    } restore;
+    const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
+    std::string failures;
+    for (const auto& test : cases) {
+        SetHostImportWindow(test.importWindow);
+        GuestTextureResource resource{};
+        resource.width = 1024;
+        resource.height = 1024;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        const auto surfaceBytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
+        Require(surfaceBytes == (4u << 20u) && test.offset + surfaceBytes <= test.registeredEnd, std::string(test.name) + ": the surface does not fit its pieces");
+#ifdef _WIN32
+        void* reserved = VirtualAlloc(nullptr, 2 * window, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        void* reserved = std::aligned_alloc(window, 2 * window);
+#endif
+        Require(reserved != nullptr, "cannot allocate the upload block");
+        auto* memory = static_cast<std::uint8_t*>(reinterpret_cast<void*>((reinterpret_cast<std::uintptr_t>(reserved) + window - 1) / window * window));
+        for (std::size_t i = 0; i < window; ++i) memory[i] = pattern(i);
+        std::vector<std::size_t> pieces;
+        for (std::size_t offset = 0; offset < test.registeredEnd; offset += piece) pieces.push_back(offset);
+        {
+            GuestAllocations::Mutation mutation;
+            for (const auto offset : pieces) mutation.Add(memory + offset, piece, true, true, true);
+        }
+        ClearHostImports(base.device);
+        const auto address = reinterpret_cast<std::uint64_t>(memory) + test.offset;
+        const auto before = HostImportCounters();
+        TextureDetiler detiler(base);
+        auto context = base;
+        context.detiler = &detiler;
+        resource.baseAddress = address;
+        bool direct = false;
+        std::size_t kept = 0;
+        {
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            recorder.Keep(image);
+            const auto read = recorder.DescribePendingRead(address + surfaceBytes - piece, piece);
+            direct = read.has_value() && read->kind == Recorder::ReadKind::StorageUpload;
+            image->MarkDirty();
+            image->WriteBack();
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            for (std::size_t i = test.offset; i < test.offset + surfaceBytes; ++i) kept += memory[i] == pattern(i) ? 1 : 0;
+        }
+        const auto after = HostImportCounters();
+        const auto segments = after.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made - before.requesters[static_cast<std::size_t>(ImportRequester::Segment)].made;
+        std::printf("%s: %zu segment imports, %s upload, %zu of %zu bytes kept through the round trip\n", test.name, static_cast<std::size_t>(segments), direct ? "GPU-direct" : "CPU", kept, surfaceBytes);
+        if (!direct) failures += std::string(test.name) + ": the upload took the CPU path\n";
+        if (segments != test.segments) failures += std::string(test.name) + ": " + std::to_string(segments) + " segment imports, expected " + std::to_string(test.segments) + "\n";
+        if (kept != surfaceBytes) failures += std::string(test.name) + ": the upload and write-back changed " + std::to_string(surfaceBytes - kept) + " guest bytes\n";
+        {
+            GuestAllocations::Mutation mutation;
+            for (const auto offset : pieces) mutation.Remove(memory + offset);
+        }
+        ClearHostImports(base.device);
+        recorder.Sync();
+#ifdef _WIN32
+        VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+        std::free(reserved);
+#endif
+    }
+    if (!failures.empty()) throw std::runtime_error("upload blocks:\n" + failures);
+    std::cout << "upload blocks: ok\n";
+}
+
+void uploadShadowedSegmentTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& base = device.GetContext();
+    if (!UnitShadowEnabled() || base.hostImportAlignment == 0 || 65536 % base.hostImportAlignment != 0) {
+        std::cout << "unit shadows or host imports unavailable: shadowed segment uploads not tested\n";
+        return;
+    }
+    constexpr std::size_t piece = 65536;
+    constexpr std::size_t block = std::size_t{8} << 20u;
+    constexpr std::size_t offset = std::size_t{1} << 20u;
+    constexpr std::size_t registeredEnd = std::size_t{6} << 20u;
+    void* reserved = AllocateWatched(block, block);
+    if (reserved == nullptr) {
+        std::cout << "no write watching: shadowed segment uploads not tested\n";
+        return;
+    }
+    struct Release {
+        void* block;
+        ~Release() {
+            SetHostImportWindow(0);
+            ReleaseWatched(block, std::size_t{8} << 20u);
+        }
+    } release{reserved};
+    SetHostImportWindow(std::size_t{2} << 20u);
+    auto* memory = static_cast<std::uint8_t*>(reserved);
+    const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
+    for (std::size_t i = 0; i < block; ++i) memory[i] = pattern(i);
+    GuestTextureResource resource{};
+    resource.width = 1024;
+    resource.height = 1024;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    const auto surfaceBytes = static_cast<std::size_t>(DescribeSurface(resource).guestBytes);
+    Require(surfaceBytes == (4u << 20u) && offset + surfaceBytes <= registeredEnd, "shadowed segment upload: the surface does not fit its pieces");
+    {
+        GuestAllocations::Mutation mutation;
+        for (std::size_t at = 0; at < registeredEnd; at += piece) mutation.Add(memory + at, piece, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        std::uint8_t* memory;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                for (std::size_t at = 0; at < (std::size_t{6} << 20u); at += 65536) mutation.Remove(memory + at);
+            }
+            ClearHostImports(context.device);
+        }
+    } unregister{base, memory};
+    ClearHostImports(base.device);
+    const auto address = reinterpret_cast<std::uint64_t>(memory) + offset;
+    std::vector<const HostImport*> imports;
+    for (std::size_t at = 0; at < surfaceBytes; at += piece) {
+        const auto* import = HostImportFor(base, address + at, piece, ImportRequester::Segment);
+        Require(import != nullptr, "shadowed segment upload: a piece of the surface was not imported");
+        if (imports.empty() || imports.back() != import) imports.push_back(import);
+    }
+    Require(imports.size() == 3, "shadowed segment upload: the surface does not span three imports");
+    if (!Watched(address, surfaceBytes)) {
+        std::cout << "host imports are compared, not watched: shadowed segment uploads not tested\n";
+        return;
+    }
+    CollectWritesUncached(address, surfaceBytes);
+    const auto copyBuffer = base.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+    std::vector<std::pair<std::uint64_t, std::uint8_t>> shadowed;
+    for (std::size_t index = 0; index < imports.size(); ++index) {
+        const auto& import = *imports[index];
+        const auto unit = std::max<std::uint64_t>(import.base, address) + piece;
+        Require(unit + piece <= std::min<std::uint64_t>(import.base + import.bytes, address + surfaceBytes), "shadowed segment upload: no whole unit of the surface in an import");
+        auto destination = ShadowDestinationFor(base, import, unit, unit + piece);
+        Require(destination.has_value() && destination->seedUnits.empty(), "shadowed segment upload: no slab destination for a whole unit");
+        const auto value = static_cast<std::uint8_t>(0xc1 + index);
+        auto fill = std::make_shared<Buffer>(base, piece, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        std::memset(fill->Bytes().data(), value, fill->Bytes().size());
+        const auto commands = recorder.Commands();
+        recorder.Keep(fill);
+        recorder.Keep(destination->slab);
+        RecordMemoryBarrier(base, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const VkBufferCopy region{0, SlabOffset(import, *destination->slab, unit), piece};
+        copyBuffer(commands, fill->Handle(), destination->buffer, 1, &region);
+        RecordMemoryBarrier(base, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        recorder.MarkCovered(VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        const ShadowedRange range{unit, unit + piece, destination->slab};
+        MarkShadowed(import, std::span(&range, 1), TrackerGeneration());
+        Require(AnyShadowedOverlaps(unit, piece), "shadowed segment upload: the slab's unit is not shadowed");
+        shadowed.emplace_back(unit, value);
+    }
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    resource.baseAddress = address;
+    bool direct = false;
+    {
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        recorder.Keep(image);
+        const auto read = recorder.DescribePendingRead(address + surfaceBytes - piece, piece);
+        direct = read.has_value() && read->kind == Recorder::ReadKind::StorageUpload;
+        image->MarkDirty();
+        image->WriteBack();
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    }
+    PublishShadow(address, surfaceBytes, PublishScope::Whole, PublishReason::Hook);
+    recorder.Sync();
+    std::size_t kept = 0;
+    std::size_t fromSlabs = 0;
+    for (std::size_t i = offset; i < offset + surfaceBytes; ++i) {
+        const auto at = reinterpret_cast<std::uint64_t>(memory) + i;
+        const auto slab = std::find_if(shadowed.begin(), shadowed.end(), [&](const auto& entry) { return entry.first <= at && at < entry.first + piece; });
+        const auto expected = slab != shadowed.end() ? slab->second : pattern(i);
+        if (memory[i] == expected) {
+            ++kept;
+            if (slab != shadowed.end()) ++fromSlabs;
+        }
+    }
+    std::printf("a 64 KiB R_X 1024x1024 image over 3 imports with a slab-held unit in each: %s upload, %zu of %zu bytes as expected (%zu of %zu from the slabs)\n", direct ? "GPU-direct" : "CPU", kept, surfaceBytes, fromSlabs, shadowed.size() * piece);
+    std::string failures;
+    if (!direct) failures += "the upload took the CPU path\n";
+    if (kept != surfaceBytes) failures += "the round trip changed " + std::to_string(surfaceBytes - kept) + " bytes, " + std::to_string(shadowed.size() * piece - fromSlabs) + " of them in the slab-held units\n";
+    if (!failures.empty()) throw std::runtime_error("shadowed segment upload:\n" + failures);
+    std::cout << "shadowed segment upload: ok\n";
+}
+
 void singlePassTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0 || !base.singlePassStorage) {
@@ -12588,6 +12815,8 @@ int main(int argc, char** argv) {
                 return 77;
             }
             writeBackBlockTests(device, recorder);
+            uploadBlockTests(device, recorder);
+            uploadShadowedSegmentTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--metadata-pass-only") {
@@ -12755,6 +12984,8 @@ int main(int argc, char** argv) {
         writeBackPaddingTests(device, recorder, true);
         splitWriteBackTests(device, recorder);
         writeBackBlockTests(device, recorder);
+        uploadBlockTests(device, recorder);
+        uploadShadowedSegmentTests(device, recorder);
         singlePassTests(device, recorder, false);
         singlePassTests(device, recorder, true);
         unchangedCpuStampTests(device, recorder);
