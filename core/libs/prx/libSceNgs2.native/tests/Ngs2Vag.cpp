@@ -221,35 +221,33 @@ public:
 };
 
 static void TestPlayback() {
-    auto data = Vag(2, 2);
-    for (std::uint32_t frame = 0; frame < 2; frame++) {
+    auto data = Vag(2, 3);
+    for (std::uint32_t frame = 0; frame < 3; frame++) {
         SetUnit(data, 2, frame, 0, 0x0c, 0, 0x21);
         SetUnit(data, 2, frame, 1, 0x0c, 0, 0xfe);
     }
     Unit(data, 2, 1, 0)[1] = 2;
     Ngs2WaveformInfo info{};
-    Require(sceNgs2ParseWaveformData(data.data(), data.size(), &info) == SCE_NGS2_OK && info.num_samples == 56);
+    Require(sceNgs2ParseWaveformData(data.data(), data.size(), &info) == SCE_NGS2_OK && info.num_samples == 84);
     Playback playback(2);
     auto block = info.block[0];
     block.num_skip_samples = 3;
-    block.num_samples = 53;
+    block.num_samples = 81;
     block.num_repeats = 2;
     playback.Add(data.data(), &block, 1);
     Require(playback.State().waveform_data == nullptr);
-    for (std::uint32_t grain = 0; grain < 15; grain++) {
+    for (std::uint32_t grain = 0; grain < 4; grain++) {
         const auto output = playback.Render();
         for (std::uint32_t i = 0; i < Grain; i++) {
             const std::uint32_t sample = grain * Grain + i;
-            const bool playing = sample >= 3 && sample - 3 < 112;
-            const std::uint32_t position = (sample - 3) % 56;
+            const bool playing = sample >= 3 && sample - 3 < 168;
+            const std::uint32_t position = (sample - 3) % 84;
             Require(output[i * 2] == (playing ? (position % 2 == 0 ? 1 : 2) : 0));
             Require(output[i * 2 + 1] == (playing ? (position % 2 == 0 ? -2 : -1) : 0));
         }
-        if (grain == 3) Require(playback.State().waveform_data == data.data() + HeaderSize + 32);
-        if (grain == 13) {
-            const auto state = playback.State();
-            Require(state.num_decoded_samples == 106 && state.decoded_data_size == 128);
-        }
+        const auto state = playback.State();
+        if (grain == 0) Require(state.waveform_data == data.data() + HeaderSize + 64 && state.num_decoded_samples == 61 && state.decoded_data_size == 64);
+        if (grain == 1) Require(state.waveform_data == data.data() + HeaderSize + 32 && state.num_decoded_samples == 122 && state.decoded_data_size == 128);
     }
     const auto state = playback.State();
     Require(state.num_decoded_samples == 0 && state.waveform_data == nullptr);
@@ -306,7 +304,7 @@ static void TestErrors() {
     RequireThrows([&] { playback.Add(data.data(), &longer, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET); });
     playback.Add(data.data(), &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET);
     const auto output = playback.Render();
-    for (std::uint32_t i = 0; i < Grain; i++) Require(output[i] == (i < 3 ? 0 : 1));
+    for (std::uint32_t i = 0; i < Grain; i++) Require(output[i] == (i >= 3 && i - 3 < FrameSamples ? 1 : 0));
 }
 
 int main() {
