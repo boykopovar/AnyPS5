@@ -224,6 +224,20 @@ class AbSplitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-finite"):
             ab_split.split(lines)
 
+    def test_invalid_phase_chronology_is_rejected(self):
+        cases = (
+            [
+                "[ab] phase A 0 begins at present 100 (t 10.000 s)",
+                "[ab] phase A 0 settled at present 90 (t 11.000 s)",
+            ],
+            [
+                "[ab] phase A 0 begins at present 100 (t 10.000 s)",
+                "[ab] phase A 0 settled at present 110 (t 9.000 s)",
+            ],
+        )
 
+        for lines in cases:
+            with self.subTest(lines=lines), self.assertRaises(ValueError):
+                ab_split.read_log(lines)
 if __name__ == "__main__":
     unittest.main()
