@@ -59,6 +59,21 @@ static void Require(bool value, std::source_location location = std::source_loca
 }
 constexpr int StandardExceptions = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
 
+static void CheckLdexpSpecialValues() {
+    constexpr double infinity = std::numeric_limits<double>::infinity();
+    Require(ldexp_nid_postfix(1., 10) == 1024. && ldexp_nid_postfix(-1.5, 3) == -12. && ldexp_nid_postfix(3., -1) == 1.5);
+    Require(ldexp_nid_postfix(5., 0) == 5.);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(0., 1000)) == 0);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(-0., -1000)) == 0x8000000000000000ull);
+    Require(ldexp_nid_postfix(infinity, -5) == infinity && ldexp_nid_postfix(-infinity, -5) == -infinity);
+    Require(std::isnan(ldexp_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 3)));
+    Require(ldexp_nid_postfix(1., 2000) == infinity && ldexp_nid_postfix(-1., 2000) == -infinity);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(1., -2000)) == 0);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(-1., -2000)) == 0x8000000000000000ull);
+    Require(std::bit_cast<std::uint64_t>(ldexp_nid_postfix(1., -1074)) == 1);
+    Require(ldexp_nid_postfix(0x1p-1074, 1074) == 1.);
+}
+
 static void CheckSquareRoot() {
     Require(sqrt_nid_postfix(4.) == 2. && sqrtf_nid_postfix(6.25f) == 2.5f);
     Require(std::bit_cast<std::uint64_t>(sqrt_nid_postfix(2.)) == 0x3ff6a09e667f3bcdull);
@@ -2597,6 +2612,7 @@ int main() {
     Require(ilogbf_nid_postfix(std::numeric_limits<float>::denorm_min()) == -149);
     Require(exp2_nid_postfix(-3.) == 0.125);
     Require(ldexp_nid_postfix(0.75, 4) == 12.);
+    CheckLdexpSpecialValues();
     CheckSquareRoot();
     CheckExp2Errno();
     CheckExactOperations();
