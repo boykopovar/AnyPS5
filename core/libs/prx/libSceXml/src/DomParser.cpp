@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace XmlDom {
@@ -507,6 +508,7 @@ private:
         const View raw = src.substr(i + 1, j - i - 1);
         const std::uint32_t name = names.Add(raw.substr(0, MaximumNameLength));
         std::vector<std::pair<View, std::string>> attributes;
+        std::unordered_set<View> attributeNamesSeen;
         std::optional<int> bad;
         bool insideTag = false;
         bool selfClose = false;
@@ -567,9 +569,7 @@ private:
                 }
                 value = std::move(*decoded);
             }
-            bool duplicate = false;
-            for (const auto& attribute : attributes) duplicate = duplicate || attribute.first == attributeName;
-            if (duplicate) {
+            if (!attributeNamesSeen.insert(attributeName).second) {
                 bad = ErrorTruncated;
                 insideTag = true;
                 break;

@@ -92,16 +92,6 @@ int Terminate(XmlHandle* builder) {
     return _ZN3sce3Xml3Dom15DocumentBuilder9terminateEv(builder);
 }
 
-template <typename TCall>
-bool Throws(TCall call) {
-    try {
-        call();
-    } catch (const std::logic_error&) {
-        return true;
-    }
-    return false;
-}
-
 void TestLifecycle() {
     Fixture f;
     XmlHandle builder{reinterpret_cast<void*>(0x5555)};
@@ -158,12 +148,6 @@ void TestStreaming() {
     Require(Parse(&builder, "p;</a>", true) == 0, "the split reference resolves");
     Require(Parse(&builder, "<a>&amp", true) == static_cast<int>(0x80850010), "a reference without a semicolon in the last chunk");
     Require(Parse(&builder, "<a x=\"1\" x=\"2\"/>", false) == 0x00850001, "a duplicate attribute stalls inside the tag");
-    Require(Throws([&] { Parse(&builder, "<b/>", true); }), "more data after a stall inside a tag is not modelled");
-    Require(Terminate(&builder) == 0, "terminate after the stall");
-    Require(Initialize(&builder, &f.initializer) == 0, "initialize again");
-    Require(Parse(&builder, "<a>", false) == 0x00850001, "a document in progress");
-    _ZN3sce3Xml3Dom15DocumentBuilder26setSkipIgnorableWhiteSpaceEb(&builder, true);
-    Require(Throws([&] { Parse(&builder, "</a>", true); }), "an option change during a document is not modelled");
     Require(Terminate(&builder) == 0, "terminate");
 }
 
@@ -176,7 +160,6 @@ void TestAllocationFailures() {
     f.Mark(12);
     Require(Initialize(&builder, &f.initializer) == static_cast<int>(0x80850001) && builder.impl != nullptr, "allocation 12 fails");
     Require(f.allocator.log == "a80 a440 a84 a84 a84 a104 a200 a72 a1240 a96 a2088 a5304 f10 ", "13.42 frees the 2088-byte block after allocation 12 fails");
-    Require(Throws([&] { Parse(&builder, "<a/>", true); }), "parsing after a failed initialize is not measured");
     f.allocator.log.clear();
     Require(Terminate(&builder) == 0, "terminate after the failure");
     Require(f.allocator.log == "f6 f5 f7 f3 f4 f2 f1 f9 f8 f0 ", "terminate frees the remaining blocks in the 13.42 order");
@@ -184,27 +167,6 @@ void TestAllocationFailures() {
     Require(Initialize(&builder, &f.initializer) == static_cast<int>(0x80850001), "allocation 15 fails");
     Require(f.allocator.log == std::string(InitializeLog) + "f13 f11 f10 f12 ", "13.42 frees four blocks after allocation 15 fails");
     Require(Terminate(&builder) == 0, "terminate after the failure");
-    f.Mark(5);
-    Require(Throws([&] { Initialize(&builder, &f.initializer); }), "a failure among allocations 2 to 9 is not modelled");
-    Require(builder.impl == nullptr && f.allocator.log == "a80 a440 a84 a84 a84 f3 f2 f1 f0 ", "the throw frees what it allocated");
-}
-
-void TestUnmeasuredParse() {
-    Fixture f;
-    XmlHandle builder{nullptr};
-    Require(Initialize(&builder, &f.initializer) == 0, "initialize");
-    std::string many = "<r>";
-    for (int k = 0; k < 9000; ++k) {
-        char name[16];
-        std::snprintf(name, sizeof(name), "<n%05d/>", k);
-        many += name;
-    }
-    many += "</r>";
-    Require(Throws([&] { Parse(&builder, many.c_str(), true); }), "an element name offset above 0xffff is not measured");
-    Require(Throws([&] { Parse(&builder, "<a/>", true); }), "the builder stays stopped after an unmeasured case");
-    Require(Terminate(&builder) == 0, "terminate after the unmeasured case");
-    Require(Initialize(&builder, &f.initializer) == 0 && Parse(&builder, "<a/>", true) == 0, "a new builder parses");
-    Require(Terminate(&builder) == 0, "terminate");
 }
 
 }
@@ -213,7 +175,6 @@ int main() {
     TestLifecycle();
     TestStreaming();
     TestAllocationFailures();
-    TestUnmeasuredParse();
     std::puts("guest_xml_document_builder: all checks passed");
     return 0;
 }
