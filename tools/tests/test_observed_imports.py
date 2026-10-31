@@ -139,6 +139,29 @@ class ObservedImportsTests(unittest.TestCase):
         self.assertEqual(self.add(report)[0], 0)
         self.assertEqual(self.text("libSceOne"), f"{FIRST}{AUDIT}\n{SECOND}  # loader\n")
 
+    def test_classify_creates_an_empty_manifest_for_each_library_without_one(self):
+        self.observed.mkdir()
+        (self.observed / "libSceOne.txt").write_text(f"{FIRST}  # loader\n", encoding="utf-8")
+        code, out, _ = self.run_tool("classify", "--all")
+        self.assertEqual(code, 0)
+        self.assertIn("classified 1 libraries", out)
+        self.assertEqual(self.text("libSceTwo"), observed_imports.NO_EVIDENCE + "\n")
+        self.assertEqual(self.text("libSceOne"), f"{FIRST}  # loader\n")
+        self.assertEqual(progress.read_manifest(self.observed / "libSceTwo.txt"), frozenset())
+        self.assertEqual(self.run_tool("check")[0], 0)
+
+    def test_classify_names_libraries_and_rejects_unknown_or_none(self):
+        self.assertEqual(self.run_tool("classify", "libSceTwo")[0], 0)
+        self.assertEqual([path.name for path in self.observed.iterdir()], ["libSceTwo.txt"])
+        self.assertEqual(self.run_tool("classify", "libSceNope")[0], 2)
+        self.assertEqual(self.run_tool("classify")[0], 2)
+
+    def test_the_no_evidence_header_is_replaced_when_a_nid_is_added(self):
+        self.run_tool("classify", "libSceOne")
+        self.assertEqual(self.run_tool("entry", "--tag", "loader", "--", "libSceOne", FIRST)[0], 0)
+        self.assertEqual(self.text("libSceOne").splitlines()[0], observed_imports.HEADER.format(library="libSceOne"))
+        self.assertNotIn("no measured use found yet", self.text("libSceOne"))
+
     def test_check_accepts_valid_manifests(self):
         self.add(self.report([record(FIRST, ["libSceOne.prx"])]))
         code, out, _ = self.run_tool("check")
