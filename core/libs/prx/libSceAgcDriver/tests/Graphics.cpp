@@ -9773,6 +9773,27 @@ std::pair<std::uint32_t, bool> stencilReferenceOutcome(const AgcDriver::Graphics
     return {((stencil & ~writeMask) | (updated & writeMask)) & 0xffu, stencilPass && depthPass};
 }
 
+void unitFlagsTests() {
+    AgcDriver::Graphics::UnitFlags flags;
+    flags.assign(130, false);
+    Require(flags.size() == 130 && !flags.Any() && flags.Count() == 0, "unit flags: a cleared set holds flags");
+    flags.SetRange(60, 10, true);
+    Require(flags.Count() == 10 && flags.AllIn(60, 10) && !flags.AllIn(59, 11) && !flags.AllIn(60, 11), "unit flags: a range across a word boundary was not set exactly");
+    Require(flags.AnyIn(69, 1) && !flags.AnyIn(70, 60) && !flags.AnyIn(0, 60), "unit flags: AnyIn saw a flag outside its range");
+    for (std::size_t unit = 0; unit < flags.size(); ++unit) Require(flags[unit] == (unit >= 60 && unit < 70), "unit flags: unit " + std::to_string(unit) + " reads wrong");
+    flags[64] = false;
+    Require(!flags.AllIn(60, 10) && flags.AnyIn(60, 10) && flags.Count() == 9 && !flags[64] && flags[63] && flags[65], "unit flags: clearing one unit changed another");
+    flags.SetRange(0, 130, true);
+    Require(flags.AllIn(0, 130) && flags.Count() == 130, "unit flags: setting every unit left one clear");
+    flags.SetRange(64, 64, false);
+    Require(flags.Count() == 66 && flags.AllIn(0, 64) && !flags.AnyIn(64, 64) && flags.AllIn(128, 2), "unit flags: clearing one whole word touched its neighbours");
+    Require(!flags.AnyIn(64, 0) && flags.AllIn(64, 0), "unit flags: an empty range was not empty");
+    flags.assign(130, true);
+    Require(flags.Count() == 130 && flags.Bools() == std::vector<bool>(130, true), "unit flags: a set filled with true holds bits past its size or misses some");
+    flags.clear();
+    Require(flags.empty() && flags.size() == 0 && !flags.Any(), "unit flags: a cleared set is not empty");
+}
+
 void stencilReferenceUnusedTests() {
     using AgcDriver::Graphics::StencilReferenceUnused;
     AgcDriver::Graphics::State state{};
@@ -12931,6 +12952,7 @@ int main(int argc, char** argv) {
         RunGuestLeaseWaitTests();
         ResourceContentKeyTests(false);
         stateTests();
+        unitFlagsTests();
         pipelineStoreLazyBufferPoolTests();
         retainedPixelStageTests();
         pipelineLibrarySetTests();
