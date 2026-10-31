@@ -47,6 +47,13 @@ struct NpIdFull {
     std::uint8_t reserved[8];
 };
 
+struct NpJid {
+    const char* user;
+    const char* domain;
+    const char* resource;
+    std::uint64_t reserved;
+};
+
 struct NpJsonRule {
     std::uint64_t kind;
     const char* key;
@@ -160,9 +167,9 @@ int APS5_VABI sceNpJoinThread(Pthread thread, void** retval);
 int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec);
 void APS5_VABI sceNpGetSdkVersion(char* version);
 int APS5_VABI sceNpCloseSema(void);
-int APS5_VABI sceNpGetNavSdkVersion(void);
-int APS5_VABI sceNpIntGetPlatformType(void);
-int APS5_VABI sceNpIntSetPlatformType(void);
+void APS5_VABI sceNpGetNavSdkVersion(char* version);
+int APS5_VABI sceNpIntGetPlatformType(const NpIdFull* npId);
+int APS5_VABI sceNpIntSetPlatformType(NpIdFull* npId, std::uint32_t platformType);
 int APS5_VABI sceNpJsonParse(void* guestContext, const char* data, int length);
 int APS5_VABI sceNpJsonParseBuf(void* guestContext, const char* data, int length);
 int APS5_VABI sceNpJsonParseBufInit(void* guestContext, const NpJsonRuleSet* rules, char* key,
@@ -173,14 +180,14 @@ int APS5_VABI sceNpJsonParseExInit(void* guestContext, const NpJsonRuleSet* rule
 int APS5_VABI sceNpJsonParseInit(void* guestContext, const NpJsonRuleSet* rules, NpJsonCallback callback,
     void* user);
 int APS5_VABI sceNpOpenSema(void);
+int APS5_VABI sceNpSetPlatformType(NpIdFull* npId, std::uint32_t platformType);
+int APS5_VABI sceNpUtilCanonicalizeNpIdForPs4(NpIdFull* npId, std::int32_t replace);
+int APS5_VABI sceNpUtilCanonicalizeNpIdForPsp2(NpIdFull* npId, std::int32_t replace);
 int APS5_VABI sceNpServerErrorJsonGetErrorCode(std::int32_t httpStatus, const char* json, std::size_t length);
 int APS5_VABI sceNpServerErrorJsonMultiGetErrorCode(std::int32_t httpStatus, const char* json, std::size_t length);
 int APS5_VABI sceNpServerErrorJsonParse(void* guestContext, const char* data, int length);
 int APS5_VABI sceNpServerErrorJsonParseInit(void* guestContext, NpServerErrorJsonResult* result);
 int APS5_VABI sceNpServerErrorJsonParseMultiInit(void* guestContext, NpServerErrorJsonResult* result);
-int APS5_VABI sceNpSetPlatformType(void);
-int APS5_VABI sceNpUtilCanonicalizeNpIdForPs4(void);
-int APS5_VABI sceNpUtilCanonicalizeNpIdForPsp2(void);
 int APS5_VABI sceNpUtilGetDateSetAuto(void);
 int APS5_VABI sceNpUtilGetDbgCommerce(void);
 int APS5_VABI sceNpUtilGetEnv(void);
@@ -195,7 +202,7 @@ int APS5_VABI sceNpUtilGetTrcNotify(void);
 int APS5_VABI sceNpUtilGetWebApi2FakeRateLimit(void);
 int APS5_VABI sceNpUtilGetWebApi2FakeRateLimitTarget(void);
 int APS5_VABI sceNpUtilGetWebTraceSetting(void);
-int APS5_VABI sceNpUtilJidToNpId(void);
+int APS5_VABI sceNpUtilJidToNpId(NpIdFull* npId, const NpJid* jid);
 int APS5_VABI sceNpAtomicCas32(std::int32_t* value, std::int32_t expected, std::int32_t desired);
 int APS5_VABI sceNpAtomicInc32(std::int32_t* value);
 int APS5_VABI sceNpAtomicDec32(std::int32_t* value);
@@ -344,7 +351,7 @@ int APS5_VABI _ZN3sce2np4Cond4InitEPKcPNS0_5MutexE(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient10DisconnectEv(void);
 int APS5_VABI _ZN3sce2np3ipc10IpmiClient11IsConnectedEv(void);
 int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTypePKcPcS5_iPPhPmPiPvESA_(void);
-int APS5_VABI sceNpUtilParseJid(void);
+int APS5_VABI sceNpUtilParseJid(NpJid* jid, const char* text, char* buffer, std::size_t bufferSize, std::size_t* required);
 int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void);
 int APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(void);
 int APS5_VABI sceNpUtilXmlUnescape(void);
