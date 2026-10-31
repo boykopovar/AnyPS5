@@ -1,0 +1,15 @@
+add_library(libSceFrontPanelDisplay SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceFrontPanelDisplay PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceFrontPanelDisplay)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_front_panel_display_tests ${LIBS_INCLUDE_DIR}/tests/GuestFrontPanelDisplay.cpp)
+    configure_windows_unwind(guest_front_panel_display_tests)
+    target_include_directories(guest_front_panel_display_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_front_panel_display_tests PRIVATE libSceFrontPanelDisplay libc)
+    add_test(NAME guest_front_panel_display COMMAND guest_front_panel_display_tests)
+    if(WIN32)
+        set_tests_properties(guest_front_panel_display PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFrontPanelDisplay>")
+    endif()
+endif()
