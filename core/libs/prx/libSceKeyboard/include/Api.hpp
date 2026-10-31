@@ -8,6 +8,8 @@ struct KeyboardProcessFocus;
 
 extern "C" {
 
+int APS5_VABI sceDbgKeyboardGetHandle();
+
 int APS5_VABI sceKeyboardInit(void);
 int APS5_VABI sceKeyboardOpen(int userId, int32_t type, int32_t index, const void* param);
 int APS5_VABI sceKeyboardClose(int32_t handle);

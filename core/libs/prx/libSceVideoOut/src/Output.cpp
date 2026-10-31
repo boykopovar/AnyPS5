@@ -302,6 +302,13 @@ int APS5_VABI sceVideoOutCursorSetPosition(int32_t handle, int32_t index, uint32
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutCursorSet2xMagnify(int32_t handle, int32_t index, bool) try {
+    if (const int error = cursorHandleError(__func__, handle, index)) return error;
+    return 0;
+} catch (const ProcessShutdown&) {
+    LibcAwaitExit_nid_postfix();
+}
+
 int APS5_VABI sceVideoOutWaitVblank(int handle) try {
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     if (cfg == nullptr) {

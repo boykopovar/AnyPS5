@@ -434,6 +434,66 @@ void relocationValidation() {
 
 }
 
+void sysvHashBoundsInCodeInstructionCollector() {
+    auto baseImage = fixture();
+    const auto parseHeaders = [](const std::vector<std::uint8_t>& bytes) {
+        std::vector<Domain::ProgramHeader> headers;
+        const auto count = Io::ReadU16(bytes, 56);
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto at = 64 + i * 56;
+            Domain::ProgramHeader h{};
+            h.Type = Io::ReadU32(bytes, at);
+            h.Flags = Io::ReadU32(bytes, at + 4);
+            h.Offset = Io::ReadU64(bytes, at + 8);
+            h.MappedAddress = Io::ReadU64(bytes, at + 16);
+            h.FileSize = Io::ReadU64(bytes, at + 32);
+            h.MemorySize = Io::ReadU64(bytes, at + 40);
+            headers.push_back(h);
+        }
+        return headers;
+    };
+    const auto headers = parseHeaders(baseImage);
+    const auto checkRejection = [&](const std::vector<std::uint8_t>& img, std::string_view expected) {
+        try {
+            Relinker::CodeInstructionCollector().Collect(img, headers);
+            throw std::runtime_error("Collector accepted invalid SysV hash table");
+        } catch (const Domain::RelinkerException& error) {
+            require(std::string(error.what()).find(expected) != std::string::npos, "Wrong error message from collector");
+        }
+    };
+    {
+        auto zeroBucket = baseImage;
+        Io::WriteU32(zeroBucket, 0x2680, 0);
+        checkRejection(zeroBucket, "invalid SysV hash header");
+    }
+    {
+        auto zeroChain = baseImage;
+        Io::WriteU32(zeroChain, 0x2684, 0);
+        checkRejection(zeroChain, "invalid SysV hash header");
+    }
+    {
+        auto oobBucket = baseImage;
+        Io::WriteU32(oobBucket, 0x2688, 4);
+        checkRejection(oobBucket, "invalid SysV hash bucket index");
+    }
+    {
+        auto tableOob = baseImage;
+        Io::WriteU32(tableOob, 0x2684, 0x2000);
+        checkRejection(tableOob, "unmapped address");
+    }
+    {
+        auto lastBucket = baseImage;
+        Io::WriteU32(lastBucket, 0x2680, 2);
+        Io::WriteU32(lastBucket, 0x268c, 1);
+        checkRejection(lastBucket, "invalid SysV hash bucket index");
+    }
+    {
+        auto chainPastSegment = baseImage;
+        Io::WriteU32(chainPastSegment, 0x2680, 0x25e);
+        checkRejection(chainPastSegment, "unmapped address");
+    }
+}
+
 int main() {
     try {
         convert();
@@ -447,6 +507,7 @@ int main() {
         baseRelocations();
         runtimeDirectories();
         relocationValidation();
+        sysvHashBoundsInCodeInstructionCollector();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

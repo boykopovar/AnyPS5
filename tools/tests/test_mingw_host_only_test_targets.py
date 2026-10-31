@@ -57,6 +57,18 @@ class HostOnlyTargets(unittest.TestCase):
         source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
         self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), ["host_tests"])
 
+    def test_excludes_mingw_libc_import_library_from_host_only_targets(self):
+        guest = self.target("guest_mktime_tests", source="core/libs/tests/GuestMktime.cpp",
+                            fragment="C:/build/core/libs/libs/implib/liblibc.dll.a")
+        source_root = Path(self.temporary.name).resolve()
+        self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, {guest["id"]: guest}), [])
+
+    def test_libc_link_does_not_accept_similarly_named_libraries(self):
+        for fragment in ("/build/notliblibc.dll.a", "/build/liblibc.dll.a.extra", "/build/liblibc.prx"):
+            with self.subTest(fragment=fragment):
+                target = self.target("host_tests", fragment=fragment)
+                self.assertFalse(build_mingw_host_only_tests.links_guest_libc(target))
+
     def test_excludes_a_transitive_guest_libc_dependency(self):
         helper = self.target("guest_helper", target_type="STATIC_LIBRARY", source="core/libs/tests/GuestHelper.cpp",
                              dependencies=("libc-id",))

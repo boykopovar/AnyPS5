@@ -126,15 +126,19 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
     int schedPriority = self->priority.load(std::memory_order_relaxed);
     const bool other = lwpid != 0 && static_cast<std::int64_t>(lwpid) != static_cast<std::int64_t>(self->tid);
     if (other && !GetLiveGuestThreadSched_nid_no_patch(lwpid, policy, schedPriority)) return fail(GuestEsrch);
+    GuestRtPrio requested{};
+    if (function == Set && !GuestCopyIn_nid_no_patch(&requested, priority, sizeof(requested))) return fail(GuestEfault);
     const bool realTime = policy == GuestSchedFifo || policy == GuestSchedRr;
     if (function == Lookup) {
-        priority->type = realTime ? (policy == GuestSchedFifo ? Fifo : Realtime) : Normal;
-        priority->prio = realTime ? static_cast<std::uint16_t>(schedPriority) : 0;
+        GuestRtPrio current{};
+        current.type = realTime ? (policy == GuestSchedFifo ? Fifo : Realtime) : Normal;
+        current.prio = realTime ? static_cast<std::uint16_t>(schedPriority) : 0;
+        if (!GuestCopyOut_nid_no_patch(priority, &current, sizeof(current))) return fail(GuestEfault);
         return 0;
     }
     if (other) NotImplemented_nid_no_patch("rtprio_thread: a thread other than the calling one");
     if (realTime) NotImplemented_nid_no_patch("rtprio_thread: a guest thread's real-time class");
-    if (priority->type == Normal && priority->prio == 0) return 0;
+    if (requested.type == Normal && requested.prio == 0) return 0;
     NotImplemented_nid_no_patch("rtprio_thread: a real-time priority change");
 }
 
@@ -185,11 +189,23 @@ int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, Ker
     return PosixThread::ToErrno(scePthreadGetschedparam(thread, policy, param));
 }
 
-static Pthread SchedTarget(int pid, const char* function) {
-    if (pid == 0) return scePthreadSelf();
-    if (pid != getpid_nid_postfix()) return nullptr;
-    if (IsInitialPthread_nid_no_patch()) return scePthreadSelf();
-    throw std::runtime_error(std::string(function) + ": the main thread is selected by the own pid from another thread, which is not modelled");
+static std::unique_lock<std::mutex> SchedTarget(int pid, Pthread& thread, const char* function) {
+    if (pid == 0) {
+        thread = scePthreadSelf();
+        return LockLiveGuestThread(thread);
+    }
+    if (pid != getpid_nid_postfix()) return {};
+    if (IsInitialPthread_nid_no_patch()) {
+        thread = scePthreadSelf();
+        return LockLiveGuestThread(thread);
+    }
+#ifndef __APPLE__
+    auto lock = LockMainGuestThread_nid_no_patch(thread);
+    if (lock.owns_lock()) return lock;
+    throw std::runtime_error(std::string(function) + ": the own pid selects the main thread, which has not called scePthreadSelf or has exited");
+#else
+    throw std::runtime_error(std::string(function) + ": the own pid selects the guest main thread, which is not identified on macOS");
+#endif
 }
 
 static int SchedFailure(int error) {
@@ -202,36 +218,36 @@ static bool InSchedRange(int policy, int priority) {
 }
 
 int APS5_VABI sched_getparam_nid_postfix(int pid, KernelSchedParam* param) {
-    const Pthread thread = SchedTarget(pid, "sched_getparam");
-    if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
-    int policy = 0;
     KernelSchedParam current{};
-    if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &policy, &current))) return SchedFailure(error);
-    if (!param) return SchedFailure(PosixThread::GUEST_EFAULT);
-    *param = current;
+    {
+        Pthread thread = nullptr;
+        const auto live = SchedTarget(pid, thread, "sched_getparam");
+        if (!live.owns_lock()) return SchedFailure(PosixThread::GUEST_ESRCH);
+        current.sched_priority = thread->priority.load(std::memory_order_relaxed);
+    }
+    if (!param || !GuestCopyOut_nid_no_patch(param, &current, sizeof(current))) return SchedFailure(PosixThread::GUEST_EFAULT);
     return 0;
 }
 
 int APS5_VABI sched_getscheduler_nid_postfix(int pid) {
-    const Pthread thread = SchedTarget(pid, "sched_getscheduler");
-    if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
-    int policy = 0;
-    KernelSchedParam current{};
-    if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &policy, &current))) return SchedFailure(error);
-    return policy;
+    Pthread thread = nullptr;
+    const auto live = SchedTarget(pid, thread, "sched_getscheduler");
+    if (!live.owns_lock()) return SchedFailure(PosixThread::GUEST_ESRCH);
+    return thread->schedPolicy.load(std::memory_order_relaxed);
 }
 
 int APS5_VABI sched_setparam_nid_postfix(int pid, const KernelSchedParam* param) {
     if (!param) return SchedFailure(PosixThread::GUEST_EFAULT);
-    const Pthread thread = SchedTarget(pid, "sched_setparam");
-    if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
-    const auto live = LockLiveGuestThread(thread);
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return SchedFailure(PosixThread::GUEST_EFAULT);
+    Pthread thread = nullptr;
+    const auto live = SchedTarget(pid, thread, "sched_setparam");
     if (!live.owns_lock()) return SchedFailure(PosixThread::GUEST_ESRCH);
     const int policy = thread->schedPolicy.load(std::memory_order_relaxed);
     if (policy != GUEST_SCHED_FIFO && policy != GUEST_SCHED_RR)
         throw std::runtime_error("sched_setparam: the thread's policy " + std::to_string(policy) + " is neither SCHED_FIFO nor SCHED_RR, for which the answer of a PS5 is unmeasured");
-    if (!InSchedRange(policy, param->sched_priority)) return SchedFailure(PosixThread::GUEST_EPERM);
-    thread->priority.store(param->sched_priority, std::memory_order_relaxed);
+    if (!InSchedRange(policy, requested.sched_priority)) return SchedFailure(PosixThread::GUEST_EPERM);
+    thread->priority.store(requested.sched_priority, std::memory_order_relaxed);
     return 0;
 }
 
@@ -250,12 +266,13 @@ int APS5_VABI pthread_getprio_nid_postfix(Pthread thread) {
 
 int APS5_VABI pthread_getaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, void* cpuset) {
     if (!thread) return PosixThread::GUEST_EINVAL;
-    if (cpusetSize != GUEST_CPUSET_BYTES) return GUEST_ERANGE;
+    if (cpusetSize >= GUEST_CPUSET_BYTES) return GUEST_ERANGE;
+    if (cpusetSize != 8 && cpusetSize != 16) NotImplemented_nid_no_patch("pthread_getaffinity_np with a set other than 8, 16 or 32 bytes and more");
     if (!cpuset) return PosixThread::GUEST_EFAULT;
     KernelCpumask mask = 0;
     const int result = scePthreadGetaffinity(thread, &mask);
     if (result != 0) return PosixThread::ToErrno(result);
-    std::memset(cpuset, 0, GUEST_CPUSET_BYTES);
+    std::memset(cpuset, 0, cpusetSize);
     std::memcpy(cpuset, &mask, sizeof(mask));
     return 0;
 }
