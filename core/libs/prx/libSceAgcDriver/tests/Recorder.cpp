@@ -11086,7 +11086,7 @@ void pipelineCacheHeaderTests(const Device& device) {
     Require(versionDirectory.native().size() >= 220 && versionDirectory.native().size() <= 249, "the pipeline cache directory is not between 220 and 249 characters");
 #ifdef _WIN32
     _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
-    _putenv_s("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str());
+    _wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", directory.c_str());
 #else
     setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
     setenv("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str(), 1);
