@@ -183,7 +183,7 @@ class ProgressHistoryTests(unittest.TestCase):
                 points = progress_history.collect("HEAD")
                 self.assertEqual(progress_history.measured_paths("HEAD")[-1], "docs/dev/observed")
                 self.assertEqual(progress_history.measured_paths("HEAD~1")[-1], "core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp")
-        self.assertEqual([(p["libraries"]["done"], p["libraries"]["total"]) for p in points], [(0, 0), (0, 1)])
+        self.assertEqual([(p["libraries"]["done"], p["libraries"]["total"]) for p in points], [(0, 1), (0, 1)])
 
     def test_points_keep_the_observed_and_unobserved_split(self):
         stub = "static void Stub() { NotImplemented_nid_no_patch(__func__); }\n"
@@ -198,7 +198,7 @@ class ProgressHistoryTests(unittest.TestCase):
             commit(root, "2026-01-02", "second", body)
             with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES, OBSERVED=observed):
                 points = progress_history.collect("HEAD")
-        self.assertEqual([(p["libraries"]["unobserved"], p["libraries"]["declared_total"]) for p in points], [(1, 1), (0, 1)])
+        self.assertEqual([(p["libraries"]["unobserved"], p["libraries"]["declared_total"]) for p in points], [(0, 1), (0, 1)])
         self.assertEqual(sorted(points[0]["shaders"]), ["done", "percent", "total"])
         self.assertEqual(len(points[1]["commit"]), 40)
 
@@ -228,7 +228,7 @@ class ProgressHistoryTests(unittest.TestCase):
                 points = progress_history.collect("HEAD")
                 html = progress_history.page(points)
         self.assertEqual([p["date"] for p in points], ["2026-01-01", "2026-01-02"])
-        self.assertEqual([(p["libraries"]["done"], p["libraries"]["total"]) for p in points], [(0, 0), (1, 1)])
+        self.assertEqual([(p["libraries"]["done"], p["libraries"]["total"]) for p in points], [(0, 1), (1, 2)])
         self.assertIn("<svg", html)
         self.assertIn("2026-01-02", html)
 
@@ -280,7 +280,7 @@ class ProgressHistoryTests(unittest.TestCase):
         point = {"date": "2026-01-01", "libraries": {"done": 1, "total": 2, "percent": 50.0},
                  "shaders": {"done": 1, "total": 1, "percent": 100.0}}
         page = progress_history.page([point])
-        self.assertIn("every stub in them is unobserved and their counted figure holds only what a manifest of that day names", page)
+        self.assertIn("every stub in them counts as observed, as it did then", page)
         self.assertIn("Unobserved stubs are not counted", page)
         self.assertIn("How to read the graphs", page)
         self.assertIn("Grey: unobserved stub", page)

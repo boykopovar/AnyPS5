@@ -46,6 +46,11 @@ def measured_paths(sha):
     return paths
 
 
+class Everything(set):
+    def __rand__(self, other):
+        return set(other)
+
+
 def measure(sha):
     paths = measured_paths(sha)
     with tempfile.TemporaryDirectory() as directory:
@@ -58,16 +63,18 @@ def measure(sha):
                 archive.extractall(root)
         except subprocess.CalledProcessError:
             return None
-        saved = progress.PRX, progress.OPCODES, progress.OBSERVED, progress.INVENTORY
+        saved = progress.PRX, progress.OPCODES, progress.OBSERVED, progress.INVENTORY, progress.observed_nids
         progress.PRX, progress.OPCODES = root / paths[0], root / paths[1]
         progress.OBSERVED = root / progress.OBSERVED_RELATIVE
         progress.INVENTORY = root / progress.INVENTORY_RELATIVE
+        if not progress.OBSERVED.is_dir():
+            progress.observed_nids = lambda library: Everything()
         try:
             libraries, shaders = progress.collect_libraries(), progress.collect_shaders()
         except (OSError, AttributeError):
             return None
         finally:
-            progress.PRX, progress.OPCODES, progress.OBSERVED, progress.INVENTORY = saved
+            progress.PRX, progress.OPCODES, progress.OBSERVED, progress.INVENTORY, progress.observed_nids = saved
     return {"libraries": {key: libraries[key] for key in COUNT_KEYS + SPLIT_KEYS},
             "shaders": {key: shaders[key] for key in COUNT_KEYS}}
 
@@ -269,13 +276,13 @@ def page(points):
         'One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point is measured '
         f'with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> rules and instruction list, '
         'so the series is comparable across days. Commits from before the '
-        f'<a href="{progress.SOURCE}/docs/dev/PROGRESS.md#observed-imports">observed manifests</a> have none, so every stub in them is unobserved and their '
-        'counted figure holds only what a manifest of that day names. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
+        f'<a href="{progress.SOURCE}/docs/dev/PROGRESS.md#observed-imports">observed manifests</a> have none, so every stub in them counts as observed, as it did then, and their '
+        'counted figure is the one it had then. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
         '<a href="progress.html">Back to the current progress</a>.</p>',
         '<p>The table lists, for each day, the commit measured, the library functions counted and the percentage, the unobserved '
         'stubs, every function declared (implemented, observed and unobserved) and how many were declared since the previous day, '
-        'so a jump in the declared column points at the commit that added the stubs. Days before the observed manifests have '
-        'no unobserved stubs.</p>',
+        'so a jump in the declared column points at the commit that added the stubs. Commits from before the observed manifests '
+        'count every stub as observed, as they did at the time, so their percentage is the old figure, not 100%.</p>',
         '<table><tr><th>Date</th><th>Commit</th>' + "".join(
             f'<th>{escape(label)}</th><th>%</th>' + ('<th>Unobserved stubs</th><th>Declared</th><th>Declared since previous day</th>' if name == "libraries" else "")
             for name, label, _ in SERIES) + '</tr>',
