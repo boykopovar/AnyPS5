@@ -189,6 +189,24 @@ void TestAdvanceRetainsRewrittenBuffer() {
     RequirePlayed(played, {&first, &second});
 }
 
+void TestAdvanceKeepsTheGrainSetBeforeTheBufferIsCleared() {
+    auto buffer = Grain(0.01f);
+    const auto first = buffer;
+    const auto second = Grain(0.02f);
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        SetData(port, buffer.data());
+        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        std::copy(second.begin(), second.end(), buffer.begin());
+        SetData(port, buffer.data());
+        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    RequirePlayed(played, {&first, &second});
+}
+
 void TestAdvanceRetainsVolume() {
     const auto buffer = Grain(0.02f);
     auto reduced = buffer;
@@ -313,6 +331,7 @@ int main() {
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     TestAdvanceRetainsRewrittenBuffer();
     TestAdvanceRetainsVolume();
+    TestAdvanceKeepsTheGrainSetBeforeTheBufferIsCleared();
     TestAdvanceBurstRetainsEveryGrain();
     TestPushingThreadWaitsForAdvance();
     TestBuffersSetBeforeOnePushPlayInOrder();
