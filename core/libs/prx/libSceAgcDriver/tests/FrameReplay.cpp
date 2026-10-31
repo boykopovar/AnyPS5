@@ -1,6 +1,7 @@
 #include "prx/libSceAgc/Acb/include/Memory.hpp"
 #include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/DcbFlow/include/Control.hpp"
+#include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
 #include "prx/libSceAgc/DcbFlow/include/Sync.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -977,6 +978,7 @@ int main(int argc, char** argv) {
     }
     int status = 0;
     try {
+        if (!OpenVulkanTestDevice()) return VulkanTestSkipped;
         if (const auto test = rewound.find(mode); test != rewound.end()) {
             try {
                 AgcDriver::DriverDetail::DriverTestAccess::OpenDevice();

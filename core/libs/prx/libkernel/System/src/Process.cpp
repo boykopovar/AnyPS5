@@ -713,9 +713,11 @@ int APS5_VABI getresgid_nid_postfix(std::uint32_t* rgid, std::uint32_t* egid, st
     return 0;
 }
 
+#ifndef __EMSCRIPTEN__
 void APS5_VABI exit_nid_postfix(int code) {
     LibcExit_nid_no_patch(code);
 }
+#endif
 
 [[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
     LibcTerminate_nid_no_patch(status);
@@ -960,7 +962,7 @@ int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {
     HostEntropy_nid_no_patch(value.data(), sizeof(value));
     value[1] = (value[1] & 0x0fffffffu) | 0x40000000u;
     value[2] = (value[2] & 0xffffff3fu) | 0x80u;
-    std::memcpy(uuid, value.data(), sizeof(value));
+    if (!GuestCopyOut_nid_no_patch(uuid, value.data(), sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -970,7 +972,7 @@ int APS5_VABI sceKernelCreateUuidV4(std::uint8_t* uuid) {
     HostEntropy_nid_no_patch(value.data(), value.size());
     value[6] = static_cast<std::uint8_t>((value[6] & 0x0fu) | 0x40u);
     value[8] = static_cast<std::uint8_t>((value[8] & 0x3fu) | 0x80u);
-    std::memcpy(uuid, value.data(), value.size());
+    if (!GuestCopyOut_nid_no_patch(uuid, value.data(), value.size())) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -1230,7 +1232,7 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
 
     std::int64_t tableSize = limit.rlim_cur;
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));
 #endif
     if (tableSize > std::numeric_limits<int>::max())
