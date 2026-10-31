@@ -1134,6 +1134,7 @@ int main() {
     CharUpperBuffW(hostDirectorySpelling.data(), static_cast<DWORD>(hostDirectorySpelling.size()));
     Require(SetCurrentDirectoryW(hostDirectorySpelling.c_str()) != 0);
 #endif
+    Require(sceKernelGetPhysPageSize() == 16384);
     CheckProcessQueries();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
     Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
