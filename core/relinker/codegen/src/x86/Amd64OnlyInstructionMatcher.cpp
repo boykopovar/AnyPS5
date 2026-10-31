@@ -48,9 +48,14 @@ const Entry& _sse4aEntry(const Sse4aOperands& operands) {
 }
 
 const Entry& _reciprocalEntry(const ReciprocalOperands& operands) {
+    const bool squareRoot = operands.Operation == ReciprocalOperation::ReciprocalSquareRoot;
+    if (operands.Scalar && operands.Vex)
+        return squareRoot ? kVrsqrtss : kVrcpss;
+    if (operands.Scalar)
+        return squareRoot ? kRsqrtss : kRcpss;
     if (!operands.Vex)
-        return operands.Operation == ReciprocalOperation::ReciprocalSquareRoot ? kRsqrtps : kRcpps;
-    return operands.Operation == ReciprocalOperation::ReciprocalSquareRoot ? kVrsqrtps : kVrcpps;
+        return squareRoot ? kRsqrtps : kRcpps;
+    return squareRoot ? kVrsqrtps : kVrcpps;
 }
 
 const Entry& _sha256Entry(const Sha256Operands& operands) {

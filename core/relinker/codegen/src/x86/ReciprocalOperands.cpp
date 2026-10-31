@@ -9,11 +9,18 @@ constexpr std::uint8_t kVexMap0F = 0x01;
 constexpr std::uint8_t kVexUnusedRegister = 0x0F;
 constexpr std::uint8_t kOpcodeRsqrtps = 0x52;
 constexpr std::uint8_t kOpcodeRcpps = 0x53;
+constexpr std::uint8_t kScalarPrefix = 0xF3;
+constexpr std::uint8_t kVexScalarPrefix = 0x02;
 
 }
 
-std::optional<ReciprocalOperands> DecodeReciprocal(const std::uint8_t* data, const std::size_t length) {
+std::optional<ReciprocalOperands> DecodeReciprocal(const std::uint8_t* data, std::size_t length) {
     using namespace X64OpcodeConstants;
+    const bool legacyScalar = length != 0 && data[0] == kScalarPrefix;
+    if (legacyScalar) {
+        ++data;
+        --length;
+    }
     if (length < 3)
         return std::nullopt;
     bool registerExtension = false;
@@ -21,11 +28,11 @@ std::optional<ReciprocalOperands> DecodeReciprocal(const std::uint8_t* data, con
     std::uint8_t payload = 0;
     std::size_t opcodeOffset = 0;
     bool vex = true;
-    if (data[0] == OneByteVex2 && length == 4) {
+    if (!legacyScalar && data[0] == OneByteVex2 && length == 4) {
         registerExtension = (data[1] & 0x80) == 0;
         payload = data[1];
         opcodeOffset = 2;
-    } else if (data[0] == OneByteVex3 && length == 5) {
+    } else if (!legacyScalar && data[0] == OneByteVex3 && length == 5) {
         if ((data[1] & Vex3MapMask) != kVexMap0F)
             return std::nullopt;
         registerExtension = (data[1] & 0x80) == 0;
@@ -46,7 +53,8 @@ std::optional<ReciprocalOperands> DecodeReciprocal(const std::uint8_t* data, con
     const auto vvvv = static_cast<std::uint8_t>((payload >> 3) & 0x0F);
     const bool wide = (payload & 0x04) != 0;
     const auto pp = static_cast<std::uint8_t>(payload & 0x03);
-    if (vex && (vvvv != kVexUnusedRegister || wide || pp != 0))
+    const bool vexScalar = vex && pp == kVexScalarPrefix;
+    if (vex && !vexScalar && (vvvv != kVexUnusedRegister || wide || pp != 0))
         return std::nullopt;
     const auto opcode = data[opcodeOffset];
     if (opcode != kOpcodeRsqrtps && opcode != kOpcodeRcpps)
@@ -59,6 +67,8 @@ std::optional<ReciprocalOperands> DecodeReciprocal(const std::uint8_t* data, con
     operands.Destination = static_cast<std::uint8_t>(((modrm >> ModRmRegShift) & ModRmRegMask) | (registerExtension ? 8 : 0));
     operands.Source = static_cast<std::uint8_t>((modrm & ModRmRmMask) | (rmExtension ? 8 : 0));
     operands.Vex = vex;
+    operands.Scalar = legacyScalar || vexScalar;
+    operands.Upper = vexScalar ? static_cast<std::uint8_t>(~vvvv & 0x0F) : operands.Destination;
     return operands;
 }
 
