@@ -23,8 +23,11 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceVideoOut/include/HostVolumeInput.hpp"
+#include "prx/libScePad/include/HostVolumeSettings.hpp"
 
 PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
+    HostVolumeConfigureFromEnvironment_nid_no_patch();
 }
 
 static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status panel lists one line per controller slot");
@@ -310,6 +313,8 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     }
     if (event.type == SDL_WINDOWEVENT) {
         if (keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now()).releaseMouse) setMouseMode(false);
+        HostVolume volume;
+        if (window.Handle() != nullptr && ApplyHostFocusEvent(event, SDL_GetWindowID(window.Handle()), &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
         publish(window.FrameNumber(), 0);
         return;
     }
@@ -330,11 +335,20 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         AgcDriverPadStatusShow_nid_postfix();
         reportStatus();
     }
+    if (window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) {
+        HostVolume volume;
+        if (ApplyHostVolumeRequests(requests, &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
+    }
     if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
     if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
 }
 
 void PadInput::Update(const DisplayWindow& window) {
+    if (!hostFocusSynced && window.Handle() != nullptr) {
+        hostFocusSynced = true;
+        HostVolume volume;
+        if (HostVolumeFocus_nid_no_patch(SDL_GetKeyboardFocus() == window.Handle(), &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
+    }
     bool anyController = false;
     for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
         if (slots[slot].controller != nullptr) {
@@ -357,7 +371,9 @@ void PadInput::Update(const DisplayWindow& window) {
         return;
     }
     const bool changed = keyboardMouse.Advance(std::chrono::steady_clock::now());
-    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed) {
+    const bool captured = ImeCapturesPad_nid_postfix() || ModalDialogCapturesInput_nid_postfix();
+    const bool captureChanged = std::exchange(padCaptured, captured) != captured;
+    if (slots[0].controller != nullptr || keyboardMouse.MouseMode() || changed || captured || captureChanged) {
         publish(window.FrameNumber(), 0);
     }
     for (int slot = 1; slot < PAD_MAX_CONTROLLERS; ++slot) {
@@ -377,6 +393,7 @@ PadInputState PadInput::handOff(int slot, PadInputState state) {
     auto& held = slots[slot].heldThroughCapture;
     const bool imeCaptures = ImeCapturesPad_nid_postfix();
     if (imeCaptures || ModalDialogCapturesInput_nid_postfix()) {
+        if (slot == 0) PadApplyInjectedInput_nid_postfix(&state);
         if (slot == 0 && imeCaptures) ImePublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
         else if (slot == 0) ModalDialogPublishPad_nid_postfix({state.buttons, state.sticks[0], state.sticks[1], state.analogButtonsL2});
         held = state.buttons;

@@ -167,6 +167,20 @@ class Main(unittest.TestCase):
         self.assertIn(["cmake", "--build", str(build), "--parallel", "3", "--target", "libs"], calls)
         self.assertFalse([cmd for cmd in calls if cmd[0] == "ctest"])
 
+    def test_selected_target_with_a_renamed_executable_runs_its_ctest(self):
+        guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
+        guest["artifacts"] = [{"path": "tests/pad-renamed.exe"}]
+        build = self.fixture([guest])
+        listing = json.dumps({"tests": [{"name": "guest_pad", "command": ["C:/b/tests/pad-renamed.exe"]}]})
+        calls = []
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run",
+                               side_effect=lambda cmd, **_: calls.append(cmd) or run_result(listing if "--show-only=json-v1" in cmd else "")):
+            code = self.main(build, ["core/libs/tests/Guest.cpp"])
+        self.assertEqual(code, 0)
+        commands = [cmd for cmd in calls if cmd[0] == "ctest" and "--show-only=json-v1" not in cmd]
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(commands[0][commands[0].index("-R") + 1], "^(guest_pad)$")
+
     def test_an_unrelated_change_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
         calls = []

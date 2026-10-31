@@ -2655,15 +2655,7 @@
 | `_ZN3WTF17StringPrintStreamD1Ev` | `EOmLhk6TiW4` |
 | `_ZN3WTF17StringPrintStreamD2Ev` | `DyzD9dy1J9M` |
 | `_ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE` | `9v4s2WAlWKI` |
-| `_ZN3WTF17charactersToFloatEPKDsmPb` | `Grm8FwC5JHA` |
-| `_ZN3WTF17charactersToFloatEPKDsmRm` | `18MTG+xtvtU` |
-| `_ZN3WTF17charactersToFloatEPKhmPb` | `bV+MAY-cz5I` |
-| `_ZN3WTF17charactersToFloatEPKhmRm` | `t-Fwv83WoZ0` |
 | `_ZN3WTF17double_conversion23DoubleToStringConverter19EcmaScriptConverterEv` | `vYLd9fXeOkc` |
-| `_ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKcmPm` | `NBcu2DCofTw` |
-| `_ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKtmPm` | `uBURSzaJ+ig` |
-| `_ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm` | `P3NGPgoeLII` |
-| `_ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKtmPm` | `Il1VIdvQNQo` |
 | `_ZN3WTF17fastAlignedMallocEmm` | `zX0skVT0j-U` |
 | `_ZN3WTF17languageDidChangeEv` | `6kL-6MlnOos` |
 | `_ZN3WTF17wordBreakIteratorENS_10StringViewE` | `fmD6lvba-e0` |
@@ -2679,8 +2671,6 @@
 | `_ZN3WTF18ParallelHelperPoolC2EONS_7CStringE` | `hY2tr-X7ytM` |
 | `_ZN3WTF18ParallelHelperPoolD1Ev` | `xfQm3FWZ-og` |
 | `_ZN3WTF18ParallelHelperPoolD2Ev` | `zWhqEwkF-C0` |
-| `_ZN3WTF18charactersToDoubleEPKDsmPb` | `iZcuO+Kb-4E` |
-| `_ZN3WTF18charactersToDoubleEPKhmPb` | `C2FgjGcN39c` |
 | `_ZN3WTF18constantTimeMemcmpEPKvS1_m` | `bj0oCNjElOE` |
 | `_ZN3WTF18fastEnableMiniModeEv` | `i7Rhg-uQBfU` |
 | `_ZN3WTF18fastMallocGoodSizeEm` | `rUZfugj0RMc` |
@@ -2796,7 +2786,6 @@
 | `_ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb` | `RoOulmakF2U` |
 | `_ZN3WTF37canCurrentThreadAccessThreadLocalDataERNS_6ThreadE` | `UY123Q3mRZI` |
 | `_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc` | `Eisgz+sqX1g` |
-| `_ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb` | `Go8rq2aaDlc` |
 | `_ZN3WTF3ICU12majorVersionEv` | `VZkUzpN-EW8` |
 | `_ZN3WTF3ICU12minorVersionEv` | `GMRugn+lVTw` |
 | `_ZN3WTF3URL10invalidateEv` | `8Ydwx621DeA` |
@@ -8715,3 +8704,10 @@
 | `Unknown` | `zdn8pgeNnEY` |
 | `Unknown` | `ziXF7YQDRhY` |
 | `Unknown` | `zpeJoENXwDY` |
+
+### Functional
+
+- [parseDateFromNullTerminatedCharacters(const char*)](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - still throws: it subtracts [calculateLocalTimeOffset](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/DateMath.cpp#L318-L361), whose code path follows `HAVE_LOCALTIME_R`, `HAVE_TIMEGM` and `HAVE_TM_GMTOFF` from [configure checks](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/cmake/OptionsCommon.cmake#L131-L148) against the port's sysroot, and the device time zone.
+- [parseDateFromNullTerminatedCharacters(const char*, bool&)](../../../core/libs/prx/libSceNKWebKit/DateParsing.cpp) (libSceNKWebKit) - is not measured on a device, and throws where pinned [DateMath.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/DateMath.cpp#L684-L988) overflows a signed integer, which is undefined there (the `YYYY/MM/DD` day count, the `GMT+hh:mm` minute total and comment nesting), and for a null argument, where WebKit faults.
+- [WTF decimal parsing](../../../core/libs/prx/libSceNKWebKit/CharactersToNumber.cpp) - the device's WebKit revision is unverified; `charactersToDouble`, `charactersToFloat` and `StringToDoubleConverter` follow pinned WebKit [toDoubleType](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/WTFString.cpp#L1040-L1098) and [StringToIeee](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/dtoa/double-conversion.cc#L459-L664). Under a rounding mode other than round-to-nearest, WebKit's [exact-power fast path](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/dtoa/strtod.cc#L219-L254) and the double-to-float cast in [Strtof](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/dtoa/strtod.cc#L485-L588) round in the current mode and the host conversion may round differently.
+- [WTF decimal parsing limits](../../../core/libs/prx/libSceNKWebKit/CharactersToNumber.cpp) - inputs of about 1 GiB or more whose decimal exponent leaves the range of WebKit's [`int` exponent](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/dtoa/double-conversion.cc#L488-L490) throw, where WebKit overflows. A UTF-16 `charactersTo*` length above `UINT32_MAX` after leading spaces throws where WebKit's [conversion Vector](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/Vector.h#L291-L293) crashes.
