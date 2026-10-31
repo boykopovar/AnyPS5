@@ -221,6 +221,7 @@ int main() {
     Require(sceMsgDialogInitialize() == kErrAlreadyInitialized);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogGetResult(&result) == kErrNotFinished);
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrNotFinished);
     Require(sceMsgDialogGetResult(nullptr) == kErrArgNull);
     Require(sceMsgDialogOpen(nullptr) == kErrArgNull);
     Require(sceMsgDialogUpdateStatus() == kStatusInitialized);
