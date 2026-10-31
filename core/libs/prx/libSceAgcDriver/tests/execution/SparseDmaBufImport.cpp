@@ -6,7 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "VulkanTestDevice.hpp"
-#ifndef _WIN32
+#ifdef __linux__
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <fcntl.h>
@@ -29,7 +29,7 @@ static int SkipCode(bool required) {
     return required ? 1 : VulkanTestSkipped;
 }
 
-#ifdef _WIN32
+#ifndef __linux__
 int main(int argc, char** argv) {
     std::printf("skipped, udmabuf imports are Linux only\n");
     return SkipCode(argc > 1 && std::string(argv[1]) == "--require-cpu-lead");
