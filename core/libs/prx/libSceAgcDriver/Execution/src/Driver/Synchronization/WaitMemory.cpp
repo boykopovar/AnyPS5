@@ -187,6 +187,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
         ++(polling ? outcomes.fromRecorderPolling : outcomes.fromRecorder);
         if (unlockedHit) ++outcomes.fromRecorderUnlocked;
+        if (Graphics::Recorder::LaneOfQueue(hit->queue) != Graphics::Recorder::LaneOfQueue(queue)) Graphics::Recorder::NoteConsumedLabel(awaited, awaitedBytes);
         if (hit->queue == queue) {
             ++outcomes.fromRecorderSameQueue;
             if (!hit->late) epochPoint.bump = false;

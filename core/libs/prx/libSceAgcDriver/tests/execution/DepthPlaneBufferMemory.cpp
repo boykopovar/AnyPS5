@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/AsyncCompute.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -20,8 +21,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -43,6 +47,9 @@ alignas(256) constexpr std::array<std::uint32_t, 11> LoadCode{
     0x7e02020du, 0x7e04020cu, 0xf0001108u, 0x00010300u, 0xbf8c3f70u, 0x34080082u, 0xe0701000u, 0x80000304u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
 };
 constexpr std::uint32_t LoadThreads = 32;
+alignas(256) constexpr std::array<std::uint32_t, 7> CopyCode{
+    0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u,
+};
 constexpr std::size_t ColorBytes = static_cast<std::size_t>(Width) * Height * 4u;
 
 void* AllocateWatched(std::size_t bytes) {
@@ -61,6 +68,35 @@ void* AllocateWatched(std::size_t bytes) {
 #endif
     GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     return block;
+}
+
+void CopyDepthBuffer(AgcDriver::VulkanDevice& device, std::uint64_t address) {
+    auto* output = static_cast<std::uint32_t*>(AllocateWatched(Block));
+    std::fill_n(output, LoadThreads, 0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto descriptor = [](std::uint64_t base, std::uint32_t bytes) {
+        return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 0xffffu), bytes, 0x31016facu};
+    };
+    const auto source = descriptor(address, Block);
+    const auto target = descriptor(reinterpret_cast<std::uintptr_t>(output), LoadThreads * sizeof(std::uint32_t));
+    std::copy(source.begin(), source.end(), userData.begin());
+    std::copy(target.begin(), target.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(CopyCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{LoadThreads, 1, 1}, 0, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    Require(AgcDriver::Graphics::AsyncDispatchEligible(result), "the depth buffer consumer is outside async dispatch admission");
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    Require(std::all_of(output, output + LoadThreads, [](std::uint32_t bits) { return bits == std::bit_cast<std::uint32_t>(0.5f); }), "the async buffer consumer did not see native depth 0.5");
+    Require(std::memcmp(output, reinterpret_cast<const void*>(address), LoadThreads * sizeof(std::uint32_t)) == 0, "the async buffer consumer disagrees with the published depth bytes");
 }
 
 std::array<std::uint32_t, LoadThreads> LoadRow(AgcDriver::VulkanDevice& device, std::uint64_t address, std::uint32_t width, std::uint32_t height, std::uint32_t swizzle) {
@@ -123,10 +159,29 @@ void DrawBlendKeepingMemory(AgcDriver::VulkanDevice& device, const DepthFastClea
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool asyncLane = argc > 1 && std::string(argv[1]) == "--async-lane";
+        if (asyncLane) {
+#ifdef _WIN32
+            Require(_putenv_s("APS5_ASYNC_LANE", "51") == 0, "cannot enable async lane test mode");
+#else
+            Require(setenv("APS5_ASYNC_LANE", "51", 1) == 0, "cannot enable async lane test mode");
+#endif
+        }
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex(), std::defer_lock);
+        std::optional<AgcDriver::Graphics::Recorder::LaneScope> lane;
+        if (asyncLane) {
+            gpu.lock();
+            const auto* recorder = device->graphicsContext().recorder;
+            if (recorder == nullptr || !recorder->AsyncLaneActive()) {
+                std::puts("skipped: depth plane async mode requires an active compute-only lane");
+                return VulkanTestSkipped;
+            }
+            lane.emplace(1);
+        }
         const auto planeBytes = static_cast<std::size_t>(AgcDriver::Graphics::DepthSliceBytes({Width, Height}, 4u));
         Require(planeBytes <= Block, "the depth plane does not fit one block");
         auto* block = static_cast<float*>(AllocateWatched(Block));
@@ -137,6 +192,11 @@ int main() {
         const Surface depth{address, 0, 0, false, VK_FORMAT_D32_SFLOAT, 0, 0, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX)};
 
         Require(Draw(*device, shaders, depth, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, "the draw writing depth 0.5 did not cover the target");
+        if (asyncLane) {
+            CopyDepthBuffer(*device, address);
+            std::puts("depth plane buffer memory async lane tests passed");
+            return 0;
+        }
         Draw(*device, reader, depth, {.depthTest = false});
         Require(Holding(plane, 0.5f) == static_cast<std::size_t>(Width) * Height, "a vertex fetch from the depth plane did not see the depth 0.5 a draw wrote into it");
 
@@ -229,7 +289,7 @@ int main() {
             Draw(*device, reusedReader, depth, {.depthTest = false});
             Require(Holding(reusedPlane, value) == static_cast<std::size_t>(Width) * Height, "after a guest write into a stored depth plane, the depth drawn behind an HTILE clear did not reach memory (frame " + std::to_string(frame) + ")");
         }
-        std::puts("depth plane buffer memory tests passed");
+        std::puts(asyncLane ? "depth plane buffer memory async lane tests passed" : "depth plane buffer memory tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

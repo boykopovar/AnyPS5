@@ -236,6 +236,11 @@ public:
     bool NeedsCompletion() const { return (bda != nullptr && faultChecks) || guestMemory.HasCopiedWrites(); }
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
+    bool HasGpuCopies() const { return guestMemory.HasGpuCopies(); }
+    bool HasHostGpuCopies() const { return guestMemory.HasHostGpuCopies(); }
+    const void* MemoryOwner() const { return &guestMemory; }
+    void CopyBacksAfterRun(std::shared_ptr<ShaderResources> self) { afterRunSelf = std::move(self); }
+    void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
     bool UsesAddressTable() const { return usesBda; }
@@ -575,6 +580,7 @@ private:
     Context context;
     std::vector<std::uint32_t> layoutKey;
     GuestBufferMemory guestMemory;
+    std::shared_ptr<ShaderResources> afterRunSelf;
     std::size_t maxDrawSnapshotBytes = MaxDrawSnapshotBytes();
     std::unique_ptr<BdaResources> bda;
     std::vector<BdaResources::SrtGuardFaults> srtGuardFaults;
@@ -663,6 +669,8 @@ private:
     HostImportsProof importsProof;
     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
     std::uint64_t dataWordsHash = 14695981039346656037ull;
+    int dataWriterLane = -1;
+    std::uint8_t dataReaderLanes = 0;
     void rehashDataWords();
     std::vector<std::pair<std::uint32_t, std::uint32_t>> pushPatches;
     std::vector<DataPatch> dataPatches;

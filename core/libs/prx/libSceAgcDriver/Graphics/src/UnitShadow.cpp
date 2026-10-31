@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
+#include <optional>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -195,7 +196,7 @@ std::shared_ptr<ShadowSlab> makeSlab(const Context& context, std::uint64_t first
     info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer) != VK_SUCCESS) return nullptr;
+    if (context.CreateBuffer(&info, nullptr, &buffer) != VK_SUCCESS) return nullptr;
     VkMemoryRequirements requirements{};
     context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
@@ -243,6 +244,7 @@ bool recordCopiesOnCpu(const UnitShadow& shadow, const std::vector<SlabCopies>& 
     };
     std::vector<Piece> pieces;
     const auto commands = recorder->Commands();
+    Recorder::CommandBorrow commandBorrow246(recorder, commands);
     const auto timing = recorder->BeginGpuTiming(Recorder::CommandClass::ShadowPublish);
     constexpr VkAccessFlags transferAccess = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, transferAccess);
@@ -286,10 +288,12 @@ void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copie
     auto* recorder = Recorder::Active();
     std::unique_ptr<CommandBatch> batch;
     VkCommandBuffer commands = VK_NULL_HANDLE;
+    std::optional<Recorder::CommandBorrow> commandBorrow;
     VkAccessFlags covered = 0;
     auto timing = Recorder::NoTiming;
     if (recorder != nullptr) {
         commands = recorder->Commands(&covered);
+        commandBorrow.emplace(recorder, commands);
         timing = recorder->BeginGpuTiming(CommandClass::ShadowPublish);
         if (Recorder::BarrierValidate()) recorder->NoteAccess(CommandClass::ShadowPublish, Recorder::Access{{}, ranges, {}, VK_PIPELINE_STAGE_TRANSFER_BIT});
     } else {
@@ -350,6 +354,8 @@ void verifyPublished(const UnitShadow& shadow, const std::vector<SlabCopies>& co
 
 // The publish of one shadow: `selected[k]` (k = unit - first) names the units the scope chose.
 std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_t first, std::uint64_t last, const std::vector<std::uint8_t>& selected, PublishReason reason) {
+    std::optional<Recorder::LaneSwitch> laneSwitch;
+    if (Recorder::ThreadLane() != 0) laneSwitch.emplace(Recorder::Active(), 0);
     auto& registry = Registry();
     std::vector<SlabCopies> copies;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
@@ -598,6 +604,29 @@ bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>
         if (end > begin && anyShadowedLocked(registry, begin, static_cast<std::size_t>(end - begin))) return true;
     }
     return false;
+}
+
+std::vector<std::pair<std::uint64_t, std::uint64_t>> LiveShadowedRanges(std::uint64_t address, std::size_t bytes, PublishScope scope) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    if (!UnitShadowEnabled() || scope == PublishScope::None || bytes == 0) return ranges;
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    for (const auto& shadow : overlapping(registry, address, end)) {
+        if (shadow->liveUnits == 0) continue;
+        const auto begin = std::max(address, shadow->importBase);
+        const auto stop = std::min(end, shadow->ImportEnd());
+        if (stop <= begin) continue;
+        for (auto unit = shadow->UnitOf(begin); unit <= shadow->UnitOf(stop - 1); ++unit) {
+            if (!shadow->Live(unit)) continue;
+            const auto [unitBegin, unitEnd] = shadow->UnitRange(unit);
+            if (unitEnd <= unitBegin || (scope == PublishScope::PartialUnits && address <= unitBegin && end >= unitEnd)) continue;
+            if (!ranges.empty() && ranges.back().second == unitBegin) ranges.back().second = unitEnd;
+            else ranges.emplace_back(unitBegin, unitEnd);
+        }
+    }
+    if (ranges.size() > 8) ranges.assign(1, {ranges.front().first, ranges.back().second});
+    return ranges;
 }
 
 std::uint64_t SlabBoundary(const HostImport& import, std::uint64_t address) {
