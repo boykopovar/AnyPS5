@@ -8,10 +8,13 @@
 #include <cstdlib>
 #include <string>
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <memory>
+#include <memory_resource>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
@@ -384,11 +387,13 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
 
 template<typename TNode>
 bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* value, const IrValue* activeMask, std::unordered_set<const IrValue*>& firstLanes) {
-    std::unordered_map<const IrValue*, bool> known;
+    std::array<std::byte, 2048> scratch;
+    std::pmr::monotonic_buffer_resource arena(scratch.data(), scratch.size());
+    std::pmr::unordered_map<const IrValue*, bool> known(&arena);
     const auto takesActiveArm = [activeMask](const IrValue* current) {
         return activeMask != nullptr && IsRuntimeSelect(current->Opcode()) && current->ArgumentCount() == 3 && ActiveMaskImplies(activeMask, current->Argument(0));
     };
-    std::vector<IrValue*> required;
+    std::pmr::vector<IrValue*> required(&arena);
     const auto requirements = [&program, &takesActiveArm, &required](IrValue* current) {
         required.clear();
         if (takesActiveArm(current)) {
@@ -424,8 +429,9 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
             required.push_back(argument != nullptr ? argument->Resolve() : nullptr);
         }
     };
-    std::unordered_set<const IrValue*> expanding;
-    std::vector<std::pair<IrValue*, bool>> pending{{value->Resolve(), false}};
+    std::pmr::unordered_set<const IrValue*> expanding(&arena);
+    std::pmr::vector<std::pair<IrValue*, bool>> pending(&arena);
+    pending.emplace_back(value->Resolve(), false);
     while (!pending.empty()) {
         const auto [current, expanded] = pending.back();
         pending.pop_back();
