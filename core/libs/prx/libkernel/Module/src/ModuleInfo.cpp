@@ -381,11 +381,12 @@ int FillModuleInfo(KernelModule handle, TInfo* info, bool titleOnly) {
 }
 
 int FillModuleList(KernelModule* handles, std::size_t count, std::size_t* actual, bool titleOnly) {
-    if (!handles || !actual) return SCE_KERNEL_ERROR_EFAULT;
+    if (!handles) return SCE_KERNEL_ERROR_EFAULT;
     auto images = GuestImages();
     if (titleOnly) std::erase_if(images, SystemImage);
     for (std::size_t i = 0; i < images.size() && i < count; ++i) handles[i] = ModuleIdForImage_nid_no_patch(images[i].native);
     if (images.size() > count) return SCE_KERNEL_ERROR_ENOMEM;
+    if (!actual) return SCE_KERNEL_ERROR_EFAULT;
     *actual = images.size();
     return 0;
 }
@@ -439,6 +440,12 @@ int APS5_VABI sceKernelGetModuleInfo(KernelModule handle, ModuleInfo* info) {
 
 int APS5_VABI sceKernelGetModuleInfo2(KernelModule handle, ModuleInfo* info) {
     return FillModuleInfo(handle, info, true);
+}
+
+KernelModule APS5_VABI sceKernelGetExecutableModuleHandle() {
+    const auto images = GuestImages();
+    if (images.empty()) throw std::runtime_error("sceKernelGetExecutableModuleHandle: the main program is not loaded");
+    return ModuleIdForImage_nid_no_patch(images.front().native);
 }
 
 int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info) {

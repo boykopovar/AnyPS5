@@ -128,6 +128,12 @@ struct FontGraphicsDeviceUsage {
     FontGraphicsMemoryUsage second;
 };
 
+namespace Font {
+
+using GraphicsErrorCallback = void (APS5_VABI*)(int error);
+
+}
+
 extern "C" {
 
 int APS5_VABI sceFontMemoryInit(FontMemory* memory, void* regionAddress, std::uint32_t regionSize, const FontMemoryInterface* iface, void* mspaceObject, FontMemoryDestroyFunction destroyCallback, void* destroyObject);
@@ -147,6 +153,7 @@ int APS5_VABI sceFontClearDeviceCache(FontLibrary library);
 int APS5_VABI sceFontDettachDeviceCacheBuffer(FontLibrary library, void** buffer, std::uint32_t* size);
 int APS5_VABI sceFontSupportExternalFonts(FontLibrary library, std::uint32_t fontMax, std::uint32_t formats);
 int APS5_VABI sceFontSupportSystemFonts(FontLibrary library);
+void APS5_VABI sceFontSetGraphicsErrorCallback(Font::GraphicsErrorCallback callback);
 int APS5_VABI sceFontSetFontsOpenMode(FontLibrary library, std::uint32_t openMode);
 int APS5_VABI sceFontOpenFontMemory(FontLibrary library, const void* fontAddress, std::uint32_t fontSize, const FontOpenDetail* openDetail, FontHandle* pFontHandle);
 int APS5_VABI sceFontOpenFontFile(FontLibrary library, const char* path, std::uint32_t openMode, const FontOpenDetail* openDetail, FontHandle* pFontHandle);
@@ -316,8 +323,8 @@ int APS5_VABI sceFontGraphicsUpdateShapeFill(FontGraphicsResource* resource, con
 int APS5_VABI sceFontGraphicsUpdateShapeFillPlot(FontGraphicsResource* resource, const FontGraphicsFillPlot* plot);
 int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support);
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter);
-int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, float x, float y, float width, float height, FontGraphicsFill** fill);
-int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* frame, const void* data, std::uint32_t dataSize, std::uint32_t firstMode, std::uint32_t secondMode, std::int32_t firstCount, std::int32_t firstLayout, std::int32_t secondLayout, std::int32_t secondCount, FontGraphicsFill** fill);
+int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height);
+int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height);
 int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t writingForm, const void* writingLineDetail, void** pWritingLine);
 int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine);
 int APS5_VABI sceFontWritingLineClear(void* writingLine);
@@ -325,5 +332,50 @@ int APS5_VABI sceFontWritingLineWritesOrder(void* writingLine, std::uint64_t wri
 const FontWritingLineStep* APS5_VABI sceFontWritingLineRefersRenderStep(void* writingLine);
 int APS5_VABI sceFontWritingLineGetRenderMetrics(void* writingLine, FontWritingMetrics* writingMetrics);
 int APS5_VABI sceFontWritingLineGetOrderingSpace(void* writingLine, float* advanceSpace, float* headSpace, float* inlineSpace, float* tailSpace);
+
+int APS5_VABI sceFontGraphicsCanvasStartDrawing();
+int APS5_VABI sceFontGraphicsGetDrawingFrameHandle();
+int APS5_VABI sceFontGraphicsGetIndexedVertexesGlyph();
+int APS5_VABI sceFontGraphicsProcessWaitAllSequences();
+int APS5_VABI sceFontGraphicsStructureVertexesGlyph();
+int APS5_VABI sceFontGraphicsTextureRefersSurface();
+int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyph();
+int APS5_VABI sceFontGraphicsAppendGradientSegment();
+int APS5_VABI sceFontSupportSystemUpdation();
+int APS5_VABI sceFontGraphicsCanvasRenewal();
+int APS5_VABI sceFontGraphicsDesignStartDrawing();
+int APS5_VABI sceFontGraphicsGetVertexesGlyphMetrics();
+int APS5_VABI sceFontGraphicsUpdateSlantShift();
+int APS5_VABI sceFontGraphicsTextureMakeFillTexture();
+int APS5_VABI sceFontGraphicsTextureMakeFillTextureImage();
+int APS5_VABI sceFontGraphicsCanvasSetSurfaceFill();
+int APS5_VABI sceFontGraphicsDrawVertexesGlyph();
+int APS5_VABI sceFontGraphicsDrawRegionShape();
+int APS5_VABI sceFontGraphicsProcessWaitSequence();
+int APS5_VABI sceFontGraphicsTextureGetSurface();
+int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyphs();
+int APS5_VABI sceFontGetCharVariationGlyphCode();
+int APS5_VABI sceFontGraphicsSetupSlantShift();
+int APS5_VABI sceFontGraphicsAdjustFillRadialGradient();
+int APS5_VABI sceFontGraphicsDrawupFillFlatColor();
+int APS5_VABI sceFontGraphicsDrawupFillLinearGradient();
+int APS5_VABI sceFontGraphicsSetVertexesGlyphScale();
+int APS5_VABI sceFontGlyphGetOutlineVertexes();
+int APS5_VABI sceFontGraphicsDrawupFillRadialGradient();
+int APS5_VABI sceFontGraphicsAdjustGradientSpread();
+int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithLayout();
+int APS5_VABI sceFontGraphicsCanvasGetPreprocess();
+int APS5_VABI sceFontGraphicsReportError();
+int APS5_VABI sceFontGraphicsDrawRectangleShape();
+int APS5_VABI sceFontGraphicsProcessSetSyncPolicy();
+int APS5_VABI sceFontGraphicsCanvasSetSurfaceFillWithMapping();
+int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyphAll();
+int APS5_VABI sceFontGraphicsGetVertexesGlyphScale();
+int APS5_VABI sceFontGraphicsCanvasClearPreprocess();
+int APS5_VABI sceFontGraphicsFindIndexedVertexesGlyph();
+int APS5_VABI sceFontGraphicsDefineIndexedVertexesGlyph();
+int APS5_VABI sceFontGraphicsProcessRenderSequence();
+int APS5_VABI sceFontOutlineVertexesInterfaceInit();
+int APS5_VABI sceFontGraphicsSurfaceSetTargetView();
 
 }

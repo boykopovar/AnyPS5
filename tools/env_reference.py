@@ -1,8 +1,13 @@
 import argparse
+import bisect
 import functools
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from nid_names import CPP_TOKEN
+from sanitizer_report import cell
 
 PREFIXES = ("APS5_", "ANYPS5_")
 DOC = "docs/dev/ENVIRONMENT.md"
@@ -75,6 +80,37 @@ def default_of(match, window):
     return found.group(1) if found else ""
 
 
+def expression_window(text, code, matches, match, start, end):
+    peers = sorted((other.start() for _, other in matches if start <= other.start() < end))
+    if len(peers) < 2:
+        return text[start:end]
+    peer_set = set(peers)
+    depths = {}
+    commas = []
+    depth = 0
+    for pos in range(start, end):
+        if pos in peer_set:
+            depths[pos] = depth
+        token = code[pos]
+        if token in "([":
+            depth += 1
+        elif token in ")]":
+            depth -= 1
+        elif token == ",":
+            commas.append((pos, depth))
+    for pos, comma_depth in commas:
+        left = bisect.bisect_left(peers, pos)
+        if not left or left == len(peers):
+            continue
+        if comma_depth > min(depths[peers[left - 1]], depths[peers[left]]):
+            continue
+        if pos < match.start():
+            start = max(start, pos + 1)
+        elif pos >= match.end():
+            end = min(end, pos)
+    return text[start:end]
+
+
 def source_files(root):
     root = Path(root)
     if not root.is_dir():
@@ -91,18 +127,21 @@ def reads(roots, prefixes=PREFIXES):
         for path in source_files(root):
             try:
                 text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+            except (OSError, UnicodeDecodeError) as error:
+                raise ValueError(f"cannot read {path.as_posix()}: {error}") from error
+            matches = line_reads(text, prefixes)
+            if not matches:
                 continue
-            lines = text.splitlines()
-            for number, line in enumerate(lines, 1):
-                window = "\n".join(lines[number - 1:number + 2])
-                if not any(prefix in window for prefix in prefixes):
-                    continue
-                for reader, match in line_reads(window, prefixes):
-                    if match.start() >= len(line):
-                        continue
-                    found.setdefault(match.group("name"), []).append(
-                        (path.as_posix(), number, kind_of(reader, window), default_of(match, window)))
+            code = CPP_TOKEN.sub(lambda token: token.group() if token.group("code") else " " * len(token.group()), text)
+            starts = [0] + [match.end() for match in re.finditer("\n", text)]
+            for reader, match in matches:
+                number = bisect.bisect_right(starts, match.start())
+                start = max(code.rfind(token, 0, match.start()) for token in ";{}") + 1
+                end = code.find(";", match.end())
+                end = end + 1 if end >= 0 else len(text)
+                window = expression_window(text, code, matches, match, start, end)
+                found.setdefault(match.group("name"), []).append(
+                    (path.as_posix(), number, kind_of(reader, window), default_of(match, window)))
     for sites in found.values():
         sites.sort()
     return found
@@ -139,7 +178,8 @@ def table(found, out):
         out.write("| Name | Kind | Source | Default | Description |\n")
         out.write("|------|------|--------|---------|-------------|\n")
         for name, (source, number, kind, default) in sorted(libraries[library]):
-            out.write(f"| `{name}` | {kind} | `{source}` | {default} | |\n")
+            cells = (f"`{name}`", kind.replace("\\", "\\\\"), f"`{source}`", default.replace("\\", "\\\\"))
+            out.write("| " + " | ".join(cell(value) for value in cells) + " | |\n")
         out.write("\n")
 
 
@@ -184,7 +224,11 @@ def main(argv=None):
         if not Path(root).is_dir():
             print(f"error: scan root {root} is not a directory", file=sys.stderr)
             return 1
-    found = reads(roots, prefixes)
+    try:
+        found = reads(roots, prefixes)
+    except ValueError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     if args.check:
         return check(found, args.doc, prefixes, sys.stdout)
     if args.table:

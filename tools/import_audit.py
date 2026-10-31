@@ -20,6 +20,7 @@ CLASSES = ("implemented", "partial", "stub", "absent", "module")
 CONDITIONAL = re.compile(r"(?:if|else|for|while|do|switch|case|default|try|catch|co_await|co_yield)\b")
 BRANCHING = re.compile(r"\?|&&|\|\||\b(?:and|or)\b")
 EXIT = re.compile(r"\b(?:return|co_return|goto)\b")
+FLOW_TOKEN = re.compile(r"\w+|[()[\]{}]")
 PREPROCESSOR_LINE = re.compile(r"^[ \t]*#[ \t]*(ifdef|ifndef|if|elifdef|elifndef|elif|else|endif)\b[^\n]*$", re.M)
 BRANCH_VARIANT_LIMIT = 256
 PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
@@ -88,12 +89,11 @@ def elf_program_dynamic_symbols(path, data):
     if len(dynamic_segments) != 1:
         raise AuditError(f"{path}: expected one dynamic segment, found {len(dynamic_segments)}")
     _, _, dynamic_offset, _, _, dynamic_size, _, _ = dynamic_segments[0]
-    if dynamic_size % 16:
-        raise AuditError(f"{path}: dynamic segment size {dynamic_size} is not a multiple of 16")
+    take(data, dynamic_offset, dynamic_size, path, "dynamic segment")
     dynamic = {}
     needed_offsets = []
     terminated = False
-    for position in range(0, dynamic_size, 16):
+    for position in range(0, dynamic_size - 15, 16):
         tag, value = unpack("<qQ", data, dynamic_offset + position, path, "dynamic entry")
         if tag == 0:
             terminated = True
@@ -126,16 +126,18 @@ def elf_program_dynamic_symbols(path, data):
         bucket_data = take(data, bucket_offset, buckets * 4, path, "GNU hash buckets")
         chain_offset = bucket_offset + buckets * 4
         maximum = first_symbol - 1
+        visited_chain_entries = set()
         for index in struct.unpack(f"<{buckets}I", bucket_data) if buckets else ():
             if index == 0:
                 continue
             if index < first_symbol:
                 raise AuditError(f"{path}: GNU hash bucket index {index} precedes symbol offset {first_symbol}")
             symbol_index = index
-            while True:
+            while symbol_index not in visited_chain_entries:
                 chain_address = dynamic[0x6ffffef5] + (chain_offset - hash_offset) + (symbol_index - first_symbol) * 4
                 chain_file_offset = file_offset(chain_address, 4, "GNU hash chain")
                 chain_value = unpack("<I", data, chain_file_offset, path, "GNU hash chain entry")[0]
+                visited_chain_entries.add(symbol_index)
                 maximum = max(maximum, symbol_index)
                 if chain_value & 1:
                     break
@@ -207,6 +209,7 @@ def elf_imports(path, data):
         if kind == 11:
             if entry != 24 or size % 24 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic symbol table (entry size {entry}, size {size}, string table section {link})")
+            take(data, offset, size, path, "dynamic symbol table")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             for position in range(0, size, 24):
@@ -218,6 +221,7 @@ def elf_imports(path, data):
         elif kind == 6:
             if entry != 16 or size % 16 or link >= len(sections) or sections[link][1] != 3:
                 raise AuditError(f"{path}: invalid dynamic section (entry size {entry}, size {size}, string table section {link})")
+            take(data, offset, size, path, "dynamic section")
             strings_offset, strings_size = sections[link][4], sections[link][5]
             take(data, strings_offset, strings_size, path, "dynamic string table")
             terminated = False
@@ -273,6 +277,8 @@ def pe_headers(path, data):
 def pe_exports(path, data):
     to_offset, directory, _ = pe_headers(path, data)
     rva, size = unpack("<II", data, directory, path, "export data directory")
+    if not rva and not size:
+        return set()
     if not rva or size < 40:
         raise AuditError(f"{path}: PE file has no export table")
 
@@ -498,6 +504,39 @@ def top_level_statements(body):
     return parts
 
 
+def function_exit(body):
+    for _, statement in top_level_statements(body):
+        depth, end, capture_depth, callable_scope = 0, 0, 0, False
+        for match in FLOW_TOKEN.finditer(statement):
+            if match.start() < end:
+                continue
+            token = match.group()
+            if token == "[":
+                before = statement[:match.start()].rstrip()
+                if not depth and not statement.startswith("[[", match.start()) and (
+                        not before or before[-1] in "=({,:;?!~&|+-*/%^<>" or before.endswith("]]")
+                        or re.search(r"\b(?:co_await|co_yield|throw)$", before)):
+                    capture_depth = depth + 1
+                depth += 1
+            elif token == "(":
+                depth += 1
+            elif token in (")", "]"):
+                if token == "]" and depth == capture_depth:
+                    callable_scope = True
+                    capture_depth = 0
+                depth -= 1
+            elif token == "{":
+                end = progress.body_end(statement, match.start()) + 1
+                statement_expression = depth and statement[:match.start()].rstrip().endswith("(")
+                if not callable_scope and (not depth or statement_expression) and function_exit(statement[match.start():end]):
+                    return True
+            elif not depth:
+                if EXIT.fullmatch(token):
+                    return True
+                callable_scope = callable_scope or token in ("class", "struct", "union")
+    return False
+
+
 def branch_variants(body):
     root = []
     lists, groups = [root], []
@@ -528,23 +567,39 @@ def branch_variants(body):
         raise AuditError("#if without a matching #endif")
     root.append(body[position:])
 
-    def expand(items):
-        variants = [""]
-        for item in items:
-            if isinstance(item, str):
-                variants = [variant + item for variant in variants]
-                continue
-            choices = [choice for alternative in item["alternatives"] for choice in expand(alternative)]
-            variants = [variant + choice for variant in variants for choice in choices]
-            if len(variants) > BRANCH_VARIANT_LIMIT:
-                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
-        return variants
+    def choices(item):
+        if isinstance(item, str):
+            return iter((item,))
+        return (choice for alternative in item["alternatives"] for choice in expand(alternative))
 
-    return expand(root)
+    def expand(items):
+        iterators = [choices(item) for item in items]
+        values = [next(iterator) for iterator in iterators]
+        while True:
+            yield "".join(values)
+            index = len(items) - 1
+            while index >= 0:
+                try:
+                    values[index] = next(iterators[index])
+                    break
+                except StopIteration:
+                    iterators[index] = choices(items[index])
+                    values[index] = next(iterators[index])
+                    index -= 1
+            if index < 0:
+                return
+
+    def limited(variants):
+        for count, variant in enumerate(variants, 1):
+            if count > BRANCH_VARIANT_LIMIT:
+                raise AuditError(f"more than {BRANCH_VARIANT_LIMIT} preprocessor branch combinations in one function")
+            yield variant
+
+    return limited(expand(root))
 
 
 def variant_calls(body):
-    return [unconditional_calls(variant) for variant in branch_variants(body)]
+    return (unconditional_calls(variant) for variant in branch_variants(body))
 
 
 def unconditional_calls(body):
@@ -558,14 +613,17 @@ def unconditional_calls(body):
                 before = statement[:call.start()]
                 if before.count("{") == before.count("}") and not progress.QUALIFIED.search(body, 0, offset + call.start()):
                     names.add(call.group(1))
-        if EXIT.search(statement):
+        if function_exit("{" + statement + "}"):
             break
     return names
 
 
 def always_stub_calls(text):
     helpers = {}
+    possible = progress.stub_calls(text)
     for match in progress.STUB_WRAPPER.finditer(text):
+        if match.group(1) not in possible:
+            continue
         body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
         helpers.setdefault(match.group(1), []).extend(variant_calls(body))
     calls = {progress.STUB}
@@ -581,7 +639,7 @@ def conditional_stubs(library):
     for source in library.rglob("*.cpp"):
         if "tests" in source.relative_to(library).parts:
             continue
-        text = progress.code(source.read_text(errors="ignore"))
+        text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = always_stub_calls(text)
         for match in progress.DEFINITION.finditer(text):
             body = text[match.end() - 1:progress.body_end(text, match.end() - 1) + 1]
@@ -633,7 +691,7 @@ def source_stub_classes(source):
 def read_registry(path):
     try:
         entries = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise AuditError(f"{path}: cannot read registry: {error}") from error
     if not isinstance(entries, list):
         raise AuditError(f"{path}: a registry is a JSON list, got {type(entries).__name__}")
@@ -658,7 +716,7 @@ def needed_registry_path(path):
 def read_needed_registry(path):
     try:
         libraries = json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise AuditError(f"{path}: cannot read needed libraries: {error}") from error
     if not isinstance(libraries, list) or any(not isinstance(library, str) or not library for library in libraries):
         raise AuditError(f"{path}: needed libraries must be a JSON list of nonempty strings")
@@ -680,9 +738,8 @@ def module_stem(name, fold):
         name = name.lower()
     for suffix in MODULE_FILE_SUFFIXES:
         if len(name) > len(suffix) and name.endswith(suffix):
-            name = name[:-len(suffix)]
-            break
-    return name
+            return name[:-len(suffix)]
+    return None
 
 
 class ModuleNames(set):
@@ -692,10 +749,14 @@ class ModuleNames(set):
     def __init__(self, names=(), fold=False):
         super().__init__(names)
         self.fold = fold
-        self.stems = {module_stem(name, fold) for name in self}
+        self.files = {name.lower() if fold else name for name in self}
+        self.stems = {stem for name in self if (stem := module_stem(name, fold)) is not None}
 
     def __contains__(self, library):
-        return isinstance(library, str) and module_stem(library, self.fold) in self.stems
+        if not isinstance(library, str):
+            return False
+        filename = library.lower() if self.fold else library
+        return filename in self.files or module_stem(library, self.fold) in self.stems
 
 
 def classify(nid, library, providers, stubs, modules, partial=frozenset()):
@@ -717,12 +778,19 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         if name:
             for suffix in (".sprx", ".suprx", ".debug_prx"):
                 if name.endswith(suffix):
-                    normalized = name.removesuffix(suffix) + ".prx"
+                    normalized = name[:-len(suffix)] + ".prx"
                     candidates = windows_names.get(normalized.casefold(), ())
                     if normalized in candidates:
                         return normalized
                     if len(candidates) == 1:
                         return next(iter(candidates))
+            if name.casefold().endswith(".prx"):
+                normalized = name[:-4] + ".prx"
+                candidates = windows_names.get(normalized.casefold(), ())
+                if normalized in candidates:
+                    return normalized
+                if len(candidates) == 1:
+                    return next(iter(candidates))
         return name
 
     def available(name):
@@ -766,8 +834,10 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         library = record["library"]
         if library and not available(library):
             missing[library] += 1
-    for _, needed in (module_imports or {}).values():
+    for module, (_, needed) in (module_imports or {}).items():
         for library in needed:
+            if module.endswith(".guest.prx") and library == "ld-linux-x86-64.so.2":
+                continue
             if not available(library):
                 missing[library] += 1
     return ordered, dict(sorted(missing.items()))
@@ -802,7 +872,9 @@ def attach_names(records, names):
 def write_json(path, result):
     if path.is_dir():
         raise AuditError(f"{path}: JSON output is a directory")
-    destination = path.resolve()
+    destination = Path(os.path.realpath(path))
+    if destination.is_symlink():
+        raise AuditError(f"{path}: JSON output is a symbolic link loop")
     with tempfile.TemporaryDirectory(dir=destination.parent, prefix=destination.name + ".", suffix=".tmp") as directory:
         temporary = Path(directory) / destination.name
         try:
@@ -941,8 +1013,8 @@ def main(argv=None):
             inputs += [file for directory in args.modules for file in directory_files(directory, "*")]
             inputs += list(Path(args.source).rglob("*.cpp"))
             inputs += [file for file in Path(args.source).glob("*/CMakeLists.txt") if file.is_file()]
-            output = args.json.resolve()
-            if any(output == path.resolve() or (args.json.exists() and args.json.samefile(path)) for path in inputs):
+            output = Path(os.path.realpath(args.json))
+            if any(output == Path(os.path.realpath(path)) or (args.json.exists() and args.json.samefile(path)) for path in inputs):
                 raise AuditError(f"{args.json}: JSON output would overwrite an input file")
         registries = [(registry, read_registry(registry)) for registry in args.registries]
         imports = [entry for _, entries in registries for entry in entries]

@@ -1,6 +1,7 @@
 """Reject inputs that are not plain ELF files with a message that names what was read."""
 
 from pathlib import Path
+import os
 import platform
 import subprocess
 import sys
@@ -42,8 +43,10 @@ def main():
                 resource.setrlimit(resource.RLIMIT_AS, (512 * 1024**2, 512 * 1024**2))
                 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
+            bounded_by_asan = "max_allocation_size_mb=" in os.environ.get("ASAN_OPTIONS", "")
             result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)],
-                                    capture_output=True, text=True, timeout=20, preexec_fn=limit_address_space)
+                                    capture_output=True, text=True, timeout=20,
+                                    preexec_fn=None if bounded_by_asan else limit_address_space)
             assert result.returncode == 2 and "Invalid ELF magic number: 7f 46 49 48" in result.stderr and not output.exists(), result
     print("Input magic diagnostics tests passed")
 

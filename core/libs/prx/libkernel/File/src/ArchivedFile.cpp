@@ -55,12 +55,6 @@ std::optional<int> OpenArchivedFile(const std::filesystem::path& native, int fla
     return fd;
 }
 
-void RefuseMergedDirectory(const std::filesystem::path& native) {
-    if (!AppArchiveHasDirectory_nid_no_patch(native)) return;
-    std::error_code error;
-    if (std::filesystem::is_directory(native, error)) NotImplemented_nid_no_patch(("opening " + native.string() + " merged with app0.zar").c_str());
-}
-
 bool IsArchivedFile(int fd) {
     return AppArchiveDescriptor_nid_no_patch(fd, nullptr, nullptr);
 }

@@ -7,7 +7,11 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 namespace {
 
@@ -22,6 +26,7 @@ void Require(bool value, int line) {
 constexpr int GuestEnoent = 2;
 constexpr int GuestEisdir = 21;
 constexpr int GuestEinval = 22;
+constexpr int GuestEnotsup = 45;
 constexpr int GuestEloop = 62;
 constexpr int GuestEnametoolong = 63;
 
@@ -32,7 +37,17 @@ std::filesystem::path EnterFreshRoot() {
         ("anyps5-fopen-errors-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(root / "folder");
     std::filesystem::current_path(root);
+#ifdef _WIN32
+    if (CreateSymbolicLinkW(L"loop", L"loop", SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) == 0) {
+        Check(GetLastError() == ERROR_PRIVILEGE_NOT_HELD);
+        std::fprintf(stderr, "fopen error checks skipped: creating symbolic links needs Developer Mode or administrator rights\n");
+        std::filesystem::current_path(root.parent_path());
+        std::filesystem::remove_all(root);
+        std::exit(77);
+    }
+#else
     Check(::symlink("loop", "loop") == 0);
+#endif
     { std::ofstream file("plain.txt"); file << "plain"; }
     return root;
 }
@@ -88,6 +103,31 @@ void CheckedOpen() {
     Check(fopen_s_nid_postfix(&stream, "plain.txt", "r") == 0 && stream != nullptr && fclose_nid_postfix(stream) == 0);
 }
 
+void CheckedReopen() {
+    FileStream* const sentinel = reinterpret_cast<FileStream*>(1);
+    FileStream* result = sentinel;
+    FileStream* stream = fopen_nid_postfix("plain.txt", "r");
+    Check(stream != nullptr);
+    Check(freopen_s_nid_postfix(nullptr, "plain.txt", "r", stream) == GuestEinval);
+    Check(freopen_s_nid_postfix(&result, nullptr, "r", stream) == GuestEnotsup && result == nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "plain.txt", nullptr, stream) == GuestEinval && result == nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "plain.txt", "r", nullptr) == GuestEinval && result == nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "plain.txt", "z", stream) == GuestEinval && result == nullptr);
+    Check(freopen_s_nid_postfix(&result, "reopened.txt", "w", stream) == 0 && result == stream);
+    Check(fclose_nid_postfix(stream) == 0 && std::filesystem::exists("reopened.txt"));
+    stream = fopen_nid_postfix("plain.txt", "r");
+    Check(stream != nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "loop", "r", stream) == GuestEloop && result == nullptr);
+    stream = fopen_nid_postfix("plain.txt", "r");
+    Check(stream != nullptr);
+    result = sentinel;
+    Check(freopen_s_nid_postfix(&result, "missing.txt", "r", stream) == GuestEnoent && result == nullptr);
+}
+
 }
 
 int main() {
@@ -95,7 +135,11 @@ int main() {
     Open();
     Reopen();
     CheckedOpen();
+    CheckedReopen();
     std::error_code error;
+#ifdef _WIN32
+    DeleteFileW(L"loop");
+#endif
     std::filesystem::current_path(std::filesystem::temp_directory_path(), error);
     std::filesystem::remove_all(root, error);
     return 0;

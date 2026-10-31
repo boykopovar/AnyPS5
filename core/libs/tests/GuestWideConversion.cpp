@@ -142,8 +142,9 @@ static void CheckScan() {
     Require(swscanf_s_nid_postfix(u"5 abc", u"%d%ls", &first, static_cast<char16_t*>(nullptr), std::size_t{4}) == -1, "null %ls argument");
     Require(swscanf_s_nid_postfix(nullptr, u"%d", &first) == -1, "null buffer");
     Require(swscanf_s_nid_postfix(u"5", nullptr) == -1, "null format");
-    Require(Throws([&] { swscanf_s_nid_postfix(u"abc", u"%l[a-c]", text, std::size_t{6}); }), "scanset range throws");
-    Require(Throws([&] { swscanf_s_nid_postfix(u"5", u"%Ld", &wide); }), "%Ld throws");
+    Require(swscanf_s_nid_postfix(u"abcz", u"%l[a-c]", text, std::size_t{6}) == 1 && std::u16string(text) == u"abc", "scanset range");
+    first = -1;
+    Require(swscanf_s_nid_postfix(u"5", u"%Ld", &first) == 1 && first == 5, "%Ld reads an int");
     Require(swscanf_s_nid_postfix(u"Ā", u"%s", narrow, std::size_t{4}) == 1 && std::strcmp(narrow, "\xc4\x80") == 0, "narrow %s stores UTF-8");
 }
 
@@ -153,6 +154,17 @@ static void CheckUnsizedScan() {
     Require(swscanf_nid_postfix(u"  42 -7", u"%d%d", &first, &second) == 2 && first == 42 && second == -7, "swscanf %d");
     Require(swscanf_nid_postfix(u"x=0x1f", u"x=%i", &first) == 1 && first == 31, "swscanf %i with a hex prefix");
     Require(swscanf_nid_postfix(u"1 2", u"%*d%d", &first) == 1 && first == 2, "swscanf suppressed %d");
+    float scannedFloat = 0;
+    double scannedDouble = 0;
+    long double scannedLongDouble = 0;
+    errno = 0;
+    Require(swscanf_nid_postfix(u"1e39 1e400", u"%f%lf", &scannedFloat, &scannedDouble) == 2 && scannedFloat == std::numeric_limits<float>::infinity() &&
+        scannedDouble == std::numeric_limits<double>::infinity() && errno == 0, "swscanf leaves errno alone for an overflowing float and double");
+    Require(swscanf_nid_postfix(u"1e-400", u"%lf", &scannedDouble) == 1 && scannedDouble == 0 && errno == 0, "swscanf leaves errno alone for an underflowing double");
+    errno = 0;
+    Require(swscanf_nid_postfix(u"1e-5000", u"%Lf", &scannedLongDouble) == 1 && scannedLongDouble == 0 && errno == ERANGE, "swscanf sets ERANGE for an out-of-range long double");
+    errno = 0;
+    Require(swscanf_nid_postfix(u"1e-50", u"%e", &scannedFloat) == 1 && scannedFloat == 0 && errno == 0, "swscanf leaves errno alone for an underflowing float");
     Require(swscanf_nid_postfix(u"12345", u"%3d%d", &first, &second) == 2 && first == 123 && second == 45, "swscanf %d width");
     std::int64_t wide = 0;
     Require(swscanf_nid_postfix(u"5000000000", u"%ld", &wide) == 1 && wide == 5000000000LL, "swscanf %ld is 64-bit");
@@ -213,9 +225,36 @@ static void CheckUnsizedScan() {
     Require(swscanf_nid_postfix(u"5", u"%d%d", &first, &second) == 1, "swscanf input failure after a conversion");
     Require(swscanf_nid_postfix(nullptr, u"%d", &first) == -1, "swscanf null buffer");
     Require(swscanf_nid_postfix(u"5", nullptr) == -1, "swscanf null format");
-    Require(Throws([&] { swscanf_nid_postfix(u"abc", u"%l[a-c]", text); }), "swscanf scanset range throws");
-    Require(Throws([&] { swscanf_nid_postfix(u"5", u"%Ld", &wide); }), "swscanf %Ld throws");
-    Require(Throws([&] { swscanf_nid_postfix(u"1", u"%lp", &pointer); }), "swscanf %lp throws");
+    Require(swscanf_nid_postfix(u"abcz", u"%l[a-c]", text) == 1 && std::u16string(text) == u"abc", "swscanf scanset range");
+    const struct {
+        const char16_t* input;
+        const char16_t* format;
+        int result;
+        const char* stored;
+    } ranges[] = {
+        {u"bca-", u"%[a-c]", 1, "bca"}, {u"za", u"%[z-a]", 0, ""}, {u"-ab", u"%[-a]", 1, "-a"}, {u"a-b", u"%[a-]", 1, "a-"},
+        {u"dcb", u"%[^a-c]", 1, "d"}, {u"b", u"%[a-a-c]", 0, ""}, {u"a-c", u"%[a-a-c]", 1, "a-c"}, {u"-d", u"%[a-c-e]", 1, "-"},
+        {u"-x", u"%[c-a-z]", 1, "-"}, {u"-", u"%[a--]", 0, ""}, {u"+", u"%[*--]", 1, "+"}, {u"b]", u"%[]-c]", 1, "b]"},
+        {u"-]a", u"%[^]-]", 0, ""}, {u"\u00e9a", u"%[a-\u00e9]", 1, "\xc3\xa9" "a"}, {u"ab cd", u"%2hs", 1, "ab"}, {u"ab", u"%lls", 1, "ab"},
+        {u"ab", u"%hhs", 1, "ab"}, {u"ab", u"%h[a-z]", 1, "ab"}, {u"ab", u"%y", 0, ""}, {u"ab", u"%5y", 0, ""}, {u"ab", u"%hls", 0, ""},
+    };
+    for (const auto& item : ranges) {
+        char bytes[8] = {'!', '!', '!', '!', '!', '!', '!', '!'};
+        Require(swscanf_nid_postfix(item.input, item.format, bytes) == item.result, "swscanf scanset or length result");
+        Require(item.result == 0 ? bytes[0] == '!' : std::strcmp(bytes, item.stored) == 0, "swscanf scanset or length bytes");
+    }
+    char letters[4] = {'!', '!', '!', '!'};
+    Require(swscanf_nid_postfix(u"abc", u"%2hc", letters) == 1 && letters[0] == 'a' && letters[1] == 'b' && letters[2] == '!', "swscanf %hc");
+    Require(swscanf_nid_postfix(u"ab", u"%ls%y", text) == 1 && std::u16string(text) == u"ab", "swscanf stops at an unknown conversion");
+    first = -1;
+    Require(swscanf_nid_postfix(u"5", u"%Ld", &first) == 1 && first == 5, "swscanf %Ld reads an int");
+    pointer = nullptr;
+    Require(swscanf_nid_postfix(u"1f", u"%lp", &pointer) == 1 && pointer == reinterpret_cast<void*>(0x1f), "swscanf %lp reads a pointer");
+    pointer = nullptr;
+    Require(swscanf_nid_postfix(u"1f", u"%hp", &pointer) == 1 && pointer == reinterpret_cast<void*>(0x1f), "swscanf %hp reads a pointer");
+    char unset[4] = {'!', '!', '!', '!'};
+    Require(swscanf_nid_postfix(u"ab", u"%[^]", unset) == 0 && swscanf_nid_postfix(u"ab", u"%[ab", unset) == 0, "swscanf unterminated set");
+    Require(swscanf_nid_postfix(u"", u"%[^]", unset) == 0 && unset[0] == '!', "swscanf unterminated set at end of input");
     Require(swscanf_nid_postfix(u"Ā", u"%s", narrow) == 1 && std::strcmp(narrow, "\xc4\x80") == 0, "swscanf narrow %s stores UTF-8");
 }
 

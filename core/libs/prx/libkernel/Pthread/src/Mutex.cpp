@@ -1,4 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Mutex.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -10,6 +12,10 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <thread>
+#if defined(__x86_64__) || defined(_M_X64)
+#include <immintrin.h>
+#endif
 
 namespace {
 
@@ -17,6 +23,8 @@ constexpr int sceNotPermitted = static_cast<int>(0x80020001u);
 constexpr int sceDeadlock = static_cast<int>(0x8002000bu);
 constexpr int sceBusy = static_cast<int>(0x80020010u);
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
+constexpr std::int32_t posixFailure = -1;
+constexpr int posixAgain = 35;
 std::mutex& InitializationMutex() {
     static std::mutex mutex;
     return mutex;
@@ -55,6 +63,19 @@ PthreadMutex resolveMutex(PthreadMutex* mutex, bool initialize) {
     return created;
 }
 
+template<typename TNative>
+bool spinAcquire(PthreadMutex mutex, TNative& native) {
+    static const bool multiprocessor = std::thread::hardware_concurrency() > 1;
+    const int spins = multiprocessor ? mutex->_spinloops.load(std::memory_order_relaxed) : 0;
+    return MutexOperations::SpinAcquire(spins, mutex->_yieldloops.load(std::memory_order_relaxed), [&] {
+        return mutex->_owner.load(std::memory_order_relaxed) == std::thread::id{} && native.try_lock();
+    }, [] {
+#if defined(__x86_64__) || defined(_M_X64)
+        _mm_pause();
+#endif
+    }, [] { std::this_thread::yield(); });
+}
+
 template<typename TAcquire>
 int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool tryOnly) {
     if (!mutex)
@@ -70,12 +91,15 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
     }
     if (owned && mutex->_count == std::numeric_limits<int>::max())
         throw std::overflow_error("Recursive mutex lock count overflow");
+    const auto take = [&](auto& native) {
+        return (!tryOnly && !owned && spinAcquire(mutex, native)) || acquire(native);
+    };
     if (mutex->_type == MutexType::Recursive) {
-        if (!acquire(mutex->_rmtx))
+        if (!take(mutex->_rmtx))
             return unavailable;
         ++mutex->_count;
     } else {
-        if (!acquire(mutex->_mtx))
+        if (!take(mutex->_mtx))
             return unavailable;
     }
     mutex->_owner.store(thread, std::memory_order_release);
@@ -137,6 +161,14 @@ int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr) {
     return 0;
 }
 
+int APS5_VABI scePthreadMutexattrSetkind(PthreadMutexattr* attr, int kind) {
+    return sceKernelError(pthread_mutexattr_setkind_np_nid_postfix(attr, kind));
+}
+
+int APS5_VABI scePthreadMutexattrGetkind(PthreadMutexattr attr) {
+    return sceKernelError(attr ? static_cast<std::int32_t>(attr->type) : posixFailure);
+}
+
 int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
     if (!attr || !*attr)
         return SCE_KERNEL_ERROR_EINVAL;
@@ -153,6 +185,8 @@ int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type) {
 int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char*) {
     if (!mutex)
         throw std::invalid_argument("Mutex pointer is null");
+    if (attr && *attr && ((*attr)->type < MutexType::ErrorCheck || (*attr)->type > MutexType::Adaptive))
+        return SCE_KERNEL_ERROR_EINVAL;
     auto replacement = std::make_unique<PthreadMutexPrivate>();
     if (attr && *attr)
         replacement->SetType((*attr)->type);
@@ -262,8 +296,26 @@ int APS5_VABI scePthreadMutexGetyieldloops(PthreadMutex* mutex, int* count) {
 }
 
 int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count) {
-    if (auto* current = resolveMutex(mutex, true))
-        current->_yieldloops = count;
+    auto* current = resolveMutex(mutex, true);
+    if (!current)
+        return SCE_KERNEL_ERROR_EINVAL;
+    current->_yieldloops = count;
+    return 0;
+}
+
+int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name) {
+    if (!mutex)
+        throw std::invalid_argument("pthread_mutex_setname_np: null mutex");
+    std::lock_guard lock(InitializationMutex());
+    const auto current = std::atomic_ref<PthreadMutex>(*mutex).load(std::memory_order_acquire);
+    if (!isInitializedMutex(current))
+        throw std::invalid_argument("pthread_mutex_setname_np: mutex is statically initialized or destroyed");
+    if (current->_named)
+        return posixAgain;
+    if (name) {
+        current->_name = name;
+        current->_named = true;
+    }
     return 0;
 }
 

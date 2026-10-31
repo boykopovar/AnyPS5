@@ -1,6 +1,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
@@ -31,6 +32,7 @@
 #include <mach/mach_vm.h>
 #include <pthread.h>
 #include <sys/mman.h>
+#include <sys/ucontext.h>
 #include <unistd.h>
 #endif
 
@@ -433,6 +435,20 @@ public:
         });
     }
 
+    int Protect(std::uintptr_t begin, std::uintptr_t end, int protection) {
+        if (!_available) return ::mprotect(reinterpret_cast<void*>(begin), end - begin, protection) == 0 ? 0 : errno;
+        const Lock lock(_lock);
+        if (::mprotect(reinterpret_cast<void*>(begin), end - begin, protection) != 0) return errno;
+        const auto first = pageStart(begin);
+        const auto last = pageEnd(end);
+        if (first < last) {
+            forEachPage(first, last, [&](std::uintptr_t, std::uint8_t& state) {
+                state = static_cast<std::uint8_t>(Written | (state & Fresh) | (protection & ProtectionMask));
+            });
+        }
+        return 0;
+    }
+
     void BeginHostWrite(std::uintptr_t begin, std::uintptr_t end) {
         if (!_available || end <= begin) return;
         begin = pageStart(begin);
@@ -534,9 +550,27 @@ private:
         _available = true;
     }
 
+    static bool isWriteFault(const siginfo_t* info, void* context) {
+        if (info->si_code <= 0 || info->si_code >= SI_USER || context == nullptr) return false;
+        const auto state = static_cast<ucontext_t*>(context)->uc_mcontext;
+        if (state == nullptr) return false;
+#if defined(__x86_64__)
+        constexpr unsigned PageFault = 14;
+        constexpr unsigned WriteAccess = 1u << 1;
+        return state->__es.__trapno == PageFault && (state->__es.__err & WriteAccess) != 0;
+#elif defined(__aarch64__)
+        constexpr unsigned DataAbort = 0x24;
+        constexpr unsigned ExceptionClassShift = 26;
+        constexpr unsigned WriteAccess = 1u << 6;
+        return (state->__es.__esr >> ExceptionClassShift) == DataAbort && (state->__es.__esr & WriteAccess) != 0;
+#else
+        return false;
+#endif
+    }
+
     static void fault(int signal, siginfo_t* info, void* context) {
         auto& watch = Get();
-        if (watch.record(reinterpret_cast<std::uintptr_t>(info->si_addr))) return;
+        if (isWriteFault(info, context) && watch.record(reinterpret_cast<std::uintptr_t>(info->si_addr))) return;
         const auto& previous = signal == SIGBUS ? watch._previousBus : watch._previousSegv;
         if ((previous.sa_flags & SA_SIGINFO) != 0 && previous.sa_sigaction != nullptr) {
             previous.sa_sigaction(signal, info, context);
@@ -547,6 +581,7 @@ private:
             return;
         }
         ::signal(signal, SIG_DFL);
+        if (previous.sa_handler == SIG_DFL) ::raise(signal);
     }
 
     bool record(std::uintptr_t address) {
@@ -558,11 +593,14 @@ private:
         if (page >= it->second.end) return false;
         auto& state = it->second.pages[(page - it->first) / _page];
         if ((state & Protected) != 0) {
+            if (::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask) != 0) return false;
             state = static_cast<std::uint8_t>((state & (ProtectionMask | Fresh)) | Written);
-            ::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask);
             return true;
         }
-        return (state & PROT_WRITE) != 0;
+        if ((state & PROT_WRITE) == 0) return false;
+        std::uint8_t value = 0;
+        mach_vm_size_t copied = 0;
+        return mach_vm_read_overwrite(mach_task_self(), address, sizeof(value), reinterpret_cast<mach_vm_address_t>(&value), &copied) == KERN_SUCCESS && copied == sizeof(value);
     }
 
     std::uintptr_t pageStart(std::uintptr_t address) const {
@@ -746,6 +784,18 @@ void GuestWriteWatchProtectionChanged_nid_postfix(const void* pointer, std::size
     static_cast<void>(pointer);
     static_cast<void>(bytes);
     static_cast<void>(protection);
+#endif
+}
+
+int GuestWriteWatchProtect_nid_postfix(void* pointer, std::size_t bytes, int protection) {
+#if defined(__APPLE__)
+    const auto begin = reinterpret_cast<std::uintptr_t>(pointer);
+    return Watch::Get().Protect(begin, begin + bytes, protection);
+#else
+    static_cast<void>(pointer);
+    static_cast<void>(bytes);
+    static_cast<void>(protection);
+    return ENOSYS;
 #endif
 }
 

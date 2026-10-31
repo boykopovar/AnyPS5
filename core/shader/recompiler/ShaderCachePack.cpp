@@ -49,11 +49,13 @@ CachePack::CachePack(const std::filesystem::path& path) {
     if (!GetFileSizeEx(handle, &size) || size.QuadPart < static_cast<LONGLONG>(sizeof(PackHeader)) || static_cast<std::uint64_t>(size.QuadPart) > std::numeric_limits<std::size_t>::max()) {
         CloseHandle(handle); error = "invalid size"; return;
     }
-    mapping = CreateFileMappingW(handle, nullptr, PAGE_READONLY, 0, 0, nullptr);
-    fileHandle = handle;
+    const auto mapping = CreateFileMappingW(handle, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    CloseHandle(handle);
     if (!mapping) { error = "cannot map"; return; }
     const auto* data = static_cast<const std::byte*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0));
+    CloseHandle(mapping);
     if (!data) { error = "cannot map view"; return; }
+    owner = std::shared_ptr<const void>(data, [](const void* view) { UnmapViewOfFile(view); });
     file = {data, static_cast<std::size_t>(size.QuadPart)};
 #else
     const auto fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
@@ -65,20 +67,13 @@ CachePack::CachePack(const std::filesystem::path& path) {
     auto* data = mmap(nullptr, size.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
     if (data == MAP_FAILED) { error = "cannot map"; return; }
+    owner = std::shared_ptr<const void>(data, [bytes = static_cast<std::size_t>(size.st_size)](const void* view) { munmap(const_cast<void*>(view), bytes); });
     file = {static_cast<const std::byte*>(data), static_cast<std::size_t>(size.st_size)};
 #endif
     Validate();
 }
 
-CachePack::~CachePack() {
-#ifdef _WIN32
-    if (!file.empty()) UnmapViewOfFile(file.data());
-    if (mapping) CloseHandle(mapping);
-    if (fileHandle) CloseHandle(fileHandle);
-#else
-    if (!file.empty()) munmap(const_cast<std::byte*>(file.data()), file.size());
-#endif
-}
+CachePack::~CachePack() = default;
 
 void CachePack::Validate() {
     PackHeader header;
@@ -107,7 +102,7 @@ LoadStatus CachePack::Load(std::span<const std::byte> key, CompiledVariant& vari
     for (auto it = first; it != records.end() && it->hash == hash; ++it) {
         const auto data = file.subspan(it->offset, it->size);
         const auto decode = Clock::now();
-        const auto result = DecodeEntry(data, key, variant);
+        const auto result = DecodeEntry(data, key, variant, owner);
         timings.decodeNanoseconds += elapsed(decode);
         timings.bytes += data.size();
         if (result == LoadStatus::Loaded) return result;
