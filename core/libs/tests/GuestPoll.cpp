@@ -12,6 +12,7 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -312,10 +313,33 @@ static void PollsAHungUpSocketWithoutPollout() {
 }
 #endif
 
+static void PollsAPipeClosedDuringTheWait() {
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        int pair[2]{-1, -1};
+        Require(pipe_nid_postfix(pair) == 0);
+        int result = 0;
+        short revents = 0;
+        std::atomic<bool> started{false};
+        std::thread waiter([&] {
+            GuestPollDescriptor entry{pair[0], In, 0};
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 20);
+            revents = entry.revents;
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::microseconds(1000 + (attempt % 20) * 100));
+        Require(close_nid_postfix(pair[0]) == 0);
+        waiter.join();
+        Require(close_nid_postfix(pair[1]) == 0);
+        Require(result == 0 || (result == 1 && (revents & Invalid) != 0));
+    }
+}
+
 int main() {
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     PollsUrgentData();
     PollsAStreamWhosePeerClosed();
+    PollsAPipeClosedDuringTheWait();
 #ifndef _WIN32
     PollsAHungUpSocketWithoutPollout();
 #endif
