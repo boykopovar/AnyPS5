@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/include/UrlProtocols.hpp"
 
 extern "C" {
 
@@ -2704,7 +2705,7 @@ int APS5_VABI _ZN3WTF20equalIgnoringNullityEPNS_10StringImplES1_();
 int APS5_VABI _ZN3WTF20fastDisableScavengerEv();
 int APS5_VABI _ZN3WTF20fastMallocStatisticsEv();
 int APS5_VABI _ZN3WTF20initializeMainThreadEv();
-int APS5_VABI _ZN3WTF20protocolIsJavaScriptENS_10StringViewE();
+bool APS5_VABI _ZN3WTF20protocolIsJavaScriptENS_10StringViewE(NKWebKit::StringView value);
 int APS5_VABI _ZN3WTF20resetAccumulatedLogsEv();
 int APS5_VABI _ZN3WTF20setProcessPrivilegesENS_9OptionSetINS_16ProcessPrivilegeEEE();
 int APS5_VABI _ZN3WTF20tryFastAlignedMallocEmm();
@@ -2744,7 +2745,7 @@ int APS5_VABI _ZN3WTF22equalIgnoringASCIICaseEPKNS_10StringImplES2_();
 int APS5_VABI _ZN3WTF22equalRespectingNullityENS_10StringViewES0_();
 int APS5_VABI _ZN3WTF22isMainThreadOrGCThreadEv();
 int APS5_VABI _ZN3WTF22numberOfProcessorCoresEv();
-int APS5_VABI _ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE();
+bool APS5_VABI _ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE(NKWebKit::StringView value);
 int APS5_VABI _ZN3WTF22removeProcessPrivilegeENS_16ProcessPrivilegeE();
 int APS5_VABI _ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE();
 int APS5_VABI _ZN3WTF23fastCommitAlignedMemoryEPvm();

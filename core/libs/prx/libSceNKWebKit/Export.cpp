@@ -11372,10 +11372,6 @@ int APS5_VABI _ZN3WTF20initializeMainThreadEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF20protocolIsJavaScriptENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF20resetAccumulatedLogsEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -11529,10 +11525,6 @@ int APS5_VABI _ZN3WTF22isMainThreadOrGCThreadEv() {
 }
 
 int APS5_VABI _ZN3WTF22numberOfProcessorCoresEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
