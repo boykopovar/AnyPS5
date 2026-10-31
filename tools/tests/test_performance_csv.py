@@ -86,11 +86,46 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
         self.assertIn(b"recorded configuration differs", result.stderr)
 
+    def test_missing_and_empty_context_values_stay_distinct(self):
+        self.before.pop("cpu", None)
+        self.after["cpu"] = ""
+        self.before["env"]["EMPTY"] = ""
+        self.after["env"].pop("EMPTY", None)
+        rows = self.rows(self.run_csv())
+        cpu = next(row for row in rows if row["kind"] == "configuration" and row["name"] == "cpu")
+        env = next(row for row in rows if row["kind"] == "configuration" and row["name"] == "env.EMPTY")
+        self.assertEqual((cpu["baseline"], cpu["candidate"]), ("<missing>", ""))
+        self.assertEqual((env["baseline"], env["candidate"]), ("", "<missing>"))
+
+    def test_missing_marker_cannot_collide_with_recorded_strings(self):
+        self.before.pop("cpu", None)
+        self.after["cpu"] = "<missing>"
+        self.before["env"]["SLASH"] = r"\<missing>"
+        self.after["env"].pop("SLASH", None)
+        rows = self.rows(self.run_csv())
+        cpu = next(row for row in rows if row["kind"] == "configuration" and row["name"] == "cpu")
+        env = next(row for row in rows if row["kind"] == "configuration" and row["name"] == "env.SLASH")
+        self.assertEqual((cpu["baseline"], cpu["candidate"]), ("<missing>", r"\<missing>"))
+        self.assertEqual((env["baseline"], env["candidate"]), (r"\\<missing>", "<missing>"))
+
     def test_invalid_input_does_not_emit_a_partial_csv(self):
         self.after["frame_ms"]["p50"] = -1
         result = self.run_csv()
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, b"")
+        self.assertNotIn(b"Traceback", result.stderr)
+
+    def test_duplicate_json_field_does_not_emit_an_ambiguous_csv(self):
+        baseline = json.dumps(self.before).replace(
+            '"commit": "abc123"', '"commit": "wrong", "commit": "abc123"', 1)
+        self.baseline.write_text(baseline + "\n", encoding="utf-8")
+        self.candidate.write_text(json.dumps(self.after) + "\n", encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(Path(performance_csv.__file__)), str(self.baseline), str(self.candidate)],
+            capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, b"")
+        self.assertIn(b"duplicate JSON field: 'commit'", result.stderr)
         self.assertNotIn(b"Traceback", result.stderr)
 
     def test_trace_selection_uses_the_existing_jsonl_selection_contract(self):
