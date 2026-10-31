@@ -797,6 +797,42 @@ class ProgressTests(unittest.TestCase):
             for name, path in others.items():
                 self.assertEqual(path.read_text(encoding="utf-8"), name)
 
+    def test_adjacent_aliased_reports_are_refused_when_others_are_missing(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            first, second = output / "badge-libraries.svg", output / "badge-shaders.svg"
+            first.write_text("badge", encoding="utf-8")
+            try:
+                os.link(first, second)
+            except OSError:
+                self.skipTest("hard links are not available")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("badge-libraries.svg and badge-shaders.svg", stderr.getvalue())
+            self.assertEqual(first.read_text(encoding="utf-8"), "badge")
+            self.assertFalse((output / "progress.json").exists())
+
+    def test_reports_linked_to_one_missing_target_are_refused(self):
+        libraries, shaders = self.library_snapshot()
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "site"
+            output.mkdir()
+            try:
+                os.symlink("shared", output / "progress.json")
+                os.symlink("shared", output / "progress.html")
+            except OSError:
+                self.skipTest("symbolic links are not available")
+            stderr = io.StringIO()
+            with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                self.run_main([str(output)], libraries, shaders)
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn("progress.json and progress.html", stderr.getvalue())
+            self.assertFalse((output / "shared").exists())
+
     def test_root_must_be_a_source_tree(self):
         with tempfile.TemporaryDirectory() as directory:
             empty = Path(directory) / "empty tree"
