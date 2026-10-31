@@ -77,6 +77,9 @@ struct Fiber {
     bool setFpuRegisters;
     std::uint8_t* hostStack;
     std::uint64_t hostStackBytes;
+#ifdef ANYPS5_GUEST_LIFTED
+    std::thread::id hostThread;
+#endif
 };
 static_assert(sizeof(Fiber) <= FIBER_OBJECT_SIZE, "guest reserves 0x100 bytes for SceFiber");
 
@@ -487,6 +490,7 @@ static Fiber* AsFiber(FiberObject* object) {
 extern "C" [[noreturn]] void Aps5FiberMain_nid_no_patch(Fiber* fiber) {
     CompletePendingSuspend();
 #ifdef ANYPS5_GUEST_LIFTED
+    fiber->hostThread = std::this_thread::get_id();
     GuestCpuStartFiber_nid_no_patch(reinterpret_cast<std::uint64_t>(fiber->context ? fiber->context + fiber->contextSize : nullptr));
     if (fiber->setFpuRegisters) {
         GuestCpu::SetMxcsr(FIBER_DEFAULT_MXCSR);
@@ -523,6 +527,10 @@ static void PrepareInitialStack(Fiber* fiber) {
     fiber->savedStack = frame;
 }
 
+#ifdef ANYPS5_GUEST_LIFTED
+void LiftedFiberRequireHostThread(std::thread::id hostThread);
+#endif
+
 static bool AcquireForResume(Fiber* target) {
     for (;;) {
         auto state = target->state.load(std::memory_order_acquire);
@@ -531,6 +539,9 @@ static bool AcquireForResume(Fiber* target) {
             continue;
         }
         if (state != FiberState::Idle && state != FiberState::Suspended) return false;
+#ifdef ANYPS5_GUEST_LIFTED
+        if (state == FiberState::Suspended) LiftedFiberRequireHostThread(target->hostThread);
+#endif
         if (target->state.compare_exchange_weak(state, FiberState::Running, std::memory_order_acq_rel)) {
             if (state == FiberState::Idle && target->context) PrepareInitialStack(target);
             return true;
