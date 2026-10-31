@@ -1,6 +1,9 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +37,11 @@ const char* SslAlertDescStringLong(int value);
 const char* OcspCertStatusString(long status);
 const char* OcspCrlReasonString(long reason);
 const char* OcspResponseStatusString(long status);
+void* D2iX509(void** certificate, const unsigned char** in, long length);
+void X509Free(void* certificate);
+void* X509GetExtD2i(void* certificate, int nid, int* critical, int* index);
+std::string ExtensionDer(int nid, void* value);
+void ExtensionFree(int nid, void* value);
 int ObjCreate(const char* oid, const char* shortName, const char* longName);
 void ObjCleanup();
 int I2tAsn1Object(char* buffer, int length, const void* object);
@@ -307,11 +315,304 @@ void CompareStrings() {
     CompareStrings("OCSP_response_status_str", Range(-2, 10), [](long v) { return OCSP_response_status_str_nid_postfix(v); }, LibreSslReference::OcspResponseStatusString);
 }
 
+using Der = std::vector<unsigned char>;
+
+unsigned Pick(unsigned count) { return static_cast<unsigned>(generator() % count); }
+bool Chance(unsigned percent) { return Pick(100) < percent; }
+
+bool faulty = false;
+
+bool Fault(unsigned percent) { return faulty && Chance(percent); }
+
+Der Join(std::initializer_list<Der> parts) {
+    Der joined;
+    for (const auto& part : parts) joined.insert(joined.end(), part.begin(), part.end());
+    return joined;
+}
+
+Der Wrap(Der tag, const Der& content) {
+    Der out = std::move(tag);
+    if ((out[0] & 0x20) && Chance(8)) {
+        out.push_back(0x80);
+        out.insert(out.end(), content.begin(), content.end());
+        out.push_back(0);
+        out.push_back(0);
+        return out;
+    }
+    const std::size_t size = content.size();
+    if (size < 128 && !Chance(4)) {
+        out.push_back(static_cast<unsigned char>(size));
+    } else {
+        Der length;
+        for (std::size_t rest = size; rest; rest >>= 8) length.insert(length.begin(), static_cast<unsigned char>(rest));
+        if (length.empty() || Chance(20)) length.insert(length.begin(), 0);
+        out.push_back(static_cast<unsigned char>(0x80 | length.size()));
+        out.insert(out.end(), length.begin(), length.end());
+    }
+    out.insert(out.end(), content.begin(), content.end());
+    return out;
+}
+
+Der Wrap(unsigned char tag, const Der& content) { return Wrap(Der{tag}, content); }
+
+Der Characters(std::size_t count) {
+    static constexpr unsigned char pool[] = {' ', ' ', 'A', 'b', 'Z', 'q', '\t', '\n', '\r', '0', '~', 'M', 0x80, 0xc3, 0xa9, 0xe2, 0x82, 0xac, 0xff, 0x00, 0xd8, 0xdc, 0x10, 0x7f};
+    Der out;
+    for (std::size_t index = 0; index < count; ++index) out.push_back(!faulty ? pool[Pick(12)] : Chance(80) ? pool[Pick(sizeof pool)] : static_cast<unsigned char>(generator()));
+    return out;
+}
+
+Der Integer() {
+    static const Der patterns[] = {{}, {0x00}, {0x00, 0x80}, {0x00, 0x00, 0x01}, {0xff}, {0xff, 0x00}, {0xff, 0x00, 0x00}, {0x80}, {0x80, 0x00}, {0xff, 0x7f}, {0x01, 0x00}};
+    if (Chance(60)) return patterns[Pick(std::size(patterns))];
+    return Characters(Pick(10));
+}
+
+Der ObjectContent() {
+    static const Der valid[] = {{0x55, 0x04, 0x03}, {0x55, 0x04, 0x0a}, {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b}, {0x55, 0x1d, 0x13}, {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x01}};
+    static const Der invalid[] = {{}, {0x80, 0x01}, {0x55, 0x84}, {0x2a, 0x80, 0x80, 0x01}, {0x81, 0x80, 0x01}};
+    if (!Fault(20)) return valid[Pick(std::size(valid))];
+    if (Chance(50)) return invalid[Pick(std::size(invalid))];
+    Der out = Characters(1 + Pick(6));
+    out.back() &= 0x7f;
+    return out;
+}
+
+Der BitContent() {
+    if (Fault(5)) return {};
+    Der out{static_cast<unsigned char>(Fault(20) ? Pick(64) : Pick(8))};
+    const Der data = Characters(Pick(6));
+    out.insert(out.end(), data.begin(), data.end());
+    return out;
+}
+
+Der Split(unsigned char tag, const Der& content) {
+    if (!Chance(12)) return Wrap(tag, content);
+    Der chunks;
+    for (std::size_t at = 0; at < content.size();) {
+        const std::size_t size = std::min<std::size_t>(content.size() - at, 1 + Pick(4));
+        const Der part(content.begin() + static_cast<std::ptrdiff_t>(at), content.begin() + static_cast<std::ptrdiff_t>(at + size));
+        const unsigned char inner = !Fault(30) ? 0x04 : static_cast<unsigned char>(Chance(50) ? tag : Pick(31));
+        chunks = Join({chunks, Chance(10) ? Split(static_cast<unsigned char>(inner | 0x20), part) : Wrap(inner, part)});
+        at += size;
+    }
+    return Wrap(static_cast<unsigned char>(tag | 0x20), chunks);
+}
+
+Der Value(unsigned char tag) {
+    switch (tag) {
+    case 0x01: return Wrap(tag, !Fault(15) ? Der{static_cast<unsigned char>(Chance(50) ? 0xff : Pick(3))} : Characters(Pick(3)));
+    case 0x02:
+    case 0x0a: return Split(tag, Integer());
+    case 0x03: return Split(tag, BitContent());
+    case 0x05: return Wrap(tag, !Fault(10) ? Der{} : Der{0x00});
+    case 0x06: return Wrap(tag, ObjectContent());
+    case 0x1e: return Split(tag, Characters(!Fault(15) ? 2 * Pick(6) : Pick(9)));
+    case 0x1c: return Split(tag, Characters(!Fault(15) ? 4 * Pick(4) : Pick(9)));
+    case 0x30:
+    case 0x31: return Wrap(tag, Chance(50) ? Join({Wrap(0x02, {0x01}), Wrap(0x0c, Characters(Pick(4)))}) : Der{});
+    case 0x1f: return Wrap(Der{0x1f, static_cast<unsigned char>(31 + Pick(60))}, Characters(Pick(4)));
+    default: return Split(tag, Characters(Pick(14)));
+    }
+}
+
+Der NameValue() {
+    static constexpr unsigned char common[] = {0x0c, 0x0c, 0x13, 0x13, 0x14, 0x16, 0x12, 0x1e, 0x1c, 0x03, 0x30};
+    static constexpr unsigned char rare[] = {0x0a, 0x07, 0x08, 0x09, 0x0b, 0x0d, 0x0e, 0x0f, 0x1d, 0x1a, 0x02, 0x04, 0x31, 0x05, 0x01, 0x06, 0x17, 0x18, 0x15, 0x19, 0x1b, 0x80, 0x1f};
+    return Value(!Fault(15) ? common[Pick(sizeof common)] : rare[Pick(sizeof rare)]);
+}
+
+Der Name() {
+    Der sets;
+    const unsigned count = Chance(10) ? 0 : 1 + Pick(3);
+    for (unsigned set = 0; set < count; ++set) {
+        Der entries;
+        const unsigned size = Chance(75) ? 1 : 2 + Pick(2);
+        for (unsigned entry = 0; entry < size; ++entry) entries = Join({entries, Wrap(0x30, Join({Wrap(0x06, ObjectContent()), NameValue()}))});
+        sets = Join({sets, Wrap(0x31, entries)});
+    }
+    return Wrap(0x30, sets);
+}
+
+Der Parameter() {
+    static constexpr unsigned char tags[] = {0x05, 0x05, 0x05, 0x01, 0x02, 0x03, 0x04, 0x06, 0x0a, 0x0c, 0x13, 0x1e, 0x1c, 0x30, 0x31, 0x17, 0x1f, 0x80, 0xa0, 0x40, 0x09};
+    const unsigned char tag = tags[Pick(sizeof tags)];
+    if (tag == 0x80 || tag == 0x40) return Wrap(tag, Characters(Pick(4)));
+    if (tag == 0xa0) return Wrap(tag, Wrap(0x05, {}));
+    return Value(tag);
+}
+
+Der Algorithm() {
+    Der fields = Wrap(0x06, ObjectContent());
+    if (Chance(85)) fields = Join({fields, Parameter()});
+    return Wrap(0x30, fields);
+}
+
+Der Time() {
+    static constexpr unsigned char tags[] = {0x17, 0x18, 0x13, 0x0c, 0x1a};
+    return Split(tags[Fault(30) ? Pick(sizeof tags) : Pick(2)], !Fault(20) ? Der{'2', '0', '0', '1', '0', '1', '0', '0', '0', '0', '0', '0', 'Z'} : Characters(Pick(16)));
+}
+
+Der Extensions() {
+    Der list;
+    const unsigned count = Pick(4);
+    for (unsigned index = 0; index < count; ++index) {
+        Der fields = Wrap(0x06, ObjectContent());
+        if (Chance(40)) fields = Join({fields, Value(0x01)});
+        fields = Join({fields, !Fault(5) ? Split(0x04, Characters(Pick(10))) : NameValue()});
+        list = Join({list, Wrap(0x30, fields)});
+    }
+    return Wrap(0xa3, Wrap(0x30, list));
+}
+
+Der Certificate() {
+    Der tbs;
+    if (Chance(70)) tbs = Wrap(0xa0, Wrap(0x02, Integer()));
+    tbs = Join({tbs, Wrap(0x02, Integer()), Algorithm(), Name(), Wrap(0x30, Join({Time(), Time()})), Name(),
+        Wrap(0x30, Join({Algorithm(), Split(0x03, BitContent())}))});
+    if (Chance(15)) tbs = Join({tbs, !Fault(20) ? Wrap(0x81, BitContent()) : Wrap(0xa1, Wrap(0x04, BitContent()))});
+    if (Chance(15)) tbs = Join({tbs, Wrap(0x82, BitContent())});
+    if (Chance(60)) tbs = Join({tbs, Extensions()});
+    return Wrap(0x30, Join({Wrap(0x30, tbs), Algorithm(), Split(0x03, BitContent())}));
+}
+
+Der Mutate(Der der) {
+    const unsigned count = 1 + Pick(3);
+    for (unsigned round = 0; round < count && !der.empty(); ++round) {
+        const std::size_t at = Pick(static_cast<unsigned>(der.size()));
+        switch (Pick(7)) {
+        case 0: der[at] ^= static_cast<unsigned char>(1u << Pick(8)); break;
+        case 1: der[at] = static_cast<unsigned char>(generator()); break;
+        case 2: der.resize(at); break;
+        case 3: der.insert(der.begin() + static_cast<std::ptrdiff_t>(at), static_cast<unsigned char>(generator())); break;
+        case 4: der.erase(der.begin() + static_cast<std::ptrdiff_t>(at)); break;
+        case 5: der[at] = 0x80; break;
+        default: der[at] = static_cast<unsigned char>(Chance(50) ? 0x00 : 0xff); break;
+        }
+    }
+    return der;
+}
+
+std::string Describe(const Asn1String* string) {
+    if (!string) return "null";
+    return "S(" + std::to_string(string->type) + "," + std::to_string(string->length) + "," + std::to_string(string->flags) + "," +
+        (string->data ? Hex(string->data, static_cast<std::size_t>(std::max(string->length, 0))) : std::string("null")) + ")";
+}
+
+std::string Describe(const LibreSslAsn1Object* object) {
+    if (!object) return "null";
+    return "O(" + std::to_string(object->nid) + "," + std::to_string(object->flags) + "," + std::to_string(object->length) + "," + Quoted(object->shortName) + "," +
+        Quoted(object->longName) + "," + (object->data ? Hex(object->data, static_cast<std::size_t>(std::max(object->length, 0))) : std::string("null")) + ")";
+}
+
+std::string Describe(const LibreSslAsn1Type* any) {
+    if (!any) return "null";
+    std::string text = "T(" + std::to_string(any->type) + ",";
+    if (any->type == 1) return text + std::to_string(*reinterpret_cast<const std::int64_t*>(&any->value)) + ")";
+    if (any->type == 5) return text + (any->value ? "set" : "null") + ")";
+    if (any->type == 6) return text + Describe(static_cast<const LibreSslAsn1Object*>(any->value)) + ")";
+    return text + Describe(static_cast<const Asn1String*>(any->value)) + ")";
+}
+
+std::string Describe(const LibreSslX509Algorithm* algorithm) {
+    if (!algorithm) return "null";
+    return "A(" + Describe(algorithm->algorithm) + "," + Describe(algorithm->parameter) + ")";
+}
+
+std::string DescribeStack(const LibreSslStack* stack) {
+    if (!stack) return "null";
+    return "K(" + std::to_string(stack->num) + "," + std::to_string(stack->numAlloc) + "," + std::to_string(stack->sorted) + "," + (stack->comp ? "comp" : "nocomp") + ")";
+}
+
+std::string Describe(const LibreSslX509Name* name) {
+    if (!name) return "null";
+    const auto* bytes = static_cast<const std::uint64_t*>(name->bytes);
+    const auto* data = *reinterpret_cast<const unsigned char* const*>(bytes + 1);
+    std::string text = "N(" + std::to_string(name->modified) + "," + std::to_string(bytes[0]) + "," + std::to_string(bytes[2]) + "," + Hex(data, bytes[0]) + "," + DescribeStack(name->entries);
+    for (int index = 0; index < name->entries->num; ++index) {
+        const auto* entry = reinterpret_cast<const LibreSslX509NameEntry*>(name->entries->data[index]);
+        text += ",E(" + std::to_string(entry->set) + "," + std::to_string(entry->size) + "," + Describe(static_cast<const LibreSslAsn1Object*>(entry->object)) + "," +
+            Describe(static_cast<const Asn1String*>(entry->value)) + ")";
+    }
+    return text + "," + std::to_string(name->canonEnclen) + "," + (name->canonEnc ? Hex(name->canonEnc, static_cast<std::size_t>(name->canonEnclen)) : std::string("null")) + ")";
+}
+
+std::string Describe(const LibreSslX509* certificate) {
+    if (!certificate) return "null";
+    const auto* info = certificate->certificateInfo;
+    std::string text = "X(" + Describe(info->version) + "," + Describe(info->serialNumber) + "," + Describe(info->signature) + "," + Describe(info->issuer) + "," +
+        Describe(info->validity->notBefore) + "," + Describe(info->validity->notAfter) + "," + Describe(info->subject) + "," + Describe(info->key->algorithm) + "," +
+        Describe(info->key->publicKey) + "," + (info->key->key ? "key" : "nokey") + "," + Describe(info->issuerUid) + "," + Describe(info->subjectUid) + "," + DescribeStack(info->extensions);
+    for (int index = 0; info->extensions && index < info->extensions->num; ++index) {
+        const auto* extension = reinterpret_cast<const LibreSslX509Extension*>(info->extensions->data[index]);
+        text += ",E(" + Describe(extension->object) + "," + std::to_string(extension->critical) + "," + Describe(extension->value) + ")";
+    }
+    text += "," + std::to_string(info->encoding.length) + "," + std::to_string(info->encoding.modified) + "," + Hex(info->encoding.data, static_cast<std::size_t>(info->encoding.length));
+    text += "," + Describe(certificate->signatureAlgorithm) + "," + Describe(certificate->signature) + "," + std::to_string(certificate->valid) + "," + std::to_string(certificate->references) +
+        "," + Quoted(certificate->name) + "," + (certificate->exData.stack ? "exdata" : "noexdata") + "," + std::to_string(certificate->pathLength) + "," + std::to_string(certificate->proxyPathLength) +
+        "," + std::to_string(certificate->extensionFlags) + "," + std::to_string(certificate->keyUsage) + "," + std::to_string(certificate->extendedKeyUsage) + "," +
+        std::to_string(certificate->netscapeCertType) + "," + Hex(certificate->sha1Hash, sizeof certificate->sha1Hash);
+    const void* const pointers[] = {certificate->subjectKeyId, certificate->authorityKeyId, certificate->policyCache, certificate->crlDistributionPoints, certificate->alternativeNames,
+        certificate->nameConstraints, certificate->auxiliary};
+    for (const void* pointer : pointers) text += pointer ? ",set" : ",null";
+    return text + ")";
+}
 
 std::string Errors(const std::function<unsigned long()>& next) {
     std::string text;
     while (const unsigned long code = next()) text += " " + std::to_string(code);
     return text;
+}
+
+void CompareCertificates() {
+    for (int round = 0; round < 60000; ++round) {
+        faulty = Chance(60);
+        Der der = Certificate();
+        if (faulty && Chance(70)) der = Mutate(der);
+        std::size_t length = der.size();
+        if (Fault(6)) length = Pick(static_cast<unsigned>(der.size() + 1));
+        if (Chance(3)) der.push_back(static_cast<unsigned char>(generator()));
+        der.resize(der.size() + 32);
+        const bool reuse = Chance(10);
+        LibreSslX509* mine = nullptr;
+        void* theirs = nullptr;
+        if (reuse) {
+            const bool keep = faulty;
+            faulty = false;
+            Der base;
+            for (int attempt = 0; attempt < 20 && (!mine || !theirs); ++attempt) {
+                if (mine) X509_free_nid_postfix(mine);
+                if (theirs) LibreSslReference::X509Free(theirs);
+                mine = nullptr;
+                theirs = nullptr;
+                base = Certificate();
+                const unsigned char* in = base.data();
+                d2i_X509_nid_postfix(&mine, &in, static_cast<std::int64_t>(base.size()));
+                in = base.data();
+                LibreSslReference::D2iX509(&theirs, &in, static_cast<long>(base.size()));
+            }
+            faulty = keep;
+            ERR_clear_error_nid_postfix();
+        }
+        LibreSslReference::ErrClearError();
+        LibreSslX509* const mineBefore = mine;
+        void* const theirsBefore = theirs;
+        const unsigned char* mineIn = der.data();
+        const unsigned char* theirIn = der.data();
+        LibreSslX509* mineResult = nullptr;
+        const auto error = Attempt([&] { mineResult = d2i_X509_nid_postfix(reuse ? &mine : nullptr, &mineIn, static_cast<std::int64_t>(length)); });
+        void* theirResult = LibreSslReference::D2iX509(reuse ? &theirs : nullptr, &theirIn, static_cast<long>(length));
+        const std::string mineText = error.empty() ? Describe(mineResult) + " consumed " + std::to_string(mineIn - der.data()) + Errors(ERR_get_error_nid_postfix) +
+            (reuse ? std::string(mine == mineBefore ? " same" : mine ? " other" : " cleared") : std::string()) : error;
+        const std::string theirText = Describe(static_cast<const LibreSslX509*>(theirResult)) + " consumed " + std::to_string(theirIn - der.data()) + Errors(LibreSslReference::ErrGetError) +
+            (reuse ? std::string(theirs == theirsBefore ? " same" : theirs ? " other" : " cleared") : std::string());
+        const char* function = reuse ? "d2i_X509 (reused)" : mineResult ? "d2i_X509 (decoded)" : "d2i_X509 (rejected)";
+        Record(function, mineText == theirText, [&] { return Hex(der.data(), length) + "\n      mine   " + mineText + "\n      theirs " + theirText; });
+        if (error.empty() && mineResult) X509_free_nid_postfix(mineResult);
+        if (theirResult) LibreSslReference::X509Free(theirResult);
+        ERR_clear_error_nid_postfix();
+        LibreSslReference::ErrClearError();
+    }
 }
 
 struct Oid {
@@ -399,14 +700,191 @@ void CompareCreatedObjects() {
     LibreSslReference::ObjCleanup();
 }
 
+Der Ia5() { return Characters(Pick(9)); }
+
+Der GeneralizedTimeValue(unsigned char tag) {
+    return Split(tag, !Fault(20) ? Der{'2', '0', '2', '0', '0', '1', '0', '1', '0', '0', '0', '0', '0', '0', 'Z'} : Characters(Pick(16)));
+}
+
+Der Optional(unsigned percent, const Der& value) { return Chance(percent) ? value : Der{}; }
+
+Der GeneralName() {
+    switch (Pick(Fault(25) ? 12 : 9)) {
+    case 0: return Wrap(0xa0, Join({Wrap(0x06, ObjectContent()), Wrap(0xa0, NameValue())}));
+    case 1: return Split(0x81, Ia5());
+    case 2: return Split(0x82, Ia5());
+    case 3: return Wrap(0xa3, Optional(70, Wrap(0x02, Integer())));
+    case 4: return Wrap(0xa4, Name());
+    case 5: return Wrap(0xa5, Join({Optional(30, Wrap(0xa0, NameValue())), Optional(30, Wrap(0x81, Ia5()))}));
+    case 6: return Split(0x86, Ia5());
+    case 7: return Split(0x87, Characters(Chance(50) ? 4 : 16));
+    case 8: return Wrap(0x88, ObjectContent());
+    case 9: return Wrap(0x89, Characters(Pick(3)));
+    case 10: return NameValue();
+    default: return Wrap(0xa4, NameValue());
+    }
+}
+
+Der GeneralNameList() {
+    Der list;
+    const unsigned count = Fault(10) ? 0 : 1 + Pick(3);
+    for (unsigned index = 0; index < count; ++index) list = Join({list, GeneralName()});
+    return list;
+}
+
+Der DistPointName() {
+    if (Chance(70)) return Wrap(0xa0, GeneralNameList());
+    Der entries;
+    const unsigned count = Pick(3);
+    for (unsigned index = 0; index < count; ++index) entries = Join({entries, Wrap(0x30, Join({Wrap(0x06, ObjectContent()), NameValue()}))});
+    return Wrap(0xa1, entries);
+}
+
+Der Repeat(Der (*element)(), unsigned most) {
+    Der list;
+    const unsigned count = Pick(most + 1);
+    for (unsigned index = 0; index < count; ++index) list = Join({list, element()});
+    return Wrap(0x30, list);
+}
+
+Der AccessDescription() { return Wrap(0x30, Join({Wrap(0x06, ObjectContent()), GeneralName()})); }
+Der Subtree() { return Wrap(0x30, Join({GeneralName(), Optional(30, Split(0x80, Integer())), Optional(30, Split(0x81, Integer()))})); }
+Der PolicyMapping() { return Wrap(0x30, Join({Wrap(0x06, ObjectContent()), Wrap(0x06, ObjectContent())})); }
+Der SxnetId() { return Wrap(0x30, Join({Split(0x02, Integer()), Split(0x04, Characters(Pick(5)))})); }
+Der Usage() { return Wrap(0x06, ObjectContent()); }
+Der DistPoint() {
+    return Wrap(0x30, Join({Optional(70, Wrap(0xa0, DistPointName())), Optional(30, Split(0x81, BitContent())), Optional(30, Wrap(0xa2, GeneralNameList()))}));
+}
+
+Der Flag(unsigned char tag) { return Wrap(tag, !Fault(15) ? Der{static_cast<unsigned char>(Chance(50) ? 0xff : 0x00)} : Characters(Pick(3))); }
+
+Der ExtensionContent(int nid) {
+    switch (nid) {
+    case 71:
+    case 83: return Split(0x03, BitContent());
+    case 82: return Split(0x04, Characters(Pick(9)));
+    case 84: return Wrap(0x30, Join({Optional(60, GeneralizedTimeValue(0x80)), Optional(60, GeneralizedTimeValue(0x81))}));
+    case 85:
+    case 86:
+    case 771: return Wrap(0x30, GeneralNameList());
+    case 87: return Wrap(0x30, Join({Optional(60, Value(0x01)), Optional(60, Split(0x02, Integer()))}));
+    case 88:
+    case 140:
+    case 748: return Split(0x02, Integer());
+    case 90: return Wrap(0x30, Join({Optional(60, Split(0x80, Characters(Pick(5)))), Optional(50, Wrap(0xa1, GeneralNameList())), Optional(50, Split(0x82, Integer()))}));
+    case 103:
+    case 857: return Repeat(DistPoint, 2);
+    case 126:
+    case 368: return Repeat(Usage, 3);
+    case 141: return Split(0x0a, Integer());
+    case 142:
+    case 370: return GeneralizedTimeValue(0x18);
+    case 143: return Wrap(0x30, Join({Split(0x02, Integer()), Repeat(SxnetId, 2)}));
+    case 177:
+    case 398: return Repeat(AccessDescription, 2);
+    case 366: return Characters(Pick(10));
+    case 367: return Wrap(0x30, Join({Optional(50, Wrap(0xa0, Split(0x16, Ia5()))), Optional(50, Wrap(0xa1, Split(0x02, Integer()))), Optional(50, Wrap(0xa2, GeneralizedTimeValue(0x18)))}));
+    case 369: return Wrap(0x05, !Fault(20) ? Der{} : Der{0x00});
+    case 371: return Wrap(0x30, Join({Name(), Optional(60, Repeat(AccessDescription, 2))}));
+    case 401: return Wrap(0x30, Join({Optional(60, Split(0x80, Integer())), Optional(60, Split(0x81, Integer()))}));
+    case 430: return Wrap(0x06, ObjectContent());
+    case 663: return Wrap(0x30, Join({Optional(50, Split(0x02, Integer())), Wrap(0x30, Join({Wrap(0x06, ObjectContent()), Optional(50, Split(0x04, Characters(Pick(5))))}))}));
+    case 666: return Wrap(0x30, Join({Optional(60, Wrap(0xa0, Repeat(Subtree, 2))), Optional(60, Wrap(0xa1, Repeat(Subtree, 2)))}));
+    case 747: return Repeat(PolicyMapping, 2);
+    case 770:
+        return Wrap(0x30, Join({Optional(60, Wrap(0xa0, DistPointName())), Optional(30, Flag(0x81)), Optional(30, Flag(0x82)), Optional(30, Split(0x83, BitContent())),
+            Optional(30, Flag(0x84)), Optional(30, Flag(0x85))}));
+    default: return Split(0x16, Ia5());
+    }
+}
+
+constexpr int ExtensionNids[] = {71, 72, 73, 74, 75, 76, 77, 78, 82, 83, 84, 85, 86, 87, 88, 90, 103, 126, 140, 141, 142, 143, 177, 366, 367, 368, 369, 370, 371, 398, 401,
+    430, 663, 666, 747, 748, 770, 771, 857, 769, 13};
+
+Der ExtensionObject(int nid) {
+    const auto& object = LibreSslObjects_nid_no_patch[nid];
+    return Der(object.data, object.data + object.length);
+}
+
+Der CertificateWithExtensions(const std::vector<int>& nids) {
+    faulty = false;
+    const Der base = Join({Wrap(0xa0, Wrap(0x02, {0x02})), Wrap(0x02, {0x01}), Algorithm(), Name(), Wrap(0x30, Join({Time(), Time()})), Name(),
+        Wrap(0x30, Join({Algorithm(), Wrap(0x03, {0x00, 0x01})}))});
+    faulty = Chance(40);
+    Der list;
+    for (const int nid : nids) {
+        Der content = ExtensionContent(nid);
+        if (faulty && Chance(30)) content = Mutate(content);
+        Der fields = Wrap(0x06, ExtensionObject(nid));
+        if (Chance(40)) fields = Join({fields, Wrap(0x01, {static_cast<unsigned char>(Chance(50) ? 0xff : Pick(2))})});
+        list = Join({list, Wrap(0x30, Join({fields, Wrap(0x04, content)}))});
+    }
+    return Wrap(0x30, Join({Wrap(0x30, Join({base, Wrap(0xa3, Wrap(0x30, list))})), Algorithm(), Wrap(0x03, {0x00, 0x01})}));
+}
+
+std::string DescribeExtension(int nid, void* value, int critical, int index, bool withCritical, bool withIndex) {
+    std::string text = withCritical ? " crit " + std::to_string(critical) : std::string(" nocrit");
+    text += withIndex ? " idx " + std::to_string(index) : std::string(" noidx");
+    if (!value) return text + " null";
+    const std::string encoded = LibreSslReference::ExtensionDer(nid, value);
+    return text + " " + Hex(encoded.data(), encoded.size());
+}
+
+void CompareExtensions() {
+    for (int round = 0; round < 30000; ++round) {
+        std::vector<int> nids;
+        const unsigned count = 1 + Pick(4);
+        for (unsigned index = 0; index < count; ++index) nids.push_back(ExtensionNids[Pick(std::size(ExtensionNids))]);
+        if (Chance(20)) nids.push_back(nids[Pick(static_cast<unsigned>(nids.size()))]);
+        const Der der = CertificateWithExtensions(nids);
+        const unsigned char* in = der.data();
+        LibreSslX509* mine = d2i_X509_nid_postfix(nullptr, &in, static_cast<std::int64_t>(der.size()));
+        in = der.data();
+        void* theirs = LibreSslReference::D2iX509(nullptr, &in, static_cast<long>(der.size()));
+        ERR_clear_error_nid_postfix();
+        LibreSslReference::ErrClearError();
+        if (!mine || !theirs) {
+            Record("X509_get_ext_d2i (certificate)", !mine == !theirs, [&] { return Hex(der.data(), der.size()); });
+            if (mine) X509_free_nid_postfix(mine);
+            if (theirs) LibreSslReference::X509Free(theirs);
+            continue;
+        }
+        const int nid = Chance(85) ? nids[Pick(static_cast<unsigned>(nids.size()))] : ExtensionNids[Pick(std::size(ExtensionNids))];
+        const bool withCritical = Chance(70);
+        const bool withIndex = Chance(50);
+        static constexpr int starts[] = {-1, -1, -1, -5, 0, 1, 2};
+        int mineCritical = 9;
+        int theirCritical = 9;
+        int mineIndex = starts[Pick(std::size(starts))];
+        int theirIndex = mineIndex;
+        const unsigned calls = withIndex ? 1 + Pick(3) : 1;
+        std::string mineText;
+        std::string theirText;
+        for (unsigned call = 0; call < calls; ++call) {
+            void* mineValue = nullptr;
+            const auto error = Attempt([&] { mineValue = X509_get_ext_d2i_nid_postfix(mine, nid, withCritical ? &mineCritical : nullptr, withIndex ? &mineIndex : nullptr); });
+            mineText += error.empty() ? DescribeExtension(nid, mineValue, mineCritical, mineIndex, withCritical, withIndex) + Errors(ERR_get_error_nid_postfix) : " " + error;
+            void* theirValue = LibreSslReference::X509GetExtD2i(theirs, nid, withCritical ? &theirCritical : nullptr, withIndex ? &theirIndex : nullptr);
+            theirText += DescribeExtension(nid, theirValue, theirCritical, theirIndex, withCritical, withIndex) + Errors(LibreSslReference::ErrGetError);
+            if (theirValue) LibreSslReference::ExtensionFree(nid, theirValue);
+        }
+        Record("X509_get_ext_d2i", mineText == theirText, [&] { return std::to_string(nid) + " " + Hex(der.data(), der.size()) + "\n      mine  " + mineText + "\n      theirs" + theirText; });
+        X509_free_nid_postfix(mine);
+        LibreSslReference::X509Free(theirs);
+    }
+}
 }
 
 int main() {
+    std::array<void*, 10> api{};
+    ApplicationHeapRegister_nid_no_patch(api.data());
     CompareAesKeys();
     CompareAesModes();
     CompareDigests();
     CompareDesParity();
     CompareStrings();
+    CompareCertificates();
+    CompareExtensions();
     CompareCreatedObjects();
     long cases = 0;
     long differing = 0;
