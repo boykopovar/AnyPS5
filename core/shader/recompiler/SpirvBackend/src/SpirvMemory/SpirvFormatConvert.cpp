@@ -345,6 +345,14 @@ void EmitDeviceAtomicMemoryBarrier(SpirvEmitterState& state) {
 }
 
 std::uint32_t EmitDsSwizzleTargetLane(SpirvEmitterState& state, std::uint32_t subid, std::uint32_t control) {
+    if ((control & 0xe000u) == 0xe000u) {
+        const std::uint32_t mask = control & 0x1fu;
+        const auto shift = 27u + static_cast<std::uint32_t>(std::popcount(mask));
+        const auto kept = EmitAndConstant(state, subid, mask | 0xffffffe0u);
+        if (shift >= 32u) return kept;
+        const auto reversed = EmitBinaryU32(state, spv::OpShiftRightLogical, Unary(state, spv::OpBitReverse, TypeU32(state), subid), ConstantU32(state, shift));
+        return EmitOrU32(state, kept, reversed);
+    }
     if ((control & 0xc000u) == 0xc000u) {
         const std::uint32_t mask = control & 0x1fu;
         const std::uint32_t rotate = (control >> 5u) & 0x1fu;

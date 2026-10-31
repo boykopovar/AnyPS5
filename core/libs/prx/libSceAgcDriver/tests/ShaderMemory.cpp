@@ -8175,6 +8175,42 @@ void verifyUnusedUnnormalizedSampler() {
     require(msaaArrayAllocation.bindings.size() == 1u && msaaArrayAllocation.bindings[0].imageShape == DescriptorImageShape::Image2DMultisampleArray, "multisampled array image resource did not receive Image2DMultisampleArray descriptor shape");
 }
 
+void verifyDsSwizzleFftMode() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle};
+    static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    static std::array<std::uint32_t, 32> output{};
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 4> userData{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), 128u, 0x31016facu};
+    const auto compiled = [&userData](std::uint32_t offset) {
+        const std::vector<std::uint32_t> code{0xd8d40000u | offset, 0x01000000u, 0x34040082u, 0xbf8cc07fu, 0xe0701000u, 0x80000102u, 0xbf810000u};
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Compute, 0x26000u, code, 0, {}};
+        request.context.waveSize = 32;
+        request.context.userDataBaseRegister = 0;
+        request.context.userData = userData;
+        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 32u;
+        request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
+        request.target.bdaAbiVersion = BdaAbi::Version;
+        request.layout.pushConstantSizeBytes = 128;
+        request.useCache = false;
+        return Recompile(request).spirv.Copy();
+    };
+    const auto reversesLanes = [](std::span<const std::uint32_t> spirv) {
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            if ((spirv[cursor] & 0xffffu) == spv::OpBitReverse) return true;
+        }
+        return false;
+    };
+    for (const auto offset : {0xe000u, 0xe010u, 0xe018u, 0xe001u}) require(reversesLanes(compiled(offset)), "ds_swizzle FFT mode: an offset with a mask below 0x1f did not reverse the lane bits");
+    for (const auto offset : {0xe01fu, 0xc000u, 0xc021u, 0xdfffu}) require(!reversesLanes(compiled(offset)), "ds_swizzle FFT mode: mask 0x1f or a rotate offset reversed the lane bits");
+    require(compiled(0xffe0u) == compiled(0xe000u) && compiled(0xf550u) == compiled(0xe010u), "ds_swizzle FFT mode: offset bits 12:5 changed the swizzle");
+}
+
 void verifyWaveUniformValues() {
     using namespace ShaderRecompiler;
     IrProgram program;
@@ -9759,6 +9795,7 @@ int main(int argc, char** argv) {
         verifyUnnormalizedSamplers();
         verifyUnusedUnnormalizedSampler();
         verifyNullVolumeUnnormalizedSampler();
+        verifyDsSwizzleFftMode();
         verifyWaveUniformValues();
         verifyTwoLaneUniformValues();
         verifyBdaReadFallbackFunctions();
