@@ -1,3 +1,24 @@
+if(BUILD_TESTING)
+    add_test_executable(agc_preparation_inputs_tests
+            tests/PreparationInputs.cpp
+            Execution/src/Driver/Shaders/ShaderDiagnostics.cpp
+            ${CMAKE_SOURCE_DIR}/core/shader/recompiler/ControlFlow/src/RequestSerializer.cpp)
+    target_include_directories(agc_preparation_inputs_tests PRIVATE
+            ${LIBS_INCLUDE_DIR}
+            $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
+            ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    target_link_libraries(agc_preparation_inputs_tests PRIVATE libc)
+    configure_windows_unwind(agc_preparation_inputs_tests)
+    foreach(mode enabled disabled selected failure concurrent write-failure capture-write-failure)
+        add_test(NAME agc_preparation_inputs_${mode} COMMAND agc_preparation_inputs_tests ${mode})
+        set_tests_properties(agc_preparation_inputs_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(agc_preparation_inputs_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+endif()
+
 function(ensure_agc_glslang)
     if(TARGET glslang AND TARGET SPIRV AND TARGET glslang-standalone)
         return()

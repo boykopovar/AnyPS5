@@ -299,10 +299,10 @@ void FailureCapture(AgcDriver::VulkanDevice& device) {
     const std::filesystem::path retryDirectory = "shader_12345cafe_retry";
     std::filesystem::remove_all(retryDirectory);
     const auto failedPath = AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_retry/test");
-    Require(!std::ifstream(failedPath, std::ios::binary).is_open(), "uncreatable dump path was unexpectedly created");
+    Require(failedPath.empty(), "uncreatable dump path reported a saved file");
     std::filesystem::create_directories(retryDirectory);
     const auto retriedPath = AgcDriver::DriverDetail::Driver::dumpRequest(request.shader.codeAddress, request, "_retry/test");
-    Require(retriedPath == failedPath, "retried dump returned a different path");
+    Require(retriedPath == (retryDirectory / "test.req").generic_string(), "retried dump returned a different path");
     std::ifstream retriedFile(retriedPath, std::ios::binary);
     Require(retriedFile.is_open(), "retried dump file was not created");
     std::ostringstream retriedText;
