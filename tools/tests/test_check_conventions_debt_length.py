@@ -41,7 +41,7 @@ class DebtLengthTests(unittest.TestCase):
             write(f"# libSceExample technical debt\n\n### Functional\n\n{SHORT}\n")
             git("add", ".")
             git("commit", "-qm", "docs: add base")
-            write(f"# libSceExample technical debt\n\n{PROSE}\n\n### Functional\n\n{SHORT}\n{LONG}\n")
+            write(f"# libSceExample technical debt\n\n{PROSE}\n\n### Functional\n\n{SHORT}\n\n{LONG}\n")
             git("commit", "-qam", "docs(debt): add a long entry")
             head = git("rev-parse", "HEAD").strip()
             base = git("rev-parse", "HEAD~1").strip()
@@ -56,7 +56,7 @@ class DebtLengthTests(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
-        self.assertEqual(check.findings, [("debt-length", DEBT, 8, f"{len(LONG)} characters")])
+        self.assertEqual(check.findings, [("debt-length", DEBT, 9, f"{len(LONG)} characters")])
         self.assertEqual(status, 0)
 
 

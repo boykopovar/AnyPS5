@@ -279,7 +279,7 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stdout.split(), ["docs/dev/debt/libSceA.md"])
         stub = A_STUB.replace("../../", "../../../")
-        self.assertEqual(self.read("docs/dev/debt/libSceA.md"), moved.replace(stub, stub + "\n" + extra.replace("../../", "../../../")))
+        self.assertEqual(self.read("docs/dev/debt/libSceA.md"), moved.replace(stub, stub + "\n\n" + extra.replace("../../", "../../../")))
         self.assertEqual(self.read(INDEX).count("[debt](debt/)"), 1)
 
     def rebase(self, stubs, functional):
@@ -330,7 +330,7 @@ class DebtSplitTests(unittest.TestCase):
         self.git("rebase", "--continue")
         self.assertEqual(self.read("docs/dev/debt/libSceA.md"),
                          "# libSceA technical debt\n\n### Silent stubs\n\n" + A_STUB.replace("../../", "../../../") +
-                         "\n" + A_FUNCTIONAL.replace("../../", "../../../") + "\n")
+                         "\n\n" + A_FUNCTIONAL.replace("../../", "../../../") + "\n")
         self.assertEqual(result.stdout.split(), ["docs/dev/debt/libSceA.md"])
         self.assertEqual(self.read(INDEX), self.git("show", "main:" + INDEX).stdout)
 
@@ -371,7 +371,7 @@ class DebtSplitTests(unittest.TestCase):
         self.git("rebase", "--continue")
         self.assertEqual(self.read("docs/dev/debt/libSceA.md"),
                          "# libSceA technical debt\n\n### Silent stubs\n\n" +
-                         "\n".join(entry.replace("../../", "../../../") for entry in (first, second, A_STUB)) +
+                         "\n\n".join(entry.replace("../../", "../../../") for entry in (first, second, A_STUB)) +
                          "\n\n### Functional\n\n" + A_FUNCTIONAL.replace("../../", "../../../") + "\n")
         self.assertEqual(self.read(INDEX), self.git("show", "main:" + INDEX).stdout)
 
@@ -383,7 +383,7 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(self.read("docs/dev/debt/libSceA.md"),
                          "# libSceA technical debt\n\n### Silent stubs\n\n" + A_STUB.replace("../../", "../../../") +
                          "\n\n### Functional\n\n" +
-                         "\n".join(entry.replace("../../", "../../../") for entry in (added, A_FUNCTIONAL)) + "\n")
+                         "\n\n".join(entry.replace("../../", "../../../") for entry in (added, A_FUNCTIONAL)) + "\n")
 
     def test_resolve_preserves_an_entry_moved_before_another_in_its_file(self):
         first = "- [libSceA](../../core/libs/prx/libSceA/First.cpp) - first limitation"
@@ -407,7 +407,7 @@ class DebtSplitTests(unittest.TestCase):
         self.git("rebase", "--continue")
         self.assertEqual(self.read("docs/dev/debt/libSceA.md"),
                          "# libSceA technical debt\n\n### Silent stubs\n\n" +
-                         "\n".join(entry.replace("../../", "../../../") for entry in (second, first)) + "\n")
+                         "\n\n".join(entry.replace("../../", "../../../") for entry in (second, first)) + "\n")
 
     def test_apply_changes_preserve_original_occurrences_and_upstream_entries(self):
         a = "- [libSceA](../../core/libs/prx/libSceA/A.cpp) - a"
@@ -435,7 +435,7 @@ class DebtSplitTests(unittest.TestCase):
                            "\n".join(entry.replace("../../", "../../../") for entry in upstream) + "\n")
                 debt_split.apply_change(self.root, index([], before), index([], after), index([], []))
                 self.assertEqual(self.read(path), "# libSceA technical debt\n\n### Functional\n\n" +
-                                 "\n".join(entry.replace("../../", "../../../") for entry in expected) + "\n")
+                                 "\n\n".join(entry.replace("../../", "../../../") for entry in expected) + "\n")
 
     def test_apply_changes_missing_original_does_not_write_files(self):
         original = "# libSceA technical debt\n\n### Silent stubs\n\n" + A_STUB.replace("../../", "../../../") + "\n"

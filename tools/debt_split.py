@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from check_conventions import DEBT as INDEX, debt_name
+from check_conventions import DEBT as INDEX, debt_name, space_debt
 
 DEBT_DIR = "docs/dev/debt"
 HEADING = re.compile(r"^(#{1,6}) (.+?)\s*$")
@@ -172,7 +172,7 @@ def write_debt(root, name, sections, order):
             path.unlink()
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    write_lf(path, render(f"# {name} technical debt", sections, order))
+    write_lf(path, space_debt(render(f"# {name} technical debt", sections, order)))
 
 
 def sections_of(text):
@@ -219,7 +219,7 @@ def command_split(root):
         write_debt(root, name, existing, order)
     if index_note() not in index:
         index.insert(1, index_note())
-    write_lf(root / INDEX, render_index(index))
+    write_lf(root / INDEX, space_debt(render_index(index)))
     print("\n".join(sorted(debt_file(name) for name in files)))
 
 

@@ -174,7 +174,7 @@ def generate(module, nids, db, td_path=None, td_lib=None):
     header.append('extern "C" {')
     footer = ["", "}"]
     code = "\n".join(header + chunks + footer) + "\n"
-    td_text = "\n".join(td) + ("\n" if td else "")
+    td_text = "\n\n".join(td) + ("\n" if td else "")
     return (code, td_text)
 
 
