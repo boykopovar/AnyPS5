@@ -89,6 +89,8 @@ void FreeObject(LibreSslAsn1Object* object) {
     if (object->flags & DynamicStrings) {
         free_nid_postfix(const_cast<char*>(object->shortName));
         free_nid_postfix(const_cast<char*>(object->longName));
+        object->shortName = nullptr;
+        object->longName = nullptr;
     }
     if (object->flags & DynamicData) {
         if (object->data) {
@@ -96,6 +98,8 @@ void FreeObject(LibreSslAsn1Object* object) {
             Wipe(const_cast<unsigned char*>(object->data), static_cast<std::size_t>(object->length));
         }
         free_nid_postfix(const_cast<unsigned char*>(object->data));
+        object->data = nullptr;
+        object->length = 0;
     }
     if (object->flags & DynamicObject) free_nid_postfix(object);
 }

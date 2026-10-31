@@ -221,6 +221,23 @@ void TestOidAndStack() {
     staticOid.flags = 0x08;
     staticOid.data = Bytes(5, 5);
     GENERAL_NAME_free_nid_postfix(Name(8, &staticOid));
+    Require(staticOid.data == nullptr);
+    Require(staticOid.length == 0);
+    GENERAL_NAME_free_nid_postfix(Name(8, &staticOid));
+    CheckClean();
+
+    static LibreSslAsn1Object staticNamedOid{};
+    staticNamedOid.flags = 0x0c;
+    staticNamedOid.shortName = reinterpret_cast<char*>(Bytes(6));
+    staticNamedOid.longName = reinterpret_cast<char*>(Bytes(9));
+    staticNamedOid.length = 7;
+    staticNamedOid.data = Bytes(7, 7);
+    GENERAL_NAME_free_nid_postfix(Name(8, &staticNamedOid));
+    Require(staticNamedOid.shortName == nullptr);
+    Require(staticNamedOid.longName == nullptr);
+    Require(staticNamedOid.data == nullptr);
+    Require(staticNamedOid.length == 0);
+    GENERAL_NAME_free_nid_postfix(Name(8, &staticNamedOid));
     CheckClean();
 
     auto* first = Name(1, String());
