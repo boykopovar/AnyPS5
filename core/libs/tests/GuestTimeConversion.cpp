@@ -2,6 +2,8 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include "prx/libc/include/GuestTimeZoneName.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
@@ -15,6 +17,10 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 extern "C" {
 
@@ -369,6 +375,49 @@ static void CheckGuestZone() {
 
 }
 
+#ifdef _WIN32
+static void CheckWindowsZoneNameEncoding() {
+    const std::string ansiName{"C\xe4T", 3};
+    Require(GuestTimeZoneNameToUtf8(ansiName.c_str(), 1252) == "C\xc3\xa4T", "Windows zone name was not converted from the ANSI code page to UTF-8");
+    Require(GuestTimeZoneNameToUtf8("UTC", 1252) == "UTC", "ASCII Windows zone name changed during UTF-8 conversion");
+
+    std::string previousZone;
+    const bool hadPreviousZone = CopyGuestEnvironment_nid_no_patch("TZ", previousZone);
+    if (hadPreviousZone) Require(unsetenv_nid_postfix("TZ") == 0, "Could not use the system time zone");
+    tzset_nid_postfix();
+    std::array<std::string, 2> expectedNames;
+    std::array<const char*, 2> publishedNames{};
+    for (std::size_t index = 0; index < expectedNames.size(); ++index) {
+        expectedNames[index] = GuestTimeZoneNameToUtf8(_tzname[index], CP_ACP);
+        if (index == 1 && _daylight == 0) expectedNames[index] = "   ";
+        publishedNames[index] = tzname_nid_postfix[index];
+        Require(publishedNames[index] != nullptr && std::strcmp(publishedNames[index], expectedNames[index].c_str()) == 0,
+            "tzname did not expose the Windows zone name as UTF-8");
+    }
+    constexpr std::array<std::int64_t, 4> instants{0, 172800, 946684800, 1709164800};
+    for (const auto instant : instants) {
+        GuestTm local{};
+        Require(localtime_s_nid_postfix(&instant, &local) == &local, "Windows localtime conversion failed");
+        for (std::size_t index = 0; index < expectedNames.size(); ++index)
+            Require(tzname_nid_postfix[index] == publishedNames[index] && std::strcmp(tzname_nid_postfix[index], expectedNames[index].c_str()) == 0,
+                "localtime invalidated the published tzname storage");
+        const std::size_t zoneIndex = local.tm_isdst > 0 ? 1 : 0;
+        Require(local.tm_zone == publishedNames[zoneIndex] && std::strcmp(local.tm_zone, expectedNames[zoneIndex].c_str()) == 0,
+            "localtime tm_zone did not retain the UTF-8 zone name");
+        char formatted[64]{};
+        Require(strftime_nid_postfix(formatted, sizeof(formatted), "%Z", &local) > 0, "strftime rejected a localtime result");
+        for (std::size_t index = 0; index < expectedNames.size(); ++index)
+            Require(tzname_nid_postfix[index] == publishedNames[index] && std::strcmp(tzname_nid_postfix[index], expectedNames[index].c_str()) == 0,
+                "strftime invalidated the published tzname storage");
+        Require(local.tm_zone == publishedNames[zoneIndex] && std::strcmp(local.tm_zone, expectedNames[zoneIndex].c_str()) == 0,
+            "strftime released the tm_zone of a localtime result under an unchanged zone");
+    }
+    if (hadPreviousZone) Require(setenv_nid_postfix("TZ", previousZone.c_str(), 1) == 0, "Could not restore the guest time zone");
+    else Require(unsetenv_nid_postfix("TZ") == 0, "Could not restore the guest time zone");
+    tzset_nid_postfix();
+}
+#endif
+
 static bool ZoneFieldsConsistent(const GuestTm& time, std::int64_t instant, int hour) {
     const std::int64_t localSeconds = ((instant + time.tm_gmtoff) % 86400 + 86400) % 86400;
     if (time.tm_hour * 3600 + time.tm_min * 60 + time.tm_sec != localSeconds || time.tm_hour != hour) return false;
@@ -546,6 +595,9 @@ int main() {
     CheckConcurrent(libc_localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent libc_localtime returned another thread's date");
     CheckConcurrent(localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent localtime returned another thread's date");
     CheckGuestZone();
+#ifdef _WIN32
+    CheckWindowsZoneNameEncoding();
+#endif
     CheckZoneRace();
 #ifdef _WIN32
     CheckRejectedZone();
