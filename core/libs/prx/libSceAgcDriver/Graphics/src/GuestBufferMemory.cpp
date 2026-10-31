@@ -6,6 +6,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SnapshotCopies.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BdaResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
@@ -4308,6 +4309,16 @@ bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t
     return state.device == context.device && peekImport(state, address, address + bytes) != nullptr;
 }
 
+bool HostImportOverlaps(const Context& context, std::uint64_t address, std::size_t bytes) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device) return false;
+    const auto next = state.imports.lower_bound(address);
+    if (next != state.imports.end() && next->first < address + bytes) return true;
+    return next != state.imports.begin() && std::prev(next)->second.base + std::prev(next)->second.bytes > address;
+}
+
 bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
 #ifdef _WIN32
     static_cast<void>(context);
@@ -4924,6 +4935,7 @@ void GuestBufferMemory::AddReadable(std::uint64_t address, std::size_t bytes) {
     // direct-write mark, and UploadPrepare copies it without the device lock. A written descriptor
     // overlapping the range still covers it through its own Writes() entry.
     addDescriptorRegion(address, bytes, false, false, true);
+    reads.emplace_back(address, address + bytes);
 }
 
 void GuestBufferMemory::AddSnapshot(const GuestMemorySnapshot& snapshot) {
@@ -5497,12 +5509,16 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     Require(prepared && !uploaded, "guest memory upload was not prepared");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto started = std::chrono::steady_clock::now();
+    if (addressable) StoreDepthExpandWrites(context);
     for (const auto& region : regions) CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
     if (space != nullptr) completeSpaceWrites();
     uploaded = true;
     for (const auto& region : regions) static_cast<void>(FlushDepthPlanes(region.begin, static_cast<std::size_t>(region.end - region.begin)));
     for (const auto& [begin, end] : writes) RequireNoResidentDepthRead_nid_no_patch(begin, static_cast<std::size_t>(end - begin), htileClear);
     for (const auto& [begin, end] : writes) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");
+    if (addressable) {
+        for (const auto& [begin, end] : reads) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "imported buffer region");
+    }
     if (context.hostImportAlignment != 0) {
         auto& state = Imports();
         std::lock_guard lock(state.mutex);
@@ -5697,6 +5713,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
         copyRegion(region, addressable);
         if (profile) copyUs += microsecondsSince(copyStart);
     }
+    if (addressable) StoreDepthExpandWrites(context);
     if (heapsEnd > heapsBegin) StorageTexture::PublishShadowsOnly(heapsBegin, static_cast<std::size_t>(heapsEnd - heapsBegin), PublishScope::Whole, "address-based heaps");
     if (!gpuCopies.empty()) recordGpuCopies(gpuCopies, addressable);
     takeHeapReferences();

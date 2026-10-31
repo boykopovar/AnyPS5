@@ -1132,6 +1132,23 @@ void intersect(VkRect2D& result, const Registers& registers, std::uint32_t offse
     result.extent = {std::min(oldRight, right) > left ? std::min(oldRight, right) - left : 0, std::min(oldBottom, bottom) > top ? std::min(oldBottom, bottom) - top : 0};
 }
 
+struct ExpandedPlanes {
+    bool depth = false;
+    bool stencil = false;
+};
+
+ExpandedPlanes outOfPlacePlanes(const Registers& cx) {
+    const auto control = find(cx, 0x000);
+    if (control == cx.end() || (control->second & 0x60u) == 0) return {};
+    const auto value = [&](std::uint32_t offset) {
+        const auto found = find(cx, offset);
+        return found == cx.end() ? 0u : found->second;
+    };
+    const auto base = [&](std::uint32_t low, std::uint32_t high) { return (static_cast<std::uint64_t>(value(high) & 0xffu) << 40u) | (static_cast<std::uint64_t>(value(low)) << 8u); };
+    const auto view = value(0x002);
+    return {(value(0x010) & 3u) != 0 && (view & 0x01000000u) == 0 && base(0x012, 0x01a) != base(0x014, 0x01c), (value(0x011) & 1u) != 0 && (view & 0x02000000u) == 0 && base(0x013, 0x01b) != base(0x015, 0x01d)};
+}
+
 }
 
 VkExtent2D SampleLocationGrid(const State& state) {
@@ -1370,7 +1387,13 @@ bool DepthResummarizeDrawsNothing(const QueueState& queue) {
 std::string DepthMaintenanceRejection(const QueueState& queue) {
     if (DepthResummarizeDrawsNothing(queue)) return {};
     const auto control = find(queue.context, 0x000);
-    if (control == queue.context.end() || (control->second & ~0x2fe3u) == 0) return {};
+    if (control == queue.context.end()) return {};
+    if (const auto planes = outOfPlacePlanes(queue.context); planes.depth || planes.stencil) {
+        char text[192];
+        std::snprintf(text, sizeof(text), "AGC graphics: an out-of-place DB expand (DB_RENDER_CONTROL 0x%08x) is run by the draw precheck, in order, and is not drawn", control->second);
+        return text;
+    }
+    if ((control->second & ~0x2fe3u) == 0) return {};
     const auto depthControl = find(queue.context, 0x200);
     const bool colorMasks = find(queue.context, 0x8e) != queue.context.end() && find(queue.context, 0x8f) != queue.context.end();
     if ((control->second & ~0x2fe3u) == 0x10u && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
@@ -2437,6 +2460,51 @@ std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue
         if (target.dccAddress != 0 || (target.cmaskAddress != 0 && pass.mode != ColorMetadataPass::Mode::EliminateFastClear)) requireCovered(target);
         pass.targets.push_back(target);
     }
+    return pass;
+}
+
+std::optional<DepthExpandPass> DecodeDepthExpandPass(const QueueState& queue) {
+    const auto& cx = queue.context;
+    const auto planes = outOfPlacePlanes(cx);
+    if (!planes.depth && !planes.stencil) return std::nullopt;
+    const auto control = read(cx, 0x000);
+    const auto value = [&](std::uint32_t offset) {
+        const auto found = find(cx, offset);
+        return found == cx.end() ? 0u : found->second;
+    };
+    const auto base = [&](std::uint32_t low, std::uint32_t high) { return (static_cast<std::uint64_t>(value(high) & 0xffu) << 40u) | (static_cast<std::uint64_t>(value(low)) << 8u); };
+    const auto zInfo = value(0x010);
+    const auto view = value(0x002);
+    const auto source = base(0x012, 0x01a);
+    const auto destination = base(0x014, 0x01c);
+    const auto reject = [&](const char* what) {
+        char text[320];
+        std::snprintf(text, sizeof(text), "AGC graphics: an out-of-place DB expand (DB_RENDER_CONTROL 0x%08x, DB_Z_INFO 0x%08x, DB_Z_READ_BASE 0x%llx, DB_Z_WRITE_BASE 0x%llx) %s is not implemented", control, zInfo, static_cast<unsigned long long>(source), static_cast<unsigned long long>(destination), what);
+        throw std::runtime_error(text);
+    };
+    const auto copySelection = (control & 0xcu) == 0 ? 0xf80u : 0u;
+    if ((control & ~(0x60u | 0x2000u | copySelection)) != 0) reject("with clear, copy, resummarize or decompress bits");
+    if ((control & 0x40u) == 0) reject("without DEPTH_COMPRESS_DISABLE");
+    if ((value(0x200) & 0xc000000fu) != 0) reject("with depth, stencil or depth bounds tests");
+    const bool colorMasks = find(cx, 0x8e) != cx.end() && find(cx, 0x8f) != cx.end();
+    if (((value(0x202) >> 4u) & 7u) != 0 && colorMasks && ColorWriteMask(cx) != 0) reject("with color writes");
+    if ((zInfo & 3u) == 0u) reject("of a surface without a depth plane");
+    if ((zInfo & 3u) == 2u) reject("of a Z_24 depth plane");
+    if (((zInfo >> 2u) & 3u) != 0) reject("of a multisampled depth surface");
+    if (((zInfo >> 4u) & 0x1fu) != 24u) reject("of a depth surface in a swizzle mode other than SW_64KB_Z_X");
+    if ((zInfo & 0x000f1000u) != 0) reject("of a partially resident or mipmapped depth surface");
+    if ((view & 0x3c000000u) != 0) reject("of a depth view with a mip level");
+    if ((value(0x207) & LayerExports) != 0) reject("with layer exports");
+    if (((source | destination | (planes.stencil ? base(0x013, 0x01b) | base(0x015, 0x01d) : 0u)) & 0xffffu) != 0) reject("between bases that are not 64 KiB aligned");
+    zero(cx, 0x80, ~0u, "window offset");
+    if (const auto viewportControl = read(cx, 0x206); viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
+    auto target = decodeDepthPlane(cx);
+    target.clearDepth = readFloat(cx, 0x00b);
+    target.clearStencil = static_cast<std::uint8_t>(read(cx, 0x00a) & 0xffu);
+    if (!drawCovers(cx, target.extent)) reject("over part of the depth surface");
+    const auto slice = static_cast<std::uint64_t>(target.firstSlice);
+    DepthExpandPass pass{target, planes.depth ? destination + slice * DepthSliceBytes(target.extent, (zInfo & 3u) == 1u ? 2u : 4u) : 0u};
+    if (planes.stencil) pass.stencilDestination = base(0x015, 0x01d) + slice * DepthSliceBytes(target.extent, 1u);
     return pass;
 }
 

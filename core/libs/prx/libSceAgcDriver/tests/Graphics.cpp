@@ -2461,9 +2461,11 @@ void DepthStencilTests() {
         split.context[0x200] = 0x00700717u;
         expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "depth read and written at different addresses");
         split.context[0x200] = 0x00700711u;
-        for (const auto control : {0x01u, 0x20u, 0x40u, 0x60u}) {
+        split.context[0x000] = 0x01u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "depth read and written at different addresses");
+        for (const auto control : {0x20u, 0x40u, 0x60u}) {
             split.context[0x000] = control;
-            expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "depth read and written at different addresses");
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(split); }, "an out-of-place DB expand");
         }
     }
     for (const auto clear : {0u, 1u, 2u, 3u}) {
@@ -2957,6 +2959,144 @@ void depthMaintenanceTests() {
         auto missing = readOnly;
         missing.context.erase(offset);
         Require(!AgcDriver::Graphics::DepthMaintenanceRejection(missing).empty(), "a resummarize draw without a required register passed");
+    }
+}
+
+void depthExpandPassTests() {
+    const auto expand = [] {
+        auto queue = makeState();
+        for (const auto [offset, value] : {std::pair{0x000u, 0x60u}, {0x002u, 0u}, {0x005u, 0x20293e00u}, {0x007u, (2159u << 16u) | 1919u}, {0x00au, 0u}, {0x00bu, 0u},
+                 {0x010u, 0x20000183u}, {0x011u, 0x20000181u}, {0x012u, 0x202a8a00u}, {0x013u, 0x20294300u}, {0x014u, 0x20298b00u}, {0x015u, 0x20294300u},
+                 {0x01au, 0u}, {0x01bu, 0u}, {0x01cu, 0u}, {0x01du, 0u}, {0x01eu, 0u}, {0x200u, 0u}, {0x201u, 0u}, {0x202u, 0x00cc0000u}, {0x203u, 0u},
+                 {0x8eu, 0xffffffffu}, {0x8fu, 0u}, {0x2f8u, 0x00108001u}, {0xdu, (2160u << 16u) | 1920u}, {0x82u, (2160u << 16u) | 1920u}, {0x91u, (2160u << 16u) | 1920u}, {0x95u, (2160u << 16u) | 1920u}}) {
+            queue.context[offset] = value;
+        }
+        queue.context[0x10f] = std::bit_cast<std::uint32_t>(960.0f);
+        queue.context[0x110] = std::bit_cast<std::uint32_t>(960.0f);
+        queue.context[0x111] = std::bit_cast<std::uint32_t>(-1080.0f);
+        queue.context[0x112] = std::bit_cast<std::uint32_t>(1080.0f);
+        return queue;
+    };
+    const auto pass = AgcDriver::Graphics::DecodeDepthExpandPass(expand());
+    Require(pass.has_value(), "the game's out-of-place DB expand was not recognised");
+    const auto& source = pass->source;
+    Require(source.address == 0x202a8a0000ull && pass->destination == 0x20298b0000ull && source.stencilAddress == 0x2029430000ull && source.htileAddress == 0x20293e0000ull, "the DB expand's bases changed");
+    Require(source.extent.width == 1920u && source.extent.height == 2160u && source.format == VK_FORMAT_D32_SFLOAT_S8_UINT && source.samples == 1u, "the DB expand's read surface changed");
+    Require(AgcDriver::Graphics::DepthMaintenanceRejection(expand()).find("is run by the draw precheck, in order, and is not drawn") != std::string::npos, "an out-of-place DB expand that reached the draw path was not refused");
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(expand()); }, "is run by the draw precheck, in order, and is not drawn");
+    for (const auto [offset, value] : {std::pair{0x000u, 0u}, {0x000u, 0x2000u}, {0x014u, 0x202a8a00u}, {0x002u, 0x01000000u}}) {
+        auto other = expand();
+        other.context[offset] = value;
+        Require(!AgcDriver::Graphics::DecodeDepthExpandPass(other).has_value(), "a draw without compress-disable bits, an in-place expand or a read-only depth view was taken for an out-of-place DB expand");
+    }
+    auto absent = expand();
+    absent.context.erase(0x000);
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(absent).has_value(), "a draw without DB_RENDER_CONTROL was taken for a DB expand");
+    auto readOnlyStencilView = expand();
+    readOnlyStencilView.context[0x002] = 0x02000000u;
+    const auto stencilKept = AgcDriver::Graphics::DecodeDepthExpandPass(readOnlyStencilView);
+    Require(stencilKept.has_value() && stencilKept->destination == 0x20298b0000ull && stencilKept->source.stencilAddress == 0x2029430000ull, "the DB expand of a depth plane with a read-only stencil plane was not taken");
+    const std::vector<std::tuple<std::uint32_t, std::uint32_t, std::string_view>> rejections{
+        {0x015u, 0x20294401u, "between bases that are not 64 KiB aligned"},
+        {0x000u, 0x61u, "with clear, copy, resummarize or decompress bits"},
+        {0x000u, 0x20u, "without DEPTH_COMPRESS_DISABLE"},
+        {0x200u, 0x2u, "with depth, stencil or depth bounds tests"},
+        {0x200u, 0x8u, "with depth, stencil or depth bounds tests"},
+        {0x010u, 0x20000182u, "of a Z_24 depth plane"},
+        {0x010u, 0x20000187u, "of a multisampled depth surface"},
+        {0x010u, 0x20000003u, "in a swizzle mode other than SW_64KB_Z_X"},
+        {0x010u, 0x20010183u, "of a partially resident or mipmapped depth surface"},
+        {0x002u, 1u << 26u, "of a depth view with a mip level"},
+        {0x002u, 0x02000000u | (1u << 26u), "of a depth view with a mip level"},
+        {0x207u, 1u << 18u, "with layer exports"},
+        {0x014u, 0x20298b01u, "between bases that are not 64 KiB aligned"},
+        {0x10fu, std::bit_cast<std::uint32_t>(480.0f), "over part of the depth surface"},
+        {0x91u, (1080u << 16u) | 1920u, "over part of the depth surface"},
+    };
+    for (const auto& [offset, value, reason] : rejections) {
+        auto other = expand();
+        other.context[offset] = value;
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(other); }, reason);
+    }
+    for (const auto view : {2u | (2u << 13u), 2u | (5u << 13u), 0x02000000u | 2u | (2u << 13u)}) {
+        auto sliced = expand();
+        sliced.context[0x002] = view;
+        const auto slice = AgcDriver::Graphics::DecodeDepthExpandPass(sliced);
+        Require(slice.has_value() && slice->source.firstSlice == 2u, "the DB expand of a depth view's third slice was not taken");
+        const auto offset = slice->source.address - 0x202a8a0000ull;
+        Require(offset != 0 && offset % 0x10000u == 0 && slice->destination - 0x20298b0000ull == offset && slice->source.stencilAddress > 0x2029430000ull, "the DB expand of a depth view's third slice did not move the read and write bases by the same two slices");
+    }
+    auto colored = expand();
+    colored.context[0x202] = 0x00cc0010u;
+    colored.context[0x8f] = 0xfu;
+    expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(colored); }, "with color writes");
+    auto formatless = colored;
+    formatless.context[0x31c] = 0u;
+    Require(AgcDriver::Graphics::DecodeDepthExpandPass(formatless).has_value(), "the DB expand of a draw whose only color target has an INVALID format was refused for color writes");
+    for (const auto [disable, selection] : {std::pair{0x40u, 0x80u}, {0x60u, 0x80u}, {0x60u, 0xf00u}, {0x60u, 0xf80u}}) {
+        auto selected = expand();
+        selected.context[0x000] = disable | selection;
+        const auto taken = AgcDriver::Graphics::DecodeDepthExpandPass(selected);
+        Require(taken.has_value() && taken->destination == 0x20298b0000ull, "a DB expand with a copy sample selection and no copy (Forspoken's DB_RENDER_CONTROL 0xc0) was refused");
+        selected.context[0x000] = disable | 4u | selection;
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(selected); }, "with clear, copy, resummarize or decompress bits");
+    }
+    auto nonFinite = expand();
+    nonFinite.context[0x00b] = 0x7fc00000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(nonFinite); }, "non-finite register");
+
+    auto alwaysPass = expand();
+    alwaysPass.context[0x014] = alwaysPass.context[0x012];
+    alwaysPass.context[0x200] = 0x76u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(alwaysPass).has_value(), "an always-pass depth draw with equal bases and compress-disable bits was taken for a DB expand");
+    Require(AgcDriver::Graphics::DepthMaintenanceRejection(alwaysPass).empty(), "an always-pass depth draw with equal bases and compress-disable bits was refused as an out-of-place DB expand");
+    alwaysPass.context[0x000] = 0u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(alwaysPass).has_value(), "an always-pass depth draw with equal bases was taken for a DB expand");
+    auto noTarget = expand();
+    noTarget.context[0x010] = 0x20000180u;
+    noTarget.context[0x011] = 0x20000180u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(noTarget).has_value(), "a draw without depth or stencil planes was taken for a DB expand");
+    auto readOnlyStencil = expand();
+    readOnlyStencil.context[0x014] = readOnlyStencil.context[0x012];
+    readOnlyStencil.context[0x015] = 0x20294400u;
+    readOnlyStencil.context[0x002] = 0x02000000u;
+    Require(!AgcDriver::Graphics::DecodeDepthExpandPass(readOnlyStencil).has_value(), "a read-only stencil plane with another write base was taken for a DB expand");
+    auto noStencil = expand();
+    noStencil.context[0x011] = 0x20000180u;
+    noStencil.context[0x015] = 0x20294400u;
+    const auto depthOnly = AgcDriver::Graphics::DecodeDepthExpandPass(noStencil);
+    Require(depthOnly.has_value() && depthOnly->source.format == VK_FORMAT_D32_SFLOAT && depthOnly->source.stencilAddress == 0 && depthOnly->destination == 0x20298b0000ull, "the DB expand of a surface without a stencil plane was not taken as a depth-only expand");
+    auto noHtile = expand();
+    noHtile.context[0x010] = 0x00000183u;
+    const auto withoutHtile = AgcDriver::Graphics::DecodeDepthExpandPass(noHtile);
+    Require(withoutHtile.has_value() && withoutHtile->source.htileAddress == 0, "the DB expand of a surface without HTILE kept an HTILE address");
+    auto stencilOnly = expand();
+    stencilOnly.context[0x014] = stencilOnly.context[0x012];
+    stencilOnly.context[0x015] = 0x20294400u;
+    const auto stencilMoved = AgcDriver::Graphics::DecodeDepthExpandPass(stencilOnly);
+    Require(stencilMoved.has_value() && stencilMoved->destination == 0 && stencilMoved->stencilDestination == 0x2029440000ull && stencilMoved->source.stencilAddress == 0x2029430000ull, "the DB expand of a stencil plane alone was not taken with the depth plane left in place");
+    auto bothMoved = expand();
+    bothMoved.context[0x015] = 0x20294400u;
+    const auto both = AgcDriver::Graphics::DecodeDepthExpandPass(bothMoved);
+    Require(both.has_value() && both->destination == 0x20298b0000ull && both->stencilDestination == 0x2029440000ull, "the DB expand of the depth and stencil planes did not take both write bases");
+    Require(pass->stencilDestination == 0, "the game's DB expand, whose stencil plane stays in place, took a stencil write base");
+    auto stencilOnlyNoDepth = stencilOnly;
+    stencilOnlyNoDepth.context[0x010] = 0x20000180u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(stencilOnlyNoDepth); }, "of a surface without a depth plane");
+    for (const auto stencilInfo : {0x20000181u, 0x20000180u}) {
+        auto z16 = expand();
+        z16.context[0x010] = 0x20000181u;
+        z16.context[0x011] = stencilInfo;
+        const auto sixteen = AgcDriver::Graphics::DecodeDepthExpandPass(z16);
+        Require(sixteen.has_value() && sixteen->source.format == ((stencilInfo & 1u) != 0 ? VK_FORMAT_D16_UNORM_S8_UINT : VK_FORMAT_D16_UNORM) && sixteen->destination == 0x20298b0000ull, "the DB expand of a Z_16 depth plane was not taken as a 16-bit expand");
+        auto z24 = z16;
+        z24.context[0x010] = 0x20000182u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(z24); }, "of a Z_24 depth plane");
+    }
+    for (const auto swizzle : {8u, 20u, 27u, 28u}) {
+        auto other = expand();
+        other.context[0x010] = (0x20000183u & ~0x1f0u) | (swizzle << 4u);
+        expectFailure([&] { AgcDriver::Graphics::DecodeDepthExpandPass(other); }, "in a swizzle mode other than SW_64KB_Z_X");
     }
 }
 
@@ -12939,6 +13079,7 @@ int main(int argc, char** argv) {
         framebufferOwnerTests();
         hdrComponentSwapTests();
         depthMaintenanceTests();
+        depthExpandPassTests();
         hardwareScreenOffsetTests();
         srgb8TargetTests();
         DepthClipTests();
