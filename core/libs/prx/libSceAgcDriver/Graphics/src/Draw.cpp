@@ -99,10 +99,10 @@ void DestroyMeshWindow(MeshWindowPool& pool) {
 }
 
 void DestroyPixelFunctionLds(PixelFunctionLdsPool& pool) {
-    if (pool.header != nullptr) pool.context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")(pool.context.device, pool.memory);
+    if (pool.header != nullptr) pool.context.Resolved(&DeviceFunctions::unmapMemory, "vkUnmapMemory")(pool.context.device, pool.memory);
     if (pool.descriptorPool != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")(pool.context.device, pool.descriptorPool, nullptr);
-    if (pool.buffer != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(pool.context.device, pool.buffer, nullptr);
-    if (pool.memory != VK_NULL_HANDLE) pool.context.Function<PFN_vkFreeMemory>("vkFreeMemory")(pool.context.device, pool.memory, nullptr);
+    if (pool.buffer != VK_NULL_HANDLE) pool.context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(pool.context.device, pool.buffer, nullptr);
+    if (pool.memory != VK_NULL_HANDLE) pool.context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(pool.context.device, pool.memory, nullptr);
     if (pool.bufferLayout != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(pool.context.device, pool.bufferLayout, nullptr);
     if (pool.empty != VK_NULL_HANDLE) pool.context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(pool.context.device, pool.empty, nullptr);
     pool.header = nullptr;
@@ -150,9 +150,9 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
         bufferInfo.size = bytes;
         bufferInfo.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        Check(context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer pixel function LDS");
+        Check(context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &bufferInfo, nullptr, &pool.buffer), "vkCreateBuffer pixel function LDS");
         VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, pool.buffer, &requirements);
+        context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, pool.buffer, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         constexpr auto hostCoherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -172,19 +172,19 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
         }
         const auto hostType = hostOnlyType.value_or(context.MemoryType(requirements.memoryTypeBits, hostCoherent));
         allocation.memoryTypeIndex = deviceLocalType.value_or(hostType);
-        auto allocated = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &pool.memory);
+        auto allocated = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &pool.memory);
         if (allocated != VK_SUCCESS && deviceLocalType && allocation.memoryTypeIndex == *deviceLocalType && hostType != *deviceLocalType) {
             allocation.memoryTypeIndex = hostType;
-            allocated = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &pool.memory);
+            allocated = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &pool.memory);
         }
         if (allocated != VK_SUCCESS) {
-            context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, pool.buffer, nullptr);
+            context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, pool.buffer, nullptr);
             pool.buffer = VK_NULL_HANDLE;
             pool.memory = VK_NULL_HANDLE;
             Check(allocated, "vkAllocateMemory pixel function LDS");
         }
-        Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, pool.buffer, pool.memory, 0), "vkBindBufferMemory pixel function LDS");
-        Check(context.Function<PFN_vkMapMemory>("vkMapMemory")(context.device, pool.memory, 0, 16, 0, reinterpret_cast<void**>(&pool.header)), "vkMapMemory pixel function LDS");
+        Check(context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, pool.buffer, pool.memory, 0), "vkBindBufferMemory pixel function LDS");
+        Check(context.Resolved(&DeviceFunctions::mapMemory, "vkMapMemory")(context.device, pool.memory, 0, 16, 0, reinterpret_cast<void**>(&pool.header)), "vkMapMemory pixel function LDS");
         pool.header[0] = 0u;
         pool.header[1] = 0u;
         pool.header[2] = pool.slots;
@@ -198,7 +198,7 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
         sets.descriptorPool = pool.descriptorPool;
         sets.descriptorSetCount = 1u;
         sets.pSetLayouts = &pool.bufferLayout;
-        Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &sets, &pool.set), "vkAllocateDescriptorSets pixel function LDS");
+        Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &sets, &pool.set), "vkAllocateDescriptorSets pixel function LDS");
         const VkDescriptorBufferInfo buffer{pool.buffer, 0, bytes};
         VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         write.dstSet = pool.set;
@@ -206,7 +206,7 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
         write.descriptorCount = 1u;
         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         write.pBufferInfo = &buffer;
-        context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1u, &write, 0u, nullptr);
+        context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, 1u, &write, 0u, nullptr);
         std::fprintf(stderr, "[gpu] pixel function LDS pool: %u subgroups, %llu MiB, stride %u lanes\n", pool.slots, static_cast<unsigned long long>(bytes >> 20u), subgroupSize);
         pool.announced = true;
     }
@@ -2358,7 +2358,7 @@ void captureInputs(const Context& context, Recorder& recorder, VkCommandBuffer c
     if (samples.empty()) return;
     auto readback = std::make_shared<Buffer>(context, total, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-    const auto copy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
+    const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
     for (const auto& sample : samples) {
         const VkBufferCopy region{sample.sourceOffset, sample.offset, sample.expected.size()};
         copy(commands, sample.source, readback->Handle(), 1, &region);

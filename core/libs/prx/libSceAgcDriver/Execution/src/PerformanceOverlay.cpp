@@ -819,8 +819,8 @@ PerformanceOverlay::~PerformanceOverlay() {
 
 void PerformanceOverlay::releaseTransient(Slot& slot) noexcept {
     for (const auto& [view, framebuffer] : slot.transient) {
-        if (framebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
-        if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+        if (framebuffer) context.Resolved(&Graphics::DeviceFunctions::destroyFramebuffer, "vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
+        if (view) context.Resolved(&Graphics::DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, view, nullptr);
     }
     slot.transient.clear();
 }
@@ -1123,7 +1123,7 @@ OverlayRect PerformanceOverlay::RecordRects(VkCommandBuffer commands, std::size_
     }
     viewInfo.pNext = &usageInfo;
     VkImageView view = VK_NULL_HANDLE;
-    Graphics::Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView performance overlay");
+    Graphics::Check(context.Resolved(&Graphics::DeviceFunctions::createImageView, "vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView performance overlay");
     VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
     framebufferInfo.renderPass = pass;
     framebufferInfo.attachmentCount = 1;
@@ -1132,7 +1132,7 @@ OverlayRect PerformanceOverlay::RecordRects(VkCommandBuffer commands, std::size_
     framebufferInfo.height = extent.height;
     framebufferInfo.layers = 1;
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
-    const auto created = context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer);
+    const auto created = context.Resolved(&Graphics::DeviceFunctions::createFramebuffer, "vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer);
     slot.transient.emplace_back(view, framebuffer);
     Graphics::Check(created, "vkCreateFramebuffer performance overlay");
     const auto right = std::min<std::int32_t>(layout.bounds.x + layout.bounds.width, static_cast<std::int32_t>(extent.width));
@@ -1142,18 +1142,18 @@ OverlayRect PerformanceOverlay::RecordRects(VkCommandBuffer commands, std::size_
     begin.renderPass = pass;
     begin.framebuffer = framebuffer;
     begin.renderArea = area;
-    context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-    context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, drawing);
+    context.Resolved(&Graphics::DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+    context.Resolved(&Graphics::DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, drawing);
     const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
-    context.Function<PFN_vkCmdSetViewport>("vkCmdSetViewport")(commands, 0, 1, &viewport);
-    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0, 1, &area);
+    context.Resolved(&Graphics::DeviceFunctions::cmdSetViewport, "vkCmdSetViewport")(commands, 0, 1, &viewport);
+    context.Resolved(&Graphics::DeviceFunctions::cmdSetScissor, "vkCmdSetScissor")(commands, 0, 1, &area);
     const OverlayParameters parameters{OverlayPalette(format, colorSpace), {static_cast<float>(extent.width), static_cast<float>(extent.height)}};
-    context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
+    context.Resolved(&Graphics::DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(parameters), &parameters);
     const VkBuffer buffer = slot.rects->Handle();
     const VkDeviceSize offset = 0;
-    context.Function<PFN_vkCmdBindVertexBuffers>("vkCmdBindVertexBuffers")(commands, 0, 1, &buffer, &offset);
-    context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 4, static_cast<std::uint32_t>(layout.rects.size()), 0, 0);
-    context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
+    context.Resolved(&Graphics::DeviceFunctions::cmdBindVertexBuffers, "vkCmdBindVertexBuffers")(commands, 0, 1, &buffer, &offset);
+    context.Resolved(&Graphics::DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, 4, static_cast<std::uint32_t>(layout.rects.size()), 0, 0);
+    context.Resolved(&Graphics::DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
     return layout.bounds;
 }
 

@@ -17,7 +17,7 @@ void TextureDetiler::BeginBatch() {
 }
 
 void TextureDetiler::resetRing(DescriptorRing& ring, const char* resetWhat) {
-    for (const auto pool : ring.pools) Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, pool, 0), resetWhat);
+    for (const auto pool : ring.pools) Check(context.Resolved(&DeviceFunctions::resetDescriptorPool, "vkResetDescriptorPool")(context.device, pool, 0), resetWhat);
     std::fill(ring.serials.begin(), ring.serials.end(), std::uint64_t{0});
     ring.current = 0;
     ring.used = 0;
@@ -37,7 +37,7 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
             }
         }
         if (next < ring.pools.size()) {
-            Check(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")(context.device, ring.pools[next], 0), resetWhat);
+            Check(context.Resolved(&DeviceFunctions::resetDescriptorPool, "vkResetDescriptorPool")(context.device, ring.pools[next], 0), resetWhat);
         } else {
             VkDescriptorPoolCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
             info.maxSets = setsPerPool;
@@ -58,7 +58,7 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
     allocation.descriptorSetCount = 1;
     allocation.pSetLayouts = &layout;
     VkDescriptorSet set = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), allocateWhat);
+    Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &set), allocateWhat);
     ++ring.used;
     ring.serials[ring.current] = recorder != nullptr ? recorder->OpenSerial() : std::numeric_limits<std::uint64_t>::max();
     return set;

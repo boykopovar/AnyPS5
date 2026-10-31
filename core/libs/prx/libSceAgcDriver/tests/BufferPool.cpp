@@ -61,6 +61,7 @@ struct MockDevice {
     unsigned binds = 0;
     unsigned maps = 0;
     unsigned unmaps = 0;
+    std::uint64_t lookups = 0;
 };
 
 MockDevice mock;
@@ -138,6 +139,7 @@ VKAPI_ATTR VkDeviceAddress VKAPI_CALL mockGetBufferDeviceAddress(VkDevice, const
 }
 
 PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
+    ++mock.lookups;
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCreateBuffer)},
         {"vkGetBufferMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferMemoryRequirements)},
@@ -1178,6 +1180,39 @@ void IdleReclaimPreservesImages() {
 }
 
 
+void TableLookups() {
+    mock = MockDevice{};
+    auto context = mockContext();
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    std::size_t round = 0;
+    const auto cycle = [&](const Context& owner) {
+        ++round;
+        for (const std::size_t size : {std::size_t{200}, std::size_t{300}}) {
+            Buffer host(owner, size + round * 8, usage);
+            DeviceBuffer device(owner, (size + round * 8) * 1024, usage);
+        }
+    };
+    cycle(context);
+    const auto untabled = mock.lookups;
+    cycle(context);
+    Expect(mock.lookups > untabled, "a buffer cycle of new sizes without a device function table looked nothing up by name, so the tabled count proves nothing");
+    DeviceFunctions table{};
+    table.createBuffer = mockCreateBuffer;
+    table.destroyBuffer = mockDestroyBuffer;
+    table.getBufferMemoryRequirements = mockGetBufferMemoryRequirements;
+    table.bindBufferMemory = mockBindBufferMemory;
+    table.allocateMemory = mockAllocateMemory;
+    table.freeMemory = mockFreeMemory;
+    table.mapMemory = mockMapMemory;
+    table.unmapMemory = mockUnmapMemory;
+    auto tabled = context;
+    tabled.functions = &table;
+    cycle(tabled);
+    const auto before = mock.lookups;
+    cycle(tabled);
+    Expect(mock.lookups == before, "a host and a device buffer cycle of new sizes looked up " + std::to_string(mock.lookups - before) + " Vulkan functions by name while the device's function table holds them");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--small-device-retention") {
@@ -1201,6 +1236,7 @@ int main(int argc, char** argv) {
         SizeClassesAndDirections();
         LargerClass();
         ExactSizeReuse();
+        TableLookups();
         KeptUntilFence();
         SmallDeviceRetention();
         Budget();

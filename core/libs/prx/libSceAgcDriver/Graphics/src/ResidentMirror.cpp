@@ -41,7 +41,7 @@ constexpr VkAccessFlags TransferredAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCES
 
 struct TransientBuffer {
     TransientBuffer(const Context& context, VkBuffer buffer) : context(context), buffer(buffer) {}
-    ~TransientBuffer() { context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr); }
+    ~TransientBuffer() { context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr); }
     TransientBuffer(const TransientBuffer&) = delete;
     TransientBuffer& operator=(const TransientBuffer&) = delete;
     Context context;
@@ -83,7 +83,7 @@ public:
     }
 
     ~ResidentMemory() {
-        const auto freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
+        const auto freeMemory = context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory");
         for (auto& slab : slabs) freeMemory(context.device, slab->memory, nullptr);
         freeMemory(context.device, zero, nullptr);
     }
@@ -100,13 +100,13 @@ public:
         info.size = ZeroBytes;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         VkBuffer buffer = VK_NULL_HANDLE;
-        if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) fail("vkCreateBuffer of the heap mirrors' zero fill", result);
+        if (const auto result = context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) fail("vkCreateBuffer of the heap mirrors' zero fill", result);
         auto transient = std::make_shared<TransientBuffer>(context, buffer);
         VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+        context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
         if ((requirements.memoryTypeBits & (1u << type)) == 0 || requirements.size > ZeroBytes) throw std::runtime_error("the heap mirrors' zero block memory cannot back a transfer buffer to fill it");
-        if (const auto result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, zero, 0); result != VK_SUCCESS) fail("vkBindBufferMemory of the heap mirrors' zero fill", result);
-        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands, buffer, 0, VK_WHOLE_SIZE, 0);
+        if (const auto result = context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, buffer, zero, 0); result != VK_SUCCESS) fail("vkBindBufferMemory of the heap mirrors' zero fill", result);
+        context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands, buffer, 0, VK_WHOLE_SIZE, 0);
         kept.push_back(std::move(transient));
         zeroed.store(true, std::memory_order_release);
     }
@@ -132,7 +132,7 @@ public:
         slab->free.push_back(index);
         if (slab->free.size() != SlabBlocks) return;
         const auto found = std::find_if(slabs.begin(), slabs.end(), [&](const auto& held) { return held.get() == slab; });
-        context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, slab->memory, nullptr);
+        context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, slab->memory, nullptr);
         slabs.erase(found);
     }
 
@@ -144,7 +144,7 @@ private:
         info.memoryTypeIndex = type;
         if (context.bufferPool != nullptr) return context.bufferPool->AllocateMemory(info, operation);
         VkDeviceMemory memory = VK_NULL_HANDLE;
-        if (const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &info, nullptr, &memory); result != VK_SUCCESS) fail(operation, result);
+        if (const auto result = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &info, nullptr, &memory); result != VK_SUCCESS) fail(operation, result);
         return memory;
     }
 
@@ -375,9 +375,9 @@ ResidentBuffer::ResidentBuffer(const Context& context, std::uint64_t base, std::
             info.queueFamilyIndexCount = static_cast<std::uint32_t>(families.size());
             info.pQueueFamilyIndices = families.data();
         }
-        if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) fail("vkCreateBuffer of a resident heap mirror", result);
+        if (const auto result = context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) fail("vkCreateBuffer of a resident heap mirror", result);
         VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+        context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
         if (requirements.alignment == 0 || requirements.alignment > BlockSize || BlockSize % requirements.alignment != 0) {
             char text[160];
             std::snprintf(text, sizeof(text), "the device's sparse buffer block of %llu bytes does not divide a heap mirror's 64 KiB block", static_cast<unsigned long long>(requirements.alignment));
@@ -422,7 +422,7 @@ ResidentBuffer::~ResidentBuffer() {
 }
 
 void ResidentBuffer::release() noexcept {
-    if (buffer != VK_NULL_HANDLE) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+    if (buffer != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
     buffer = VK_NULL_HANDLE;
     for (auto& slot : slots) {
         if (slot.host != nullptr) memory->Put(static_cast<ResidentMemory::Slab*>(slot.slab), slot.index);
@@ -582,7 +582,7 @@ void ResidentBuffer::flush() {
             }
         }
         recordTransfer(context, [&](VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept) {
-            context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, staging->Handle(), buffer, static_cast<std::uint32_t>(regions.size()), regions.data());
+            context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands, staging->Handle(), buffer, static_cast<std::uint32_t>(regions.size()), regions.data());
             kept.push_back(staging);
             kept.push_back(shared_from_this());
         });
@@ -649,7 +649,7 @@ void ResidentBuffer::submit(const std::vector<VkSparseMemoryBind>& binds) {
         if (ownQueue) queueLock = std::unique_lock(*context.sparseQueueMutex);
         else gpuLock = std::unique_lock(GuestMemory::GpuMutex());
         submitted = context.Function<PFN_vkQueueBindSparse>("vkQueueBindSparse")(ownQueue ? context.sparseQueue : context.queue, 1, &bind, fence);
-        if (submitted == VK_SUCCESS) waited = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        if (submitted == VK_SUCCESS) waited = context.Resolved(&DeviceFunctions::waitForFences, "vkWaitForFences")(context.device, 1, &fence, VK_TRUE, UINT64_MAX);
     }
     context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     if (submitted != VK_SUCCESS) fail("vkQueueBindSparse of a resident heap mirror", submitted);

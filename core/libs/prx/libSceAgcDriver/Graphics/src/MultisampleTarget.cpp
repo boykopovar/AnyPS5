@@ -260,7 +260,7 @@ public:
             VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
             viewUsage.usage = imageUsage & ~VK_IMAGE_USAGE_STORAGE_BIT;
             if ((imageUsage & VK_IMAGE_USAGE_STORAGE_BIT) != 0) viewInfo.pNext = &viewUsage;
-            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &created.view), "vkCreateImageView multisampled target");
+            Check(context.Resolved(&DeviceFunctions::createImageView, "vkCreateImageView")(context.device, &viewInfo, nullptr, &created.view), "vkCreateImageView multisampled target");
         } catch (...) {
             destroy(created);
             throw;
@@ -269,9 +269,9 @@ public:
     }
 
     void destroy(const Allocation& allocation) noexcept {
-        if (allocation.view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, allocation.view, nullptr);
+        if (allocation.view) context.Resolved(&DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, allocation.view, nullptr);
         if (allocation.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, allocation.image, nullptr);
-        if (allocation.memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, allocation.memory, nullptr);
+        if (allocation.memory) context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, allocation.memory, nullptr);
     }
 
     void recordToGeneral(VkCommandBuffer commands, VkImage destination) {
@@ -410,7 +410,7 @@ public:
                 viewUsage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
                 viewInfo.pNext = &viewUsage;
             }
-            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &selectedView), "vkCreateImageView multisampled target storage");
+            Check(context.Resolved(&DeviceFunctions::createImageView, "vkCreateImageView")(context.device, &viewInfo, nullptr, &selectedView), "vkCreateImageView multisampled target storage");
         }
         recordCommands(context, [&](VkCommandBuffer commands, Recorder* recorder) {
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
@@ -435,7 +435,7 @@ public:
         VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
         viewUsage.usage = VK_IMAGE_USAGE_STORAGE_BIT;
         viewInfo.pNext = &viewUsage;
-        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &orderView), "vkCreateImageView multisampled target storage");
+        Check(context.Resolved(&DeviceFunctions::createImageView, "vkCreateImageView")(context.device, &viewInfo, nullptr, &orderView), "vkCreateImageView multisampled target storage");
         return orderView;
     }
 
@@ -493,7 +493,7 @@ public:
             VkImageViewUsageCreateInfo viewUsage{VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO};
             viewUsage.usage = twinViewUsage;
             viewInfo.pNext = &viewUsage;
-            Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &twinView), "vkCreateImageView multisampled target twin");
+            Check(context.Resolved(&DeviceFunctions::createImageView, "vkCreateImageView")(context.device, &viewInfo, nullptr, &twinView), "vkCreateImageView multisampled target twin");
         }
         return twinView;
     }
@@ -753,10 +753,10 @@ private:
         firstSampleTextures.clear();
         firstSampleCopy.reset();
         for (const auto& [format, resolvePass] : resolvePasses) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, resolvePass, nullptr);
-        if (orderView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, orderView, nullptr);
-        if (twinView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, twinView, nullptr);
-        if (storageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, storageView, nullptr);
-        if (uintStorageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uintStorageView, nullptr);
+        if (orderView) context.Resolved(&DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, orderView, nullptr);
+        if (twinView) context.Resolved(&DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, twinView, nullptr);
+        if (storageView) context.Resolved(&DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, storageView, nullptr);
+        if (uintStorageView) context.Resolved(&DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, uintStorageView, nullptr);
         destroy({image, memory, view});
         for (const auto& allocation : retired) destroy(allocation);
     }

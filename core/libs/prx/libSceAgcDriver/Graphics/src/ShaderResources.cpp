@@ -2254,7 +2254,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
             allocation.descriptorSetCount = 1;
             allocation.pSetLayouts = &layout;
             VkDescriptorSet set = VK_NULL_HANDLE;
-            Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets");
+            Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets");
             return set;
         };
         const auto createLayout = [&](const std::vector<std::uint32_t>& key, const std::vector<VkDescriptorSetLayoutBinding>& description, const std::vector<VkDescriptorBindingFlags>& flags, bool& owns) {
@@ -2322,7 +2322,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 allocation.descriptorPool = pool;
                 allocation.descriptorSetCount = 1;
                 allocation.pSetLayouts = &_layout;
-                Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &_set), "vkAllocateDescriptorSets");
+                Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &_set), "vkAllocateDescriptorSets");
             }
         }
         writeOnlyRanges.clear();
@@ -4286,7 +4286,7 @@ std::size_t KeptSets() {
 
 }
 
-DescriptorCache::DescriptorCache(const Context& context) : context(context), destroyLayout(context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")), destroyPool(context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")), resetPool(context.Function<PFN_vkResetDescriptorPool>("vkResetDescriptorPool")), freeDescriptorSets(context.individuallyFreeDescriptorSets ? context.Function<PFN_vkFreeDescriptorSets>("vkFreeDescriptorSets") : nullptr) {
+DescriptorCache::DescriptorCache(const Context& context) : context(context), destroyLayout(context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")), destroyPool(context.Function<PFN_vkDestroyDescriptorPool>("vkDestroyDescriptorPool")), resetPool(context.Resolved(&DeviceFunctions::resetDescriptorPool, "vkResetDescriptorPool")), freeDescriptorSets(context.individuallyFreeDescriptorSets ? context.Function<PFN_vkFreeDescriptorSets>("vkFreeDescriptorSets") : nullptr) {
     kept.reserve(KeptSets() + 1u);
 }
 
@@ -5135,6 +5135,11 @@ std::uint32_t SamplerTableCapacityFor(const Context& context, bool updateAfterBi
     return static_cast<std::uint32_t>(capacity - capacity % ShaderRecompiler::ImageTableAbi::SamplerEntryElements);
 }
 
+}
+
+std::uint64_t& DeviceProcLookups() {
+    thread_local std::uint64_t count = 0;
+    return count;
 }
 
 std::uint32_t ImageTableCapacity(const Context& context) {

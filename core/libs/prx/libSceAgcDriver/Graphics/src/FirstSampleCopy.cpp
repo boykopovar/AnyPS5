@@ -74,7 +74,7 @@ FirstSampleCopy::FirstSampleCopy(const Context& context, VkFormat format, VkExte
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = format;
         viewInfo.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        Check(context.Function<PFN_vkCreateImageView>("vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView first sample");
+        Check(context.Resolved(&DeviceFunctions::createImageView, "vkCreateImageView")(context.device, &viewInfo, nullptr, &view), "vkCreateImageView first sample");
 
         VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         samplerInfo.magFilter = VK_FILTER_NEAREST;
@@ -132,7 +132,7 @@ FirstSampleCopy::FirstSampleCopy(const Context& context, VkFormat format, VkExte
         framebufferInfo.width = extent.width;
         framebufferInfo.height = extent.height;
         framebufferInfo.layers = 1;
-        Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "vkCreateFramebuffer first sample");
+        Check(context.Resolved(&DeviceFunctions::createFramebuffer, "vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "vkCreateFramebuffer first sample");
 
         vertex = CreateShaderModule(context, PRESENTATION_PASS_VERT_SPV, sizeof(PRESENTATION_PASS_VERT_SPV), "vkCreateShaderModule first sample vertex");
         const auto code = fragmentCode(format);
@@ -192,14 +192,14 @@ void FirstSampleCopy::release() noexcept {
     if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
     if (fragment) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, fragment, nullptr);
     if (vertex) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, vertex, nullptr);
-    if (framebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
+    if (framebuffer) context.Resolved(&DeviceFunctions::destroyFramebuffer, "vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
     if (renderPass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, renderPass, nullptr);
     if (pipelineLayout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, pipelineLayout, nullptr);
     if (descriptorLayout) context.Function<PFN_vkDestroyDescriptorSetLayout>("vkDestroyDescriptorSetLayout")(context.device, descriptorLayout, nullptr);
     if (sampler) context.Function<PFN_vkDestroySampler>("vkDestroySampler")(context.device, sampler, nullptr);
-    if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
+    if (view) context.Resolved(&DeviceFunctions::destroyImageView, "vkDestroyImageView")(context.device, view, nullptr);
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-    if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    if (memory) context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, memory, nullptr);
     pipeline = VK_NULL_HANDLE;
     fragment = vertex = VK_NULL_HANDLE;
     framebuffer = VK_NULL_HANDLE;
@@ -226,7 +226,7 @@ void FirstSampleCopy::Record(Recorder& recorder, VkImageView source, VkImageLayo
     allocation.descriptorSetCount = 1;
     allocation.pSetLayouts = &descriptorLayout;
     VkDescriptorSet set = VK_NULL_HANDLE;
-    Check(context.Function<PFN_vkAllocateDescriptorSets>("vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets first sample");
+    Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &set), "vkAllocateDescriptorSets first sample");
     const VkDescriptorImageInfo imageInfo{VK_NULL_HANDLE, source, layout};
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     write.dstSet = set;
@@ -234,7 +234,7 @@ void FirstSampleCopy::Record(Recorder& recorder, VkImageView source, VkImageLayo
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     write.pImageInfo = &imageInfo;
-    context.Function<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
+    context.Resolved(&DeviceFunctions::updateDescriptorSets, "vkUpdateDescriptorSets")(context.device, 1, &write, 0, nullptr);
     recorder.Keep(pool);
     recorder.RecordUncounted([&](VkCommandBuffer commands) {
         VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
@@ -242,9 +242,9 @@ void FirstSampleCopy::Record(Recorder& recorder, VkImageView source, VkImageLayo
         begin.framebuffer = framebuffer;
         begin.renderArea = {{0, 0}, extent};
         context.Resolved(&DeviceFunctions::cmdBeginRenderPass, "vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-        context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, 0, nullptr);
-        context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3, 1, 0, 0);
+        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &set, 0, nullptr);
+        context.Resolved(&DeviceFunctions::cmdDraw, "vkCmdDraw")(commands, 3, 1, 0, 0);
         context.Resolved(&DeviceFunctions::cmdEndRenderPass, "vkCmdEndRenderPass")(commands);
     });
 }

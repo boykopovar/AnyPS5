@@ -141,13 +141,29 @@ struct DeviceFunctions {
     PFN_vkUpdateDescriptorSets updateDescriptorSets = nullptr;
     PFN_vkAllocateDescriptorSets allocateDescriptorSets = nullptr;
     PFN_vkGetFenceStatus getFenceStatus = nullptr;
+    PFN_vkCreateBuffer createBuffer = nullptr;
+    PFN_vkDestroyBuffer destroyBuffer = nullptr;
+    PFN_vkGetBufferMemoryRequirements getBufferMemoryRequirements = nullptr;
+    PFN_vkBindBufferMemory bindBufferMemory = nullptr;
+    PFN_vkAllocateMemory allocateMemory = nullptr;
+    PFN_vkFreeMemory freeMemory = nullptr;
+    PFN_vkMapMemory mapMemory = nullptr;
+    PFN_vkUnmapMemory unmapMemory = nullptr;
+    PFN_vkCreateImageView createImageView = nullptr;
+    PFN_vkDestroyImageView destroyImageView = nullptr;
+    PFN_vkResetDescriptorPool resetDescriptorPool = nullptr;
+    PFN_vkWaitForFences waitForFences = nullptr;
+    PFN_vkResetFences resetFences = nullptr;
+    PFN_vkQueueSubmit queueSubmit = nullptr;
+    PFN_vkBeginCommandBuffer beginCommandBuffer = nullptr;
+    PFN_vkEndCommandBuffer endCommandBuffer = nullptr;
+    PFN_vkResetCommandBuffer resetCommandBuffer = nullptr;
+    PFN_vkCreateFramebuffer createFramebuffer = nullptr;
+    PFN_vkDestroyFramebuffer destroyFramebuffer = nullptr;
 };
 
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
-inline std::uint64_t& DeviceProcLookups() {
-    thread_local std::uint64_t count = 0;
-    return count;
-}
+std::uint64_t& DeviceProcLookups();
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 

@@ -1153,21 +1153,21 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores) : context(co
     // Idempotent: the same hook for every recorder (the deferred lists are per thread, not per recorder).
     GuestMemory::SetGpuUnlockHook(&ReleaseDeferredKeeps);
     if (ProcTable() && context.deviceProc != nullptr) {
-        getFenceStatus = context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus");
-        resetFences = context.Function<PFN_vkResetFences>("vkResetFences");
-        waitForFences = context.Function<PFN_vkWaitForFences>("vkWaitForFences");
-        cmdUpdateBuffer = context.Function<PFN_vkCmdUpdateBuffer>("vkCmdUpdateBuffer");
-        beginCommandBuffer = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer");
-        endCommandBuffer = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer");
-        queueSubmit = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit");
-        cmdPipelineBarrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
+        getFenceStatus = context.Resolved(&DeviceFunctions::getFenceStatus, "vkGetFenceStatus");
+        resetFences = context.Resolved(&DeviceFunctions::resetFences, "vkResetFences");
+        waitForFences = context.Resolved(&DeviceFunctions::waitForFences, "vkWaitForFences");
+        cmdUpdateBuffer = context.Resolved(&DeviceFunctions::cmdUpdateBuffer, "vkCmdUpdateBuffer");
+        beginCommandBuffer = context.Resolved(&DeviceFunctions::beginCommandBuffer, "vkBeginCommandBuffer");
+        endCommandBuffer = context.Resolved(&DeviceFunctions::endCommandBuffer, "vkEndCommandBuffer");
+        queueSubmit = context.Resolved(&DeviceFunctions::queueSubmit, "vkQueueSubmit");
+        cmdPipelineBarrier = context.Resolved(&DeviceFunctions::cmdPipelineBarrier, "vkCmdPipelineBarrier");
         cmdBeginQuery = context.Function<PFN_vkCmdBeginQuery>("vkCmdBeginQuery");
         cmdEndQuery = context.Function<PFN_vkCmdEndQuery>("vkCmdEndQuery");
         cmdResetQueryPool = context.Function<PFN_vkCmdResetQueryPool>("vkCmdResetQueryPool");
         cmdCopyQueryPoolResults = context.Function<PFN_vkCmdCopyQueryPoolResults>("vkCmdCopyQueryPoolResults");
-        cmdBindPipeline = context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline");
-        cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
-        cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
+        cmdBindPipeline = context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline");
+        cmdPushConstants = context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants");
+        cmdDispatch = context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch");
     }
     if (!timelineSemaphores) return;
     // The timeline starts at 0 and every Submit signals its serial (1, 2, ...): a value that only
@@ -4030,7 +4030,7 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
     std::chrono::steady_clock::time_point targetSubmittedAt{};
     std::map<std::uint32_t, std::uint64_t> aheadByQueue;
     if (profile || trace) {
-        const auto status = context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus");
+        const auto status = context.Resolved(&DeviceFunctions::getFenceStatus, "vkGetFenceStatus");
         for (const auto& batch : inFlight) {
             if (batch->serial > targetSerial) break;
             ++batchesToTarget;
@@ -4169,7 +4169,7 @@ void Recorder::finish(std::unique_ptr<Batch> batch, bool wait, int source, bool 
         const auto waitStart = std::chrono::steady_clock::now();
         // A fence still unsignaled here makes this a real GPU wait under the mutex (finish runs
         // under it): the [lock] line's 'locked GPU waits'.
-        const bool signaledAtStart = !profile || context.Function<PFN_vkGetFenceStatus>("vkGetFenceStatus")(context.device, batch->fence) == VK_SUCCESS;
+        const bool signaledAtStart = !profile || context.Resolved(&DeviceFunctions::getFenceStatus, "vkGetFenceStatus")(context.device, batch->fence) == VK_SUCCESS;
         struct Report {
             bool enabled;
             int source;

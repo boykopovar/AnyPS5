@@ -401,8 +401,8 @@ void releaseSettleBatches(VkDevice device, ImportSettle& settle) {
 #endif
 
 void destroyImport(const Context& context, const HostImport& entry) {
-    context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, entry.buffer, nullptr);
-    context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, entry.memory, nullptr);
+    context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, entry.buffer, nullptr);
+    context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, entry.memory, nullptr);
 #ifdef _WIN32
     GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
 #endif
@@ -531,13 +531,13 @@ VkResult createImportBuffer(const Context& context, VkExternalMemoryHandleTypeFl
     info.size = size;
     info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    return context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, buffer);
+    return context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, buffer);
 }
 
 const char* bindImport(const Context& context, HostImport& entry, VkExternalMemoryHandleTypeFlagBits handleType, const void* import, std::uint32_t importTypes, bool& allocated, VkResult& failure) {
     const auto failed = [&](const char* step, VkResult result) -> const char* {
-        if (entry.buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, entry.buffer, nullptr);
-        if (allocated && entry.memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, entry.memory, nullptr);
+        if (entry.buffer) context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, entry.buffer, nullptr);
+        if (allocated && entry.memory) context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, entry.memory, nullptr);
         entry.buffer = VK_NULL_HANDLE;
         entry.memory = VK_NULL_HANDLE;
         failure = result;
@@ -555,20 +555,20 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     if (handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) shareDmaBufImport(context, info, families, false);
 #endif
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) return failed("vkCreateBuffer", result);
+    if (const auto result = context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) return failed("vkCreateBuffer", result);
     entry.buffer = buffer;
     VkMemoryRequirements requirements{};
-    context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, entry.buffer, &requirements);
+    context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, entry.buffer, &requirements);
     const auto types = requirements.memoryTypeBits & importTypes;
     if (types == 0) return failed("memory type selection", VK_ERROR_FORMAT_NOT_SUPPORTED);
     const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, import, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     allocation.allocationSize = entry.bytes;
     allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(types));
-    if (const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &entry.memory); result != VK_SUCCESS) return failed("vkAllocateMemory", result);
+    if (const auto result = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &entry.memory); result != VK_SUCCESS) return failed("vkAllocateMemory", result);
     allocated = true;
     entry.memoryType = allocation.memoryTypeIndex;
-    if (const auto result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, entry.buffer, entry.memory, 0); result != VK_SUCCESS) return failed("vkBindBufferMemory", result);
+    if (const auto result = context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, entry.buffer, entry.memory, 0); result != VK_SUCCESS) return failed("vkBindBufferMemory", result);
     const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, entry.buffer};
     entry.address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
     if (entry.address == 0) return failed("vkGetBufferDeviceAddressKHR", VK_ERROR_UNKNOWN);
@@ -713,14 +713,14 @@ std::shared_ptr<ImportChunk> importChunk(const Context& context, int file, std::
     allocation.allocationSize = ImportChunkBytes;
     allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(types));
     auto chunk = std::make_shared<ImportChunk>();
-    if (const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &chunk->memory); result != VK_SUCCESS) {
+    if (const auto result = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &chunk->memory); result != VK_SUCCESS) {
         close(buffer);
         failure = result;
         step = "vkAllocateMemory";
         return nullptr;
     }
     chunk->device = context.device;
-    chunk->freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
+    chunk->freeMemory = context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory");
     chunk->memoryType = allocation.memoryTypeIndex;
     for (auto it = chunks.chunks.begin(); it != chunks.chunks.end();) it = it->second.expired() ? chunks.chunks.erase(it) : std::next(it);
     chunks.chunks[key] = chunk;
@@ -739,13 +739,13 @@ const char* createChunkedDmaBufImport(const Context& context, HostImport& entry,
     ImportFamilies families;
     shareDmaBufImport(context, info, families, false);
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) {
+    if (const auto result = context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) {
         failure = result;
         return "vkCreateBuffer";
     }
-    const auto destroy = [&] { context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr); };
+    const auto destroy = [&] { context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr); };
     VkMemoryRequirements requirements{};
-    context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+    context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
     if (requirements.alignment == 0 || within % requirements.alignment != 0 || within + requirements.size > ImportChunkBytes) {
         destroy();
         fits = false;
@@ -762,7 +762,7 @@ const char* createChunkedDmaBufImport(const Context& context, HostImport& entry,
         fits = false;
         return nullptr;
     }
-    if (const auto result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, chunk->memory, within); result != VK_SUCCESS) {
+    if (const auto result = context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, buffer, chunk->memory, within); result != VK_SUCCESS) {
         destroy();
         failure = result;
         return "vkBindBufferMemory";
@@ -793,13 +793,13 @@ VkMemoryRequirements dmaBufBufferRequirements(const Context& context, const Host
     ImportFamilies families;
     shareDmaBufImport(context, info, families, (flags & VK_BUFFER_CREATE_SPARSE_BINDING_BIT) != 0);
     VkBuffer buffer = VK_NULL_HANDLE;
-    if (const auto result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) throwSparseImport(entry, "vkCreateBuffer", result);
+    if (const auto result = context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &buffer); result != VK_SUCCESS) throwSparseImport(entry, "vkCreateBuffer", result);
     VkMemoryRequirements requirements{};
-    context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+    context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
     if (kept != nullptr) {
         *kept = buffer;
     } else {
-        context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
     }
     return requirements;
 }
@@ -818,11 +818,11 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
     const bool chosen = alignment != 0 && offset % alignment == 0 && ImportChunkBytes % alignment == 0 && (chunkTypes & ~requirements.memoryTypeBits) == 0 && (requirements.memoryTypeBits & chunkTypes) != 0 &&
         (offset + requirements.size + ImportChunkBytes - 1) / ImportChunkBytes * ImportChunkBytes <= static_cast<std::uint64_t>(backing.st_size);
     const auto fail = [&](const char* step, VkResult result) {
-        context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
         throwSparseImport(entry, step, result);
     };
     if (!chosen) {
-        context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+        context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, buffer, nullptr);
         return false;
     }
     auto chunks = std::make_shared<std::vector<std::shared_ptr<ImportChunk>>>();
@@ -854,7 +854,7 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
         std::unique_lock<std::mutex> queueLock;
         if (ownQueue) queueLock = std::unique_lock(*context.sparseQueueMutex);
         bound = context.Function<PFN_vkQueueBindSparse>("vkQueueBindSparse")(ownQueue ? context.sparseQueue : context.queue, 1, &bind, fence);
-        if (bound == VK_SUCCESS) waited = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, UINT64_MAX);
+        if (bound == VK_SUCCESS) waited = context.Resolved(&DeviceFunctions::waitForFences, "vkWaitForFences")(context.device, 1, &fence, VK_TRUE, UINT64_MAX);
     }
     context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     if (bound != VK_SUCCESS) fail("vkQueueBindSparse", bound);
@@ -938,10 +938,10 @@ std::atomic<bool> deferredSettles{std::getenv("APS5_NO_DEFERRED_SETTLES") == nul
 ImportSettle& settleFor(const Context& context, HostImports& state) {
     auto& settle = state.settles[context.device];
     settle.destroyFence = context.Function<PFN_vkDestroyFence>("vkDestroyFence");
-    settle.settleDestroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
-    settle.settleFreeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
+    settle.settleDestroyBuffer = context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer");
+    settle.settleFreeMemory = context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory");
 #ifdef _WIN32
-    settle.waitForFences = context.Function<PFN_vkWaitForFences>("vkWaitForFences");
+    settle.waitForFences = context.Resolved(&DeviceFunctions::waitForFences, "vkWaitForFences");
 #endif
     return settle;
 }
@@ -955,18 +955,18 @@ const char* settleImport(const Context& context, HostImports& state, const HostI
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = 256;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        if ((result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &settle.settleTarget)) != VK_SUCCESS) {
+        if ((result = context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &settle.settleTarget)) != VK_SUCCESS) {
             settle.settleTarget = VK_NULL_HANDLE;
             return "vkCreateBuffer (settle)";
         }
         VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, settle.settleTarget, &requirements);
+        context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, settle.settleTarget, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(requirements.memoryTypeBits));
-        if ((result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &settle.settleMemory)) != VK_SUCCESS || (result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, settle.settleTarget, settle.settleMemory, 0)) != VK_SUCCESS) {
-            context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, settle.settleTarget, nullptr);
-            if (settle.settleMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, settle.settleMemory, nullptr);
+        if ((result = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &settle.settleMemory)) != VK_SUCCESS || (result = context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, settle.settleTarget, settle.settleMemory, 0)) != VK_SUCCESS) {
+            context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, settle.settleTarget, nullptr);
+            if (settle.settleMemory != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, settle.settleMemory, nullptr);
             settle.settleTarget = VK_NULL_HANDLE;
             settle.settleMemory = VK_NULL_HANDLE;
             return "the settle target";
@@ -996,32 +996,32 @@ const char* settleImport(const Context& context, HostImports& state, const HostI
             VkBufferCreateInfo aliasInfo{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, &external};
             aliasInfo.size = std::min<VkDeviceSize>(entry.bytes, 65536);
             aliasInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-            if ((result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &aliasInfo, nullptr, &alias)) != VK_SUCCESS) return "vkCreateBuffer (settle alias)";
-            if ((result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, alias, entry.memory, 0)) != VK_SUCCESS) return "vkBindBufferMemory (settle alias)";
+            if ((result = context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &aliasInfo, nullptr, &alias)) != VK_SUCCESS) return "vkCreateBuffer (settle alias)";
+            if ((result = context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, alias, entry.memory, 0)) != VK_SUCCESS) return "vkBindBufferMemory (settle alias)";
             source = alias;
         }
 #endif
-        if ((result = context.Function<PFN_vkResetFences>("vkResetFences")(context.device, 1, &settle.settleFence)) != VK_SUCCESS) return "vkResetFences (settle)";
-        if ((result = context.Function<PFN_vkResetCommandBuffer>("vkResetCommandBuffer")(settle.settleCommands, 0)) != VK_SUCCESS) return "vkResetCommandBuffer (settle)";
+        if ((result = context.Resolved(&DeviceFunctions::resetFences, "vkResetFences")(context.device, 1, &settle.settleFence)) != VK_SUCCESS) return "vkResetFences (settle)";
+        if ((result = context.Resolved(&DeviceFunctions::resetCommandBuffer, "vkResetCommandBuffer")(settle.settleCommands, 0)) != VK_SUCCESS) return "vkResetCommandBuffer (settle)";
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        if ((result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(settle.settleCommands, &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer (settle)";
+        if ((result = context.Resolved(&DeviceFunctions::beginCommandBuffer, "vkBeginCommandBuffer")(settle.settleCommands, &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer (settle)";
         const VkBufferCopy region{0, 0, 4};
-        context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(settle.settleCommands, source, settle.settleTarget, 1, &region);
-        if ((result = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(settle.settleCommands)) != VK_SUCCESS) return "vkEndCommandBuffer (settle)";
+        context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(settle.settleCommands, source, settle.settleTarget, 1, &region);
+        if ((result = context.Resolved(&DeviceFunctions::endCommandBuffer, "vkEndCommandBuffer")(settle.settleCommands)) != VK_SUCCESS) return "vkEndCommandBuffer (settle)";
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &settle.settleCommands;
-        if ((result = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.settleQueue, 1, &submit, settle.settleFence)) != VK_SUCCESS) return "vkQueueSubmit (settle)";
+        if ((result = context.Resolved(&DeviceFunctions::queueSubmit, "vkQueueSubmit")(context.settleQueue, 1, &submit, settle.settleFence)) != VK_SUCCESS) return "vkQueueSubmit (settle)";
 #ifdef _WIN32
         ++state.settlesWaited;
 #endif
-        if ((result = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &settle.settleFence, VK_TRUE, 10'000'000'000ull)) != VK_SUCCESS) return "vkWaitForFences (settle)";
+        if ((result = context.Resolved(&DeviceFunctions::waitForFences, "vkWaitForFences")(context.device, 1, &settle.settleFence, VK_TRUE, 10'000'000'000ull)) != VK_SUCCESS) return "vkWaitForFences (settle)";
         return nullptr;
     };
     const char* step = run();
     if (step != nullptr) context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.settleQueue);
-    if (alias != VK_NULL_HANDLE) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, alias, nullptr);
+    if (alias != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, alias, nullptr);
     if (step == nullptr) settledImports.fetch_add(1, std::memory_order_relaxed);
     return step;
 }
@@ -1032,18 +1032,18 @@ const char* prepareSettleBatch(const Context& context, ImportSettle& settle, Set
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = VkDeviceSize{settleBatchCount} * settleBatchCopies * 4u;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        if ((result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &settle.batchTarget)) != VK_SUCCESS) {
+        if ((result = context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &settle.batchTarget)) != VK_SUCCESS) {
             settle.batchTarget = VK_NULL_HANDLE;
             return "vkCreateBuffer (settle batch)";
         }
         VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, settle.batchTarget, &requirements);
+        context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, settle.batchTarget, &requirements);
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(requirements.memoryTypeBits));
-        if ((result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &settle.batchMemory)) != VK_SUCCESS || (result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, settle.batchTarget, settle.batchMemory, 0)) != VK_SUCCESS) {
-            context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, settle.batchTarget, nullptr);
-            if (settle.batchMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, settle.batchMemory, nullptr);
+        if ((result = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &settle.batchMemory)) != VK_SUCCESS || (result = context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, settle.batchTarget, settle.batchMemory, 0)) != VK_SUCCESS) {
+            context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, settle.batchTarget, nullptr);
+            if (settle.batchMemory != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, settle.batchMemory, nullptr);
             settle.batchTarget = VK_NULL_HANDLE;
             settle.batchMemory = VK_NULL_HANDLE;
             return "the settle batch target";
@@ -1085,7 +1085,7 @@ void submitSettleBatch(const Context& context, HostImports& state) {
     auto& batch = *free;
     std::unique_lock queueLock(*context.settleQueueMutex);
     VkResult result = VK_SUCCESS;
-    const auto destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
+    const auto destroyBuffer = context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer");
     const auto fail = [&](const char* step) {
         for (const auto alias : batch.aliases) destroyBuffer(context.device, alias, nullptr);
         batch.aliases.clear();
@@ -1095,11 +1095,11 @@ void submitSettleBatch(const Context& context, HostImports& state) {
         std::fprintf(stderr, "[gpu] settling host imports under %llu KiB without waiting failed at %s (%d); they stay compared\n", static_cast<unsigned long long>(settleFloorBytes >> 10u), step, static_cast<int>(result));
     };
     if (const char* step = prepareSettleBatch(context, deviceSettle, batch, result)) return fail(step);
-    if ((result = context.Function<PFN_vkResetFences>("vkResetFences")(context.device, 1, &batch.fence)) != VK_SUCCESS) return fail("vkResetFences (settle batch)");
-    if ((result = context.Function<PFN_vkResetCommandBuffer>("vkResetCommandBuffer")(batch.commands, 0)) != VK_SUCCESS) return fail("vkResetCommandBuffer (settle batch)");
+    if ((result = context.Resolved(&DeviceFunctions::resetFences, "vkResetFences")(context.device, 1, &batch.fence)) != VK_SUCCESS) return fail("vkResetFences (settle batch)");
+    if ((result = context.Resolved(&DeviceFunctions::resetCommandBuffer, "vkResetCommandBuffer")(batch.commands, 0)) != VK_SUCCESS) return fail("vkResetCommandBuffer (settle batch)");
     VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    if ((result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(batch.commands, &begin)) != VK_SUCCESS) return fail("vkBeginCommandBuffer (settle batch)");
+    if ((result = context.Resolved(&DeviceFunctions::beginCommandBuffer, "vkBeginCommandBuffer")(batch.commands, &begin)) != VK_SUCCESS) return fail("vkBeginCommandBuffer (settle batch)");
     const auto copy = context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer");
     RecordMemoryBarrier(context, batch.commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
     std::size_t consumed = 0;
@@ -1119,12 +1119,12 @@ void submitSettleBatch(const Context& context, HostImports& state) {
     }
     state.settleWanted.erase(state.settleWanted.begin(), state.settleWanted.begin() + static_cast<std::ptrdiff_t>(consumed));
     RecordMemoryBarrier(context, batch.commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_MEMORY_WRITE_BIT);
-    if ((result = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(batch.commands)) != VK_SUCCESS) return fail("vkEndCommandBuffer (settle batch)");
+    if ((result = context.Resolved(&DeviceFunctions::endCommandBuffer, "vkEndCommandBuffer")(batch.commands)) != VK_SUCCESS) return fail("vkEndCommandBuffer (settle batch)");
     if (batch.bases.empty()) return;
     VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &batch.commands;
-    if ((result = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.queue, 1, &submit, batch.fence)) != VK_SUCCESS) return fail("vkQueueSubmit (settle batch)");
+    if ((result = context.Resolved(&DeviceFunctions::queueSubmit, "vkQueueSubmit")(context.queue, 1, &submit, batch.fence)) != VK_SUCCESS) return fail("vkQueueSubmit (settle batch)");
     batch.busy = true;
     state.settlesSubmitted += batch.bases.size();
 }
@@ -1877,7 +1877,7 @@ std::uint64_t evictableBytes(const HostImports& state, std::uint64_t begin, std:
 
 struct ImportConstruction {
     ImportConstruction(const Context& context, std::uint64_t base, std::uint64_t bytes)
-        : device(context.device), destroyBuffer(context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")), freeMemory(context.Function<PFN_vkFreeMemory>("vkFreeMemory")), entry{base, bytes, VK_NULL_HANDLE, VK_NULL_HANDLE, 0} {}
+        : device(context.device), destroyBuffer(context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")), freeMemory(context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")), entry{base, bytes, VK_NULL_HANDLE, VK_NULL_HANDLE, 0} {}
     ImportConstruction(const ImportConstruction&) = delete;
     ImportConstruction& operator=(const ImportConstruction&) = delete;
     ~ImportConstruction() {
@@ -2336,16 +2336,16 @@ void refreshImports(const Context& context, HostImports& state, const GuestAlloc
         state.sparseRunJoins.clear();
         state.importedAtMap.clear();
         state.device = context.device;
-        state.destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
-        state.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
+        state.destroyBuffer = context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer");
+        state.freeMemory = context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory");
         state.refreshedRanges.clear();
         state.refreshedWindow = 0;
         state.pendingImports.clear();
         state.refreshedGeneration = 0;
         ++state.epoch;
     }
-    if (state.destroyBuffer == nullptr) state.destroyBuffer = context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer");
-    if (state.freeMemory == nullptr) state.freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
+    if (state.destroyBuffer == nullptr) state.destroyBuffer = context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer");
+    if (state.freeMemory == nullptr) state.freeMemory = context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory");
     const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
     if (generation == state.refreshedGeneration) return;
     state.refreshedGeneration = generation;
@@ -3806,39 +3806,39 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
         info.size = bytes;
         info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        if ((probe.result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &destination)) != VK_SUCCESS) return "vkCreateBuffer";
+        if ((probe.result = context.Resolved(&DeviceFunctions::createBuffer, "vkCreateBuffer")(context.device, &info, nullptr, &destination)) != VK_SUCCESS) return "vkCreateBuffer";
         VkMemoryRequirements requirements{};
-        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, destination, &requirements);
+        context.Resolved(&DeviceFunctions::getBufferMemoryRequirements, "vkGetBufferMemoryRequirements")(context.device, destination, &requirements);
         if (requirements.memoryTypeBits == 0) return "the destination memory type";
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(requirements.memoryTypeBits));
-        if ((probe.result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &destinationMemory)) != VK_SUCCESS) return "vkAllocateMemory";
-        if ((probe.result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, destination, destinationMemory, 0)) != VK_SUCCESS) return "vkBindBufferMemory";
+        if ((probe.result = context.Resolved(&DeviceFunctions::allocateMemory, "vkAllocateMemory")(context.device, &allocation, nullptr, &destinationMemory)) != VK_SUCCESS) return "vkAllocateMemory";
+        if ((probe.result = context.Resolved(&DeviceFunctions::bindBufferMemory, "vkBindBufferMemory")(context.device, destination, destinationMemory, 0)) != VK_SUCCESS) return "vkBindBufferMemory";
         VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         allocate.commandPool = context.pool;
         allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocate.commandBufferCount = 2;
         if ((probe.result = context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocate, commands)) != VK_SUCCESS) return "vkAllocateCommandBuffers";
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        if ((probe.result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands[0], &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer";
+        if ((probe.result = context.Resolved(&DeviceFunctions::beginCommandBuffer, "vkBeginCommandBuffer")(commands[0], &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer";
         const VkBufferCopy region{0, 0, bytes};
-        context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands[0], import.buffer, destination, 1, &region);
-        if ((probe.result = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(commands[0])) != VK_SUCCESS) return "vkEndCommandBuffer";
+        context.Resolved(&DeviceFunctions::cmdCopyBuffer, "vkCmdCopyBuffer")(commands[0], import.buffer, destination, 1, &region);
+        if ((probe.result = context.Resolved(&DeviceFunctions::endCommandBuffer, "vkEndCommandBuffer")(commands[0])) != VK_SUCCESS) return "vkEndCommandBuffer";
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        if ((probe.result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands[1], &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer";
-        context.Function<PFN_vkCmdFillBuffer>("vkCmdFillBuffer")(commands[1], import.buffer, 0, bytes, 0x02020202u);
-        if ((probe.result = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(commands[1])) != VK_SUCCESS) return "vkEndCommandBuffer";
+        if ((probe.result = context.Resolved(&DeviceFunctions::beginCommandBuffer, "vkBeginCommandBuffer")(commands[1], &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer";
+        context.Resolved(&DeviceFunctions::cmdFillBuffer, "vkCmdFillBuffer")(commands[1], import.buffer, 0, bytes, 0x02020202u);
+        if ((probe.result = context.Resolved(&DeviceFunctions::endCommandBuffer, "vkEndCommandBuffer")(commands[1])) != VK_SUCCESS) return "vkEndCommandBuffer";
         const VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         if ((probe.result = context.Function<PFN_vkCreateFence>("vkCreateFence")(context.device, &fenceInfo, nullptr, &fence)) != VK_SUCCESS) return "vkCreateFence";
         const auto execute = [&](VkCommandBuffer buffer) -> const char* {
-            if ((probe.result = context.Function<PFN_vkResetFences>("vkResetFences")(context.device, 1, &fence)) != VK_SUCCESS) return "vkResetFences";
+            if ((probe.result = context.Resolved(&DeviceFunctions::resetFences, "vkResetFences")(context.device, 1, &fence)) != VK_SUCCESS) return "vkResetFences";
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
             submit.commandBufferCount = 1;
             submit.pCommandBuffers = &buffer;
-            if ((probe.result = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.queue, 1, &submit, fence)) != VK_SUCCESS) return "vkQueueSubmit";
+            if ((probe.result = context.Resolved(&DeviceFunctions::queueSubmit, "vkQueueSubmit")(context.queue, 1, &submit, fence)) != VK_SUCCESS) return "vkQueueSubmit";
             submitted = true;
-            if ((probe.result = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, 10'000'000'000ull)) != VK_SUCCESS) return "vkWaitForFences";
+            if ((probe.result = context.Resolved(&DeviceFunctions::waitForFences, "vkWaitForFences")(context.device, 1, &fence, VK_TRUE, 10'000'000'000ull)) != VK_SUCCESS) return "vkWaitForFences";
             submitted = false;
             return nullptr;
         };
@@ -3856,8 +3856,8 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
     if (submitted) context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue);
     if (fence != VK_NULL_HANDLE) context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     if (commands[0] != VK_NULL_HANDLE) context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 2, commands);
-    if (destination != VK_NULL_HANDLE) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, destination, nullptr);
-    if (destinationMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, destinationMemory, nullptr);
+    if (destination != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::destroyBuffer, "vkDestroyBuffer")(context.device, destination, nullptr);
+    if (destinationMemory != VK_NULL_HANDLE) context.Resolved(&DeviceFunctions::freeMemory, "vkFreeMemory")(context.device, destinationMemory, nullptr);
     if (import.buffer != VK_NULL_HANDLE) destroyImport(context, import);
 }
 
