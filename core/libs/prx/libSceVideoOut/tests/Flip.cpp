@@ -486,7 +486,7 @@ void testControls() {
     }
     check(sceVideoOutDeleteOutputModeEvent(queue, handle) == 0, "duplicate output mode unsubscription failed");
     expectFailure([&] { sceVideoOutDeleteOutputModeEvent(0, handle); });
-    expectFailure([&] { sceVideoOutDeleteOutputModeEvent(queue, -1); });
+    check(sceVideoOutDeleteOutputModeEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "output mode unsubscription on an invalid handle was accepted");
     check(sceVideoOutAddVblankEvent(queue, handle, nullptr) == 0 && sceVideoOutAddVblankEvent(queue, handle, &settings) == 0, "vblank subscription failed");
     {
         std::lock_guard lock(cfg->mutex);
@@ -538,7 +538,7 @@ void testControls() {
     }
     check(sceVideoOutDeleteVrrActiveStatusEvent(queue, handle) == 0, "duplicate VRR status unsubscription failed");
     expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(0, handle); });
-    expectFailure([&] { sceVideoOutDeleteVrrActiveStatusEvent(queue, -1); });
+    check(sceVideoOutDeleteVrrActiveStatusEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "VRR status unsubscription on an invalid handle was accepted");
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 1, 0); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0, 1); });
     expectFailure([&] { sceVideoOutVrrPegToFixedRate(handle, 0x100000000ull, 0); });
@@ -990,6 +990,8 @@ void testUnopenedEventRegistration() {
     check(sceKernelCreateEqueue(&eq, "unopened") == 0, "the event queue was not created");
     check(sceVideoOutAddFlipEvent(eq, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on an unopened port was accepted");
     check(sceVideoOutAddVblankEvent(eq, 1, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event on an unopened port was accepted");
+    check(sceVideoOutDeleteFlipEvent(eq, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event deletion on an unopened port was accepted");
+    check(sceVideoOutDeleteVblankEvent(eq, 1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event deletion on an unopened port was accepted");
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == 0, "flip event on an open port was refused");
     check(sceVideoOutAddVblankEvent(eq, handle, nullptr) == 0, "vblank event on an open port was refused");
@@ -997,6 +999,8 @@ void testUnopenedEventRegistration() {
     check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "registered vblank event was not deleted");
     sceVideoOutClose(handle);
     check(sceVideoOutAddFlipEvent(eq, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event on a closed port was accepted");
+    check(sceVideoOutDeleteFlipEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event deletion on a closed port was accepted");
+    check(sceVideoOutDeleteVblankEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "vblank event deletion on a closed port was accepted");
     check(sceKernelDeleteEqueue(eq) == 0, "the event queue was not deleted");
     LibcRunShutdown_nid_postfix();
 }
