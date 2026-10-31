@@ -76,6 +76,18 @@ def change_tag(image, tag, value=None, replacement=None):
     raise AssertionError(f"Missing dynamic tag {tag:#x}")
 
 
+def duplicate_tls_segment(image):
+    image = bytearray(image)
+    phnum, = struct.unpack_from("<H", image, 56)
+    insert_at = 64 + phnum * 56
+    if insert_at + 112 > len(image):
+        image.extend(bytes(insert_at + 112 - len(image)))
+    struct.pack_into("<IIQQQQQQ", image, insert_at, 7, 4, 0, 0, 0, 0, 8, 8)
+    image[insert_at + 56:insert_at + 112] = image[insert_at:insert_at + 56]
+    struct.pack_into("<H", image, 56, phnum + 2)
+    return image
+
+
 def unsized_lifecycle(rela, sce, initial):
     image = module(rela, sce=sce, lifecycle=True, initial=initial)
     return change_tag(change_tag(image, 27, replacement=0x61000001), 28, replacement=0x61000001)
@@ -138,6 +150,7 @@ def invalid_cases(sce):
     ambiguous = module(plt=[NOOP], sce=sce)
     yield "ambiguous-plt-format", change_tag(ambiguous, 0x61000027 if sce else 3, value=7,
                                             replacement=20 if sce else 0x6100002b), "Missing or ambiguous dynamic tag"
+    yield "duplicate-tls-segment", duplicate_tls_segment(module([NOOP], sce=sce)), "Multiple ELF TLS segments"
 
 
 def main():
