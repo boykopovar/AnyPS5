@@ -161,7 +161,7 @@ struct PthreadPrivate {
     std::string name;
     std::atomic<bool> _finished;
     void* _retval;
-    bool _detached;
+    std::atomic<bool> _detached;
     bool _adopted;
     Pthread* _handleStorage;
     std::atomic<bool> _joined;
