@@ -410,6 +410,8 @@ static void CheckFftQuerySize() {
     Require(sceNgs2FftQuerySize(7, 0, &size) == -1);
     Require(sceNgs2FftQuerySize(13, 0, &size) == -1);
     Require(sceNgs2FftQuerySize(8, 0, nullptr) == -1);
+    Require(sceNgs2FftInit() == 0);
+    Require(sceNgs2FftProcess() == 0);
 }
 
 static void CheckEnumeration() {
