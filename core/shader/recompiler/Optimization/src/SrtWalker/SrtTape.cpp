@@ -639,7 +639,11 @@ bool SrtTape::Run(const IrResourcePlan& plan, const SrtRuntime& runtime, std::ve
             for (const auto image : block.images) active[imageBase + image] = 1u;
             for (const auto slot : block.flatSlots) activeFlat[slot] = 1u;
             std::uint64_t condition = 0;
-            const bool cleanEvaluable = block.condition != nullptr && runtime.readSpecializationMemory != nullptr && conditionRoots[index] != NoNode && evaluate(frame, conditionRoots[index], condition);
+            bool cleanEvaluable = false;
+            {
+                const SrtBranchScope branch;
+                cleanEvaluable = block.condition != nullptr && runtime.readSpecializationMemory != nullptr && conditionRoots[index] != NoNode && evaluate(frame, conditionRoots[index], condition);
+            }
             if (frame.nullRoot) return refuse();
             if (cleanEvaluable) {
                 if (block.successors.size() < 2) return refuse();

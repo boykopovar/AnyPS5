@@ -104,7 +104,12 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
             std::uint32_t condition = 0;
             TNode conditionValue{};
             const auto nullRootsBefore = conditionNullRoots;
-            const bool cleanEvaluable = TNode::Condition(program, index, conditionValue) && runtime.readSpecializationMemory != nullptr && cleanEvaluator.Evaluate(conditionValue, condition) && conditionNullRoots == nullRootsBefore;
+            bool conditionEvaluated = false;
+            {
+                const SrtBranchScope branch;
+                conditionEvaluated = TNode::Condition(program, index, conditionValue) && runtime.readSpecializationMemory != nullptr && cleanEvaluator.Evaluate(conditionValue, condition);
+            }
+            const bool cleanEvaluable = conditionEvaluated && conditionNullRoots == nullRootsBefore;
             if (cleanEvaluable) {
                 pending.push_back(block.successors[condition != 0u ? 0u : 1u]);
             } else {

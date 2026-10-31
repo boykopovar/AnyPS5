@@ -90,6 +90,7 @@ public:
 
 private:
     std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture> captureWaitingOnFailure(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle, const ShaderRecompiler::PreparedShaderInvocation* invocation);
     static constexpr std::size_t PageBytes = 4096;
     static constexpr std::size_t PageWords = PageBytes / sizeof(std::uint32_t);
 
@@ -169,6 +170,8 @@ private:
     std::size_t descriptorSpanBytes = 0;
     std::uint64_t rawInvalidations = 0;
     std::uint32_t forceSync = 0;
+    std::uint64_t branchReadsRefused = 0;
+    bool waitBranches = false;
 };
 
 // The positions, among a dispatch-cache variant's stored words, of the pure flat-SRT leaves a

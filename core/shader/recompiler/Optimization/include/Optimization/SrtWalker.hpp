@@ -112,6 +112,16 @@ enum class RuntimeValueType {
     Integer
 };
 
+bool& SrtEvaluatingBranch();
+
+struct SrtBranchScope {
+    bool saved;
+    SrtBranchScope() : saved(SrtEvaluatingBranch()) { SrtEvaluatingBranch() = true; }
+    ~SrtBranchScope() { SrtEvaluatingBranch() = saved; }
+    SrtBranchScope(const SrtBranchScope&) = delete;
+    SrtBranchScope& operator=(const SrtBranchScope&) = delete;
+};
+
 class SrtWalker {
 public:
     void BuildPlan(IrProgram& program) const;

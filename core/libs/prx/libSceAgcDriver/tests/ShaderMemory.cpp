@@ -865,6 +865,98 @@ void verifyPlanRetention() {
     require(copiedWalk.active == wholeWalk.active && copiedWalk.results == wholeWalk.results && copiedWalk.flat == wholeWalk.flat, "plan retention: the plan's walk differs from the program's");
 }
 
+std::uint32_t branchReadsRefused = 0;
+
+bool readFiveUnlessBranch(void*, std::uint64_t, std::uint32_t* value) {
+    if (ShaderRecompiler::SrtEvaluatingBranch()) {
+        ++branchReadsRefused;
+        return false;
+    }
+    *value = 5u;
+    return true;
+}
+
+void verifyPendingBranchLeftUnpruned() {
+    using namespace ShaderRecompiler;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t ids = 0;
+    const auto make = [&](IrOpcode opcode, IrType type) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, ids++));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t value) -> IrValue& {
+        auto& immediate = make(IrOpcode::Void, IrType::U32);
+        immediate.SetImmediateU32(value);
+        return immediate;
+    };
+    const auto userData = [&](std::uint32_t index) -> IrValue& {
+        auto& reg = make(IrOpcode::Void, IrType::ScalarReg);
+        reg.SetRegister({RegisterBank::Scalar, index});
+        auto& read = make(IrOpcode::GetUserData, IrType::U32);
+        read.AddArgument(&reg);
+        return read;
+    };
+    const auto binary = [&](IrOpcode opcode, IrType type, IrValue& left, IrValue& right) -> IrValue& {
+        auto& value = make(opcode, type);
+        value.AddArgument(&left);
+        value.AddArgument(&right);
+        return value;
+    };
+    constexpr std::uint32_t Chain = 64;
+    IrValue* address = &userData(4);
+    for (std::uint32_t step = 0; step < Chain; ++step) address = &binary(IrOpcode::IAdd32, IrType::U32, *address, constant(1));
+    auto& load = make(IrOpcode::LoadBufferU32, IrType::U32);
+    load.AddArgument(address);
+    auto& low = binary(IrOpcode::CompositeExtractU32x2, IrType::U32, binary(IrOpcode::CompositeConstructU32x2, IrType::U32x2, userData(1), load), constant(0));
+    auto& mask = binary(IrOpcode::IEqual32, IrType::Bool, userData(5), constant(0));
+    auto& choice = make(IrOpcode::SelectU32, IrType::U32);
+    choice.AddArgument(&mask);
+    choice.AddArgument(&userData(6));
+    choice.AddArgument(&load);
+    auto& offset = binary(IrOpcode::ReadFirstLane, IrType::U32, choice, mask);
+    auto& read = binary(IrOpcode::LoadAddressU32, IrType::U32, binary(IrOpcode::CompositeConstructU64, IrType::U64, userData(2), userData(3)), offset);
+    read.SetFlags(MemoryFlags{0, 0});
+    IrProgram program;
+    auto& resources = program.Resources();
+    resources.srtPlanComplete = true;
+    resources.resourceTrackingComplete = true;
+    MemoryInfo memory;
+    memory.kind = ResourceKind::ScalarAddress;
+    resources.memoryInfo.push_back(memory);
+    for (std::uint32_t source = 0; source < 2u; ++source) {
+        DescriptorSource descriptor;
+        descriptor.dwordCount = 4;
+        for (std::uint32_t dword = 0; dword < 4u; ++dword) descriptor.dwords[dword] = &userData(10u + source * 4u + dword);
+        resources.descriptorSources.push_back(descriptor);
+        BufferResource buffer;
+        buffer.source = source;
+        resources.info.buffers.push_back(buffer);
+    }
+    resources.controlFlow.push_back({&binary(IrOpcode::IEqual32, IrType::Bool, low, constant(7)), {1, 2}, {0}, {}});
+    resources.controlFlow.push_back({&binary(IrOpcode::IEqual32, IrType::Bool, read, constant(5)), {3, 4}, {}, {}});
+    resources.controlFlow.push_back({nullptr, {}, {}, {}});
+    resources.controlFlow.push_back({nullptr, {}, {}, {}});
+    resources.controlFlow.push_back({nullptr, {}, {1}, {}});
+    const auto plan = ResourceMaterializer{}.ExtractPlan(program);
+    std::array<std::uint32_t, 18> userWords{};
+    userWords[1] = 7u;
+    userWords[2] = 0x1000u;
+    userWords[6] = 8u;
+    for (std::uint32_t word = 10; word < userWords.size(); ++word) userWords[word] = 0x100u + word;
+    SrtRuntime runtime{userWords};
+    runtime.readMemory = readFiveUnlessBranch;
+    runtime.readSpecializationMemory = readFiveUnlessBranch;
+    branchReadsRefused = 0;
+    const auto copiedWalk = walkPlan(plan, plan.materializationSources, plan.cleanFlatSlots, runtime);
+    require(branchReadsRefused != 0u && !SrtEvaluatingBranch(), "pending branch: the plan's walk read its branch condition outside a branch scope or left the scope open");
+    branchReadsRefused = 0;
+    const std::array<std::uint32_t, 2> sources{0u, 1u};
+    const auto wholeWalk = walkPlan(program.Resources(), sources, {}, runtime);
+    require(branchReadsRefused != 0u && !SrtEvaluatingBranch(), "pending branch: the program's walk read its branch condition outside a branch scope or left the scope open");
+    require(wholeWalk.active == std::vector<std::uint8_t>{1u, 1u}, "pending branch: a condition whose word could not be read pruned a successor");
+    require(copiedWalk.active == wholeWalk.active && copiedWalk.results == wholeWalk.results && copiedWalk.flat == wholeWalk.flat, "pending branch: the plan's walk differs from the program's");
+}
+
 void verifyPlanRetentionChains() {
     using namespace ShaderRecompiler;
     std::vector<std::size_t> kept;
@@ -1974,6 +2066,89 @@ void verifyExecGuardedDescriptorSources() {
         const auto capture = memory.Capture(request);
         require(capture->snapshot.images.size() == 1u && std::equal(valid.begin(), valid.end(), capture->snapshot.images[0].dwords.begin()), "exec guarded sources: the T# behind a branch the lanes may take was not read");
     }
+}
+
+void verifyPendingBranchCapture() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture texture;
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+    const std::array<std::uint32_t, 8> valid{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+    const std::array<std::uint32_t, 8> invalid{0x12345678u, 0xffffffffu, 0xffffffffu, 2u << 28u, 0u, 0u, 0u, 0u};
+    const std::array<std::uint32_t, 4> sampler{0u, 0u, 0u, 0u};
+    static std::array<std::uint32_t, 4> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    alignas(4096) static std::array<std::uint32_t, 1024> srt{};
+    alignas(4096) static std::array<std::uint32_t, 1024> flags{};
+    const auto flagsAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(flags.data()));
+    const std::array<std::uint32_t, 4> flagsV{static_cast<std::uint32_t>(flagsAddress), static_cast<std::uint32_t>((flagsAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    static std::uint64_t conditionAddress = 0;
+    static std::uint64_t waits = 0;
+    const auto fill = [&](const std::array<std::uint32_t, 8>& image, std::uint32_t mode) {
+        srt.fill(0u);
+        std::copy(image.begin(), image.end(), srt.begin());
+        std::copy(sampler.begin(), sampler.end(), srt.begin() + 8);
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+        std::copy(flagsV.begin(), flagsV.end(), srt.begin() + 24);
+        flags[0] = mode;
+    };
+    const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    conditionAddress = flagsAddress;
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    const std::vector<std::uint32_t> code{0xf4080700u, 0xfa000060u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf420040eu, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850006u, 0xf40c0200u, 0xfa000000u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    request.shader = {ShaderStage::Compute, 0x2a000u, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+
+    struct FlushReset {
+        ~FlushReset() { AgcDriver::GuestMemory::SetFlushHook(nullptr); }
+    } flushReset;
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t address, std::size_t bytes) {
+        if (address < conditionAddress + sizeof(std::uint32_t) && conditionAddress < address + bytes) ++waits;
+    });
+    const auto pending = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte>) -> AgcDriver::ShaderMemory::PendingWrite {
+        using Pending = AgcDriver::ShaderMemory::PendingWrite;
+        return address < conditionAddress + sizeof(std::uint32_t) && conditionAddress < address + bytes ? Pending::Sync : Pending::None;
+    };
+    const auto captured = [&](const std::array<std::uint32_t, 8>& image, std::uint32_t mode) {
+        fill(image, mode);
+        waits = 0;
+        AgcDriver::ShaderMemory memory({}, pending);
+        return memory.Capture(request);
+    };
+    const auto holds = [](const std::shared_ptr<const ResourceCapture>& capture, const std::array<std::uint32_t, 8>& image) {
+        return capture->snapshot.images.size() == 1u && std::equal(image.begin(), image.end(), capture->snapshot.images[0].dwords.begin());
+    };
+    const std::array<std::uint32_t, 8> null{};
+
+    const auto unpruned = captured(valid, 0u);
+    require(waits == 0u, ("pending branch capture: the branch condition over a pending GPU write waited " + std::to_string(waits) + " times").c_str());
+    require(holds(unpruned, valid), "pending branch capture: the branch over a pending GPU write was pruned instead of keeping both successors");
+    const auto redone = captured(invalid, 0u);
+    require(waits != 0u, "pending branch capture: a capture that failed behind an unpruned branch was not redone waiting for the condition");
+    require(holds(redone, null), "pending branch capture: the capture redone waiting did not prune the branch its condition skips");
+    fill(invalid, 1u);
+    {
+        AgcDriver::ShaderMemory memory({}, pending);
+        expectFailure([&] { static_cast<void>(memory.Capture(request)); }, "runtime image descriptor is invalid", "pending branch capture: an invalid T# behind a taken branch was accepted after the capture was redone waiting");
+    }
+    std::cout << "pending branch capture passed\n";
 }
 
 void verifyGuardedDescriptorSources() {
@@ -9709,9 +9884,11 @@ int main(int argc, char** argv) {
         verifyPureFlatSlots();
         verifyPlanConditionPruning();
         verifyPlanRetention();
+        verifyPendingBranchLeftUnpruned();
         verifyPlanRetentionChains();
         verifyPlanCopyAnswers();
         verifyGuardedDescriptorSources();
+        verifyPendingBranchCapture();
         verifyLaneMaskGuardedDescriptorSources();
         verifyExecGuardedDescriptorSources();
         verifySrtTape();
