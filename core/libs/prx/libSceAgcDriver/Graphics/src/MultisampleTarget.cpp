@@ -796,6 +796,11 @@ std::atomic<bool>& anyGuarded() {
     return any;
 }
 
+std::atomic<std::uint64_t>& guardedGeneration() {
+    static std::atomic<std::uint64_t> generation{0};
+    return generation;
+}
+
 void guardReads(std::uint64_t address, std::size_t bytes) {
     RequireNoMultisampleTarget(address, bytes, "a CPU read");
 }
@@ -834,13 +839,18 @@ void retireUnmapped(std::uintptr_t address, std::size_t bytes) {
     forgetSingleClears(address, bytes);
     RetireUnmappedDepth_nid_no_patch(address, bytes);
     std::unique_lock lock(guardedMutex());
-    std::erase_if(guarded(), [&](const auto& range) {
-        if (range.metadataValid && address < range.address + range.bytes && range.address < address + bytes) range.metadataValid->store(false, std::memory_order_release);
+    bool metadataChanged = false;
+    const auto invalidated = std::erase_if(guarded(), [&](const auto& range) {
+        if (range.metadataValid && address < range.address + range.bytes && range.address < address + bytes) {
+            range.metadataValid->store(false, std::memory_order_release);
+            metadataChanged = true;
+        }
         if (range.address < address || range.address - address > bytes || range.bytes > bytes - (range.address - address)) return false;
         if (!range.metadataValid) range.active->store(false, std::memory_order_release);
         return true;
     });
-    std::erase_if(guarded(), [](const auto& range) { return range.metadataValid && !range.active->load(std::memory_order_acquire); });
+    const auto staleMetadata = std::erase_if(guarded(), [](const auto& range) { return range.metadataValid && !range.active->load(std::memory_order_acquire); });
+    if (metadataChanged || invalidated != 0 || staleMetadata != 0) guardedGeneration().fetch_add(1, std::memory_order_release);
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
 }
 
@@ -882,6 +892,7 @@ void guard(const Context& context, const ColorTarget& target, const std::shared_
         if (target.cmaskAddress != 0) guarded().push_back({context.device, target.cmaskAddress, target.cmaskBytes, target.samples, active, metadataValid, use});
         if (target.samples == 8u && target.fmaskAddress != 0u && target.cmaskAddress != 0u) guarded().push_back({context.device, target.fmaskAddress, DescribeSurface(fmaskResource(target)).guestBytes, target.samples, active, metadataValid, use});
     }
+    guardedGeneration().fetch_add(1, std::memory_order_release);
     anyGuarded().store(true, std::memory_order_release);
     InstallResidentImageReadGuard_nid_no_patch();
 }
@@ -1477,7 +1488,8 @@ void ClearMultisampleTargets(VkDevice device) {
     std::lock_guard lock(targetsMutex());
     std::erase_if(targets(), [&](const auto& target) { return target->context.device == device; });
     std::unique_lock guardLock(guardedMutex());
-    std::erase_if(guarded(), [&](const auto& range) { return range.device == device; });
+    const auto removed = std::erase_if(guarded(), [&](const auto& range) { return range.device == device; });
+    if (removed != 0) guardedGeneration().fetch_add(1, std::memory_order_release);
     anyGuarded().store(!guarded().empty(), std::memory_order_release);
     UpdateResidentImageUnmapObserver_nid_no_patch();
 }
@@ -1497,6 +1509,71 @@ void GuardOneFragmentFmask(const Context& context, const ColorTarget& target) {
     anyGuarded().store(true, std::memory_order_release);
     lock.unlock();
     InstallResidentImageReadGuard_nid_no_patch();
+}
+
+std::uint64_t MultisampleTargetRangeGeneration() {
+    std::shared_lock lock(guardedMutex());
+    return guardedGeneration().load(std::memory_order_acquire);
+}
+
+std::optional<std::vector<ShaderRecompiler::BdaAbi::Range>> ExcludeMultisampleTargetRanges(
+    VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges, std::uint64_t& generation) {
+    if (ranges.empty()) {
+        generation = MultisampleTargetRangeGeneration();
+        return std::nullopt;
+    }
+    if (!anyGuarded().load(std::memory_order_acquire)) {
+        generation = MultisampleTargetRangeGeneration();
+        return std::nullopt;
+    }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> excluded;
+    {
+        std::shared_lock lock(guardedMutex());
+        generation = guardedGeneration().load(std::memory_order_relaxed);
+        for (const auto& range : guarded()) {
+            if (range.device != device || !range.active->load(std::memory_order_acquire)) continue;
+            excluded.emplace_back(range.address, range.address + range.bytes);
+        }
+    }
+    if (excluded.empty()) return std::nullopt;
+    std::sort(excluded.begin(), excluded.end());
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> merged;
+    merged.reserve(excluded.size());
+    for (const auto& range : excluded) {
+        if (!merged.empty() && range.first <= merged.back().second) merged.back().second = std::max(merged.back().second, range.second);
+        else merged.push_back(range);
+    }
+    std::vector<ShaderRecompiler::BdaAbi::Range> filtered;
+    filtered.reserve(ranges.size() + merged.size());
+    bool changed = false;
+    for (const auto& range : ranges) {
+        auto cursor = range.begin;
+        for (const auto& [begin, end] : merged) {
+            if (end <= cursor) continue;
+            if (begin >= range.end) break;
+            const auto cutBegin = std::max(cursor, begin);
+            const auto cutEnd = std::min(range.end, end);
+            if (cutBegin > cursor) {
+                auto part = range;
+                part.begin = cursor;
+                part.end = cutBegin;
+                part.deviceAddress += cursor - range.begin;
+                filtered.push_back(part);
+            }
+            if (cutBegin < cutEnd) {
+                changed = true;
+                cursor = cutEnd;
+            }
+            if (cursor == range.end) break;
+        }
+        if (cursor < range.end) {
+            auto part = range;
+            part.begin = cursor;
+            part.deviceAddress += cursor - range.begin;
+            filtered.push_back(part);
+        }
+    }
+    return changed ? std::optional(std::move(filtered)) : std::nullopt;
 }
 
 void RequireNoMultisampleTarget(std::uint64_t address, std::size_t bytes, const char* access) {
