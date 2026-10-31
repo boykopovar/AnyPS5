@@ -1886,12 +1886,21 @@ void testStallPromptRearm() {
     AgcDriver::DriverDetail::SetStallClock(nullptr);
 }
 
+std::array<std::chrono::steady_clock::time_point, 3> realStallPromptTimes{};
+
+AgcDriver::DriverDetail::StallChoice recordRealStallPrompt(const char*) {
+    const auto index = stallPrompts.load();
+    if (index < 3) realStallPromptTimes[static_cast<std::size_t>(index)] = std::chrono::steady_clock::now();
+    ++stallPrompts;
+    return stallAnswer;
+}
+
 void testStallPromptRealPath() {
     alignas(8) static std::uint32_t gate = 0;
     alignas(8) static std::uint32_t done = 0;
     stallPrompts = 0;
     stallAnswer = AgcDriver::DriverDetail::StallChoice::Wait;
-    AgcDriver::DriverDetail::SetStallPresenter(recordStallPrompt);
+    AgcDriver::DriverDetail::SetStallPresenter(recordRealStallPrompt);
     std::vector<std::string> lines;
     {
         CapturedStderr capture;
@@ -1899,6 +1908,7 @@ void testStallPromptRealPath() {
         submitWords(words);
         for (int waited = 0; waited < 1000 && stallPrompts < 3; ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(10));
         check(stallPrompts == 3, "a stalled wait did not ask the host three times on the real clock");
+        check(realStallPromptTimes[1] - realStallPromptTimes[0] >= std::chrono::seconds(1) && realStallPromptTimes[2] - realStallPromptTimes[1] >= std::chrono::seconds(1), "the host was asked again before a period had passed after Wait on the real clock");
         std::this_thread::sleep_for(std::chrono::milliseconds(2500));
         check(stallPrompts == 3, "a stalled wait asked the host more than three times on the real clock");
         std::atomic_ref<std::uint32_t>(gate).store(1);
