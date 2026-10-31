@@ -319,6 +319,52 @@ unsigned TestVectorAliased() {
 
 }
 
+void TestVectorCopyFromStrings() {
+    std::uint64_t sourceContext = 1;
+    std::uint64_t targetContext = 2;
+    VectorStorage source;
+    VectorStorage target;
+    Storage element;
+    std::memset(source.bytes, kFill, sizeof(source.bytes));
+    std::memset(target.bytes, kFill, sizeof(target.bytes));
+    std::memset(element.bytes, kFill, sizeof(element.bytes));
+
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(source.bytes), &sourceContext);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEEC1EPNS2_10LibContextE(reinterpret_cast<IntrusivePtr*>(target.bytes), &targetContext);
+    _ZN3sce2Np9CppWebApi6Common6StringC1EPNS2_10LibContextE(reinterpret_cast<CommonString*>(element.bytes), &sourceContext);
+    const char* payload = "copied string element";
+    Require(_ZN3sce2Np9CppWebApi6Common6String6appendEPKc(reinterpret_cast<CommonString*>(element.bytes), payload) == 0);
+    for (unsigned index = 0; index < 3; ++index)
+        Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8pushBackERKS4_(reinterpret_cast<IntrusivePtr*>(source.bytes), element.bytes) == 0);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(reinterpret_cast<IntrusivePtr*>(target.bytes), reinterpret_cast<IntrusivePtr*>(source.bytes)) == 0);
+    void* sourceBody = LoadBody<void*>(source.bytes, kObjectOffset);
+    void* targetBody = LoadBody<void*>(target.bytes, kObjectOffset);
+    Require(targetBody != nullptr && targetBody != sourceBody);
+    Require(LoadBody<std::int32_t>(targetBody, kBodyElementKindOffset) == 2);
+    Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 3);
+    const auto* sourceElements = LoadBody<unsigned char*>(sourceBody, kBodyElementsOffset);
+    const auto* targetElements = LoadBody<unsigned char*>(targetBody, kBodyElementsOffset);
+    for (unsigned index = 0; index < 3; ++index) {
+        const char* sourceBuffer = LoadBody<char*>(sourceElements + index * kStringSize, kBufferOffset);
+        const char* targetBuffer = LoadBody<char*>(targetElements + index * kStringSize, kBufferOffset);
+        Require(targetBuffer != nullptr && targetBuffer != sourceBuffer);
+        Require(std::strcmp(targetBuffer, payload) == 0);
+        Require(LoadBody<std::int32_t>(targetElements + index * kStringSize, kReferenceCountOffset) == 0);
+    }
+
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(reinterpret_cast<IntrusivePtr*>(target.bytes), reinterpret_cast<IntrusivePtr*>(source.bytes)) == 0);
+    Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 3);
+    const auto* reloaded = LoadBody<unsigned char*>(targetBody, kBodyElementsOffset);
+    for (unsigned index = 0; index < 3; ++index)
+        Require(std::strcmp(LoadBody<char*>(reloaded + index * kStringSize, kBufferOffset), payload) == 0);
+
+    _ZN3sce2Np9CppWebApi6Common6StringD1Ev(reinterpret_cast<CommonString*>(element.bytes));
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(reinterpret_cast<IntrusivePtr*>(source.bytes));
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(reinterpret_cast<IntrusivePtr*>(target.bytes));
+    Require(GuardIntact(element) && VectorGuardIntact(source) && VectorGuardIntact(target));
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "alias-append") == 0) return TestAppendAliased() ? 1 : 0;
     if (argc == 2 && std::strcmp(argv[1], "alias-vector") == 0) return TestVectorAliased();
@@ -327,6 +373,7 @@ int main(int argc, char** argv) {
     TestAppendBuildsAndClearsBuffer();
     TestAppendNullKeepsEmpty();
     TestVectorPushBackCopiesStringContent();
+    TestVectorCopyFromStrings();
     TestStringEmptyAndEquals();
     TestIntrusivePtrVectorPushBack();
     TestOfflineResponses();

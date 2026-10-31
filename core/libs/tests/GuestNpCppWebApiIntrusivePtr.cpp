@@ -20,6 +20,7 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr std::size_t ObjectSize = 0x40;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;
+static constexpr std::size_t StringVectorReferenceCountOffset = 0x38;
 
 struct DestroyCase {
     Destroy destroy;
@@ -451,6 +452,14 @@ static void TestUserProfileModelAndTransaction() {
     std::memset(onlineId, 0x61, sizeof(onlineId));
     Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfile11setOnlineIdERK13SceNpOnlineId(profile, onlineId) == 0);
     Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile13onlineIdIsSetEv(profile));
+    unsigned char onlineIdOut[0x14];
+    std::memset(onlineIdOut, 0, sizeof(onlineIdOut));
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile11getOnlineIdEv(onlineIdOut, profile) == onlineIdOut);
+    Require(std::memcmp(onlineIdOut, onlineId, sizeof(onlineId)) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile23getIsOfficiallyVerifiedEv(profile));
+    IntrusivePtr personalDetail{reinterpret_cast<void*>(0xfeed), RecordDelete, &context};
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile17getPersonalDetailEv(&personalDetail, profile) == &personalDetail);
+    Require(personalDetail.object == nullptr && personalDetail.deleter == nullptr && personalDetail.libContext == nullptr);
     Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfileD1Ev(profile) == profile);
 
     std::uint8_t presence[0x28];
@@ -461,6 +470,7 @@ static void TestUserProfileModelAndTransaction() {
     const std::uint64_t accountId = 0x1234;
     Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence12setAccountIdERKm(presence, &accountId) == 0);
     Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence12getAccountIdEv(presence) == 0x1234);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence14accountIdIsSetEv(presence));
     const bool inContext = true;
     Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence12setInContextERKb(presence, &inContext) == 0);
     Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence12getInContextEv(presence));
@@ -475,6 +485,105 @@ static void TestUserProfileModelAndTransaction() {
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(transaction) == 0);
     Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11hasResponseEv() == 0);
     Require(_ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(transaction) == 0);
+}
+
+static void TestResidualAccessors() {
+    int context = 0;
+    alignas(8) unsigned char object[ObjectSize];
+    deleterCalls = 0;
+    deletedObject = nullptr;
+
+    alignas(8) unsigned char response[0x210];
+    std::memset(object, 0x5a, sizeof(object));
+    WriteCount(object, VectorReferenceCountOffset, 6);
+    std::memset(response, 0, sizeof(response));
+    IntrusivePtr member{object, RecordDelete, &context};
+    std::memcpy(response + 0x30, &member, sizeof(member));
+    IntrusivePtr out{reinterpret_cast<void*>(0xfeed), RecordDelete, &context};
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V125GetBasicPresencesResponse17getBasicPresencesEv(&out, response) == &out);
+    Require(out.object == object && out.deleter == RecordDelete && out.libContext == &context);
+    Require(ReadCount(object, VectorReferenceCountOffset) == 7);
+    Require(OnlyCountChanged(object, VectorReferenceCountOffset));
+
+    out = {nullptr, nullptr, nullptr};
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V129GetPlayerSessionsResponseBody17getPlayerSessionsEv(&out, response) == &out);
+    Require(out.object == object && ReadCount(object, VectorReferenceCountOffset) == 8);
+
+    std::memset(response + 0x30, 0, sizeof(member));
+    std::memcpy(response + 0x10, &member, sizeof(member));
+    out = {nullptr, nullptr, nullptr};
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V133ResponsePlayerSessionMemberPlayer10getPlayersEv(&out, response) == &out);
+    Require(out.object == object && ReadCount(object, VectorReferenceCountOffset) == 9);
+
+    std::memset(object, 0x5a, sizeof(object));
+    WriteCount(object, 0, 4);
+    std::memset(response, 0, sizeof(response));
+    std::memcpy(response + 0x30, &member, sizeof(member));
+    out = {nullptr, nullptr, nullptr};
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V113PlayerSession9getMemberEv(&out, response) == &out);
+    Require(out.object == object && ReadCount(object, 0) == 5);
+    Require(OnlyCountChanged(object, 0));
+
+    std::memset(response, 0, sizeof(response));
+    std::memcpy(response + 0xf8, &member, sizeof(member));
+    out = {nullptr, nullptr, nullptr};
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead9getLeaderEv(&out, response) == &out);
+    Require(out.object == object && ReadCount(object, 0) == 6);
+
+    std::memset(object, 0x5a, sizeof(object));
+    WriteCount(object, StringVectorReferenceCountOffset, 2);
+    std::memset(response, 0, sizeof(response));
+    std::memcpy(response + 0x188, &member, sizeof(member));
+    out = {nullptr, nullptr, nullptr};
+    Require(_ZN3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead28getExclusiveLeaderPrivilegesEv(&out, response) == &out);
+    Require(out.object == object && ReadCount(object, StringVectorReferenceCountOffset) == 3);
+    Require(OnlyCountChanged(object, StringVectorReferenceCountOffset));
+
+    std::memset(response, 0x11, sizeof(response));
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V118GetFriendsResponse10getFriendsEv(response) == response + 0x30);
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V124GetBlockingUsersResponse9getBlocksEv(response) == response + 0x30);
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead14getCustomData1Ev(response) == response + 0x1c8);
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead14getCustomData2Ev(response) == response + 0x1e8);
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead16customData2IsSetEv(response));
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V127ResponsePlayerSessionPlayer11getPlatformEv(response) == response + 0x18);
+    Require(_ZNK3sce2Np9CppWebApi15ProfanityFilter2V223FilterProfanityResponse10getMessageEv(response) == response + 0x38);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail14getDisplayNameEv(response) == response + 0x88);
+    const std::uint64_t playerAccount = 0xfeed1234;
+    std::memcpy(response + 0x10, &playerAccount, sizeof(playerAccount));
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V127ResponsePlayerSessionPlayer12getAccountIdEv(response) == playerAccount);
+
+    std::memset(response, 0, sizeof(response));
+    IntrusivePtr headerOut{};
+    Require(_ZN3sce2Np9CppWebApi6Common18ResponseHeaderBase14getHeaderValueEPKcRNS2_12IntrusivePtrINS2_6StringEEE(response, "Content-Type", &headerOut) == static_cast<int>(0x80553512));
+    Require(_ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi26getMultiDataStatusesByUserEiRKNS4_37ParameterToGetMultiDataStatusesByUserERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_32GetMultiDataStatusesResponseBodyEEENSA_INS8_18ResponseHeaderBaseEEEEE() == static_cast<int>(0x80552907));
+
+    std::uint64_t transactionSource[2] = {0xdeadbeefcafe, 0x0123456789ab};
+    std::uint64_t transactionTarget[2] = {0, 0};
+    Require(_ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEENS4_INS2_18ResponseHeaderBaseEEEEaSERKSB_(transactionTarget, transactionSource) == transactionTarget);
+    Require(transactionTarget[0] == transactionSource[0] && transactionTarget[1] == transactionSource[1]);
+
+    alignas(8) unsigned char element[ObjectSize];
+    std::memset(element, 0x5a, sizeof(element));
+    WriteCount(element, 0, 1);
+    IntrusivePtr vector{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEEC1EPNS2_10LibContextE(&vector, &context);
+    IntrusivePtr owner{element, RecordDelete, &context};
+    for (unsigned index = 0; index < 3; ++index)
+        Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEE8pushBackERKS8_(&vector, &owner) == 0);
+    IntrusivePtr begin{};
+    IntrusivePtr end{};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE5beginEv(&begin, &vector) == &begin);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE3endEv(&end, &vector) == &end);
+    IntrusivePtr step = begin;
+    unsigned visited = 0;
+    while (_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEEneERKS9_(&step, &end)) {
+        Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_13InGameCatalog2V53SkuEEEEppEv(&step) == &step);
+        ++visited;
+    }
+    Require(visited == 3);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEEEED1Ev(&vector);
+    Require(ReadCount(element, 0) == 1 && deleterCalls == 0);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEED1Ev(&owner);
 }
 
 int main(int argc, char** argv) {
@@ -595,5 +704,6 @@ int main(int argc, char** argv) {
     TestAdoptedVectorBodyDestroyedThroughDeleter();
     TestUserProfileVectorAssign();
     TestUserProfileModelAndTransaction();
+    TestResidualAccessors();
     return 0;
 }
