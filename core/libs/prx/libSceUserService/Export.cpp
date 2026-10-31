@@ -190,12 +190,11 @@ int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event) {
 }
 
 int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets) {
- // System-wide game presets (difficulty, view inversion, subtitles, audio language) of the user's
- // profile. A fresh console has none set: every field is 0, "not specified", and the title falls
- // back to its own defaults. this_size is the caller's.
- const int index = UserIndex(user_id);
- if (presets == nullptr || index < 0) {
+ if (presets == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (!IsUserLoggedIn(user_id)) {
+  return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  presets->difficulty = 0;
  presets->priority = 0;
