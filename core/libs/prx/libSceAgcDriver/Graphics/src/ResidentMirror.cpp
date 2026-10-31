@@ -28,6 +28,7 @@ namespace AgcDriver::Graphics {
 namespace {
 
 constexpr std::uint64_t BlockSize = ResidentBuffer::BlockBytes;
+constexpr VkDeviceSize StagingChunkBytes = VkDeviceSize{32} << 20u;
 constexpr std::uint64_t SlabBytes = std::uint64_t{16} << 20u;
 constexpr std::uint32_t SlabBlocks = static_cast<std::uint32_t>(SlabBytes / BlockSize);
 constexpr std::uint64_t ZeroBytes = SlabBytes;
@@ -572,18 +573,34 @@ void ResidentBuffer::flush() {
             cursor = std::max(cursor, last);
         }
         if (regions.empty()) return;
-        auto staging = std::make_shared<Buffer>(context, static_cast<std::size_t>(total), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        struct Chunk {
+            std::shared_ptr<Buffer> staging;
+            std::vector<VkBufferCopy> copies;
+        };
+        std::vector<Chunk> chunks;
+        VkDeviceSize filled = StagingChunkBytes;
         for (const auto& region : regions) {
             for (VkDeviceSize done = 0; done < region.size;) {
+                if (filled == StagingChunkBytes) {
+                    const auto remaining = total - (region.srcOffset + done);
+                    chunks.push_back({std::make_shared<Buffer>(context, static_cast<std::size_t>(std::min(StagingChunkBytes, remaining)), VK_BUFFER_USAGE_TRANSFER_SRC_BIT), {}});
+                    filled = 0;
+                }
+                auto& chunk = chunks.back();
                 const auto at = origin + region.dstOffset + done;
-                const auto length = std::min<VkDeviceSize>(region.size - done, BlockSize - (at - origin) % BlockSize);
-                std::memcpy(staging->Bytes().data() + region.srcOffset + done, Block(at), static_cast<std::size_t>(length));
+                const auto length = std::min({region.size - done, BlockSize - (at - origin) % BlockSize, StagingChunkBytes - filled});
+                std::memcpy(chunk.staging->Bytes().data() + filled, Block(at), static_cast<std::size_t>(length));
+                if (!chunk.copies.empty() && chunk.copies.back().srcOffset + chunk.copies.back().size == filled && chunk.copies.back().dstOffset + chunk.copies.back().size == region.dstOffset + done) chunk.copies.back().size += length;
+                else chunk.copies.push_back({filled, region.dstOffset + done, length});
+                filled += length;
                 done += length;
             }
         }
         recordTransfer(context, [&](VkCommandBuffer commands, std::vector<std::shared_ptr<void>>& kept) {
-            context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, staging->Handle(), buffer, static_cast<std::uint32_t>(regions.size()), regions.data());
-            kept.push_back(staging);
+            for (const auto& chunk : chunks) {
+                context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, chunk.staging->Handle(), buffer, static_cast<std::uint32_t>(chunk.copies.size()), chunk.copies.data());
+                kept.push_back(chunk.staging);
+            }
             kept.push_back(shared_from_this());
         });
     } catch (...) {

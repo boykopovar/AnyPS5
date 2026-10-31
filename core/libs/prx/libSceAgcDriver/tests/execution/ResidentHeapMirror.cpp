@@ -259,6 +259,25 @@ void ResidentTests(AgcDriver::VulkanDevice& device) {
     CheckStores(written, "unchanged dispatch");
 }
 
+void StagingChunkTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint64_t LargeBytes = 48u << 20u;
+    constexpr std::uint64_t ChunkBoundary = 32u << 20u;
+    constexpr std::uint64_t First = ChunkBoundary - Threads / 2 * ThreadStride;
+    GuestHeap read(false, 1, LargeBytes);
+    GuestHeap written(true);
+    const OutputBlock output;
+    for (std::uint64_t block = 0; block < LargeBytes; block += Block) read.Store(block + 8, 0x11u);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) read.Store(First + thread * ThreadStride, Pattern(thread));
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    const auto before = AgcDriver::Graphics::MirrorCounters();
+    Dispatch(device, read.Address() + First, written.Address(), output);
+    const auto made = AgcDriver::Graphics::MirrorCounters();
+    Require(made.heapBytes - before.heapBytes > First + Threads * ThreadStride, "resident heap mirror: a " + std::to_string(LargeBytes >> 20u) + " MiB heap mirror does not reach past the read range (" + std::to_string((made.heapBytes - before.heapBytes) >> 10u) + " KiB held)");
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        Require(output.Data()[thread] == Pattern(thread), "resident heap mirror: an upload split into staging chunks: thread " + std::to_string(thread) + " read " + Hex(output.Data()[thread]) + " at heap offset " + Hex(First + thread * ThreadStride) + ", expected " + Hex(Pattern(thread)));
+    }
+}
+
 struct AddressSpaceLimit {
     explicit AddressSpaceLimit(std::uint64_t bytes) { AgcDriver::Graphics::SetResidentAddressSpaceLimit(bytes); }
     ~AddressSpaceLimit() { AgcDriver::Graphics::SetResidentAddressSpaceLimit(0); }
@@ -399,6 +418,7 @@ int main() {
         const bool sparse = context.sparseBinding && context.sparseResidencyBuffer && context.sparseResidencyAliased;
         if (sparse) {
             ResidentTests(*device);
+            StagingChunkTests(*device);
             ReusedAddressTests(*device);
             JoinedImportTests(*device);
         } else {
