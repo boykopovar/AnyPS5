@@ -34,12 +34,12 @@ int APS5_VABI sceAppContentAddcontMountByEntitlemetId(const char* entitlementId,
 int APS5_VABI sceAppContentAddcontShrink(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel);
 int APS5_VABI sceAppContentCheckBundleLicenseOnDisc(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel);
 int APS5_VABI sceAppContentAppParamGetString(void);
-int APS5_VABI sceAppContentDownload0Expand(size_t size);
-int APS5_VABI sceAppContentDownload0Shrink(size_t size);
-int APS5_VABI sceAppContentDownload1Expand(size_t size);
-int APS5_VABI sceAppContentDownload1Shrink(size_t size);
+int APS5_VABI sceAppContentDownload0Expand(void);
+int APS5_VABI sceAppContentDownload0Shrink(void);
+int APS5_VABI sceAppContentDownload1Expand(void);
+int APS5_VABI sceAppContentDownload1Shrink(void);
 int APS5_VABI sceAppContentDownload2Expand(size_t size);
-int APS5_VABI sceAppContentDownload2Shrink(size_t size);
+int APS5_VABI sceAppContentDownload2Shrink(void);
 int APS5_VABI sceAppContentUnknown_SWVxsi_ZBlw(void);
 int APS5_VABI sceAppContentGetAddcontInfoByEntitlementId(const char* entitlementId, AppContentAddcontInfo* info);
 int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppContentAddcontInfo* list, uint32_t listNum, uint32_t* hitNum);

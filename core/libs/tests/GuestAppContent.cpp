@@ -17,6 +17,16 @@ static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotMounted = static_cast<int>(0x80D90004);
 static void Require(bool value) { if (!value) std::abort(); }
 
+template <typename TCall>
+static bool NotImplemented(TCall call) {
+    try {
+        call();
+        return false;
+    } catch (const std::runtime_error& error) {
+        return std::string(error.what()).find("not implemented") != std::string::npos;
+    }
+}
+
 int main() {
     static std::array<std::byte, 64> process{};
     Require(ProcessParametersFixture::Install(process.data(), process.size()));
@@ -38,12 +48,7 @@ int main() {
     Require(sceAppContentTemporaryDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
     Require(sceAppContentDownloadDataFormat(nullptr) == notInitialized);
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
-    Require(sceAppContentDownload0Expand(0) == notInitialized);
-    Require(sceAppContentDownload0Shrink(0) == notInitialized);
-    Require(sceAppContentDownload1Expand(0) == notInitialized);
-    Require(sceAppContentDownload1Shrink(0) == notInitialized);
-    Require(sceAppContentDownload2Expand(0) == notInitialized);
-    Require(sceAppContentDownload2Shrink(0) == notInitialized);
+    Require(sceAppContentDownload2Expand(1024) == notInitialized);
     Require(sceAppContentAddcontDelete(0, nullptr) == notInitialized);
     Require(sceAppContentAddcontEnqueueDownload(0, nullptr) == notInitialized);
     Require(sceAppContentGetAddcontDownloadProgress(0, nullptr, nullptr) == notInitialized);
@@ -119,16 +124,17 @@ int main() {
     Require(sceAppContentDownloadDataFormat(&download2Mount) == 0);
     Require(std::filesystem::is_directory(download2Data) && std::filesystem::is_empty(download2Data));
     Require(std::filesystem::exists(downloadData / "preserve.bin"));
-    Require(sceAppContentDownload0Expand(1024) == 0);
-    Require(sceAppContentDownload0Shrink(512) == 0);
-    Require(sceAppContentDownload1Expand(2048) == 0);
-    Require(sceAppContentDownload1Shrink(1024) == 0);
-    Require(sceAppContentDownload2Expand(4096) == 0);
-    Require(sceAppContentDownload2Shrink(2048) == 0);
-    const auto download1Data = ResolvePath_nid_no_patch("/download1");
-    Require(std::filesystem::is_directory(downloadData));
-    Require(std::filesystem::is_directory(download1Data));
+    Require(sceAppContentDownload2Expand(0) == ErrorParameter);
+    Require(sceAppContentDownload2Expand(1024 * 1024) == 0);
     Require(std::filesystem::is_directory(download2Data));
+    size_t download2Space = 0;
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download2Mount, &download2Space) == 0);
+    Require(download2Space == 1024);
+    Require(NotImplemented([] { sceAppContentDownload0Expand(); }));
+    Require(NotImplemented([] { sceAppContentDownload0Shrink(); }));
+    Require(NotImplemented([] { sceAppContentDownload1Expand(); }));
+    Require(NotImplemented([] { sceAppContentDownload1Shrink(); }));
+    Require(NotImplemented([] { sceAppContentDownload2Shrink(); }));
 
     const int32_t expectedParams[] = {3, 23566, -7, 0, 2147483647};
     for (uint32_t id = 0; id < 5; ++id) {
