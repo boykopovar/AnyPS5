@@ -1,5 +1,9 @@
 # libSceLibcInternal technical debt
 
+### Floating-point word access
+
+- `_Plsw`, `_Pmsw`, `_FPlsw` and `_FPmsw` return writable pointers to the least or most significant 16-bit word of a double or float. The signatures and word-selection model follow Dinkumware's `xmath.h`, `xdtest.c` and `xfdtest.c` ([reference tree](https://github.com/dorpxtos/xtos/tree/master/Crt/stl)). This is not verified on PS5. The implementation assumes the guest's little-endian IEEE binary32/binary64 layout and rejects null pointers by throwing instead of reproducing native pointer arithmetic on a null address.
+
 ### Additional callable exports
 
 The named entries below use provider-specific NID aliases to avoid interposing host libc and C++ runtime symbols.
