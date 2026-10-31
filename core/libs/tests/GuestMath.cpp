@@ -1626,6 +1626,22 @@ static void CheckHyperbolic() {
     Require(Near(acosh_nid_postfix(1e300), 691.4686750787736, 1e-15));
 }
 
+static void CheckAsinhfMsunBoundaries() {
+    Require(std::bit_cast<std::uint32_t>(asinhf_nid_postfix(0.0f)) == 0x00000000u);
+    Require(std::bit_cast<std::uint32_t>(asinhf_nid_postfix(-0.0f)) == 0x80000000u);
+    for (const std::uint32_t bits : {0x317fffffu, 0x31800000u, 0x3fffffffu, 0x40000000u,
+                                     0x40000001u, 0x4d800000u, 0x4d800001u, 0x7f7fffffu}) {
+        const float x = std::bit_cast<float>(bits);
+        Require(Near(asinhf_nid_postfix(x), std::asinh(static_cast<double>(x)), 1e-6));
+        Require(Near(asinhf_nid_postfix(-x), std::asinh(-static_cast<double>(x)), 1e-6));
+    }
+    Require(std::isinf(asinhf_nid_postfix(INFINITY)) && asinhf_nid_postfix(INFINITY) > 0.0f);
+    Require(std::isinf(asinhf_nid_postfix(-INFINITY)) && asinhf_nid_postfix(-INFINITY) < 0.0f);
+    Require(std::isnan(asinhf_nid_postfix(std::numeric_limits<float>::quiet_NaN())));
+    Require(std::bit_cast<std::uint32_t>(asinhf_nid_postfix(0x1.ab8ef4p+1f)) == 0x3febbbfeu);
+    Require(std::bit_cast<std::uint32_t>(asinhf_nid_postfix(-0x1.4f2858p+6f)) == 0xc1a3e33eu);
+}
+
 static void CheckAcoshfDomainEnvironment() {
     const RestoreFloatingPointState saved;
     const unsigned savedCsr = _mm_getcsr();
@@ -2750,6 +2766,7 @@ int main() {
     CheckAcoshfMsunBoundaries();
     CheckCoshfMsunBoundaries();
     CheckExp2fConsoleBits();
+    CheckAsinhfMsunBoundaries();
     CheckScaledHyperbolic();
     CheckSinhf();
     CheckAtanhf();

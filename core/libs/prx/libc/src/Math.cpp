@@ -1375,7 +1375,27 @@ double APS5_VABI asinh_nid_postfix(double x) {
     }
     return hx > 0 ? w : -w;
 }
-float APS5_VABI asinhf_nid_postfix(float x) { return std::asinh(x); }
+float APS5_VABI asinhf_nid_postfix(float x) {
+    constexpr float ln2 = 6.9314718246e-01f;
+    const std::uint32_t bits = std::bit_cast<std::uint32_t>(x);
+    const std::uint32_t magnitude = bits & 0x7fffffffu;
+    if (magnitude >= 0x7f800000u) return x + x;
+    if (magnitude < 0x31800000u) {
+        volatile float huge = 1.0e30f;
+        if (huge + x > 1.0f) return x;
+    }
+    const float absolute = std::fabs(x);
+    float result;
+    if (magnitude > 0x4d800000u) {
+        result = logf_nid_postfix(absolute) + ln2;
+    } else if (magnitude > 0x40000000u) {
+        result = logf_nid_postfix(2.0f * absolute + 1.0f / (std::sqrt(x * x + 1.0f) + absolute));
+    } else {
+        const float square = x * x;
+        result = AtanhfLog1p(absolute + square / (1.0f + std::sqrt(1.0f + square)));
+    }
+    return std::copysign(result, x);
+}
 double APS5_VABI acosh_nid_postfix(double x) { return std::acosh(x); }
 float APS5_VABI acoshf_nid_postfix(float x) {
     constexpr float ln2 = 6.9314718246e-01f;
