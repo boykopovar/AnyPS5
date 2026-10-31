@@ -325,7 +325,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     }
     std::vector<std::uint32_t> imageModes(info.images.size());
     for (std::size_t index = 0; index < info.images.size(); ++index) {
-        if (info.images[index].table == NoTable) imageModes[index] = ResourceMaterializer::RuntimeImageMode(info.images[index], snapshot.images.at(index), info.runtimeImageModes.at(index));
+        if (info.images[index].table != NoTable) continue;
+        const auto& modes = info.runtimeImageModes.at(index);
+        imageModes[index] = ResourceMaterializer::RuntimeImageMode(info.images[index], snapshot.images.at(index), modes);
+        if (registrationModules && modes.size() > 1u) plan.specialization.push_back({PipelineSpecialization::ImageBase + static_cast<std::uint32_t>(index) * PipelineSpecialization::ImageWords, imageModes[index]});
     }
     for (std::uint32_t index = 0; index < info.buffers.size(); ++index) {
         const auto& descriptor = snapshot.buffers.at(index);
