@@ -1404,6 +1404,124 @@ std::uint64_t Recorder::ThreadHookWaits() {
     return hookRealWaits;
 }
 
+namespace {
+
+struct DispatchOrder {
+    std::uint32_t queueKey = 0;
+    bool unordered = false;
+};
+
+thread_local DispatchOrder nextDispatchOrder;
+std::atomic<std::uint64_t> overlapDeferred{0}, overlapJoined{0}, overlapFlushed{0};
+
+}
+
+bool Recorder::DispatchOverlapEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_DISPATCH_OVERLAP") == nullptr;
+    return enabled;
+}
+
+void Recorder::SetDispatchOrder(std::uint32_t queueKey, bool unordered) {
+    nextDispatchOrder = {queueKey, unordered};
+}
+
+std::uint32_t Recorder::PeekUnorderedDispatch() {
+    return nextDispatchOrder.unordered ? nextDispatchOrder.queueKey : 0u;
+}
+
+std::uint32_t Recorder::TakeDispatchOrder(bool& unordered) {
+    const auto order = std::exchange(nextDispatchOrder, DispatchOrder{});
+    unordered = order.unordered;
+    return order.queueKey;
+}
+
+Recorder::OverlapStatistics Recorder::OverlapCounts() {
+    return OverlapStatistics{overlapDeferred.load(std::memory_order_relaxed), overlapJoined.load(std::memory_order_relaxed), overlapFlushed.load(std::memory_order_relaxed)};
+}
+
+void Recorder::flushDeferredDispatch() {
+    if (open == nullptr || open->deferredDispatchQueue == 0) return;
+    open->deferredDispatchQueue = 0;
+    open->deferredRun.clear();
+    open->runAccess.clear();
+    auto after = std::move(open->afterRun);
+    open->afterRun.clear();
+    constexpr VkAccessFlags dispatchedAccess = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
+    recordBarrier(open->commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, dispatchedAccess);
+    CountBarriers(CommandClass::DispatchTrailing);
+    open->coveredAccess = dispatchedAccess;
+    overlapFlushed.fetch_add(1, std::memory_order_relaxed);
+    std::exception_ptr failure;
+    for (auto& work : after) {
+        try {
+            work(*this);
+        } catch (...) {
+            if (failure == nullptr) failure = std::current_exception();
+        }
+    }
+    if (failure != nullptr) std::rethrow_exception(failure);
+}
+
+bool Recorder::runConflict(std::span<const RunAccess> accesses) const {
+    for (const auto& access : accesses) {
+        for (const auto& member : open->runAccess) {
+            if (((access[2] ^ member[2]) & RunAccessImage) != 0) continue;
+            if (!(access[0] < member[1] && member[0] < access[1])) continue;
+            if (((access[2] | member[2]) & RunAccessWritten) != 0) return true;
+        }
+    }
+    return false;
+}
+
+bool Recorder::joinsRun(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) const {
+    if (queueKey == 0 || open == nullptr || open->deferredDispatchQueue != queueKey || open->renderPass.open || open->run.open) return false;
+    const auto taken = [&](const void* owner) { return std::find(open->deferredRun.begin(), open->deferredRun.end(), owner) != open->deferredRun.end(); };
+    return std::none_of(owners.begin(), owners.end(), taken) && !runConflict(accesses);
+}
+
+VkCommandBuffer Recorder::RunCommands(std::uint32_t queueKey, const void* owner, std::span<const RunAccess> accesses, bool& inRun, VkAccessFlags* coveredAccess) {
+    GuestMemory::AssertGpuLockHeld("Recorder::RunCommands");
+    inRun = joinsRun(queueKey, std::span(&owner, 1), accesses);
+    if (!inRun) return Commands(coveredAccess);
+    if (coveredAccess != nullptr) *coveredAccess = 0;
+    return open->commands;
+}
+
+void Recorder::AfterRun(std::function<void(Recorder&)> work) {
+    Require(RunOpen(), "work after a dispatch run without an open run");
+    open->afterRun.push_back(std::move(work));
+}
+
+bool Recorder::CloseRunOwing(const void* owner) {
+    GuestMemory::AssertGpuLockHeld("Recorder::CloseRunOwing");
+    if (!RunOpen() || std::find(open->deferredRun.begin(), open->deferredRun.end(), owner) == open->deferredRun.end()) return false;
+    flushDeferredDispatch();
+    return true;
+}
+
+VkCommandBuffer Recorder::OverlapCommands(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses, VkAccessFlags* coveredAccess, bool& overlapped) {
+    GuestMemory::AssertGpuLockHeld("Recorder::OverlapCommands");
+    overlapped = joinsRun(queueKey, owners, accesses);
+    if (!overlapped) return Commands(coveredAccess);
+    if (coveredAccess != nullptr) *coveredAccess = 0;
+    return open->commands;
+}
+
+void Recorder::DeferDispatchBarrier(std::uint32_t queueKey, std::span<const void* const> owners, std::span<const RunAccess> accesses) {
+    Require(open != nullptr && queueKey != 0, "a deferred dispatch barrier has no batch");
+    if (open->deferredDispatchQueue == 0) {
+        open->deferredRun.clear();
+        open->runAccess.clear();
+    } else {
+        overlapJoined.fetch_add(1, std::memory_order_relaxed);
+    }
+    open->deferredRun.insert(open->deferredRun.end(), owners.begin(), owners.end());
+    open->runAccess.insert(open->runAccess.end(), accesses.begin(), accesses.end());
+    open->deferredDispatchQueue = queueKey;
+    open->coveredAccess = 0;
+    overlapDeferred.fetch_add(1, std::memory_order_relaxed);
+}
+
 bool Recorder::SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes) {
     return AgcDriver::Graphics::SnapshotOverlaps(address, bytes);
 }
@@ -1437,6 +1555,7 @@ std::uint64_t Recorder::ReapsWithWork() {
 
 VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess) {
     ensureOpen();
+    flushDeferredDispatch();
     // Work recorded after a draw's render pass or an inline store run must see their writes: the
     // pass's end and the run's trailing barrier go in first (a per-batch run waits for Submit, or
     // for a caller whose ranges overlap a queued store: FlushStores).
@@ -1453,6 +1572,7 @@ void Recorder::MarkCovered(VkAccessFlags access) {
 
 Recorder::DrawPassStart Recorder::StartDrawPass(std::uint64_t key, bool forced, bool fenced, const PassAccess& access) {
     ensureOpen();
+    flushDeferredDispatch();
     auto& pass = open->renderPass;
     if (!pass.open || forced || (countingSamples && segmentMode() && !segmentSlotReady(*open))) {
         const auto reason = !pass.open ? pass.closedBy : forced ? PassBreak::Forced : PassBreak::Segment;
@@ -1618,6 +1738,7 @@ void Recorder::ensureOpen() {
 void Recorder::RecordStore(VkBuffer buffer, VkDeviceSize offset, std::span<const std::byte> bytes, std::uint64_t address) {
     if (bytes.empty()) return;
     ensureOpen();
+    flushDeferredDispatch();
     auto& run = open->run;
     const VkDeviceSize end = offset + bytes.size();
     storeCount.fetch_add(1, std::memory_order_relaxed);
@@ -1708,6 +1829,7 @@ void Recorder::flushPendingStore() {
 }
 
 bool Recorder::closeStoreRun(bool atSubmit) {
+    flushDeferredDispatch();
     auto& run = open->run;
     if (LabelRunsPerBatch()) {
         auto stores = std::move(run.queued);
@@ -2327,6 +2449,7 @@ void Recorder::PrepareSampleSlot() {
     GuestMemory::AssertGpuLockHeld("Recorder::PrepareSampleSlot");
     if (!countingSamples || !segmentMode()) return;
     ensureOpen();
+    flushDeferredDispatch();
     Require(!open->renderPass.open, "a sample slot is prepared inside a render pass");
     if (!segmentSlotReady(*open)) takeSegmentPool(*open);
 }
@@ -2531,6 +2654,7 @@ bool Recorder::DumpSamples(VkDeviceAddress target, std::uint64_t address) {
     GuestMemory::AssertGpuLockHeld("Recorder::DumpSamples");
     if (target == 0 || !gpuSampleCounter()) return false;
     countingSamples = true;
+    flushDeferredDispatch();
     if (segmentMode()) {
         ensureOpen();
         if (address != 0 && LabelRunsPerBatch() && pendingSamples.size() < SegmentFoldCapacity && open->queuedDumps < DumpFoldCapacity) {
@@ -3648,6 +3772,7 @@ void Recorder::Submit() {
     dropStaleHoldKept();
     if (open == nullptr) return;
     GuestMemory::AssertGpuLockHeld("Recorder::Submit");
+    flushDeferredDispatch();
     if (!open->keyStores.empty()) recordKeyStores(false);
     if (open->renderPass.open) endOpenRenderPass(PassBreak::NewBatch);
     const bool segments = segmentMode();

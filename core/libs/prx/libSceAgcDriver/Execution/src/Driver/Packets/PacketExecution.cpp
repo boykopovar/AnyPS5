@@ -27,6 +27,24 @@ namespace {
 
 constexpr std::uint32_t eopSelfSignalFlipLimit = 4;
 
+struct RingOrder {
+    std::uint32_t queue = 0xffffffffu;
+    std::uint64_t serial = 0;
+    bool afterDispatch = false;
+};
+
+thread_local RingOrder ringOrder;
+
+void noteRingPacket(std::uint32_t queueId, std::uint64_t serial, std::uint32_t opcode, std::uint32_t header) {
+    if (ringOrder.queue != queueId || ringOrder.serial != serial) ringOrder = {queueId, serial, false};
+    if (opcode == 0x15 || opcode == 0x16 || opcode == 0x76) return;
+    if (opcode == 0x10) {
+        const auto sub = (header >> 2u) & 0x3fu;
+        if ((header & 0xfcu) == 0 || sub == 0x0b || sub == 0x0c) return;
+    }
+    ringOrder.afterDispatch = false;
+}
+
 bool orderedFills() {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_FILLS") == nullptr;
     return ordered;
@@ -273,6 +291,7 @@ void Driver::execute(const Submission& submission) {
         }
         if (APS5_ENABLE_TIMING_LOG && submission.queue == 0 && pendingFrameTiming == nullptr) includeTimingSubmission(submission, false);
         PerformanceContext timingContext(submission.queue == 0 ? pendingFrameTiming.get() : FrameTiming::Async());
+        if (submission.queue != 0 && Graphics::Recorder::DispatchOverlapEnabled()) noteRingPacket(submission.queue, submission.serial, opcode, header);
         PerformanceTimer timing("Driver.Packet");
         if (!predicated) noteLabelIssue(packet, submission.queue);
         if (pipelined && !predicated && header != FlipPacketHeader && header != RenderingWaitPacketHeader && !submission.flips.contains(cursor) && (enqueueLabelPacket(packet, opcode, submission.queue) || enqueueDmaPacket(packet, opcode, submission.queue, queue))) {
@@ -450,6 +469,15 @@ void Driver::execute(const Submission& submission) {
                     timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor); });
                 }
             }
+            const bool ringOverlap = submission.queue != 0 && Graphics::Recorder::DispatchOverlapEnabled();
+            if (ringOverlap) Graphics::Recorder::SetDispatchOrder(submission.queue + 1u, ringOrder.afterDispatch);
+            struct ClearOrder {
+                bool active;
+                ~ClearOrder() {
+                    if (active) Graphics::Recorder::SetDispatchOrder(0, false);
+                }
+            } clearOrder{ringOverlap};
+            if (ringOverlap) ringOrder.afterDispatch = true;
             if (opcode == 0x15) timed(&WorkerProfile::dispatchMs, [&] { dispatch(queue, packet, submission); });
             else timed(&WorkerProfile::dispatchMs, [&] { dispatchIndirect(queue, packet, submission); });
             Pm4::NoteDispatchRegisters(packet, queue);
