@@ -1262,6 +1262,50 @@ static void CheckExpm1ScalingRounding() {
     }
     _mm_setcsr(savedCsr);
 }
+static void CheckTrigConsoleBits() {
+    constexpr struct {
+        std::uint64_t input;
+        std::uint64_t sine;
+        std::uint64_t cosine;
+        std::uint64_t tangent;
+        int error;
+    } cases[] = {
+        {0x0000000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0x8000000000000000ull, 0x8000000000000000ull, 0x3ff0000000000000ull, 0x8000000000000000ull, 0},
+        {0x3e3fffffffffffffull, 0x3e3fffffffffffffull, 0x3ff0000000000000ull, 0x3e3fffffffffffffull, 0},
+        {0x3fe921fb54442d18ull, 0x3fe6a09e667f3bccull, 0x3fe6a09e667f3bcdull, 0x3fefffffffffffffull, 0},
+        {0x3ff921fb54442d18ull, 0x3ff0000000000000ull, 0x3c91a62633145c07ull, 0x434d02967c31cdb5ull, 0},
+        {0x400921fb54442d18ull, 0x3ca1a62633145c07ull, 0xbff0000000000000ull, 0xbca1a62633145c07ull, 0},
+        {0xc00921fb54442d18ull, 0xbca1a62633145c07ull, 0xbff0000000000000ull, 0x3ca1a62633145c07ull, 0},
+        {0x401921fb54442d18ull, 0xbcb1a62633145c07ull, 0x3ff0000000000000ull, 0xbcb1a62633145c07ull, 0},
+        {0x4012d97c7f3321d2ull, 0xbff0000000000000ull, 0xbcaa79394c9e8a0aull, 0x4333570efd768923ull, 0},
+        {0x412e848000000000ull, 0xbfd6664b2568d867ull, 0x3fedf9df9906d32cull, 0xbfd7e9768ab734c0ull, 0},
+        {0x4139000000000000ull, 0x3fd065dff07cc910ull, 0xbfeeee8b0ce93021ull, 0xbfd0f6d7d15bc5b1ull, 0},
+        {0x7e37e43c8800759cull, 0xbfea2c16b010e385ull, 0xbfe2699022adc4c1ull, 0x3ff6be411f37ac77ull, 0},
+        {0x7fefffffffffffffull, 0x3f7452fc98b34e97ull, 0xbfefffe62ecfab75ull, 0xbf74530cfe729484ull, 0},
+        {0xffefffffffffffffull, 0xbf7452fc98b34e97ull, 0xbfefffe62ecfab75ull, 0x3f74530cfe729484ull, 0},
+        {0x7ff0000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xfff0000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0x7ff0000054442d18ull, 0x7ff8000054442d18ull, 0x7ff8000054442d18ull, 0x7ff8000054442d18ull, EDOM},
+        {0x7ff8000000000001ull, 0x7ff8000000000001ull, 0x7ff8000000000001ull, 0x7ff8000000000001ull, 0},
+        {0x3fdada3603b109ebull, 0x3fda124ac129e754ull, 0x3fed397712faa550ull, 0x3fdc8c2adf939d0aull, 0},
+        {0xbfba382e79c9f161ull, 0xbfba2c73e99f121cull, 0x3fefd51240491c33ull, 0xbfba4fc011ff9a31ull, 0},
+        {0x4079ab389c31a606ull, 0x3fe7fbf5be09b71cull, 0xbfe52f138550db6full, 0xbff21d74a8b63e76ull, 0},
+        {0xbfd6066a236944ecull, 0xbfd597c69592a402ull, 0x3fee1faa6b709b8bull, 0xbfd6f0152b51d55cull, 0},
+        {0xbfcdf9356ad39d8full, 0xbfcdb34648619610ull, 0x3fef206c15f26ee6ull, 0xbfce889b662f705full, 0},
+        {0x40557a01c7c97d05ull, 0xbfec45eb63779e2eull, 0xbfddf9b1098520ebull, 0x3ffe2ecb59bfb87eull, 0},
+    };
+    for (const auto& item : cases) {
+        const double x = std::bit_cast<double>(item.input);
+        const int expected = item.error != 0 ? item.error : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(sin_nid_postfix(x)) == item.sine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(cos_nid_postfix(x)) == item.cosine && errno == expected);
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(tan_nid_postfix(x)) == item.tangent && errno == expected);
+    }
+}
 
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
@@ -2621,6 +2665,7 @@ int main() {
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckExpm1ScalingRounding();
+    CheckTrigConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
