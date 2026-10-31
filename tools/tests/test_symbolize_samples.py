@@ -220,6 +220,7 @@ class SymbolizeSamplesTests(unittest.TestCase):
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn("--out needs a collapsed-stack file", result.stderr)
+        self.assertEqual(result.stdout, "")
         self.assertNotIn("module inputs", result.stderr)
         self.assertEqual(module.read_bytes(), original)
 
