@@ -199,9 +199,21 @@ std::atomic<bool>& TexturesReleased() {
     return released;
 }
 
-void noteReleased(const std::shared_ptr<Texture>& texture) {
+enum IndexCount : std::size_t { IndexAccepted, IndexPartial, IndexFallback, IndexBumped, IndexLookedUp, IndexRebound, IndexCompared, IndexBuilds, IndexCountCount };
+
+std::array<std::atomic<std::uint64_t>, IndexCountCount>& IndexCounts() {
+    static std::array<std::atomic<std::uint64_t>, IndexCountCount> counts{};
+    return counts;
+}
+
+void countIndex(IndexCount which, std::uint64_t amount = 1) {
+    IndexCounts()[which].fetch_add(amount, std::memory_order_relaxed);
+}
+
+void noteReleased(const std::shared_ptr<Texture>& texture, std::uint64_t address) {
     texture->MarkReleased();
     TexturesReleased().store(true, std::memory_order_release);
+    GuestMemory::NoteTextureReleased(address);
 }
 
 bool SamplerCacheDisabled() {
@@ -235,7 +247,7 @@ void eraseTexture(TextureCache& cache, std::list<CachedTexture>::iterator it) {
             }
         }
     }
-    if (it->texture.use_count() > 1) noteReleased(it->texture);
+    if (it->texture.use_count() > 1) noteReleased(it->texture, it->address);
     cache.index.erase(it->key);
     cache.entries.erase(it);
     ++cache.erasures;
@@ -1040,7 +1052,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     const auto budget = sampledBudget(context, cache);
     auto texture = entry.texture;
     if (!admitTexture(cache, key, entry.accounted, budget)) {
-        noteReleased(texture);
+        noteReleased(texture, resource.baseAddress);
         logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
         reportCacheCounts(cache, budget);
         reportTextureCounters();
@@ -1392,6 +1404,12 @@ void FlushCachedTextures(VkDevice device) {
     }
 }
 
+WriteIndexOutcomes WriteIndexOutcomesCounted() {
+    const auto& counts = IndexCounts();
+    const auto at = [&](IndexCount which) { return counts[which].load(std::memory_order_relaxed); };
+    return {at(IndexAccepted), at(IndexPartial), at(IndexFallback), at(IndexBumped), at(IndexLookedUp), at(IndexRebound), at(IndexCompared), at(IndexBuilds)};
+}
+
 void ClearCachedTextures(VkDevice device) {
     Require(device != VK_NULL_HANDLE, "cannot clear textures without a Vulkan device");
     auto& sampled = Textures();
@@ -1720,6 +1738,9 @@ void ShaderResources::forgetDeferredInputs() {
 void ShaderResources::build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) {
     buildPrepare(shaders, target, colorAttachments, indexAddress, indexBytes);
     buildComplete();
+    if (!GuestMemory::WriteIndexEnabled()) return;
+    countIndex(IndexBuilds);
+    subscribeBuilt(shaders);
 }
 
 namespace {
@@ -2635,6 +2656,7 @@ void mixDataWords(std::uint64_t& hash, std::span<const std::uint32_t> words) {
 std::atomic<std::uint64_t> resourceCacheFinds{0};
 std::atomic<std::uint64_t> resourceCacheTouches{0};
 std::atomic<std::uint64_t> depthGuardRefusals{0};
+thread_local bool indexProof = false;
 
 }
 
@@ -2929,6 +2951,7 @@ struct RevalidateProfile {
     std::atomic<std::uint64_t> ownSourceViews{0};
     std::atomic<std::uint64_t> refreshedOverlaps{0};
     std::atomic<std::uint64_t> proofsVerified{0};
+    std::atomic<std::uint64_t> indexNanoseconds{0};
     std::atomic<std::int64_t> lastReport{0};
     std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(FastFail::Count)> fullNanoseconds{};
     std::atomic<std::uint64_t> refusedSampled{0};
@@ -2946,11 +2969,11 @@ RevalidateProfile& Revalidations() {
 }
 
 void countFastFail(FastFail reason) {
-    if (BuildProfiled()) Revalidations().fastFails[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
+    if (BuildProfiled() && !indexProof) Revalidations().fastFails[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
 }
 
 void countPendingFail(std::span<const StorageTexture::PendingQuery> pending) {
-    if (!BuildProfiled()) return;
+    if (!BuildProfiled() || indexProof) return;
     auto& profile = Revalidations();
     bool eligible = true;
     for (const auto& query : pending) {
@@ -2982,7 +3005,7 @@ void countFullWalkTime(FastFail reason, std::chrono::steady_clock::time_point st
 constexpr std::size_t RefusedSurfaceLimit = 65536;
 
 void countCollectRefusal(bool storage, std::uint64_t address, std::size_t bytes) {
-    if (!BuildProfiled()) return;
+    if (!BuildProfiled() || indexProof) return;
     auto& profile = Revalidations();
     (storage ? profile.refusedStorage : profile.refusedSampled).fetch_add(1, std::memory_order_relaxed);
     const bool accessible = GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes);
@@ -3061,6 +3084,20 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
         profile.refusedSurfaces.clear();
     }
     AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate (10 s): %llu calls %.1f ms: fast %llu, full %llu, failed %llu; fast-fail by reason:%s; full walks: T1 refreshed %llu (%llu storage images, %llu view sources, %llu views served by their own pending source, %llu overlaps left by the refresh accepted), full by reason:%s, T1 fallback by reason:%s, proofs verified %llu; fast-fail pending image: own 0 (the query excepts the own object), foreign %llu, snapshot %llu, T1 eligible %llu; keys proven: %llu sampled, %llu storage; epoch gate: %llu registry scans skipped, %llu import loops skipped; lookup log: %llu builds and full walks kept their records past the bound; full walk ms by reason:%s; collect refusals: sampled %llu, storage %llu (uncommitted pages %llu, unwatched %llu, other %llu) over %llu surfaces, %.1f MiB\n", static_cast<unsigned long long>(profile.calls.exchange(0, std::memory_order_relaxed)), profile.nanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(profile.fast.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.full.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.failed.exchange(0, std::memory_order_relaxed)), reasons.c_str(), static_cast<unsigned long long>(profile.ownRefreshed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownStorageRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownViewRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownSourceViews.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refreshedOverlaps.exchange(0, std::memory_order_relaxed)), fullReasons.c_str(), fallbacks.c_str(), static_cast<unsigned long long>(profile.proofsVerified.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingForeign.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingSnapshot.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingT1Eligible.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.keysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.storageKeysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.serialSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.importSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(lookupBuildsPastBound.exchange(0, std::memory_order_relaxed)), walkMs.c_str(), static_cast<unsigned long long>(profile.refusedSampled.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedStorage.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUncommitted.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUnwatched.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedOther.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(refusedSurfaces), static_cast<double>(refusedBytes) / 1048576.0);
+    if (!GuestMemory::WriteIndexEnabled()) return;
+    const auto index = GuestMemory::WriteIndexCounted();
+    GuestMemory::ResetWriteIndexCounts();
+    std::string sources;
+    constexpr std::array<const char*, static_cast<std::size_t>(GuestMemory::WriteBumpSource::Count)> SourceNames{"cpu", "driver", "pending", "unwatch", "forget", "release", "import"};
+    for (std::size_t i = 0; i < SourceNames.size(); ++i) sources += " " + std::string(SourceNames[i]) + " " + std::to_string(index.bySource[i]);
+    static std::array<std::uint64_t, IndexCountCount> reported{};
+    std::array<std::uint64_t, IndexCountCount> counts{};
+    for (std::size_t i = 0; i < counts.size(); ++i) {
+        const auto total = IndexCounts()[i].load(std::memory_order_relaxed);
+        counts[i] = total - reported[i];
+        reported[i] = total;
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[rescache] write index (10 s): %llu proofs %.1f ms: %llu accepted, %llu partial (%llu bumped elements, %llu looked up again, %llu re-bound), %llu unwatched elements compared, %llu fallbacks, %llu builds subscribed; %llu subscriptions over %llu blocks, %llu bumps by source:%s, %llu sweeps (%llu failed), %llu bump lists overflowed, writers' index lookups %llu in %.1f ms\n", static_cast<unsigned long long>(counts[IndexAccepted] + counts[IndexPartial] + counts[IndexFallback]), profile.indexNanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(counts[IndexAccepted]), static_cast<unsigned long long>(counts[IndexPartial]), static_cast<unsigned long long>(counts[IndexBumped]), static_cast<unsigned long long>(counts[IndexLookedUp]), static_cast<unsigned long long>(counts[IndexRebound]), static_cast<unsigned long long>(counts[IndexCompared]), static_cast<unsigned long long>(counts[IndexFallback]), static_cast<unsigned long long>(counts[IndexBuilds]), static_cast<unsigned long long>(index.subscriptions), static_cast<unsigned long long>(index.blocks), static_cast<unsigned long long>(index.bumps), sources.c_str(), static_cast<unsigned long long>(index.sweeps), static_cast<unsigned long long>(index.sweepFailures), static_cast<unsigned long long>(index.overflows), static_cast<unsigned long long>(index.lookups), static_cast<double>(index.lookupNanoseconds) / 1e6);
 }
 
 // APS5_NO_EPOCH_REVALIDATE=1: the per-element registry, cache and stamp checks and the per-region
@@ -3152,6 +3189,15 @@ ShaderResources::CollectRefusals ShaderResources::CollectRefusalCounts() {
     return counts;
 }
 
+ShaderResources::PendingFails ShaderResources::PendingFailCounts() {
+    auto& profile = Revalidations();
+    PendingFails counts;
+    counts.foreign = profile.pendingForeign.load(std::memory_order_relaxed);
+    counts.snapshot = profile.pendingSnapshot.load(std::memory_order_relaxed);
+    counts.t1Eligible = profile.pendingT1Eligible.load(std::memory_order_relaxed);
+    return counts;
+}
+
 std::array<std::uint64_t, static_cast<std::size_t>(ShaderResources::FastFail::Count)> ShaderResources::FullWalkNanoseconds() {
     std::array<std::uint64_t, static_cast<std::size_t>(FastFail::Count)> result{};
     auto& profile = Revalidations();
@@ -3178,11 +3224,13 @@ std::size_t ShaderResources::LookupLogCapacity() {
 // registry mutex), so the pending-image checks are skipped; otherwise one scan answers them for
 // every surface at once. The stamp checks go through one tracker lock, the cache checks through
 // the images' cached flags and one touch of the cache.
-bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted) {
+bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const PendingOverlap> refreshed, FastFail& reason, std::vector<PendingOverlap>& overlapping, bool& accepted, const std::vector<std::size_t>* only, bool withStorage) {
     reason = FastFail::Count;
     overlapping.clear();
     accepted = false;
     if (!EpochRevalidate()) return fastRevalidateEach();
+    const auto elementCount = only != nullptr ? only->size() : textures.size();
+    const auto elementAt = [only](std::size_t k) { return only != nullptr ? (*only)[k] : k; };
     const auto fail = [&reason](FastFail why) {
         reason = why;
         countFastFail(why);
@@ -3211,7 +3259,8 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         pending.push_back({begin, end, except, identity, false});
         owners.push_back(owner);
     };
-    for (std::size_t i = 0; i < textures.size(); ++i) {
+    for (std::size_t k = 0; k < elementCount; ++k) {
+        const auto i = elementAt(k);
         auto& surface = validatedTextures[i];
         if (!surface.valid) return fail(FastFail::NoRecord);
         if (surface.depth) {
@@ -3270,7 +3319,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             queries.push_back({address, bytes, surface.generation});
         }
     }
-    for (std::size_t i = 0; i < storageTextures.size(); ++i) {
+    for (std::size_t i = 0; withStorage && i < storageTextures.size(); ++i) {
         if (storageTextures[i] != nullptr && (i >= storageKeys.size() || !StorageImageServesKeys(*storageTextures[i], storageKeys[i]))) return fail(FastFail::StorageKeys);
         if (i != 0 && storageTextures[i] == storageTextures[i - 1]) continue;
         const auto* image = storageTextures[i].get();
@@ -3279,7 +3328,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         const auto address = own.baseAddress;
         const auto bytes = static_cast<std::size_t>(image->GuestBytes());
         if (DepthSurfaceOverlaps(context.device, address, bytes)) {
-            depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
+            if (!indexProof) depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
             return fail(FastFail::Depth);
         }
         if (GuestMemory::CollectWrites(address, bytes) == 0) {
@@ -3341,7 +3390,8 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     if (!GuestMemory::UnchangedSinceAll(queries)) return fail(FastFail::Changed);
     if (!StorageImagesCached(context, images)) return fail(FastFail::Evicted);
     for (const auto* image : images) image->NoteProved();
-    for (std::size_t i = 0; i < validatedTextures.size(); ++i) {
+    for (std::size_t k = 0; k < elementCount; ++k) {
+        const auto i = elementAt(k);
         auto& surface = validatedTextures[i];
         if (surface.source == nullptr) surface.generation = surface.collected;
         surface.keys = scannedKeys[i];
@@ -3556,6 +3606,324 @@ void noteEpochProof(bool reused, bool verified, bool failed) {
 }
 }
 
+namespace {
+
+constexpr std::size_t TableSpanElement = std::numeric_limits<std::size_t>::max();
+
+bool IndexBroken(const char* part) {
+    static const std::string broken = [] {
+        const char* text = std::getenv("APS5_TABLE_INDEX_BREAK");
+        return std::string(text != nullptr ? text : "");
+    }();
+    return !broken.empty() && broken.find(part) != std::string::npos;
+}
+
+}
+
+void ShaderResources::subscribeIndex(std::span<const CompiledShader> shaders) {
+    writeSubscription.reset();
+    subscribedGeneration = 0;
+    subscribedPendingSerial = 0;
+    subscribedBlocks.clear();
+    perElementTextures.clear();
+    comparedTextures.clear();
+    comparedTableSpans.clear();
+    depthCopyTextures.clear();
+    indexElements.assign(textures.size(), {});
+    for (std::size_t i = 0; i < textures.size(); ++i) {
+        if (textures[i] != nullptr && textures[i]->IsDepthCopy()) depthCopyTextures.push_back(i);
+    }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    ranges.reserve(textures.size() + 4);
+    for (std::size_t i = 0; i < textures.size(); ++i) {
+        if (i >= validatedTextures.size()) {
+            perElementTextures.push_back(i);
+            continue;
+        }
+        const auto& surface = validatedTextures[i];
+        const auto begin = surface.resource.baseAddress;
+        const auto bytes = surface.bytes;
+        if (!surface.valid || surface.depth || bytes == 0) {
+            perElementTextures.push_back(i);
+            continue;
+        }
+        if (!GuestMemory::Watched(begin, static_cast<std::size_t>(bytes))) {
+            comparedTextures.push_back(i);
+            continue;
+        }
+        if (surface.source != nullptr || surface.resource.dccAddress != 0) {
+            perElementTextures.push_back(i);
+            continue;
+        }
+        ranges.emplace_back(begin, begin + bytes);
+        for (auto block = GuestMemory::WriteBlockOf(begin); block <= GuestMemory::WriteBlockOf(begin + bytes - 1); ++block) subscribedBlocks.emplace_back(block, i);
+    }
+    for (const auto& table : tableStages) {
+        if (table.images == nullptr || table.map.size() < ShaderRecompiler::ImageTableAbi::HeaderWords) continue;
+        const auto tables = table.map[ShaderRecompiler::ImageTableAbi::HeaderTableCount];
+        for (std::uint32_t index = 0; index < tables; ++index) {
+            const auto header = ShaderRecompiler::ImageTableAbi::TableHeader(index);
+            if (static_cast<std::size_t>(header) + ShaderRecompiler::ImageTableAbi::TableWords > table.map.size()) break;
+            const auto base = static_cast<std::uint64_t>(table.map[header + ShaderRecompiler::ImageTableAbi::TableBaseLow]) | (static_cast<std::uint64_t>(table.map[header + ShaderRecompiler::ImageTableAbi::TableBaseHigh]) << 32);
+            const auto size = static_cast<std::uint64_t>(table.map[header + ShaderRecompiler::ImageTableAbi::TableSizeLow]) | (static_cast<std::uint64_t>(table.map[header + ShaderRecompiler::ImageTableAbi::TableSizeHigh]) << 32);
+            if (base == 0 || size == 0 || size > (std::uint64_t{64} << 20) || size > std::numeric_limits<std::uint64_t>::max() - base) continue;
+            if (GuestMemory::Watched(base, static_cast<std::size_t>(size))) {
+                ranges.emplace_back(base, base + size);
+                for (auto block = GuestMemory::WriteBlockOf(base); block <= GuestMemory::WriteBlockOf(base + size - 1); ++block) subscribedBlocks.emplace_back(block, TableSpanElement);
+            } else if (GuestMemory::Accessible(reinterpret_cast<const void*>(base), static_cast<std::size_t>(size))) {
+                std::vector<std::byte> copy(static_cast<std::size_t>(size));
+                std::memcpy(copy.data(), reinterpret_cast<const void*>(base), copy.size());
+                comparedTableSpans.emplace_back(base, std::move(copy));
+            }
+        }
+    }
+    std::sort(subscribedBlocks.begin(), subscribedBlocks.end());
+    std::size_t textureIndex = 0;
+    for (const auto& shader : shaders) {
+        if (shader.program == nullptr) break;
+        for (const auto& binding : shader.program->bindings) {
+            if (binding.role != ShaderRecompiler::DescriptorRole::GuestImages || binding.kind != ShaderRecompiler::DescriptorKind::SampledImage) continue;
+            const auto elementWords = binding.count != 0 ? binding.guestDescriptor.size() / binding.count : 0;
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
+                if (IsNullTextureResource(words)) continue;
+                if (textureIndex < indexElements.size() && words.size() <= 8) {
+                    auto& entry = indexElements[textureIndex];
+                    std::copy(words.begin(), words.end(), entry.words.begin());
+                    entry.count = static_cast<std::uint32_t>(words.size());
+                    entry.shape = binding.imageShape;
+                    entry.depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
+                    entry.known = true;
+                }
+                ++textureIndex;
+            }
+        }
+    }
+    for (const auto& table : tableStages) {
+        if (table.images == nullptr) continue;
+        for (std::size_t element = 0; element < table.elementTextures.size(); ++element) {
+            const auto index = table.elementTextures[element];
+            if (index >= indexElements.size() || (element + 1) * 8u > table.images->guestDescriptor.size()) continue;
+            auto& entry = indexElements[index];
+            const auto words = std::span<const std::uint32_t>(table.images->guestDescriptor).subspan(element * 8u, 8u);
+            std::copy(words.begin(), words.end(), entry.words.begin());
+            entry.count = 8;
+            entry.shape = element < table.images->imageShapes.size() ? std::optional(table.images->imageShapes[element]) : std::nullopt;
+            entry.depthCompare = element < table.images->imageDepthCompare.size() && table.images->imageDepthCompare[element];
+            entry.known = true;
+        }
+    }
+    writeSubscription = GuestMemory::SubscribeWrites(ranges);
+}
+
+void ShaderResources::subscribeBuilt(std::span<const CompiledShader> shaders) {
+    if (!reusable || !EpochRevalidate() || std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr) return;
+    subscribeIndex(shaders);
+    if (writeSubscription == nullptr) return;
+    const auto generation = GuestMemory::SubscriptionGeneration(*writeSubscription);
+    std::vector<GuestMemory::UnchangedQuery> queries;
+    queries.reserve(textures.size());
+    std::size_t last = std::numeric_limits<std::size_t>::max();
+    for (const auto& [block, element] : subscribedBlocks) {
+        if (element == TableSpanElement || element == last) continue;
+        last = element;
+        const auto& surface = validatedTextures[element];
+        if (surface.generation == 0) return;
+        queries.push_back({surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes), surface.generation});
+    }
+    if (!queries.empty() && !GuestMemory::UnchangedSinceAll(queries)) return;
+    subscribedGeneration = generation;
+    subscribedPendingSerial = 0;
+}
+
+void ShaderResources::noteIndexProof(std::uint64_t generation, std::uint64_t serialBefore) {
+    if (writeSubscription == nullptr) return;
+    subscribedGeneration = generation;
+    subscribedPendingSerial = StorageTexture::PendingSerial() == serialBefore ? serialBefore : 0;
+    GuestMemory::TrimSubscriptionBumps(*writeSubscription, generation);
+}
+
+bool ShaderResources::reresolveElements(const std::vector<std::size_t>& elements, std::vector<std::size_t>& replacedElements) {
+    auto* recorder = Recorder::Active();
+    if (elements.empty()) return true;
+    if (recorder == nullptr) return false;
+    if (indexImagePositions.empty()) {
+        std::size_t position = 0;
+        for (const auto& binding : bindings) {
+            if (binding.flags != 0) {
+                for (const auto index : binding.imageAllocations) {
+                    if (index == std::numeric_limits<std::size_t>::max()) continue;
+                    if (binding.layout.descriptorType != VK_DESCRIPTOR_TYPE_SAMPLER) indexImagePositions.push_back({index, position, true});
+                    ++position;
+                }
+                continue;
+            }
+            if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) continue;
+            for (const auto index : binding.imageAllocations) {
+                if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE && index != std::numeric_limits<std::size_t>::max()) indexImagePositions.push_back({index, position, false});
+                ++position;
+            }
+        }
+        if (position != descriptorImages.size()) {
+            indexImagePositions.clear();
+            return false;
+        }
+        std::sort(indexImagePositions.begin(), indexImagePositions.end(), [](const ImagePosition& left, const ImagePosition& right) { return left.texture < right.texture; });
+    }
+    lookupLog().clear();
+    BuildLookups lookups;
+    std::vector<std::pair<std::size_t, std::shared_ptr<Texture>>> replaced;
+    for (const auto i : elements) {
+        if (i >= indexElements.size() || i >= textures.size() || !indexElements[i].known) return false;
+        const auto& element = indexElements[i];
+        std::array<std::uint32_t, 8> narrowed{};
+        const auto words = firstLayerWords(std::span<const std::uint32_t>(element.words.data(), element.count), element.shape, narrowed, false);
+        const auto resource = DecodeTextureResource(words);
+        const VkImageViewType multisampleViewType = element.shape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
+        auto texture = cachedTexture(context, words, resource, ViewComponents(resource), 0, element.depthCompare, multisampleViewType);
+        if (texture == nullptr) return false;
+        if (texture != textures[i]) replaced.emplace_back(i, std::move(texture));
+    }
+    if (!replaced.empty() && (!drawBuild || usesBda)) {
+        lookupLog().clear();
+        return false;
+    }
+    for (auto& [i, texture] : replaced) {
+        replacedElements.push_back(i);
+        recorder->Keep(textures[i]);
+        textures[i] = std::move(texture);
+        depthCopyTextures.erase(std::remove(depthCopyTextures.begin(), depthCopyTextures.end(), i), depthCopyTextures.end());
+        if (textures[i]->IsDepthCopy()) depthCopyTextures.insert(std::lower_bound(depthCopyTextures.begin(), depthCopyTextures.end(), i), i);
+        const auto first = std::lower_bound(indexImagePositions.begin(), indexImagePositions.end(), i, [](const ImagePosition& entry, std::size_t texture) { return entry.texture < texture; });
+        for (auto entry = first; entry != indexImagePositions.end() && entry->texture == i; ++entry) {
+            const auto& current = textures[i];
+            const auto view = entry->table ? (textureFirstLayer[i] ? current->FirstLayerView() : current->View()) : textureSrgb[i] ? current->SrgbView(textureFirstLayer[i], textureBaseLevel[i]) : textureBaseLevel[i] ? current->BaseLevelView() : textureFirstLayer[i] ? current->FirstLayerView() : current->View();
+            descriptorImages[entry->position] = {VK_NULL_HANDLE, view, current->Layout()};
+        }
+        rebound = true;
+        countIndex(IndexRebound);
+    }
+    const auto& log = lookupLog();
+    for (const auto i : elements) {
+        const auto found = std::find_if(log.rbegin(), log.rend(), [&](const LookupRecord& record) { return record.object == textures[i].get(); });
+        if (found == log.rend()) {
+            validatedTextures[i].valid = false;
+            lookupLog().clear();
+            return false;
+        }
+        validatedTextures[i] = {found->resource, found->bytes, found->keys, found->generation, 0, found->source, found->depth, true};
+    }
+    lookupLog().clear();
+    return true;
+}
+
+ShaderResources::IndexOutcome ShaderResources::indexRevalidate(std::span<const CompiledShader> shaders, std::uint64_t serialBefore) {
+    static_cast<void>(shaders);
+    if (writeSubscription == nullptr || subscribedGeneration == 0) return IndexOutcome::Fallback;
+    const bool profiled = BuildProfiled();
+    const auto start = profiled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto outcome = [&](IndexOutcome result) {
+        countIndex(result == IndexOutcome::Accepted ? IndexAccepted : result == IndexOutcome::Partial ? IndexPartial : IndexFallback);
+        if (!profiled) return result;
+        Revalidations().indexNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+        return result;
+    };
+    const auto fallback = [&] { return outcome(IndexOutcome::Fallback); };
+    auto& subscription = *writeSubscription;
+    for (const auto& [begin, end] : GuestMemory::SubscriptionSpans(subscription)) {
+        if (!FlushDepthPlanes(begin, static_cast<std::size_t>(end - begin)).empty()) return fallback();
+    }
+    if (!GuestMemory::SweepSubscription(subscription)) return fallback();
+    if ((subscribedPendingSerial == 0 || subscribedPendingSerial != serialBefore) && !IndexBroken("pending")) {
+        thread_local std::vector<StorageTexture::PendingQuery>* regionsSlot = nullptr;
+        auto& regions = ShaderRecompiler::ThreadOwned(regionsSlot);
+        regions.clear();
+        for (const auto& [begin, end] : GuestMemory::SubscriptionSpans(subscription)) regions.push_back({begin, end, nullptr, nullptr, false});
+        if (!regions.empty()) {
+            StorageTexture::ScanPending(regions);
+            if (std::any_of(regions.begin(), regions.end(), [](const StorageTexture::PendingQuery& region) { return region.overlaps; })) return fallback();
+        }
+    }
+    for (const auto& [address, bytes] : comparedTableSpans) {
+        if (GuestMemory::CompareMapped(address, bytes) != GuestMemory::Compare::Equal) return fallback();
+    }
+    const auto generation = GuestMemory::SubscriptionGeneration(subscription);
+    thread_local std::vector<std::size_t>* checkSlot = nullptr;
+    auto& check = ShaderRecompiler::ThreadOwned(checkSlot);
+    thread_local std::vector<std::size_t>* bumpedSlot = nullptr;
+    auto& bumped = ShaderRecompiler::ThreadOwned(bumpedSlot);
+    thread_local std::vector<std::size_t>* lookedSlot = nullptr;
+    auto& looked = ShaderRecompiler::ThreadOwned(lookedSlot);
+    thread_local std::vector<std::uint64_t>* blocksSlot = nullptr;
+    auto& blocks = ShaderRecompiler::ThreadOwned(blocksSlot);
+    thread_local std::vector<std::uint64_t>* lookupBlocksSlot = nullptr;
+    auto& lookupBlocks = ShaderRecompiler::ThreadOwned(lookupBlocksSlot);
+    check = perElementTextures;
+    bumped.clear();
+    looked.clear();
+    const auto elementsOf = [&](const std::vector<std::uint64_t>& from, std::vector<std::size_t>& into) {
+        for (const auto block : from) {
+            auto entry = std::lower_bound(subscribedBlocks.begin(), subscribedBlocks.end(), std::pair<std::uint64_t, std::size_t>{block, 0});
+            for (; entry != subscribedBlocks.end() && entry->first == block; ++entry) {
+                if (entry->second == TableSpanElement) return false;
+                into.push_back(entry->second);
+            }
+        }
+        std::sort(into.begin(), into.end());
+        into.erase(std::unique(into.begin(), into.end()), into.end());
+        return true;
+    };
+    const bool partial = generation != subscribedGeneration;
+    if (partial) {
+        if (!GuestMemory::SubscriptionBumpsSince(subscription, subscribedGeneration, blocks, lookupBlocks)) return fallback();
+        if (!elementsOf(blocks, bumped) || !elementsOf(lookupBlocks, looked)) return fallback();
+        countIndex(IndexBumped, bumped.size());
+        check.insert(check.end(), bumped.begin(), bumped.end());
+        check.insert(check.end(), looked.begin(), looked.end());
+        std::sort(check.begin(), check.end());
+        check.erase(std::unique(check.begin(), check.end()), check.end());
+    }
+    thread_local std::vector<std::size_t>* replacedSlot = nullptr;
+    auto& replaced = ShaderRecompiler::ThreadOwned(replacedSlot);
+    replaced.clear();
+    if (!looked.empty()) {
+        countIndex(IndexLookedUp, looked.size());
+        if (!reresolveElements(looked, replaced)) return fallback();
+    }
+    if (!comparedTextures.empty() && !IndexBroken("compared")) {
+        countIndex(IndexCompared, comparedTextures.size());
+        if (!reresolveElements(comparedTextures, replaced)) return fallback();
+    }
+    if (!check.empty() || !storageTextures.empty()) {
+        thread_local std::vector<PendingOverlap>* overlappingSlot = nullptr;
+        auto& overlapping = ShaderRecompiler::ThreadOwned(overlappingSlot);
+        FastFail reason = FastFail::Count;
+        bool accepted = false;
+        indexProof = true;
+        struct Done {
+            bool& flag;
+            ~Done() { flag = false; }
+        } done{indexProof};
+        if (!fastRevalidate(serialBefore, {}, reason, overlapping, accepted, &check, true)) {
+            if (!partial || bumped.empty() || reason != FastFail::Changed) return fallback();
+            if (!reresolveElements(bumped, replaced)) return fallback();
+            if (!fastRevalidate(serialBefore, {}, reason, overlapping, accepted, &check, true)) return fallback();
+        }
+    }
+    auto proved = generation;
+    if (!replaced.empty()) {
+        std::sort(replaced.begin(), replaced.end());
+        const auto now = GuestMemory::SubscriptionGeneration(subscription);
+        thread_local std::vector<std::size_t>* absorbedSlot = nullptr;
+        auto& absorbed = ShaderRecompiler::ThreadOwned(absorbedSlot);
+        absorbed.clear();
+        const auto own = [&](std::size_t element) { return std::binary_search(replaced.begin(), replaced.end(), element) && !textures[element]->Released(); };
+        if (now != generation && GuestMemory::SubscriptionBumpsSince(subscription, generation, blocks, lookupBlocks) && blocks.empty() && elementsOf(lookupBlocks, absorbed) && std::all_of(absorbed.begin(), absorbed.end(), own)) proved = now;
+    }
+    noteIndexProof(proved, serialBefore);
+    return outcome(partial || !replaced.empty() ? IndexOutcome::Partial : IndexOutcome::Accepted);
+}
+
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (EpochProofs()) {
         const auto epoch = GuestMemory::CollectEpoch();
@@ -3592,16 +3960,19 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     if (!reusable || shaders.empty()) return false;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const bool cpuWriters = !GuestMemory::WriteIndexEnabled() || AnyPendingCpuWrites(context);
     for (const auto& region : directRegions) {
         static_cast<void>(FlushDepthPlanes(region.begin, static_cast<std::size_t>(region.end - region.begin)));
-        CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
+        if (cpuWriters) CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
     }
     for (const auto& range : describedRanges) {
         if (!range.imageTable) RequireNoMultisampleColorTarget(range.address, static_cast<std::size_t>(range.bytes), "a cached image access");
+        if (!cpuWriters) continue;
         CompletePendingCpuWrites(context, range.address, static_cast<std::size_t>(range.bytes));
         if (range.dccAddress != 0) CompletePendingCpuWrites(context, range.dccAddress, DccKeyBytes(range.bytes));
     }
     for (const auto& image : storageTextures) {
+        if (!cpuWriters) break;
         CompletePendingCpuWrites(context, image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes()));
         if (image->Descriptor().dccAddress != 0) CompletePendingCpuWrites(context, image->Descriptor().dccAddress, DccKeyBytes(image->GuestBytes()));
     }
@@ -3705,7 +4076,16 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     refreshed.clear();
     FastFail reason = FastFail::Count;
     bool accepted = false;
-    bool fast = !noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted);
+    bool indexProved = false;
+    std::uint64_t indexBaseline = 0;
+    if (GuestMemory::WriteIndexEnabled() && !noFast && EpochRevalidate()) {
+        if (indexRevalidate(shaders, serialBefore) != IndexOutcome::Fallback) indexProved = true;
+        else {
+            if (writeSubscription == nullptr) subscribeIndex(shaders);
+            if (writeSubscription != nullptr) indexBaseline = GuestMemory::SubscriptionGeneration(*writeSubscription);
+        }
+    }
+    bool fast = indexProved || (!noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted));
     // T1 (design_cpu_final M3, rule RT1): a Pending failure whose overlapping images are foreign
     // to the surfaces is resolved by the own objects' refresh (what the walk's lookups would do to
     // them) and the fast proof run again, which is then authoritative (it accepts what stays
@@ -3829,8 +4209,20 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         }
     }
     pendingSerialSeen = EpochRevalidate() && StorageTexture::PendingSerial() == serialBefore ? serialBefore : 0;
-    for (const auto& texture : textures) {
-        if (texture != nullptr && texture->IsDepthCopy()) texture->RefreshDepthCopy();
+    if (indexBaseline != 0) {
+        noteIndexProof(indexBaseline, serialBefore);
+        for (auto& [address, copy] : comparedTableSpans) {
+            if (GuestMemory::Accessible(reinterpret_cast<const void*>(address), copy.size())) std::memcpy(copy.data(), reinterpret_cast<const void*>(address), copy.size());
+            else copy.clear();
+        }
+        comparedTableSpans.erase(std::remove_if(comparedTableSpans.begin(), comparedTableSpans.end(), [](const auto& span) { return span.second.empty(); }), comparedTableSpans.end());
+    }
+    if (writeSubscription != nullptr) {
+        for (const auto index : depthCopyTextures) textures[index]->RefreshDepthCopy();
+    } else {
+        for (const auto& texture : textures) {
+            if (texture != nullptr && texture->IsDepthCopy()) texture->RefreshDepthCopy();
+        }
     }
     return finish(fast, true);
 }
@@ -5840,7 +6232,7 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
         totalSnapshotBytes += bytes;
         CaptureTrace::Log("draw-snapshot batch=%llu address=%llx bytes=%zu", static_cast<unsigned long long>(recorder.Submissions() + 1), static_cast<unsigned long long>(begin), bytes);
     }
-    if (selected.empty()) return {};
+    if (selected.empty() && !rebound) return {};
     Require(context.descriptorCache != nullptr, "draw snapshots require a descriptor cache");
     std::array<bool, 2> described{};
     thread_local std::array<std::vector<VkDescriptorPoolSize>, 2>* countsSlot = nullptr;

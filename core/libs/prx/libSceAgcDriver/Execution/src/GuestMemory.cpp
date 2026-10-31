@@ -96,6 +96,201 @@ std::uintptr_t userAddressLimit() {
 
 }
 
+struct WriteSubscription {
+    std::atomic<std::uint64_t> generation{1};
+    std::vector<std::uint64_t> blocks;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> spans;
+    struct Bump {
+        std::uint64_t generation;
+        std::uint64_t block;
+        bool plain;
+        bool lookup;
+    };
+    std::vector<Bump> bumps;
+    std::uint64_t overflowedAt = 0;
+};
+
+namespace {
+
+constexpr std::uint64_t IndexBlockBytes = 65536;
+constexpr std::size_t MaxRecordedBumps = 1024;
+constexpr std::uint64_t SpanGapBytes = std::uint64_t{1} << 20;
+
+struct WriteIndex {
+    AgcDriver::Mutex mutex;
+    std::atomic<std::uint64_t> live{0};
+    std::unordered_map<std::uint64_t, std::vector<WriteSubscription*>> byBlock;
+    std::atomic<std::uint64_t> subscriptions{0};
+    std::atomic<std::uint64_t> blocks{0};
+    std::atomic<std::uint64_t> bumps{0};
+    std::atomic<std::uint64_t> lookups{0};
+    std::atomic<std::uint64_t> sweeps{0};
+    std::atomic<std::uint64_t> sweepFailures{0};
+    std::atomic<std::uint64_t> overflows{0};
+    std::atomic<std::uint64_t> lookupNanoseconds{0};
+    std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(WriteBumpSource::Count)> bySource{};
+};
+
+WriteIndex& Index() {
+    static auto* index = new WriteIndex;
+    return *index;
+}
+
+bool brokenSource(WriteBumpSource source) {
+    static const auto broken = [] {
+        std::array<bool, static_cast<std::size_t>(WriteBumpSource::Count)> flags{};
+        const char* text = std::getenv("APS5_TABLE_INDEX_BREAK");
+        if (text == nullptr) return flags;
+        const std::string value(text);
+        constexpr std::array<const char*, static_cast<std::size_t>(WriteBumpSource::Count)> names{"cpu", "driver", "pending", "unwatch", "forget", "release", "import"};
+        for (std::size_t i = 0; i < names.size(); ++i) flags[i] = value.find(names[i]) != std::string::npos;
+        return flags;
+    }();
+    return broken[static_cast<std::size_t>(source)];
+}
+
+void bumpSubscriptions(std::uint64_t address, std::uint64_t bytes, WriteBumpSource source) {
+    auto& index = Index();
+    if (bytes == 0 || index.live.load(std::memory_order_acquire) == 0 || brokenSource(source)) return;
+    static const bool timed = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto start = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    const auto first = address / IndexBlockBytes;
+    const auto last = (address + bytes - 1) / IndexBlockBytes;
+    const bool lookup = source == WriteBumpSource::Release || source == WriteBumpSource::Import;
+    std::uint64_t lookups = 0;
+    std::uint64_t bumped = 0;
+    std::uint64_t overflowed = 0;
+    {
+        std::lock_guard lock(index.mutex);
+        const auto visit = [&](std::uint64_t block, const std::vector<WriteSubscription*>& subscribers) {
+            for (auto* subscription : subscribers) {
+                const auto generation = subscription->generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+                if (!subscription->bumps.empty() && subscription->bumps.back().block == block && subscription->bumps.back().lookup == lookup) subscription->bumps.back().generation = generation;
+                else if (subscription->bumps.size() < MaxRecordedBumps) subscription->bumps.push_back({generation, block, !lookup, lookup});
+                else if (subscription->overflowedAt == 0) {
+                    subscription->overflowedAt = generation;
+                    ++overflowed;
+                }
+                ++bumped;
+            }
+        };
+        if (last - first >= index.byBlock.size()) {
+            ++lookups;
+            for (const auto& [block, subscribers] : index.byBlock) {
+                if (block >= first && block <= last) visit(block, subscribers);
+            }
+        } else {
+            for (auto block = first; block <= last; ++block) {
+                ++lookups;
+                if (const auto found = index.byBlock.find(block); found != index.byBlock.end()) visit(block, found->second);
+            }
+        }
+    }
+    index.lookups.fetch_add(lookups, std::memory_order_relaxed);
+    if (bumped != 0) {
+        index.bumps.fetch_add(bumped, std::memory_order_relaxed);
+        index.bySource[static_cast<std::size_t>(source)].fetch_add(bumped, std::memory_order_relaxed);
+    }
+    if (overflowed != 0) index.overflows.fetch_add(overflowed, std::memory_order_relaxed);
+    if (timed) index.lookupNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
+}
+
+void releaseSubscription(WriteSubscription* subscription) {
+    auto& index = Index();
+    {
+        std::lock_guard lock(index.mutex);
+        for (const auto block : subscription->blocks) {
+            const auto found = index.byBlock.find(block);
+            if (found == index.byBlock.end()) continue;
+            auto& subscribers = found->second;
+            subscribers.erase(std::remove(subscribers.begin(), subscribers.end(), subscription), subscribers.end());
+            if (subscribers.empty()) index.byBlock.erase(found);
+        }
+        index.live.fetch_sub(1, std::memory_order_acq_rel);
+    }
+    delete subscription;
+}
+
+}
+
+bool WriteIndexEnabled() {
+    static const bool enabled = [] {
+        const char* text = std::getenv("APS5_TABLE_INDEX");
+        return text != nullptr && text[0] != '\0' && text[0] != '0';
+    }();
+    return enabled;
+}
+
+std::uint64_t WriteBlockOf(std::uint64_t address) {
+    return address / IndexBlockBytes;
+}
+
+std::uint64_t SubscriptionGeneration(const WriteSubscription& subscription) {
+    return subscription.generation.load(std::memory_order_acquire);
+}
+
+std::span<const std::pair<std::uint64_t, std::uint64_t>> SubscriptionSpans(const WriteSubscription& subscription) {
+    return subscription.spans;
+}
+
+bool SubscriptionBumpsSince(const WriteSubscription& subscription, std::uint64_t generation, std::vector<std::uint64_t>& blocks, std::vector<std::uint64_t>& lookupBlocks) {
+    blocks.clear();
+    lookupBlocks.clear();
+    auto& index = Index();
+    std::lock_guard lock(index.mutex);
+    if (subscription.overflowedAt != 0) return false;
+    for (const auto& bump : subscription.bumps) {
+        if (bump.generation <= generation) continue;
+        if (bump.plain) blocks.push_back(bump.block);
+        if (bump.lookup) lookupBlocks.push_back(bump.block);
+    }
+    for (auto* list : {&blocks, &lookupBlocks}) {
+        std::sort(list->begin(), list->end());
+        list->erase(std::unique(list->begin(), list->end()), list->end());
+    }
+    return true;
+}
+
+void TrimSubscriptionBumps(WriteSubscription& subscription, std::uint64_t generation) {
+    auto& index = Index();
+    std::lock_guard lock(index.mutex);
+    if (subscription.overflowedAt != 0 && subscription.overflowedAt <= generation) {
+        subscription.overflowedAt = 0;
+        subscription.bumps.clear();
+        return;
+    }
+    subscription.bumps.erase(std::remove_if(subscription.bumps.begin(), subscription.bumps.end(), [generation](const auto& bump) { return bump.generation <= generation; }), subscription.bumps.end());
+}
+
+void NoteGpuPending(std::uint64_t address, std::size_t bytes) {
+    bumpSubscriptions(address, bytes, WriteBumpSource::Pending);
+}
+
+void NoteTextureReleased(std::uint64_t address) {
+    bumpSubscriptions(address, 1, WriteBumpSource::Release);
+}
+
+WriteIndexStats WriteIndexCounted() {
+    auto& index = Index();
+    WriteIndexStats stats;
+    stats.subscriptions = index.subscriptions.load(std::memory_order_relaxed);
+    stats.blocks = index.blocks.load(std::memory_order_relaxed);
+    stats.bumps = index.bumps.load(std::memory_order_relaxed);
+    stats.lookups = index.lookups.load(std::memory_order_relaxed);
+    stats.sweeps = index.sweeps.load(std::memory_order_relaxed);
+    stats.sweepFailures = index.sweepFailures.load(std::memory_order_relaxed);
+    stats.overflows = index.overflows.load(std::memory_order_relaxed);
+    stats.lookupNanoseconds = index.lookupNanoseconds.load(std::memory_order_relaxed);
+    for (std::size_t i = 0; i < stats.bySource.size(); ++i) stats.bySource[i] = index.bySource[i].load(std::memory_order_relaxed);
+    return stats;
+}
+
+void ResetWriteIndexCounts() {
+    auto& index = Index();
+    for (auto* counter : {&index.subscriptions, &index.blocks, &index.bumps, &index.lookups, &index.sweeps, &index.sweepFailures, &index.overflows, &index.lookupNanoseconds}) counter->store(0, std::memory_order_relaxed);
+    for (auto& counter : index.bySource) counter.store(0, std::memory_order_relaxed);
+}
+
 namespace {
 std::atomic<std::uint64_t> forgetCalls{0};
 // See ForgetSerial: odd while a ForgetPages call stores its page states.
@@ -537,6 +732,7 @@ std::size_t ImagePagesSize() {
 }
 
 void ForgetPages(std::uintptr_t address, std::size_t bytes) {
+    bumpSubscriptions(address, bytes, WriteBumpSource::Forget);
     forgetCalls.fetch_add(1, std::memory_order_relaxed);
     forgetBytes.fetch_add(bytes, std::memory_order_relaxed);
     forgetSerial.fetch_add(1, std::memory_order_release);
@@ -598,10 +794,8 @@ void PageStates::initialize() {
             imageCached = image.allocate();
         }
 #endif
-        if (arenaCached || imageCached) {
-            GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
-            GuestArena::GuestArenaSetAccessObserver_nid_postfix(&ForgetInaccessiblePages);
-        }
+        if (arenaCached || imageCached || WriteIndexEnabled()) GuestAllocations::GuestAllocationsSetInvalidator_nid_postfix(&ForgetPages);
+        if (arenaCached || imageCached) GuestArena::GuestArenaSetAccessObserver_nid_postfix(&ForgetInaccessiblePages);
     });
     ready.store(true, std::memory_order_release);
 }
@@ -1322,6 +1516,7 @@ struct WriteTracker {
             coarse = std::max(coarse, stampGeneration);
         }
         if (cpu) leaf.cpuBlocks[block % LeafBlocks] = stampGeneration;
+        if (stored) bumpSubscriptions(blockBegin(block), WriteBlockBytes, kind == StampKind::Driver ? WriteBumpSource::Driver : WriteBumpSource::Cpu);
     }
 };
 
@@ -1788,9 +1983,15 @@ void unwatchLocked(WriteTracker& tracker, std::uint64_t address, std::size_t byt
     if (!tracker.watched) return;
 #ifdef _WIN32
     tracker.startHints(address, bytes);
-    if (tracker.coverage.Exclude(address, bytes, GuestArena::GuestArenaCommitGeneration_nid_postfix())) unwatchSerial.fetch_add(1, std::memory_order_release);
+    if (tracker.coverage.Exclude(address, bytes, GuestArena::GuestArenaCommitGeneration_nid_postfix())) {
+        unwatchSerial.fetch_add(1, std::memory_order_release);
+        bumpSubscriptions(address, bytes, WriteBumpSource::Unwatch);
+    }
 #else
-    if (GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(address), bytes)) unwatchSerial.fetch_add(1, std::memory_order_release);
+    if (GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(address), bytes)) {
+        unwatchSerial.fetch_add(1, std::memory_order_release);
+        bumpSubscriptions(address, bytes, WriteBumpSource::Unwatch);
+    }
 #endif
 }
 
@@ -1873,6 +2074,7 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     if (!staysWatched) {
         const bool before = covered && walkWrites(tracker, first, stop, StampKind::Cpu, true);
         if (!runImport()) return false;
+        bumpSubscriptions(first, stop - first, WriteBumpSource::Import);
         if (!before || !walkWrites(tracker, first, stop, StampKind::ImportWindow, true)) unwatchLocked(tracker, first, static_cast<std::size_t>(stop - first));
         unwatchLocked(tracker, address, bytes);
         return true;
@@ -1905,6 +2107,7 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     });
     for (const auto& [begin, end] : leaving) saveBytes(begin, end);
     if (!runImport()) return false;
+    bumpSubscriptions(first, stop - first, WriteBumpSource::Import);
     const WindowCopy window{first, hashes};
     auto unwatchedFrom = first;
     for (const auto& [begin, end] : spans) {
@@ -1935,6 +2138,55 @@ bool Watched(std::uint64_t address, std::size_t bytes) {
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     return tracker.watched && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address && tracker.covers(address, bytes);
+}
+
+std::shared_ptr<WriteSubscription> SubscribeWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    Pages().initialize();
+    auto* subscription = new WriteSubscription;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> watched;
+    constexpr std::uint64_t page = 4096;
+    for (const auto& [begin, end] : ranges) {
+        if (end <= begin) continue;
+        for (auto block = begin / IndexBlockBytes; block <= (end - 1) / IndexBlockBytes; ++block) subscription->blocks.push_back(block);
+        const auto first = begin & ~(page - 1);
+        const auto stop = (end + page - 1) & ~(page - 1);
+        if (Watched(first, static_cast<std::size_t>(stop - first))) watched.emplace_back(first, stop);
+    }
+    std::sort(subscription->blocks.begin(), subscription->blocks.end());
+    subscription->blocks.erase(std::unique(subscription->blocks.begin(), subscription->blocks.end()), subscription->blocks.end());
+    std::sort(watched.begin(), watched.end());
+    for (const auto& range : watched) {
+        auto& spans = subscription->spans;
+        if (!spans.empty() && range.first <= spans.back().second + SpanGapBytes) {
+            const auto end = std::max(spans.back().second, range.second);
+            if (range.first <= spans.back().second || Watched(spans.back().first, static_cast<std::size_t>(end - spans.back().first))) {
+                spans.back().second = end;
+                continue;
+            }
+        }
+        spans.push_back(range);
+    }
+    auto& index = Index();
+    {
+        std::lock_guard lock(index.mutex);
+        for (const auto block : subscription->blocks) index.byBlock[block].push_back(subscription);
+        index.live.fetch_add(1, std::memory_order_acq_rel);
+    }
+    index.subscriptions.fetch_add(1, std::memory_order_relaxed);
+    index.blocks.fetch_add(subscription->blocks.size(), std::memory_order_relaxed);
+    return std::shared_ptr<WriteSubscription>(subscription, &releaseSubscription);
+}
+
+bool SweepSubscription(const WriteSubscription& subscription) {
+    auto& index = Index();
+    index.sweeps.fetch_add(1, std::memory_order_relaxed);
+    for (const auto& [begin, end] : subscription.spans) {
+        if (collectWrites(begin, static_cast<std::size_t>(end - begin), true) == 0) {
+            index.sweepFailures.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+    }
+    return true;
 }
 
 bool UnchangedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {

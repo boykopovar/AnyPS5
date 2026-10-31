@@ -4578,6 +4578,11 @@ void imageTableFirstLayerRevalidateTests(const Device& device, Recorder& recorde
     TextureDetiler detiler(base);
     auto context = base;
     context.detiler = &detiler;
+    struct Clear {
+        const Context& context;
+        Recorder& recorder;
+        ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+    } clear{context, recorder};
     if (context.imageTableCapacity < 1u) {
         std::cout << "image tables unavailable: image table first-layer revalidation not tested\n";
         return;
@@ -4619,14 +4624,18 @@ void imageTableFirstLayerRevalidateTests(const Device& device, Recorder& recorde
         ShaderResources resources(context, compute);
         Require(resources.SampledTextures().size() == 1, "a 2D read of a 2D array in an image table bound no texture");
         const auto bound = resources.SampledTextures().front();
+        const auto before = WriteIndexOutcomesCounted();
         ShaderResources::ProofReport report;
         Require(resources.Revalidate(std::span(&compute, 1), &report), "an image table holding a 2D read of a 2D array did not revalidate");
-        Require(report.path == ShaderResources::ProofPath::Full, "an image table holding a 2D read of a 2D array was not proven on the full path");
+        if (AgcDriver::GuestMemory::WriteIndexEnabled()) {
+            Require(report.path == ShaderResources::ProofPath::Fast && WriteIndexOutcomesCounted().compared == before.compared + 1u, "an image table holding a 2D read of a 2D array was not proven by comparing its unwatched element on the write index's path");
+        } else {
+            Require(report.path == ShaderResources::ProofPath::Full, "an image table holding a 2D read of a 2D array was not proven on the full path");
+        }
         Require(resources.SampledTextures().front() == bound, "revalidating an image table holding a 2D read of a 2D array changed its texture");
         Require(resources.Revalidate(std::span(&compute, 1)), "an image table holding a 2D read of a 2D array did not revalidate twice");
         recorder.Sync();
     }
-    ClearCachedTextures(context.device);
 }
 
 void drawSnapshotReuseTests(const Device& device, Recorder& recorder) {
