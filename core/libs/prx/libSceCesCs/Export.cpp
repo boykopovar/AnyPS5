@@ -269,31 +269,35 @@ constexpr uint8_t EUC_JIS2004_TAG[8] = {'E', 'U', 'C', 'J', 'I', 'S', '0', '4'};
 constexpr uint8_t SJIS2004_TAG[8] = {'S', 'J', 'I', 'S', '2', '0', '0', '4'};
 
 bool hasTag(const void* profile, const uint8_t (&tag)[8]) {
+    return profile != nullptr && std::memcmp(profile, tag, sizeof(tag)) == 0;
+}
+
+bool hasSheetTag(const void* profile, const uint8_t (&tag)[8]) {
     return profile != nullptr && std::memcmp(profile, tag, sizeof(tag) - 1) == 0;
 }
 
 bool isEucJpX0208(const void* profile) {
-    return hasTag(profile, EUC_JP_X0208_TAG) || hasTag(profile, EUC_JP_X0208_SS2_TAG) || hasTag(profile, EUC_JP_X0208_SS3_TAG);
+    return hasSheetTag(profile, EUC_JP_X0208_TAG) || hasSheetTag(profile, EUC_JP_X0208_SS2_TAG) || hasSheetTag(profile, EUC_JP_X0208_SS3_TAG);
 }
 
 bool isEucJp(const void* profile) {
-    return hasTag(profile, EUC_JP_TAG) || isEucJpX0208(profile);
+    return hasSheetTag(profile, EUC_JP_TAG) || isEucJpX0208(profile);
 }
 
 bool hasSs2(const void* profile) {
-    return !hasTag(profile, EUC_JP_X0208_TAG);
+    return !hasSheetTag(profile, EUC_JP_X0208_TAG);
 }
 
 bool hasSs3(const void* profile) {
-    return hasTag(profile, EUC_JP_X0208_SS3_TAG);
+    return hasSheetTag(profile, EUC_JP_X0208_SS3_TAG);
 }
 
 bool isSjisX0208(const void* profile) {
-    return hasTag(profile, SJIS_X0208_TAG);
+    return hasSheetTag(profile, SJIS_X0208_TAG);
 }
 
 bool isSjis(const void* profile) {
-    return hasTag(profile, SJIS_TAG) || isSjisX0208(profile);
+    return hasSheetTag(profile, SJIS_TAG) || isSjisX0208(profile);
 }
 
 bool isEucJis2004(const void* profile) {
@@ -348,11 +352,11 @@ constexpr uint8_t EUC_CN_TAG[8] = {'E', 'U', 'C', 'C', 'N', '9', '3', 0};
 constexpr uint8_t GBK_TAG[8] = {'G', 'B', 'K', 'C', 'P', '9', '3', 0};
 
 bool isEucCn(const void* profile) {
-    return hasTag(profile, EUC_CN_TAG);
+    return hasSheetTag(profile, EUC_CN_TAG);
 }
 
 bool isGbk(const void* profile) {
-    return hasTag(profile, GBK_TAG);
+    return hasSheetTag(profile, GBK_TAG);
 }
 
 bool isSbc(const void* profile) {
@@ -473,8 +477,8 @@ bool mapsGb18030Supplementary(const Gb18030Tables& tables, uint32_t code) {
 
 const Gb18030Tables* gb18030Tables(const void* profile) {
     if (profile == nullptr) return nullptr;
-    if (hasTag(profile, GB18030_2000_TAG)) return &GB18030_2000;
-    if (hasTag(profile, GB18030_2005_TAG)) return &GB18030_2005;
+    if (hasSheetTag(profile, GB18030_2000_TAG)) return &GB18030_2000;
+    if (hasSheetTag(profile, GB18030_2005_TAG)) return &GB18030_2005;
     return nullptr;
 }
 
@@ -624,15 +628,15 @@ constexpr uint8_t BIG5_TAG[8] = {'B', 'I', 'G', '5', 'C', '9', '5', 0};
 constexpr uint16_t BIG5_LAST_CELL[2] = {0x5341, 0x5345};
 
 bool isEucKr(const void* profile) {
-    return hasTag(profile, EUC_KR_TAG);
+    return hasSheetTag(profile, EUC_KR_TAG);
 }
 
 bool isUhc(const void* profile) {
-    return hasTag(profile, UHC_TAG);
+    return hasSheetTag(profile, UHC_TAG);
 }
 
 bool isBig5(const void* profile) {
-    return hasTag(profile, BIG5_TAG);
+    return hasSheetTag(profile, BIG5_TAG);
 }
 
 bool isMbcs(const void* profile) {
@@ -846,7 +850,7 @@ int decodeEucJpScalar(const uint8_t* euc, uint32_t eucMax, uint32_t& length, uin
 }
 
 int decodeEucJp(const void* profile, const uint8_t* mbcs, uint32_t mbcsMax, uint32_t& length, uint32_t& code) {
-    if (hasTag(profile, EUC_JP_TAG)) return decodeEucJpScalar(mbcs, mbcsMax, length, code);
+    if (hasSheetTag(profile, EUC_JP_TAG)) return decodeEucJpScalar(mbcs, mbcsMax, length, code);
     const uint8_t lead = mbcs[0];
     if (lead < 0x80) {
         length = 1;
