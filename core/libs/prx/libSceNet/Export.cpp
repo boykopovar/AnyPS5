@@ -2868,8 +2868,7 @@ void APS5_VABI sceNetMemoryFree(void* memory) {
 }
 
 int APS5_VABI sceNetSetDnsInfoToKernel(const NetDnsInfo* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetSetDnsInfo(info, flags);
 }
 
 int APS5_VABI sceNetSetsockoptEx(int socketId, int level, int option, const void* value, std::uint32_t valueSize) {
@@ -2986,8 +2985,7 @@ int APS5_VABI sceNetGetDns6Info(NetDns6Info* info, std::uint32_t flags) {
 }
 
 int APS5_VABI sceNetSetDns6InfoToKernel(const NetDns6Info* info, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetSetDns6Info(info, flags);
 }
 
 int APS5_VABI sceNetShowRoute6ForBuffer(char* buffer, std::int32_t bufferSize, std::int32_t poolId) {

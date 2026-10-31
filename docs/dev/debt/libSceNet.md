@@ -24,7 +24,7 @@
 
 ### Unknown function info
 
-- [sceNetSetDnsInfoToKernel, sceNetSetDns6InfoToKernel](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - signatures and semantics remain unverified on hardware; whether they mirror process-local overrides or issue kernel calls is unmeasured. Both throw through `NotImplemented_nid_no_patch`.
+- [sceNetSetDnsInfoToKernel, sceNetSetDns6InfoToKernel](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - call `sceNetSetDnsInfo` and `sceNetSetDns6Info` respectively. Whether the console routes these through the kernel or only updates process-local state is unmeasured on hardware; the host has no separate kernel DNS table.
 - [sceNetGetsockopt](../../../core/libs/prx/libSceNet/Export.cpp) - `SO_PROTOCOL` on raw sockets throws: FreeBSD's raw protocol-switch selection has not been mapped to host raw sockets. For stream and datagram sockets, the effective creation protocol and accepted-socket inheritance follow FreeBSD 11.4's [protocol tables](https://github.com/freebsd/freebsd-src/blob/releng/11.4/sys/netinet/in_proto.c) and [sogetopt](https://github.com/freebsd/freebsd-src/blob/releng/11.4/sys/kern/uipc_socket.c); the `0x1016` option and truncated integer output are not measured on PS5. Existing null-pointer validation still returns `EINVAL`.
 - [sceNetRecv, sceNetRecvfrom and sceNetRecvmsg](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - zero-length TCP receives while connecting, after disconnect, or with a pending host error still use the host receive path. Error and output precedence in those states is unmeasured on a console. The established, error-free case follows FreeBSD 11.4's [`soreceive_generic`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/uipc_socket.c#L1568-L1583).
 
