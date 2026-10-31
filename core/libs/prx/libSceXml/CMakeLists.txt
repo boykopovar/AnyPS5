@@ -1,6 +1,8 @@
 add_library(libSceXml SHARED EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Document.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/DocumentBuilder.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/DomReader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/DomParser.cpp
 )
 target_include_directories(libSceXml PRIVATE ${LIBS_INCLUDE_DIR})
@@ -11,6 +13,20 @@ if(BUILD_TESTING)
     target_include_directories(xml_dom_parser_tests PRIVATE ${LIBS_INCLUDE_DIR})
     configure_host_test_executable(xml_dom_parser_tests)
     add_test(NAME xml_dom_parser COMMAND xml_dom_parser_tests)
+    add_test_executable(xml_dom_reader_tests ${LIBS_INCLUDE_DIR}/tests/XmlDomReader.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/DomReader.cpp)
+    target_include_directories(xml_dom_reader_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(xml_dom_reader_tests)
+    add_test(NAME xml_dom_reader COMMAND xml_dom_reader_tests)
+    add_test_executable(guest_xml_document_tests ${LIBS_INCLUDE_DIR}/tests/GuestXmlDocument.cpp)
+    target_include_directories(guest_xml_document_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_xml_document_tests PRIVATE libSceXml libkernel libc)
+    configure_windows_unwind(guest_xml_document_tests)
+    add_test(NAME guest_xml_document COMMAND guest_xml_document_tests)
+    set_tests_properties(guest_xml_document PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_xml_document PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceXml>")
+    endif()
     add_test_executable(guest_xml_document_builder_tests ${LIBS_INCLUDE_DIR}/tests/GuestXmlDocumentBuilder.cpp)
     target_include_directories(guest_xml_document_builder_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_xml_document_builder_tests PRIVATE libSceXml libkernel libc)

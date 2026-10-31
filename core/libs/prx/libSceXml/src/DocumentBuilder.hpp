@@ -11,5 +11,6 @@ int BuilderTerminate(XmlHandle* self);
 void BuilderDestroy(XmlHandle* self);
 int BuilderParse(XmlHandle* self, const XmlString* text, bool last);
 void BuilderSetOption(XmlHandle* self, BuilderOption option, bool value);
+XmlHandle* BuilderGetDocument(XmlHandle* result, XmlHandle* self);
 
 }

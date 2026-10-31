@@ -1,5 +1,6 @@
 #include "prx/libSceXml/include/InventoryExports.hpp"
 #include "prx/libSceXml/include/Api.hpp"
+#include "prx/libSceXml/src/Document.hpp"
 #include "prx/libSceXml/src/DocumentBuilder.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -244,8 +245,8 @@ int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder10initializeEPKNS0_11InitializerE(
     return XmlDom::BuilderInitialize(self, initializer);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv() {
-    NotImplemented_nid_no_patch(__func__);
+XmlHandle* APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(XmlHandle* result, XmlHandle* self) {
+    return XmlDom::BuilderGetDocument(result, self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder16setResolveEntityEb(XmlHandle* self, bool value) {
@@ -452,36 +453,36 @@ int APS5_VABI _ZN3sce3Xml3Dom8Document9serializeEPKNS0_18SerializeParameterEPNS0
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8Document9terminateEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom8Document9terminateEv(XmlHandle* self) {
+    return XmlDom::DocumentTerminate(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentC1ERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8DocumentC1ERKS2_(XmlHandle* self, const XmlHandle* other) {
+    XmlDom::DocumentCopy(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentC1Ev(XmlHandle* self) {
     self->impl = nullptr;
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentC2ERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8DocumentC2ERKS2_(XmlHandle* self, const XmlHandle* other) {
+    XmlDom::DocumentCopy(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentC2Ev(XmlHandle* self) {
     self->impl = nullptr;
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8DocumentD1Ev(XmlHandle* self) {
+    XmlDom::DocumentDestroy(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom8DocumentD2Ev(XmlHandle* self) {
+    XmlDom::DocumentDestroy(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentaSERKS2_() {
-    NotImplemented_nid_no_patch(__func__);
+XmlHandle* APS5_VABI _ZN3sce3Xml3Dom8DocumentaSERKS2_(XmlHandle* self, const XmlHandle* other) {
+    return XmlDom::DocumentAssign(self, other);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE() {
@@ -750,43 +751,106 @@ int APS5_VABI _ZNK3sce3Xml3Dom4Node16getOwnerDocumentEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document10getDocRootEv() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document10getDocRootEv(XmlNodeId* result, const XmlHandle* self) {
+    return XmlDom::DocumentNode(result, self, XmlDom::NodeQuery::DocRoot, XmlNodeId{});
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentNode(result, self, XmlDom::NodeQuery::Sibling, node);
 }
+
+
+bool APS5_VABI _ZNK3sce3Xml3Dom8Document11isAvailableEv(const XmlHandle* self) {
+    return XmlDom::DocumentIsAvailable(self);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document9getStatusEv(const XmlHandle* self) {
+    return XmlDom::DocumentGetStatus(self);
+}
+
+bool APS5_VABI _ZNK3sce3Xml3Dom8Document10isReadOnlyEv(const XmlHandle* self) {
+    return XmlDom::DocumentIsReadOnly(self);
+}
+
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document7getRootEv(XmlNodeId* result, const XmlHandle* self) {
+    return XmlDom::DocumentNode(result, self, XmlDom::NodeQuery::Root, XmlNodeId{});
+}
+
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentNode(result, self, XmlDom::NodeQuery::FirstChild, node);
+}
+
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document9getParentENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentNode(result, self, XmlDom::NodeQuery::Parent, node);
+}
+
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document12getLastChildENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentNode(result, self, XmlDom::NodeQuery::LastChild, node);
+}
+
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentNode(result, self, XmlDom::NodeQuery::FirstAttribute, node);
+}
+
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document11getNextAttrENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentNode(result, self, XmlDom::NodeQuery::NextAttribute, node);
+}
+
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeNameENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentString(result, self, XmlDom::StringQuery::NodeName, node);
+}
+
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document7getTextENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentString(result, self, XmlDom::StringQuery::Text, node);
+}
+
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document14getSkippedTextENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentString(result, self, XmlDom::StringQuery::SkippedText, node);
+}
+
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document11getAttrNameENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentString(result, self, XmlDom::StringQuery::AttributeName, node);
+}
+
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttrValueENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentString(result, self, XmlDom::StringQuery::AttributeValue, node);
+}
+
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document9getEntityENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentString(result, self, XmlDom::StringQuery::Entity, node);
+}
+
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttributeENS1_6NodeIdEPKNS0_6StringE(XmlString* result, const XmlHandle* self, XmlNodeId node, const XmlString* name) {
+    return XmlDom::DocumentAttribute(result, self, node, name);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeTypeENS1_6NodeIdE(const XmlHandle* self, XmlNodeId node) {
+    return static_cast<int>(XmlDom::DocumentNumber(self, XmlDom::NumberQuery::NodeType, node));
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getEntityTypeENS1_6NodeIdE(const XmlHandle* self, XmlNodeId node) {
+    return static_cast<int>(XmlDom::DocumentNumber(self, XmlDom::NumberQuery::EntityType, node));
+}
+
+bool APS5_VABI _ZNK3sce3Xml3Dom8Document13hasChildNodesENS1_6NodeIdE(const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentNumber(self, XmlDom::NumberQuery::HasChildNodes, node) != 0;
+}
+
+bool APS5_VABI _ZNK3sce3Xml3Dom8Document13hasAttributesENS1_6NodeIdE(const XmlHandle* self, XmlNodeId node) {
+    return XmlDom::DocumentNumber(self, XmlDom::NumberQuery::HasAttributes, node) != 0;
+}
+
+XmlNodeId _ZN3sce3Xml3Dom13invalidNodeIdE{};
 
 }
 
 extern "C" {
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeTypeENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document12getLastChildENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document7getTextENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeNameENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3sce3Xml3Dom8Document20getElementsByTagNameENS1_6NodeIdEPKNS0_6StringEPNS1_8NodeListE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document13getEntityTypeENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -802,10 +866,6 @@ int APS5_VABI _ZNK3sce3Xml3Dom8Document13getAttributesENS1_6NodeIdEPNS1_8NodeLis
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3sce3Xml3Dom8NodeList4itemEj() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -814,19 +874,7 @@ int APS5_VABI _ZNK3sce3Xml4Attr8getValueEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document11getAttrNameENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3sce3Xml3Dom8NodeListixEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document9getStatusEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document14getSkippedTextENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -834,31 +882,7 @@ int APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document9getEntityENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNextAttrENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttrValueENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3sce3Xml3Dom8NodeList11isAvailableEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document7getRootEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttributeENS1_6NodeIdEPKNS0_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -866,27 +890,7 @@ int APS5_VABI _ZNK3sce3Xml3Dom8Document10getXmlMetaEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3sce3Xml3Dom8Document11isAvailableEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document9getParentENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3sce3Xml3Dom8NodeList9getLengthEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document10isReadOnlyEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document13hasChildNodesENS1_6NodeIdE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3sce3Xml3Dom8Document13hasAttributesENS1_6NodeIdE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -1,10 +1,12 @@
 #include "prx/libSceXml/src/DocumentBuilder.hpp"
 
+#include "prx/libSceXml/src/Document.hpp"
 #include "prx/libSceXml/src/DomParser.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -21,6 +23,7 @@ constexpr std::array<std::size_t, 15> BlockSizes{80, 440, 84, 84, 84, 104, 200, 
 constexpr std::array<std::size_t, 15> ReleaseOrder{6, 5, 7, 3, 4, 2, 1, 14, 13, 12, 11, 10, 9, 8, 0};
 constexpr std::array<std::size_t, 4> LateFailureReleaseOrder{13, 11, 10, 12};
 constexpr std::size_t FirstLateBlock = 9;
+constexpr std::size_t DocumentBlockSize = 72;
 
 struct BuilderState {
     XmlMemAllocator* allocator = nullptr;
@@ -33,7 +36,8 @@ struct BuilderState {
     bool inProgress = false;
     bool stalledInsideTag = false;
     std::string input;
-    Buffers buffers;
+    std::shared_ptr<Generation> generation;
+    void* documentBlock = nullptr;
 };
 
 BuilderState* StateOf(const XmlHandle* self) {
@@ -91,6 +95,8 @@ void BuilderDestroy(XmlHandle* self) {
     if (self == nullptr) throw std::invalid_argument("sce::Xml::Dom::DocumentBuilder::~DocumentBuilder: null object");
     if (self->impl == nullptr) return;
     BuilderState* state = StateOf(self);
+    if (state->generation) state->generation->alive = false;
+    if (state->documentBlock != nullptr) state->allocator->vtable->deallocate(state->allocator, state->documentBlock, state->userData);
     for (std::size_t block : ReleaseOrder) Release(state, block);
     delete state;
     self->impl = nullptr;
@@ -114,6 +120,8 @@ int BuilderParse(XmlHandle* self, const XmlString* text, bool last) {
         state->input.clear();
         state->documentOptions = state->options;
         state->stalledInsideTag = false;
+        if (state->generation) state->generation->alive = false;
+        state->generation = std::make_shared<Generation>();
     } else {
         if (state->stalledInsideTag) {
             state->failed = true;
@@ -132,10 +140,29 @@ int BuilderParse(XmlHandle* self, const XmlString* text, bool last) {
         state->failed = true;
         throw;
     }
-    state->buffers = std::move(result.buffers);
+    if (state->generation->lent) state->generation->lentBuffers.push_back(std::move(state->generation->buffers));
+    state->generation->lent = false;
+    state->generation->buffers = std::move(result.buffers);
+    state->generation->status = result.status < 0 ? result.status : 0;
     state->stalledInsideTag = result.stalledInsideTag;
     state->inProgress = result.status == StatusInProgress;
     return result.status;
+}
+
+XmlHandle* BuilderGetDocument(XmlHandle* result, XmlHandle* self) {
+    if (self == nullptr || result == nullptr) throw std::invalid_argument("sce::Xml::Dom::DocumentBuilder::getDocument: null object");
+    result->impl = nullptr;
+    if (self->impl == nullptr) return result;
+    BuilderState* state = StateOf(self);
+    if (state->initializeFailed) throw std::logic_error("sce::Xml::Dom::DocumentBuilder::getDocument: a document after a failed 13.42 initialize is not measured");
+    if (state->failed) throw std::logic_error("sce::Xml::Dom::DocumentBuilder::getDocument: the builder stopped at an unmeasured case; terminate it first");
+    if (!state->generation) return result;
+    if (state->documentBlock == nullptr) {
+        state->documentBlock = state->allocator->vtable->allocate(state->allocator, DocumentBlockSize, state->userData);
+        if (state->documentBlock == nullptr) throw std::logic_error("sce::Xml::Dom::DocumentBuilder::getDocument: an allocation failure was not measured");
+    }
+    DocumentCreate(result, state->allocator, state->userData, state->generation);
+    return result;
 }
 
 void BuilderSetOption(XmlHandle* self, BuilderOption option, bool value) {
