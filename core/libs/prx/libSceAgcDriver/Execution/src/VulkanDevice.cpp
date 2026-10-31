@@ -3962,11 +3962,11 @@ std::size_t VulkanDevice::FlipInFlight() {
     static const std::size_t count = [] {
         if (std::getenv("APS5_SYNC_FLIP") != nullptr) return std::size_t{0};
         const char* value = std::getenv("APS5_FLIP_INFLIGHT");
-        if (value == nullptr) return std::size_t{1};
+        if (value == nullptr) return std::size_t{2};
         const long parsed = std::strtol(value, nullptr, 10);
         if (parsed >= 0 && parsed <= 2) return static_cast<std::size_t>(parsed);
-        std::fprintf(stderr, "[present] APS5_FLIP_INFLIGHT=%s refused (0, 1 or 2 presentations may trail on the GPU); using 1\n", value);
-        return std::size_t{1};
+        std::fprintf(stderr, "[present] APS5_FLIP_INFLIGHT=%s refused (0, 1 or 2 presentations may trail on the GPU); using 2\n", value);
+        return std::size_t{2};
     }();
     return count;
 }
