@@ -5787,6 +5787,13 @@ bool ShaderResources::BindsVertexRange(std::span<const CompiledShader> shaders, 
     return true;
 }
 
+std::optional<std::uint32_t> ShaderResources::LastInstance(std::uint32_t firstInstance, std::uint32_t instanceCount) {
+    if (instanceCount == 0u) return std::nullopt;
+    const auto last = static_cast<std::uint64_t>(firstInstance) + instanceCount - 1u;
+    if (last > std::numeric_limits<std::uint32_t>::max()) return std::nullopt;
+    return static_cast<std::uint32_t>(last);
+}
+
 std::uint64_t ShaderResources::VertexBoundBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element, VertexReach maxVertex) {
     Require(binding.guestDescriptor.size() >= (static_cast<std::size_t>(element) + 1u) * 4u, "buffer descriptor must contain four DWORDs");
     const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;

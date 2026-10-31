@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <span>
@@ -49,8 +50,8 @@ alignas(256) constexpr std::array<std::uint32_t, 6> ReadOnlyVertexCode{
     0xe00c2000u, 0x80020805u, 0xbf8c3f70u, 0xf80008cfu, 0x0b0a0908u, 0xbf810000u,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 6> ReadOnlyInstanceCode{
-    0xe00c2000u, 0x80020808u, 0xbf8c3f70u, 0xf80008cfu, 0x0b0a0908u, 0xbf810000u,
+alignas(256) constexpr std::array<std::uint32_t, 10> InstanceCode{
+    0x34021084u, 0xe00c2000u, 0x80020808u, 0xbf8c3f70u, 0xe0781000u, 0x80010801u, 0xf80008cfu, 0x0b0a0908u, 0xbf810000u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{
@@ -63,6 +64,8 @@ struct Case {
     std::uint32_t count;
     std::uint32_t firstVertex;
     std::array<std::uint32_t, 3> vertices;
+    std::uint32_t instances = 0;
+    std::uint32_t firstInstance = 0;
 };
 
 std::array<std::uint32_t, 4> Descriptor(const void* pointer, std::uint32_t stride, std::uint32_t records, std::uint32_t word3) {
@@ -144,16 +147,19 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     const auto ring = Descriptor(Ring.data(), 16u, Records, 0x1104bfacu);
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     std::copy(ring.begin(), ring.end(), userData.begin() + 8);
-    const auto programs = Compile(device, VertexCode, userData);
+    const bool instanced = value.instances != 0u;
+    const auto programs = Compile(device, instanced ? std::span<const std::uint32_t>(InstanceCode) : std::span<const std::uint32_t>(VertexCode), userData);
     const auto guest = programs.GuestBuffers();
-    Require(guest != programs.vertex.bindings.end() && guest->count == 2u && guest->bufferVertexExtent.size() == 2u, std::string(value.what) + ": the vertex shader does not bind its two V#s with vertex extents");
+    Require(guest != programs.vertex.bindings.end() && guest->count == 2u && guest->bufferVertexExtent.size() == 2u && guest->bufferVertexByInstance.size() == 2u, std::string(value.what) + ": the vertex shader does not bind its two V#s with vertex extents");
     for (std::uint32_t element = 0; element < 2u; ++element) {
         const bool ringElement = guest->guestDescriptor[element * 4u + 2u] == Records;
         Require(guest->bufferVertexExtent[element] == (ringElement ? 16u : 0u), std::string(value.what) + ": " + (ringElement ? "the ring read by the vertex index has no vertex extent" : "the output written at a VGPR offset has a vertex extent"));
+        Require(guest->bufferVertexByInstance[element] == (ringElement && instanced), std::string(value.what) + ": the ring's extent is not marked by the index that reads it");
     }
     const auto state = TargetState(Pixels.data());
-    AgcDriver::Pm4::DrawParameters draw{value.indexed ? reinterpret_cast<std::uintptr_t>(Indices.data()) : 0u, value.count, value.indexed ? 2u : 0u, 1, 0, value.indexed};
+    AgcDriver::Pm4::DrawParameters draw{value.indexed ? reinterpret_cast<std::uintptr_t>(Indices.data()) : 0u, value.count, value.indexed ? 2u : 0u, instanced ? value.instances : 1u, 0, value.indexed};
     draw.firstVertex = value.firstVertex;
+    draw.firstInstance = value.firstInstance;
     const auto shaders = programs.Shaders();
     device.Draw(state, draw, shaders);
     device.WaitIdle();
@@ -184,19 +190,28 @@ std::byte* GuestBlock() {
 void DrawsUpToTheTarget(AgcDriver::VulkanDevice& device, std::uint32_t past, std::uint32_t instances = 0u, std::uint32_t firstInstance = 0u) {
     const bool instanced = instances != 0u;
     const auto what = (instanced ? "a ring whose instances " + std::to_string(firstInstance) + " to " + std::to_string(firstInstance + instances - 1u) + " reach " : "a ring whose first three vertices reach ") + std::to_string(past) + " bytes into the target";
-    static const auto* block = GuestBlock();
-    const auto* target = block + GuestBlockBytes;
+    static auto* block = GuestBlock();
+    auto* target = block + GuestBlockBytes;
     const auto readBytes = instanced ? (firstInstance + instances) * 16u : ThreeVerticesBytes;
-    const auto* base = target - (readBytes - past);
+    auto* base = target - (readBytes - past);
+    for (std::size_t i = 0; i < readBytes - past; ++i) base[i] = static_cast<std::byte>(0x30u + i * 7u);
+    Output.fill(0xdeadbeefu);
     const auto targetBytes = AgcDriver::Graphics::ColorTargetLayout(Width, Height, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4u).Bytes();
     Require(targetBytes <= GuestBlockBytes, "the target does not fit its guest block");
     const auto ring = Descriptor(base, 16u, static_cast<std::uint32_t>((target + targetBytes - base) / 16), 0x1104bfacu);
     std::vector<std::uint32_t> userData(12, 0u);
     std::copy(ring.begin(), ring.end(), userData.begin() + 8);
-    const auto programs = Compile(device, instanced ? std::span<const std::uint32_t>(ReadOnlyInstanceCode) : std::span<const std::uint32_t>(ReadOnlyVertexCode), userData);
+    const auto output = Descriptor(Output.data(), 0u, static_cast<std::uint32_t>(sizeof(Output)), 0x31016facu);
+    if (instanced) std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const auto programs = Compile(device, instanced ? std::span<const std::uint32_t>(InstanceCode) : std::span<const std::uint32_t>(ReadOnlyVertexCode), userData);
     const auto guest = programs.GuestBuffers();
-    Require(guest != programs.vertex.bindings.end() && guest->count == 1u && guest->bufferVertexExtent == std::vector<std::uint32_t>{16u}, what + ": the vertex shader does not bind its V# with a vertex extent");
-    Require(guest->bufferVertexByInstance == std::vector<bool>{instanced}, what + ": the extent is not marked as indexed by the " + (instanced ? "instance" : "vertex") + " index");
+    const auto elements = instanced ? 2u : 1u;
+    Require(guest != programs.vertex.bindings.end() && guest->count == elements && guest->bufferVertexExtent.size() == elements && guest->bufferVertexByInstance.size() == elements, what + ": the vertex shader does not bind its V#s with vertex extents");
+    for (std::uint32_t element = 0; element < elements; ++element) {
+        const bool ringElement = guest->guestDescriptor[element * 4u + 1u] >> 16u == 16u;
+        Require(guest->bufferVertexExtent[element] == (ringElement ? 16u : 0u), what + ": " + (ringElement ? "the ring has no vertex extent" : "the output written at a VGPR offset has a vertex extent"));
+        Require(guest->bufferVertexByInstance[element] == (ringElement && instanced), what + ": the extent is not marked by the index that reads it");
+    }
     auto state = TargetState(target);
     state.color.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
     state.color.bytes = targetBytes;
@@ -207,18 +222,28 @@ void DrawsUpToTheTarget(AgcDriver::VulkanDevice& device, std::uint32_t past, std
     std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
     device.Draw(state, draw, shaders, {}, &recipe);
     const auto context = device.graphicsContext();
-    if (context.hostImportAlignment != 0u) {
+    if (context.hostImportAlignment != 0u && !instanced) {
         Require(recipe != nullptr, what + ": the draw built no recipe");
         const auto replayed = AgcDriver::Graphics::DrawWithRecipe(context, state, draw, shaders, {}, *recipe);
         Require(replayed.recorded, what + ": the draw did not replay its recipe: " + AgcDriver::Graphics::DrawRecipeMissName(replayed.miss));
     }
     device.Draw(state, draw, shaders);
     device.WaitIdle();
+    if (!instanced) return;
+    for (std::uint32_t instance = 0; instance < OutputVertices; ++instance) {
+        const bool drawn = instance >= firstInstance && instance < firstInstance + instances;
+        for (std::uint32_t component = 0; component < 4u; ++component) {
+            std::uint32_t expected = 0xdeadbeefu;
+            if (drawn) std::memcpy(&expected, base + static_cast<std::size_t>(instance) * 16u + component * 4u, sizeof(expected));
+            const auto actual = Output[instance * 4u + component];
+            Require(actual == expected, what + ": instance " + std::to_string(instance) + " component " + std::to_string(component) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
+        }
+    }
 }
 
 void Check(const Case& value) {
     for (std::uint32_t vertex = 0; vertex < OutputVertices; ++vertex) {
-        const bool drawn = std::ranges::find(value.vertices, vertex) != value.vertices.end();
+        const bool drawn = value.instances != 0u ? vertex >= value.firstInstance && vertex < value.firstInstance + value.instances : std::ranges::find(value.vertices, vertex) != value.vertices.end();
         for (std::uint32_t component = 0; component < 4u; ++component) {
             const auto expected = drawn ? Ring[vertex * 4u + component] : 0xdeadbeefu;
             const auto actual = Output[vertex * 4u + component];
@@ -234,10 +259,12 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         for (std::uint32_t index = 0; index < Ring.size(); ++index) Ring[index] = 0x01000000u + index * 0x10001u;
-        constexpr std::array<Case, 3> cases{{
+        constexpr std::array<Case, 5> cases{{
             {"auto draw from vertex 5", false, 3u, 5u, {5u, 6u, 7u}},
             {"indexed draw with base vertex 20", true, 3u, 20u, {20u, 22u, 21u}},
             {"auto draw from vertex 0", false, 3u, 0u, {0u, 1u, 2u}},
+            {"instanced draw of 3 instances from instance 2", false, 3u, 0u, {}, 3u, 2u},
+            {"instanced draw of 3 instances from instance 0", false, 3u, 0u, {}, 3u, 0u},
         }};
         for (const auto& value : cases) {
             Draw(*device, value);

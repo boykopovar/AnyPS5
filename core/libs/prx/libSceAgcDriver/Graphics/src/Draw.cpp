@@ -1445,8 +1445,7 @@ bool StripPatches(const State& state, std::span<const CompiledShader> shaders) {
 
 VertexReach drawVertexBound(const State& state, const Pm4::DrawParameters& draw, const DrawInputs& inputs) {
     if (draw.indirect || state.stages.path != ShaderPath::Vertex || state.stages.mesh || state.stages.tessellation) return {};
-    const auto lastInstance = draw.instanceCount == 0u ? std::optional<std::uint32_t>{} : std::optional<std::uint32_t>{draw.firstInstance + draw.instanceCount - 1u};
-    return {inputs.maxIndex, lastInstance};
+    return {inputs.maxIndex, ShaderResources::LastInstance(draw.firstInstance, draw.instanceCount)};
 }
 
 std::shared_ptr<Buffer> zeroVertexBuffer(const Context& context, std::size_t bytes) {

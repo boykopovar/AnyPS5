@@ -226,6 +226,7 @@ public:
     std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, VertexReach maxVertex = {}) const;
     bool BindsVertexRange(std::span<const CompiledShader> shaders, const ColorTarget* target, VertexReach maxVertex) const;
     static std::uint64_t VertexBoundBytes(const ShaderRecompiler::DescriptorBinding& binding, std::uint32_t element, VertexReach maxVertex);
+    static std::optional<std::uint32_t> LastInstance(std::uint32_t firstInstance, std::uint32_t instanceCount);
     static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
     struct MoveProof {

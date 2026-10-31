@@ -6641,6 +6641,12 @@ void vertexRangeBindingTests() {
         Require(ShaderResources::VertexBoundBytes(perInstance, 0, VertexReach{3u, std::nullopt}) == whole(0), "an instance-indexed element of a draw without a known instance range was cut");
         Require(ShaderResources::VertexBoundBytes(perInstance, 0, VertexReach{std::nullopt, 1u}) == 2u * stride + extent - stride + 8u, "an instance-indexed element was not cut when only the instance range is known");
         Require(ShaderResources::VertexBoundBytes(binding, 0, VertexReach{std::nullopt, 1u}) == whole(0), "a vertex-indexed element was cut by the instance range");
+        Require(ShaderResources::LastInstance(2u, 3u) == std::optional<std::uint32_t>{4u}, "the last instance of 3 instances from instance 2 is not 4");
+        Require(ShaderResources::LastInstance(0u, 1u) == std::optional<std::uint32_t>{0u}, "the last instance of one instance is not 0");
+        Require(!ShaderResources::LastInstance(2u, 0u).has_value(), "a draw of no instances has a last instance");
+        Require(!ShaderResources::LastInstance(2u, 0xffffffffu).has_value(), "an instance range past 32 bits has a last instance");
+        Require(ShaderResources::LastInstance(0u, 0xffffffffu) == std::optional<std::uint32_t>{0xfffffffeu}, "the last instance of 0xffffffff instances from instance 0 is not 0xfffffffe");
+        Require(ShaderResources::VertexBoundBytes(perInstance, 0, VertexReach{3u, ShaderResources::LastInstance(2u, 0xffffffffu)}) == whole(0), "an instance range past 32 bits cut the element");
     }
     auto context = mockContext();
     context.limits.maxStorageBufferRange = 1u << 20u;
