@@ -22,6 +22,8 @@
 
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/ScanWideField.hpp"
+#include "prx/libc/include/ScanFloatField.hpp"
+#include "prx/libc/include/GuestLongDouble.hpp"
 #include "prx/libc/include/ScanQuadLength.hpp"
 
 #ifdef _WIN32
@@ -483,6 +485,39 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             target = nextPointer();
             if (target == nullptr) return EOF;
         }
+#ifdef ANYPS5_GUEST_LIFTED
+        if (length == "L" && std::strchr("aAeEfFgG", conversion) != nullptr) {
+            std::string field;
+            const std::size_t limit = width == 0 ? std::string::npos : width;
+            while (field.size() < limit) {
+                const int next = source.Peek();
+                if (next == EOF) break;
+                field.push_back(static_cast<char>(next));
+                if (LibcDetail::FloatFit(field) == LibcDetail::Fit::Invalid) {
+                    field.pop_back();
+                    break;
+                }
+                source.Skip();
+            }
+            if (LibcDetail::FloatFit(field) != LibcDetail::Fit::Valid) return finish(!converted && source.Peek() == EOF ? EOF : assigned);
+            const int savedError = errno;
+            errno = 0;
+            const LibcDetail::GuestLongDouble value = LibcDetail::GuestLongDoubleParse(field.c_str(), nullptr);
+            const bool rangeError = errno == ERANGE;
+            if constexpr (TSource::Contiguous) {
+                const bool outOfRange = rangeError && field.find_first_of("xX") == std::string::npos && (LibcDetail::IsInf(value) || value == 0);
+                errno = outOfRange ? ERANGE : savedError;
+            } else {
+                errno = rangeError ? ERANGE : savedError;
+            }
+            if (!suppress) {
+                LibcDetail::GuestLongDoubleStore(target, LibcDetail::IsNan(value) ? LibcDetail::GuestLongDouble::FromBits(0x7fff, 0xc000000000000000ull) : value);
+                ++assigned;
+            }
+            converted = true;
+            continue;
+        }
+#endif
         if (conversion == 'c' && length != "l" && (!TSource::Contiguous || !secure)) {
             const auto narrowWidth = static_cast<std::uint32_t>(width);
             const unsigned long wanted = secure ? (width == 0 ? 1 : width) : (narrowWidth == 0 || narrowWidth > INT_MAX ? 1 : narrowWidth);

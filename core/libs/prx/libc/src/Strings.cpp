@@ -389,7 +389,7 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
         if (subject[0] != '-') return TFloat{0};
         if constexpr (std::is_same_v<TFloat, float>) return subject[1] == '\0' ? TFloat{0} : -TFloat{0};
         const bool special = std::strchr("iInN", subject[1]) != nullptr && subject[1] != '\0';
-        return std::is_same_v<TFloat, long double> && !special ? -TFloat{0} : TFloat{0};
+        return std::is_same_v<TFloat, LibcDetail::GuestLongDouble> && !special ? -TFloat{0} : TFloat{0};
     }
     if (*subject == '+' || *subject == '-') ++subject;
     const bool hexadecimal = subject[0] == '0' && (subject[1] == 'x' || subject[1] == 'X') && parsedEnd > subject + 2;
@@ -656,9 +656,9 @@ double APS5_VABI atof_nid_postfix(const char* str) { return strtod_nid_postfix(s
 float APS5_VABI strtof_nid_postfix(const char* str, char** endptr) {
     return ParseFloat<float>(str, endptr, std::strtof);
 }
-long double APS5_VABI strtold_nid_postfix(const char* str, char** endptr) {
-    static_assert(sizeof(long double) == 16, "Guest long double requires x87 extended precision storage");
-    return ParseFloat<long double>(str, endptr, LibcDetail::GuestLongDoubleParse);
+LibcDetail::GuestLongDouble APS5_VABI strtold_nid_postfix(const char* str, char** endptr) {
+    static_assert(sizeof(LibcDetail::GuestLongDouble) == 16, "Guest long double requires x87 extended precision storage");
+    return ParseFloat<LibcDetail::GuestLongDouble>(str, endptr, LibcDetail::GuestLongDoubleParse);
 }
 
 int APS5_VABI atoi_nid_postfix(const char* str) {
@@ -947,11 +947,11 @@ float APS5_VABI wcstof_nid_postfix(const char16_t* str, char16_t** endptr) {
     return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return ParseFloat<float>(text, end, std::strtof); });
 }
 
-long double APS5_VABI wcstold_nid_postfix(const char16_t* str, char16_t** endptr) {
+LibcDetail::GuestLongDouble APS5_VABI wcstold_nid_postfix(const char16_t* str, char16_t** endptr) {
 #ifndef __EMSCRIPTEN__
-    static_assert(sizeof(long double) == 16);
+    static_assert(sizeof(LibcDetail::GuestLongDouble) == 16);
 #endif
-    return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return ParseFloat<long double>(text, end, LibcDetail::GuestLongDoubleParse); });
+    return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return ParseFloat<LibcDetail::GuestLongDouble>(text, end, LibcDetail::GuestLongDoubleParse); });
 }
 
 unsigned long long APS5_VABI wcstoul_nid_postfix(const char16_t* str, char16_t** endptr, int base) {
@@ -1070,7 +1070,7 @@ float APS5_VABI _WStof_nid_postfix(const char16_t* str, char16_t** endptr, std::
     return ParseAsciiPrefix(str, endptr, [pten](const char* text, char** end) { return _Stofx_nid_postfix(text, end, pten, nullptr); });
 }
 
-long double APS5_VABI _WStold_nid_postfix(const char16_t* str, char16_t** endptr, std::int64_t pten) {
+LibcDetail::GuestLongDouble APS5_VABI _WStold_nid_postfix(const char16_t* str, char16_t** endptr, std::int64_t pten) {
     return ParseAsciiPrefix(str, endptr, [pten](const char* text, char** end) { return _Stoldx_nid_postfix(text, end, pten, nullptr); });
 }
 

@@ -55,7 +55,7 @@ struct ExtendedBits {
     int exponent;
 };
 
-ExtendedBits DecomposeExtended(long double value) {
+ExtendedBits DecomposeExtended(LibcDetail::GuestLongDouble value) {
     const auto bytes = LibcDetail::GuestLongDoubleImage(value);
     std::uint64_t mantissa;
     std::uint16_t signExponent;
@@ -64,8 +64,8 @@ ExtendedBits DecomposeExtended(long double value) {
     return {mantissa, (signExponent & 0x8000u) != 0, static_cast<int>(signExponent & 0x7fffu) - 16383};
 }
 
-long double ComposeExtended(bool negative, int biased, std::uint64_t mantissa) {
-    unsigned char bytes[sizeof(long double)] = {};
+LibcDetail::GuestLongDouble ComposeExtended(bool negative, int biased, std::uint64_t mantissa) {
+    unsigned char bytes[sizeof(LibcDetail::GuestLongDouble)] = {};
     const std::uint16_t signExponent = static_cast<std::uint16_t>((negative ? 0x8000u : 0u) | static_cast<unsigned>(biased));
     std::memcpy(bytes, &mantissa, sizeof(mantissa));
     std::memcpy(bytes + 8, &signExponent, sizeof(signExponent));
@@ -99,7 +99,7 @@ TResult FixUnsigned(TFloat value) {
 }
 
 template<typename TResult>
-TResult FixExtendedSigned(long double value) {
+TResult FixExtendedSigned(LibcDetail::GuestLongDouble value) {
     const ExtendedBits parts = DecomposeExtended(value);
     if (parts.exponent < 0) return 0;
     TResult magnitude;
@@ -116,7 +116,7 @@ TResult FixExtendedSigned(long double value) {
 }
 
 template<typename TResult>
-TResult FixExtendedUnsigned(long double value) {
+TResult FixExtendedUnsigned(LibcDetail::GuestLongDouble value) {
     const ExtendedBits parts = DecomposeExtended(value);
     if (parts.negative || parts.exponent < 0) return 0;
     if constexpr (sizeof(TResult) == 16) {
@@ -161,7 +161,7 @@ TFloat RoundToFloat(bool negative, Uint128 magnitude) {
     return std::bit_cast<TFloat>(static_cast<Rep>(sign | (static_cast<Rep>(biased) << Format::SignificandBits) | fraction));
 }
 
-long double RoundToExtended(bool negative, Uint128 magnitude) {
+LibcDetail::GuestLongDouble RoundToExtended(bool negative, Uint128 magnitude) {
     if (magnitude == 0) return ComposeExtended(negative, 0, 0);
     int exponent = HighestBit(magnitude);
     Uint128 significand;
@@ -507,7 +507,9 @@ void DivideComplex(TFloat a, TFloat b, TFloat c, TFloat d, TFloat& real, TFloat&
 
 using ComplexFloat = __complex__ float;
 using ComplexDouble = __complex__ double;
+#ifndef ANYPS5_GUEST_LIFTED
 using ComplexExtended = __complex__ long double;
+#endif
 
 ComplexFloat MakeComplex(float real, float imaginary) {
     ComplexFloat result;
@@ -523,12 +525,14 @@ ComplexDouble MakeComplex(double real, double imaginary) {
     return result;
 }
 
+#ifndef ANYPS5_GUEST_LIFTED
 ComplexExtended MakeComplex(long double real, long double imaginary) {
     ComplexExtended result;
     __real__ result = real;
     __imag__ result = imaginary;
     return result;
 }
+#endif
 
 }
 
@@ -600,11 +604,11 @@ std::uint32_t APS5_VABI __fixunsdfsi_nid_postfix(double a) {
 
 std::uint64_t APS5_VABI __fixunsdfdi_nid_postfix(double a) { return FixUnsigned<std::uint64_t>(a); }
 Uint128 APS5_VABI __fixunsdfti_nid_postfix(double a) { return FixUnsigned<Uint128>(a); }
-std::int64_t APS5_VABI __fixxfdi_nid_postfix(long double a) { return FixExtendedSigned<std::int64_t>(a); }
-Int128 APS5_VABI __fixxfti_nid_postfix(long double a) { return FixExtendedSigned<Int128>(a); }
-std::uint32_t APS5_VABI __fixunsxfsi_nid_postfix(long double a) { return FixExtendedUnsigned<std::uint32_t>(a); }
-std::uint64_t APS5_VABI __fixunsxfdi_nid_postfix(long double a) { return FixExtendedUnsigned<std::uint64_t>(a); }
-Uint128 APS5_VABI __fixunsxfti_nid_postfix(long double a) { return FixExtendedUnsigned<Uint128>(a); }
+std::int64_t APS5_VABI __fixxfdi_nid_postfix(LibcDetail::GuestLongDouble a) { return FixExtendedSigned<std::int64_t>(a); }
+Int128 APS5_VABI __fixxfti_nid_postfix(LibcDetail::GuestLongDouble a) { return FixExtendedSigned<Int128>(a); }
+std::uint32_t APS5_VABI __fixunsxfsi_nid_postfix(LibcDetail::GuestLongDouble a) { return FixExtendedUnsigned<std::uint32_t>(a); }
+std::uint64_t APS5_VABI __fixunsxfdi_nid_postfix(LibcDetail::GuestLongDouble a) { return FixExtendedUnsigned<std::uint64_t>(a); }
+Uint128 APS5_VABI __fixunsxfti_nid_postfix(LibcDetail::GuestLongDouble a) { return FixExtendedUnsigned<Uint128>(a); }
 
 double APS5_VABI __floatsidf_nid_postfix(std::int32_t a) { return static_cast<double>(a); }
 double APS5_VABI __floatunsidf_nid_postfix(std::uint32_t a) { return static_cast<double>(a); }
@@ -612,16 +616,16 @@ float APS5_VABI __floatsisf_nid_postfix(std::int32_t a) { return RoundToFloat<fl
 float APS5_VABI __floatunsisf_nid_postfix(std::uint32_t a) { return RoundToFloat<float>(false, a); }
 double APS5_VABI __floatdidf_nid_postfix(std::int64_t a) { return static_cast<double>(a); }
 float APS5_VABI __floatdisf_nid_postfix(std::int64_t a) { return static_cast<float>(a); }
-long double APS5_VABI __floatdixf_nid_postfix(std::int64_t a) { return static_cast<long double>(a); }
+LibcDetail::GuestLongDouble APS5_VABI __floatdixf_nid_postfix(std::int64_t a) { return LibcDetail::GuestLongDouble(a); }
 double APS5_VABI __floatundidf_nid_postfix(std::uint64_t a) { return static_cast<double>(a); }
 float APS5_VABI __floatundisf_nid_postfix(std::uint64_t a) { return static_cast<float>(a); }
-long double APS5_VABI __floatundixf_nid_postfix(std::uint64_t a) { return static_cast<long double>(a); }
+LibcDetail::GuestLongDouble APS5_VABI __floatundixf_nid_postfix(std::uint64_t a) { return LibcDetail::GuestLongDouble(a); }
 double APS5_VABI __floattidf_nid_postfix(Int128 a) { return RoundToFloat<double>(a < 0, Magnitude(a)); }
 float APS5_VABI __floattisf_nid_postfix(Int128 a) { return RoundToFloat<float>(a < 0, Magnitude(a)); }
-long double APS5_VABI __floattixf_nid_postfix(Int128 a) { return RoundToExtended(a < 0, Magnitude(a)); }
+LibcDetail::GuestLongDouble APS5_VABI __floattixf_nid_postfix(Int128 a) { return RoundToExtended(a < 0, Magnitude(a)); }
 double APS5_VABI __floatuntidf_nid_postfix(Uint128 a) { return RoundToFloat<double>(false, a); }
 float APS5_VABI __floatuntisf_nid_postfix(Uint128 a) { return RoundToFloat<float>(false, a); }
-long double APS5_VABI __floatuntixf_nid_postfix(Uint128 a) { return RoundToExtended(false, a); }
+LibcDetail::GuestLongDouble APS5_VABI __floatuntixf_nid_postfix(Uint128 a) { return RoundToExtended(false, a); }
 
 __complex__ float APS5_VABI __mulsc3_nid_postfix(float a, float b, float c, float d) {
     float real, imaginary;
@@ -635,11 +639,13 @@ __complex__ double APS5_VABI __muldc3_nid_postfix(double a, double b, double c, 
     return MakeComplex(real, imaginary);
 }
 
+#ifndef ANYPS5_GUEST_LIFTED
 __complex__ long double APS5_VABI __mulxc3_nid_postfix(long double a, long double b, long double c, long double d) {
     long double real, imaginary;
     MultiplyComplex<long double, false>(a, b, c, d, real, imaginary);
     return MakeComplex(real, imaginary);
 }
+#endif
 
 __complex__ float APS5_VABI __divsc3_nid_postfix(float a, float b, float c, float d) {
     float real, imaginary;
@@ -653,15 +659,17 @@ __complex__ double APS5_VABI __divdc3_nid_postfix(double a, double b, double c, 
     return MakeComplex(real, imaginary);
 }
 
+#ifndef ANYPS5_GUEST_LIFTED
 __complex__ long double APS5_VABI __divxc3_nid_postfix(long double a, long double b, long double c, long double d) {
     long double real, imaginary;
     DivideComplex<long double, false>(a, b, c, d, real, imaginary);
     return MakeComplex(real, imaginary);
 }
+#endif
 
-long double APS5_VABI __powixf2_nid_postfix(long double base, int exponent) {
+LibcDetail::GuestLongDouble APS5_VABI __powixf2_nid_postfix(LibcDetail::GuestLongDouble base, int exponent) {
     const bool reciprocal = exponent < 0;
-    long double result = (exponent & 1) != 0 ? base : 1.0L;
+    LibcDetail::GuestLongDouble result = (exponent & 1) != 0 ? base : LibcDetail::GuestLongDouble(1);
     for (exponent /= 2; exponent != 0; exponent /= 2) {
         base *= base;
         if (exponent & 1) result *= base;

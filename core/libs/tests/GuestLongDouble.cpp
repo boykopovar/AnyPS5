@@ -38,4 +38,7 @@ int main() {
         LibcDetail::GuestLongDoubleStore(stored.data(), loaded);
         if (std::memcmp(stored.data(), guest.data(), 10) != 0) std::abort();
     }
+    for (const char* text : {"0.1", "2.718281828459045235360287471352662497757"}) {
+        if (LibcDetail::GuestLongDoubleParse(text, nullptr) != std::strtold(text, nullptr)) std::abort();
+    }
 }

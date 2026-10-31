@@ -198,14 +198,14 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             const char narrow = static_cast<char>(conversion);
             const bool hexadecimal = narrow == 'a' || narrow == 'A';
             if (length == "L") {
-                const long double value = args.Next<long double>();
-                if (std::isnan(value)) {
-                    AppendPadded(out, WideNanText(spec, std::signbit(value), conversion < u'a'), left, width);
-                } else if (std::isfinite(value)) {
+                const LibcDetail::GuestLongDouble value = args.Next<LibcDetail::GuestLongDouble>();
+                if (LibcDetail::IsNan(value)) {
+                    AppendPadded(out, WideNanText(spec, LibcDetail::SignBit(value), conversion < u'a'), left, width);
+                } else if (LibcDetail::IsFinite(value)) {
                     const std::string text = hexadecimal ? LibcDetail::HexFloat(spec, narrow, value) : LibcDetail::DecimalFloat(spec, narrow, value);
                     out.append(text.begin(), text.end());
                 } else {
-                    AppendNumber(out, spec + "L" + narrow, value);
+                    AppendNumber(out, spec + narrow, static_cast<double>(value));
                 }
             } else {
                 if (!length.empty() && length != "l") throw std::invalid_argument("Invalid floating length");
