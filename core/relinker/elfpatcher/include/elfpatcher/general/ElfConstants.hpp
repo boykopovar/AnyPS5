@@ -192,8 +192,11 @@ inline constexpr std::uint8_t kStubOpXorRsiRsi[] = {0x48, 0x31, 0xf6};
 inline constexpr std::uint8_t kStubOpPushZero[] = {0x6a, 0x00};
 inline constexpr std::uint8_t kStubOpMovRbpRsp[] = {0x48, 0x89, 0xe5};
 inline constexpr std::uint8_t kStubOpCallRel32 = 0xe8;
-inline constexpr std::size_t kStubCallInstructionSize = 5;
+inline constexpr std::uint8_t kStubOpLeaRsiRip[] = {0x48, 0x8d, 0x35};
+inline constexpr std::uint8_t kStubOpCallRipIndirect[] = {0xff, 0x15};
 inline constexpr std::uint8_t kStubOpUd2[] = {0x0f, 0x0b};
+inline constexpr char kGuestMainStackEntryLibrary[] = "libkernel.prx";
+inline constexpr char kGuestMainStackEntrySymbol[] = "EnterGuestMainStack_nid_no_patch";
 
 }
 
