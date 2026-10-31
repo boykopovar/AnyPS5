@@ -332,16 +332,19 @@ static std::string blocks_path(const std::string& real_path) {
     return real_path + ".blocks";
 }
 
-static bool isMountedDirectory(const std::string& path) {
+static bool isMountedDirectory(const std::string& path, std::error_code& error) {
     for (const auto& slot : g_slots) {
         if (!slot.used) continue;
         if (slot.real_path == path) return true;
-        if (!std::filesystem::exists(path) || !std::filesystem::exists(slot.real_path)) continue;
-        std::error_code error;
+        const bool exists = std::filesystem::exists(path, error);
+        if (error) return false;
+        if (!exists) continue;
+        const bool mountedExists = std::filesystem::exists(slot.real_path, error);
+        if (error) return false;
+        if (!mountedExists) continue;
         const bool sameDirectory = std::filesystem::equivalent(slot.real_path, path, error);
-        if (error && error != std::errc::no_such_file_or_directory) {
-            throw std::filesystem::filesystem_error("SaveData: failed to compare save paths", slot.real_path, path, error);
-        }
+        if (error == std::errc::no_such_file_or_directory) error.clear();
+        if (error) return false;
         if (sameDirectory) return true;
     }
     return false;
@@ -361,7 +364,9 @@ static int deleteSave(const SaveDataDelete* del) {
     }
     const std::string path = save_root() + "/" + dirName;
     std::lock_guard lock(g_slots_mutex);
-    if (isMountedDirectory(path)) return SAVE_DATA_ERROR_BUSY;
+    std::error_code error;
+    if (isMountedDirectory(path, error)) return SAVE_DATA_ERROR_BUSY;
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
     if (std::filesystem::is_directory(path)) {
         RemoveTree(path);
     }
@@ -394,12 +399,9 @@ static std::uint64_t save_blocks(const std::string& real_path) {
     return std::min(blocks, SAVE_DATA_BLOCKS_MAX);
 }
 
-static void keep_save_blocks(const std::string& real_path, std::uint64_t blocks) {
-    std::ofstream file(blocks_path(real_path), std::ios::trunc);
-    file << std::min(blocks, SAVE_DATA_BLOCKS_MAX) << '\n';
-    if (!file) {
-        throw std::runtime_error("sceSaveDataMount3: the save's size could not be kept");
-    }
+static bool keep_save_blocks(const std::string& real_path, std::uint64_t blocks) {
+    const auto content = std::to_string(std::min(blocks, SAVE_DATA_BLOCKS_MAX)) + '\n';
+    return savedata::replace_file(blocks_path(real_path), content.data(), content.size());
 }
 
 static std::uint64_t used_blocks(const std::string& real_path) {
@@ -651,8 +653,12 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     }
     const std::string real_path = save_root() + "/" + dirName;
     std::lock_guard lock(g_slots_mutex);
-    if (isMountedDirectory(real_path)) return SAVE_DATA_ERROR_BUSY;
-    const bool exists = std::filesystem::is_directory(real_path);
+    std::error_code error;
+    if (isMountedDirectory(real_path, error)) return SAVE_DATA_ERROR_BUSY;
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
+    const bool exists = std::filesystem::is_directory(real_path, error);
+    if (error == std::errc::no_such_file_or_directory) error.clear();
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
     if (create && exists) {
         return SAVE_DATA_ERROR_EXISTS;
     }
@@ -663,13 +669,26 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     if (slot == -1) {
         return SAVE_DATA_ERROR_MOUNT_FULL;
     }
-    if (create || create2) {
-        std::filesystem::create_directories(real_path);
+    bool keepSize = mount->blocks != 0 && (create || (create2 && !exists));
+    if (mount->blocks != 0 && !keepSize) {
+        keepSize = !std::filesystem::exists(blocks_path(real_path), error);
+        if (error) return SAVE_DATA_ERROR_INTERNAL;
+    }
+    const auto absolutePath = std::filesystem::absolute(real_path, error).string();
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
+    const bool created = (create || create2) && std::filesystem::create_directories(real_path, error);
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
+    if (keepSize && !keep_save_blocks(real_path, mount->blocks)) {
+        if (created) {
+            std::error_code ignored;
+            std::filesystem::remove(real_path, ignored);
+        }
+        return SAVE_DATA_ERROR_INTERNAL;
     }
     // The title gets a short mount point (16 bytes on the PS5) and opens files under it; the
     // path resolver maps it to the save directory, whose name may be far longer.
     const std::string mountPoint = "/savedata" + std::to_string(slot);
-    AddPathAlias_nid_no_patch(mountPoint.c_str(), std::filesystem::absolute(real_path).string().c_str());
+    AddPathAlias_nid_no_patch(mountPoint.c_str(), absolutePath.c_str());
     std::memset(mount_result, 0, sizeof(*mount_result));
     g_slots[slot].used = true;
     g_slots[slot].mount_point = mountPoint;
@@ -677,16 +696,12 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
     mount_result->required_blocks = 0;
     mount_result->mount_status = (create || (create2 && !exists)) ? 1u : 0u;
-    std::error_code sized;
-    if (mount->blocks != 0 && (create || (create2 && !exists) || !std::filesystem::exists(blocks_path(real_path), sized))) {
-        keep_save_blocks(real_path, mount->blocks);
-    }
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
     const int rc = mount3(mount, mount_result);
-    SAVEDATA_TRACE("mount3 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_result != nullptr ? mount_result->mount_point.data : "", mount_result != nullptr ? mount_result->mount_status : 0u);
+    SAVEDATA_TRACE("mount3 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_point.data : "", rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_status : 0u);
     return rc;
 }
 
@@ -1398,6 +1413,34 @@ int APS5_VABI sceSaveDataUnregisterEventCallback() {
 int APS5_VABI sceSaveDataUpload(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceSaveDataCheckPremiumMember() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataCheckSyncStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataGetAllSizeProspero() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataGetAutoSyncInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataGetCloudInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataNotifySaveDataDownload() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceSaveDataSetAutoSyncSettings() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }
