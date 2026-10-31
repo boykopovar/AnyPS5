@@ -63,6 +63,13 @@ inline constexpr std::uint32_t NoTable = std::numeric_limits<std::uint32_t>::max
 
 enum class TableOperation : std::uint8_t { Supported, Unsupported };
 
+enum ImageLevelUse : std::uint8_t {
+    ImageLevelUseQuery = 1u << 0u,
+    ImageLevelUseLoad = 1u << 1u,
+    ImageLevelUseMipLoad = 1u << 2u,
+    ImageLevelUseLodQuery = 1u << 3u,
+};
+
 struct ImageResource {
     std::uint32_t source = 0;
     std::uint32_t firstUsePc = 0;
@@ -109,6 +116,7 @@ struct ImageResource {
     std::uint32_t emulatedCompare = 0;
     std::uint32_t table = NoTable;
     TableOperation tableOperation = TableOperation::Supported;
+    std::uint8_t levelUses = 0;
     bool targetMerge = false;
 
     bool operator==(const ImageResource& other) const = default;

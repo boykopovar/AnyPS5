@@ -13094,6 +13094,7 @@ int main(int argc, char** argv) {
         RunTextureTilingTests();
         RunGuestTextureResourceTests();
         RunDepthSurfaceReuseTests();
+        RunTextureMipChainTests();
         RunGuestSamplerResourceTests();
         RunLastRecordIndicesTests();
         mock = MockVulkan{};
