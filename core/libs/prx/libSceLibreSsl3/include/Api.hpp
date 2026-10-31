@@ -107,7 +107,7 @@ int APS5_VABI EVP_PKEY_CTX_free_nid_postfix();
 int APS5_VABI EVP_PKEY_assign_nid_postfix();
 int APS5_VABI EVP_PKEY_bits_nid_postfix();
 int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix();
-int APS5_VABI EVP_PKEY_get0_EC_KEY_nid_postfix();
+LibreSsl3EcKey* APS5_VABI EVP_PKEY_get0_EC_KEY_nid_postfix(LibreSsl3EvpPkey* key);
 int APS5_VABI EVP_PKEY_verify_nid_postfix();
 int APS5_VABI EVP_PKEY_verify_init_nid_postfix();
 int APS5_VABI EVP_get_digestbyname_nid_postfix();
