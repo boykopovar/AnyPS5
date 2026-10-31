@@ -117,7 +117,7 @@ void RequireLoaded(const std::vector<Domain::ProgramHeader>& headers, const std:
         if (header.Type == PT_LOAD && (header.Flags == 0 || (header.Flags & flags) == flags) && address >= header.MappedAddress && address - header.MappedAddress < header.MemorySize && size <= header.MemorySize - (address - header.MappedAddress))
             return;
     const auto range = size > 1 ? " (" + std::to_string(size) + " bytes) does not fit inside " : std::string(" is not inside ");
-    throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : "a") + " PT_LOAD segment");
+    throw Domain::RelinkerException(what + " " + Hex(address) + range + ((flags & PF_X) != 0 ? "an executable" : (flags & PF_W) != 0 ? "a writable" : "a") + " PT_LOAD segment");
 }
 
 std::uint64_t RelocationWidth(const std::vector<std::uint8_t>& relocations, const std::size_t entry) {
@@ -424,7 +424,7 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     RequireLoaded(originalHeaders, Io::ReadU64(sourceElf, kEhdrEntryOffset), 1, PF_X, "e_entry");
     for (const auto& [relocationTable, name] : {std::pair{&dynSection.RelaData, "RELA r_offset"}, std::pair{&dynSection.RelaPltData, "JMPREL r_offset"}})
         for (std::size_t entry = 0; entry < relocationTable->size(); entry += kRelaEntrySize)
-            RequireLoaded(originalHeaders, Io::ReadU64(*relocationTable, entry), RelocationWidth(*relocationTable, entry), 0, name);
+            RequireLoaded(originalHeaders, Io::ReadU64(*relocationTable, entry), RelocationWidth(*relocationTable, entry), static_cast<std::uint32_t>(Io::ReadU64(*relocationTable, entry + 8)) == R_X86_64_NONE ? 0U : PF_W, name);
     if (!dynSection.RelaPltData.empty())
         RequireLoaded(originalHeaders, originalPltGotVaddr, lazyBinding ? kLazyPltGotBytes : kPltGotEntryBytes, 0, "DT_PLTGOT");
     const auto traced = _traceImports ? TracedImports(dynSection) : std::vector<TracedImport>{};
