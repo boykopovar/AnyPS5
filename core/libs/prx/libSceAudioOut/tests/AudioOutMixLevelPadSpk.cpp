@@ -44,8 +44,10 @@ constexpr std::uint32_t frequency = 48000;
 constexpr int unity = 32768;
 constexpr int defaultMixLevel = 11626;
 constexpr int invalidPort = static_cast<int>(0x80260003);
+constexpr int invalidVolume = static_cast<int>(0x80260009);
 constexpr int invalidPortType = static_cast<int>(0x8026000A);
 constexpr int invalidMixLevel = static_cast<int>(0x80260014);
+constexpr int maxPadSpkVolume = 127;
 
 template<typename TSample, typename TSetup>
 std::vector<TSample> Play(int type, std::uint32_t format, const std::vector<TSample>& block, TSetup setup) {
@@ -164,6 +166,49 @@ void TestRejectedLevels() {
     Require(sceAudioOutSetMixLevelPadSpk(closed, unity) == invalidPort);
 }
 
+void TestPadSpeakerVolume() {
+    std::vector<std::int16_t> block(frames);
+    for (std::uint32_t frame = 0; frame < frames; frame++) block[frame] = frame % 2 == 0 ? 16384 : -16384;
+    int closed = 0;
+    Require(Play(portTypePadSpeaker, formatS16Mono, block, [&closed](int handle) {
+        closed = handle;
+        AudioOutPortState state{};
+        Require(sceAudioOutGetPortState(handle, &state) == 0);
+        Require(state.volume == maxPadSpkVolume);
+
+        Require(sceAudioOutSetPadSpkVolume(handle, 64) == 0);
+        Require(sceAudioOutGetPortState(handle, &state) == 0);
+        Require(state.volume == 64);
+
+        Require(sceAudioOutSetPadSpkVolume(handle, 0) == 0);
+        Require(sceAudioOutGetPortState(handle, &state) == 0);
+        Require(state.volume == 0);
+
+        Require(sceAudioOutSetPadSpkVolume(handle, maxPadSpkVolume) == 0);
+        Require(sceAudioOutGetPortState(handle, &state) == 0);
+        Require(state.volume == maxPadSpkVolume);
+
+        Require(sceAudioOutSetPadSpkVolume(handle, -1) == invalidVolume);
+        Require(sceAudioOutSetPadSpkVolume(handle, 128) == invalidVolume);
+        Require(sceAudioOutSetPadSpkVolume(handle, unity) == invalidVolume);
+        Require(sceAudioOutSetPadSpkVolume(0, maxPadSpkVolume) == invalidPort);
+        Require(sceAudioOutSetPadSpkVolume(handle + 1, maxPadSpkVolume) == invalidPort);
+    }) == Scaled(block, defaultMixLevel));
+
+    Require(sceAudioOutSetPadSpkVolume(closed, maxPadSpkVolume) == invalidPort);
+
+    Require(Play(portTypePadSpeaker, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetPadSpkVolume(handle, 0) == 0);
+    }).empty());
+
+    Require(Play(portTypeMain, formatS16Mono, block, [](int handle) {
+        AudioOutPortState state{};
+        Require(sceAudioOutGetPortState(handle, &state) == 0);
+        Require(state.volume == maxPadSpkVolume);
+        Require(sceAudioOutSetPadSpkVolume(handle, 64) == invalidPortType);
+    }) == block);
+}
+
 }
 
 int main() {
@@ -173,5 +218,6 @@ int main() {
     TestLevelWithVolume();
     TestOtherPortType();
     TestRejectedLevels();
+    TestPadSpeakerVolume();
     return 0;
 }
