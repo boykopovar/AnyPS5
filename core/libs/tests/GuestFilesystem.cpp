@@ -1227,6 +1227,12 @@ int main() {
     const int followedJunction = sceKernelOpen(junction.string().c_str(), 0, 0);
     Require(followedJunction >= 0 && sceKernelClose(followedJunction) == 0);
     Require(std::filesystem::remove(junction) && std::filesystem::remove(junctionTarget));
+    const auto danglingJunctionTarget = root / "dangling-junction-target";
+    const auto danglingJunction = root / "dangling-junction";
+    Require(std::filesystem::create_directory(danglingJunctionTarget));
+    const auto danglingJunctionCommand = L"cmd /c mklink /J \"" + danglingJunction.wstring() + L"\" \"" + danglingJunctionTarget.wstring() + L"\"";
+    Require(_wsystem(danglingJunctionCommand.c_str()) == 0 && std::filesystem::remove(danglingJunctionTarget));
+    Require(unlink_nid_postfix(danglingJunction.string().c_str()) == 0 && GetFileAttributesW(danglingJunction.c_str()) == INVALID_FILE_ATTRIBUTES);
     const auto tagged = root / "tagged.bin";
     { std::ofstream stream(tagged, std::ios::binary); stream << std::string(1u << 18, 'a'); }
     const HANDLE taggedHandle = CreateFileW(tagged.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
@@ -1548,6 +1554,7 @@ int main() {
         Require(sceKernelRmdir(directoryLink.string().c_str()) == static_cast<int>(0x80020014u));
         Require(rmdir_nid_postfix(danglingDirectoryLink.string().c_str()) == -1 && *__error_nid_postfix() == 20);
         Require((GetFileAttributesW(directoryLink.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && std::filesystem::is_directory(linkedDirectory));
+        Require(unlink_nid_postfix((root / "directory-li*").string().c_str()) == -1 && *__error_nid_postfix() != 5 && (GetFileAttributesW(directoryLink.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) != 0);
         Require(unlink_nid_postfix(directoryLink.string().c_str()) == 0 && unlink_nid_postfix(danglingDirectoryLink.string().c_str()) == 0);
     }
 #else
