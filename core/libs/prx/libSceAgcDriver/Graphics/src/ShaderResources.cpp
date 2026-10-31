@@ -678,7 +678,7 @@ std::array<std::uint64_t, 4> untrackedKey(std::uint64_t address, std::size_t byt
 }
 
 std::span<const std::uint32_t> firstLayerWords(std::span<const std::uint32_t> words, std::optional<ShaderRecompiler::DescriptorImageShape> shape, std::array<std::uint32_t, 8>& narrowed, bool report) {
-    if (shape != ShaderRecompiler::DescriptorImageShape::Image2D || words.size() != narrowed.size() || IsNullTextureResource(words)) return words;
+    if (shape != ShaderRecompiler::DescriptorImageShape::Image2D || words.size() != narrowed.size() || IsNullSampledTextureResource(words)) return words;
     try {
         if (!FirstLayerDescriptor(words, narrowed)) return words;
     } catch (const std::runtime_error&) {
@@ -3472,7 +3472,7 @@ ShaderResources::OwnRefreshFallback ShaderResources::refreshOwnObjects(std::span
             if (binding.kind == ShaderRecompiler::DescriptorKind::SampledImage) {
                 for (std::uint32_t element = 0; element < binding.count; ++element) {
                     const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
-                    if (IsNullTextureResource(words)) continue;
+                    if (IsNullSampledTextureResource(words)) continue;
                     if (textureIndex >= textures.size()) return OwnRefreshFallback::Uncached;
                     const auto index = textureIndex++;
                     const auto overlap = listed(index, false);
@@ -3635,7 +3635,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                         const auto raw = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * elementWords, elementWords);
                         std::array<std::uint32_t, 8> narrowed{};
                         const auto words = firstLayerWords(raw, binding.imageShape, narrowed, false);
-                        if (IsNullTextureResource(words)) continue;
+                        if (IsNullSampledTextureResource(words)) continue;
                         const auto resource = DecodeTextureResource(words);
                         const VkComponentMapping components = ViewComponents(resource);
                         const VkImageViewType multisampleViewType = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
@@ -4860,7 +4860,7 @@ bool ShaderResources::precollectImages() {
             }
             ImageRecord record;
             record.sampled = sampled;
-            if (!IsNullTextureResource(words)) {
+            if (sampled ? !IsNullSampledTextureResource(words) : !IsNullTextureResource(words)) {
                 const auto* memo = words.size() == 8 ? &decodedImage(context.device, words) : nullptr;
                 record.resource = memo != nullptr ? memo->resource : DecodeTextureResource(words);
                 record.guestBytes = memo != nullptr ? memo->guestBytes : DescribeSurface(record.resource).guestBytes;
@@ -4972,7 +4972,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             std::array<std::uint32_t, 8> narrowed{};
             const auto words = firstLayerWords(raw, binding.imageShape, narrowed, true);
             const auto* record = nextRecord();
-            if (IsNullTextureResource(words)) {
+            if (IsNullSampledTextureResource(words)) {
                 item.imageAllocations.push_back(std::numeric_limits<std::size_t>::max());
                 --plannedSampledImages;
                 continue;

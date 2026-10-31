@@ -2,11 +2,13 @@
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -6836,6 +6838,161 @@ void resourceTests() {
     }
 }
 
+void unsetFormatStorageImageTests() {
+    using ShaderRecompiler::DescriptorBinding;
+    using ShaderRecompiler::DescriptorImageShape;
+    using ShaderRecompiler::DescriptorKind;
+    using ShaderRecompiler::DescriptorRole;
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    alignas(256) std::array<std::byte, 4096> guest{};
+    const auto base = reinterpret_cast<std::uint64_t>(guest.data());
+    const auto words = [](std::uint32_t format, std::uint64_t baseAddress) {
+        return std::vector<std::uint32_t>{
+            static_cast<std::uint32_t>(baseAddress >> 8u),
+            static_cast<std::uint32_t>((baseAddress >> 40u) & 0xffu) | ((format & 0x1ffu) << 20u) | (3u << 30u),
+            3u | (15u << 14u),
+            0xfacu | (Type2D << 28u),
+            0u,
+            0u,
+            0u,
+            0u,
+        };
+    };
+    const auto storage = [&](std::uint32_t format, std::uint64_t baseAddress) {
+        DescriptorBinding binding{};
+        binding.kind = DescriptorKind::StorageImage;
+        binding.role = DescriptorRole::GuestImages;
+        binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding;
+        binding.count = 1;
+        binding.imageWritten = {true};
+        binding.guestDescriptor = words(format, baseAddress);
+        return binding;
+    };
+    for (const std::uint32_t format : {0u, 0x1ffu}) {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorStorageImages = 8;
+        context.limits.maxDescriptorSetStorageImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(storage(format, base));
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }, "unsupported guest texture format");
+        }
+        Require(mock.live == 0, "a rejected unset-format storage image leaked Vulkan objects");
+    }
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorSampledImages = 8;
+        context.limits.maxDescriptorSetSampledImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto sampled = storage(0u, base);
+        sampled.kind = DescriptorKind::SampledImage;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        sampled.imageWritten.clear();
+        sampled.imageShape = DescriptorImageShape::Image2D;
+        sampled.imageSamplers = {0};
+        vertex.bindings.push_back(sampled);
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::TextureCache textureCache(context);
+            context.textureCache = &textureCache;
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        Require(mock.live == 0, "a sampled unset-format image leaked Vulkan objects");
+    }
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorSampledImages = 8;
+        context.limits.maxDescriptorSetSampledImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto sampled = storage(0u, base);
+        sampled.kind = DescriptorKind::SampledImage;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        sampled.imageWritten.clear();
+        sampled.imageShape = DescriptorImageShape::Image1DArray;
+        sampled.imageSamplers = {0};
+        sampled.guestDescriptor[3] = (sampled.guestDescriptor[3] & ~(0xfu << 28u)) | (12u << 28u);
+        vertex.bindings.push_back(sampled);
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::TextureCache textureCache(context);
+            context.textureCache = &textureCache;
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        Require(mock.live == 0, "a sampled TYPE 12 image with an unset format leaked Vulkan objects");
+    }
+    for (const std::uint32_t format : {0u, 0x1ffu}) {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorSampledImages = 8;
+        context.limits.maxDescriptorSetSampledImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        auto sampled = storage(format, base);
+        sampled.kind = DescriptorKind::SampledImage;
+        sampled.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+        sampled.imageWritten.clear();
+        sampled.imageShape = DescriptorImageShape::Image2D;
+        sampled.imageSamplers = {0};
+        sampled.guestDescriptor[3] = (sampled.guestDescriptor[3] & ~(0xfu << 28u)) | (2u << 28u);
+        vertex.bindings.push_back(sampled);
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::TextureCache textureCache(context);
+            context.textureCache = &textureCache;
+            expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }, "unsupported image type 2");
+        }
+        Require(mock.live == 0, "a rejected reserved-type sampled image leaked Vulkan objects");
+    }
+    {
+        mock = MockVulkan{};
+        auto context = mockContext();
+        context.device = makeHandle<VkDevice>();
+        context.limits.maxPerStageDescriptorStorageImages = 8;
+        context.limits.maxDescriptorSetStorageImages = 8;
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(storage(0u, 0));
+        const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
+        {
+            AgcDriver::Graphics::TextureDetiler detiler(context);
+            context.detiler = &detiler;
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        Require(mock.live == 0, "a null storage image with an unset format leaked Vulkan objects");
+    }
+    {
+        ShaderRecompiler::RecompileResult compiled;
+        compiled.bindings.push_back(storage(Format8888UNorm, base));
+        bool bounded = false;
+        const auto ranges = AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded);
+        Require(ranges.size() == 1 && ranges[0].first == base && ranges[0].second == base + 4096u, "a written storage image did not contribute its whole surface to the dispatch write ranges");
+        compiled.bindings.front().guestDescriptor = words(0u, base);
+        expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded)); }, "unsupported guest texture format");
+        compiled.bindings.front().guestDescriptor = words(0u, 0u);
+        Require(AgcDriver::DriverDetail::DispatchWriteRanges(compiled, bounded).empty(), "a null written storage image contributed dispatch write ranges");
+    }
+}
+
 void descriptorCacheTests() {
     mock = MockVulkan{};
     auto context = mockContext();
@@ -13020,6 +13177,7 @@ int main(int argc, char** argv) {
         descriptorPoolTests();
         pushConstantTests();
         resourceTests();
+        unsetFormatStorageImageTests();
         oversizedDescriptorTests();
         guestBufferViewBytesTests();
         descriptorSnapshotTests();

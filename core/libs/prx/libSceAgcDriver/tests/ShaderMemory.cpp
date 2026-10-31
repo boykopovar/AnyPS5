@@ -1706,6 +1706,68 @@ void verifyTypeZeroImageMaterialization() {
     gateSecondWaitOnSrtRoot = false;
 }
 
+void verifyUnsetFormatImageMaterialization() {
+    using namespace ShaderRecompiler;
+    constexpr std::array<std::uint32_t, 8> measuredImage{0xffffffffu, 0xffffffffu, 0x00000019u, 0xc0017901u, 0x00000342u, 0xc8000000u, 0xc0064900u, 0x0000062fu};
+    const auto materialize = [](const std::array<std::uint32_t, 8>& words, const ImageResource& image) {
+        IrResourcePlan plan;
+        plan.srtPlanComplete = true;
+        plan.resourceTrackingComplete = true;
+        plan.userDataCount = 0u;
+        plan.materializationSources = {0u};
+        std::vector<std::unique_ptr<IrValue>> values;
+        DescriptorSource source;
+        source.dwordCount = static_cast<std::uint32_t>(words.size());
+        for (std::uint32_t i = 0u; i < words.size(); ++i) {
+            auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, i);
+            value->SetImmediateU32(words[i]);
+            source.dwords[i] = value.get();
+            values.push_back(std::move(value));
+        }
+        plan.descriptorSources.push_back(source);
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        ResourceSnapshot snapshot;
+        ResourceMaterializer{}.Materialize(plan, SrtRuntime{}, snapshot);
+        return snapshot;
+    };
+    ImageResource sampled;
+    sampled.source = 0u;
+    sampled.resourceClass = ImageResourceClass::Sampled;
+    sampled.dimension = RdnaImageDimension::Dim1DArray;
+    sampled.read = true;
+    for (const std::uint32_t format : {0u, 0x1ffu}) {
+        auto words = measuredImage;
+        words[1] = (words[1] & ~(0x1ffu << 20u)) | (format << 20u);
+        const auto snapshot = materialize(words, sampled);
+        require(snapshot.images.size() == 1u && snapshot.images[0].dwordCount == 8u && snapshot.images[0].dwords == words,
+                "an unset-format measured image-type T# was rejected or altered during materialization");
+        for (const bool atomic : {false, true}) {
+            auto storage = sampled;
+            storage.resourceClass = ImageResourceClass::Storage;
+            storage.read = false;
+            storage.written = !atomic;
+            storage.atomic = atomic;
+            bool rejected = false;
+            try {
+                static_cast<void>(materialize(words, storage));
+            } catch (const std::runtime_error& error) {
+                rejected = std::string_view(error.what()).find("image descriptor") != std::string_view::npos;
+            }
+            require(rejected, atomic ? "an unset-format atomic image descriptor was accepted" : "an unset-format writable image descriptor was accepted");
+        }
+    }
+    const auto expectInvalidType = [&](std::uint32_t type, const char* message) {
+        auto words = measuredImage;
+        words[1] &= ~(0x1ffu << 20u);
+        words[3] = (words[3] & ~(0xfu << 28u)) | (type << 28u);
+        expectFailure([&] { static_cast<void>(materialize(words, sampled)); }, "runtime image descriptor is invalid", message);
+    };
+    expectInvalidType(2u, "a reserved TYPE 2 T# with an unset format was accepted as a null image");
+    expectInvalidType(7u, "a reserved TYPE 7 T# with an unset format was accepted as a null image");
+    expectInvalidType(15u, "an unimplemented TYPE 15 T# with an unset format was accepted as a null image");
+}
+
 void verifyOutOfRangeConstantReads() {
     std::vector<std::uint32_t> code{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf4000400u, 0xfa000050u, 0xf4080a00u, 0xfa000080u, 0xbf8cc07fu, 0xf42c0814u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850008u};
     for (std::uint32_t dword = 0; dword < 8u; dword++) {
@@ -2029,6 +2091,22 @@ void verifyGuardedDescriptorSources() {
     {
         AgcDriver::ShaderMemory memory({});
         expectFailure([&] { static_cast<void>(memory.Capture(request)); }, "runtime image descriptor is invalid", "guarded sources: an invalid T# behind a taken branch was accepted");
+    }
+    auto unsetFormat = valid;
+    unsetFormat[1] = valid[1] & ~(0x1ffu << 20u);
+    fill(unsetFormat, 1u);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        require(capture->snapshot.images.size() == 1u && capture->snapshot.images[0].dwords == unsetFormat, "guarded sources: a T# with an unset format behind a taken branch was rejected or altered");
+    }
+    auto filledFormat = valid;
+    filledFormat[1] = valid[1] | (0x1ffu << 20u);
+    fill(filledFormat, 1u);
+    {
+        AgcDriver::ShaderMemory memory({});
+        const auto capture = memory.Capture(request);
+        require(capture->snapshot.images.size() == 1u && capture->snapshot.images[0].dwords == filledFormat, "guarded sources: a T# with an all-ones format behind a taken branch was rejected or altered");
     }
     auto typeOne = valid;
     typeOne[3] = 0xfacu | (1u << 28u);
@@ -9703,6 +9781,7 @@ int main(int argc, char** argv) {
         verifyLayoutPair();
         verifySignedSrtComparison();
         verifyTypeZeroImageMaterialization();
+        verifyUnsetFormatImageMaterialization();
         verifyOutOfRangeConstantReads();
         verifySignedMinimum();
         verifyMayEvaluate();
