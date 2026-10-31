@@ -359,6 +359,12 @@ void TestVectorCopyFromStrings() {
     for (unsigned index = 0; index < 3; ++index)
         Require(std::strcmp(LoadBody<char*>(reloaded + index * kStringSize, kBufferOffset), payload) == 0);
 
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEE8copyFromERKS5_(reinterpret_cast<IntrusivePtr*>(target.bytes), reinterpret_cast<IntrusivePtr*>(target.bytes)) == 0);
+    Require(LoadBody<std::uint64_t>(targetBody, kBodySizeOffset) == 3);
+    const auto* selfCopied = LoadBody<unsigned char*>(targetBody, kBodyElementsOffset);
+    for (unsigned index = 0; index < 3; ++index)
+        Require(std::strcmp(LoadBody<char*>(selfCopied + index * kStringSize, kBufferOffset), payload) == 0);
+
     _ZN3sce2Np9CppWebApi6Common6StringD1Ev(reinterpret_cast<CommonString*>(element.bytes));
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(reinterpret_cast<IntrusivePtr*>(source.bytes));
     _ZN3sce2Np9CppWebApi6Common6VectorINS2_6StringEED1Ev(reinterpret_cast<IntrusivePtr*>(target.bytes));
