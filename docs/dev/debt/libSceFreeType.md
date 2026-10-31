@@ -1,5 +1,6 @@
 # libSceFreeType technical debt
 
+- [FT_Set_Renderer](../../../core/libs/prx/libSceFreeType/src/RendererSelection.cpp) (libSceFreeType) - console signature and the 16-byte LP64 `FT_Parameter` layout are unverified; the adapter follows bundled [FreeType 2.13.3](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftobjs.c). The renderer handle must come from `FT_Get_Renderer` on the same library, and the parameter data pointers are passed to the native renderer unchanged. A parameter tag above the host `FT_ULong` range throws on Windows, where the native type is 32 bits
 ### Unknown function info
 - [autofitter glyph-to-script-map](../../../core/libs/prx/libSceFreeType/src/ModuleProperties.cpp) assumes the FreeType LP64 face/map carrier and translates the guest face to its host face. The returned 16-bit map borrows host face storage and is valid only while that face is alive; the setter returns the bundled FreeType error. This is an exception to the general unsupported-property note below. Console ABI, glyph classification and firmware behavior are unverified.
 
