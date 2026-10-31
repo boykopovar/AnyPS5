@@ -1021,6 +1021,32 @@ int APS5_VABI wcscat_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t
     return wcsncat_s_nid_postfix(dest, destsz, src, static_cast<size_t>(-1));
 }
 
+/*
+ * Copyright (c) 2010 Damien Miller. All rights reserved.
+ *
+ * Permission to use, copy, modify, and distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/libc/string/timingsafe_bcmp.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/libc/string/timingsafe_bcmp.c */
+int APS5_VABI timingsafe_bcmp_nid_postfix(const void* b1, const void* b2, size_t n) {
+    const auto* p1 = static_cast<const unsigned char*>(b1);
+    const auto* p2 = static_cast<const unsigned char*>(b2);
+    int ret = 0;
+    for (size_t i = 0; i < n; ++i) {
+        ret |= p1[i] ^ p2[i];
+    }
+    return ret != 0;
+}
+
 int APS5_VABI timingsafe_memcmp_nid_postfix(const void* b1, const void* b2, size_t len) {
     const auto* p1 = static_cast<const unsigned char*>(b1);
     const auto* p2 = static_cast<const unsigned char*>(b2);
