@@ -2540,6 +2540,7 @@ if(ANYPS5_ENABLE_SPIRV_TOOLS)
     target_link_libraries(agc_driver_optimize_on_fiber_tests PRIVATE libSceFiber shader_recompiler_agc_driver)
 endif()
 
+target_link_libraries(agc_driver_gcn_display_present_tests PRIVATE decoder_png)
 target_link_libraries(agc_driver_rect_list_corner_tests PRIVATE shader_recompiler_agc_driver)
 target_link_libraries(agc_driver_queue_zero_late_interrupt_tests PRIVATE libkernel)
 target_link_libraries(agc_driver_linear_target_completion_points_tests PRIVATE libkernel)

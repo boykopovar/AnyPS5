@@ -4,6 +4,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
 #include <array>
 #include <string>
@@ -786,4 +788,14 @@ void RunGuestTextureResourceTests() {
     single.depth = 3;
     Require(!FirstLayerDescriptor(pack(single), narrowed), "a 2D array T# of its base slice alone needs no narrowing");
     Require(!FirstLayerDescriptor(baseWords, narrowed), "a 2D T# needs no narrowing");
+
+    const std::array<std::uint32_t, 8> gcnTexture{0x00001000u, 0x00a000c0u, 0x0003c00fu, 0x90800facu, 0x0001e000u, 0u, 0u, 0u};
+    auto gcnNullBase = gcnTexture;
+    gcnNullBase[0] = 0u;
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    const auto gcnResult = DecodeTextureResource(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnTexture)));
+    const bool gcnNull = IsNullTextureResource(ShaderRecompiler::GcnImageWords(std::span<const std::uint32_t, 8>(gcnNullBase)));
+    ShaderRecompiler::SetGcnGuestShaders(false);
+    Require(gcnResult.baseAddress == 0x100000u, "a PS4 T# took MTYPE_L2 above its 38-bit base as address bits");
+    Require(gcnNull, "a PS4 T# with a zero base and MTYPE_L2 set was not classified as null");
 }
