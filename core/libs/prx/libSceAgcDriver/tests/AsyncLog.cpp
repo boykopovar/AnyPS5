@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -122,7 +123,7 @@ std::string LargeLine(std::size_t index, std::size_t bytes) {
 }
 
 void OrderPerThread() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     std::string expected;
@@ -139,7 +140,7 @@ void OrderPerThread() {
 }
 
 void LongLine() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     const std::string longText(3000, 'x');
     AgcDriver::AsyncLog::Get().Defer(file, "%s|%d\n", AgcDriver::LogLiteral{longText.c_str()}, 7);
@@ -158,7 +159,7 @@ void Coalescing() {
 }
 
 void FlushWaitsForHeldStream() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     {
@@ -178,7 +179,7 @@ void FlushWaitsForHeldStream() {
 }
 
 void BoundedFlushGivesUp() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     Check(log.FlushFor(0ms), "FlushFor waited with nothing queued");
@@ -194,7 +195,7 @@ void BoundedFlushGivesUp() {
 }
 
 void FullQueueBlocksCaller() {
-    std::FILE* file = std::tmpfile();
+    std::FILE* file = TemporaryFile::Open();
     Check(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     constexpr std::size_t lineBytes = 1024 * 1024;
