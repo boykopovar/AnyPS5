@@ -6,9 +6,12 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #else
 #include <arpa/inet.h>
 #include <cerrno>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -34,6 +37,7 @@
 #include <map>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <random>
 #include <vector>
 #include <set>
@@ -126,6 +130,7 @@ constexpr int NET_ETIMEDOUT = 60;
 constexpr int NET_ECONNREFUSED = 61;
 constexpr int NET_EHOSTUNREACH = 65;
 constexpr int NET_ENOTINIT = 200;
+constexpr int NET_ENODATA = 0xA4;
 constexpr int NET_ERROR_BASE = static_cast<int>(0x80410100u);
 constexpr int NET_ERROR_RESOLVER_ENODNS = static_cast<int>(0x804101E1u);
 constexpr int NET_CONFIG_ERROR_NULL_FLAGS = static_cast<int>(0x8041130Eu);
@@ -136,6 +141,8 @@ constexpr std::uint32_t NET_IFF_LOOPBACK = 0x8;
 constexpr std::uint32_t NET_IFF_RUNNING = 0x40;
 constexpr std::uint32_t NET_IFF_MULTICAST = 0x8000;
 constexpr std::uint32_t NET_IF_LO0 = 0;
+constexpr std::array<const char*, 10> NET_INTERFACE_NAMES = {
+    "lo0", "eth0", "eth1", "dbg0", "wlan0", "wlan1", "gbe0", "bt0", "phone0", "pppoe0"};
 
 constexpr int NET_AF_INET = 2;
 constexpr int NET_AF_INET6 = 28;
@@ -395,6 +402,56 @@ void set_errno(int err) {
 int fail(int err) {
     set_errno(err);
     return NET_ERROR_BASE | err;
+}
+
+std::optional<std::uint32_t> HostInterfaceByRole(bool loopback) {
+#ifdef _WIN32
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG size = 0;
+    if (GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return std::nullopt;
+    std::vector<std::uint8_t> storage(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
+    if (GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, adapters, &size) != NO_ERROR) return std::nullopt;
+    std::optional<std::uint32_t> primary;
+    for (auto* adapter = adapters; adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->IfIndex == 0) continue;
+        if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            if (loopback) return static_cast<std::uint32_t>(adapter->IfIndex);
+            continue;
+        }
+        if (!primary && adapter->OperStatus == IfOperStatusUp && adapter->FirstUnicastAddress != nullptr)
+            primary = static_cast<std::uint32_t>(adapter->IfIndex);
+    }
+    return loopback ? std::nullopt : primary;
+#else
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return std::nullopt;
+    std::uint32_t loop = 0;
+    std::optional<std::uint32_t> primary;
+    for (auto* item = list; item != nullptr; item = item->ifa_next) {
+        if (item->ifa_name == nullptr || !(item->ifa_flags & IFF_UP)) continue;
+        const unsigned int index = if_nametoindex(item->ifa_name);
+        if (index == 0) continue;
+        if ((item->ifa_flags & IFF_LOOPBACK) != 0) {
+            if (loop == 0) loop = index;
+            continue;
+        }
+        if (!primary && item->ifa_addr != nullptr &&
+            (item->ifa_addr->sa_family == AF_INET || item->ifa_addr->sa_family == AF_INET6))
+            primary = static_cast<std::uint32_t>(index);
+    }
+    freeifaddrs(list);
+    if (loopback) return loop == 0 ? std::nullopt : std::optional<std::uint32_t>(loop);
+    return primary;
+#endif
+}
+
+std::optional<std::uint32_t> HostInterfaceIndex(std::uint32_t interfaceId) {
+    if (interfaceId >= NET_INTERFACE_NAMES.size()) return std::nullopt;
+    if (interfaceId == 0) return HostInterfaceByRole(true);
+    if (interfaceId == 1) return HostInterfaceByRole(false);
+    const unsigned int index = if_nametoindex(NET_INTERFACE_NAMES[interfaceId]);
+    return index == 0 ? std::nullopt : std::optional<std::uint32_t>(index);
 }
 
 void* APS5_VABI RunNetThread(void* param) {
@@ -2733,23 +2790,32 @@ int APS5_VABI sceNetGetIfListOnce(std::int32_t interfaceId, NetInterfaceStatisti
 }
 
 const char* APS5_VABI sceNetGetIfName(std::uint32_t index) {
-    static constexpr std::array<const char*, 10> names = {
-        "lo0", "eth0", "eth1", "dbg0", "wlan0", "wlan1", "gbe0", "bt0", "phone0", "pppoe0"};
-    if (index >= names.size()) {
+    if (index >= NET_INTERFACE_NAMES.size()) {
         set_errno(NET_EINVAL);
         return "";
     }
-    return names[index];
+    return NET_INTERFACE_NAMES[index];
 }
 
 int APS5_VABI sceNetGetIfnameNumList(std::uint32_t* interfaceIds, std::int32_t capacity, std::uint32_t flags) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_net_inited) return fail(NET_ENOTINIT);
+    if (interfaceIds == nullptr || capacity <= 0 || flags > 1) return fail(NET_EINVAL);
+    const std::uint32_t first = (flags & 1) != 0 ? 0 : 1;
+    const std::uint32_t last = (flags & 1) != 0 ? 9 : 8;
+    std::int32_t count = 0;
+    for (std::uint32_t interfaceId = first; interfaceId <= last && count < capacity; ++interfaceId) {
+        if (!HostInterfaceIndex(interfaceId)) continue;
+        interfaceIds[count++] = interfaceId;
+    }
+    return count;
 }
 
 int APS5_VABI sceNetGetNameToIndex(std::uint32_t interfaceId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!g_net_inited) return fail(NET_ENOTINIT);
+    if (interfaceId == 0xffffffffu) return fail(NET_EINVAL);
+    const auto index = HostInterfaceIndex(interfaceId);
+    if (!index) return fail(NET_ENODATA);
+    return static_cast<int>(*index);
 }
 
 int APS5_VABI sceNetGetRandom(std::uint32_t* output) {
