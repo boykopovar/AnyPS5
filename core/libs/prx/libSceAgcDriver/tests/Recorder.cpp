@@ -5706,6 +5706,381 @@ void idlePublishWaitTests(const Device& device, Recorder& recorder) {
     std::cout << "idle publish wait verified\n";
 }
 
+void untrackedForgetTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: untracked comparison memo not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t otherBytes = 65536;
+    const auto allocate = [](std::size_t bytes) -> void* {
+#ifdef _WIN32
+        return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        return std::aligned_alloc(65536, bytes);
+#endif
+    };
+    void* block = allocate(surfaceBytes);
+    void* other = allocate(otherBytes);
+    Require(block != nullptr && other != nullptr, "cannot allocate the untracked comparison blocks");
+    std::memset(block, 0x55, surfaceBytes);
+    std::memset(other, 0x11, otherBytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    const auto otherAddress = reinterpret_cast<std::uint64_t>(other);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, surfaceBytes, true, true, true);
+        mutation.Add(other, otherBytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        void* other;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+                mutation.Remove(other);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), surfaceBytes);
+        }
+    } unregister{base, block, other};
+    if (HostImportFor(base, address, surfaceBytes) == nullptr) {
+        std::cout << "host import of the surface refused: untracked comparison memo not tested\n";
+        return;
+    }
+    if (AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
+        std::cout << "the surface is write-watched: untracked comparison memo not tested\n";
+        return;
+    }
+    TextureDetiler detiler(base);
+    struct Finish {
+        Recorder& recorder;
+        ~Finish() { recorder.Sync(); }
+    } finish{recorder};
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "the test surface has an unexpected size");
+    {
+        auto image = StorageTexture::Create(context, detiler, resource, 0);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        image->Refresh();
+        const auto compares = StorageTexture::UntrackedCompares();
+        image->Refresh();
+        Require(StorageTexture::UntrackedCompares() == compares, "a second refresh in the same collect epoch compared the surface again");
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(otherAddress, otherBytes);
+        image->Refresh();
+        Require(StorageTexture::UntrackedCompares() == compares, "forgetting memory the surface does not cover made its refresh compare again");
+        GuestAllocations::GuestAllocationsInvalidate_nid_postfix(address, 65536);
+        image->Refresh();
+        Require(StorageTexture::UntrackedCompares() == compares + 1, "forgetting the surface's own memory left its comparison memo standing");
+    }
+#ifdef _WIN32
+    VirtualFree(other, 0, MEM_RELEASE);
+#endif
+    std::cout << "untracked comparison memo: ok\n";
+}
+
+void untrackedRevalidateTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.nullDescriptors = device.NullDescriptors();
+    if (context.hostImportAlignment == 0 || !context.nullDescriptors) {
+        std::cout << "host imports or null descriptors unavailable: fast revalidation over untracked memory not tested\n";
+        return;
+    }
+    constexpr std::size_t bytes = 2 * 65536;
+#ifdef _WIN32
+    void* block = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+    void* block = std::aligned_alloc(65536, bytes);
+#endif
+    Require(block != nullptr, "cannot allocate the untracked revalidation block");
+    std::memset(block, 0x40, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+        }
+    } unregister{context, block};
+    if (HostImportFor(context, address, bytes) == nullptr) {
+        std::cout << "host import of the block refused: fast revalidation over untracked memory not tested\n";
+        return;
+    }
+    if (AgcDriver::GuestMemory::Watched(address, bytes)) {
+        std::cout << "the block is write-watched: fast revalidation over untracked memory not tested\n";
+        return;
+    }
+    TextureDetiler detiler(context);
+    auto imageContext = context;
+    imageContext.detiler = &detiler;
+    TextureCache textureCache(imageContext);
+    imageContext.textureCache = &textureCache;
+    struct Clear {
+        const Context& context;
+        Recorder& recorder;
+        ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+    } clear{context, recorder};
+    ShaderRecompiler::RecompileResult imageProgram;
+    ShaderRecompiler::DescriptorBinding imageBinding;
+    imageBinding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+    imageBinding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    imageBinding.descriptorSet = 0;
+    imageBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+    imageBinding.count = 1;
+    imageBinding.imageSamplers = {0};
+    imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    imageBinding.guestDescriptor = {static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+    imageProgram.bindings.push_back(imageBinding);
+    const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto sampled = std::make_shared<ShaderResources>(imageContext, imageCompute);
+    recorder.Sync();
+    ShaderResources::ProofReport report;
+    Require(sampled->Revalidate(std::span(&imageCompute, 1), &report), "a sampled template over untracked memory did not revalidate");
+    Require(report.path == ShaderResources::ProofPath::Fast, "a sampled template over untracked memory took the full walk in the same collect epoch");
+    Require(sampled->Revalidate(std::span(&imageCompute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "a second proof in the same collect epoch was not fast");
+    std::memset(block, 0x41, 4096);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(sampled->Revalidate(std::span(&imageCompute, 1), &report));
+    Require(report.path != ShaderResources::ProofPath::Fast, "a sampled template over untracked memory kept its fast proof across a store and a new collect epoch");
+    sampled.reset();
+    std::cout << "fast revalidation over untracked memory: ok\n";
+}
+
+struct WalkStore {
+    std::uint64_t trigger = 0;
+    std::size_t triggerBytes = 0;
+    std::uint8_t* target = nullptr;
+    std::size_t storeBytes = 0;
+    std::size_t hintBytes = 0;
+    bool done = true;
+    std::uint8_t value = 0x45;
+    bool threaded = false;
+};
+WalkStore walkStore;
+
+void storeDuringWalk(std::uint64_t address, std::size_t bytes) {
+    if (walkStore.done || address >= walkStore.trigger + walkStore.triggerBytes || walkStore.trigger >= address + bytes) return;
+    walkStore.done = true;
+    const auto store = [] {
+        std::memset(walkStore.target, walkStore.value, walkStore.storeBytes);
+        static_cast<void>(AgcDriver::GuestMemory::UntrackedHint(reinterpret_cast<std::uint64_t>(walkStore.target), walkStore.hintBytes));
+    };
+    if (walkStore.threaded) {
+        std::thread(store).join();
+    } else {
+        store();
+    }
+}
+
+void untrackedHintProofTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.nullDescriptors = device.NullDescriptors();
+    if (context.hostImportAlignment == 0 || !context.nullDescriptors) {
+        std::cout << "host imports or null descriptors unavailable: untracked proofs across collect epochs not tested\n";
+        return;
+    }
+    constexpr std::size_t surface = 65536;
+    constexpr std::size_t bytes = 2 * surface;
+    auto* block = static_cast<std::uint8_t*>(AllocateWatched(bytes, surface));
+    if (block == nullptr) {
+        std::cout << "guest memory is not write-watched: untracked proofs across collect epochs not tested\n";
+        return;
+    }
+    std::memset(block, 0x40, bytes);
+    const auto first = reinterpret_cast<std::uint64_t>(block);
+    const auto second = first + surface;
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+        }
+    } unregister{context, block};
+    if (HostImportFor(context, first, bytes) == nullptr) {
+        std::cout << "host import of the block refused: untracked proofs across collect epochs not tested\n";
+        return;
+    }
+    AgcDriver::GuestMemory::Unwatch(first, bytes);
+    if (AgcDriver::GuestMemory::Watched(first, bytes)) {
+        std::cout << "the block stayed write-watched: untracked proofs across collect epochs not tested\n";
+        return;
+    }
+    const bool hinted = AgcDriver::GuestMemory::UntrackedHint(first, bytes) != 0;
+    std::cout << (hinted ? "the block has a write-watch hint: its proofs are expected to hold across collect epochs\n" : "the block has no write-watch hint: its proofs are expected to follow the collect epoch\n");
+    TextureDetiler detiler(context);
+    auto imageContext = context;
+    imageContext.detiler = &detiler;
+    TextureCache textureCache(imageContext);
+    imageContext.textureCache = &textureCache;
+    struct Clear {
+        const Context& context;
+        Recorder& recorder;
+        ~Clear() { recorder.Sync(); ClearCachedTextures(context.device); }
+    } clear{context, recorder};
+    const auto words = [](std::uint64_t address) {
+        return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(address >> 8), static_cast<std::uint32_t>(address >> 40) | (56u << 20) | (3u << 30), 15u | (63u << 14), 0x91b00fac, 0, 0, 0, 0};
+    };
+    const auto firstWords = words(first);
+    const auto secondWords = words(second);
+    const auto imageBytes = DescribeSurface(DecodeTextureResource(firstWords)).guestBytes;
+    Require(imageBytes == surface, "the test surface does not fill its 64 KiB block");
+    ShaderRecompiler::RecompileResult imageProgram;
+    ShaderRecompiler::DescriptorBinding imageBinding;
+    imageBinding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+    imageBinding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    imageBinding.descriptorSet = 0;
+    imageBinding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding;
+    imageBinding.count = 2;
+    imageBinding.imageSamplers = {0, 0};
+    imageBinding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    imageBinding.guestDescriptor.assign(firstWords.begin(), firstWords.end());
+    imageBinding.guestDescriptor.insert(imageBinding.guestDescriptor.end(), secondWords.begin(), secondWords.end());
+    imageProgram.bindings.push_back(imageBinding);
+    const CompiledShader imageCompute{ShaderRecompiler::ShaderStage::Compute, &imageProgram, 0};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    auto sampled = std::make_shared<ShaderResources>(imageContext, imageCompute);
+    recorder.Sync();
+    const auto fast = [&] {
+        ShaderResources::ProofReport report;
+        Require(sampled->Revalidate(std::span(&imageCompute, 1), &report), "a sampled template over untracked memory did not revalidate");
+        return report.path == ShaderResources::ProofPath::Fast;
+    };
+    const auto version = [&](std::uint64_t address) {
+        const auto image = StorageTexture::FindLive(address, imageBytes);
+        Require(image != nullptr, "the view's storage image is not cached");
+        return image->Version();
+    };
+    const auto settle = [&](const std::string& after) {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        static_cast<void>(fast());
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(fast() == hinted, after + (hinted ? ": a hinted proof walked across an unwritten collect epoch" : ": a proof without a hint stayed fast across a collect epoch"));
+    };
+    Require(fast(), "a sampled template over untracked memory took the full walk in the same collect epoch");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(fast());
+    Require(fast(), "a sampled template over untracked memory took the full walk twice in one collect epoch");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(fast() == hinted, hinted ? "a proof over a hinted untracked range walked after a collect epoch with no write" : "a proof over untracked memory without a write-watch hint stayed fast across a collect epoch");
+
+    auto before = version(first);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::memset(block, 0x41, 4096);
+    Require(!fast(), "a CPU store after a collect epoch kept the fast proof");
+    Require(version(first) != before, "the walk after a CPU store kept the old content");
+    settle("after a CPU store");
+
+    before = version(first);
+    std::memset(block, 0x42, 4096);
+    AgcDriver::GuestMemory::MarkWritten(first, 4096);
+    Require(!fast(), "a driver store kept the fast proof");
+    Require(version(first) != before, "the walk after a driver store kept the old content");
+    settle("after a driver store");
+
+    before = version(first);
+    std::memset(block, 0x43, 4096);
+    recorder.NotePendingWrite(first, 4096);
+    Require(!fast(), "a recorded GPU write over the range kept the fast proof");
+    recorder.Sync();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!fast(), "a completed GPU write over the range kept the fast proof after its completion");
+    Require(version(first) != before, "the walk after a completed GPU write kept the old content");
+    settle("after a recorded GPU write");
+
+    before = version(first);
+    walkStore = {second, surface, block, 4096, bytes, false};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::GuestMemory::MarkWritten(second, 4096);
+    AgcDriver::GuestMemory::SetFlushHook(&storeDuringWalk);
+    const bool walked = !fast();
+    recorder.Activate();
+    Require(walkStore.done, "the walk did not compare the second surface");
+    Require(walked, "a driver store over the second surface kept the fast proof");
+    Require(version(first) == before, "the first surface was read again after the store made while the second was compared");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!fast(), "a CPU store made after the first surface was compared and before its stamp was recorded kept the fast proof");
+    Require(version(first) != before, "the walk after a store made during the previous walk kept the old content");
+
+    before = version(first);
+    walkStore = {second, surface, block, 4096, bytes, false, 0x46, true};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::GuestMemory::MarkWritten(second, 4096);
+    AgcDriver::GuestMemory::SetFlushHook(&storeDuringWalk);
+    const bool threadWalked = !fast();
+    recorder.Activate();
+    Require(walkStore.done, "the walk did not compare the second surface before the store from another thread");
+    Require(threadWalked, "a driver store over the second surface kept the fast proof before the store from another thread");
+    Require(version(first) == before, "the first surface was read again after another thread stored into it while the second was compared");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!fast(), "a store from another thread right after the first surface was compared kept the fast proof");
+    Require(version(first) != before, "the walk after a store from another thread during the previous walk kept the old content");
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(fast());
+    Require(fast(), "a second proof in one collect epoch was not fast before the store from another thread");
+    before = version(first);
+    std::thread([&] { std::memset(block, 0x47, 4096); }).join();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(!fast(), "a store from another thread after a fast proof kept the fast proof in the next collect epoch");
+    Require(version(first) != before, "the walk after a store from another thread kept the old content");
+
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    static_cast<void>(fast());
+    Require(fast(), "a second proof in one collect epoch was not fast before the check on another thread");
+    before = version(first);
+    std::memset(block, 0x48, 4096);
+    bool checked = false;
+    ShaderResources::ProofReport threadReport;
+    std::exception_ptr threadError;
+    std::thread([&] {
+        try {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            checked = sampled->Revalidate(std::span(&imageCompute, 1), &threadReport);
+        } catch (...) {
+            threadError = std::current_exception();
+        }
+    }).join();
+    if (threadError) std::rethrow_exception(threadError);
+    Require(checked, "a sampled template over untracked memory did not revalidate on another thread");
+    Require(threadReport.path != ShaderResources::ProofPath::Fast, "a check on another thread after a store on the proving thread kept the fast proof");
+    Require(version(first) != before, "the walk on another thread after a store kept the old content");
+    sampled.reset();
+    std::cout << "untracked proofs across collect epochs: ok\n";
+}
+
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
@@ -12668,6 +13043,18 @@ int main(int argc, char** argv) {
             overlappedRangeTests(recorder);
             spaceWriteSyncTests(device, recorder);
             std::cout << "Address space pending write tests passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--untracked-revalidate-only") {
+            untrackedRevalidateTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--untracked-hint-proof-only") {
+            untrackedHintProofTests(device, recorder);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
+            untrackedForgetTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {

@@ -451,6 +451,7 @@ struct LookupRecord {
     std::uint64_t generation;
     const StorageTexture* source;
     bool depth = false;
+    std::array<std::uint64_t, 4> untracked{};
 };
 
 thread_local std::vector<LookupRecord>* lookupLogSlot = nullptr;
@@ -932,7 +933,10 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
             committed = std::move(ranges);
         }
     }
-    const auto untracked = source == nullptr && generation == 0 && !committed.has_value() && *keys == DccKeys::Uncompressed ? untrackedKey(address, bytes) : std::array<std::uint64_t, 4>{};
+    const bool keyed = source == nullptr && generation == 0 && !committed.has_value() && *keys == DccKeys::Uncompressed;
+    const auto forgetStamp = keyed ? GuestMemory::ForgetStamp(address, bytes) : 0;
+    const auto untracked = keyed ? untrackedKey(address, bytes) : std::array<std::uint64_t, 4>{};
+    const auto proofKey = untracked[0] != 0 ? std::array<std::uint64_t, 4>{untracked[0], untracked[1], forgetStamp, untracked[3]} : std::array<std::uint64_t, 4>{};
     auto& cache = Textures();
     const auto key = MakeTextureKey(context.device, words, components, depthCompare);
     std::lock_guard lock(cache.mutex);
@@ -979,7 +983,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
                 it->committed = std::move(committed);
                 it->untracked = untracked;
                 touchTexture(cache, it);
-                logLookup({it->texture.get(), resource, guestBytes, *keys, generation, nullptr});
+                logLookup({it->texture.get(), resource, guestBytes, *keys, generation, nullptr, false, proofKey});
                 reportTextureCounters();
                 if (profile) LookupOutcomes::Add(LookupOutcomes::SampledHitSnapshot, start);
                 return it->texture;
@@ -1037,11 +1041,12 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         if (entry.bytes.size() > SnapshotCompareBytes && (entry.generation != 0 || entry.untracked[0] != 0)) parkSnapshot(cache, entry.bytes);
         counters.snapshots.fetch_add(1, std::memory_order_relaxed);
     }
+    const auto madeKey = entry.untracked[0] != 0 ? proofKey : std::array<std::uint64_t, 4>{};
     const auto budget = sampledBudget(context, cache);
     auto texture = entry.texture;
     if (!admitTexture(cache, key, entry.accounted, budget)) {
         noteReleased(texture);
-        logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
+        logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get(), false, madeKey});
         reportCacheCounts(cache, budget);
         reportTextureCounters();
         if (profile) LookupOutcomes::Add(source != nullptr ? LookupOutcomes::SampledMadeView : LookupOutcomes::SampledMadeSnapshot, start);
@@ -1050,7 +1055,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     cache.bytes += entry.accounted;
     entry.present = Recorder::Presents();
     ++cache.counts.inserted;
-    logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get()});
+    logLookup({texture.get(), resource, guestBytes, *keys, generation, source.get(), false, madeKey});
     cache.entries.push_front(std::move(entry));
     cache.index[key] = cache.entries.begin();
     if (source != nullptr) cache.views.emplace(source.get(), cache.entries.begin());
@@ -3108,6 +3113,29 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
 
 // Turns the lookups' records into this object's per-texture validation records (see
 // ValidatedSurface); the last record of an object is the freshest.
+namespace {
+
+std::array<std::uint64_t, 4> hintedProof(std::uint64_t address, std::size_t bytes) {
+    const auto hint = GuestMemory::UntrackedHint(address, bytes);
+    if (hint == 0) return {};
+    const auto* recorder = Recorder::Active();
+    return {hint, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+}
+
+std::array<std::uint64_t, 5> untrackedRangeStamp(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 4>& hinted) {
+    const auto epoch = GuestMemory::CollectEpoch();
+    if (epoch == 0 || bytes == 0 || (GuestMemory::ForgetSerial() & 1u) != 0) return {};
+    if (hinted[0] != 0) return {hinted[0], hinted[1], hinted[2], hinted[3], 1};
+    const auto* recorder = Recorder::Active();
+    return {epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0, 0};
+}
+
+std::array<std::uint64_t, 5> currentUntrackedStamp(std::uint64_t address, std::size_t bytes, const std::array<std::uint64_t, 5>& recorded) {
+    return untrackedRangeStamp(address, bytes, recorded[4] != 0 ? hintedProof(address, bytes) : std::array<std::uint64_t, 4>{});
+}
+
+}
+
 void ShaderResources::captureValidation() {
     const auto& log = lookupLog();
     thread_local std::vector<const void*>* loggedSlot = nullptr;
@@ -3126,6 +3154,16 @@ void ShaderResources::captureValidation() {
         if (indices[i] == log.size()) continue;
         const auto& found = log[indices[i]];
         validatedTextures[i] = {found.resource, found.bytes, found.keys, found.generation, 0, found.source, found.depth, true};
+        auto& surface = validatedTextures[i];
+        if (surface.valid && !surface.depth && GuestMemory::CollectWrites(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes)) == 0) surface.untracked = untrackedRangeStamp(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes), surface.source != nullptr ? surface.source->HintedComparison(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes)) : found.untracked);
+    }
+    storageUntracked.assign(storageTextures.size(), {});
+    for (std::size_t i = 0; i < storageTextures.size(); ++i) {
+        const auto* image = storageTextures[i].get();
+        if (image == nullptr) continue;
+        const auto address = image->Descriptor().baseAddress;
+        const auto bytes = static_cast<std::size_t>(image->GuestBytes());
+        if (GuestMemory::CollectWrites(address, bytes) == 0) storageUntracked[i] = untrackedRangeStamp(address, bytes, image->HintedComparison(address, bytes));
     }
     lookupLog().clear();
     const auto trim = [](auto& scratch) {
@@ -3223,9 +3261,13 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         const auto bytes = static_cast<std::size_t>(surface.bytes);
         if (!FlushDepthPlanes(address, bytes).empty()) return fail(FastFail::Changed);
         surface.collected = GuestMemory::CollectWrites(address, bytes);
+        bool untracked = false;
         if (surface.collected == 0) {
-            countCollectRefusal(false, address, bytes);
-            return fail(FastFail::Collect);
+            if (surface.untracked[0] == 0 || currentUntrackedStamp(address, bytes, surface.untracked) != surface.untracked) {
+                countCollectRefusal(false, address, bytes);
+                return fail(FastFail::Collect);
+            }
+            untracked = true;
         }
         const auto* source = surface.source;
         if (!keyProofs) {
@@ -3264,9 +3306,9 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         }
         if (source != nullptr) {
             if (!source->Cached()) return fail(FastFail::Evicted);
-            queries.push_back({address, bytes, source->GenerationFor(address, bytes)});
+            if (!untracked) queries.push_back({address, bytes, source->GenerationFor(address, bytes)});
             images.push_back(source);
-        } else {
+        } else if (!untracked) {
             queries.push_back({address, bytes, surface.generation});
         }
     }
@@ -3282,9 +3324,13 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
             return fail(FastFail::Depth);
         }
+        bool untracked = false;
         if (GuestMemory::CollectWrites(address, bytes) == 0) {
-            countCollectRefusal(true, address, bytes);
-            return fail(FastFail::Collect);
+            if (i >= storageUntracked.size() || storageUntracked[i][0] == 0 || currentUntrackedStamp(address, bytes, storageUntracked[i]) != storageUntracked[i]) {
+                countCollectRefusal(true, address, bytes);
+                return fail(FastFail::Collect);
+            }
+            untracked = true;
         }
         if (own.dccAddress != 0) {
             // Refresh's unchanged branch (its key compare against the keys the content was
@@ -3295,7 +3341,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         }
         if (!unchanged) query(address, address + bytes, image, nullptr, {i, true, false});
         if (!image->Cached()) return fail(FastFail::Evicted);
-        queries.push_back({address, bytes, image->GenerationFor(address, bytes)});
+        if (!untracked) queries.push_back({address, bytes, image->GenerationFor(address, bytes)});
         images.push_back(image);
     }
     if (!pending.empty()) {
@@ -3706,6 +3752,19 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     FastFail reason = FastFail::Count;
     bool accepted = false;
     bool fast = !noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted);
+    {
+        static const bool verifyUntracked = std::getenv("APS5_VERIFY_UNTRACKED_PROOFS") != nullptr;
+        const bool anyUntracked = std::any_of(validatedTextures.begin(), validatedTextures.end(), [](const ValidatedSurface& surface) { return surface.untracked[0] != 0; }) || std::any_of(storageUntracked.begin(), storageUntracked.end(), [](const auto& stamp) { return stamp[0] != 0; });
+        if (verifyUntracked && fast && anyUntracked) {
+            static std::atomic<std::uint64_t> checked{0}, disagreed{0};
+            const auto saved = validatedTextures;
+            const auto savedStorage = storageUntracked;
+            if (!fullWalk()) disagreed.fetch_add(1, std::memory_order_relaxed);
+            validatedTextures = saved;
+            storageUntracked = savedStorage;
+            if (checked.fetch_add(1, std::memory_order_relaxed) % 100000 == 99999) std::fprintf(stderr, "[verify-untracked] %llu fast proofs over untracked memory checked by the full walk, %llu disagreed%c", static_cast<unsigned long long>(checked.load()), static_cast<unsigned long long>(disagreed.load()), 10);
+        }
+    }
     // T1 (design_cpu_final M3, rule RT1): a Pending failure whose overlapping images are foreign
     // to the surfaces is resolved by the own objects' refresh (what the walk's lookups would do to
     // them) and the fast proof run again, which is then authoritative (it accepts what stays
