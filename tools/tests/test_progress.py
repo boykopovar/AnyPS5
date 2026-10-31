@@ -293,7 +293,7 @@ class OriginFlagTests(unittest.TestCase):
             plain = json.loads(self.run_json(root)[1])["libraries"]["groups"][0]
             asked = json.loads(self.run_json(root, "--origins")[1])["libraries"]["groups"][0]
         self.assertNotIn("origins", plain)
-        self.assertEqual(asked["origins"], {"Pending": {"commit": sha, "date": "2026-02-03"}, "Ready": {"commit": sha, "date": "2026-02-03"}})
+        self.assertEqual({name: {key: origin[key] for key in ("commit", "date")} for name, origin in asked["origins"].items()}, {"Pending": {"commit": sha, "date": "2026-02-03"}, "Ready": {"commit": sha, "date": "2026-02-03"}})
         self.assertEqual({key: value for key, value in asked.items() if key != "origins"}, plain)
 
     def test_the_site_gets_a_detailed_map_only_with_traceability_data(self):
@@ -604,6 +604,12 @@ class ProgressTests(unittest.TestCase):
         quiet = "\n".join(progress.compare("System libraries", "Library", "functions", base["libraries"],
                                            self.report_snapshot(observed)["libraries"]))
         self.assertNotIn("with no measured use", quiet)
+
+    def test_origin_text_names_the_time_author_and_pull_request(self):
+        origin = {"commit": "a" * 40, "date": "2026-02-03", "time": "12:30 UTC", "author": "Dev Name", "pr": 42}
+        self.assertEqual(progress.origin_text(origin), "aaaaaaaaaa on 2026-02-03 12:30 UTC by Dev Name in PR #42")
+        self.assertEqual(progress.origin_text({"commit": "b" * 40, "date": "2026-02-03"}), "bbbbbbbbbb on 2026-02-03")
+        self.assertIn("in [#42](", progress.origin_link(origin))
 
     def headline(self, head_group):
         base = self.report_snapshot(dict(self.report_library("libScePad", ["Ready"], ["Seen"]), unobserved=1, unobserved_names=["Old"]))

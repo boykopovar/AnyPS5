@@ -364,10 +364,11 @@ def collect_libraries():
 
 
 def add_origins(libraries, root):
+    numbers = stub_origins.pull_requests(root)
     for group in libraries["groups"]:
         names = set(group.get("done_names", ())) | set(group.get("todo_names", ())) | set(group.get("unobserved_names", ()))
         if names:
-            found = stub_origins.origins(root, PRX / group["name"], names)
+            found = stub_origins.origins(root, PRX / group["name"], names, numbers)
             if found:
                 group["origins"] = dict(sorted(found.items()))
 
@@ -478,6 +479,21 @@ def commit_url(sha):
     return SOURCE.rsplit("/blob/", 1)[0] + "/commit/" + sha
 
 
+def pull_request_url(number):
+    return SOURCE.rsplit("/blob/", 1)[0] + f"/pull/{number}"
+
+
+def origin_text(origin):
+    text = f"{origin['commit'][:10]} on {origin['date']}"
+    if origin.get("time"):
+        text += f" {origin['time']}"
+    if origin.get("author"):
+        text += f" by {origin['author']}"
+    if origin.get("pr"):
+        text += f" in PR #{origin['pr']}"
+    return text
+
+
 def cell_title(group, name, kind):
     details = [f"{name}: {kind}"]
     tag = group.get("observed_tags", {}).get(name)
@@ -485,7 +501,7 @@ def cell_title(group, name, kind):
         details.append(f"observed by {tag}")
     origin = group.get("origins", {}).get(name)
     if origin:
-        details.append(f"declared in {origin['commit'][:10]} on {origin['date']}")
+        details.append(f"declared in {origin_text(origin)}")
     source = group.get("inventory", {}).get(name)
     if source:
         details.append(f"listed in {source}")
@@ -677,7 +693,14 @@ def origin_map(data, owners=None):
 
 
 def origin_link(origin):
-    return f"[`{origin['commit'][:10]}`]({commit_url(origin['commit'])}) {origin['date']}"
+    text = f"[`{origin['commit'][:10]}`]({commit_url(origin['commit'])}) {origin['date']}"
+    if origin.get("time"):
+        text += f" {origin['time']}"
+    if origin.get("author"):
+        text += f" by {origin['author']}"
+    if origin.get("pr"):
+        text += f" in [#{origin['pr']}]({pull_request_url(origin['pr'])})"
+    return text
 
 
 def details(icon, title, column, items, origins=None):
