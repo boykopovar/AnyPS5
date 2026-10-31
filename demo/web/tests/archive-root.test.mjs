@@ -189,7 +189,7 @@ for (const directories of [[], parents, [...parents].reverse()]) {
     const { downloadLibraries } = await import(pathToFileURL(path.join(process.argv[2], "worker.mjs")));
     const bytes = Uint8Array.from({ length: 32 }, (_, index) => index);
     const sha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(byte => byte.toString(16).padStart(2, "0")).join("");
-    const asset = { path: "libraries/linux-1234.zip", size: bytes.length, expandedBytes: 100, sha256 };
+    const asset = { path: `libraries/linux-${sha256}.zip`, size: bytes.length, expandedBytes: 100, sha256 };
     let cancelled = false;
     let pulled = 0;
     const configureDownload = (chunks, size = bytes.length) => {

@@ -28,6 +28,8 @@ jobs:
           zip_url=$(python3 -c 'from pathlib import Path; import re; print(re.search(r"from \"(https://cdn.jsdelivr.net/[^\"]+)\"", Path("demo/web/archive.mjs").read_text(encoding="utf-8")).group(1))')
           curl -fsSL "$zip_url" -o "$RUNNER_TEMP/zip.mjs"
           ANYPS5_TEST_ZIP_URL="$zip_url" ANYPS5_TEST_ZIP_PATH="$(python3 -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve().as_uri())' "$RUNNER_TEMP/zip.mjs")" node demo/web/tests/archive-root.test.mjs demo/web
+      - name: Test library manifest validation
+        run: node --test demo/web/tests/worker-manifest.test.mjs
       - name: Check browser module syntax
         run: |
           node --check demo/web/app.mjs

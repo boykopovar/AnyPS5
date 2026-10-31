@@ -196,10 +196,10 @@ globalThis.self = { postMessage: message => workerMessages.push(message) };
 const worker = await import(site("worker.mjs"));
 const libraryArchive = await zip([["libs/system.prx", new Uint8Array([1, 2, 3])]]);
 const libraryBytes = new Uint8Array(await libraryArchive.arrayBuffer());
-const libraryPath = "libraries/windows-acde1234.zip";
 const librarySha256 = [...new Uint8Array(await crypto.subtle.digest("SHA-256", libraryBytes))]
   .map(byte => byte.toString(16).padStart(2, "0"))
   .join("");
+const libraryPath = `libraries/windows-${librarySha256}.zip`;
 const release = {
   tag: "v1",
   platforms: {
