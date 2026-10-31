@@ -286,7 +286,8 @@ void RunGuestTextureResourceTests() {
 
     Fields twoD = base;
     twoD.depth = 1;
-    rejectFields(twoD, "custom pitch other than its default pitch");
+    result = DecodeTextureResource(pack(twoD));
+    Require(result.depthOrLastArray == 0 && result.linearPitch == 0, "linear 2D descriptor with a pitch below its width did not keep the default pitch");
     twoD.tileModeRaw = 0x09;
     rejectFields(twoD, "nonzero depth or base array");
     Fields pitched = base;
@@ -294,18 +295,35 @@ void RunGuestTextureResourceTests() {
     pitched.height = 72;
     pitched.depth = 127;
     result = DecodeTextureResource(pack(pitched));
-    Require(result.dimension == TextureDimension::k2D && result.width == 72 && result.depthOrLastArray == 0, "linear 2D descriptor with its default pitch in DEPTH decoded incorrectly");
+    Require(result.dimension == TextureDimension::k2D && result.width == 72 && result.depthOrLastArray == 0 && result.linearPitch == 0, "linear 2D descriptor with its default pitch in DEPTH decoded incorrectly");
     pitched.width = 8;
     pitched.height = 8;
     pitched.depth = 63;
     result = DecodeTextureResource(pack(pitched));
-    Require(result.width == 8 && result.depthOrLastArray == 0, "linear 2D descriptor with a one-unit default pitch decoded incorrectly");
-    pitched.depth = 127;
-    rejectFields(pitched, "custom pitch other than its default pitch");
+    Require(result.width == 8 && result.depthOrLastArray == 0 && result.linearPitch == 0, "linear 2D descriptor with a one-unit default pitch decoded incorrectly");
+    for (const auto& [depth, pitch] : std::array<std::pair<std::uint32_t, std::uint32_t>, 4>{{{64u, 128u}, {127u, 128u}, {128u, 192u}, {319u, 320u}}}) {
+        pitched.depth = depth;
+        result = DecodeTextureResource(pack(pitched));
+        Require(result.width == 8 && result.depthOrLastArray == 0 && result.linearPitch == pitch, "linear 2D descriptor did not round its DEPTH pitch up to 256 bytes");
+        const auto geometry = DescribeSurface(result);
+        Require(geometry.mips.size() == 1 && geometry.mips[0].pitchBytes == pitch * 4u && geometry.mips[0].blocksPerRow == pitch && geometry.guestBytes == pitch * 4u * 8u, "linear 2D surface with a custom pitch has the wrong layout");
+        auto defaultPitch = result;
+        defaultPitch.linearPitch = 0;
+        static_cast<void>(EncodeTextureResource(defaultPitch));
+    }
+    Fields narrow = base;
+    narrow.format = 5;
+    narrow.width = 300;
+    narrow.depth = 511;
+    Require(DecodeTextureResource(pack(narrow)).linearPitch == 0, "linear 2D 8-bit descriptor with its default pitch in DEPTH set a custom pitch");
+    narrow.depth = 767;
+    Require(DecodeTextureResource(pack(narrow)).linearPitch == 768, "linear 2D 8-bit descriptor did not keep its DEPTH pitch");
+    narrow.depth = 768;
+    Require(DecodeTextureResource(pack(narrow)).linearPitch == 1024, "linear 2D 8-bit descriptor did not round its DEPTH pitch up to 256 bytes");
     pitched.depth = 63;
     pitched.maxMip = 1;
     pitched.lastLevel = 1;
-    rejectFields(pitched, "custom pitch other than its default pitch");
+    rejectFields(pitched, "pitch on a block-compressed, mipmapped or base-array surface");
     twoD = base;
     twoD.baseArray = 1;
     rejectFields(twoD, "nonzero depth or base array");
