@@ -236,7 +236,7 @@ def read_manifest(path):
     return frozenset(observed)
 
 
-def scan_library(path, observed=None):
+def scan_library(path, observed=None, provenance=None):
     done, todo, unobserved, inert, live = set(), set(), set(), set(), set()
     raw = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
            if "tests" not in source.relative_to(path).parts]
@@ -272,6 +272,8 @@ def scan_library(path, observed=None):
              "inert_names": sorted(inert)}
     if observed is not None:
         group["done_unobserved_names"] = sorted(name for name in done if not tokenizer.nids_of(name, aliases) & observed)
+    if provenance is not None and todo:
+        group["observed_tags"] = {name: provenance.get(min(tokenizer.nids_of(name, aliases) & observed), UNTAGGED) for name in sorted(todo)}
     if not (done or todo or unobserved):
         cmake = path / "CMakeLists.txt"
         texts = [(CMAKE_SHARED, cmake.read_text(encoding="utf-8", errors="ignore"))] if cmake.is_file() else []
@@ -288,9 +290,16 @@ def summarize(groups):
     total = done + sum(g["todo"] for g in groups)
     unobserved = sum(g.get("unobserved", 0) for g in groups)
     declared = total + unobserved
-    return {"done": done, "total": total, "percent": round(100 * done / total, 2) if total else 0,
-            "unobserved": unobserved, "declared_total": declared,
-            "declared_percent": round(100 * done / declared, 2) if declared else 0, "groups": groups}
+    result = {"done": done, "total": total, "percent": round(100 * done / total, 2) if total else 0,
+              "unobserved": unobserved, "declared_total": declared,
+              "declared_percent": round(100 * done / declared, 2) if declared else 0, "groups": groups}
+    tags = {}
+    for group in groups:
+        for tag in group.get("observed_tags", {}).values():
+            tags[tag] = tags.get(tag, 0) + 1
+    if tags:
+        result["observed_by_tag"] = dict(sorted(tags.items()))
+    return result
 
 
 def observed_nids(library):
@@ -298,8 +307,13 @@ def observed_nids(library):
     return read_manifest(manifest) if manifest.is_file() else None
 
 
+def observed_provenance(library):
+    manifest = OBSERVED / f"{library.name}.txt"
+    return read_provenance(manifest) if manifest.is_file() else None
+
+
 def collect_libraries():
-    return summarize([scan_library(p, observed_nids(p)) for p in sorted(PRX.iterdir()) if p.is_dir()])
+    return summarize([scan_library(p, observed_nids(p), observed_provenance(p)) for p in sorted(PRX.iterdir()) if p.is_dir()])
 
 
 def select_libraries(libraries, modules):
@@ -719,6 +733,12 @@ def validate_snapshot(snapshot):
                 values = group.get(field, [])
                 if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
                     raise ValueError(f"{location}.{field} must be a list of strings")
+            for field in ("observed_tags", "origins", "inventory"):
+                values = group.get(field, {})
+                if not isinstance(values, dict) or any(not isinstance(key, str) for key in values):
+                    raise ValueError(f"{location}.{field} must be an object keyed by function name")
+            if any(not isinstance(tag, str) for tag in group.get("observed_tags", {}).values()):
+                raise ValueError(f"{location}.observed_tags must map names to strings")
 
 
 def main(argv=None):

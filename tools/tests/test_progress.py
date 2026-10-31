@@ -259,6 +259,46 @@ class ProvenanceTagTests(unittest.TestCase):
             self.assertEqual(progress.read_provenance(path), {"AaAaAaAaAaA": "loader", "BbBbBbBbBbB": "untagged"})
 
 
+class ObservedTagScanTests(unittest.TestCase):
+    def scan(self, manifest):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "int APS5_VABI A() { NotImplemented_nid_no_patch(__func__); }\n"
+                "int APS5_VABI B() { NotImplemented_nid_no_patch(__func__); }\n"
+                "int APS5_VABI C() { NotImplemented_nid_no_patch(__func__); }\n", encoding="utf-8")
+            path = Path(directory) / "libSceExample.txt"
+            path.write_text(manifest, encoding="utf-8")
+            return progress.scan_library(library, progress.read_manifest(path), progress.read_provenance(path))
+
+    def test_each_observed_stub_carries_the_tag_of_its_nid(self):
+        nid = progress.tokenizer.compute_nid
+        group = self.scan(f"{nid('A')}  # loader\n{nid('B')}\n")
+        self.assertEqual(group["observed_tags"], {"A": "loader", "B": "untagged"})
+        self.assertEqual(group["unobserved_names"], ["C"])
+
+    def test_a_library_without_a_manifest_has_no_tags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text("int APS5_VABI A() { NotImplemented_nid_no_patch(__func__); }\n", encoding="utf-8")
+            self.assertNotIn("observed_tags", progress.scan_library(library))
+
+    def test_summary_counts_observed_stubs_by_tag_only_when_there_are_tags(self):
+        groups = [{"name": "libA", "label": "A", "done": 0, "todo": 3, "observed_tags": {"X": "loader", "Y": "audit", "Z": "loader"}}]
+        self.assertEqual(progress.summarize(groups)["observed_by_tag"], {"audit": 1, "loader": 2})
+        self.assertNotIn("observed_by_tag", progress.summarize([{"name": "libA", "label": "A", "done": 0, "todo": 1}]))
+
+    def test_snapshot_validation_checks_the_traceability_fields(self):
+        def snapshot(group):
+            return {"libraries": {"percent": 0, "groups": [dict({"name": "libA"}, **group)]}, "shaders": {"percent": 0, "groups": []}}
+        progress.validate_snapshot(snapshot({"observed_tags": {"X": "loader"}, "origins": {"X": {"commit": "a"}}, "inventory": {"X": "s"}}))
+        for field, value in (("observed_tags", ["x"]), ("observed_tags", {"X": 1}), ("origins", [1]), ("inventory", "s")):
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, field):
+                progress.validate_snapshot(snapshot({field: value}))
+
+
 class ObservedStubTests(unittest.TestCase):
     def scan(self, source, observed=None):
         with tempfile.TemporaryDirectory() as directory:
