@@ -1083,89 +1083,34 @@ void CheckKernelEnvironment() {
     constexpr int get = 0, set = 1, unset = 2, dump = 3;
     char buffer[300];
     std::memset(buffer, 0x5a, sizeof(buffer));
+    const std::string longName(129, 'n');
+    const std::string longestName(128, 'n');
+    const std::string longValue(1000, 'v');
     Require(Kenv(dump, nullptr, nullptr, 0) == 0);
+    Require(Kenv(dump, nullptr, buffer, sizeof(buffer)) == 0 && buffer[0] == 0x5a);
+    Require(Kenv(dump, nullptr, reinterpret_cast<char*>(0x10), sizeof(buffer)) == 0);
+    Require(Kenv(dump, reinterpret_cast<const char*>(0x10), buffer, -1) == 0);
     Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
-    Require(Kenv(unset, "anyps5.alpha", nullptr, 0) == -1 && Error() == 2);
-    Require(Kenv(4, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
-    Require(Kenv(-1, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
-    Require(Kenv(set, "anyps5.alpha", "one", 0) == -1 && Error() == 22);
-    Require(Kenv(set, "anyps5.alpha", "one", 3) == -1 && Error() == 63);
-    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
-    Require(Kenv(set, "anyps5.negative", "one", -1) == 0);
-    Require(Kenv(get, "anyps5.negative", buffer, sizeof(buffer)) == 4 && std::strcmp(buffer, "one") == 0);
-    Require(Kenv(set, "anyps5.negative", std::string(128, 'v').c_str(), -1) == 0);
-    Require(Kenv(set, "anyps5.negative", std::string(129, 'v').c_str(), -1) == -1 && Error() == 63);
-    Require(Kenv(unset, "anyps5.negative", nullptr, 0) == 0);
-
-    Require(Kenv(set, "anyps5.alpha", "one", 4) == 0);
-    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == 4 && std::strcmp(buffer, "one") == 0);
-    Require(Kenv(get, "anyps5", buffer, sizeof(buffer)) == -1 && Error() == 2);
-    Require(Kenv(get, "anyps5.alph", buffer, sizeof(buffer)) == -1 && Error() == 2);
-    Require(Kenv(get, "anyps5.alphaa", buffer, sizeof(buffer)) == -1 && Error() == 2);
-    std::memset(buffer, 0x5a, sizeof(buffer));
-    Require(Kenv(get, "anyps5.alpha", buffer, 2) == 2 && buffer[0] == 'o' && buffer[1] == 'n' && buffer[2] == 0x5a);
-    Require(Kenv(get, "anyps5.alpha", buffer, 0) == 0 && buffer[2] == 0x5a);
-    Require(Kenv(get, "anyps5.alpha", nullptr, 0) == 0);
-    Require(Kenv(get, "anyps5.alpha", nullptr, 4) == -1 && Error() == 14);
-    Require(Kenv(get, "anyps5.alpha", reinterpret_cast<char*>(0x10), 4) == -1 && Error() == 14);
-    Require(Kenv(set, "anyps5.alpha", "", 1) == 0);
-    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == 1 && buffer[0] == '\0');
-    Require(Kenv(set, "anyps5.alpha", "one", 129) == 0);
-    Require(Kenv(set, "anyps5.beta", "two", 1000) == 0);
-    Require(Kenv(set, "anyps5.alpha", "uno", 4) == 0);
-    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == 4 && std::strcmp(buffer, "uno") == 0);
-
-    constexpr char expected[] = "anyps5.alpha=uno\0anyps5.beta=two";
-    constexpr int needed = sizeof(expected);
-    Require(Kenv(dump, nullptr, nullptr, 0) == needed);
-    Require(Kenv(dump, nullptr, buffer, 0) == needed);
-    Require(Kenv(dump, nullptr, nullptr, sizeof(buffer)) == needed);
-    std::memset(buffer, 0x5a, sizeof(buffer));
-    Require(Kenv(dump, nullptr, buffer, sizeof(buffer)) == 0 && std::memcmp(buffer, expected, needed) == 0 && buffer[needed] == 0x5a);
-    Require(Kenv(dump, nullptr, buffer, needed) == 0);
-    std::memset(buffer, 0x5a, sizeof(buffer));
-    Require(Kenv(dump, nullptr, buffer, 20) == needed && std::memcmp(buffer, expected, 20) == 0 && buffer[20] == 0x5a);
-    Require(Kenv(dump, nullptr, reinterpret_cast<char*>(0x10), sizeof(buffer)) == -1 && Error() == 14);
-    Require(Kenv(dump, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer)) == 0);
-
+    Require(Kenv(get, longestName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(get, longName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
     Require(Kenv(get, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(get, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer)) == -1 && Error() == 14);
+    Require(Kenv(4, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
+    Require(Kenv(-1, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
     Require(Kenv(4, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
-    Require(Kenv(set, "anyps5.gamma", nullptr, 4) == -1 && Error() == 14);
-    Require(Kenv(set, "anyps5.gamma", reinterpret_cast<const char*>(0x10), 4) == -1 && Error() == 14);
-    Require(Kenv(get, "anyps5.gamma", buffer, sizeof(buffer)) == -1 && Error() == 2);
-
-    const std::string longest(128, 'n');
-    const std::string longestValue(128, 'v');
-    Require(Kenv(set, (longest + "x").c_str(), "v", 2) == -1 && Error() == 63);
-    Require(Kenv(get, (longest + "x").c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
-    Require(Kenv(set, longest.c_str(), longestValue.c_str(), 129) == 0);
-    Require(Kenv(get, longest.c_str(), buffer, sizeof(buffer)) == 129 && std::strcmp(buffer, longestValue.c_str()) == 0);
-    Require(Kenv(set, "anyps5.gamma", (longestValue + "v").c_str(), 1000) == -1 && Error() == 63);
-    Require(Kenv(set, "anyps5.gamma", longestValue.c_str(), 128) == -1 && Error() == 63);
-    Require(Kenv(unset, longest.c_str(), nullptr, 0) == 0);
-    Require(Kenv(get, longest.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 2);
-
-    Require(Kenv(set, "anyps5.eq=name", "tail", 5) == 0);
-    Require(Kenv(get, "anyps5.eq", buffer, sizeof(buffer)) == 10 && std::strcmp(buffer, "name=tail") == 0);
-    Require(Kenv(unset, "anyps5.eq", nullptr, 0) == 0);
-    Require(Kenv(unset, "anyps5.eq", nullptr, 0) == -1 && Error() == 2);
-    Require(Kenv(unset, "anyps5.alpha", nullptr, 0) == 0);
+    for (const int what : {set, unset}) {
+        Require(Kenv(what, "anyps5.alpha", "one", 4) == -1 && Error() == 1);
+        Require(Kenv(what, "anyps5.alpha", "one", 0) == -1 && Error() == 1);
+        Require(Kenv(what, "anyps5.alpha", "one", -1) == -1 && Error() == 1);
+        Require(Kenv(what, "anyps5.alpha", longValue.c_str(), 1000) == -1 && Error() == 1);
+        Require(Kenv(what, "anyps5.alpha", nullptr, 4) == -1 && Error() == 1);
+        Require(Kenv(what, "anyps5.alpha", reinterpret_cast<const char*>(0x10), 4) == -1 && Error() == 1);
+        Require(Kenv(what, nullptr, "one", 4) == -1 && Error() == 1);
+        Require(Kenv(what, reinterpret_cast<const char*>(0x10), "one", 4) == -1 && Error() == 1);
+        Require(Kenv(what, longName.c_str(), "one", 4) == -1 && Error() == 1);
+        Require(Kenv(what, "", "one", 4) == -1 && Error() == 1);
+    }
     Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
-    Require(Kenv(dump, nullptr, nullptr, 0) == static_cast<int>(sizeof("anyps5.beta=two")));
-    Require(Kenv(unset, "anyps5.beta", nullptr, 0) == 0);
-    Require(Kenv(dump, nullptr, nullptr, 0) == 0);
-
-    for (int i = 0; i < 512; ++i) Require(Kenv(set, ("anyps5.fill" + std::to_string(i)).c_str(), "x", 2) == 0);
-    Require(Kenv(set, "anyps5.overflow", "x", 2) == 0);
-    Require(Kenv(get, "anyps5.overflow", buffer, sizeof(buffer)) == -1 && Error() == 2);
-    Require(Kenv(set, "anyps5.fill0", "y", 2) == 0);
-    Require(Kenv(get, "anyps5.fill0", buffer, sizeof(buffer)) == 2 && buffer[0] == 'y');
-    Require(Kenv(unset, "anyps5.fill511", nullptr, 0) == 0);
-    Require(Kenv(set, "anyps5.overflow", "x", 2) == 0);
-    Require(Kenv(get, "anyps5.overflow", buffer, sizeof(buffer)) == 2);
-    for (int i = 0; i < 511; ++i) Require(Kenv(unset, ("anyps5.fill" + std::to_string(i)).c_str(), nullptr, 0) == 0);
-    Require(Kenv(unset, "anyps5.overflow", nullptr, 0) == 0);
     Require(Kenv(dump, nullptr, nullptr, 0) == 0);
 }
 
