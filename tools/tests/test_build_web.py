@@ -219,6 +219,18 @@ class BuildWebCliTests(unittest.TestCase):
             self.assertIn("Build relinker_wasm first: missing", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
 
+    def test_symlink_loop_build_reports_error_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first, second = Path(directory) / "first", Path(directory) / "second"
+            first.symlink_to(second)
+            second.symlink_to(first)
+            result = subprocess.run([sys.executable, str(Path(build_web.__file__)), "--build", str(first)],
+                                    capture_output=True, text=True,
+                                    env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])})
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Build relinker_wasm first: missing", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_main_with_explicit_argv(self):
         with tempfile.TemporaryDirectory() as directory:
             build = Path(directory)
