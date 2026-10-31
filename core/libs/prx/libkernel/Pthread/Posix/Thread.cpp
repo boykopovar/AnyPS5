@@ -211,8 +211,7 @@ int APS5_VABI sched_getparam_nid_postfix(int pid, KernelSchedParam* param) {
     int policy = 0;
     KernelSchedParam current{};
     if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &policy, &current))) return SchedFailure(error);
-    if (!param) return SchedFailure(PosixThread::GUEST_EFAULT);
-    *param = current;
+    if (!param || !GuestCopyOut_nid_no_patch(param, &current, sizeof(current))) return SchedFailure(PosixThread::GUEST_EFAULT);
     return 0;
 }
 
@@ -227,6 +226,8 @@ int APS5_VABI sched_getscheduler_nid_postfix(int pid) {
 
 int APS5_VABI sched_setparam_nid_postfix(int pid, const KernelSchedParam* param) {
     if (!param) return SchedFailure(PosixThread::GUEST_EFAULT);
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return SchedFailure(PosixThread::GUEST_EFAULT);
     const Pthread thread = SchedTarget(pid, "sched_setparam");
     if (!thread) return SchedFailure(PosixThread::GUEST_ESRCH);
     const auto live = LockLiveGuestThread(thread);
@@ -234,8 +235,8 @@ int APS5_VABI sched_setparam_nid_postfix(int pid, const KernelSchedParam* param)
     const int policy = thread->schedPolicy.load(std::memory_order_relaxed);
     if (policy != GUEST_SCHED_FIFO && policy != GUEST_SCHED_RR)
         throw std::runtime_error("sched_setparam: the thread's policy " + std::to_string(policy) + " is neither SCHED_FIFO nor SCHED_RR, for which the answer of a PS5 is unmeasured");
-    if (!InSchedRange(policy, param->sched_priority)) return SchedFailure(PosixThread::GUEST_EPERM);
-    thread->priority.store(param->sched_priority, std::memory_order_relaxed);
+    if (!InSchedRange(policy, requested.sched_priority)) return SchedFailure(PosixThread::GUEST_EPERM);
+    thread->priority.store(requested.sched_priority, std::memory_order_relaxed);
     return 0;
 }
 

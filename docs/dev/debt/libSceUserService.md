@@ -1,5 +1,48 @@
 # libSceUserService technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceUserService/InventoryExports.cpp) - 36 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. None of these NIDs appears in the pinned public 3.20 catalogue for this library. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `sceUserServiceGetPartyChatTranscriptionVoiceType` | `Ebq9pcMYrko` |
+| `sceUserServiceSetVoiceAgentEnableByButton` | `Jz06XYyyqGE` |
+| `Unknown` | `-JCFmPNhxY8` |
+| `Unknown` | `-dkPbHlL9O8` |
+| `Unknown` | `-o+vKoB+bIw` |
+| `Unknown` | `0rgUYD57RHc` |
+| `Unknown` | `1b1BuBizZ2Q` |
+| `Unknown` | `1fV-P4lyYAM` |
+| `Unknown` | `6Qsib4RLbFw` |
+| `Unknown` | `6erDJ4-MGCs` |
+| `Unknown` | `A-wBTL+Cs5A` |
+| `Unknown` | `BdzmN4JP3JM` |
+| `Unknown` | `Bx+ESDBWJm4` |
+| `Unknown` | `Cqt7pJZRKLI` |
+| `Unknown` | `D5lYX9Wm7PI` |
+| `Unknown` | `DL6cKVeISqs` |
+| `Unknown` | `ErTMkmSho4E` |
+| `Unknown` | `GbRykQBfmM8` |
+| `Unknown` | `JD766DzZIIU` |
+| `Unknown` | `L9NSPGwLZTQ` |
+| `Unknown` | `PBJH7EFon8c` |
+| `Unknown` | `UKInJ0LzusI` |
+| `Unknown` | `WGYLbMB95kM` |
+| `Unknown` | `YZwUXHtKrXI` |
+| `Unknown` | `fPmaQlxVoqI` |
+| `Unknown` | `hKzuaakSOLE` |
+| `Unknown` | `iRkGgbFAhcw` |
+| `Unknown` | `isbcQWjV-qU` |
+| `Unknown` | `keFAPHk6pIc` |
+| `Unknown` | `oF3Ygwz32Bs` |
+| `Unknown` | `pfgU0SxMMxw` |
+| `Unknown` | `pr3J39r9ArQ` |
+| `Unknown` | `shuQwNy79HM` |
+| `Unknown` | `tPbEIE0wYCM` |
+| `Unknown` | `u5SR3+a0lTw` |
+| `Unknown` | `ys8aAGjUads` |
+
 ### Unknown function info
 
 - [sceUserServiceGetNpAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the account id for a logged-in user with no linked PSN account is assumed to be 0 with success; libSceNpManager's `sceNpGetAccountIdA` answers the same question with `SCE_NP_ERROR_SIGNED_OUT`. Console measurement on PS4 Pro firmware 10.71 confirms a user that is not logged in returns `0x80960105` (`USER_SERVICE_ERROR_UNKNOWN_USER`) and leaves the output untouched, differing from `sceUserServiceGetUserName`.

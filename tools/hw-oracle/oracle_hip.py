@@ -238,6 +238,8 @@ def main(argv=None):
         code_bytes, input_bytes = code.read_bytes(), inputs.read_bytes()
         if output.exists() and any(source.samefile(output) for source in (code, inputs)):
             parser.error("dispatch output must not overwrite an input file")
+        if len(input_bytes) < threads * 16:
+            parser.error(f"input file must contain at least {threads * 16} bytes")
         result = dispatch(code_bytes, threads, input_bytes, out_dwords, os.environ.get("COARSE") is not None)
         output.write_bytes(result)
         return 0
