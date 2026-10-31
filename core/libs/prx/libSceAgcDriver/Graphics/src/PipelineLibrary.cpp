@@ -1,17 +1,23 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <condition_variable>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <thread>
 #include <map>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace AgcDriver::Graphics {
 
@@ -55,11 +61,26 @@ struct LibraryStore {
     std::deque<std::pair<VkDevice, std::function<void()>>> jobs;
     std::map<VkDevice, std::size_t> pending;
     std::map<VkDevice, std::size_t> activeBuilds;
-    std::thread worker;
+    std::vector<std::thread> workers;
+    std::size_t waitingWorkers = 0;
     bool stopping = false;
 };
 
 std::atomic<unsigned> runningWorkers{0};
+
+std::size_t WorkerLimit() {
+    static const std::size_t limit = [] {
+        const std::size_t hardware = std::max<std::size_t>(1, std::thread::hardware_concurrency());
+        const char* text = std::getenv("APS5_PIPELINE_LTO_THREADS");
+        if (text == nullptr) return std::max<std::size_t>(2, hardware / 2);
+        const char* end = text + std::strlen(text);
+        std::size_t value = 0;
+        const auto [last, error] = std::from_chars(text, end, value);
+        if (error != std::errc{} || last != end || value == 0 || value > hardware) throw std::runtime_error("APS5_PIPELINE_LTO_THREADS must be a whole number from 1 through " + std::to_string(hardware) + ", the hardware thread count");
+        return value;
+    }();
+    return limit;
+}
 
 LibraryStore& Libraries() {
     static auto* store = new LibraryStore();
@@ -69,7 +90,9 @@ LibraryStore& Libraries() {
 void runJobs(LibraryStore& store) {
     std::unique_lock lock(store.mutex);
     for (;;) {
+        ++store.waitingWorkers;
         store.work.wait(lock, [&] { return !store.jobs.empty() || store.stopping; });
+        --store.waitingWorkers;
         if (store.stopping) break;
         auto [device, job] = std::move(store.jobs.front());
         store.jobs.pop_front();
@@ -83,8 +106,8 @@ void runJobs(LibraryStore& store) {
 
 void enqueue(LibraryStore& store, VkDevice device, std::function<void()> job) {
     if (store.stopping) return;
-    if (!store.worker.joinable()) {
-        store.worker = std::thread(runJobs, std::ref(store));
+    if (store.waitingWorkers <= store.jobs.size() && store.workers.size() < WorkerLimit()) {
+        store.workers.emplace_back(runJobs, std::ref(store));
         runningWorkers.fetch_add(1, std::memory_order_acq_rel);
     }
     auto& pending = store.pending[device];
@@ -365,19 +388,21 @@ void ClearPipelineLibraries(VkDevice device) {
 
 void StopPipelineLibraryWorker() {
     auto& store = Libraries();
-    std::thread worker;
+    std::vector<std::thread> workers;
     {
         std::lock_guard lock(store.mutex);
         store.stopping = true;
         for (const auto& [device, job] : store.jobs) --store.pending[device];
         store.jobs.clear();
-        worker = std::move(store.worker);
+        workers = std::move(store.workers);
     }
     store.idle.notify_all();
     store.work.notify_all();
-    if (!worker.joinable()) return;
-    if (worker.get_id() == std::this_thread::get_id()) worker.detach();
-    else worker.join();
+    for (auto& worker : workers) {
+        if (!worker.joinable()) continue;
+        if (worker.get_id() == std::this_thread::get_id()) worker.detach();
+        else worker.join();
+    }
 }
 
 unsigned PipelineLibraryWorkers() {
