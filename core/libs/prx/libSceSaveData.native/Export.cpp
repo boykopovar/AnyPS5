@@ -1250,9 +1250,22 @@ int APS5_VABI sceSaveDataGetEventInfo() {
     return 0;
 }
 
-int APS5_VABI sceSaveDataGetMountedSaveDataCount() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSaveDataGetMountedSaveDataCount(std::uint32_t* count) {
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    if (count == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    std::lock_guard lock(g_slots_mutex);
+    std::uint32_t mounted = 0;
+    for (const auto& slot : g_slots) {
+        if (slot.used) {
+            ++mounted;
+        }
+    }
+    *count = mounted;
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataGetProgress() {
