@@ -16,6 +16,18 @@ static bool Throws(TCall call) {
     return false;
 }
 
+static int callbackCalls = 0;
+
+static int APS5_VABI RejectRedirect(int, int, const char**, const char*, void*) {
+    ++callbackCalls;
+    return -1;
+}
+
+static int APS5_VABI RejectSsl(int, unsigned int, void* const*, int, void*) {
+    ++callbackCalls;
+    return -1;
+}
+
 int main() {
     Require(sceHttp2CreateCookieBox(0xffff) == static_cast<int>(0x817b121du));
     const int box = sceHttp2CreateCookieBox(0x10000);
@@ -29,6 +41,20 @@ int main() {
     Require(Throws([&] { sceHttp2CreateTemplate(context, "agent", 3, -1); }));
     const int request = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://localhost/", 0);
     Require(box > 0 && context > 0 && tmpl > 0 && request > 0);
+    Require(sceHttp2SetRedirectCallback(-1, RejectRedirect, nullptr) == InvalidId);
+    for (const int id : {tmpl, request}) {
+        Require(sceHttp2SetRedirectCallback(id, RejectRedirect, &callbackCalls) == 0);
+        Require(sceHttp2SetRedirectCallback(id, nullptr, &callbackCalls) == 0);
+        Require(sceHttp2SetRedirectCallback(id, RejectRedirect, nullptr) == 0);
+    }
+    Require(sceHttp2SetSslCallback(-1, RejectSsl, nullptr) == InvalidId);
+    for (const int id : {tmpl, request}) {
+        Require(sceHttp2SetSslCallback(id, RejectSsl, &callbackCalls) == 0);
+        Require(sceHttp2SetSslCallback(id, nullptr, &callbackCalls) == 0);
+        Require(sceHttp2SetSslCallback(id, RejectSsl, nullptr) == 0);
+    }
+    Require(callbackCalls == 0);
+
     Require(sceHttp2SetCookieBox(tmpl, 0) == 0);
     Require(Throws([&] { sceHttp2SetCookieBox(tmpl, box); }));
     Require(sceHttp2CookieFlush(box) == 0);
@@ -73,7 +99,7 @@ int main() {
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &poll) != 0);
     Require(sceKernelDeleteEqueue(eq) == 0);
     const int sibling = sceHttp2CreateTemplate(context, "other", 2, 0);
-    const int child = sceHttp2CreateRequestWithURL(sibling, "GET", "https://localhost/", 0);
+    const int child = sceHttp2CreateRequestWithURL(sibling, "CONNECT", "https://localhost/", 0);
     Require(Throws([&] { sceHttp2SendRequest(child, nullptr, 0); }));
     Require(sceHttp2DeleteTemplate(tmpl) == 0);
     Require(sceHttp2SslEnableOption(sibling, 0) == 0);
