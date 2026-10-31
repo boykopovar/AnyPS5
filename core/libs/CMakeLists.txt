@@ -1228,4 +1228,19 @@ if(BUILD_TESTING)
 endif()
 
 include(prx/libSceFreeType/CurveBounds.cmake)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/src/FileWrapper.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_file_wrapper_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWebrtcFileWrapper.cpp)
+    target_include_directories(guest_webrtc_file_wrapper_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_webrtc_file_wrapper_tests PRIVATE libwebrtc libc)
+    configure_windows_unwind(guest_webrtc_file_wrapper_tests)
+    add_test(NAME guest_webrtc_file_wrapper COMMAND guest_webrtc_file_wrapper_tests)
+    set_tests_properties(guest_webrtc_file_wrapper PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_file_wrapper PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+    endif()
+endif()
+
 include(prx/libSceBeisobmf/Tests.cmake)
