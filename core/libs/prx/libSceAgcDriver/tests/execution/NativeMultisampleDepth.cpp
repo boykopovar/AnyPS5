@@ -1561,6 +1561,11 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
     recorder.Activate();
     auto words = DepthSampleWords(target);
     words[6] &= ~((1u << 19u) | (1u << 21u));
+    auto stencilTarget = target;
+    stencilTarget.address = target.stencilAddress;
+    auto stencilWords = DepthSampleWords(stencilTarget);
+    stencilWords[1] = (stencilWords[1] & ~(0x1ffu << 20u)) | (5u << 20u);
+    stencilWords[6] &= ~((1u << 19u) | (1u << 21u));
     const auto lookup = [&] { return DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}); };
     const auto clear = [&] {
         recorder.Sync();
@@ -1586,7 +1591,7 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
         TargetRefuses([&] { DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{}); }, reason);
         clear();
     }
-    for (const auto& [depth, value] : std::array{std::pair{0.0f, std::uint8_t{0u}}, std::pair{0.25f, std::uint8_t{0x5au}}}) {
+    for (const auto& [depth, value] : std::array{std::pair{0.0f, std::uint8_t{0xc3u}}, std::pair{0.25f, std::uint8_t{0x5au}}}) {
         fill(depth, value);
         Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "a uniform-plane D32S8 target without HTILE has no attachment view");
         auto texture = lookup();
@@ -1606,6 +1611,23 @@ void CheckUniformPlanesWithoutHtile(Context context, std::uint32_t samples) {
                 Require(sampled == std::array<float, 4>{depth, 0.0f, 0.0f, 1.0f}, "a uniform depth plane without HTILE was not imported into every sample");
             }
         }
+        auto stencilTexture = DepthSurfaceTexture(context, stencilWords, DecodeTextureResource(stencilWords), VkComponentMapping{});
+        Require(stencilTexture != nullptr && stencilTexture->View() != VK_NULL_HANDLE, "the stencil plane of a uniform-plane D32S8 target without HTILE was not sampled natively");
+        {
+            std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+            const Fetch fetch(context, *stencilTexture, output, FetchShader(extent.width, extent.height, samples, false, false));
+            CommandBatch batch(context);
+            fetch.Run(batch.Handle(), extent.width * extent.height * samples);
+            RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            batch.SubmitAndWait();
+            output.Invalidate();
+            for (std::uint32_t i = 0u; i < extent.width * extent.height * samples; ++i) {
+                std::array<std::uint32_t, 4> sampled{};
+                std::memcpy(sampled.data(), output.Bytes().data() + (i + 1u) * 16u, 16u);
+                Require(sampled[0] == value, "a uniform stencil plane without HTILE was not imported into every sample: sample " + std::to_string(i) + " holds " + std::to_string(sampled[0]) + ", the plane " + std::to_string(value));
+            }
+        }
+        stencilTexture.reset();
         texture.reset();
         stencil.Data()[0] = std::byte{static_cast<std::uint8_t>(value + 1u)};
         TargetRefuses([&] { lookup(); }, "guest writes");
