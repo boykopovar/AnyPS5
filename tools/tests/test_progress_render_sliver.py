@@ -18,6 +18,18 @@ class ProgressRenderSliverTests(unittest.TestCase):
         self.assertIn(">libA</text>", svg)
         self.assertNotIn(">lib</text>", svg)
 
+    def test_unobserved_stubs_get_their_own_colour_and_legend(self):
+        libraries = {"done": 1, "total": 2, "percent": 50, "groups": [
+            {"name": "libA", "label": "libA", "done": 1, "todo": 1, "unobserved": 2}]}
+        parts = progress.treemap("System libraries*", libraries, 0)
+        cells = "\n".join(parts)
+        self.assertEqual(cells.count('fill="#2ea043"'), 1)
+        self.assertEqual(cells.count('fill="#6e7681"'), 1)
+        self.assertEqual(cells.count('fill="#30363d"'), 2)
+        self.assertIn("libA: 1/2 (50%), 2 unobserved", cells)
+        svg = progress.render(libraries, {"done": 0, "total": 0, "percent": 0, "groups": []})
+        self.assertIn(">Unobserved stub</text>", svg)
+
     def test_cells_without_area(self):
         self.assertEqual(progress.cells(5, 0, 0, 0, 10), [])
         self.assertEqual(progress.cells(5, 0, 0, -1, 10), [])

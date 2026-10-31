@@ -80,8 +80,8 @@ OPCODE_VARIANTS = {
     "ImageSample": ("IMAGE_SAMPLE_L", "IMAGE_SAMPLE_B", "IMAGE_SAMPLE_C_LZ", "IMAGE_SAMPLE_L_O", "IMAGE_SAMPLE_D_CL_O"),
 }
 REPORT_ROWS = 100
-PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER = 495, 10, 280, 30
-DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#0d1117", "#ffffff"
+PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER, LEGEND = 495, 10, 280, 30, 26
+DONE_COLOR, TODO_COLOR, UNOBSERVED_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#30363d", "#0d1117", "#ffffff"
 
 
 def blank(match):
@@ -350,16 +350,24 @@ def text(x, y, value, size):
             f'stroke="{BORDER}" stroke-width="3" paint-order="stroke">{escape(value)}</text>')
 
 
+def declared_size(group):
+    return group["done"] + group["todo"] + group.get("unobserved", 0)
+
+
 def treemap(title, data, left):
-    groups = sorted((g for g in data["groups"] if g["done"] + g["todo"]), key=lambda g: -(g["done"] + g["todo"]))
+    groups = sorted((g for g in data["groups"] if declared_size(g)), key=lambda g: -declared_size(g))
     parts = [text(left + 4, 21, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 16)]
-    for group, (x, y, w, h) in zip(groups, squarify([g["done"] + g["todo"] for g in groups], left, HEADER, PANEL_WIDTH, MAP_HEIGHT)):
-        total = group["done"] + group["todo"]
+    for group, (x, y, w, h) in zip(groups, squarify([declared_size(g) for g in groups], left, HEADER, PANEL_WIDTH, MAP_HEIGHT)):
+        observed = group["done"] + group["todo"]
+        unobserved = group.get("unobserved", 0)
         shared = [g["name"] for g in data["groups"] if g.get("shared_sources") == group["name"]]
         suffix = "; shared by " + ", ".join(shared) if shared else ""
-        parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{total} ({100 * group["done"] / total:.0f}%){escape(suffix)}</title>')
-        for i, cell in enumerate(cells(total, x + 1, y + 1, w - 2, h - 2)):
-            parts.append(rect(*cell, DONE_COLOR if i < group["done"] else TODO_COLOR))
+        ratio = f" ({100 * group['done'] / observed:.0f}%)" if observed else ""
+        extra = f", {unobserved} unobserved" if unobserved else ""
+        parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{observed}{ratio}{escape(extra)}{escape(suffix)}</title>')
+        for i, cell in enumerate(cells(declared_size(group), x + 1, y + 1, w - 2, h - 2)):
+            color = DONE_COLOR if i < group["done"] else TODO_COLOR if i < observed else UNOBSERVED_COLOR
+            parts.append(rect(*cell, color))
         parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')
         label_length = int((w - 10) / 7)
         label = group["label"][:label_length] if label_length > 0 else ""
@@ -369,12 +377,22 @@ def treemap(title, data, left):
     return parts
 
 
+def legend(left, top):
+    parts, x = [], left
+    for label, color in (("Implemented", DONE_COLOR), ("Observed stub", TODO_COLOR), ("Unobserved stub", UNOBSERVED_COLOR)):
+        parts.append(rect(x, top + 7, 12, 12, color, 0.5))
+        parts.append(text(x + 17, top + 18, label, 12))
+        x += 17 + 7 * len(label) + 18
+    return parts
+
+
 def render(libraries, shaders):
-    width, height = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT
+    width, height = 2 * PANEL_WIDTH + GAP, HEADER + MAP_HEIGHT + LEGEND
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
              rect(0, 0, width, height, BORDER, 0)]
     parts += treemap("System libraries*", libraries, 0)
     parts += treemap("GPU shader instructions", shaders, PANEL_WIDTH + GAP)
+    parts += legend(4, HEADER + MAP_HEIGHT)
     parts.append("</svg>")
     return "\n".join(parts)
 
