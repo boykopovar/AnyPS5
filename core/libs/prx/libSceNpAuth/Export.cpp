@@ -130,7 +130,8 @@ int APS5_VABI sceNpAuthPollAsync(int req_id, int* result) {
   it->second.polled = true;
   return NP_POLL_ASYNC_RUNNING;
  }
- *result = it->second.result;
+ const int res = it->second.result;
+ if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  return NP_POLL_ASYNC_FINISHED;
 }
 
@@ -155,7 +156,8 @@ int APS5_VABI sceNpAuthWaitAsync(int req_id, int* result) {
  auto it = g_requests.find(req_id);
  if (it == g_requests.end()) return ORBIS_NP_AUTH_ERROR_REQUEST_NOT_FOUND;
  if (!it->second.isAsync || !it->second.processed) return ORBIS_NP_AUTH_ERROR_INVALID_ID;
- *result = it->second.result;
+ const int res = it->second.result;
+ if (!GuestCopyOut_nid_no_patch(result, &res, sizeof(res))) return ORBIS_NP_AUTH_ERROR_INVALID_ARGUMENT;
  return NP_POLL_ASYNC_FINISHED;
 }
 
