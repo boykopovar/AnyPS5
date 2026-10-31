@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl/include/Ec.hpp"
 
 #include <atomic>
 #include <limits>
@@ -29,7 +30,7 @@ int APS5_VABI EVP_PKEY_up_ref_nid_postfix(LibreSsl3EvpPkey* key) {
     return Retain_nid_no_patch(key->references);
 }
 
-int APS5_VABI EC_KEY_up_ref_nid_postfix(LibreSsl3EcKey* key) {
+int APS5_VABI EC_KEY_up_ref_nid_postfix(EcKey* key) {
     if (!key)
         throw std::invalid_argument("EC_KEY_up_ref requires a key");
     return Retain_nid_no_patch(key->references);
