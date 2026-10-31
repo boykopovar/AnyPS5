@@ -1392,31 +1392,6 @@ int APS5_VABI X509_INFO_free_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI X509_NAME_ENTRY_get_data_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_NAME_get_entry_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_NAME_get_index_by_NID_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_NAME_get_text_by_NID_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_NAME_oneline_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI X509_NAME_print_ex_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1433,11 +1408,6 @@ int APS5_VABI X509_STORE_add_crl_nid_postfix(void) {
 }
 
 int APS5_VABI X509_check_issued_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI X509_free_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1567,17 +1537,7 @@ int APS5_VABI d2i_RSA_PUBKEY_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI d2i_X509_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI i2a_ASN1_OBJECT_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI i2d_X509_PUBKEY_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

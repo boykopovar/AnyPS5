@@ -82,6 +82,10 @@ const char* OcspResponseStatusString(long status) { return OCSP_response_status_
 int ObjCreate(const char* oid, const char* shortName, const char* longName) { return OBJ_create(oid, shortName, longName); }
 void ObjCleanup() { OBJ_cleanup(); }
 int I2tAsn1Object(char* buffer, int length, const void* object) { return i2t_ASN1_OBJECT(buffer, length, const_cast<ASN1_OBJECT*>(static_cast<const ASN1_OBJECT*>(object))); }
+void* D2iX509(void** certificate, const unsigned char** in, long length) { return d2i_X509(reinterpret_cast<X509**>(certificate), in, length); }
+void X509Free(void* certificate) { X509_free(static_cast<X509*>(certificate)); }
+int I2dX509Pubkey(void* key, unsigned char** out) { return i2d_X509_PUBKEY(static_cast<X509_PUBKEY*>(key), out); }
+void Free(void* pointer) { free(pointer); }
 unsigned long ErrGetError() { return ERR_get_error(); }
 void ErrClearError() { ERR_clear_error(); }
 
