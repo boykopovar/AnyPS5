@@ -100,7 +100,7 @@ class Trace:
             elif phase == "C":
                 tid = _event_tid(event, index)
                 self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
-        self.presents.sort()
+        self.presents.sort(key=lambda present: (present[0], present[1] is None, present[1] if isinstance(present[1], int) else 0))
         for slices in self.slices.values():
             slices.sort(key=lambda entry: (entry[0], -entry[1]))
             stack = []
@@ -165,12 +165,15 @@ def load_summary(path, trace_path):
     candidate = Path(path) if path else Path(trace_path).with_name("aps5-summary.jsonl")
     if not candidate.exists():
         return None
-    lines = load_summary_lines(candidate)
     name = Path(trace_path).name
     alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
-        for line in reversed(lines):
-            if line.get("trace") == filename:
+        for number, line in reversed(load_summary_lines(candidate, numbered=True)):
+            if line.get("trace") == filename and "interval_start_s" not in line:
+                try:
+                    validate_capture(line)
+                except ValueError as error:
+                    raise ValueError(f"{candidate}:{number}: {error}") from error
                 return line
     return None
 
@@ -372,6 +375,36 @@ def interval_number(value, field):
     if not valid:
         raise ValueError(f"{field} must be a finite non-negative number")
     return value
+
+
+def capture_string(value, field):
+    if type(value) is not str:
+        raise ValueError(f"{field} must be a string")
+    return value
+
+
+def validate_capture(record):
+    window = record.get("window")
+    if not isinstance(window, dict):
+        raise ValueError("window must be an object")
+    capture_string(window.get("spec"), "window.spec")
+    if type(window.get("first_present")) is not int or window["first_present"] < 0:
+        raise ValueError("window.first_present must be a non-negative integer")
+    interval_number(window.get("ms"), "window.ms")
+    if type(record.get("presents")) is not int or record["presents"] < 0:
+        raise ValueError("presents must be a non-negative integer")
+    frames = record.get("frame_ms")
+    if not isinstance(frames, dict):
+        raise ValueError("frame_ms must be an object")
+    for field in ("p50", "p90", "p99", "max"):
+        interval_number(frames.get(field), f"frame_ms.{field}")
+    interval_number(record.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
+    for field in ("gpu", "driver", "os", "resolution", "commit"):
+        capture_string(record.get(field), field)
+    if type(record.get("trace_dropped")) is not bool:
+        raise ValueError("trace_dropped must be a boolean")
+    if "dirty" in record and type(record["dirty"]) is not bool:
+        raise ValueError("dirty must be a boolean")
 
 
 def validate_interval(record):
