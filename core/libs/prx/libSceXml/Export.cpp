@@ -1,4 +1,5 @@
 #include "prx/libSceXml/include/Api.hpp"
+#include "prx/libSceXml/src/DocumentBuilder.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -239,32 +240,32 @@ void APS5_VABI _ZN3sce3Xml18SerializeParameterC2Ev(XmlSerializeParameter* self) 
     self->third = 0;
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder10initializeEPKNS0_11InitializerE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
+    return XmlDom::BuilderInitialize(self, initializer);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder16setResolveEntityEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder16setResolveEntityEb(XmlHandle* self, bool value) {
+    XmlDom::BuilderSetOption(self, XmlDom::BuilderOption::ResolveEntity, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder20setSkipIgnorableTextEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder20setSkipIgnorableTextEb(XmlHandle* self, bool value) {
+    XmlDom::BuilderSetOption(self, XmlDom::BuilderOption::SkipIgnorableText, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder26setSkipIgnorableWhiteSpaceEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder26setSkipIgnorableWhiteSpaceEb(XmlHandle* self, bool value) {
+    XmlDom::BuilderSetOption(self, XmlDom::BuilderOption::SkipIgnorableWhiteSpace, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder5parseEPKNS0_6StringEb() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder5parseEPKNS0_6StringEb(XmlHandle* self, const XmlString* text, bool last) {
+    return XmlDom::BuilderParse(self, text, last);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder9terminateEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder9terminateEv(XmlHandle* self) {
+    return XmlDom::BuilderTerminate(self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderC1Ev(XmlHandle* self) {
@@ -275,12 +276,12 @@ void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderC2Ev(XmlHandle* self) {
     self->impl = nullptr;
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD1Ev(XmlHandle* self) {
+    XmlDom::BuilderDestroy(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD2Ev(XmlHandle* self) {
+    XmlDom::BuilderDestroy(self);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom4Node11appendChildENS1_6NodeIdE() {
