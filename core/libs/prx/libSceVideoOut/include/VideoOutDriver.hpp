@@ -117,6 +117,7 @@ struct BufferAttributeGroup {
     int category = VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED;
     bool occupied = false;
     bool ps4 = false;
+    uint32_t ps4Pitch = 0;
 };
 
 AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, const BufferAttributeGroup& group);

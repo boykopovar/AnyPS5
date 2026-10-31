@@ -27,6 +27,10 @@ AgcDriver::DisplayBuffer DescribeVideoOutBuffer(const VideoOutBuffer& buffer, co
     if (compressed && (attribute.dcc_control & ~VIDEO_OUT_DCC_CONTROL_BLOCK_LAYOUT) != 0) throw std::runtime_error("VideoOut: unsupported DCC control " + hex(attribute.dcc_control) + " (only the block size and independence fields " + hex(VIDEO_OUT_DCC_CONTROL_BLOCK_LAYOUT) + " are known)");
     AgcDriver::DisplayBuffer result{buffer.dataAddress, attribute.pixel_format, attribute.width, attribute.height, attribute.tiling_mode, attribute.pitch_in_pixel, compressed ? buffer.metadataAddress : 0, compressed ? attribute.dcc_cb_register_clear_color : 0};
     if (group.ps4) result.alignment = 4096;
+    if (group.ps4 && attribute.tiling_mode == 0) {
+        result.tilingMode = AgcDriver::DisplayTilingGcn;
+        result.pitchInPixel = group.ps4Pitch;
+    }
     static_cast<void>(AgcDriverDisplayBufferSize_nid_postfix(result));
     return result;
 }
@@ -75,9 +79,15 @@ int CommitBufferGroup(const std::string& function, VideoOutConfig& cfg, int setI
 uint64_t Ps5PixelFormat(uint32_t pixelFormat) {
     if (pixelFormat == 0x80000000u) return 0x8000000000000000ull;
     if (pixelFormat == 0x80002200u) return 0x8000000022000000ull;
+    if (pixelFormat == 0x88000000u) return 0x8100000000000000ull;
     char text[96];
     std::snprintf(text, sizeof(text), "sceVideoOutRegisterBuffers: unsupported PS4 pixel format 0x%08x", pixelFormat);
     throw std::runtime_error(text);
+}
+
+uint32_t Ps4TiledPitch(uint32_t tilingMode, uint32_t width, uint32_t pitchInPixel) {
+    if (tilingMode != 0) return 0;
+    return pitchInPixel != 0 ? pitchInPixel : (width + 127u) / 128u * 128u;
 }
 
 }
@@ -97,6 +107,12 @@ int APS5_VABI sceVideoOutGetBufferLabelAddress(int handle, uintptr_t* address) t
     return VIDEO_OUT_BUFFER_NUM_MAX;
 } catch (const ProcessShutdown&) {
     LibcAwaitExit_nid_postfix();
+}
+
+uintptr_t VideoOutBufferLabelAddress_nid_postfix(int handle) {
+    uintptr_t address = 0;
+    if (sceVideoOutGetBufferLabelAddress(handle, &address) != VIDEO_OUT_BUFFER_NUM_MAX) throw std::runtime_error("VideoOut: buffer labels of an invalid handle");
+    return address;
 }
 
 void APS5_VABI sceVideoOutSetBufferAttribute2(VideoOutBufferAttribute2* attribute, uint64_t pixelFormat, uint32_t tilingMode, uint32_t width, uint32_t height, uint64_t option, uint32_t dccControl, uint64_t dccCbRegisterClearColor) {
@@ -191,8 +207,8 @@ int APS5_VABI sceVideoOutRegisterBuffers(int handle, int bufferIndexStart, void*
     if (attribute->option != 0 || attribute->reserved0 != 0 || attribute->reserved1 != 0) {
         throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_OPTION");
     }
-    if (attribute->tiling_mode != 1) {
-        throw std::runtime_error(std::string(__func__) + ": PS4 tiled display buffers are not implemented");
+    if (attribute->tiling_mode > 1) {
+        throw std::runtime_error(std::string(__func__) + ": VIDEO_OUT_ERROR_INVALID_TILING_MODE");
     }
     BufferAttributeGroup group{};
     group.attribute.pixel_format = Ps5PixelFormat(attribute->pixel_format);
@@ -200,7 +216,8 @@ int APS5_VABI sceVideoOutRegisterBuffers(int handle, int bufferIndexStart, void*
     group.attribute.aspect_ratio = attribute->aspect_ratio;
     group.attribute.width = attribute->width;
     group.attribute.height = attribute->height;
-    group.attribute.pitch_in_pixel = attribute->pitch_in_pixel;
+    group.attribute.pitch_in_pixel = attribute->tiling_mode == 0 ? 0 : attribute->pitch_in_pixel;
+    group.ps4Pitch = Ps4TiledPitch(attribute->tiling_mode, attribute->width, attribute->pitch_in_pixel);
     group.category = VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_UNCOMPRESSED;
     group.occupied = true;
     group.ps4 = true;
@@ -233,6 +250,7 @@ int APS5_VABI sceVideoOutSubmitChangeBufferAttribute2(int handle, int setIndex, 
     AgcDriverCheckGuestMemory_nid_postfix(attribute, sizeof(*attribute), alignof(VideoOutBufferAttribute2));
     auto group = cfg->groups[setIndex];
     group.attribute = *attribute;
+    if (group.ps4) group.ps4Pitch = Ps4TiledPitch(attribute->tiling_mode, attribute->width, attribute->pitch_in_pixel);
     for (int i = 0; i < VIDEO_OUT_BUFFER_NUM_MAX; ++i) {
         if (cfg->buffers[i].groupIndex != setIndex) continue;
         const auto display = DescribeVideoOutBuffer(cfg->buffers[i], group);

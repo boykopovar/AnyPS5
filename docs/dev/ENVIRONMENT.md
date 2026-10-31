@@ -527,6 +527,12 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `ANYPS5_SYSTEM_FONTS` | string | `core/libs/prx/libSceFont/src/SystemFont.cpp` |  | directory holding the system fonts, defaulting to anyps5-fonts beside the executable |
 
+### libSceGnmDriver
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `APS5_GNM_SUBMIT_WAIT_IDLE` | presence | `core/libs/prx/libSceGnmDriver/Export.cpp` |  | makes each command buffer submission after the first wait for the work already queued, so the GPU trails the title by at most one submission |
+
 ### libSceNpEntitlementAccess
 
 | Name | Kind | Source | Default | Description |
