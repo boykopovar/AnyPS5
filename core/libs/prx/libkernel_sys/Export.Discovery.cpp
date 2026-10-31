@@ -1439,9 +1439,8 @@ int APS5_VABI sceKernelMemoryPoolMove(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelMlockall(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelMlockall(int flags) {
+    return mlockall_nid_postfix(flags) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
 int APS5_VABI sceKernelMsync(void* address, std::size_t length, int flags) {
