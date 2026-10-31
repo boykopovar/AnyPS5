@@ -281,6 +281,10 @@ struct Sock {
     bool bound = false;
     bool listening = false;
     bool connectAttempted = false;
+#ifdef _WIN32
+    bool connectPending = false;
+    bool connectRefused = false;
+#endif
     bool aborted = false;
     bool sending_shut = false;
     bool read_shut = false;
@@ -1163,12 +1167,35 @@ static int disconnect_datagram(const Sock& socket) {
 extern "C" void RefuseClosedLoopbackAtOnce_nid_no_patch(SOCKET socket, const sockaddr* address);
 #endif
 
+#ifdef _WIN32
+static bool pending_connect_refused(Sock& socket) {
+    if (socket.connectPending) {
+        int pending = 0;
+        int size = sizeof(pending);
+        if (::getsockopt(socket.native->value, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&pending), &size) == 0 && pending != 0) {
+            socket.connectPending = false;
+            socket.connectRefused = true;
+        }
+    }
+    return socket.connectRefused;
+}
+
+static void note_connect_pending(int s, const Sock& socket, bool pending) {
+    std::lock_guard lock(g_mutex);
+    const auto current = g_socks.find(s);
+    if (current != g_socks.end() && current->second.native == socket.native) current->second.connectPending = pending;
+}
+#endif
+
 int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     Sock socket;
     {
         std::lock_guard lk(g_mutex);
         auto it = g_socks.find(s);
         if (it == g_socks.end()) return fail(NET_EBADF);
+#ifdef _WIN32
+        if (it->second.type == NET_SOCK_STREAM && pending_connect_refused(it->second)) return fail(NET_ECONNREFUSED);
+#endif
         it->second.reported_error = 0;
         socket = it->second;
     }
@@ -1189,13 +1216,19 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         if (current != g_socks.end() && current->second.native == socket.native) current->second.connectAttempted = true;
     }
     if (::connect(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) == 0) {
+#ifdef _WIN32
+        if (socket.type == NET_SOCK_STREAM) note_connect_pending(s, socket, false);
+#endif
 #if defined(_WIN32) || defined(__APPLE__)
         note_local_address(s, socket);
 #endif
         return 0;
     }
 #ifdef _WIN32
-    if (WSAGetLastError() == WSAEWOULDBLOCK) {
+    const int connectError = WSAGetLastError();
+    if (socket.type == NET_SOCK_STREAM) note_connect_pending(s, socket, (connectError == WSAEWOULDBLOCK && socket.native->nonblock) || connectError == WSAEALREADY);
+    WSASetLastError(connectError);
+    if (connectError == WSAEWOULDBLOCK) {
         if (socket.native->nonblock) return fail(NET_EINPROGRESS);
         fd_set writable;
         fd_set failed;
