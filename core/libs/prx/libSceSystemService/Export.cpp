@@ -270,7 +270,7 @@ bool WellFormedTitleId(const char* titleId) {
 
 int RunningAppId(const std::string& caller, const char* titleId) {
     if (!WellFormedTitleId(titleId)) return SYSTEM_SERVICE_INVALID_TITLE_APP_ID;
-    if (RunningTitleId() != titleId) NotImplemented_nid_no_patch((caller + ": title other than the running title").c_str());
+    if (RunningTitleId() != titleId) throw std::runtime_error(caller + ": title other than the running title");
     return SYSTEM_SERVICE_RUNNING_APP_ID;
 }
 
