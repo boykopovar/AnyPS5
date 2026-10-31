@@ -35,6 +35,17 @@ void RequireThrows(TAction action, const char* message) {
     Require(false, message);
 }
 
+template<typename TAction>
+void RequireInvalidArgument(TAction action, const char* message) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    } catch (const std::exception&) {
+    }
+    Require(false, message);
+}
+
 void RequireEmptyStack(const void* pointer, bool comparator, const char* message) {
     const auto* stack = static_cast<const Stack*>(pointer);
     Require(stack && stack->num == 0 && stack->sorted == 0 && stack->numAlloc == 4 && stack->data, message);
@@ -76,10 +87,10 @@ void Flags() {
     store->param->flags = 0;
     Require(X509_STORE_set_flags_nid_postfix(store, 0x8000000000000000ull) == 1 && store->param->flags == 0x8000000000000000ull, "all 64 flag bits are kept");
     Require(store->param->inheritanceFlags == 0, "inheritance flags are left alone");
-    RequireThrows([] { X509_STORE_set_flags_nid_postfix(nullptr, 1); }, "null store");
+    RequireInvalidArgument([] { X509_STORE_set_flags_nid_postfix(nullptr, 1); }, "null store");
     auto* param = store->param;
     store->param = nullptr;
-    RequireThrows([&] { X509_STORE_set_flags_nid_postfix(store, 1); }, "store without verify parameters");
+    RequireInvalidArgument([&] { X509_STORE_set_flags_nid_postfix(store, 1); }, "store without verify parameters");
     store->param = param;
     X509_STORE_free_nid_postfix(store);
 }
@@ -155,10 +166,10 @@ void Hosts() {
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 5) == 1 && param->id->hosts == nullptr, "a null name clears the list");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, nullptr, 0) == 1 && param->id->hosts == nullptr, "clearing an empty list");
     Require(X509_VERIFY_PARAM_set1_host_nid_postfix(param, "last.example", 0) == 1, "a name that the store frees");
-    RequireThrows([] { X509_VERIFY_PARAM_set1_host_nid_postfix(nullptr, "a", 0); }, "null verify parameters");
+    RequireInvalidArgument([] { X509_VERIFY_PARAM_set1_host_nid_postfix(nullptr, "a", 0); }, "null verify parameters");
     auto* id = param->id;
     param->id = nullptr;
-    RequireThrows([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "verify parameters without an identity");
+    RequireInvalidArgument([&] { X509_VERIFY_PARAM_set1_host_nid_postfix(param, "a", 0); }, "verify parameters without an identity");
     param->id = id;
     X509_STORE_free_nid_postfix(store);
 }
