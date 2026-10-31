@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <windows.h>
 #include "prx/libc/include/WindowsDescriptor.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libkernel/File/include/WindowsSymbolicLink.hpp"
 static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint16_t mode) {
     const int access = nativeFlags & (_O_RDONLY | _O_WRONLY | _O_RDWR);
@@ -113,15 +114,7 @@ static int NativeUnlink(const std::filesystem::path& p) {
     return -1;
 }
 static std::filesystem::path NativeMetadataPath(const std::filesystem::path& path, std::error_code& error) {
-    const auto& input = path.native();
-    if (input.starts_with(L"\\\\?\\") || input.starts_with(L"\\\\.\\")) return path;
-    auto absolute = std::filesystem::absolute(path, error);
-    if (error) return {};
-    absolute = absolute.lexically_normal().make_preferred();
-    const auto& native = absolute.native();
-    if (native.size() < MAX_PATH || native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return absolute;
-    return native.starts_with(L"\\\\") ? std::filesystem::path(L"\\\\?\\UNC\\" + native.substr(2))
-                                            : std::filesystem::path(L"\\\\?\\" + native);
+    return NativeVerbatimPath_nid_no_patch(path, error);
 }
 static bool NativeSymbolicLinkLoop(const std::filesystem::path& path) {
     return File::WindowsSymbolicLinkLoop(path);
@@ -228,13 +221,16 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         return *archived;
     }
 #ifdef _WIN32
+    std::error_code pathError;
+    const auto metadataOpenPath = NativeMetadataPath(native, pathError);
+    const auto& openNative = pathError ? native : metadataOpenPath;
     if ((flags & (SCE_KERNEL_O_DIRECTORY | SCE_KERNEL_O_CREAT)) == SCE_KERNEL_O_DIRECTORY) {
         std::error_code error;
-        const auto status = std::filesystem::status(native, error);
+        const auto status = std::filesystem::status(openNative, error);
         if (std::filesystem::exists(status) && !std::filesystem::is_directory(status)) return SceErrorFromErrno(ENOTDIR);
     }
-    if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL) && native.has_filename()) {
-        const DWORD attributes = GetFileAttributesW(native.c_str());
+    if ((flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL) && openNative.has_filename()) {
+        const DWORD attributes = GetFileAttributesW(openNative.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) return SceErrorFromErrno(EEXIST);
     }
 #endif
@@ -243,14 +239,18 @@ static int OpenNative(const std::filesystem::path& native, int flags, std::uint1
         std::error_code error;
         if (std::filesystem::is_symlink(native, error)) return SceErrorFromErrno(GuestEmlink);
 #ifdef _WIN32
-        const DWORD attributes = GetFileAttributesW(native.c_str());
+        const DWORD attributes = GetFileAttributesW(openNative.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;
-            if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "open")) return SceErrorFromErrno(GuestEmlink);
+            if (File::WindowsSymbolicLink::ReadJunction(openNative, junctionTarget, "open")) return SceErrorFromErrno(GuestEmlink);
         }
 #endif
     }
+#ifdef _WIN32
+    int fd = NativeOpen(openNative, MapFlags(flags), mode);
+#else
     int fd = NativeOpen(native, MapFlags(flags), mode);
+#endif
 #ifdef __APPLE__
     if (fd >= 0 && (flags & (SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL)) == SCE_KERNEL_O_CREAT) {
         struct stat opened{};
@@ -486,26 +486,33 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
+#ifdef _WIN32
+    std::error_code unlinkPathError;
+    const auto metadataUnlinkPath = NativeMetadataPath(native, unlinkPathError);
+    const auto& unlinkNative = unlinkPathError ? native : metadataUnlinkPath;
+#else
+    const auto& unlinkNative = native;
+#endif
     constexpr int GuestEperm = 1;
     std::error_code error;
-    if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) {
+    if (std::filesystem::is_directory(std::filesystem::symlink_status(unlinkNative, error))) {
 #ifdef _WIN32
-        if (native.has_filename()) {
+        if (unlinkNative.has_filename()) {
             WIN32_FIND_DATAW found{};
-            if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
+            if (const HANDLE find = FindFirstFileW(unlinkNative.c_str(), &found); find != INVALID_HANDLE_VALUE) {
                 FindClose(find);
                 if ((found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
-                    if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
+                    if (!RemoveDirectoryW(unlinkNative.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
                     RecordWrittenPath_nid_no_patch(native);
                     return 0;
                 }
             }
         }
-        const DWORD attributes = GetFileAttributesW(native.c_str());
+        const DWORD attributes = GetFileAttributesW(unlinkNative.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;
-            if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "unlink")) {
-                if (RemoveDirectoryW(native.c_str()) == 0) return SceErrorFromErrno(GuestEperm);
+            if (File::WindowsSymbolicLink::ReadJunction(unlinkNative, junctionTarget, "unlink")) {
+                if (RemoveDirectoryW(unlinkNative.c_str()) == 0) return SceErrorFromErrno(GuestEperm);
                 RecordWrittenPath_nid_no_patch(native);
                 return 0;
             }
@@ -513,9 +520,9 @@ int APS5_VABI sceKernelUnlink(const char* path) {
 #endif
         return SceErrorFromErrno(GuestEperm);
     }
-    if (NativeUnlink(native) != 0) {
+    if (NativeUnlink(unlinkNative) != 0) {
 #ifdef _WIN32
-        if (NativeSymbolicLinkLoop(native.parent_path())) return SCE_KERNEL_ERROR_ELOOP;
+        if (NativeSymbolicLinkLoop(unlinkNative.parent_path())) return SCE_KERNEL_ERROR_ELOOP;
 #endif
         return SceErrorFromErrno(errno == ENOENT ? NotFoundError_nid_no_patch(native) : errno);
     }

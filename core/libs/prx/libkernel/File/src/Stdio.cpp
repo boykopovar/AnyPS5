@@ -8,6 +8,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libc/include/RenameDot.hpp"
+#include "prx/libc/include/WindowsVerbatimPath.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -75,20 +76,49 @@ template <typename TCall> static auto WithoutParameterHandler(TCall call) {
     return result;
 }
 static int NativeRmdir(const std::filesystem::path& path) {
-    return ::_wrmdir(path.wstring().c_str());
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error, WindowsMaxDirectoryPathLength);
+    const auto& target = error ? path : verbatim;
+    if (::RemoveDirectoryW(target.c_str())) return 0;
+    errno = WindowsOpenError_nid_no_patch(GetLastError());
+    return -1;
+}
+static bool IsDirectoryEmpty(const std::filesystem::path& path) {
+    if (path.empty()) return true;
+    const auto search = (path.native().back() == L'\\' || path.native().back() == L'/') ? (path.native() + L"*") : (path.native() + L"\\*");
+    WIN32_FIND_DATAW data{};
+    const HANDLE handle = ::FindFirstFileW(search.c_str(), &data);
+    if (handle == INVALID_HANDLE_VALUE) return true;
+    bool empty = true;
+    do {
+        const auto* name = data.cFileName;
+        if (name[0] == L'.' && (name[1] == L'\0' || (name[1] == L'.' && name[2] == L'\0'))) continue;
+        empty = false;
+        break;
+    } while (::FindNextFileW(handle, &data));
+    ::FindClose(handle);
+    return empty;
 }
 static bool RemoveEmptyDirectory(const std::filesystem::path& path) {
-    struct _stat64 status{};
-    const bool unlocked = ::_wstat64(path.c_str(), &status) == 0 && !(status.st_mode & _S_IWRITE) &&
-        ::_wchmod(path.c_str(), _S_IREAD | _S_IWRITE) == 0;
+    std::error_code pathError;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, pathError, WindowsMaxDirectoryPathLength);
+    const auto& target = pathError ? path : verbatim;
+    const DWORD attributes = ::GetFileAttributesW(target.c_str());
+    const bool unlocked = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_READONLY) &&
+        ::SetFileAttributesW(target.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY);
     std::error_code error;
-    if (std::filesystem::remove(path, error)) return true;
-    if (unlocked) ::_wchmod(path.c_str(), _S_IREAD);
-    return false;
+    const bool removed = ::RemoveDirectoryW(target.c_str()) != 0 || std::filesystem::remove(target, error);
+    if (!removed && unlocked) ::SetFileAttributesW(target.c_str(), attributes);
+    return removed;
 }
 static int NativeMkdir(const std::filesystem::path& path, std::uint16_t mode) {
     (void)mode;
-    return ::_wmkdir(path.wstring().c_str());
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error, WindowsMaxDirectoryPathLength);
+    const auto& target = error ? path : verbatim;
+    if (::CreateDirectoryW(target.c_str(), nullptr)) return 0;
+    errno = WindowsOpenError_nid_no_patch(GetLastError());
+    return -1;
 }
 static std::optional<std::filesystem::path> HandlePath(HANDLE handle) {
     std::wstring path(MAX_PATH, L'\0');
@@ -119,12 +149,15 @@ std::optional<std::filesystem::path> File::WindowsDescriptorPath_nid_no_patch(in
     return HandlePath(handle);
 }
 static int NativeChmod(const std::filesystem::path& path, int mode) {
-    const DWORD attributes = GetFileAttributesW(path.c_str());
+    std::error_code pathError;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, pathError);
+    const auto& checkPath = pathError ? path : verbatim;
+    const DWORD attributes = GetFileAttributesW(checkPath.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
         RecordWrittenPath_nid_no_patch(path);
-        return ::_wchmod(path.wstring().c_str(), mode);
+        return ::_wchmod(checkPath.wstring().c_str(), mode);
     }
-    const HANDLE handle = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+    const HANDLE handle = CreateFileW(checkPath.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
         OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = WindowsOpenError_nid_no_patch(GetLastError());
@@ -134,7 +167,9 @@ static int NativeChmod(const std::filesystem::path& path, int mode) {
     CloseHandle(handle);
     if (!target) return -1;
     RecordWrittenPath_nid_no_patch(*target);
-    return ::_wchmod(target->wstring().c_str(), mode);
+    const auto verbatimTarget = NativeVerbatimPath_nid_no_patch(*target, pathError);
+    const auto& finalTarget = pathError ? *target : verbatimTarget;
+    return ::_wchmod(finalTarget.wstring().c_str(), mode);
 }
 static int NativeFchmod(int descriptor, int mode) {
     const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);
@@ -172,11 +207,14 @@ static int NativeFtruncate(int descriptor, std::int64_t length) {
     }
 }
 static int NativeTruncate(const std::filesystem::path& path, std::int64_t length) {
-    const int descriptor = ::_wopen(path.c_str(), _O_WRONLY | _O_BINARY);
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    const auto& target = error ? path : verbatim;
+    const int descriptor = ::_wopen(target.c_str(), _O_WRONLY | _O_BINARY);
     if (descriptor < 0) return errno;
-    const int error = NativeFtruncate(descriptor, length);
+    const int err = NativeFtruncate(descriptor, length);
     ::_close(descriptor);
-    return error;
+    return err;
 }
 static int SetTimes(HANDLE handle, const KernelTimeval* times) {
     FILETIME access{}, modified{};
@@ -195,7 +233,10 @@ static int SetTimes(HANDLE handle, const KernelTimeval* times) {
     return SetFileTime(handle, birth, &access, &modified) ? 0 : File::WindowsFileTime::Failure(GetLastError());
 }
 static int NativeUtimes(const std::filesystem::path& path, const KernelTimeval* times, bool followLink = true) {
-    const auto handle = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    std::error_code error;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(path, error);
+    const auto& target = error ? path : verbatim;
+    const auto handle = CreateFileW(target.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | (followLink ? 0 : FILE_FLAG_OPEN_REPARSE_POINT), nullptr);
     if (handle == INVALID_HANDLE_VALUE) return File::WindowsFileTime::Failure(GetLastError());
     const int result = SetTimes(handle, times);
@@ -695,20 +736,26 @@ int File::DuplicateFrom(int fd, int start) {
 
 static int LookupError(const std::filesystem::path& native) {
 #ifdef _WIN32
-    const auto named = native.has_filename() ? native : WithoutTrailingSeparator(native);
+    std::error_code pathError;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(native, pathError);
+    const auto& checkNative = pathError ? native : verbatim;
+    const auto named = checkNative.has_filename() ? checkNative : WithoutTrailingSeparator(checkNative);
     const DWORD attributes = GetFileAttributesW(named.c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
         FileStat target{};
         if (!File::TryFillFileStat(named, &target)) return SceErrorFromErrno(errno) & 0xffff;
-        return native.has_filename() || (target.st_mode & 0170000) == 0040000 ? 0 : GUEST_ENOTDIR;
+        return checkNative.has_filename() || (target.st_mode & 0170000) == 0040000 ? 0 : GUEST_ENOTDIR;
     }
+    const auto& statusNative = checkNative;
+#else
+    const auto& statusNative = native;
 #endif
     std::error_code error;
-    const auto status = std::filesystem::status(native, error);
-    if (std::filesystem::exists(status)) return native.has_filename() || std::filesystem::is_directory(status) ? 0 : GUEST_ENOTDIR;
+    const auto status = std::filesystem::status(statusNative, error);
+    if (std::filesystem::exists(status)) return statusNative.has_filename() || std::filesystem::is_directory(status) ? 0 : GUEST_ENOTDIR;
     if (status.type() != std::filesystem::file_type::not_found) return SceErrorFromErrno(error.default_error_condition().value()) & 0xffff;
-    const bool fileWithSeparator = !native.has_filename() && std::filesystem::exists(WithoutTrailingSeparator(native), error);
-    return fileWithSeparator || HasNonDirectoryPrefix(native) ? GUEST_ENOTDIR : GUEST_ENOENT;
+    const bool fileWithSeparator = !statusNative.has_filename() && std::filesystem::exists(WithoutTrailingSeparator(statusNative), error);
+    return fileWithSeparator || HasNonDirectoryPrefix(statusNative) ? GUEST_ENOTDIR : GUEST_ENOENT;
 }
 
 static constexpr std::pair<std::uint64_t, const char*> GUEST_FILE_FLAGS[] = {
@@ -1166,8 +1213,15 @@ int APS5_VABI sceKernelCheckReachability(const char* path) {
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native, true, true)) return SceKernelError(error);
     if (AppArchiveOnly_nid_no_patch(native)) return 0;
+#ifdef _WIN32
+    std::error_code pathError;
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(native, pathError);
+    const auto& checkNative = pathError ? native : verbatim;
+#else
+    const auto& checkNative = native;
+#endif
     std::error_code error;
-    return std::filesystem::exists(native, error) ? 0 : SCE_KERNEL_ERROR_ENOENT;
+    return std::filesystem::exists(checkNative, error) ? 0 : SCE_KERNEL_ERROR_ENOENT;
 }
 
 int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
@@ -1352,16 +1406,23 @@ int APS5_VABI sceKernelMkdir(const char* path, uint16_t mode) {
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     while (!native.has_filename() && native.has_relative_path()) native = native.parent_path();
-    std::error_code error;
-    if (std::filesystem::exists(native, error)) return SceErrorFromErrno(GUEST_EEXIST);
-    if (const int failure = PathLookupFailure(error)) return failure;
-    if (!std::filesystem::is_directory(WithoutTrailingSeparator(native).parent_path(), error)) {
 #ifdef _WIN32
-        if (File::WindowsSymbolicLinkLoop(WithoutTrailingSeparator(native).parent_path())) return SceKernelError(GUEST_ELOOP);
+    std::error_code pathError;
+    const auto verbatimNative = NativeVerbatimPath_nid_no_patch(native, pathError, WindowsMaxDirectoryPathLength);
+    const auto& targetNative = pathError ? native : verbatimNative;
+#else
+    const auto& targetNative = native;
 #endif
-        return SceErrorFromErrno(HasNonDirectoryPrefix(native) ? GUEST_ENOTDIR : GUEST_ENOENT);
+    std::error_code error;
+    if (std::filesystem::exists(targetNative, error)) return SceErrorFromErrno(GUEST_EEXIST);
+    if (const int failure = PathLookupFailure(error)) return failure;
+    if (!std::filesystem::is_directory(WithoutTrailingSeparator(targetNative).parent_path(), error)) {
+#ifdef _WIN32
+        if (File::WindowsSymbolicLinkLoop(WithoutTrailingSeparator(targetNative).parent_path())) return SceKernelError(GUEST_ELOOP);
+#endif
+        return SceErrorFromErrno(HasNonDirectoryPrefix(targetNative) ? GUEST_ENOTDIR : GUEST_ENOENT);
     }
-    if (!std::filesystem::create_directory(native, error)) return SceErrorFromErrno(error.value() ? error.value() : GUEST_EIO);
+    if (!std::filesystem::create_directory(targetNative, error)) return SceErrorFromErrno(error.value() ? error.value() : GUEST_EIO);
     RecordWrittenPath_nid_no_patch(native);
     return 0;
 }
@@ -1649,27 +1710,38 @@ int APS5_VABI sceKernelRmdir(const char* path) {
     if (const int dot = RenameDotError_nid_no_patch(path)) return SceKernelError(dot);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
+#ifdef _WIN32
+    std::error_code pathError;
+    const auto verbatimNative = NativeVerbatimPath_nid_no_patch(native, pathError, WindowsMaxDirectoryPathLength);
+    const auto& targetNative = pathError ? native : verbatimNative;
+#else
+    const auto& targetNative = native;
+#endif
     FileStat linkStatus{};
-    if (native.has_filename() && File::FillLinkStat(native, &linkStatus) && (linkStatus.st_mode & 0170000) == 0120000) return SceErrorFromErrno(GUEST_ENOTDIR);
+    if (targetNative.has_filename() && File::FillLinkStat(targetNative, &linkStatus) && (linkStatus.st_mode & 0170000) == 0120000) return SceErrorFromErrno(GUEST_ENOTDIR);
     std::error_code error;
-    const auto status = std::filesystem::status(native, error);
+    const auto status = std::filesystem::status(targetNative, error);
     if (const int failure = PathLookupFailure(error)) return failure;
 #ifdef _WIN32
-    const DWORD attributes = GetFileAttributesW(native.c_str());
+    const DWORD attributes = GetFileAttributesW(targetNative.c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
         std::string junctionTarget;
-        if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "rmdir")) return SceErrorFromErrno(GUEST_ENOTDIR);
+        if (File::WindowsSymbolicLink::ReadJunction(targetNative, junctionTarget, "rmdir")) return SceErrorFromErrno(GUEST_ENOTDIR);
     }
 #endif
     if (!std::filesystem::is_directory(status)) {
 #ifdef _WIN32
-        if (File::WindowsSymbolicLinkLoop(WithoutTrailingSeparator(native).parent_path())) return SceKernelError(GUEST_ELOOP);
+        if (File::WindowsSymbolicLinkLoop(WithoutTrailingSeparator(targetNative).parent_path())) return SceKernelError(GUEST_ELOOP);
 #endif
-        const bool blockedByFile = HasNonDirectoryPrefix(native) || std::filesystem::exists(WithoutTrailingSeparator(native), error);
+        const bool blockedByFile = HasNonDirectoryPrefix(targetNative) || std::filesystem::exists(WithoutTrailingSeparator(targetNative), error);
         return SceErrorFromErrno(blockedByFile ? GUEST_ENOTDIR : GUEST_ENOENT);
     }
-    if (!std::filesystem::is_empty(native, error)) return SceErrorFromErrno(GUEST_ENOTEMPTY);
-    if (!RemoveEmptyDirectory(native)) return SceErrorFromErrno(GUEST_EIO);
+#ifdef _WIN32
+    if (!IsDirectoryEmpty(targetNative)) return SceErrorFromErrno(GUEST_ENOTEMPTY);
+#else
+    if (!std::filesystem::is_empty(targetNative, error)) return SceErrorFromErrno(GUEST_ENOTEMPTY);
+#endif
+    if (!RemoveEmptyDirectory(targetNative)) return SceErrorFromErrno(GUEST_EIO);
     RecordWrittenPath_nid_no_patch(native);
     return 0;
 }
@@ -1733,18 +1805,20 @@ int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t lengt
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     std::error_code error;
-    const auto status = std::filesystem::status(native, error);
+    const auto verbatim = NativeVerbatimPath_nid_no_patch(native, error);
+    const auto& target = error ? native : verbatim;
+    const auto status = std::filesystem::status(target, error);
     if (const int failure = PathLookupFailure(error)) return failure;
     if (!std::filesystem::exists(status)) {
 #ifdef _WIN32
-        if (File::WindowsSymbolicLinkLoop(native)) return SceKernelError(GUEST_ELOOP);
+        if (File::WindowsSymbolicLinkLoop(target)) return SceKernelError(GUEST_ELOOP);
 #endif
         return SceErrorFromErrno(NotFoundError_nid_no_patch(native));
     }
     if (std::filesystem::is_directory(status)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (const int failure = NativeTruncate(native, length)) {
+    if (const int failure = NativeTruncate(target, length)) {
 #ifdef _WIN32
-        if (File::WindowsSymbolicLinkLoop(native)) return SceKernelError(GUEST_ELOOP);
+        if (File::WindowsSymbolicLinkLoop(target)) return SceKernelError(GUEST_ELOOP);
 #endif
         return SceErrorFromErrno(failure);
     }
