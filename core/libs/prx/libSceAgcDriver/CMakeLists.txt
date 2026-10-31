@@ -444,7 +444,7 @@ if(BUILD_TESTING)
     target_include_directories(agc_driver_unsupported_diagnostics_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_driver_unsupported_diagnostics_tests PRIVATE libSceAgcDriver)
     configure_windows_unwind(agc_driver_unsupported_diagnostics_tests)
-    add_test(NAME agc_driver_unsupported_diagnostics COMMAND agc_driver_unsupported_diagnostics_tests)
+    add_test(NAME agc_driver_unsupported_diagnostics COMMAND agc_driver_unsupported_diagnostics_tests $<TARGET_FILE:libSceAgcDriver>)
     if(WIN32)
         set_tests_properties(agc_driver_unsupported_diagnostics PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
