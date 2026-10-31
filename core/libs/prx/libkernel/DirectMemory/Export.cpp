@@ -852,6 +852,10 @@ int UnlockHostPages(std::uintptr_t start, std::uintptr_t end) {
 
 extern "C" {
 
+bool APS5_VABI DirectMemoryAliased_nid_postfix(std::uintptr_t address, std::size_t bytes) {
+    return DirectMemoryAliased(address, bytes);
+}
+
 int APS5_VABI sceKernelMlock_nid_postfix(void* address, std::uint64_t length) {
     std::uintptr_t start = 0;
     std::uintptr_t end = 0;
