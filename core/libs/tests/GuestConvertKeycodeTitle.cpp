@@ -27,5 +27,6 @@ int main() {
     if (sceConvertKeycodeGetCharacter(0, 0, 0, &character) != static_cast<int>(0x80BC001Du)) return 1;
     if (sceConvertKeycodeGetCharacter(0, 0, 40, &character) != static_cast<int>(0x80BC001Du)) return 1;
     if (sceConvertKeycodeGetImeKeyboardType(0x10000000, nullptr) != static_cast<int>(0x80BC0031u)) return 1;
+    if (sceConvertKeycodeGetImeKeyboardType(-1, &type) != static_cast<int>(0x80BC0010u)) return 1;
     return sceConvertKeycodeGetImeKeyboardType(0x10000000, &type) == 0 && type == 4 ? 0 : 1;
 }
