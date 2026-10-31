@@ -149,7 +149,7 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_pm4_failure PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 30)
     set(pm4RingCases "ring|APS5_PM4_RING=4" "ring-empty|APS5_PM4_RING=16" "ring-disabled|APS5_PM4_RING=0" "ring-invalid|APS5_PM4_RING=4x" "ring-report|APS5_PM4_RING=2" "stall-watchdog|APS5_STALL_WATCHDOG_SECS=1"
             "stall-watchdog-invalid|APS5_STALL_WATCHDOG_SECS=1x" "stall-watchdog-rewind|APS5_STALL_WATCHDOG_SECS=1" "stall-watchdog-order|APS5_STALL_WATCHDOG_SECS=1" "stall-clock|APS5_STALL_WATCHDOG_SECS=1"
-            "stall-prompt-invalid|ANYPS5_STALL_PROMPT=2" "stall-prompt-off|APS5_STALL_WATCHDOG_SECS=1" "stall-prompt-rearm|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1" "stall-prompt-quit|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1")
+            "stall-prompt-invalid|ANYPS5_STALL_PROMPT=2" "stall-prompt-off|APS5_STALL_WATCHDOG_SECS=1" "stall-prompt-rearm|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1" "stall-prompt-real|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1" "stall-prompt-quit|APS5_STALL_WATCHDOG_SECS=1,ANYPS5_STALL_PROMPT=1")
     if(WIN32)
         list(APPEND pm4RingCases "ring-report-heap|APS5_PM4_RING=2")
     endif()

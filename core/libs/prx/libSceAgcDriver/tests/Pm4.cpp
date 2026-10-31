@@ -1886,6 +1886,29 @@ void testStallPromptRearm() {
     AgcDriver::DriverDetail::SetStallClock(nullptr);
 }
 
+void testStallPromptRealPath() {
+    alignas(8) static std::uint32_t gate = 0;
+    alignas(8) static std::uint32_t done = 0;
+    stallPrompts = 0;
+    stallAnswer = AgcDriver::DriverDetail::StallChoice::Wait;
+    AgcDriver::DriverDetail::SetStallPresenter(recordStallPrompt);
+    std::vector<std::string> lines;
+    {
+        CapturedStderr capture;
+        auto words = joinPackets({makePacket(0x3c, {0x13, low(&gate), high(&gate), 1, 0xffffffffu, 0x19}), writeWord(done, 1)});
+        submitWords(words);
+        for (int waited = 0; waited < 1000 && stallPrompts < 3; ++waited) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        check(stallPrompts == 3, "a stalled wait did not ask the host three times on the real clock");
+        std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+        check(stallPrompts == 3, "a stalled wait asked the host more than three times on the real clock");
+        std::atomic_ref<std::uint32_t>(gate).store(1);
+        AgcDriverWaitIdle_nid_postfix();
+        lines = capture.RingLines();
+    }
+    checkOneStallDump(lines, done);
+    AgcDriver::DriverDetail::SetStallPresenter(nullptr);
+}
+
 void testStallPromptQuit() {
     AgcDriver::DriverDetail::SetStallClock(fakeStallClock);
     AgcDriver::DriverDetail::SetStallPresenter(recordStallPrompt);
@@ -2226,7 +2249,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-quit", testStallPromptQuit}, {"rewind-trace", testRewindTailTrace}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-quit", testStallPromptQuit}, {"rewind-trace", testRewindTailTrace}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
