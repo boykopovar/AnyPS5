@@ -9,6 +9,12 @@
 #include <utility>
 #include <stdexcept>
 
+#ifdef APS5_NGS2_PS4_LIBRARY
+static constexpr bool Ps4Library = true;
+#else
+static constexpr bool Ps4Library = false;
+#endif
+
 enum class Update { Play, Start, Pause, Kill, Volume, Matrix, Combined, Pitch, Gain, PlayStop, StopPlay, PauseResume, KillPlay, PlayKill, PlayPause, StopResume, LongPause, Mute, SelectMatrix, Over, Shift, ExternalShift, UnchangedShift };
 struct BufferedState {
     std::uintptr_t voice;
@@ -95,13 +101,17 @@ static int APS5_VABI UpdatePeer(Ngs2UserFxProcessContext* context) {
                     Require(volume() == 2.0f);
                 }
                 send(-1.0f, 1);
-                Require(std::bit_cast<std::uint32_t>(volume()) == 0);
+                Require(std::bit_cast<std::uint32_t>(volume()) == (Ps4Library ? std::bit_cast<std::uint32_t>(-1.0f) : 0));
                 send(std::bit_cast<float>(0x7fc00000u), 1);
                 Require(std::bit_cast<std::uint32_t>(volume()) == 0x7fc00000u);
                 send(-0.0f, 1);
                 Require(std::bit_cast<std::uint32_t>(volume()) == 0x80000000u);
+                if (Ps4Library) {
+                    send(-16.0f, 1);
+                    Require(volume() == -4.0f);
+                }
                 send(33.0f, 1);
-                Require(volume() == 32.0f);
+                Require(volume() == (Ps4Library ? 4.0f : 32.0f));
                 break;
             }
             case Update::Shift:
@@ -237,7 +247,7 @@ static void TestBuffer(Update update, bool custom, bool commands, unsigned order
         if (captured) captured->insert(captured->end(), samples.begin(), samples.begin() + grainFrames);
         for (unsigned i = 0; !shift && i < grainFrames; ++i) {
             if (update == Update::Over) {
-                if (grain != 1) Require(samples[i] == (grain == 0 && i < 3 ? 0.0f : 1000.0f / 32768.0f) * (grain == 0 ? 1.0f : 32.0f));
+                if (grain != 1) Require(samples[i] == (grain == 0 && i < 3 ? 0.0f : 1000.0f / 32768.0f) * (grain == 0 ? 1.0f : Ps4Library ? 4.0f : 32.0f));
                 continue;
             }
             float expected = 1000.0f / 32768.0f;
@@ -689,9 +699,13 @@ static void TestBlockQueueRace() {
     ResetBuffers(firstBuffer);
 }
 
+static void TestPortVolumeOver() {
+    for (bool custom : {false, true}) for (bool commands : {false, true}) for (unsigned order = 0; order < 3; ++order) TestBuffer(Update::Over, custom, commands, order, 64);
+}
+
 int main(int argc, char** argv) {
     if (argc > 1) {
-        const std::pair<const char*, void (*)()> scenarios[] = {{"validation", TestCaptureValidation}, {"recover", TestApplyFailureRecovers},
+        const std::pair<const char*, void (*)()> scenarios[] = {{"over", TestPortVolumeOver}, {"validation", TestCaptureValidation}, {"recover", TestApplyFailureRecovers},
             {"emptysetup", TestEmptySetupPort}, {"destroyed", TestPendingPatchDestroyedDest}, {"race", TestBlockQueueRace}};
         for (const auto& [name, run] : scenarios) {
             if (std::strcmp(argv[1], name) != 0) continue;
@@ -717,10 +731,8 @@ int main(int argc, char** argv) {
         }
     }
     TestBuffer(Update::Combined, true, true, 2, 256);
-    for (bool custom : {false, true}) for (bool commands : {false, true}) for (unsigned order = 0; order < 3; ++order) {
-        TestBuffer(Update::Over, custom, commands, order, 64);
-        cases++;
-    }
+    TestPortVolumeOver();
+    cases += 12;
     std::vector<float> worker, external, unchanged;
     TestBuffer(Update::Shift, true, false, 2, 256, &worker);
     TestBuffer(Update::ExternalShift, true, false, 2, 256, &external);

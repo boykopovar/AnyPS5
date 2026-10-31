@@ -17,6 +17,7 @@ static constexpr std::uint32_t COMMAND_MATRIX_LEVELS = 5;
 static constexpr std::uint32_t COMMAND_PORT_VOLUME = 6;
 static constexpr std::uint32_t COMMAND_PORT_MATRIX = 7;
 static constexpr float MAX_PORT_VOLUME = 32.0f;
+static constexpr float MAX_PS4_PORT_VOLUME = 4.0f;
 static constexpr std::size_t DEFAULT_MAX_PORTS = 8;
 static constexpr std::uint8_t COMMAND_TYPE_FLOAT = 1;
 static constexpr std::uint8_t COMMAND_TYPE_INT = 3;
@@ -28,6 +29,10 @@ static constexpr bool PS4_LIBRARY = true;
 #else
 static constexpr bool PS4_LIBRARY = false;
 #endif
+
+static float ClampPortVolume(float level) {
+    return PS4_LIBRARY ? std::clamp(level, -MAX_PS4_PORT_VOLUME, MAX_PS4_PORT_VOLUME) : std::clamp(level, 0.0f, MAX_PORT_VOLUME);
+}
 
 struct Ngs2ReturnCode {
     int code;
@@ -527,7 +532,7 @@ static Ngs2PendingControl CaptureParamControl(Ngs2Voice& voice, const Ngs2VoiceP
     if (param.id == SCE_NGS2_VOICE_PARAM_PORT_VOLUME) {
         auto value = ParamAs<Ngs2VoicePortVolumeParam>(param);
         PortAt(voice, value.port);
-        value.level = std::clamp(value.level, 0.0f, MAX_PORT_VOLUME);
+        value.level = ClampPortVolume(value.level);
         return value;
     }
     if (param.id == SCE_NGS2_VOICE_PARAM_PORT_MATRIX) {
@@ -622,7 +627,7 @@ static Ngs2PendingControl CaptureCommandControl(Ngs2Voice& voice, const Ngs2Voic
     }
     if (id == COMMAND_PORT_VOLUME) {
         PortAt(voice, index);
-        return Ngs2VoicePortVolumeParam{{}, index, std::clamp(command.value.f, 0.0f, MAX_PORT_VOLUME)};
+        return Ngs2VoicePortVolumeParam{{}, index, ClampPortVolume(command.value.f)};
     }
     if (id == COMMAND_PORT_MATRIX && command.type == COMMAND_TYPE_INT) {
         PortAt(voice, index);
@@ -758,7 +763,7 @@ static void ApplyCommonParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param
         }
         case SCE_NGS2_VOICE_PARAM_PORT_VOLUME: {
             const auto& volume = ParamAs<Ngs2VoicePortVolumeParam>(param);
-            PortAt(voice, volume.port).volume = std::clamp(volume.level, 0.0f, MAX_PORT_VOLUME);
+            PortAt(voice, volume.port).volume = ClampPortVolume(volume.level);
             break;
         }
         case SCE_NGS2_VOICE_PARAM_PORT_MATRIX: {
@@ -1118,7 +1123,7 @@ int APS5_VABI sceNgs2VoiceRunCommands(uintptr_t voice_handle, const Ngs2VoiceCom
             if (expectedType == 0) throw std::runtime_error("NGS2: voice command " + Ngs2Hex(command.id) + " is not implemented");
             if (id != COMMAND_PORT_VOLUME && command.type != expectedType) throw std::invalid_argument("NGS2: voice command " + Ngs2Hex(command.id) + " has value type " + Ngs2Hex(command.type));
             if (id == COMMAND_MATRIX_LEVELS) SetMatrixLevels(voice, index, command.value.levels, command.count);
-            else if (id == COMMAND_PORT_VOLUME) PortAt(voice, index).volume = std::clamp(command.value.f, 0.0f, MAX_PORT_VOLUME);
+            else if (id == COMMAND_PORT_VOLUME) PortAt(voice, index).volume = ClampPortVolume(command.value.f);
             else SetPortMatrix(voice, index, command.value.i);
         }
     } catch (const Ngs2ReturnCode& result) {

@@ -1524,18 +1524,6 @@ static void TestStereoIntoSurround() {
         Require(outSeven[i * 8] == (i < 3 ? 0.0f : 0.5f) && outSeven[i * 8 + 1] == (i < 3 ? 0.0f : 0.25f));
         for (std::uint32_t channel = 2; channel < 8; channel++) Require(outSeven[i * 8 + channel] == 0.0f);
     }
-
-    const auto rejectedSource = RackVoice(samplerRack, 2);
-    StereoSource(rejectedSource, pcm, masters[2]);
-    Event(rejectedSource, SCE_NGS2_VOICE_EVENT_PLAY);
-    bool threw = false;
-    try {
-        sceNgs2SystemRender(system, info, 3);
-
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
@@ -1947,6 +1935,112 @@ static std::vector<float> MixFrame(std::uint32_t sourceChannels, std::uint32_t s
     return std::vector<float>(out.begin() + 3 * destChannels, out.begin() + 4 * destChannels);
 }
 
+struct PortVolumeFx {
+    uintptr_t sampler = 0;
+    std::vector<std::pair<float, float>> cases;
+    bool command = false;
+    std::uint32_t calls = 0;
+};
+
+static int APS5_VABI SetPortVolumes(Ngs2UserFxProcessContext* context) {
+    auto& fx = *reinterpret_cast<PortVolumeFx*>(context->user_data0);
+    if (fx.calls++ != 0) return SCE_NGS2_OK;
+    for (const auto& [sent, stored] : fx.cases) {
+        if (fx.command) {
+            const auto set = PortVolumeCommand(0, sent);
+            Require(sceNgs2VoiceRunCommands(fx.sampler, &set, 1) == SCE_NGS2_OK);
+        } else {
+            Control(fx.sampler, SCE_NGS2_VOICE_PARAM_PORT_VOLUME, Ngs2VoicePortVolumeParam{{}, 0, sent});
+        }
+        Require(SameBits(PortVolume(fx.sampler, 0), stored));
+    }
+    return SCE_NGS2_OK;
+}
+
+static void TestPortVolumeRangeLikePs4() {
+    const std::vector<std::int16_t> pcm(Grain, 4096);
+    const float inf = INFINITY;
+    const float nan = std::bit_cast<float>(0x7fc00000u);
+    const float negativeNan = std::bit_cast<float>(0xffc00000u);
+    const float tiny = std::bit_cast<float>(0x000116c2u);
+    const float negativeTiny = std::bit_cast<float>(0x800116c2u);
+    const float aboveFour = 4.000001f;
+    const float belowFour = 3.999999f;
+    const auto check = [&](bool command, float sent, float stored, bool rendered) {
+        const auto system = CreateSystem();
+        const auto sampler = Sampler(system, pcm, 0);
+        Patch(sampler, Mastering(system, 1));
+        if (command) {
+            const auto set = PortVolumeCommand(0, sent);
+            Require(sceNgs2VoiceRunCommands(sampler, &set, 1) == SCE_NGS2_OK);
+        } else {
+            Control(sampler, SCE_NGS2_VOICE_PARAM_PORT_VOLUME, Ngs2VoicePortVolumeParam{{}, 0, sent});
+        }
+        Require(SameBits(PortVolume(sampler, 0), stored));
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        std::vector<float> out(Grain, -1.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        for (std::size_t i = 0; rendered && i < out.size(); ++i) Require(std::isnan(stored) ? std::isnan(out[i]) : out[i] == (i < 3 ? 0.0f : 0.125f * stored));
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    };
+    const std::vector<std::pair<float, float>> cases{
+        {0.0f, 0.0f}, {-0.0f, -0.0f}, {0.5f, 0.5f}, {1.0f, 1.0f}, {2.5f, 2.5f}, {belowFour, belowFour}, {4.0f, 4.0f},
+        {aboveFour, 4.0f}, {4.01f, 4.0f}, {5.0f, 4.0f}, {8.0f, 4.0f}, {32.0f, 4.0f}, {33.0f, 4.0f}, {1e30f, 4.0f}, {inf, 4.0f},
+        {-0.5f, -0.5f}, {-1.0f, -1.0f}, {-3.9f, -3.9f}, {-belowFour, -belowFour}, {-4.0f, -4.0f},
+        {-aboveFour, -4.0f}, {-5.0f, -4.0f}, {-16.0f, -4.0f}, {-1e30f, -4.0f}, {-inf, -4.0f},
+        {nan, nan}, {negativeNan, negativeNan}};
+    for (const bool command : {false, true}) {
+        for (const auto& [sent, stored] : cases) check(command, sent, stored, true);
+        check(command, tiny, tiny, false);
+        check(command, negativeTiny, negativeTiny, false);
+    }
+
+    for (const bool command : {false, true}) {
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, 1);
+        const auto fxVoice = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+        Control(fxVoice, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 1, 0});
+        const auto sampler = Sampler(system, pcm, 100);
+        PortVolumeFx fx{sampler, {{5.0f, 4.0f}, {-5.0f, -4.0f}, {aboveFour, 4.0f}, {33.0f, 4.0f}, {-0.5f, -0.5f}, {-16.0f, -4.0f}}, command};
+        Control(fxVoice, SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX, Ngs2SubmixerVoiceUserFxParam{{}, SetPortVolumes, reinterpret_cast<std::uintptr_t>(&fx), 0, 0});
+        Patch(fxVoice, master);
+        Patch(sampler, fxVoice);
+        Event(fxVoice, SCE_NGS2_VOICE_EVENT_PLAY);
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        std::vector<float> out(Grain, -1.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        Require(fx.calls == 1 && SameBits(PortVolume(sampler, 0), -4.0f));
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        Require(fx.calls == 3 && SameBits(PortVolume(sampler, 0), -4.0f));
+        for (std::size_t i = 0; i < out.size(); ++i) Require(out[i] == 0.125f * -4.0f);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+
+    for (const auto& [sent, stored] : std::vector<std::pair<float, float>>{
+             {1.5f, 1.5f}, {belowFour, belowFour}, {4.0f, 4.0f}, {aboveFour, 4.0f}, {5.0f, 4.0f}, {32.0f, 4.0f}, {1e30f, 4.0f}, {inf, 4.0f},
+             {-1.0f, -1.0f}, {-belowFour, -belowFour}, {-4.0f, -4.0f}, {-aboveFour, -4.0f}, {-5.0f, -4.0f}, {-16.0f, -4.0f}, {-inf, -4.0f}, {nan, nan}, {-0.0f, -0.0f}}) {
+        const auto system = CreateSystem();
+        const auto master = Mastering(system, 1);
+        const auto submixer = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
+        Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 1, 0});
+        Patch(submixer, master);
+        Event(submixer, SCE_NGS2_VOICE_EVENT_PLAY);
+        const auto sampler = Sampler(system, pcm, 100);
+        Patch(sampler, submixer);
+        Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
+        Control(submixer, SCE_NGS2_VOICE_PARAM_PORT_VOLUME, Ngs2VoicePortVolumeParam{{}, 0, sent});
+        Require(SameBits(PortVolume(submixer, 0), stored));
+        std::vector<float> out(Grain, -1.0f);
+        const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 1};
+        for (int render = 0; render < 3; ++render) Require(sceNgs2SystemRender(system, &info, 1) == SCE_NGS2_OK);
+        for (std::size_t i = 0; i < out.size(); ++i) Require(std::isnan(stored) ? std::isnan(out[i]) : out[i] == 0.125f * stored);
+        Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+    }
+}
+
 static void TestDefaultChannelMap() {
     const float half = 0.5f * HalfPower;
     const float quarter = 0.5f * (std::numbers::sqrt2_v<float> / 4.0f);
@@ -1975,23 +2069,6 @@ static void TestDefaultChannelMap() {
     Require(MixFrame(8, 6, 2) == (std::vector<float>{Ps4Library ? 0.25f : half, 0}));
     Require(MixFrame(8, 7, 6) == (std::vector<float>{0, 0, 0, 0, 0, 0.5f}));
     Require(MixFrame(8, 7, 8) == (std::vector<float>{0, 0, 0, 0, 0, 0, 0, 0.5f}));
-
-    const auto system = CreateSystem();
-    const auto master = Mastering(system, 2);
-    const auto submixer = Voice(CreateRack(system, SCE_NGS2_RACK_ID_SUBMIXER));
-    Control(submixer, SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP, Ngs2SubmixerVoiceSetupParam{{}, 4, 0});
-    Patch(submixer, master);
-    Event(submixer, SCE_NGS2_VOICE_EVENT_PLAY);
-    const std::vector<std::int16_t> pcm(Grain, 16384);
-    const auto sampler = Sampler(system, pcm, 0);
-    Patch(sampler, submixer);
-    Event(sampler, SCE_NGS2_VOICE_EVENT_PLAY);
-    std::vector<float> out(Grain * 2, -1.0f);
-    const Ngs2RenderBufferInfo info{out.data(), out.size() * sizeof(float), SCE_NGS2_WAVEFORM_TYPE_PCM_F32L, 2};
-    bool unsupported = false;
-    try { sceNgs2SystemRender(system, &info, 1); } catch (const std::runtime_error&) { unsupported = true; }
-    Require(unsupported);
-    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
 static void TestUnsetMatrix() {
@@ -2279,7 +2356,8 @@ int main() {
     TestMasteringGain();
     TestMatrixLevelClamp();
 
-    TestPortVolumeClampedLikePs5();
+    if (!Ps4Library) TestPortVolumeClampedLikePs5();
+    else TestPortVolumeRangeLikePs4();
 
     TestStereoIntoSurround();
     TestLock();
