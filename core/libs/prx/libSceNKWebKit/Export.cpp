@@ -41387,4 +41387,8 @@ int APS5_VABI libSceNKWebKitUnknown_zpeJoENXwDY_nid_no_patch() {
 }
 APS5_EXPORT("zpeJoENXwDY", libSceNKWebKitUnknown_zpeJoENXwDY_nid_no_patch);
 
+int APS5_VABI _ZN7WebCore24StorageNamespaceProviderD0Ev() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

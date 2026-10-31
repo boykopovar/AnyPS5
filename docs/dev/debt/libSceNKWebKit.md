@@ -10,7 +10,7 @@
 
 - [Constant-return exports](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 137 exports answer with a fixed value in the PS5 11.00 module: 111 execute `xor eax,eax; ret`, 13 `mov eax,imm32; ret` and 13 `mov al,1; ret` (addresses and bodies from the 11.00 `libSceNKWebKit.sprx`, SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`; NIDs recomputed from the declared names). The 124 EAX-writing bodies measure the 32-bit return; the 13 `mov al,1` bodies write only the low byte, so for them only AL is measured and the upper bits are unspecified. The declared prototypes stay the no-parameter `int` placeholders, so no other width, pointer or floating-point return is claimed. Only 11.00 was measured.
 
-- [Forwarded exports](../../../core/libs/prx/libSceNKWebKit/src/ForwardExports.cpp) (libSceNKWebKit) - 272 exports are the same function under another name in the PS5 11.00 module: the body at each address is a `jmp rel32` into another export of the same image, so they are implemented as an assembly tail jump to that export. The target is one of 196 `operator new`/`operator new[]` exports that forward to `WTF::fastMalloc`, 104 `operator delete`/`operator delete[]` and 16 destructors that forward to `WTF::fastFree`, and 2 `WKUserMediaPermissionRequest*DeviceUIDs` that forward to `WKMutableArrayCreate`; the jump keeps every register, so the return type and arguments are whatever the target uses, but their behaviour is only as verified as the target's and no prototype is claimed. Addresses, sizes and bytes come from the 11.00 `libSceNKWebKit.sprx`, with each NID recomputed from the declared name; only 11.00 was measured.
+- [Forwarded exports](../../../core/libs/prx/libSceNKWebKit/src/ForwardExports.cpp) (libSceNKWebKit) - 275 exports are the same function under another name in the PS5 11.00 module: the body at their address is a `jmp rel32` into another export of the same image (26 distinct targets), so they are implemented as an assembly tail jump to that export. The jump keeps every register, so the return type and arguments are whatever the target uses, and 198 of them reach an implemented target (104 `operator delete`-family jumps to `WTF::fastFree`, 92 `operator new`-family jumps to `WTF::fastMalloc`, 2 `WKUserMediaPermissionRequest*DeviceUIDs` to `WKMutableArrayCreate`); the other 77 jump to an export that still throws, so they throw as well, and no prototype is claimed for either symbol. Addresses, sizes and bytes come from the 11.00 `libSceNKWebKit.sprx` (SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`), with each NID recomputed from the declared name; only 11.00 was measured.
 
 - [JavaScriptCore C API](../../../core/libs/prx/libSceNKWebKit/src/JscContext.cpp) (libSceNKWebKit) - `JS*` runs on QuickJS-NG (`3rdparty/quickjs`), not JavaScriptCore: there is no JIT and no conservative stack scan, and error messages, stack traces and property order come from QuickJS. An unprotected `JSObjectRef` held only in a native variable or heap structure across `JSGarbageCollect` is collected, where JavaScriptCore keeps it through its stack scan; `JSValueProtect`, a marking constraint, a JavaScript reference or an active callback frame keep it alive. `JSStringRef` values are `libSceJsc` strings.
 - [Dictionary key order](../../../core/libs/prx/libSceNKWebKit/src/Dictionary.cpp) (libSceNKWebKit) - `WKDictionaryCopyKeys` returns keys sorted by UTF-16 code unit, not in the `WTF::HashMap` iteration order of [WKDictionary.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKDictionary.cpp).
@@ -320,7 +320,6 @@
 | `WKContextEnableProcessTermination` | `FJB0fZbTUWY` |
 | `WKContextGarbageCollectJavaScriptObjects` | `MBIrQeS3ILw` |
 | `WKContextGetAccessibilityEnabled` | `YREfLD1wwT0` |
-| `WKContextGetApplicationCacheManager` | `PZzcUP8YYkg` |
 | `WKContextGetCacheModel` | `vdM7J5Xjh2A` |
 | `WKContextGetGeolocationManager` | `GJsL9usTdig` |
 | `WKContextGetGlobalStatistics` | `cLN+-CVotuU` |
@@ -2529,7 +2528,6 @@
 | `_ZN7WebCore13MIMETypeCacheD2Ev` | `47WhLC3+uRA` |
 | `_ZN7WebCore13MIMETypeCacheaSERKS0_` | `EbS+N1MbOBw` |
 | `_ZN7WebCore13MIMETypeCachenaEmPv` | `ah7gMVFXK8I` |
-| `_ZN7WebCore13MIMETypeCachenwEm` | `PIa6V635TSQ` |
 | `_ZN7WebCore13MIMETypeCachenwEmPv` | `BwDiCf2Irzg` |
 | `_ZN7WebCore13MediaStrategyC1ERKS0_` | `UoyxMN47fmw` |
 | `_ZN7WebCore13MediaStrategyC1Ev` | `FKp2wB9uPwY` |
@@ -5182,7 +5180,6 @@
 | `_ZN9Inspector18InspectorHeapAgentD0Ev` | `cbxQvl0FscU` |
 | `_ZN9Inspector18InspectorHeapAgentD1Ev` | `nC0Zgj4tVAY` |
 | `_ZN9Inspector18InspectorHeapAgentD2Ev` | `t7Sao1Z9Vgc` |
-| `_ZN9Inspector18InspectorHeapAgentdlEPv` | `HdqkxFL0nGo` |
 | `_ZN9Inspector18InspectorHeapAgentnaEmPv` | `5Z1c0doVn20` |
 | `_ZN9Inspector18InspectorHeapAgentnwEm10NotNullTagPv` | `4CiIyjuiGiE` |
 | `_ZN9Inspector18InspectorHeapAgentnwEmPv` | `DZF93h86bFk` |
