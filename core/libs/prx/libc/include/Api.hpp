@@ -6,9 +6,11 @@
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include "prx/libc/include/LegacySignals.hpp"
 #include "SceTypes.hpp"
 #include <future>
 #include <regex>
@@ -103,6 +105,7 @@ struct FutureErrorObject { const void* vtable; GuestLocale::String message; Erro
 }
 
 extern "C" {
+
 
 int APS5_VABI std_execute_once_nid_postfix(int* flag, int (APS5_VABI *func)(void*, void*, void**), void* arg);
 void APS5_VABI LibcHeapGetTraceInfo_nid_postfix(LibcHeapInfo* info);
@@ -829,7 +832,6 @@ std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const ch
 std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t* dest, const char* src, std::size_t size);
 void APS5_VABI exit_nid_postfix(int code);
 int* APS5_VABI libc_error_nid_postfix();
-int* APS5_VABI __error_nid_postfix();
 int APS5_VABI atexit_nid_postfix(GuestExitCallback func);
 int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func);
 int APS5_VABI daemon_nid_postfix(int noChdir, int noClose);

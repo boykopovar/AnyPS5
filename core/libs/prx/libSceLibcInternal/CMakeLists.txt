@@ -196,3 +196,40 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibcInternal>")
     endif()
 endif()
+
+target_sources(libSceLibcInternal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Sigvec.cpp)
+
+if(BUILD_TESTING AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
+    add_test_executable(guest_sigvec_modules_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestSigvecModules.cpp
+        ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp
+        ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)
+    target_include_directories(guest_sigvec_modules_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
+    target_link_libraries(guest_sigvec_modules_tests PRIVATE ${CMAKE_DL_LIBS})
+    set_source_files_properties(${LIBS_INCLUDE_DIR}/tests/GuestSigvecModules.cpp PROPERTIES COMPILE_OPTIONS "-fno-exceptions;-fno-asynchronous-unwind-tables")
+    if(MINGW)
+        target_compile_options(guest_sigvec_modules_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(guest_sigvec_modules_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_library(sigvec_modules_exceptions SHARED ${LIBS_INCLUDE_DIR}/tests/SigvecModulesExceptions.cpp)
+    target_include_directories(sigvec_modules_exceptions PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(sigvec_modules_exceptions PRIVATE libc)
+    set_target_properties(sigvec_modules_exceptions PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    configure_windows_unwind(sigvec_modules_exceptions)
+    add_dependencies(guest_sigvec_modules_tests libc libkernel libSceLibcInternal nid_patcher sigvec_modules_exceptions)
+    set(sigvecAllocatorArgument)
+    if(TARGET mimalloc)
+        set(sigvecAllocatorArgument -DALLOCATOR_DIRECTORY=$<TARGET_FILE_DIR:mimalloc>)
+    endif()
+    add_test(NAME guest_sigvec_modules COMMAND ${CMAKE_COMMAND}
+        -DEXCEPTION_PROBE=$<TARGET_FILE:sigvec_modules_exceptions>
+        -DPATCHER=$<TARGET_FILE:nid_patcher>
+        -DLIBC=$<TARGET_FILE:libc>
+        -DKERNEL=$<TARGET_FILE:libkernel>
+        -DINTERNAL=$<TARGET_FILE:libSceLibcInternal>
+        ${sigvecAllocatorArgument}
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/sigvec-modules
+        -P ${LIBS_INCLUDE_DIR}/tests/SigvecModules.cmake
+        -- "$<TARGET_FILE:guest_sigvec_modules_tests>")
+    set_tests_properties(guest_sigvec_modules PROPERTIES TIMEOUT 20)
+endif()

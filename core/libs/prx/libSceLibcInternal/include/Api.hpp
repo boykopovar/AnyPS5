@@ -4,6 +4,7 @@
 #include "prx/libSceLibcInternal/include/Spawn.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/LegacySignals.hpp"
 #include "SceTypes.hpp"
 
 using ErrExit = void (APS5_VABI*)(int);
