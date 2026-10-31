@@ -225,11 +225,15 @@ void APS5_VABI __ubsan_handle_cfi_check_fail_nid_postfix(Ubsan::CfiCheckFailData
     Ubsan::ReportCfiCheckFail(data, value, validVtable, false);
 }
 
-int APS5_VABI _dup2_nid_postfix(int from, int to) {
+int GuestDup2_nid_no_patch(int from, int to) {
     return dup2_nid_postfix(from, to);
 }
 
-static int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp) {
+int APS5_VABI _dup2_nid_postfix(int from, int to) {
+    return GuestDup2_nid_no_patch(from, to);
+}
+
+int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp) {
     constexpr int GuestEfault = 14;
     constexpr int GuestEacces = 13;
     constexpr int GuestEnoexec = 8;
@@ -340,7 +344,7 @@ int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* con
     return GuestExecve_nid_no_patch(path, argv, envp);
 }
 
-int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp) {
+int GuestExecvpe_nid_no_patch(const char* name, char* const* argv, char* const* envp) {
     constexpr int GuestEacces = 13;
     constexpr int GuestEnoent = 2;
     constexpr int GuestE2big = 7;
@@ -455,6 +459,10 @@ int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* co
         if (ladder(candidate)) return -1;
     }
     return fail(accessFailure ? GuestEacces : GuestEnoent);
+}
+
+int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp) {
+    return GuestExecvpe_nid_no_patch(name, argv, envp);
 }
 
 int APS5_VABI _wait4_nid_postfix(int pid, int* status, int options, void* usage) {
