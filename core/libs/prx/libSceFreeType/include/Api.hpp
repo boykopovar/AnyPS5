@@ -16,6 +16,8 @@ int APS5_VABI FT_New_Face_nid_postfix(FreeType::GuestLibrary* library, const cha
 int APS5_VABI FT_New_Memory_Face_nid_postfix(FreeType::GuestLibrary* library, const unsigned char* fileBase, std::int64_t fileSize, std::int64_t faceIndex, FreeType::GuestFaceRec** aface);
 int APS5_VABI FT_Reference_Face_nid_postfix(FreeType::GuestFaceRec* face);
 int APS5_VABI FT_Done_Face_nid_postfix(FreeType::GuestFaceRec* face);
+int APS5_VABI FT_Attach_File_nid_postfix(FreeType::GuestFaceRec* face, const char* filepathname);
+std::int64_t APS5_VABI FT_Get_PS_Font_Value_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t key, std::uint32_t index, void* value, std::int64_t valueLength);
 int APS5_VABI FT_Select_Size_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t strikeIndex);
 int APS5_VABI FT_New_Size_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestSizeRec** asize);
 int APS5_VABI FT_Activate_Size_nid_postfix(FreeType::GuestSizeRec* size);
