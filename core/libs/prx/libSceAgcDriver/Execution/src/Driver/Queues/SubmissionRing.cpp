@@ -38,6 +38,7 @@ std::chrono::steady_clock::time_point realStallClock() { return std::chrono::ste
 std::atomic<StallClock> stallClock{realStallClock};
 std::atomic<StallPresenter> stallPresenter{ShowStallPrompt};
 constexpr int StallQuitExitCode = 124;
+constexpr int MaxStallPrompts = 3;
 
 struct Entry {
     std::uint64_t tenthsOfMs = 0;
@@ -298,15 +299,22 @@ void StallWatch::Check(const char* waiter, std::uint64_t value) {
         return;
     }
     if (now - since < period) return;
-    finished = true;
     char reason[192];
     std::snprintf(reason, sizeof(reason), "queue 0x%x %s 0x%llx has not progressed for %lld s (APS5_STALL_WATCHDOG_SECS)", queue, waiter, static_cast<unsigned long long>(value), static_cast<long long>(period.count()));
-    DumpSubmissionRings(reason);
-    if (!StallPromptEnabled()) return;
+    if (!dumped) {
+        dumped = true;
+        DumpSubmissionRings(reason);
+    }
+    if (!StallPromptEnabled()) {
+        finished = true;
+        return;
+    }
     char message[320];
     std::snprintf(message, sizeof(message), "This title has not made progress for %lld seconds (queue 0x%x %s 0x%llx).\n\nWait keeps it running. Quit stops it; the submission rings are on stderr.", static_cast<long long>(period.count()), queue, waiter, static_cast<unsigned long long>(value));
     switch (stallPresenter.load()(message)) {
         case StallChoice::Wait:
+            if (++prompts == MaxStallPrompts) finished = true;
+            since = stallClock.load()();
             return;
         case StallChoice::Quit:
             std::fprintf(stderr, "[stall prompt] quit at a stalled wait; exit code %d (ANYPS5_STALL_PROMPT)\n", StallQuitExitCode);
@@ -314,6 +322,7 @@ void StallWatch::Check(const char* waiter, std::uint64_t value) {
             LibcTerminate_nid_no_patch(StallQuitExitCode);
         case StallChoice::Unavailable:
             std::fputs("[stall prompt] no message box is available; the rings are printed only\n", stderr);
+            finished = true;
             return;
     }
 }

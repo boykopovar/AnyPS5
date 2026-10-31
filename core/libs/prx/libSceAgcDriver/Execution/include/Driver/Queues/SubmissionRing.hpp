@@ -44,7 +44,9 @@ public:
 private:
     std::uint32_t queue;
     std::chrono::steady_clock::time_point since{};
+    bool dumped = false;
     bool finished = false;
+    int prompts = 0;
 };
 
 }
