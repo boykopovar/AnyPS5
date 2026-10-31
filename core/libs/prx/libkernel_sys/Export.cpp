@@ -279,6 +279,33 @@ bool HasLongComponent(std::string_view path) {
     return false;
 }
 
+bool HostFollowsGuestTarget(const char* created, const char* target, const std::filesystem::path& native) {
+    auto directory = native.parent_path();
+    for (const auto& part : std::filesystem::path(target)) {
+        if (part.empty() || part == ".") continue;
+        if (part != "..") {
+            directory /= part;
+            continue;
+        }
+        std::error_code error;
+        if (!std::filesystem::is_directory(directory, error) || IsSymbolicLink(directory)) return false;
+        directory = directory.parent_path();
+    }
+    const std::string_view link(created);
+    const auto separator = link.find_last_of("/\\");
+    std::string guest = separator == std::string_view::npos ? std::string(".") : std::string(link.substr(0, separator == 0 ? 1 : separator));
+    guest += '/';
+    guest += target;
+    std::filesystem::path resolved;
+    if (ResolvePathError_nid_no_patch(guest.c_str(), resolved)) return false;
+    const auto trimmed = [](std::filesystem::path path) {
+        path = path.lexically_normal();
+        if (!path.has_filename() && path.has_relative_path()) path = path.parent_path();
+        return path;
+    };
+    return trimmed(resolved) == trimmed(directory);
+}
+
 bool IsDotOrDotDot(std::string_view path) {
     while (!path.empty() && (path.back() == '/' || path.back() == '\\')) path.remove_suffix(1);
     const auto separator = path.find_last_of("/\\");
@@ -832,12 +859,6 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
         NotImplemented_nid_no_patch("symlink: absolute targets");
         return -1;
     }
-    for (const auto& part : contents) {
-        if (part == "..") {
-            NotImplemented_nid_no_patch("symlink: parent-directory targets");
-            return -1;
-        }
-    }
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(created, native)) return static_cast<int>(Fail(error));
     std::error_code error;
@@ -847,6 +868,11 @@ int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
     if (std::filesystem::exists(std::filesystem::symlink_status(native, error))) return static_cast<int>(Fail(GuestEexist));
 #endif
     if (!std::filesystem::is_directory(native.parent_path(), error)) return static_cast<int>(Fail(HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestEnoent));
+    if (std::any_of(contents.begin(), contents.end(), [](const std::filesystem::path& part) { return part == ".."; }) &&
+        !HostFollowsGuestTarget(created, target, native)) {
+        NotImplemented_nid_no_patch("symlink: a parent-directory target the host would not follow to the guest path it names");
+        return -1;
+    }
     const bool directory = std::filesystem::is_directory(native.parent_path() / contents, error);
 #ifdef _WIN32
     DWORD flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;

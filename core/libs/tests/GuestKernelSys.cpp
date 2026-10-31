@@ -355,14 +355,14 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
 
 void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
     const auto created = (root / "rejected").string();
-    for (const auto& target : {std::string(".."), std::string("../x"), std::string("a/../b"), std::string("a/../../x"), std::string("/abs")})
+    for (const auto& target : {std::string("a/../b"), std::string("a/../../x"), std::string("/abs")})
         Require(SymlinkTargetThrows(target.c_str(), created));
 #ifdef _WIN32
     for (const auto& target : {std::string("C:/"), std::string("\\\\server\\share")})
         Require(SymlinkTargetThrows(target.c_str(), created));
 #endif
     const auto links = [](const std::string& created, const char* target) {
-        char buffer[16];
+        char buffer[64];
         const auto length = std::strlen(target);
         return readlink_nid_postfix(created.c_str(), buffer, sizeof(buffer)) == static_cast<std::int64_t>(length) &&
             std::memcmp(buffer, target, length) == 0;
@@ -376,6 +376,29 @@ void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
         const auto ellipsis = (root / "accepted-ellipsis").string();
         Require(symlink_nid_postfix("...", ellipsis.c_str()) == 0 && links(ellipsis, "..."));
         Require(RemoveSymlink(nested) && RemoveSymlink(dots) && RemoveSymlink(ellipsis));
+        const auto climb = root / "climb";
+        Require(std::filesystem::create_directories(climb / "deeper"));
+        const auto readsFile = [](const std::string& link) {
+            const int fd = sceKernelOpen(link.c_str(), SCE_KERNEL_O_RDONLY, 0);
+            char byte = 0;
+            const bool read = fd >= 0 && sceKernelRead(fd, &byte, 1) == 1 && byte == 'x';
+            return fd >= 0 && sceKernelClose(fd) == 0 && read;
+        };
+        const auto up = (climb / "up").string();
+        Require(symlink_nid_postfix("../file.txt", up.c_str()) == 0 && links(up, "../file.txt") && readsFile(up));
+        const auto inner = (climb / "inner").string();
+        Require(symlink_nid_postfix("deeper/../../file.txt", inner.c_str()) == 0 && links(inner, "deeper/../../file.txt") && readsFile(inner));
+        const auto parent = (climb / "parent").string();
+        Require(symlink_nid_postfix("..", parent.c_str()) == 0 && links(parent, "..") && readsFile((climb / "parent" / "file.txt").string()));
+        const auto parentDangling = (climb / "dangling").string();
+        Require(symlink_nid_postfix("../missing/x", parentDangling.c_str()) == 0 && links(parentDangling, "../missing/x"));
+        const auto mount = "/anyps5-symlink-climb-mount";
+        AddPathAlias_nid_no_patch(mount, std::filesystem::absolute(climb).string().c_str());
+        Require(symlink_nid_postfix("deeper/../up", (std::string(mount) + "/kept").c_str()) == 0 && readsFile((climb / "kept").string()));
+        RemovePathAlias_nid_no_patch(mount);
+        Require(RemoveSymlink(up) && RemoveSymlink(inner) && RemoveSymlink(parent) && RemoveSymlink(parentDangling));
+        Require(RemoveSymlink((climb / "kept").string()));
+        Require(std::filesystem::remove(climb / "deeper") && std::filesystem::remove(climb));
     } else {
         Require(link == -1 && Error() == 1);
         std::fprintf(stderr, "symbolic links unavailable: the symlink target success cases not tested\n");
