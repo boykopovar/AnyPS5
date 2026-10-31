@@ -24,11 +24,38 @@ class ProgressRenderSliverTests(unittest.TestCase):
         parts = progress.treemap("System libraries*", libraries, 0)
         cells = "\n".join(parts)
         self.assertEqual(cells.count('fill="#2ea043"'), 1)
-        self.assertEqual(cells.count('fill="#6e7681"'), 1)
-        self.assertEqual(cells.count('fill="#30363d"'), 2)
+        self.assertEqual(cells.count('fill="#d29922"'), 1)
+        self.assertEqual(cells.count('fill="#8957e5"'), 2)
+        self.assertEqual(cells.count('fill="#6e7681"'), 0)
         self.assertIn("libA: 1/2 (50%), 2 unobserved", cells)
         svg = progress.render(libraries, {"done": 0, "total": 0, "percent": 0, "groups": []})
         self.assertIn(">Unobserved stub</text>", svg)
+        self.assertIn(">Not implemented (shaders)</text>", svg)
+        self.assertEqual(len({progress.DONE_COLOR, progress.TODO_COLOR, progress.UNOBSERVED_COLOR, progress.PENDING_COLOR}), 4)
+
+    def test_shader_panel_draws_pending_instructions_in_the_pending_colour(self):
+        shaders = {"done": 1, "total": 2, "percent": 50, "groups": [{"name": "SOP1", "label": "SOP1", "done": 1, "todo": 1}]}
+        cells = "\n".join(progress.treemap("GPU shader instructions", shaders, 0, states=False))
+        self.assertEqual((cells.count('fill="#2ea043"'), cells.count('fill="#6e7681"'), cells.count('fill="#d29922"')), (1, 1, 0))
+
+    def test_pending_cells_show_name_provenance_origin_and_inventory_when_known(self):
+        sha = "0123456789abcdef0123456789abcdef01234567"
+        libraries = {"done": 1, "total": 2, "percent": 50, "groups": [{
+            "name": "libA", "label": "libA", "done": 1, "todo": 1, "unobserved": 1, "done_names": ["Ready"],
+            "todo_names": ["Seen"], "unobserved_names": ["Unseen"], "observed_tags": {"Seen": "loader"},
+            "origins": {"Seen": {"commit": sha, "date": "2026-01-02"}, "Unseen": {"commit": sha, "date": "2026-03-04"}},
+            "inventory": {"Unseen": "Libs-3.20"}}]}
+        cells = "\n".join(progress.treemap("System libraries*", libraries, 0))
+        self.assertIn("<title>Unseen: unobserved stub, declared in 0123456789 on 2026-03-04, listed in Libs-3.20</title>", cells)
+        self.assertIn("<title>Seen: observed stub, observed by loader, declared in 0123456789 on 2026-01-02</title>", cells)
+        self.assertNotIn("Ready:", cells)
+
+    def test_cells_get_no_tooltip_without_traceability_data(self):
+        libraries = {"done": 0, "total": 1, "percent": 0, "groups": [{
+            "name": "libA", "label": "libA", "done": 0, "todo": 1, "unobserved": 1, "todo_names": ["Seen"], "unobserved_names": ["Unseen"]}]}
+        cells = "\n".join(progress.treemap("System libraries*", libraries, 0))
+        self.assertNotIn("Seen:", cells)
+        self.assertNotIn("Unseen:", cells)
 
     def test_cells_without_area(self):
         self.assertEqual(progress.cells(5, 0, 0, 0, 10), [])

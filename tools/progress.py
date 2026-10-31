@@ -91,7 +91,7 @@ OPCODE_VARIANTS = {
 }
 REPORT_ROWS = 100
 PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER, LEGEND = 495, 10, 280, 30, 26
-DONE_COLOR, TODO_COLOR, UNOBSERVED_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#30363d", "#0d1117", "#ffffff"
+DONE_COLOR, TODO_COLOR, UNOBSERVED_COLOR, PENDING_COLOR, BORDER, TEXT = "#2ea043", "#d29922", "#8957e5", "#6e7681", "#0d1117", "#ffffff"
 
 
 def blank(match):
@@ -470,9 +470,27 @@ def cells(count, x, y, w, h):
     return result
 
 
-def rect(x, y, w, h, color, stroke=0.5):
-    return (f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" '
-            f'fill="{color}" stroke="{BORDER}" stroke-width="{stroke}"/>')
+def rect(x, y, w, h, color, stroke=0.5, title=None):
+    shape = f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="{color}" stroke="{BORDER}" stroke-width="{stroke}"'
+    return f"{shape}><title>{escape(title)}</title></rect>" if title else f"{shape}/>"
+
+
+def commit_url(sha):
+    return SOURCE.rsplit("/blob/", 1)[0] + "/commit/" + sha
+
+
+def cell_title(group, name, kind):
+    details = [f"{name}: {kind}"]
+    tag = group.get("observed_tags", {}).get(name)
+    if tag:
+        details.append(f"observed by {tag}")
+    origin = group.get("origins", {}).get(name)
+    if origin:
+        details.append(f"declared in {origin['commit'][:10]} on {origin['date']}")
+    source = group.get("inventory", {}).get(name)
+    if source:
+        details.append(f"listed in {source}")
+    return ", ".join(details) if len(details) > 1 else None
 
 
 def text(x, y, value, size):
@@ -484,7 +502,7 @@ def declared_size(group):
     return group["done"] + group["todo"] + group.get("unobserved", 0)
 
 
-def treemap(title, data, left):
+def treemap(title, data, left, states=True):
     groups = sorted((g for g in data["groups"] if declared_size(g)), key=lambda g: -declared_size(g))
     parts = [text(left + 4, 21, f'{title}: {data["percent"]}% ({data["done"]}/{data["total"]})', 16)]
     for group, (x, y, w, h) in zip(groups, squarify([declared_size(g) for g in groups], left, HEADER, PANEL_WIDTH, MAP_HEIGHT)):
@@ -495,9 +513,19 @@ def treemap(title, data, left):
         ratio = f" ({100 * group['done'] / observed:.0f}%)" if observed else ""
         extra = f", {unobserved} unobserved" if unobserved else ""
         parts.append(f'<g><title>{escape(group["name"])}: {group["done"]}/{observed}{ratio}{escape(extra)}{escape(suffix)}</title>')
+        pending = group.get("todo_names", []) if states else []
+        hidden = group.get("unobserved_names", []) if states else []
         for i, cell in enumerate(cells(declared_size(group), x + 1, y + 1, w - 2, h - 2)):
-            color = DONE_COLOR if i < group["done"] else TODO_COLOR if i < observed else UNOBSERVED_COLOR
-            parts.append(rect(*cell, color))
+            if i < group["done"]:
+                parts.append(rect(*cell, DONE_COLOR))
+            elif i < observed:
+                index = i - group["done"]
+                name = pending[index] if index < len(pending) else None
+                parts.append(rect(*cell, TODO_COLOR if states else PENDING_COLOR, title=cell_title(group, name, "observed stub") if name else None))
+            else:
+                index = i - observed
+                name = hidden[index] if index < len(hidden) else None
+                parts.append(rect(*cell, UNOBSERVED_COLOR, title=cell_title(group, name, "unobserved stub") if name else None))
         parts.append(f'<rect x="{x:.2f}" y="{y:.2f}" width="{w:.2f}" height="{h:.2f}" fill="none" stroke="{BORDER}" stroke-width="2"/>')
         label_length = int((w - 10) / 7)
         label = group["label"][:label_length] if label_length > 0 else ""
@@ -509,7 +537,8 @@ def treemap(title, data, left):
 
 def legend(left, top):
     parts, x = [], left
-    for label, color in (("Implemented", DONE_COLOR), ("Observed stub", TODO_COLOR), ("Unobserved stub", UNOBSERVED_COLOR)):
+    for label, color in (("Implemented", DONE_COLOR), ("Observed stub", TODO_COLOR), ("Unobserved stub", UNOBSERVED_COLOR),
+                         ("Not implemented (shaders)", PENDING_COLOR)):
         parts.append(rect(x, top + 7, 12, 12, color, 0.5))
         parts.append(text(x + 17, top + 18, label, 12))
         x += 17 + 7 * len(label) + 18
@@ -521,7 +550,7 @@ def render(libraries, shaders):
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" width="{width}" height="{height}">',
              rect(0, 0, width, height, BORDER, 0)]
     parts += treemap("System libraries*", libraries, 0)
-    parts += treemap("GPU shader instructions", shaders, PANEL_WIDTH + GAP)
+    parts += treemap("GPU shader instructions", shaders, PANEL_WIDTH + GAP, states=False)
     parts += legend(4, HEADER + MAP_HEIGHT)
     parts.append("</svg>")
     return "\n".join(parts)
