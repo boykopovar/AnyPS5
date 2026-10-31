@@ -865,6 +865,91 @@ static long double MakeExtended(std::uint64_t mantissa, std::uint16_t signExpone
     return value;
 }
 
+static void CheckPowRangeFlags() {
+    constexpr int over = FE_OVERFLOW | FE_INEXACT, under = FE_UNDERFLOW | FE_INEXACT;
+    constexpr struct {
+        double x;
+        double y;
+        std::uint64_t expected;
+        int error;
+        int flags;
+    } cases[] = {
+        {2.0, 1e300, 0x7ff0000000000000ull, 0, 0}, {0.5, -1e300, 0x7ff0000000000000ull, 0, 0}, {2.0, -1e300, 0, 0, 0}, {0.5, 1e300, 0, 0, 0},
+        {1.1, 1e10, 0x7ff0000000000000ull, 0, over}, {0.9, 1e10, 0, 0, under}, {1.1, -1e10, 0, 0, under}, {-1.1, -1e10, 0, 0, under},
+        {2.0, 1024.0, 0x7ff0000000000000ull, ERANGE, over}, {-2.0, 1025.0, 0xfff0000000000000ull, ERANGE, over},
+        {2.0, -1075.0, 0, ERANGE, under}, {-2.0, -1075.0, 0x8000000000000000ull, ERANGE, under}, {10.0, -400.0, 0, ERANGE, under},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        std::feclearexcept(FE_ALL_EXCEPT);
+        Require(std::bit_cast<std::uint64_t>(pow_nid_postfix(item.x, item.y)) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+        Require(std::fetestexcept(FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT) == item.flags);
+    }
+}
+
+static void CheckPowConsoleBits() {
+    constexpr struct {
+        std::uint64_t x;
+        std::uint64_t y;
+        std::uint64_t expected;
+        int error;
+    } cases[] = {
+        {0x4000000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x7ff8000000000000ull, 0x0000000000000000ull, 0x3ff0000000000000ull, 0},
+        {0x3ff0000000000000ull, 0x7ff8000000000000ull, 0x7ff8000000000000ull, 0},
+        {0x7ff8000000000000ull, 0x3ff0000000000000ull, 0x7ff8000000000000ull, 0},
+        {0xbff0000000000000ull, 0x7ff0000000000000ull, 0xfff8000000000000ull, 0},
+        {0xbff0000000000000ull, 0xfff0000000000000ull, 0xfff8000000000000ull, 0},
+        {0x3fe0000000000000ull, 0x7ff0000000000000ull, 0x0000000000000000ull, 0},
+        {0x4000000000000000ull, 0xfff0000000000000ull, 0x0000000000000000ull, 0},
+        {0x4000000000000000ull, 0x3ff0000000000000ull, 0x4000000000000000ull, 0},
+        {0x4000000000000000ull, 0xbff0000000000000ull, 0x3fe0000000000000ull, 0},
+        {0x4008000000000000ull, 0x4000000000000000ull, 0x4022000000000000ull, 0},
+        {0x4010000000000000ull, 0x3fe0000000000000ull, 0x4000000000000000ull, 0},
+        {0xc010000000000000ull, 0x3fe0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xbff0000000000000ull, 0x3fe0000000000000ull, 0xfff8000000000000ull, EDOM},
+        {0xc020000000000000ull, 0x4008000000000000ull, 0xc080000000000000ull, 0},
+        {0xc020000000000000ull, 0x4000000000000000ull, 0x4050000000000000ull, 0},
+        {0x0000000000000000ull, 0xbff0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0x8000000000000000ull, 0xbff0000000000000ull, 0xfff0000000000000ull, 0},
+        {0x8000000000000000ull, 0x4008000000000000ull, 0x8000000000000000ull, 0},
+        {0xfff0000000000000ull, 0x4008000000000000ull, 0xfff0000000000000ull, 0},
+        {0xfff0000000000000ull, 0x3fe0000000000000ull, 0x7ff0000000000000ull, 0},
+        {0x4000000000000000ull, 0x4090000000000000ull, 0x7ff0000000000000ull, ERANGE},
+        {0x4000000000000000ull, 0x408ff80000000000ull, 0x7fe0000000000000ull, 0},
+        {0x4000000000000000ull, 0xc090c80000000000ull, 0x0000000000000001ull, 0},
+        {0x4000000000000000ull, 0xc090cc0000000000ull, 0x0000000000000000ull, ERANGE},
+        {0xc000000000000000ull, 0xc090cc0000000000ull, 0x8000000000000000ull, ERANGE},
+        {0x4024000000000000ull, 0x4073400000000000ull, 0x7fe1ccf385ebc8a0ull, 0},
+        {0x4024000000000000ull, 0x4073500000000000ull, 0x7ff0000000000000ull, ERANGE},
+        {0x3ff0000000000001ull, 0x41e65a0bc0000000ull, 0x3ff00000b2d061e7ull, 0},
+        {0x3fefffffffffffffull, 0x4415af1d78b58c40ull, 0x0000000000000000ull, 0},
+        {0x3ff8000000000000ull, 0x4415af1d78b58c40ull, 0x7ff0000000000000ull, 0},
+        {0x3fe0000000000000ull, 0xc415af1d78b58c40ull, 0x7ff0000000000000ull, 0},
+        {0x0000000000004000ull, 0x3fe0000000000000ull, 0x1ed0000000000000ull, 0},
+        {0x3feafced736ee4feull, 0xc0361f9e443ea358ull, 0x4045a8e0115e099aull, 0},
+        {0x4020c8a6b98feb33ull, 0xc04fb31e9d251450ull, 0x33c584ca7f0d8a62ull, 0},
+        {0x3ffaa8c75ac92f7cull, 0x4035319a10c8dee4ull, 0x40e86e36977bcdeeull, 0},
+        {0x4021c28586753c01ull, 0x401dc8b81f794880ull, 0x4165fe6822ba5fe2ull, 0},
+        {0x4018b0117d5d403cull, 0x40529e2d085a832eull, 0x4c274a3831ef8852ull, 0},
+        {0x40203852c518da08ull, 0xc04961929b871429ull, 0x365a3a0c99ab236eull, 0},
+    };
+    for (const auto& item : cases) {
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(pow_nid_postfix(std::bit_cast<double>(item.x), std::bit_cast<double>(item.y))) == item.expected);
+        Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+    for (const double y : {-0.25, 0.75, -1.5}) {
+        std::feclearexcept(FE_ALL_EXCEPT);
+        const double huge = pow_nid_postfix(1e300, y);
+        Require(std::fetestexcept(FE_OVERFLOW) != 0 && std::isfinite(huge));
+        std::feclearexcept(FE_ALL_EXCEPT);
+        const double below = pow_nid_postfix(std::ldexp(1.0, 970), y);
+        Require(std::fetestexcept(FE_OVERFLOW) == 0 && std::isfinite(below));
+    }
+}
+
 static void CheckExpm1ConsoleBits() {
     constexpr struct {
         std::uint64_t input;
@@ -1262,6 +1347,7 @@ static void CheckExpm1ScalingRounding() {
     }
     _mm_setcsr(savedCsr);
 }
+
 
 static void CheckAsinl() {
     const struct { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; } cases[] = {
@@ -2606,6 +2692,8 @@ int main() {
     CheckScalbnErrno();
     CheckNearbyintl();
     CheckCbrtConsoleBits();
+    CheckPowConsoleBits();
+    CheckPowRangeFlags();
     CheckLogbConsoleBits();
     CheckExpm1ConsoleBits();
     CheckLog1pConsoleBits();
@@ -2621,6 +2709,7 @@ int main() {
     CheckNextafterEnvironment(nextafterf_nid_postfix, 0x80000000u, 0x3f800000u, 0x00800000u, 0x7f7fffffu, 0x7f800000u);
     CheckNextafterEnvironment(nextafter_nid_postfix, std::uint64_t{0x8000000000000000ull}, std::uint64_t{0x3ff0000000000000ull}, std::uint64_t{0x0010000000000000ull}, std::uint64_t{0x7fefffffffffffffull}, std::uint64_t{0x7ff0000000000000ull});
     CheckExpm1ScalingRounding();
+    CheckPowConsoleBits();
     CheckAsinl();
     Require(scalbn_nid_postfix(0.75, -2) == 0.1875);
     Require(scalbnf_nid_postfix(0.75f, 4) == 12.f);
