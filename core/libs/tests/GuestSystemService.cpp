@@ -120,6 +120,9 @@ int main() {
     Require(sceSystemServiceDisableMusicPlayer() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReenableMusicPlayer() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceIsBgmPlaying() == 0 && sceShellCoreUtilIsBgmPlaying() == 0);
+    Require(sceSystemServiceTickVideoPlayback() == SYSTEM_SERVICE_OK);
+    Require(sceSystemStateMgrTickVideoPlayback() == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceTurnOffScreenSaver() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReenableMusicPlayer() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceDisableMediaPlay() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceDisableMediaPlay() == SYSTEM_SERVICE_OK);

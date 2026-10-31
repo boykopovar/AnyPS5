@@ -2175,13 +2175,11 @@ int APS5_VABI sceSystemServiceTelemetrySetData2(const char* key, const char* dat
 }
 
 int APS5_VABI sceSystemServiceTickVideoPlayback() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceTurnOffScreenSaver() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceUsbStorageGetDeviceInfo(std::uint32_t device, UsbStorageDeviceInfo* info) {
