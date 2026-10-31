@@ -754,6 +754,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_dinkumware_atomics PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_dinkumware_division_tests ${LIBS_INCLUDE_DIR}/tests/GuestDinkumwareDivision.cpp)
+    target_include_directories(guest_dinkumware_division_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_dinkumware_division_tests PRIVATE libc)
+    configure_windows_unwind(guest_dinkumware_division_tests)
+    add_test(NAME guest_dinkumware_division COMMAND guest_dinkumware_division_tests)
+    if(MINGW)
+        set_tests_properties(guest_dinkumware_division PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_dinkumware_internals_tests ${LIBS_INCLUDE_DIR}/tests/GuestDinkumwareInternals.cpp)
     target_include_directories(guest_dinkumware_internals_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_dinkumware_internals_tests PRIVATE libc)
