@@ -1363,3 +1363,16 @@ int APS5_VABI getgroups_nid_postfix(int capacity, std::uint32_t* groups) {
 }
 
 }
+
+namespace {
+
+struct ProgramNameRegistration {
+    ProgramNameRegistration() { LibcRegisterProgramName_nid_no_patch(&__progname_nid_postfix); }
+    ~ProgramNameRegistration() { LibcRegisterProgramName_nid_no_patch(nullptr); }
+    ProgramNameRegistration(const ProgramNameRegistration&) = delete;
+    ProgramNameRegistration& operator=(const ProgramNameRegistration&) = delete;
+};
+
+const ProgramNameRegistration programNameRegistration;
+
+}
