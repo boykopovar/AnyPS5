@@ -1,0 +1,19 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI nativeExtensionsLegacyUnknown__plus_ApidWZdo8I_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_6wLehmKPNa4_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_I4qJlIt9njM_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_NbqpC_plus_BT7pk_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_OyrA1qLyRbE_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_VlnUVT4Q3rI_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_jb_plus_IRdsgPW8_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_jdC8IMz6aBk_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_oG09eQK8Qbw_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_w6MTo0Q_plus_8wQ_nid_no_patch();
+int APS5_VABI nativeExtensionsLegacyUnknown_y_minus_WjZegNnuk_nid_no_patch();
+
+}
