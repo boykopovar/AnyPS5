@@ -17,9 +17,9 @@ def declarations(library):
     for source in sorted(Path(library).rglob("*.cpp")):
         if "tests" in source.relative_to(library).parts:
             continue
-        for number, line in enumerate(source.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-            for match in DECLARATION.finditer(line):
-                found.setdefault(match.group(1), (source, number))
+        text = source.read_text(encoding="utf-8", errors="ignore")
+        for match in DECLARATION.finditer(text):
+            found.setdefault(match.group(1), (source, text.count("\n", 0, match.start(1)) + 1))
     return found
 
 

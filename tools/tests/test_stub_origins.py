@@ -61,5 +61,11 @@ class StubOriginTests(unittest.TestCase):
         self.assertEqual(stub_origins.origins(self.root, self.library, {"Late"}), {})
 
 
+    def test_declaration_split_over_lines_is_found_with_its_own_line(self):
+        (self.library / "Export.cpp").write_text("int APS5_VABI\nsceSplit(\n    int a) {\n    return 0;\n}\n", encoding="utf-8")
+        found = stub_origins.declarations(self.library)
+        self.assertEqual(found["sceSplit"][1], 2)
+
+
 if __name__ == "__main__":
     unittest.main()
