@@ -29,6 +29,9 @@ static constexpr int SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_CALLBACK_NOT_FOUND =
 static constexpr int SCE_NP_WEBAPI_ERROR_SIGNED_IN_USER_NOT_FOUND = static_cast<int>(0x80552910);
 static constexpr int SCE_NP_WEBAPI_ERROR_LIB_CONTEXT_MAX = static_cast<int>(0x8055291A);
 
+static constexpr int SCE_HTTP_ERROR_INVALID_ID = static_cast<int>(0x80431100);
+static constexpr int SCE_HTTP_ERROR_PARSE_HTTP_INVALID_RESPONSE = static_cast<int>(0x80432060);
+
 static constexpr int SCE_NP_WEBAPI_HTTP_METHOD_DELETE = 3;
 static constexpr std::uint32_t SCE_NP_INVALID_SERVICE_LABEL = 0xFFFFFFFF;
 static constexpr std::uint32_t SDK_VERSION_1_00 = 0x01000000;
@@ -239,14 +242,20 @@ int APS5_VABI sceNpWebApiDeleteServicePushEventFilter(int libCtxId, int filterId
     return SCE_NP_WEBAPI_ERROR_SERVICE_PUSH_EVENT_FILTER_NOT_FOUND;
 }
 
-int APS5_VABI sceNpWebApiGetHttpResponseHeaderValue() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpWebApiGetHttpResponseHeaderValue(std::int64_t requestId, const char* fieldName, char* value, std::size_t valueSize) {
+    if (!fieldName || !value || valueSize == 0) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findRequest(requestId);
+    if (lookup.error != 0) return lookup.error;
+    return SCE_HTTP_ERROR_PARSE_HTTP_INVALID_RESPONSE;
 }
 
-int APS5_VABI sceNpWebApiGetHttpResponseHeaderValueLength() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpWebApiGetHttpResponseHeaderValueLength(std::int64_t requestId, const char* fieldName, std::size_t* valueLength) {
+    if (!fieldName || !valueLength) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findRequest(requestId);
+    if (lookup.error != 0) return lookup.error;
+    return SCE_HTTP_ERROR_PARSE_HTTP_INVALID_RESPONSE;
 }
 
 int APS5_VABI sceNpWebApiGetHttpStatusCode(std::int64_t requestId, int* statusCode) {
@@ -266,8 +275,12 @@ int APS5_VABI sceNpWebApiInitialize(int libHttpCtxId, std::size_t poolSize) {
 }
 
 int APS5_VABI sceNpWebApiReadData(std::int64_t requestId, void* data, std::size_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (!data || size == 0) return SCE_NP_WEBAPI_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(contextsMutex);
+    const auto lookup = findRequest(requestId);
+    if (lookup.error != 0) return lookup.error;
+    if (lookup.request->aborted) return SCE_NP_WEBAPI_ERROR_ABORTED;
+    return SCE_HTTP_ERROR_INVALID_ID;
 }
 
 int APS5_VABI sceNpWebApiRegisterPushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg) {
