@@ -40,8 +40,11 @@ def quote(value):
 
 
 def write_seed(path, text):
-    destination = path.resolve()
-    metadata = destination.stat() if destination.exists() else None
+    destination = Path(os.path.realpath(path))
+    try:
+        metadata = destination.stat()
+    except FileNotFoundError:
+        metadata = None
     if metadata is not None and os.name == "nt" and metadata.st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
         raise PermissionError(f"Seed output is read-only: {path}")
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -72,7 +75,7 @@ def main(argv=None):
                         help="omit matching check names after inclusion; patterns are case-sensitive")
     args = parser.parse_args(argv)
     cache, seed = Path(args.cache), Path(args.seed)
-    if cache.resolve() == seed.resolve() or (cache.exists() and seed.exists() and cache.samefile(seed)):
+    if os.path.realpath(cache) == os.path.realpath(seed) or (cache.exists() and seed.exists() and cache.samefile(seed)):
         parser.error("seed output would overwrite the input cache")
     try:
         results = checks(cache)
