@@ -551,9 +551,6 @@ SpirvBufferFormatInfo ImageConversionFormat(const ImageResource& image) {
 }
 
 void RequireConvertedUnormAccess(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SpirvBufferFormatInfo& info) {
-    if (access.mem.dataBits == 16u && info.byteSize != 2u) {
-        ctx.Fail(access.inst, info.type == SpirvFormatComponentType::Float ? "reads or writes a converted float image with 16-bit data, which is not implemented" : "reads or writes a converted unorm image with 16-bit data, which is not implemented");
-    }
     for (std::uint32_t component = 0; component < 4u; component++) {
         const auto selector = (access.image.shaderSwizzle >> (component * 3u)) & 7u;
         if (selector >= 4u && selector - 4u >= info.componentCount && info.byteSize != 2u) {
@@ -633,6 +630,19 @@ std::uint32_t UnpackImageTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess
     const auto result = state.module.AllocateId();
     state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), result, selected[0], selected[1], selected[2], selected[3]);
     return result;
+}
+
+std::uint32_t LoadedTexelResult(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t texel, IrTextureNumericClass numericClass) {
+    auto& state = ctx.state;
+    const auto unpacked = UnpackImageTexel(ctx, access, texel);
+    if (access.mem.dataBits != 16u || access.image.srgbDecode || access.image.conversionFormat == FmaskExpansion) {
+        return ResultVector(ctx, access, unpacked, numericClass, false, false);
+    }
+    const auto info = ImageConversionFormat(access.image);
+    if (info.format == IrBufferFormat::Invalid || (info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float)) {
+        return ResultVector(ctx, access, unpacked, numericClass, false, false);
+    }
+    return ResultVector(ctx, access, Unary(state, spv::OpBitcast, TypeF32Vector(state, 4), unpacked), IrTextureNumericClass::Float, false, false);
 }
 
 SpirvBufferFormatInfo PackedTexelFormat(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
@@ -1020,7 +1030,7 @@ void EmitByReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
                 words[0] = Binary(state, spv::OpBitwiseOr, TypeU32(state), words[0], Select(state, TypeU32(state), inside, shifted, ConstantU32(state, 0)));
                 continue;
             }
-            const auto texel = ResultVector(ctx, texelAccess, UnpackImageTexel(ctx, texelAccess, color), access.image.numericClass, false, false);
+            const auto texel = LoadedTexelResult(ctx, texelAccess, color, access.image.numericClass);
             for (std::uint32_t component = 0; component < components; ++component) {
                 const auto value = state.module.AllocateId();
                 state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), value, texel, component);
@@ -1064,7 +1074,7 @@ void EmitReadOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
         if (access.mem.imagePacked) {
             return PackedImageTexel(ctx, access, color);
         }
-        return ResultVector(ctx, access, UnpackImageTexel(ctx, access, color), numericClass, false, false);
+        return LoadedTexelResult(ctx, access, color, numericClass);
     }));
 }
 
