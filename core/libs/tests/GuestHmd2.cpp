@@ -56,6 +56,26 @@ void InstallProcessParameters() {
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "process parameters were not installed");
 }
 
+void TestNamedCallsBeforeInitialize() {
+    Require(sceHmd2SetIpdOffset(1, 0.5f) == 0, "IPD offset before initialization");
+    Require(sceHmd2GazeStartUserCalibration() == Hmd2::Error0004, "gaze calibration start before initialization");
+    Require(sceHmd2GazeStopUserCalibration() == Hmd2::Error0004, "gaze calibration stop before initialization");
+    Require(sceHmd2GazeSetUserCalibrationPoint(Hmd2::CalibrationPoint{}) == Hmd2::Error0004, "gaze calibration point before initialization");
+    Require(sceHmd2GazeSetEnabledEye(0) == Hmd2::Error0004, "gaze eye before initialization");
+    Require(sceHmd2GazeGetCalibrationData(0, nullptr) == Hmd2::ParameterNull, "gaze calibration data before initialization");
+    Require(sceHmd2GazeSetUserCalibrationData(nullptr) == Hmd2::ParameterNull, "gaze user calibration data before initialization");
+    Require(sceHmd2GazeObjectSelectionInitialize(nullptr) == Hmd2::ParameterNull, "gaze object selection before initialization");
+    Require(sceHmd2GazeObjectSelectionTerminate() == Hmd2::Error002C, "gaze object selection terminate before initialization");
+    Require(sceHmd2ReprojectionSetUserEventStart(nullptr, 0) == Hmd2::ReprojectionNotInitialized, "reprojection user event start before initialization");
+    Require(sceHmd2ReprojectionSetUserEventEnd(nullptr, 0) == Hmd2::ReprojectionNotInitialized, "reprojection user event end before initialization");
+    Require(sceHmd2ReprojectionClearUserEventStart() == Hmd2::ReprojectionNotInitialized, "reprojection user event start clear before initialization");
+    Require(sceHmd2ReprojectionClearUserEventEnd() == Hmd2::ReprojectionNotInitialized, "reprojection user event end clear before initialization");
+    Require(sceHmd2InternalTrackingOpen() == 0 && sceHmd2InternalTrackingClose() == 0, "tracking open and close before initialization");
+    Require(sceHmd2InternalLedDetectorOpen() == 0 && sceHmd2InternalLedDetectorClose() == 0, "LED detector open and close before initialization");
+    Require(sceHmd2InternalTrackingStart() == -1 && sceHmd2InternalTrackingStop() == -1, "tracking start and stop before initialization");
+    Require(sceHmd2InternalLedDetectorStart() == -1 && sceHmd2InternalLedDetectorStop() == -1, "LED detector start and stop before initialization");
+}
+
 void TestBeforeInitialize() {
     Hmd2::DeviceInformation info;
     std::memset(&info, 0xcc, sizeof(info));
@@ -280,6 +300,7 @@ int main() {
     SizeQueriesReturnTheConsoleSizes();
     InstallProcessParameters();
     TestBeforeInitialize();
+    TestNamedCallsBeforeInitialize();
     TestWithoutHeadset();
     bool threw = false;
     try {
