@@ -1,0 +1,545 @@
+#include "prx/libc/include/general/VabiMacros.hpp"
+
+extern "C" {
+
+void APS5_VABI WKAddMockMediaDevice() {
+}
+
+void APS5_VABI WKBundleExtendClassesForParameterCoder() {
+}
+
+void APS5_VABI WKBundleNodeHandleSetHTMLInputElementAutoFillButtonEnabled() {
+}
+
+void APS5_VABI WKBundlePageClickMenuItem() {
+}
+
+void APS5_VABI WKBundlePageCopyRenderLayerTree() {
+}
+
+void APS5_VABI WKBundlePageCopyRenderTree() {
+}
+
+void APS5_VABI WKBundlePageSetBottomOverhangImage() {
+}
+
+void APS5_VABI WKBundlePageSetContextMenuClient() {
+}
+
+void APS5_VABI WKBundlePageSetPaintedObjectsCounterThreshold() {
+}
+
+void APS5_VABI WKBundlePageSetTopOverhangImage() {
+}
+
+void APS5_VABI WKContextAddSupportedPlugin() {
+}
+
+void APS5_VABI WKContextClearSupportedPlugins() {
+}
+
+void APS5_VABI WKContextGetStatistics() {
+}
+
+void APS5_VABI WKContextGetStatisticsWithOptions() {
+}
+
+void APS5_VABI WKContextMenuItemSetUserData() {
+}
+
+void APS5_VABI WKContextRefreshPlugIns() {
+}
+
+void APS5_VABI WKContextSetAdditionalPluginsDirectory() {
+}
+
+void APS5_VABI WKContextSetIconDatabasePath() {
+}
+
+void APS5_VABI WKContextSetPlugInAutoStartOriginHashes() {
+}
+
+void APS5_VABI WKContextSetPlugInAutoStartOrigins() {
+}
+
+void APS5_VABI WKContextSetPlugInAutoStartOriginsFilteringOutEntriesAddedAfterTime() {
+}
+
+void APS5_VABI WKContextSetPrimaryWebsiteDataStore() {
+}
+
+void APS5_VABI WKContextSetProcessModel() {
+}
+
+void APS5_VABI WKContextSetUsesNetworkProcess() {
+}
+
+void APS5_VABI WKCookieManagerDeleteAllCookies() {
+}
+
+void APS5_VABI WKCookieManagerSetHTTPCookieAcceptPolicy() {
+}
+
+void APS5_VABI WKIconDatabaseCheckIntegrityBeforeOpening() {
+}
+
+void APS5_VABI WKIconDatabaseClose() {
+}
+
+void APS5_VABI WKIconDatabaseEnableDatabaseCleanup() {
+}
+
+void APS5_VABI WKIconDatabaseReleaseIconForURL() {
+}
+
+void APS5_VABI WKIconDatabaseRemoveAllIcons() {
+}
+
+void APS5_VABI WKIconDatabaseRetainIconForURL() {
+}
+
+void APS5_VABI WKIconDatabaseSetIconDataForIconURL() {
+}
+
+void APS5_VABI WKIconDatabaseSetIconDatabaseClient() {
+}
+
+void APS5_VABI WKIconDatabaseSetIconURLForPageURL() {
+}
+
+void APS5_VABI WKPreferencesSetAccelerated2DCanvasEnabled() {
+}
+
+void APS5_VABI WKPreferencesSetQTKitEnabled() {
+}
+
+void APS5_VABI WKRenderLayerCopyElementID() {
+}
+
+void APS5_VABI WKRenderLayerCopyElementTagName() {
+}
+
+void APS5_VABI WKRenderLayerCopyRendererName() {
+}
+
+void APS5_VABI WKRenderLayerGetAbsoluteBounds() {
+}
+
+void APS5_VABI WKRenderLayerGetBackingStoreMemoryEstimate() {
+}
+
+void APS5_VABI WKRenderLayerGetCompositingLayerType() {
+}
+
+void APS5_VABI WKRenderLayerGetElementClassNames() {
+}
+
+void APS5_VABI WKRenderLayerGetFrameContentsLayer() {
+}
+
+void APS5_VABI WKRenderLayerGetNegativeZOrderList() {
+}
+
+void APS5_VABI WKRenderLayerGetNormalFlowList() {
+}
+
+void APS5_VABI WKRenderLayerGetPositiveZOrderList() {
+}
+
+void APS5_VABI WKRenderLayerGetRenderer() {
+}
+
+void APS5_VABI WKRenderLayerIsClipped() {
+}
+
+void APS5_VABI WKRenderLayerIsClipping() {
+}
+
+void APS5_VABI WKRenderLayerIsReflection() {
+}
+
+void APS5_VABI WKRenderObjectCopyElementID() {
+}
+
+void APS5_VABI WKRenderObjectCopyElementTagName() {
+}
+
+void APS5_VABI WKRenderObjectCopyName() {
+}
+
+void APS5_VABI WKRenderObjectCopyTextSnippet() {
+}
+
+void APS5_VABI WKRenderObjectGetAbsolutePosition() {
+}
+
+void APS5_VABI WKRenderObjectGetChildren() {
+}
+
+void APS5_VABI WKRenderObjectGetElementClassNames() {
+}
+
+void APS5_VABI WKRenderObjectGetFrameRect() {
+}
+
+void APS5_VABI WKRenderObjectGetTextLength() {
+}
+
+void APS5_VABI WKWebsiteDataStoreClearAllDeviceOrientationPermissions() {
+}
+
+void APS5_VABI WKWebsiteDataStoreReinitializeAppBoundDomains() {
+}
+
+void APS5_VABI WKWebsiteDataStoreSetAppBoundDomainsForTesting() {
+}
+
+void APS5_VABI WKWebsiteDataStoreSetPerOriginStorageQuota() {
+}
+
+void APS5_VABI _ZN3JSC11FuzzerAgentD1Ev() {
+}
+
+void APS5_VABI _ZN3JSC11FuzzerAgentD2Ev() {
+}
+
+void APS5_VABI _ZN3JSC12HeapAnalyzerD2Ev() {
+}
+
+void APS5_VABI _ZN3JSC12HeapCellTypeD1Ev() {
+}
+
+void APS5_VABI _ZN3JSC12HeapCellTypeD2Ev() {
+}
+
+void APS5_VABI _ZN3JSC14ProtoCallFrameC1Ev() {
+}
+
+void APS5_VABI _ZN3JSC14ProtoCallFrameC2Ev() {
+}
+
+void APS5_VABI _ZN3JSC15WeakHandleOwnerD1Ev() {
+}
+
+void APS5_VABI _ZN3JSC15WeakHandleOwnerD2Ev() {
+}
+
+void APS5_VABI _ZN3JSC20TypedArrayControllerD1Ev() {
+}
+
+void APS5_VABI _ZN3JSC20TypedArrayControllerD2Ev() {
+}
+
+void APS5_VABI _ZN3JSC2VM10ClientDataD2Ev() {
+}
+
+void APS5_VABI _ZN3PAL13SleepDisablerD1Ev() {
+}
+
+void APS5_VABI _ZN3PAL13SleepDisablerD2Ev() {
+}
+
+void APS5_VABI _ZN3WTF11Persistence7DecoderD1Ev() {
+}
+
+void APS5_VABI _ZN3WTF11Persistence7DecoderD2Ev() {
+}
+
+void APS5_VABI _ZN3WTF18FunctionDispatcherD1Ev() {
+}
+
+void APS5_VABI _ZN3WTF18FunctionDispatcherD2Ev() {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounterD1Ev() {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounterD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore11FileMonitorD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore11FileMonitorD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore12BlobRegistryD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore12BlobRegistryD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore13MediaStrategyD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore13MediaStrategyD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore14LoaderStrategyD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore14LoaderStrategyD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore14SocketProviderD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore14SocketProviderD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore15HitTestLocationD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore15HitTestLocationD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore15XPathNSResolverD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore15XPathNSResolverD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore16DatabaseProviderD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore16DatabaseProviderD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore16TrackPrivateBaseD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore18ImageBufferBackendD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore18ImageBufferBackendD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore20LowPowerModeNotifierD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore20LowPowerModeNotifierD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore20PasteboardWriterData10WebContentD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore20PasteboardWriterData10WebContentD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore20ResourceHandleClientD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore20ResourceHandleClientD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore21InspectorFrontendHostD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore21InspectorFrontendHostD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore21MediaRecorderProviderD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore21MediaRecorderProviderD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore22DefaultFilterOperationD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore22DefaultFilterOperationD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClientD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClientD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore27ContentSecurityPolicyClientD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8SettingsD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8SettingsD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore30InvertLightnessFilterOperationD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore30InvertLightnessFilterOperationD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore37CrossOriginAccessControlCheckDisablerD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore4IconD1Ev() {
+}
+
+void APS5_VABI _ZN7WebCore4IconD2Ev() {
+}
+
+void APS5_VABI _ZN7bmalloc11IsoTLSEntryD1Ev() {
+}
+
+void APS5_VABI _ZN7bmalloc11IsoTLSEntryD2Ev() {
+}
+
+void APS5_VABI _ZN7bmalloc15IsoHeapImplBaseD1Ev() {
+}
+
+void APS5_VABI _ZN7bmalloc15IsoHeapImplBaseD2Ev() {
+}
+
+void APS5_VABI _ZN7bmalloc8FreeListD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector15RemoteInspector6ClientD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector15RemoteInspector6ClientD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector27CSSBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector27CSSBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector27DOMBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector27DOMBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector28HeapBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector28HeapBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector28PageBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector28PageBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector29AuditBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector29AuditBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector30CanvasBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector30CanvasBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector30TargetBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector30TargetBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector30WorkerBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector30WorkerBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector31BrowserBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector31BrowserBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector31ConsoleBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector31ConsoleBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector31NetworkBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector31NetworkBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector31RuntimeBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector31RuntimeBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector32DatabaseBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector32DatabaseBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector32DebuggerBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector32TimelineBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector33AnimationBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector33AnimationBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector33InspectorBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector33InspectorBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector33LayerTreeBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector33LayerTreeBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector34DOMStorageBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector34DOMStorageBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector35DOMDebuggerBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector35DOMDebuggerBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector38ScriptProfilerBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector38ScriptProfilerBackendDispatcherHandlerD2Ev() {
+}
+
+void APS5_VABI _ZN9Inspector40ApplicationCacheBackendDispatcherHandlerD1Ev() {
+}
+
+void APS5_VABI _ZN9Inspector40ApplicationCacheBackendDispatcherHandlerD2Ev() {
+}
+
+}
