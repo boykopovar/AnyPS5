@@ -1,6 +1,7 @@
 #define main frameReplayToolMain
 #include "../tools/FrameReplay.cpp"
 #undef main
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <barrier>
@@ -152,6 +153,158 @@ void testUnwatched() {
     check(false, "a capture started without the write watch");
 }
 
+std::atomic<std::uint32_t*> pendingResult{nullptr};
+
+void storePendingResult(std::uint64_t begin, std::size_t bytes) {
+    auto* const result = pendingResult.load();
+    if (result == nullptr || begin >= address(result) + sizeof(std::uint32_t) || address(result) >= begin + bytes) return;
+    *result = 1;
+    pendingResult = nullptr;
+}
+
+std::uint64_t groupBeforeSuspend(const FrameCaptureReader& reader, std::size_t index) {
+    const FrameCall* previous = nullptr;
+    for (const auto& call : reader.Calls()) {
+        if (call.kind == FrameCallKind::Suspend) {
+            if (index == 0) return previous != nullptr && previous->kind == FrameCallKind::Memory ? previous->values.at(0) : 0;
+            --index;
+        }
+        previous = &call;
+    }
+    return 0;
+}
+
+std::vector<std::uint64_t> deltaGroupsHolding(const FrameCaptureReader& reader, const std::byte* page) {
+    std::vector<std::uint64_t> groups;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind != FrameMemoryKind::Delta || chunk.address >= address(page) + 4096 || address(page) >= chunk.address + chunk.bytes) continue;
+        if (std::find(groups.begin(), groups.end(), chunk.group) == groups.end()) groups.push_back(chunk.group);
+    }
+    return groups;
+}
+
+void testPagesCollectedOnce(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0});
+    auto* x = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    auto* y = bytes + 4 * FrameCaptureWriter::BlockBytes;
+    auto* shader = reinterpret_cast<Shader*>(x + 2 * Page);
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    std::fill_n(x, Page, std::byte{0x31});
+    recorder->Suspend([] {});
+    std::fill_n(x + FrameCaptureWriter::BlockBytes, Page, std::byte{0x4d});
+    recorder->RegisterShader(shader);
+    recorder->RegisterShader(shader);
+    auto* late = allocate(Size);
+    std::fill_n(late, Size, std::byte{0});
+    auto* lateSource = late + 2 * FrameCaptureWriter::BlockBytes;
+    std::fill_n(lateSource, Page, std::byte{0x57});
+    std::fill_n(y, Page, std::byte{0x65});
+    recorder->Suspend([] {});
+    recorder->Suspend([] {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    const auto first = groupBeforeSuspend(reader, 0);
+    const auto second = groupBeforeSuspend(reader, 1);
+    check(first != 0 && second != 0, "the CPU writes before the first two suspend points are not in memory deltas");
+    std::string failures;
+    const auto expectOnce = [&](const std::byte* page, std::uint64_t group, const char* name) {
+        const auto groups = deltaGroupsHolding(reader, page);
+        if (groups == std::vector<std::uint64_t>{group}) return;
+        failures += std::string(failures.empty() ? "" : "; ") + name + (groups.empty() ? " is in no memory delta" : " is in memory delta groups");
+        for (const auto held : groups) failures += " " + std::to_string(held);
+        failures += ", not only in group " + std::to_string(group);
+    };
+    expectOnce(x, first, "the page written before the first suspend point");
+    expectOnce(y, second, "the page written before the second suspend point");
+    expectOnce(lateSource, second, "the written page of the range committed during the capture");
+    const auto& calls = reader.Calls();
+    const auto registration = std::find_if(calls.begin(), calls.end(), [](const FrameCall& call) { return call.kind == FrameCallKind::RegisterShader; });
+    if (registration == calls.end() || registration + 1 == calls.end() || (registration + 1)->kind != FrameCallKind::RegisterShader) failures += std::string(failures.empty() ? "" : "; ") + "the second registration of the shader collected its blocks again";
+    if (!failures.empty()) throw std::runtime_error(failures);
+}
+
+void testPendingResultRead(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0});
+    auto* page = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    auto* result = reinterpret_cast<std::uint32_t*>(page + Page - sizeof(std::uint32_t));
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    struct FlushHookReset {
+        ~FlushHookReset() {
+            AgcDriver::GuestMemory::SetFlushHook(nullptr);
+            pendingResult = nullptr;
+        }
+    } reset;
+    AgcDriver::GuestMemory::SetFlushHook(&storePendingResult);
+    std::fill_n(page, Page - sizeof(std::uint32_t), std::byte{0x3c});
+    pendingResult = result;
+    recorder->Suspend([] {});
+    auto* late = allocate(Size);
+    std::fill_n(late, Size, std::byte{0});
+    auto* latePage = late + 2 * FrameCaptureWriter::BlockBytes;
+    auto* lateResult = reinterpret_cast<std::uint32_t*>(latePage + Page - sizeof(std::uint32_t));
+    std::fill_n(latePage, Page - sizeof(std::uint32_t), std::byte{0x3c});
+    pendingResult = lateResult;
+    recorder->Suspend([] {});
+    recorder->FrameBoundary();
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    const FrameCaptureReader reader(directory);
+    const auto first = groupBeforeSuspend(reader, 0);
+    const auto second = groupBeforeSuspend(reader, 1);
+    check(first != 0 && second != 0, "the CPU writes before the suspend points are not in memory deltas");
+    std::string failures;
+    const auto expectStored = [&](const std::uint32_t* word, std::uint64_t group, const char* name) {
+        std::optional<std::uint32_t> held;
+        for (const auto& chunk : reader.Chunks()) {
+            if (chunk.kind != FrameMemoryKind::Delta || chunk.group != group || chunk.address > address(word) || address(word) + sizeof(std::uint32_t) > chunk.address + chunk.bytes) continue;
+            const auto data = reader.Read(chunk);
+            std::uint32_t value = 0;
+            std::memcpy(&value, data.data() + (address(word) - chunk.address), sizeof(value));
+            held = value;
+        }
+        if (held == 1u) return;
+        failures += std::string(failures.empty() ? "" : "; ") + name + (held ? " read the page before the result pending over it was stored: it holds " + std::to_string(*held) + ", not 1" : std::string(" does not hold the page the CPU wrote"));
+    };
+    expectStored(result, first, "the memory delta before the first suspend point");
+    expectStored(lateResult, second, "the memory delta that added the range committed during the capture");
+    if (!failures.empty()) throw std::runtime_error(failures);
+}
+
+void testPartlyCoveredBlock(const std::filesystem::path& directory) {
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(4 * Page);
+    std::fill_n(bytes, 4 * Page, std::byte{0x2b});
+    auto* shader = reinterpret_cast<Shader*>(bytes + 2 * Page);
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    recorder->RegisterShader(shader);
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    const auto groups = deltaGroupsHolding(reader, bytes);
+    if (groups.empty()) return;
+    std::string failure = "the page written before the capture, in a shader block the captured ranges cover only in part, is in memory delta groups";
+    for (const auto held : groups) failure += " " + std::to_string(held);
+    throw std::runtime_error(failure);
+}
+
 void testEopTokens() {
     Frames frames;
     auto output = std::make_shared<ReplayOutput>(frames);
@@ -301,6 +454,9 @@ int main(int argc, char** argv) {
         else if (mode == "shared_page") testSharedPage(directory);
         else if (mode == "host_neighbors") testHostNeighbors(directory);
         else if (mode == "unwatched") testUnwatched();
+        else if (mode == "once") testPagesCollectedOnce(directory);
+        else if (mode == "pending_result") testPendingResultRead(directory);
+        else if (mode == "partly_covered") testPartlyCoveredBlock(directory);
         else if (mode == "tokens") testEopTokens();
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
