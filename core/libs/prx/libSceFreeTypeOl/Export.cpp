@@ -1,6 +1,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libSceFreeTypeOl/libSceFreeTypeOl.hpp"
 #include "prx/libc/include/General.hpp"
 
 extern "C" {
