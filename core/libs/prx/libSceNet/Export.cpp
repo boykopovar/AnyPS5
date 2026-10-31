@@ -39,6 +39,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -377,6 +378,7 @@ int* errno_slot() {
 
 extern "C" std::size_t NetCtlHostDnsServers_nid_no_patch(std::uint32_t* servers, std::size_t capacity);
 extern "C" bool NetCtlHostIpv4Address_nid_no_patch(std::uint32_t* address, std::uint32_t* netmask, std::uint32_t* mtu);
+extern "C" bool NetCtlHostIpv4Gateway_nid_no_patch(std::uint32_t* gateway);
 
 std::mutex g_dnsLock;
 bool g_dnsOverridden = false;
@@ -2768,8 +2770,7 @@ int APS5_VABI sceNetGetRouteInfo(std::int32_t family, NetRouteInfo* routes, std:
 }
 
 int APS5_VABI sceNetGetsockoptEx(int socketId, int level, int option, void* value, std::uint32_t* valueSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetGetsockopt(socketId, level, option, value, valueSize);
 }
 
 void APS5_VABI sceNetGetSystemTime(std::uint64_t* output) {
@@ -2873,13 +2874,11 @@ int APS5_VABI sceNetSetDnsInfoToKernel(const NetDnsInfo* info, std::uint32_t fla
 }
 
 int APS5_VABI sceNetSetsockoptEx(int socketId, int level, int option, const void* value, std::uint32_t valueSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetSetsockopt(socketId, level, option, value, valueSize);
 }
 
 int APS5_VABI sceNetSocketInternal(const char* name, int domain, int type, int protocol) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceNetSocket(name, domain, type, protocol);
 }
 
 int APS5_VABI sceNetSyncCreate(NetSyncObject* sync, std::uint32_t signals, const char* name) {
@@ -2908,8 +2907,8 @@ int APS5_VABI sceNetSyncWait(NetSyncObject* sync, std::uint32_t* timeout) {
 }
 
 int APS5_VABI sceNetSysctl(const int* name, std::uint32_t nameLength, void* oldValue, std::size_t* oldSize, const void* newValue, std::size_t newSize) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (sysctl_nid_postfix(name, nameLength, oldValue, oldSize, newValue, newSize) == 0) return 0;
+    return fail(*__error_nid_postfix());
 }
 
 int APS5_VABI sceNetThreadCreate(Pthread* thread, const NetThreadParameter* parameter, const char* name) {
@@ -2967,13 +2966,45 @@ int APS5_VABI sceNetShowNetstatExForBuffer(char* buffer, std::int32_t bufferSize
 }
 
 const char* APS5_VABI sceNetInetNtopWithScopeId(std::int32_t family, const void* address, char* text, std::uint32_t size, std::uint32_t scopeId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (address == nullptr || text == nullptr) {
+        set_errno(NET_EINVAL);
+        return nullptr;
+    }
+    if (family != NET_AF_INET6) throw std::runtime_error("sceNetInetNtopWithScopeId: family " + std::to_string(family) + " is not implemented");
+    std::array<char, 64> unscoped{};
+    if (sceNetInetNtop(family, address, unscoped.data(), static_cast<std::uint32_t>(unscoped.size())) == nullptr) return nullptr;
+    std::string scoped(unscoped.data());
+    if (scopeId != 0) scoped += "%" + std::to_string(scopeId);
+    if (scoped.size() >= size) {
+        set_errno(NET_ENOSPC);
+        return nullptr;
+    }
+    std::memcpy(text, scoped.c_str(), scoped.size() + 1);
+    return text;
 }
 
 int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, void* address, std::uint32_t* scopeId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (text == nullptr || address == nullptr || scopeId == nullptr) return fail(NET_EINVAL);
+    if (family != NET_AF_INET6) throw std::runtime_error("sceNetInetPtonWithScopeId: family " + std::to_string(family) + " is not implemented");
+    const char* percent = std::strchr(text, '%');
+    std::uint64_t zone = 0;
+    if (percent != nullptr) {
+        const std::string_view digits(percent + 1);
+        if (digits.empty()) return 0;
+        if (!std::all_of(digits.begin(), digits.end(), [](char digit) { return digit >= '0' && digit <= '9'; }))
+            throw std::runtime_error("sceNetInetPtonWithScopeId: the interface name zone in " + std::string(text) + " is not implemented");
+        for (const char digit : digits) {
+            zone = zone * 10 + static_cast<std::uint64_t>(digit - '0');
+            if (zone > 0xffffffffull) return 0;
+        }
+    }
+    const std::string unscoped = percent != nullptr ? std::string(text, percent) : std::string(text);
+    std::array<unsigned char, 16> parsed{};
+    const int converted = sceNetInetPton(family, unscoped.c_str(), parsed.data());
+    if (converted != 1) return converted;
+    std::memcpy(address, parsed.data(), parsed.size());
+    *scopeId = static_cast<std::uint32_t>(zone);
+    return 1;
 }
 
 int APS5_VABI sceNetGetDns6Info(NetDns6Info* info, std::uint32_t flags) {
@@ -3139,7 +3170,10 @@ int APS5_VABI sceNetConfigDelRoute(const std::uint32_t* destination, const std::
 }
 
 int APS5_VABI sceNetConfigGetDefaultRoute(std::uint32_t* gateway) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!gateway) throw std::runtime_error("sceNetConfigGetDefaultRoute: a null gateway is not supported");
+    std::uint32_t found = 0;
+    if (!NetCtlHostIpv4Gateway_nid_no_patch(&found)) throw std::runtime_error("sceNetConfigGetDefaultRoute: the answer without an IPv4 default route is not implemented");
+    *gateway = found;
     return 0;
 }
 
