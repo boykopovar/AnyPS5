@@ -1047,7 +1047,9 @@ static void CheckIoctl() {
     Require(sceNetRecv(socket, buffer, sizeof(buffer), 0) == sizeof(payload));
     Require(sceNetIoctl(socket, 0x4004667f, &readable) == 0 && readable == 0);
     Require(Failed(sceNetIoctl(socket, 0x8004667e, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 0x8004667e, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
     Require(Failed(sceNetIoctl(socket, 0x4004667f, nullptr), 14));
+    Require(Failed(sceNetIoctl(socket, 0x4004667f, reinterpret_cast<void*>(std::uintptr_t{0x10})), 14));
     Require(Failed(sceNetIoctl(socket, 123, &readable), 25));
     Require(Failed(sceNetIoctl(socket, 123, nullptr), 25));
     Require(sceNetSocketClose(socket) == 0);

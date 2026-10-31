@@ -2827,7 +2827,9 @@ int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
     if (command != nonblockingRequest && command != readableRequest) return fail(NET_ENOTTY);
     if (!argument) return fail(NET_EFAULT);
     if (command == nonblockingRequest) {
-        const int enabled = *static_cast<const int*>(argument) != 0;
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return fail(NET_EFAULT);
+        const int enabled = enable != 0;
         return sceNetSetsockopt(socketId, NET_SOL_SOCKET, NET_SO_NBIO, &enabled, sizeof(enabled));
     }
 #ifdef _WIN32
@@ -2843,7 +2845,8 @@ int APS5_VABI sceNetIoctl(int socketId, std::uint32_t command, void* argument) {
     int available = 0;
     if (::ioctl(native->value, FIONREAD, &available) != 0) return fail(native_error());
 #endif
-    *static_cast<int*>(argument) = static_cast<int>(available);
+    const int readable = static_cast<int>(available);
+    if (!GuestCopyOut_nid_no_patch(argument, &readable, sizeof(readable))) return fail(NET_EFAULT);
     return 0;
 }
 
