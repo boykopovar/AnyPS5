@@ -639,9 +639,18 @@ extern "C" int APS5_VABI pipe_nid_postfix(int* descriptors) {
     const int result = ::pipe(native);
 #endif
     if (result != 0) return PosixFailure(SceErrorFromErrno(errno) & 0xffff);
+    if (!GuestCopyOut_nid_no_patch(descriptors, native, sizeof(native))) {
+#ifdef _WIN32
+        ::_close(native[0]);
+        ::_close(native[1]);
+#else
+        ::close(native[0]);
+        ::close(native[1]);
+#endif
+        return PosixFailure(GUEST_EFAULT);
+    }
     File::RememberPipe(native[0]);
     File::RememberPipe(native[1]);
-    std::memcpy(descriptors, native, sizeof(native));
     return 0;
 }
 

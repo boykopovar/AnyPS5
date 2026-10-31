@@ -470,6 +470,9 @@ int main() {
     Require(std::strcmp(debugText, "[debug:3] %s%d literal\n") == 0);
     Require(std::fclose(captured) == 0);
     Require(pipe_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 14);
+    int* const badDescriptors = reinterpret_cast<int*>(static_cast<std::uintptr_t>(0x10));
+    *__error_nid_postfix() = 0;
+    Require(pipe_nid_postfix(badDescriptors) == -1 && *__error_nid_postfix() == 14);
     int descriptors[2] = {-1, -1};
     Require(pipe_nid_postfix(descriptors) == 0 && descriptors[0] >= 0 && descriptors[1] >= 0);
     const char payload[] = {'A', '\0', '\r', '\n', '\x1a', 'Z'};
