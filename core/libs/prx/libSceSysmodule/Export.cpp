@@ -36,6 +36,10 @@ const char* findModuleName(const std::uint32_t id) {
     return it != kModuleTable.end() ? it->second : nullptr;
 }
 
+bool isMeasuredRejectedInternalId(const std::uint32_t id) {
+    return id == 0x8000ffffu || id == 0x80ffff00u;
+}
+
 bool isPublicModuleId(const std::uint16_t id) {
     return std::binary_search(std::begin(kPublicModuleIds), std::end(kPublicModuleIds), id);
 }
@@ -280,6 +284,9 @@ int APS5_VABI sceSysmoduleLoadModuleInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isMeasuredRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleLoadModuleInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -292,6 +299,9 @@ int APS5_VABI sceSysmoduleUnloadModuleInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isMeasuredRejectedInternalId(id)) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleUnloadModuleInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
@@ -330,6 +340,9 @@ int APS5_VABI sceSysmoduleIsLoadedInternal(std::uint32_t id) {
         return SCE_SYSMODULE_ERROR_INVALID_VALUE;
     }
     if (!findModuleName(id)) {
+        if (isMeasuredRejectedInternalId(id) || id == 0x00ffffffu) {
+            return SCE_SYSMODULE_ERROR_INVALID_VALUE;
+        }
         throw std::runtime_error(std::string("sceSysmoduleIsLoadedInternal: unknown id ") + std::to_string(id));
     }
     std::lock_guard<std::mutex> lock(gMutex);
