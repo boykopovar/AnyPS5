@@ -5799,13 +5799,16 @@ void verifySingleLaneVertexWave() {
     static constexpr std::array<std::uint32_t, 12> comparedWaterfall{0x7d880a84u, 0x87806a7eu, 0xbe821400u, 0xd7600003u, 0x00000505u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
     static constexpr std::array<std::uint32_t, 11> everyLaneWaterfall{0xbe8004c1u, 0xbe821400u, 0xd7600003u, 0x00000505u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
     static constexpr std::array<std::uint32_t, 7> selectedLane{0x7e040505u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 13> guardedWaterfall{0x7d880a84u, 0x87806a7eu, 0xbf840006u, 0xbe821400u, 0xd7600003u, 0x00000505u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 7> execLane{0xbe82137eu, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 10> conditionalLane{0xbe82137eu, 0x7e080505u, 0xbf068004u, 0x8502c102u, 0xd7600003u, 0x00000505u, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
 
     const auto single = compiled(waveInfo, 32u, false);
     const auto wide = compiled(waveInfo, 64u, true);
     require(hasConstant(single, 0x0101u) && !hasConstant(single, 0x4040u) && !hasConstant(single, 0x2020u), "single-lane vertex wave: s3 of a vertex program without vertex subgroups was not one vertex and one primitive");
     require(hasConstant(wide, 0x4040u) && !hasConstant(wide, 0x0101u), "single-lane vertex wave: s3 of a vertex program with vertex subgroups on 64 lanes changed");
     require(single == compiled(waveInfo, 4u, false), "single-lane vertex wave: the program without vertex subgroups depended on the device subgroup size");
-    for (const auto code : {std::span<const std::uint32_t>(laneOps), std::span<const std::uint32_t>(waterfall), std::span<const std::uint32_t>(comparedWaterfall)}) {
+    for (const auto code : {std::span<const std::uint32_t>(laneOps), std::span<const std::uint32_t>(waterfall), std::span<const std::uint32_t>(guardedWaterfall), std::span<const std::uint32_t>(execLane)}) {
         const auto withSubgroups = compiled(code, 32u, true);
         const auto withoutSubgroups = compiled(code, 32u, false);
         require(usesSubgroups(withSubgroups), "single-lane vertex wave: the program did not use subgroup operations with vertex subgroups");
@@ -5816,6 +5819,8 @@ void verifySingleLaneVertexWave() {
     const char* registerLane = "v_readlane_b32 of a register-selected lane is outside the 1-lane host subgroup";
     expectFailure([&] { static_cast<void>(compiled(selectedLane, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups read the lane v_readfirstlane_b32 took from the vertex index");
     expectFailure([&] { static_cast<void>(compiled(everyLaneWaterfall, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups ran an s_ff1 waterfall over every lane instead of the exec mask");
+    expectFailure([&] { static_cast<void>(compiled(comparedWaterfall, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups entered an s_ff1 waterfall over a compare result that can be empty, which reads lane 63");
+    expectFailure([&] { static_cast<void>(compiled(conditionalLane, 32u, false)); }, registerLane, "single-lane vertex wave: a vertex program without vertex subgroups read the lane s_cselect_b32 took from s_ff1_i32_b32 of EXEC or -1 on a test of the vertex index");
     require(!compiled(selectedLane, 32u, true).empty(), "single-lane vertex wave: the lane v_readfirstlane_b32 took from the vertex index did not build on a 32-lane vertex subgroup");
 
     ShaderPixelStageInfo info{};

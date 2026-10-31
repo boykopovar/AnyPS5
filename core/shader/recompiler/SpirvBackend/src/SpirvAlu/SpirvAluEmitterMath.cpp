@@ -567,14 +567,28 @@ private:
 
 class OwnLaneSelectorWalk {
 public:
-    explicit OwnLaneSelectorWalk(std::uint32_t waveSize) : laneMask(waveSize - 1u) {}
+    explicit OwnLaneSelectorWalk(const IrProgram& program) : program(program) {}
 
-    bool Selector(const IrValue* value) {
-        return walk(value, SelectorKind);
+    bool Selector(const IrValue* value, const IrBlock* reader) {
+        value = Resolved(value);
+        if (Is(value, IrOpcode::FindILsb32)) return ownMask(value->Argument(0), reader);
+        if (!Is(value, IrOpcode::SelectU32)) return false;
+        const auto* first = Resolved(value->Argument(1));
+        const auto* test = Resolved(value->Argument(0));
+        if (!Is(first, IrOpcode::FindILsb32) || !Is(test, IrOpcode::INotEqual32)) return false;
+        const auto* mask = Resolved(first->Argument(0));
+        return EitherOrder(test, [mask](const IrValue* word, const IrValue* zero) { return word == mask && IsU32(zero, 0u); }) && ownMask(mask, reader);
     }
 
 private:
-    static constexpr std::uint32_t SelectorKind = 2u;
+    static constexpr std::uint32_t LowKind = 0u;
+    static constexpr std::uint32_t HighKind = 1u;
+    static constexpr std::uint32_t OwnKind = 2u;
+    static constexpr std::uint32_t NonEmptyKind = 3u;
+
+    bool ownMask(const IrValue* mask, const IrBlock* reader) {
+        return walk(mask, LowKind) && nonEmpty(mask, reader, nullptr);
+    }
 
     bool walk(const IrValue* value, std::uint32_t kind) {
         value = Resolved(value);
@@ -585,38 +599,88 @@ private:
         if (Is(value, IrOpcode::Phi)) {
             if (!assumed.insert(key).second) return true;
             result = value->ArgumentCount() != 0u;
-            for (std::size_t index = 0; result && index < value->ArgumentCount(); ++index) result = walk(value->Argument(index), kind);
+            for (std::size_t index = 0; result && index < value->ArgumentCount(); ++index) {
+                result = kind == NonEmptyKind ? nonEmpty(value->Argument(index), value->PhiBlock(index), value->Parent()) : walk(value->Argument(index), kind);
+            }
             assumed.erase(key);
-        } else {
-            result = kind == SelectorKind ? selector(value) : ownWord(value, kind);
+        } else if (kind == OwnKind) {
+            result = exactlyOwn(value);
+        } else if (kind != NonEmptyKind) {
+            result = ownWord(value, kind);
         }
         if (!result || assumed.empty()) known.emplace(key, result);
         return result;
     }
 
-    bool selector(const IrValue* value) {
-        if (value->HasImmediate()) return value->Type() == IrType::U32 && (value->ImmediateU32() & laneMask) == 0u;
-        if (Is(value, IrOpcode::FindILsb32)) return walk(value->Argument(0), 0u);
-        if (!Is(value, IrOpcode::SelectU32)) return false;
-        const auto* low = Resolved(value->Argument(1));
-        if (Is(low, IrOpcode::FindILsb32) && walk(low->Argument(0), 0u) && noLane(value->Argument(2))) return true;
-        return walk(value->Argument(1), SelectorKind) && walk(value->Argument(2), SelectorKind);
+    bool nonEmpty(const IrValue* word, const IrBlock* block, const IrBlock* entered) {
+        word = Resolved(word);
+        if (word == nullptr) return false;
+        if (walk(word, OwnKind)) return true;
+        for (const IrBlock* at = block; at != nullptr && spend(); entered = at, at = at->Predecessors().front()) {
+            if (entered != nullptr && tested(at, entered, word)) return true;
+            if (at == word->Parent() || at->Predecessors().size() != 1u) break;
+        }
+        return walk(word, NonEmptyKind);
     }
 
-    bool noLane(const IrValue* value) {
-        if (IsU32(value, 0xffffffffu)) return true;
-        const auto* upper = Resolved(value);
-        if (!Is(upper, IrOpcode::SelectU32) || !IsU32(upper->Argument(2), 0xffffffffu)) return false;
-        const auto* test = Resolved(upper->Argument(0));
-        return Is(test, IrOpcode::INotEqual32) && EitherOrder(test, [this](const IrValue* word, const IrValue* zero) { return IsU32(zero, 0u) && walk(word, 1u); });
+    bool tested(const IrBlock* from, const IrBlock* to, const IrValue* word) {
+        const auto& blocks = program.BlockOrder();
+        const auto& infos = program.Metadata().blockInfo;
+        if (blocks.size() != infos.size()) return false;
+        const auto at = std::ranges::find(blocks, from);
+        if (at == blocks.end()) return false;
+        const auto& info = infos[static_cast<std::size_t>(at - blocks.begin())];
+        if (info.terminator.kind != TerminatorKind::ConditionalBranch || info.condition == nullptr) return false;
+        const auto target = [&](std::uint32_t id) -> const IrBlock* {
+            const auto found = std::ranges::find(infos, id, &BlockInfo::id);
+            return found == infos.end() ? nullptr : blocks[static_cast<std::size_t>(found - infos.begin())];
+        };
+        const auto* taken = target(info.terminator.trueBlock);
+        const auto* skipped = target(info.terminator.falseBlock);
+        if (taken == skipped || (to != taken && to != skipped)) return false;
+        return implies(info.condition, to == taken, word);
+    }
+
+    bool implies(const IrValue* condition, bool holds, const IrValue* word) {
+        condition = Resolved(condition);
+        if (condition == nullptr || !spend()) return false;
+        if (Is(condition, IrOpcode::LogicalNot)) return implies(condition->Argument(0), !holds, word);
+        if (Is(condition, holds ? IrOpcode::LogicalAnd : IrOpcode::LogicalOr)) return implies(condition->Argument(0), holds, word) || implies(condition->Argument(1), holds, word);
+        const bool nonZero = holds ? Is(condition, IrOpcode::INotEqual32) || Is(condition, IrOpcode::INotEqual64) : Is(condition, IrOpcode::IEqual32) || Is(condition, IrOpcode::IEqual64);
+        return nonZero && EitherOrder(condition, [&](const IrValue* value, const IrValue* zero) { return ZeroImmediate(zero) && holdsWord(value, word); });
+    }
+
+    bool holdsWord(const IrValue* value, const IrValue* word) {
+        if (value == word) return true;
+        if (Is(value, IrOpcode::CompositeConstructU64)) return Resolved(value->Argument(0)) == word && walk(value->Argument(1), HighKind);
+        return Is(value, IrOpcode::BitwiseOr32) && EitherOrder(value, [&](const IrValue* low, const IrValue* high) { return low == word && walk(high, HighKind); });
+    }
+
+    static bool ZeroImmediate(const IrValue* value) {
+        return value != nullptr && value->HasImmediate() && ((value->Type() == IrType::U32 && value->ImmediateU32() == 0u) || (value->Type() == IrType::U64 && value->ImmediateU64() == 0u));
+    }
+
+    bool exactlyOwn(const IrValue* word) {
+        if (word->HasImmediate()) return word->Type() == IrType::U32 && word->ImmediateU32() == 1u;
+        switch (word->Opcode()) {
+            case IrOpcode::CompositeExtractU32x4: {
+                const auto* ballot = Resolved(word->Argument(0));
+                const auto* active = Is(ballot, IrOpcode::Ballot) ? Resolved(ballot->Argument(0)) : nullptr;
+                return active != nullptr && active->HasImmediate() && active->Type() == IrType::Bool && active->ImmediateBool() && IsU32(word->Argument(1), 0u);
+            }
+            case IrOpcode::BitwiseAnd32: return walk(word->Argument(0), OwnKind) && walk(word->Argument(1), OwnKind);
+            case IrOpcode::BitwiseOr32: return EitherOrder(word, [this](const IrValue* own, const IrValue* other) { return walk(own, OwnKind) && walk(other, LowKind); });
+            case IrOpcode::SelectU32: return walk(word->Argument(1), OwnKind) && walk(word->Argument(2), OwnKind);
+            default: return false;
+        }
     }
 
     bool ownWord(const IrValue* word, std::uint32_t half) {
-        if (word->HasImmediate()) return word->Type() == IrType::U32 && (word->ImmediateU32() & (half == 0u ? ~1u : ~0u)) == 0u;
+        if (word->HasImmediate()) return word->Type() == IrType::U32 && (word->ImmediateU32() & (half == LowKind ? ~1u : ~0u)) == 0u;
         switch (word->Opcode()) {
             case IrOpcode::CompositeExtractU32x4: {
                 const auto* index = Resolved(word->Argument(1));
-                return Is(Resolved(word->Argument(0)), IrOpcode::Ballot) && index != nullptr && index->HasImmediate() && (half == 0u || index->ImmediateU32() != 0u);
+                return Is(Resolved(word->Argument(0)), IrOpcode::Ballot) && index != nullptr && index->HasImmediate() && (half == LowKind || index->ImmediateU32() != 0u);
             }
             case IrOpcode::BitwiseAnd32: return walk(word->Argument(0), half) || walk(word->Argument(1), half);
             case IrOpcode::BitwiseOr32:
@@ -632,7 +696,7 @@ private:
         return true;
     }
 
-    std::uint32_t laneMask;
+    const IrProgram& program;
     std::map<std::pair<const IrValue*, std::uint32_t>, bool> known;
     std::set<std::pair<const IrValue*, std::uint32_t>> assumed;
     std::uint32_t budget = 4096u;
@@ -1507,7 +1571,7 @@ std::uint32_t EmitReadLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
             if (index >= 32u && UpperLaneWalk{state.program.Resources().stage}.ZeroValue(inst.Argument(0))) return ConstantU32(state, 0u);
             FailOutsideHostSubgroup(ctx, inst, "v_readlane_b32 of lane " + std::to_string(index));
         }
-    } else if (HostSubgroupNarrowerThanWave(state) && HostSubgroupSingleLane(state) && !OwnLaneSelectorWalk{state.program.WaveSize()}.Selector(selector)) {
+    } else if (HostSubgroupNarrowerThanWave(state) && HostSubgroupSingleLane(state) && !OwnLaneSelectorWalk{state.program}.Selector(selector, inst.Parent())) {
         FailOutsideHostSubgroup(ctx, inst, "v_readlane_b32 of a register-selected lane");
     }
     const auto lane = Binary(state, spv::OpBitwiseAnd, TypeU32(state), ctx.Arg(inst, 1), ConstantU32(state, state.program.WaveSize() - 1u));
