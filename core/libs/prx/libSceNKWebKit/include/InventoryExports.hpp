@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/include/WtfCryptoUtilities.hpp"
 
 extern "C" {
 
@@ -2673,7 +2674,6 @@ int APS5_VABI _ZN3WTF18ParallelHelperPoolD1Ev();
 int APS5_VABI _ZN3WTF18ParallelHelperPoolD2Ev();
 double APS5_VABI _ZN3WTF18charactersToDoubleEPKDsmPb(const char16_t* data, std::size_t length, bool* ok);
 double APS5_VABI _ZN3WTF18charactersToDoubleEPKhmPb(const unsigned char* data, std::size_t length, bool* ok);
-int APS5_VABI _ZN3WTF18constantTimeMemcmpEPKvS1_m();
 int APS5_VABI _ZN3WTF18fastEnableMiniModeEv();
 int APS5_VABI _ZN3WTF18fastMallocGoodSizeEm();
 int APS5_VABI _ZN3WTF19MetaAllocatorHandle6shrinkEm();

@@ -11248,10 +11248,6 @@ int APS5_VABI _ZN3WTF18ParallelHelperPoolD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF18constantTimeMemcmpEPKvS1_m() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF18fastEnableMiniModeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
