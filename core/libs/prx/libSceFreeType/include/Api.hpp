@@ -102,4 +102,9 @@ int APS5_VABI FT_Stroker_ConicTo_nid_postfix(void* stroker, const FreeType::Gues
 int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
 int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
 
+void* APS5_VABI FT_Get_Module_nid_postfix(FreeType::GuestLibrary* library, const char* moduleName);
+void* APS5_VABI FT_Get_Renderer_nid_postfix(FreeType::GuestLibrary* library, std::uint32_t format);
+int APS5_VABI FT_Remove_Module_nid_postfix(FreeType::GuestLibrary* library, void* module);
+void APS5_VABI FT_Add_Default_Modules_nid_postfix(FreeType::GuestLibrary* library);
+int APS5_VABI sceFreeTypeOtRemoveModule_nid_no_patch();
 }
