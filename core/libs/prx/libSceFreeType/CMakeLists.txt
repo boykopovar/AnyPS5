@@ -4,7 +4,9 @@ add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         src/Outline.cpp
         src/Charmap.cpp
         src/FaceInfo.cpp
-        src/Stroker.cpp
+        src/Stroker.cpp src/SfntTable.cpp
+        src/OutlineBitmap.cpp
+        src/SfntTable.cpp
         src/GuestObjects.cpp
         src/Names.cpp
         src/Trigonometry.cpp
@@ -110,6 +112,24 @@ if(BUILD_TESTING)
     add_test(NAME guest_freetype_stroker COMMAND guest_freetype_stroker_tests)
     if(WIN32)
         set_tests_properties(guest_freetype_stroker PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_sfnt_table_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeSfntTable.cpp)
+    target_include_directories(guest_freetype_sfnt_table_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_sfnt_table_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_sfnt_table_tests)
+    add_test(NAME guest_freetype_sfnt_table COMMAND guest_freetype_sfnt_table_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_sfnt_table PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+    add_test_executable(guest_freetype_outline_bitmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeOutlineBitmap.cpp)
+    target_include_directories(guest_freetype_outline_bitmap_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_outline_bitmap_tests PRIVATE libSceFreeType freetype libc)
+    configure_windows_unwind(guest_freetype_outline_bitmap_tests)
+    add_test(NAME guest_freetype_outline_bitmap COMMAND guest_freetype_outline_bitmap_tests)
+    if(WIN32)
+        set_tests_properties(guest_freetype_outline_bitmap PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
     endif()
     add_test_executable(guest_freetype_charmap_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeCharmap.cpp)
