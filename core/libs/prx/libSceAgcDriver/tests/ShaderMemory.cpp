@@ -2656,6 +2656,121 @@ void verifyRegionMerge(bool strided = false, bool benchmark = false) {
 }
 
 
+void verifyNestedSnapshotRetry(bool sampler) {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t Parents = ImageTableAbi::MaxParentKeys / 2u + 1u;
+    constexpr std::uint32_t Children = ImageTableAbi::MaxNestedKeys / 2u + 1u;
+    const std::uint32_t leafDwords = sampler ? 4u : 8u;
+    const auto texture = TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u);
+    const std::array<std::uint32_t, 4> pointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
+    std::vector<std::uint32_t> leaves;
+    for (std::uint32_t leaf = 0; leaf < Children; ++leaf) {
+        if (sampler) leaves.insert(leaves.end(), pointClamp.begin(), pointClamp.end());
+        else leaves.insert(leaves.end(), texture.begin(), texture.end());
+    }
+    const auto child = TableV(leaves.data(), leafDwords * 4u, Children);
+    std::vector<std::uint64_t> parents(Parents, reinterpret_cast<std::uintptr_t>(child.data()));
+    const auto root = TableV(parents.data(), 8u, Parents);
+    std::vector<std::unique_ptr<IrValue>> values;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.resourceTrackingComplete = true;
+    plan.userDataCount = 0u;
+    plan.materializationSources = {2u};
+    plan.descriptorSources.resize(3u);
+    for (std::uint32_t word = 0; word < 4u; ++word) {
+        auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, word);
+        value->SetImmediateU32(root[word]);
+        plan.descriptorSources[0].dwords[word] = value.get();
+        values.push_back(std::move(value));
+    }
+    plan.descriptorSources[0].dwordCount = 4u;
+    TableColumn parent;
+    parent.heapSource = 0u;
+    parent.stride = 8u;
+    parent.dwordCount = 4u;
+    parent.indirect = true;
+    parent.buffer = true;
+    plan.descriptorSources[1].tableColumn = parent;
+    TableColumn nested;
+    nested.heapSource = 1u;
+    nested.stride = leafDwords * 4u;
+    nested.dwordCount = leafDwords;
+    nested.sampler = sampler;
+    plan.descriptorSources[2].tableColumn = nested;
+    if (sampler) {
+        SamplerResource resource;
+        resource.source = 2u;
+        resource.table = 0u;
+        plan.info.samplers.push_back(resource);
+    } else {
+        ImageResource image;
+        image.source = 2u;
+        image.table = 0u;
+        image.resourceClass = ImageResourceClass::Sampled;
+        image.dimension = RdnaImageDimension::Dim2D;
+        image.read = true;
+        plan.info.images.push_back(image);
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+    }
+    struct Memory {
+        std::array<std::pair<std::uint64_t, std::size_t>, 3> ranges;
+        std::uint64_t epoch = 0;
+        bool invalidate = false;
+        std::uint32_t firstReads = 0;
+        std::uint32_t epochQueries = 0;
+        std::vector<std::array<std::size_t, 2>> coverage;
+    };
+    const auto capture = [&](bool invalidate) {
+        Memory memory{{{{reinterpret_cast<std::uintptr_t>(parents.data()), parents.size() * sizeof(parents[0])},
+                         {reinterpret_cast<std::uintptr_t>(child.data()), sizeof(child)},
+                         {reinterpret_cast<std::uintptr_t>(leaves.data()), leaves.size() * sizeof(leaves[0])}}}, 0u, invalidate};
+        SrtRuntime runtime{};
+        runtime.userContext = &memory;
+        runtime.readMemory = +[](void* context, std::uint64_t address, std::uint32_t* value) {
+            auto& memory = *static_cast<Memory*>(context);
+            for (const auto& [base, size] : memory.ranges) {
+                if (address >= base && address - base <= size - sizeof(*value)) {
+                    if (address == memory.ranges[0].first) {
+                        ++memory.firstReads;
+                        memory.coverage.push_back({});
+                    }
+                    if (memory.invalidate && address == memory.ranges[2].first + memory.ranges[2].second - sizeof(*value)) {
+                        ++memory.epoch;
+                        memory.invalidate = false;
+                    }
+                    if (!memory.coverage.empty()) {
+                        if (base == memory.ranges[0].first) memory.coverage.back()[0] = std::max(memory.coverage.back()[0], static_cast<std::size_t>(address - base + sizeof(*value)));
+                        if (base == memory.ranges[2].first) memory.coverage.back()[1] = std::max(memory.coverage.back()[1], static_cast<std::size_t>(address - base + sizeof(*value)));
+                    }
+                    std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+                    return true;
+                }
+            }
+            return false;
+        };
+        runtime.descriptorScope = +[](void* context, std::size_t bytes) -> std::uint64_t {
+            auto& memory = *static_cast<Memory*>(context);
+            if (bytes == 0u) ++memory.epochQueries;
+            return memory.epoch;
+        };
+        ResourceSnapshot snapshot;
+        ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+        require(memory.epochQueries != 0u, "nested retry: a single nested table did not check the descriptor epoch");
+        require(memory.firstReads == (invalidate ? 3u : 1u), "nested retry: expected inner retry and outer revalidation");
+        for (const auto& covered : memory.coverage)
+            require(covered[0] == memory.ranges[0].second && covered[1] == memory.ranges[2].second,
+                    "nested retry: a discarded attempt consumed the next attempt key budgets");
+        require(snapshot.tables.tables.at(0).keys == Parents && snapshot.tables.nested.at(0).keys == Children,
+                "nested retry: parent or child key coverage was truncated");
+        return snapshot.tables;
+    };
+    const auto stable = capture(false);
+    const auto retried = capture(true);
+    require(stable.tables == retried.tables && stable.nested == retried.nested,
+            "nested retry: an invalidation changed the captured keys, pointers, words or codes");
+}
+
 void verifyTableSnapshotReuse() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -9656,6 +9771,16 @@ int main(int argc, char** argv) {
             verifyWaterfallImageTable();
             verifySplitWaterfallImageTable();
             std::cout << "Image table keys, maps, records and registration passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-snapshot-retry") {
+            verifyNestedSnapshotRetry(false);
+            std::cout << "Nested snapshot retry preserves parent and child coverage\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--nested-sampler-snapshot-retry") {
+            verifyNestedSnapshotRetry(true);
+            std::cout << "Nested sampler snapshot retry checks the descriptor epoch and preserves parent and child coverage\n";
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--table-snapshot-reuse") {
