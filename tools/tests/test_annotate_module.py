@@ -179,6 +179,8 @@ class ObjdumpDiscoveryTests(unittest.TestCase):
         def run(command, **kwargs):
             return subprocess.CompletedProcess(command, 0, versions[Path(command[0]).name], "")
 
+        annotate_module.gnu_objdump.cache_clear()
+        self.addCleanup(annotate_module.gnu_objdump.cache_clear)
         with mock.patch.object(annotate_module.shutil, "which", which), mock.patch.object(annotate_module.subprocess, "run", run):
             return annotate_module.gnu_objdump()
 
