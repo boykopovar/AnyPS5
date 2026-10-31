@@ -2337,7 +2337,7 @@ std::uint32_t EmitLaneOrderedSharedAtomic(SpirvValueEmitContext& ctx, const IrVa
     const auto& capabilities = state.supportedCapabilities;
     const bool arithmetic = std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformArithmetic)) != capabilities.end();
     const auto reduction = AggregatedLdsReduction(inst.Opcode());
-    if (reduction && arithmetic && !state.spannedWave) return AggregatedLdsAtomic(ctx, inst, *reduction);
+    if (reduction && arithmetic && !state.spannedWave && (reduction->scan == spv::OpGroupNonUniformIAdd || !state.splitSubgroup)) return AggregatedLdsAtomic(ctx, inst, *reduction);
     return SerializedLdsAtomic(ctx, inst, emit);
 }
 

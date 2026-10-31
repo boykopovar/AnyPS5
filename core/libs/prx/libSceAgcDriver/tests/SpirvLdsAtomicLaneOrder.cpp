@@ -38,6 +38,7 @@ struct Options {
     std::uint32_t waveSize = 64u;
     bool ordered = true;
     bool arithmetic = true;
+    std::uint32_t subgroupSize = 32u;
 };
 
 struct Usage {
@@ -67,7 +68,7 @@ Usage Compile(std::initializer_list<std::uint32_t> body, const Options& options)
     request.context.compute = ShaderComputeStageInfo{{256u, 1u, 1u}, 64u, {false, false, false}, false, 1u};
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010300u;
-    request.target.subgroupSize = 32;
+    request.target.subgroupSize = options.subgroupSize;
     request.target.bdaAbiVersion = 1;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
@@ -146,6 +147,14 @@ void CheckLockedProgramsAreUnchanged() {
     Require(unordered.words == ordered.words, "lane order changes a program whose LDS atomics already take the 64-bit workgroup lock");
 }
 
+void CheckSplitSubgroups() {
+    const auto add = Compile({DsAddRtnU32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn}, {32u, true, true, 64u});
+    Require(Count(add, spv::OpAtomicIAdd) == 1u && Count(add, spv::OpGroupNonUniformIAdd, spv::GroupOperationExclusiveScan) == 1u, "a lane-ordered wave32 ds_add_rtn_u32 on a 64-lane host does not scan once and add once");
+    const auto unordered = Compile({DsMinRtnU32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn}, {32u, false, true, 64u});
+    const auto min = Compile({DsMinRtnU32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn}, {32u, true, true, 64u});
+    Require(Count(min, spv::OpAtomicUMin) == 1u && GroupArithmetic(min) == 0u && Count(min, spv::OpLoopMerge) == Count(unordered, spv::OpLoopMerge) + 1u, "a lane-ordered wave32 ds_min_rtn_u32 on a 64-lane host, where a shuffle scan would read the other wave's invocations, is not serialized by one lane loop");
+}
+
 void CheckWithoutArithmetic() {
     const auto ordered = Compile({DsAddRtnU32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn}, {64u, true, false});
     Require(Count(ordered, spv::OpAtomicIAdd) == 2u && GroupArithmetic(ordered) == 0u && !ordered.arithmeticCapability, "without subgroup arithmetic, a lane-ordered ds_add_rtn_u32 does not take the serialized path");
@@ -160,6 +169,7 @@ int main() {
         CheckMinScansWithShuffles();
         CheckUpdatesSerialize();
         CheckLockedProgramsAreUnchanged();
+        CheckSplitSubgroups();
         CheckWithoutArithmetic();
         std::puts("SPIR-V LDS atomic lane order tests passed");
         return 0;
