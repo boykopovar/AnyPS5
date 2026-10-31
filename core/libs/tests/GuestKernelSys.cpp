@@ -1375,6 +1375,10 @@ int main() {
     Require(socketDescriptor >= 0);
     Require(fchdir_nid_postfix(socketDescriptor) == -1 && Error() == 22);
     Require(close_nid_postfix(socketDescriptor) == 0);
+    const int fchdirKqueueDescriptor = kqueue_nid_postfix();
+    Require(fchdirKqueueDescriptor >= 0);
+    Require(fchdir_nid_postfix(fchdirKqueueDescriptor) == -1 && Error() == 22);
+    Require(close_nid_postfix(fchdirKqueueDescriptor) == 0);
     Require(fchdir_nid_postfix(directory) == 0);
     char directoryPath[1024];
     Require(getcwd_nid_postfix(directoryPath, sizeof(directoryPath)) == directoryPath);
