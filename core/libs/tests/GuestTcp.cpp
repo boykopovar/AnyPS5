@@ -219,8 +219,54 @@ static void ReceiveAnsweredWithoutTheHost() {
     for (const int descriptor : {unconnected, client, accepted, listener}) Require(close_nid_postfix(descriptor) == 0);
 }
 
+static void SocketNameFaults() {
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page, 3, 0) == 0 && memory != nullptr);
+    auto* readOnly = static_cast<std::uint8_t*>(memory);
+    Require(sceKernelMprotect(memory, page, 1) == 0);
+    const auto fails = [](int result) { return result == -1 && *__error_nid_postfix() == 14; };
+    const auto unreadable = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    const int listener = socket_nid_postfix(2, 1, 0);
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 4) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0);
+    const int client = socket_nid_postfix(2, 1, 0);
+    Require(connect_nid_postfix(client, address.data(), address.size()) == 0);
+    const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(accepted >= 0);
+    const int unconnected = socket_nid_postfix(2, 1, 0);
+    for (const auto call : {getsockname_nid_postfix, getpeername_nid_postfix}) {
+        std::array<std::uint8_t, 16> out{};
+        size = out.size();
+        Require(fails(call(client, out.data(), static_cast<std::uint32_t*>(unreadable))));
+        Require(fails(call(client, out.data(), nullptr)));
+        Require(fails(call(-1, out.data(), static_cast<std::uint32_t*>(unreadable))));
+        Require(call(-1, out.data(), &size) == -1 && *__error_nid_postfix() == 9);
+        Require(fails(call(client, unreadable, &size)) && size == out.size());
+        Require(fails(call(client, nullptr, &size)) && size == out.size());
+        Require(fails(call(client, readOnly, &size)) && size == out.size());
+        std::uint32_t* readOnlySize = reinterpret_cast<std::uint32_t*>(readOnly + 64);
+        Require(sceKernelMprotect(memory, page, 3) == 0);
+        *readOnlySize = out.size();
+        Require(sceKernelMprotect(memory, page, 1) == 0);
+        Require(fails(call(client, out.data(), readOnlySize)) && out[0] == 16 && out[1] == 2);
+        size = 0;
+        Require(call(client, nullptr, &size) == 0 && size == 0);
+        Require(call(client, unreadable, &size) == 0 && size == 0);
+        size = out.size();
+        Require(call(client, out.data(), &size) == 0 && size == 16);
+    }
+    size = address.size();
+    Require(getpeername_nid_postfix(unconnected, address.data(), &size) == -1 && *__error_nid_postfix() == 57);
+    Require(fails(getpeername_nid_postfix(unconnected, address.data(), static_cast<std::uint32_t*>(unreadable))));
+    for (const int descriptor : {unconnected, accepted, client, listener}) Require(close_nid_postfix(descriptor) == 0);
+}
+
 int main() {
     StreamReceiveReportsNoSender();
+    SocketNameFaults();
     ListenersShareAPortAcrossFamilies();
     AcceptedSocketsFollowListenerBlocking();
     WaitAllReceivesTheWholeRequest();
