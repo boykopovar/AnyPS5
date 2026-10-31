@@ -321,8 +321,10 @@ int FindImage(dl_phdr_info* image, std::size_t, void* data) {
 }
 
 int CollectGuestImage(dl_phdr_info* image, std::size_t, void* data) {
+#ifndef ANYPS5_GUEST_LIFTED
     const std::string_view name = image->dlpi_name ? image->dlpi_name : "";
     if (!name.empty() && !name.ends_with(".prx")) return 0;
+#endif
     for (std::uint16_t i = 0; i < image->dlpi_phnum; ++i) {
         const auto& header = image->dlpi_phdr[i];
         if (header.p_type != PT_LOAD) continue;
@@ -337,11 +339,15 @@ std::vector<GuestImage> GuestImages() {
     dl_iterate_phdr(CollectGuestImage, &addresses);
     std::vector<GuestImage> images;
     for (const auto address : addresses) {
+#ifdef ANYPS5_GUEST_LIFTED
+        images.push_back({reinterpret_cast<const void*>(address), address});
+#else
         Dl_info symbol{};
         link_map* native = nullptr;
         if (!dladdr1(reinterpret_cast<const void*>(address), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP) || !native)
             throw std::runtime_error("sceKernelGetModuleList: no link map for a loaded image");
         images.push_back({native, address});
+#endif
     }
     return images;
 }

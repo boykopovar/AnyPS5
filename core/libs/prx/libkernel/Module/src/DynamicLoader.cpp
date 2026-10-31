@@ -31,7 +31,7 @@
 #include <mach-o/getsect.h>
 #include <mach-o/loader.h>
 #else
-#include <link.h>
+#include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #ifdef __linux__
 #include <unistd.h>
 #endif
@@ -74,6 +74,27 @@ std::optional<std::uint64_t> LiftedImage(const std::filesystem::path& resolved) 
     if (const auto image = GuestCpuFindImage_nid_no_patch(path.c_str())) return image;
     if (const auto image = GuestCpuFindImage_nid_no_patch((path + ".guest.prx").c_str())) return image;
     return std::nullopt;
+}
+constexpr std::uint64_t LiftedExecutable = 1;
+struct LiftedImageSearch {
+    std::uint64_t remaining;
+    void* address;
+};
+int FindLiftedImageAddress(dl_phdr_info* image, std::size_t, void* data) {
+    auto& search = *static_cast<LiftedImageSearch*>(data);
+    if (--search.remaining != 0) return 0;
+    for (std::uint16_t i = 0; i < image->dlpi_phnum; ++i) {
+        if (image->dlpi_phdr[i].p_type != PT_LOAD) continue;
+        search.address = reinterpret_cast<void*>(image->dlpi_addr + image->dlpi_phdr[i].p_vaddr);
+        break;
+    }
+    return 1;
+}
+void* LiftedImageAddress(std::uint64_t image) {
+    LiftedImageSearch search{image, nullptr};
+    dl_iterate_phdr(FindLiftedImageAddress, &search);
+    if (!search.address) throw std::runtime_error("dlopen: lifted image " + std::to_string(image) + " has no loadable segment");
+    return search.address;
 }
 #endif
 #ifdef _WIN32
@@ -516,6 +537,7 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
         module->image = path ? LiftedImage(resolved) : std::optional<std::uint64_t>(0);
         if (module->image) {
             module->owned = false;
+            module->native = LiftedImageAddress(path ? *module->image : LiftedExecutable);
             if (path) InitializeLiftedGuestModule(*module->image);
         } else {
 #endif
