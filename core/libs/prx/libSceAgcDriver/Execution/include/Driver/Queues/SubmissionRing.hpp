@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <span>
 #include <string_view>
 
@@ -39,7 +40,7 @@ class StallWatch {
 public:
     explicit StallWatch(std::uint32_t queue) : queue(queue) {}
     void Progressed() { since = {}; }
-    void Check(const char* waiter, std::uint64_t value);
+    void Check(const char* waiter, std::uint64_t value, std::unique_lock<std::mutex>* held = nullptr);
 
 private:
     std::uint32_t queue;
