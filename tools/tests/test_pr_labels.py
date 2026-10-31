@@ -113,6 +113,20 @@ class NumbersTests(unittest.TestCase):
 
 
 class LabelTests(unittest.TestCase):
+    def test_tooling_perf_is_labeled_without_asking_for_a_capture(self):
+        for title in ("perf(tools): x", "perf(ci): x", "perf(build): x", "perf(Tools): x", "perf( tools ): x"):
+            with self.subTest(title=title):
+                self.assertEqual(pr_labels.labels_for(pr(title, TEMPLATE)), ({"perf"}, set()))
+
+    def test_runtime_perf_still_needs_a_capture(self):
+        for title in ("perf: x", "perf!: x", "perf(agc): x", "perf(libc): x", "perf(toolsy): x"):
+            with self.subTest(title=title):
+                self.assertEqual(pr_labels.labels_for(pr(title, TEMPLATE)), ({"perf", "perf numbers missing"}, set()))
+
+    def test_tooling_perf_drops_an_earlier_missing_label(self):
+        self.assertEqual(pr_labels.labels_for(pr("perf(tools): x", TEMPLATE, ["perf", "perf numbers missing"])),
+                         (set(), {"perf numbers missing"}))
+
     def test_labels(self):
         self.assertEqual(pr_labels.labels_for(pr()), (set(), set()))
         self.assertEqual(pr_labels.labels_for(pr("perf: x", TEMPLATE)), ({"perf", "perf numbers missing"}, set()))
