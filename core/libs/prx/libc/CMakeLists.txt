@@ -33,6 +33,17 @@ if(BUILD_TESTING)
         set_tests_properties(guest_stream_purge PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_bsearch_packed_tests ${LIBS_INCLUDE_DIR}/tests/GuestBsearchPacked.cpp)
+    target_include_directories(guest_bsearch_packed_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_bsearch_packed_tests PRIVATE libc)
+    configure_windows_unwind(guest_bsearch_packed_tests)
+    add_test(NAME guest_bsearch_packed COMMAND guest_bsearch_packed_tests)
+    set_tests_properties(guest_bsearch_packed PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_bsearch_packed PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_safe_error_tests ${LIBS_INCLUDE_DIR}/tests/GuestSafeErrors.cpp)
     target_include_directories(guest_safe_error_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_safe_error_tests PRIVATE libc)
