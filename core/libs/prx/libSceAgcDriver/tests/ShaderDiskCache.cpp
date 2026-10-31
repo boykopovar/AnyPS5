@@ -1401,6 +1401,10 @@ void verifyInvocationIsolation() {
         if ((descriptor[0] & 3u) == (original[0] & 3u) && (descriptor[1] & 0xffff0000u) == (original[1] & 0xffff0000u) && descriptor[3] == original[3] && (descriptor[0] != 0u || (descriptor[1] & 0xffffu) != 0u)) {
             require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "buffer address or size rebuilt the specialized module");
         }
+        if (descriptor[2] == 0u) {
+            require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "a null V# did not specialize with the bound slot's substitute");
+            continue;
+        }
         ComputeRequest fresh(false);
         fresh.userData = descriptor;
         requireSameResult(Recompile(fresh.request), changed, "reused binding plan against fresh compilation");
