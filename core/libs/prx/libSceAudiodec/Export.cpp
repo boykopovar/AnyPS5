@@ -174,11 +174,11 @@ Instance* find(std::int32_t handle) {
 extern "C" {
 
 int APS5_VABI sceAudiodecUnregisterCodec() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int APS5_VABI sceAudiodecGetAjmContext() {
-    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 int32_t APS5_VABI sceAudiodecInitLibrary(uint32_t codec_type) {
