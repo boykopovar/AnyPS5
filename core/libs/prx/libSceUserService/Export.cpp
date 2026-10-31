@@ -54,7 +54,9 @@ void PopulateInitialLoginEvents() {
  std::lock_guard lock(userMutex);
  eventQueue.clear();
  constexpr std::uint32_t EventTypeLogin = 0;
- eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID});
+ if (userConnected[0]) {
+  eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID});
+ }
  for (int i = 1; i < USER_SERVICE_MAX_USERS; ++i) {
   if (userConnected[i]) {
    eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID + i});
@@ -98,7 +100,7 @@ static int ReportKeyboardSetting(int user_id, int32_t* type, int32_t (*value)())
 extern "C" {
 
 void UserServiceSetUserConnected_nid_postfix(int userIndex, bool connected) {
-    if (userIndex <= 0 || userIndex >= USER_SERVICE_MAX_USERS) return;
+    if (userIndex < 0 || userIndex >= USER_SERVICE_MAX_USERS) return;
     std::lock_guard lock(userMutex);
     if (userConnected[userIndex] != connected) {
         userConnected[userIndex] = connected;
