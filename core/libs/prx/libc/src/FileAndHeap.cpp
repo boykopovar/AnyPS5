@@ -159,33 +159,33 @@ static bool IsPipeStream(std::FILE* native) {
 }
 #endif
 
-static void SwapElements(unsigned char* left, unsigned char* right, size_t size) {
+static void ReentrantSwapElements(unsigned char* left, unsigned char* right, size_t size) {
     for (size_t index = 0; index < size; ++index) std::swap(left[index], right[index]);
 }
 
-static void SwapRanges(unsigned char* left, unsigned char* right, size_t bytes) {
-    if (bytes > 0) SwapElements(left, right, bytes);
+static void ReentrantSwapRanges(unsigned char* left, unsigned char* right, size_t bytes) {
+    if (bytes > 0) ReentrantSwapElements(left, right, bytes);
 }
 
 template <typename Compare>
-static unsigned char* MedianOfThree(unsigned char* a, unsigned char* b, unsigned char* c, Compare compare) {
+static unsigned char* ReentrantMedianOfThree(unsigned char* a, unsigned char* b, unsigned char* c, Compare compare) {
     return compare(a, b) < 0
         ? (compare(b, c) < 0 ? b : (compare(a, c) < 0 ? c : a))
         : (compare(b, c) > 0 ? b : (compare(a, c) < 0 ? a : c));
 }
 
 template <typename Compare>
-static void InsertionSort(unsigned char* base, size_t count, size_t size, Compare compare) {
+static void ReentrantInsertionSort(unsigned char* base, size_t count, size_t size, Compare compare) {
     for (unsigned char* next = base + size; next < base + count * size; next += size)
         for (unsigned char* element = next; element > base && compare(element - size, element) > 0; element -= size)
-            SwapElements(element, element - size, size);
+            ReentrantSwapElements(element, element - size, size);
 }
 
 template <typename Compare>
-static void SortElements(unsigned char* base, size_t count, size_t size, Compare compare) {
+static void ReentrantSortElements(unsigned char* base, size_t count, size_t size, Compare compare) {
     for (;;) {
         if (count < 7) {
-            InsertionSort(base, count, size, compare);
+            ReentrantInsertionSort(base, count, size, compare);
             return;
         }
         unsigned char* middle = base + (count / 2) * size;
@@ -194,13 +194,13 @@ static void SortElements(unsigned char* base, size_t count, size_t size, Compare
             unsigned char* high = base + (count - 1) * size;
             if (count > 40) {
                 const size_t step = (count / 8) * size;
-                low = MedianOfThree(low, low + step, low + 2 * step, compare);
-                middle = MedianOfThree(middle - step, middle, middle + step, compare);
-                high = MedianOfThree(high - 2 * step, high - step, high, compare);
+                low = ReentrantMedianOfThree(low, low + step, low + 2 * step, compare);
+                middle = ReentrantMedianOfThree(middle - step, middle, middle + step, compare);
+                high = ReentrantMedianOfThree(high - 2 * step, high - step, high, compare);
             }
-            middle = MedianOfThree(low, middle, high, compare);
+            middle = ReentrantMedianOfThree(low, middle, high, compare);
         }
-        SwapElements(base, middle, size);
+        ReentrantSwapElements(base, middle, size);
         unsigned char* equalLow = base + size;
         unsigned char* scanLow = equalLow;
         unsigned char* scanHigh = base + (count - 1) * size;
@@ -211,7 +211,7 @@ static void SortElements(unsigned char* base, size_t count, size_t size, Compare
             while (scanLow <= scanHigh && (result = compare(scanLow, base)) <= 0) {
                 if (result == 0) {
                     swapped = true;
-                    SwapElements(equalLow, scanLow, size);
+                    ReentrantSwapElements(equalLow, scanLow, size);
                     equalLow += size;
                 }
                 scanLow += size;
@@ -219,39 +219,179 @@ static void SortElements(unsigned char* base, size_t count, size_t size, Compare
             while (scanLow <= scanHigh && (result = compare(scanHigh, base)) >= 0) {
                 if (result == 0) {
                     swapped = true;
-                    SwapElements(scanHigh, equalHigh, size);
+                    ReentrantSwapElements(scanHigh, equalHigh, size);
                     equalHigh -= size;
                 }
                 scanHigh -= size;
             }
             if (scanLow > scanHigh) break;
-            SwapElements(scanLow, scanHigh, size);
+            ReentrantSwapElements(scanLow, scanHigh, size);
             swapped = true;
             scanLow += size;
             scanHigh -= size;
         }
         if (!swapped) {
-            InsertionSort(base, count, size, compare);
+            ReentrantInsertionSort(base, count, size, compare);
             return;
         }
         unsigned char* const end = base + count * size;
         size_t moved = std::min<size_t>(equalLow - base, scanLow - equalLow);
-        SwapRanges(base, scanLow - moved, moved);
+        ReentrantSwapRanges(base, scanLow - moved, moved);
         moved = std::min<size_t>(equalHigh - scanHigh, end - equalHigh - size);
-        SwapRanges(scanLow, end - moved, moved);
+        ReentrantSwapRanges(scanLow, end - moved, moved);
         const size_t lowBytes = scanLow - equalLow;
         const size_t highBytes = equalHigh - scanHigh;
         if (lowBytes <= highBytes) {
-            if (lowBytes > size) SortElements(base, lowBytes / size, size, compare);
+            if (lowBytes > size) ReentrantSortElements(base, lowBytes / size, size, compare);
             if (highBytes <= size) return;
             base = end - highBytes;
             count = highBytes / size;
         } else {
-            if (highBytes > size) SortElements(end - highBytes, highBytes / size, size, compare);
+            if (highBytes > size) ReentrantSortElements(end - highBytes, highBytes / size, size, compare);
             if (lowBytes <= size) return;
             count = lowBytes / size;
         }
     }
+}
+
+static void SwapElements(unsigned char* left, unsigned char* right, size_t size) {
+    if (left == right) return;
+    std::swap_ranges(left, left + size, right);
+}
+
+static void RotateRight(unsigned char* first, unsigned char* last, size_t size) {
+    unsigned char buffer[256];
+    for (size_t offset = 0; offset < size; offset += sizeof(buffer)) {
+        const size_t chunk = std::min(sizeof(buffer), size - offset);
+        std::memcpy(buffer, last + offset, chunk);
+        for (unsigned char* element = last; element != first; element -= size) std::memcpy(element + offset, element - size + offset, chunk);
+        std::memcpy(first + offset, buffer, chunk);
+    }
+}
+
+template <typename Compare>
+static void MedianOfThree(unsigned char* first, unsigned char* middle, unsigned char* last, size_t size, Compare& compare) {
+    if (compare(middle, first) < 0) SwapElements(middle, first, size);
+    if (compare(last, middle) < 0) SwapElements(last, middle, size);
+    if (compare(middle, first) < 0) SwapElements(middle, first, size);
+}
+
+template <typename Compare>
+static void Median(unsigned char* first, unsigned char* middle, unsigned char* last, size_t size, Compare& compare) {
+    const size_t distance = static_cast<size_t>(last - first) / size;
+    if (distance <= 40) {
+        MedianOfThree(first, middle, last, size, compare);
+        return;
+    }
+    const size_t step = (distance / 8 + 1) * size;
+    MedianOfThree(first, first + step, first + 2 * step, size, compare);
+    MedianOfThree(middle - step, middle, middle + step, size, compare);
+    MedianOfThree(last - 2 * step, last - step, last, size, compare);
+    MedianOfThree(first + step, middle, last - step, size, compare);
+}
+
+template <typename Compare>
+static void AdjustHeap(unsigned char* base, size_t hole, size_t count, size_t size, Compare& compare) {
+    const auto at = [base, size](size_t index) { return base + index * size; };
+    size_t index = hole;
+    while (2 * index + 2 <= count) {
+        size_t child = 2 * index + 2;
+        if (child == count || compare(at(child), at(child - 1)) < 0) --child;
+        SwapElements(at(index), at(child), size);
+        index = child;
+    }
+    while (index > hole) {
+        const size_t parent = (index - 1) / 2;
+        if (compare(at(index), at(parent)) <= 0) break;
+        SwapElements(at(parent), at(index), size);
+        index = parent;
+    }
+}
+
+template <typename Compare>
+static void HeapSort(unsigned char* base, size_t count, size_t size, Compare& compare) {
+    for (size_t hole = count / 2; hole-- > 0;) AdjustHeap(base, hole, count, size, compare);
+    for (size_t remaining = count; remaining >= 2;) {
+        SwapElements(base, base + (remaining - 1) * size, size);
+        if (--remaining < 2) break;
+        AdjustHeap(base, 0, remaining, size, compare);
+    }
+}
+
+template <typename Compare>
+static void InsertionSort(unsigned char* base, size_t count, size_t size, Compare& compare) {
+    for (size_t index = 1; index < count; ++index) {
+        unsigned char* const next = base + index * size;
+        if (compare(next, base) < 0) {
+            RotateRight(base, next, size);
+            continue;
+        }
+        unsigned char* stop = next - size;
+        while (compare(next, stop) < 0) stop -= size;
+        if (stop + size != next) RotateRight(stop + size, next, size);
+    }
+}
+
+template <typename Compare>
+static void SortElements(unsigned char* first, size_t count, size_t ideal, size_t size, Compare& compare) {
+    while (ideal != 0 && count >= 33) {
+        unsigned char* const last = first + count * size;
+        unsigned char* const middle = first + count / 2 * size;
+        Median(first, middle, last - size, size, compare);
+        unsigned char* pivotFirst = middle;
+        while (first < pivotFirst && compare(pivotFirst - size, pivotFirst) == 0) pivotFirst -= size;
+        unsigned char* pivotLast = middle + size;
+        while (pivotLast < last && compare(pivotLast, pivotFirst) == 0) pivotLast += size;
+        unsigned char* greaterFirst = pivotLast;
+        unsigned char* greaterLast = pivotFirst;
+        for (;;) {
+            for (; greaterFirst < last; greaterFirst += size) {
+                const int result = compare(pivotFirst, greaterFirst);
+                if (result < 0) continue;
+                if (result > 0) break;
+                SwapElements(pivotLast, greaterFirst, size);
+                pivotLast += size;
+            }
+            for (; first < greaterLast; greaterLast -= size) {
+                const int result = compare(greaterLast - size, pivotFirst);
+                if (result < 0) continue;
+                if (result > 0) break;
+                pivotFirst -= size;
+                SwapElements(pivotFirst, greaterLast - size, size);
+            }
+            if (greaterLast == first && greaterFirst == last) break;
+            if (greaterLast == first) {
+                if (pivotLast != greaterFirst) SwapElements(pivotFirst, pivotLast, size);
+                SwapElements(pivotFirst, greaterFirst, size);
+                greaterFirst += size;
+                pivotFirst += size;
+                pivotLast += size;
+            } else if (greaterFirst == last) {
+                greaterLast -= size;
+                pivotFirst -= size;
+                pivotLast -= size;
+                if (greaterLast != pivotFirst) SwapElements(greaterLast, pivotFirst, size);
+                SwapElements(pivotFirst, pivotLast, size);
+            } else {
+                greaterLast -= size;
+                SwapElements(greaterFirst, greaterLast, size);
+                greaterFirst += size;
+            }
+        }
+        ideal = (ideal >> 1) + (ideal >> 2);
+        const size_t lowCount = static_cast<size_t>(pivotFirst - first) / size;
+        const size_t highCount = static_cast<size_t>(last - pivotLast) / size;
+        if (lowCount > highCount) {
+            SortElements(pivotLast, highCount, ideal, size, compare);
+            count = lowCount;
+        } else {
+            SortElements(first, lowCount, ideal, size, compare);
+            first = pivotLast;
+            count = highCount;
+        }
+    }
+    if (count >= 33) HeapSort(first, count, size, compare);
+    else if (count >= 2) InsertionSort(first, count, size, compare);
 }
 
 namespace {
@@ -874,14 +1014,10 @@ int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestC
 }
 
 void APS5_VABI qsort_nid_postfix(void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*)) {
-    if (!compare) throw std::invalid_argument("qsort: null comparator");
-    if (size == 0) throw std::invalid_argument("qsort: zero element size");
-    if (count == 0) return;
-    if (!base) throw std::invalid_argument("qsort: null base");
-    if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("qsort: array size overflow");
-    if (count == 1) return;
-
-    SortElements(static_cast<unsigned char*>(base), count, size, compare);
+    if (!base || !compare) return;
+    if (size == 0 && count >= 33) throw std::invalid_argument("qsort: zero element size");
+    if (size != 0 && count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("qsort: array size overflow");
+    SortElements(static_cast<unsigned char*>(base), count, count, size, compare);
 }
 
 int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestContextCompare compare, void* context) {
@@ -895,8 +1031,10 @@ int APS5_VABI qsort_s_nid_postfix(void* base, size_t count, size_t size, GuestCo
         SonyInvokeConstraintHandler(violation, nullptr, 22);
         return 22;
     }
-    if (count > 1 && size != 0)
-        SortElements(static_cast<unsigned char*>(base), count, size, [compare, context](const void* left, const void* right) { return compare(left, right, context); });
+    if (count == 0) return 0;
+    if (size == 0 && count >= 33) throw std::invalid_argument("qsort_s: zero element size");
+    auto withContext = [compare, context](const void* left, const void* right) { return compare(left, right, context); };
+    SortElements(static_cast<unsigned char*>(base), count, count, size, withContext);
     return 0;
 }
 
@@ -908,7 +1046,7 @@ void APS5_VABI qsort_r_nid_postfix(void* base, size_t count, size_t size, void* 
     if (count > std::numeric_limits<size_t>::max() / size) throw std::overflow_error("qsort_r: array size overflow");
     if (count == 1) return;
 
-    SortElements(static_cast<unsigned char*>(base), count, size, [compare, thunk](const void* left, const void* right) { return compare(thunk, left, right); });
+    ReentrantSortElements(static_cast<unsigned char*>(base), count, size, [compare, thunk](const void* left, const void* right) { return compare(thunk, left, right); });
 }
 
 }
