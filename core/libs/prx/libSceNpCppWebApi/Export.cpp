@@ -1688,6 +1688,7 @@ static int HostVectorCopyFrom(IntrusivePtr* self, const IntrusivePtr* source, co
         NotImplemented_nid_no_patch(function);
         return ParameterAllocationFailed;
     }
+    if (sourceBody != nullptr && body == sourceBody) return 0;
     auto* elements = static_cast<IntrusivePtr*>(body->elements);
     for (std::uint64_t index = 0; index < body->size; ++index) {
         ReleaseIntrusivePtr(&elements[index], ReferenceCountOffset, function);
@@ -1736,6 +1737,7 @@ static int HostVectorCopyFromStrings(IntrusivePtr* self, const IntrusivePtr* sou
         NotImplemented_nid_no_patch(function);
         return ParameterAllocationFailed;
     }
+    if (sourceBody != nullptr && body == sourceBody) return 0;
     auto* elements = static_cast<CommonString*>(body->elements);
     for (std::uint64_t index = 0; index < body->size; ++index) DestroyHostString(&elements[index]);
     body->size = 0;
