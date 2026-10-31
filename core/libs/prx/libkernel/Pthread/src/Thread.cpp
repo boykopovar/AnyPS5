@@ -554,6 +554,15 @@ std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread) {
     return {};
 }
 
+static std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread) {
+    auto& registry = CpuClocks();
+    std::unique_lock lock(registry.lock);
+    for (const auto& [id, registered] : registry.threads) {
+        if (registered == thread) return lock;
+    }
+    return {};
+}
+
 bool GuestThreadIsLive(const PthreadPrivate* thread) {
     return LockLiveGuestThread(thread).owns_lock();
 }
@@ -1277,12 +1286,16 @@ KernelCpumask APS5_VABI sceKernelGetAvailableCpumask(void) {
 
 int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask) {
     if (!thread || !mask) return SCE_KERNEL_ERROR_EINVAL;
+    const auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     *mask = thread->affinity.load(std::memory_order_relaxed);
     return SCE_OK;
 }
 
 int APS5_VABI scePthreadGetname(Pthread thread, char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
+    const auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     std::lock_guard lock(thread->nameLock);
     const std::size_t length = std::min<std::size_t>(thread->name.size(), THREAD_NAME_CAPACITY - 1);
     std::memcpy(name, thread->name.data(), length);
@@ -1292,6 +1305,8 @@ int APS5_VABI scePthreadGetname(Pthread thread, char* name) {
 
 int APS5_VABI scePthreadGetprio(Pthread thread, int* prio) {
     if (!thread || !prio) return SCE_KERNEL_ERROR_EINVAL;
+    const auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     *prio = thread->priority.load(std::memory_order_relaxed);
     return SCE_OK;
 }
@@ -1302,6 +1317,8 @@ int APS5_VABI scePthreadGetthreadid(void) {
 
 int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     if (!thread || !name) return SCE_KERNEL_ERROR_EINVAL;
+    const auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     std::lock_guard lock(thread->nameLock);
     thread->name = name;
 #ifdef _WIN32
@@ -1314,6 +1331,8 @@ int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
 
 int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask) {
     if (!thread || mask == 0) return SCE_KERNEL_ERROR_EINVAL;
+    const auto registered = LockRegisteredGuestThread(thread);
+    if (!registered) return SCE_KERNEL_ERROR_ESRCH;
     thread->affinity.store(mask, std::memory_order_relaxed);
     return SCE_OK;
 }
