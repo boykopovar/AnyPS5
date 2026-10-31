@@ -22,7 +22,7 @@ RELATIVE_DEFINED = (TARGET, (1 << 32) | 8, FUNCTION)
 JUMP_SLOT = (TARGET, (1 << 32) | 7, 0)
 
 
-def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, exported=True, symbol_info=0x12):
+def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, exported=True, symbol_info=0x12, preinit=False):
     image = module_with_symbol(exported)
     image[0x89c] = symbol_info
     image.extend(bytes(0xE00 - len(image)))
@@ -35,6 +35,8 @@ def module(rela=(), plt=(), sce=False, lifecycle=False, initial=UNCHANGED, expor
         tags += [(23, 0x2400), (2, len(plt) * 24), (20, 7), (3, TARGET)]
     if lifecycle:
         tags += [(25, TARGET), (27, 8), (26, TARGET), (28, 8)]
+    if preinit:
+        tags += [(32, TARGET), (33, 8)]
     if sce:
         struct.pack_into("<H", image, 56, 4)
         struct.pack_into("<IIQQQQQQ", image, 232, 0x61000000, 0, 0x800, 0, 0, 0x600, 0x600, 1)
@@ -138,6 +140,7 @@ def invalid_cases(sce):
     ambiguous = module(plt=[NOOP], sce=sce)
     yield "ambiguous-plt-format", change_tag(ambiguous, 0x61000027 if sce else 3, value=7,
                                             replacement=20 if sce else 0x6100002b), "Missing or ambiguous dynamic tag"
+    yield "preinit-without-init", module([NOOP], sce=sce, preinit=True), "Guest PREINIT_ARRAY has no module initializer"
 
 
 def main():
