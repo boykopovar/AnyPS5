@@ -1,3 +1,4 @@
+import json
 import contextlib
 import io
 import sys
@@ -35,6 +36,62 @@ static const char* t = std::getenv("NOT_AN_ENV");
 static std::uint64_t u = std::min<std::uint64_t>(EnvironmentNumber("APS5_CRASH_STACK_BYTES"), std::uint64_t{1} << 20);
 static std::uint64_t v = MyEnvironmentNumber("APS5_NOT_A_NUMBER_READ");
 """
+
+
+class EnvironmentJsonTests(unittest.TestCase):
+    def test_sites_and_documentation_differences(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "sources-日"
+            root.mkdir()
+            (root / "a.cpp").write_text('auto a = EnvInt("APS5_COUNT", -4);\nauto b = EnvInt("APS5_COUNT", 2);\n', encoding="utf-8")
+            doc = root / "reference.md"
+            doc.write_text("`APS5_STALE`", encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = env_reference.main(["--root", str(root), "--check", "--doc", str(doc), "--json"])
+            self.assertEqual(status, 1)
+            data = json.loads(output.getvalue())
+            self.assertEqual(data["documentation"]["missing"], ["APS5_COUNT"])
+            self.assertEqual(data["documentation"]["stale"], ["APS5_STALE"])
+            self.assertEqual(data["variables"], [{"name": "APS5_COUNT", "reads": [
+                {"path": (root / "a.cpp").as_posix(), "line": 1, "kind": "integer", "default": "-4"},
+                {"path": (root / "a.cpp").as_posix(), "line": 2, "kind": "integer", "default": "2"}]}])
+            doc.write_text("`APS5_COUNT`", encoding="utf-8")
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(env_reference.main(["--root", str(root), "--check", "--doc", str(doc), "--json"]), 0)
+
+    def test_empty_missing_document_and_incompatible_table(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(env_reference.main(["--root", directory, "--json"]), 0)
+            self.assertEqual(json.loads(out.getvalue()), {"variables": []})
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertEqual(env_reference.main(["--root", directory, "--json", "--check", "--doc", str(Path(directory) / "absent")]), 1)
+            self.assertIn("error", json.loads(out.getvalue()))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            env_reference.main(["--json", "--table"])
+        self.assertEqual(error.exception.code, 2)
+
+    def test_each_documentation_difference_fails_alone_and_lists_are_sorted(self):
+        names = ["APS5_F", "APS5_B", "APS5_E", "APS5_A", "APS5_D", "APS5_C"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "a.cpp").write_text("".join(f'auto v{index} = EnvInt("{name}", 1);\n' for index, name in enumerate(names)), encoding="utf-8")
+            doc = root / "reference.md"
+            stale = [name + "_OLD" for name in names]
+            for text, missing, extra in ((" ".join(f"`{name}`" for name in names + stale), [], sorted(stale)), ("", sorted(names), [])):
+                doc.write_text(text, encoding="utf-8")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    status = env_reference.main(["--root", str(root), "--check", "--doc", str(doc), "--json"])
+                data = json.loads(output.getvalue())
+                self.assertEqual(status, 1)
+                self.assertEqual(data["documentation"], {"path": str(doc), "missing": missing, "stale": extra})
+                self.assertEqual([variable["name"] for variable in data["variables"]], sorted(names))
 
 
 class EnvReferenceTests(unittest.TestCase):
@@ -444,6 +501,9 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+
+
 
 
 if __name__ == "__main__":

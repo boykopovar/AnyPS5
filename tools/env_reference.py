@@ -1,6 +1,7 @@
 import argparse
 import bisect
 import functools
+import json
 import re
 import sys
 from pathlib import Path
@@ -210,6 +211,7 @@ def main(argv=None):
         description="list the environment names the code reads, or check them against a reference document")
     parser.add_argument("--check", action="store_true",
                         help="compare the names the code reads with the document and fail on a mismatch")
+    parser.add_argument("--json", action="store_true", help="emit a JSON report, including documentation checks when requested")
     parser.add_argument("--table", action="store_true",
                         help="emit the reference table rows, grouped by library")
     parser.add_argument("--doc", default=DOC, help="reference document to check (default: %(default)s)")
@@ -218,6 +220,8 @@ def main(argv=None):
     parser.add_argument("--prefix", action="append", default=None,
                         help="name prefix to scan (default: %s); repeatable" % ", ".join(PREFIXES))
     args = parser.parse_args(argv)
+    if args.json and args.table:
+        parser.error("--json conflicts with --table")
     roots = args.root if args.root else ROOTS
     prefixes = tuple(args.prefix) if args.prefix else PREFIXES
     for root in roots:
@@ -229,6 +233,23 @@ def main(argv=None):
     except ValueError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
+    if args.json:
+        report = {"variables": [
+            {"name": name, "reads": [{"path": path, "line": line, "kind": kind, "default": default}
+                                     for path, line, kind, default in found[name]]}
+            for name in sorted(found)]}
+        status = 0
+        if args.check:
+            names = documented(args.doc, prefixes)
+            if names is None:
+                report["error"] = f"cannot read {args.doc}"
+                status = 1
+            else:
+                missing, stale = sorted(set(found) - names), sorted(names - set(found))
+                report["documentation"] = {"path": args.doc, "missing": missing, "stale": stale}
+                status = int(bool(missing or stale))
+        print(json.dumps(report, ensure_ascii=True, sort_keys=True))
+        return status
     if args.check:
         return check(found, args.doc, prefixes, sys.stdout)
     if args.table:
