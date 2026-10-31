@@ -15,6 +15,7 @@
 #include <limits>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -44,6 +45,15 @@ alignas(256) constexpr std::array<std::uint32_t, 30> Code{
     0xf0800108, 0x00610e02, 0xf0001108, 0x00010f05, 0xbf8c3f70, 0xe0701020, 0x80000c01, 0xe0701024,
     0x80000d01, 0xe0701028, 0x80000e01, 0xe070102c, 0x80000f01, 0xbf810000,
 };
+
+alignas(256) constexpr auto ExplicitCode = [] {
+    static_assert(Code[16] == 0xf0800108u && Code[25] == 0xe0701028u);
+    std::array<std::uint32_t, Code.size() - 4u> code{};
+    std::copy_n(Code.begin(), 16u, code.begin());
+    std::copy(Code.begin() + 18u, Code.begin() + 25u, code.begin() + 16u);
+    std::copy(Code.begin() + 27u, Code.end(), code.begin() + 23u);
+    return code;
+}();
 
 std::uint32_t GuestWord(std::uint32_t seed) {
     seed ^= seed >> 16u;
@@ -113,24 +123,43 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, const std::array<std::uint32_t, 4>& sampler) {
+bool HasComputeDerivatives(const ShaderRecompiler::SpirvTarget& target) {
+    return TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
+}
+
+void Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, const std::array<std::uint32_t, 8>& texture, const std::array<std::uint32_t, 4>& sampler) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     std::copy(sampler.begin(), sampler.end(), userData.begin() + 12);
-    const std::span<const std::uint32_t> code(Code);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(Code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
-    ShaderRecompiler::RecompileRequest request{
-        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(Code.data()), code, 0, {}},
-        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
-        {0, 0, 0, 128}
+    const auto compile = [&](std::span<const std::uint32_t> code) {
+        const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+        const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+        ShaderRecompiler::RecompileRequest request{
+            {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+            {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+            target,
+            {0, 0, 0, 128}
+        };
+        request.useCache = false;
+        return ShaderRecompiler::Recompile(request);
     };
-    request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    ShaderRecompiler::RecompileResult result;
+    const bool implicit = HasComputeDerivatives(target);
+    if (implicit) {
+        result = compile(Code);
+    } else {
+        std::string refusal;
+        try {
+            static_cast<void>(compile(Code));
+        } catch (const std::exception& error) {
+            refusal = error.what();
+        }
+        Require(refusal.find("require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives") != std::string::npos, "image repacked float: implicit sample was not refused without compute derivatives: " + refusal);
+        result = compile(ExplicitCode);
+    }
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(implicit ? Code.data() : ExplicitCode.data()));
     device.WaitIdle();
 }
 
@@ -150,14 +179,14 @@ std::uint32_t MipWord(std::uint32_t, std::uint32_t level, std::uint32_t x, std::
     return GuestWord(level * 4096u + y * 64u + x);
 }
 
-void CheckMipLevels(AgcDriver::VulkanDevice& device) {
+void CheckMipLevels(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
     for (std::uint32_t lod = 1; lod < MipLevels; ++lod) {
         const auto size = MipSize >> lod;
         for (std::uint32_t component = 0; component < 3u; ++component) {
             const auto descriptor = Descriptor(RepackedFormat, MipSize, Type2D, Swizzle(component), MipLevels - 1u, 0u);
             Fill(descriptor, MipWord);
             Input(size, 0.0f, lod);
-            Run(device, descriptor, PointMipSampler);
+            Run(device, target, descriptor, PointMipSampler);
             for (std::uint32_t tid = 0; tid < Threads; ++tid) {
                 const auto x = tid % size;
                 const auto y = (tid * 3u) % size;
@@ -176,22 +205,23 @@ std::uint32_t CubeWord(std::uint32_t face, std::uint32_t, std::uint32_t x, std::
     return ((exponent << 5u) | ((x * 7u + y) & 31u)) | (((exponent + 1u) << 6u | ((y * 5u + face) & 63u)) << 10u) | (((exponent + 2u) << 6u | ((x * 3u + face * 11u) & 63u)) << 21u);
 }
 
-void CheckCubeFace(AgcDriver::VulkanDevice& device) {
+void CheckCubeFace(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target) {
     for (std::uint32_t component = 0; component < 3u; ++component) {
         const auto repacked = Descriptor(RepackedFormat, CubeSize, TypeCube, Swizzle(component), 0u, Faces - 1u);
         Fill(repacked, CubeWord);
         Input(CubeSize, 1.0f, 0u);
         for (std::uint32_t tid = 0; tid < Threads; ++tid) Buffer[tid * Words] = std::bit_cast<std::uint32_t>(std::bit_cast<float>(Buffer[tid * Words]) + 0.3f / CubeSize);
         const auto input = Buffer;
-        Run(device, repacked, BilinearSampler);
+        Run(device, target, repacked, BilinearSampler);
         const auto repackedResults = Buffer;
         constexpr std::array<std::uint32_t, 3> nativeChannel{2u, 1u, 0u};
         const auto native = Descriptor(NativeFormat, CubeSize, TypeCube, Swizzle(nativeChannel[component]), 0u, Faces - 1u);
         Fill(native, [](std::uint32_t face, std::uint32_t level, std::uint32_t x, std::uint32_t y) { return AgcDriver::Graphics::RepackTextureWord(CubeWord(face, level, x, y)); });
         Buffer = input;
-        Run(device, native, BilinearSampler);
+        Run(device, target, native, BilinearSampler);
         for (std::uint32_t tid = 0; tid < Threads; ++tid) {
             for (std::uint32_t op = 0; op < 4u; ++op) {
+                if (op == 2u && !HasComputeDerivatives(target)) continue;
                 const float actual = std::bit_cast<float>(repackedResults[tid * Words + Result + op]);
                 const float expected = std::bit_cast<float>(Buffer[tid * Words + Result + op]);
                 Require(Same(actual, expected), "image repacked float: cube face sample " + std::to_string(op) + ", thread " + std::to_string(tid) + " component " + std::to_string(component) + " is " + std::to_string(actual) + ", the native B10G11R11 cube gives " + std::to_string(expected));
@@ -204,12 +234,27 @@ void CheckCubeFace(AgcDriver::VulkanDevice& device) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool forced = argc == 2 && std::string_view(argv[1]) == "--without-compute-derivatives";
+        Require(argc == 1 || forced, "image repacked float: unexpected arguments");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        CheckMipLevels(*device);
-        CheckCubeFace(*device);
+        auto target = device->Target();
+        std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
+        std::vector<std::string_view> extensions(target.supportedExtensions.begin(), target.supportedExtensions.end());
+        if (forced) {
+            std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR));
+            std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+        }
+        target.supportedCapabilities = capabilities;
+        target.supportedExtensions = extensions;
+        CheckMipLevels(*device, target);
+        CheckCubeFace(*device, target);
+        if (!HasComputeDerivatives(target)) {
+            std::puts("image repacked float explicit samples and loads passed; implicit samples refused without compute derivatives");
+            return forced ? 0 : VulkanTestSkipped;
+        }
         std::puts("image repacked float tests passed");
         return 0;
     } catch (const std::exception& error) {

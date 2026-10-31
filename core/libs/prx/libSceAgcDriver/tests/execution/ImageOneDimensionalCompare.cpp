@@ -11,6 +11,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -246,7 +247,11 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
     return {CompareLess << 12u, 0xfffu << 12u, 1u << 26u, 0u};
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& textureDesc) {
+bool HasComputeDerivatives(const ShaderRecompiler::SpirvTarget& target) {
+    return TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
+}
+
+bool Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& textureDesc, bool implicit = false) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto sampler = SamplerDescriptor();
@@ -258,13 +263,25 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
+    ShaderRecompiler::RecompileResult result;
+    try {
+        result = ShaderRecompiler::Recompile(request);
+    } catch (const std::exception& error) {
+        if (implicit && !HasComputeDerivatives(target)) {
+            Require(std::string_view(error.what()).find("require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives") != std::string_view::npos, std::string("1D comparison: unexpected implicit sample refusal: ") + error.what());
+            std::puts("1D comparison: implicit sample refused without compute derivatives");
+            return false;
+        }
+        throw;
+    }
+    Require(!implicit || HasComputeDerivatives(target), "1D comparison: implicit sample was accepted without compute derivatives");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    return true;
 }
 
 void Check(const std::string& op) {
@@ -275,7 +292,7 @@ void Check(const std::string& op) {
     }
 }
 
-void ExpectGatherReject(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& textureDesc) {
+void ExpectGatherReject(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& textureDesc) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(sizeof(Buffer)));
     const auto sampler = SamplerDescriptor();
@@ -287,7 +304,7 @@ void ExpectGatherReject(AgcDriver::VulkanDevice& device, std::span<const std::ui
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
@@ -301,61 +318,72 @@ void ExpectGatherReject(AgcDriver::VulkanDevice& device, std::span<const std::ui
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool forced = argc == 2 && std::string_view(argv[1]) == "--without-compute-derivatives";
+        Require(argc == 1 || forced, "1D comparison: unexpected arguments");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        auto target = device->Target();
+        std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
+        std::vector<std::string_view> extensions(target.supportedExtensions.begin(), target.supportedExtensions.end());
+        if (forced) {
+            std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR));
+            std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+        }
+        target.supportedCapabilities = capabilities;
+        target.supportedExtensions = extensions;
         FillLine();
         FillArray();
         FillPlane();
 
         FillInput1D();
-        Run(*device, Code1D_Lz, LineDescriptor());
+        Run(*device, target, Code1D_Lz, LineDescriptor());
         Check("1D image_sample_c_lz");
 
         FillInput1D();
-        Run(*device, Code1D_ImplicitLod, LineDescriptor());
-        Check("1D image_sample_c");
+        if (Run(*device, target, Code1D_ImplicitLod, LineDescriptor(), true)) Check("1D image_sample_c");
 
         FillInput1D();
-        Run(*device, Code1D_ExplicitLod, LineDescriptor());
+        Run(*device, target, Code1D_ExplicitLod, LineDescriptor());
         Check("1D image_sample_c_l");
 
         FillInput1D();
-        Run(*device, Code1D_Lz_Offset, LineDescriptor());
+        Run(*device, target, Code1D_Lz_Offset, LineDescriptor());
         Check("1D image_sample_c_lz_o");
 
         FillInput1DArray();
-        Run(*device, Code1DArray_Lz, ArrayDescriptor());
+        Run(*device, target, Code1DArray_Lz, ArrayDescriptor());
         Check("1D array image_sample_c_lz");
 
         FillInput1DArray();
-        Run(*device, Code1DArray_Lz_Offset, ArrayDescriptor());
+        Run(*device, target, Code1DArray_Lz_Offset, ArrayDescriptor());
         Check("1D array image_sample_c_lz_o");
 
         FillInput1DArray();
-        Run(*device, Code1DArray_ImplicitLod, ArrayDescriptor());
-        Check("1D array image_sample_c");
+        if (Run(*device, target, Code1DArray_ImplicitLod, ArrayDescriptor(), true)) Check("1D array image_sample_c");
 
         FillInputArrayFirstLayer();
-        Run(*device, Code1D_Lz, ArrayDescriptor());
+        Run(*device, target, Code1D_Lz, ArrayDescriptor());
         Check("1D image_sample_c_lz on 1D array first layer");
 
         FillInputArrayFirstLayer();
-        Run(*device, Code1D_ImplicitLod, ArrayDescriptor());
-        Check("1D image_sample_c on 1D array first layer");
+        if (Run(*device, target, Code1D_ImplicitLod, ArrayDescriptor(), true)) Check("1D image_sample_c on 1D array first layer");
 
         FillInput2D();
-        Run(*device, Code2D_Lz, PlaneDescriptor());
+        Run(*device, target, Code2D_Lz, PlaneDescriptor());
         Check("2D image_sample_c_lz");
 
         FillInput2D();
-        Run(*device, Code2D_ImplicitLod, PlaneDescriptor());
-        Check("2D image_sample_c");
+        if (Run(*device, target, Code2D_ImplicitLod, PlaneDescriptor(), true)) Check("2D image_sample_c");
 
-        ExpectGatherReject(*device, Code1D_Gather_C_Lz, LineDescriptor());
-        ExpectGatherReject(*device, Code1DArray_Gather_C_Lz, ArrayDescriptor());
+        ExpectGatherReject(*device, target, Code1D_Gather_C_Lz, LineDescriptor());
+        ExpectGatherReject(*device, target, Code1DArray_Gather_C_Lz, ArrayDescriptor());
 
+        if (!HasComputeDerivatives(target)) {
+            std::puts("1D comparison explicit samples and gather refusals passed; implicit samples refused without compute derivatives");
+            return forced ? 0 : VulkanTestSkipped;
+        }
         std::puts("1D, 1D-array, and 2D comparison tests passed");
         return 0;
     } catch (const std::exception& error) {

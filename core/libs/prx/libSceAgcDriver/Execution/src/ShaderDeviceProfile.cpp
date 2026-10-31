@@ -30,6 +30,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     const auto* barycentric = findFeatures<VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR);
     const auto* mesh = findFeatures<VkPhysicalDeviceMeshShaderFeaturesEXT>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT);
     const auto* clock = findFeatures<VkPhysicalDeviceShaderClockFeaturesKHR>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_CLOCK_FEATURES_KHR);
+    const auto* derivatives = findFeatures<VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR);
     const auto* drawParameters = findFeatures<VkPhysicalDeviceShaderDrawParametersFeatures>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES);
     const auto* terminate = findFeatures<VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR);
     const auto* maintenance8 = findFeatures<VkPhysicalDeviceMaintenance8FeaturesKHR>(deviceInfo.pNext, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_8_FEATURES_KHR);
@@ -70,6 +71,8 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     checkFeature(spv::CapabilityMeshShadingEXT, meshEnabled, "meshShader");
     checkFeature(spv::CapabilityDrawParameters, drawParameters != nullptr && drawParameters->shaderDrawParameters == VK_TRUE, "shaderDrawParameters");
     checkFeature(spv::CapabilityShaderClockKHR, clock != nullptr && clock->shaderSubgroupClock == VK_TRUE && clock->shaderDeviceClock == VK_TRUE, "shader clock");
+    const bool linearDerivatives = derivatives != nullptr && derivatives->computeDerivativeGroupLinear == VK_TRUE;
+    checkFeature(spv::CapabilityComputeDerivativeGroupLinearKHR, linearDerivatives, "computeDerivativeGroupLinear");
     Require(!target.fragmentShaderBarycentricEnabled || barycentricEnabled, "shader device profile exposes disabled barycentrics");
     Require(!target.fragmentBarycentricBuiltins || barycentricEnabled, "shader device profile exposes disabled barycentric built-ins");
     Require(!target.mesh || meshEnabled, "shader device profile exposes disabled mesh shaders");
@@ -81,6 +84,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     for (const auto& extension : extensions) extensionViews.emplace_back(extension);
     Require(std::ranges::find(extensionViews, "SPV_KHR_physical_storage_buffer") != extensionViews.end() && std::ranges::find(extensionViews, "SPV_KHR_8bit_storage") != extensionViews.end(), "shader device profile is missing runtime extensions");
     Require(std::ranges::find(extensionViews, "SPV_KHR_terminate_invocation") == extensionViews.end() || (terminate != nullptr && terminate->shaderTerminateInvocation == VK_TRUE), "shader device profile advertises a disabled feature: shaderTerminateInvocation");
+    Require(std::ranges::find(extensionViews, "SPV_KHR_compute_shader_derivatives") == extensionViews.end() || linearDerivatives, "shader device profile advertises a disabled feature: computeDerivativeGroupLinear");
     this->target.supportedCapabilities = capabilities;
     this->target.supportedExtensions = extensionViews;
 }

@@ -303,6 +303,15 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.splitSubgroup = program.WaveSize() == 32u && target.subgroupSize > 32u;
     if (state.splitSubgroup && (state.requirements.subgroupBallot || state.requirements.subgroupShuffle)) state.requirements.subgroupLocalInvocationId = true;
     const auto* workgroup = ShaderWorkgroupInputFor(state);
+    if (state.requirements.computeDerivatives && program.Resources().stage == IrShaderStage::Compute) {
+        if (std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR)) == state.supportedCapabilities.end() || std::ranges::find(state.supportedExtensions, "SPV_KHR_compute_shader_derivatives") == state.supportedExtensions.end()) {
+            FailProgram(program, "compute texture derivatives require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives");
+        }
+        const auto threads = std::uint64_t{std::max(workgroup->threadsNum[0], 1u)} * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u);
+        if (threads % 4u != 0u || inputInfo.compute->partialGroups) {
+            FailProgram(program, "compute texture derivatives require complete four-lane quads without partial dispatch groups");
+        }
+    }
     const bool halfHost = workgroup != nullptr && program.WaveSize() == 64u && workgroup->hostSubgroupSize == 32u;
     state.spannedWave = halfHost && target.spannedWaves && program.Resources().stage == IrShaderStage::Compute && !state.requirements.computeDerivatives && std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u) == 64u;
     state.laneCount = halfHost && !state.spannedWave ? 2u : 1u;

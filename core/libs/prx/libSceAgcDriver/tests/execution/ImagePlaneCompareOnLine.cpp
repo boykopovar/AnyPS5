@@ -11,6 +11,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -103,7 +104,17 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
     return {CompareLess << 12u, 0xfffu << 12u, 1u << 26u, 0u};
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
+bool Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, bool withoutComputeDerivatives, bool implicit) {
+    auto target = device.Target();
+    std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
+    std::vector<std::string_view> extensions(target.supportedExtensions.begin(), target.supportedExtensions.end());
+    if (withoutComputeDerivatives) {
+        std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR));
+        std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+        target.supportedCapabilities = capabilities;
+        target.supportedExtensions = extensions;
+    }
+    const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto texture = LineDescriptor();
@@ -116,13 +127,24 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
+    ShaderRecompiler::RecompileResult result;
+    try {
+        result = ShaderRecompiler::Recompile(request);
+    } catch (const std::exception& error) {
+        if (implicit && !derivatives && std::string_view(error.what()).find("require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives") != std::string_view::npos) {
+            std::printf("image plane compare on a line: observed missing compute derivative refusal: %s\n", error.what());
+            return false;
+        }
+        throw;
+    }
+    Require(!implicit || derivatives, "image plane compare on a line: implicit sampling compiled without compute derivative support");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    return true;
 }
 
 void Check(const std::string& op) {
@@ -135,16 +157,22 @@ void Check(const std::string& op) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool withoutComputeDerivatives = argc == 2 && std::string_view(argv[1]) == "--without-compute-derivatives";
+        Require(argc == 1 || withoutComputeDerivatives, "image plane compare on a line: unexpected argument");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         FillLine();
         FillInput();
-        Run(*device, LevelZeroCode);
+        Require(Run(*device, LevelZeroCode, withoutComputeDerivatives, false), "image plane compare on a line: level-zero control unexpectedly requires compute derivatives");
         Check("image_sample_c_lz");
         FillInput();
-        Run(*device, ImplicitLodCode);
+        if (!Run(*device, ImplicitLodCode, withoutComputeDerivatives, true)) {
+            for (std::uint32_t tid = 0; tid < Threads; ++tid) Require(Buffer[tid * Words + Result] == 0xdeadbeefu, "image plane compare on a line: refused implicit sampling overwrote its sentinel");
+            std::puts("image plane compare on line level-zero control passed; implicit sampling skipped");
+            return withoutComputeDerivatives ? 0 : VulkanTestSkipped;
+        }
         Check("image_sample_c");
         std::puts("image plane compare on line tests passed");
         return 0;

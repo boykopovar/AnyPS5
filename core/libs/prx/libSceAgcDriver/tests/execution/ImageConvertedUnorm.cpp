@@ -86,9 +86,9 @@ constexpr std::array<std::uint32_t, 9> SamplerCode(std::uint32_t word0) {
     };
 }
 
-constexpr std::array<std::uint32_t, 13> SampleAtCode(std::uint32_t step, std::uint32_t start) {
+constexpr std::array<std::uint32_t, 13> SampleAtCode(std::uint32_t step, std::uint32_t start, std::uint32_t opcode = 0xf09c0f08u) {
     return {
-        0x34060084u, 0x7e280d00u, 0x102828ffu, step, 0x062828ffu, start, 0x7e2a0280u, 0xf09c0f08u,
+        0x34060084u, 0x7e280d00u, 0x102828ffu, step, 0x062828ffu, start, 0x7e2a0280u, opcode,
         0x00610a14u, 0xbf8c3f70u, 0xe0781000u, 0x80000a03u, 0xbf810000u,
     };
 }
@@ -109,6 +109,7 @@ alignas(256) constexpr auto SampleLz = SamplerCode(0xf09c0f08u);
 alignas(256) constexpr auto Gather4Lz = SamplerCode(0xf11c0108u);
 alignas(256) constexpr auto GetLod = SamplerCode(0xf1800308u);
 alignas(256) constexpr auto SampleAt = SampleAtCode(SampleStep, SampleStart);
+alignas(256) constexpr auto SampleImplicit = SampleAtCode(SampleStep, SampleStart, 0xf0800f08u);
 alignas(256) constexpr auto SampleWrapped = SampleAtCode(SampleStep, WrappedStart);
 alignas(256) constexpr auto SampleOffGrid = SampleAtCode(OffGridStep, SampleStart);
 alignas(256) constexpr auto SampleWrappedOffGrid = SampleAtCode(OffGridStep, WrappedStart);
@@ -589,6 +590,8 @@ int main(int argc, char** argv) {
         Run(*device, StoreXyz, TextureDescriptor(texels + Float36Offset, NativeFloatFormat, SwizzleXYZ1, Threads), BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u)), 1);
         CheckFloatSample(*device, texels + Float36Offset, {0u, 0u, 0x7fc00000u, 0x3f800000u}, "image_sample_lz of R11_G11_B10_FLOAT results still on the GPU", NativeFloatFormat);
         CheckSample(*device, texels, SampleAt, SampleStep, SampleStart, SwizzleXYZ1, PointSampler, false, false, "point image_sample_lz X Y Z 1");
+        CheckSample(*device, texels, SampleImplicit, SampleStep, SampleStart, SwizzleXYZ1, PointSampler, false, false, "point single-level converted image_sample X Y Z 1");
+        CheckSample(*device, texels, SampleImplicit, SampleStep, SampleStart, SwizzleZYX1, BilinearSampler, true, false, "bilinear single-level converted image_sample Z Y X 1");
         CheckSample(*device, texels, SampleAt, SampleStep, SampleStart, SwizzleZYX1, BilinearSampler, true, false, "bilinear image_sample_lz Z Y X 1");
         CheckSample(*device, texels, SampleWrapped, SampleStep, WrappedStart, SwizzleX011, WrapPointSampler, false, true, "wrapped point image_sample_lz X 0 1 1");
         CheckSample(*device, texels, SampleWrapped, SampleStep, WrappedStart, SwizzleXYZ1, WrapBilinearSampler, true, true, "wrapped bilinear image_sample_lz X Y Z 1");

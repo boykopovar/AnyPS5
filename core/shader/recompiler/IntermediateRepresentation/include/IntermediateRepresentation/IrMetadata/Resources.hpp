@@ -127,7 +127,7 @@ enum SamplerUse : std::uint16_t {
 };
 
 inline bool ImageSampleExplicitLod(std::uint32_t flags, IrShaderStage stage) {
-    return (flags & (RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLod | RdnaImageSampleFlagLevelZero)) != 0u || stage != IrShaderStage::Pixel;
+    return (flags & (RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLod | RdnaImageSampleFlagLevelZero)) != 0u || (stage != IrShaderStage::Pixel && stage != IrShaderStage::Compute);
 }
 
 struct SamplerResource {

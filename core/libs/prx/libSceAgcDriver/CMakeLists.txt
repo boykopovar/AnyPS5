@@ -3537,6 +3537,41 @@ if(BUILD_TESTING)
     set_tests_properties(agc_driver_queued_index_read_order PROPERTIES TIMEOUT 60)
     set_property(TEST agc_driver_compute_prebuild_share APPEND PROPERTY ENVIRONMENT "APS5_PREBUILD_THREADS=4")
 
+    foreach(computeDerivativeFixture IN ITEMS image_cache_bits image_texel_status image_plane_address_on_cube image_plane_compare_on_line image_one_dimensional_compare image_repacked_float image_volume_address_on_line image_sample_unnormalized)
+        set(computeDerivativeRefusalTest agc_driver_${computeDerivativeFixture}_without_compute_derivatives)
+        add_test(NAME ${computeDerivativeRefusalTest} COMMAND agc_driver_${computeDerivativeFixture}_tests --without-compute-derivatives)
+        set_tests_properties(${computeDerivativeRefusalTest} PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;ANYPS5_REQUIRE_VULKAN=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(${computeDerivativeRefusalTest} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    add_test(NAME agc_driver_image_sample_unnormalized_implicit_computed_offset COMMAND agc_driver_image_sample_unnormalized_tests --implicit-computed-offset)
+    set_tests_properties(agc_driver_image_sample_unnormalized_implicit_computed_offset PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;ANYPS5_REQUIRE_VULKAN=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    set_tests_properties(agc_driver_compute_implicit_lod PROPERTIES TIMEOUT 30)
+    add_test(NAME agc_driver_compute_implicit_lod_masked_quad_coordinate COMMAND agc_driver_compute_implicit_lod_tests --masked-quad-coordinate)
+    set_tests_properties(agc_driver_compute_implicit_lod_masked_quad_coordinate PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;ANYPS5_REQUIRE_VULKAN=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_image_sample_lod_clamp_implicit_affine_quads COMMAND agc_driver_image_sample_lod_clamp_tests --implicit-affine-quads)
+    set_tests_properties(agc_driver_image_sample_lod_clamp_implicit_affine_quads PROPERTIES
+        ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;ANYPS5_REQUIRE_VULKAN=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    foreach(mode IN ITEMS implicit_zero_bias implicit_affine_zero_bias)
+        string(REPLACE "_" "-" argument "${mode}")
+        add_test(NAME agc_driver_image_sample_lod_clamp_${mode} COMMAND agc_driver_image_sample_lod_clamp_tests --${argument})
+        set_tests_properties(agc_driver_image_sample_lod_clamp_${mode} PROPERTIES
+            ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;ANYPS5_REQUIRE_VULKAN=1" SKIP_RETURN_CODE 77 TIMEOUT 30 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+        if(WIN32)
+            set_tests_properties(agc_driver_image_sample_lod_clamp_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    if(WIN32)
+        set_tests_properties(agc_driver_compute_implicit_lod_masked_quad_coordinate agc_driver_image_sample_unnormalized_implicit_computed_offset agc_driver_image_sample_lod_clamp_implicit_affine_quads PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     foreach(agcTest IN ITEMS agc_spirv_narrow_constant_store_tests agc_spirv13_image_tests agc_spirv_optimizer_tests agc_driver_constant_store_tests)
         if(NOT TARGET ${agcTest})
             continue()

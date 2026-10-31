@@ -99,8 +99,8 @@ void operator delete(void* allocation, std::size_t) noexcept {
 namespace {
 
 ShaderRecompiler::SpirvTarget BufferTarget() {
-    static constexpr std::array<std::uint32_t, 6> capabilities{spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance};
-    static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance, spv::CapabilityComputeDerivativeGroupLinearKHR};
+    static constexpr std::array<std::string_view, 3> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_KHR_compute_shader_derivatives"};
     ShaderRecompiler::SpirvTarget target{};
     target.bdaAbiVersion = ShaderRecompiler::BdaAbi::Version;
     target.supportedCapabilities = capabilities;
@@ -7807,7 +7807,8 @@ void verifyUnnormalizedSamplers() {
     const auto program = [](std::uint32_t mimg) {
         return std::vector<std::uint32_t>{0x7e020280u, 0x7e040280u, 0x7e060280u, 0x7e080280u, 0x7e0a0280u, 0x7e0c0280u, mimg, 0x00400801u, 0xe0700000u, 0x80030800u, 0xbf810000u};
     };
-    const std::array<std::uint32_t, 3> capabilities{1u, static_cast<std::uint32_t>(spv::CapabilityImageGatherExtended), static_cast<std::uint32_t>(spv::CapabilityMinLod)};
+    const std::array<std::uint32_t, 4> capabilities{1u, static_cast<std::uint32_t>(spv::CapabilityImageGatherExtended), static_cast<std::uint32_t>(spv::CapabilityMinLod), static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR)};
+    const std::array<std::string_view, 1> extensions{"SPV_KHR_compute_shader_derivatives"};
     std::uint64_t nextAddress = 0x40000u;
     const auto recompile = [&](std::span<const std::uint32_t> code, const std::array<std::uint32_t, 16>& data, std::uint64_t address = 0u, bool offsets = false) {
         RecompileRequest request{};
@@ -7820,6 +7821,7 @@ void verifyUnnormalizedSamplers() {
         request.target.spirvVersion = 0x00010300u;
         request.target.subgroupSize = 32;
         request.target.supportedCapabilities = capabilities;
+        request.target.supportedExtensions = extensions;
         request.target.fragmentShaderBarycentricEnabled = false;
         request.target.nonConstantImageOffsets = offsets;
         request.layout.pushConstantSizeBytes = 128;
@@ -7853,6 +7855,19 @@ void verifyUnnormalizedSamplers() {
         }
         require(samples != 0u, "unnormalized samplers: the SPIR-V does not sample");
     };
+    const auto sampleMasks = [](std::span<const std::uint32_t> words, std::uint32_t opcode = spv::OpImageSampleExplicitLod) {
+        std::vector<std::uint32_t> masks;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "unnormalized texel offsets: truncated SPIR-V instruction");
+            if ((words[cursor] & 0xffffu) == opcode) {
+                require(count >= 5u, "unnormalized texel offsets: truncated sample instruction");
+                masks.push_back(count > 5u ? words[cursor + 5] : 0u);
+            }
+            cursor += count;
+        }
+        return masks;
+    };
 
     const auto lz = program(0xf09c0f08u);
     const auto accepted = recompile(lz, userData(unnormalized), 0x40000u);
@@ -7862,10 +7877,24 @@ void verifyUnnormalizedSamplers() {
     require(proven(plain, false), "unnormalized samplers: a normalized S# was flagged");
     require(plain.variantId == accepted.variantId && plain.spirv == accepted.spirv, "unnormalized samplers: the unnormalized S# compiled another variant");
 
-    for (const std::uint32_t mimg : {0xf0900f08u, 0xf0800f08u, 0xf0940f08u, 0xf0840f08u, 0xf0880f08u}) {
-        const auto result = recompile(program(mimg), userData(unnormalized));
+    for (const std::uint32_t mimg : {0xf0900f08u, 0xf0800f08u, 0xf0940f08u, 0xf0840f08u, 0xf0880f08u, 0xf0980f08u}) {
+        const auto address = nextAddress += 0x1000u;
+        const auto result = recompile(program(mimg), userData(unnormalized), address);
         require(proven(result, true), "unnormalized samplers: a compute image_sample_l, image_sample, image_sample_b, image_sample_cl or image_sample_d was not flagged");
         auditSpirv(result.spirv.Words());
+        if (mimg == 0xf0900f08u || mimg == 0xf0880f08u) continue;
+        const auto normalizedResult = recompile(program(mimg), userData(normalized), address);
+        require(proven(normalizedResult, false) && normalizedResult.variantId == result.variantId && normalizedResult.PipelineVariantId() != result.PipelineVariantId(), "unnormalized samplers: a normalized compute sample did not get its own specialization of the shared artifact");
+        if (mimg == 0xf0980f08u) {
+            require(sampleMasks(normalizedResult.spirv.Words()) == std::vector<std::uint32_t>{spv::ImageOperandsGradMask | spv::ImageOperandsMinLodMask}, "unnormalized samplers: a normalized zero-bias clamp lost its minimum-LOD gradients");
+            const auto implicitMasks = sampleMasks(normalizedResult.spirv.Words(), spv::OpImageSampleImplicitLod);
+            require(implicitMasks.empty() || implicitMasks == std::vector<std::uint32_t>{spv::ImageOperandsBiasMask | spv::ImageOperandsMinLodMask}, "unnormalized samplers: a normalized biased clamp lost its bias or minimum LOD");
+            continue;
+        }
+        const bool clamp = mimg == 0xf0840f08u;
+        const auto opcode = clamp ? spv::OpImageSampleExplicitLod : spv::OpImageSampleImplicitLod;
+        const auto mask = mimg == 0xf0940f08u ? spv::ImageOperandsBiasMask : clamp ? spv::ImageOperandsGradMask | spv::ImageOperandsMinLodMask : spv::ImageOperandsMaskNone;
+        require(sampleMasks(normalizedResult.spirv.Words(), opcode) == std::vector<std::uint32_t>{mask} && sampleMasks(normalizedResult.spirv.Words(), clamp ? spv::OpImageSampleImplicitLod : spv::OpImageSampleExplicitLod).empty(), "unnormalized samplers: a normalized compute sample lost its LOD operands or minimum-LOD gradients");
     }
 
     const auto reject = [&](std::uint32_t mimg, const std::array<std::uint32_t, 16>& data, const char* reason, const char* what) {
@@ -7874,7 +7903,7 @@ void verifyUnnormalizedSamplers() {
     reject(0xf0bc0f08u, imageData(unnormalized, Type2D, Format32Float, 0u), "unnormalized guest sampler is used with depth comparison, which is not implemented", "unnormalized samplers: image_sample_c_lz was accepted");
     reject(0xf11c0108u, userData(unnormalized), "unnormalized guest sampler is used by a gather, which is not implemented", "unnormalized samplers: image_gather4_lz was accepted");
     reject(0xf1800308u, userData(unnormalized), "unnormalized guest sampler is used by image_get_lod, which is not implemented", "unnormalized samplers: image_get_lod was accepted");
-    reject(0xf0800f09u, userData(unnormalized), "unnormalized guest sampler is used by an image_sample_*_a variant, which is not implemented", "unnormalized samplers: image_sample_a was accepted");
+    reject(0xf0800f09u, userData(unnormalized), "unnormalized guest sampler is used by an implicit-LOD sample, which is not implemented", "unnormalized samplers: implicit image_sample_a was accepted");
     const auto reservedDword3 = [&](std::uint32_t mimg) {
         auto code = program(mimg);
         const std::array<std::uint32_t, 4> computed{0x7d8a0080u, 0x870bff6au, 0x000000ffu, 0x8f0b8c0bu};
@@ -7924,16 +7953,6 @@ void verifyUnnormalizedSamplers() {
         }
         return !coordinates.empty() && std::ranges::all_of(coordinates, [&](std::uint32_t id) { return std::ranges::count(sums, id) != 0 && std::ranges::count(exact, id) != 0; });
     };
-    const auto sampleMasks = [](std::span<const std::uint32_t> words) {
-        std::vector<std::uint32_t> masks;
-        for (std::size_t cursor = 5; cursor < words.size();) {
-            const auto count = words[cursor] >> 16u;
-            require(count != 0 && count <= words.size() - cursor, "unnormalized texel offsets: truncated SPIR-V instruction");
-            if ((words[cursor] & 0xffffu) == spv::OpImageSampleExplicitLod && count > 5u) masks.push_back(words[cursor + 5]);
-            cursor += count;
-        }
-        return masks;
-    };
     for (const std::uint32_t source : {0xffu, 0x100u}) {
         const auto oneD = recompile(offsetProgram(0xf0dc0f00u, source, 0x3du), imageData(unnormalized, Type1D, Format8888UNorm, 0u));
         require(proven(oneD, true), "unnormalized texel offsets: a 1D image_sample_lz_o through an unnormalized S# was not flagged");
@@ -7959,8 +7978,12 @@ void verifyUnnormalizedSamplers() {
         }
         expectFailure([&] { static_cast<void>(recompile(computed, userData(normalized))); }, "normalized guest sampler is used with a texel offset that is not a constant", "unnormalized texel offsets: a normalized computed offset was accepted without maintenance8");
         expectFailure([&] { static_cast<void>(recompile(computed, imageData(unnormalized, Type2D, Format11_11_10UInt, 0u))); }, "takes only images an unnormalized S# can sample", "unnormalized texel offsets: a computed offset sampled a converted image without maintenance8");
-        const auto masks = sampleMasks(recompile(computed, userData(normalized), 0u, true).spirv.Words());
-        require(!masks.empty() && std::ranges::all_of(masks, [](std::uint32_t mask) { return (mask & spv::ImageOperandsOffsetMask) != 0u; }), "unnormalized texel offsets: a normalized computed offset lost its Offset operand");
+        const auto normalizedResult = recompile(computed, userData(normalized), 0u, true);
+        const bool clamp = mimg == 0xf0c40f08u;
+        const bool explicitLod = mimg == 0xf0dc0f08u || mimg == 0xf0d00f08u || clamp;
+        const auto opcode = explicitLod ? spv::OpImageSampleExplicitLod : spv::OpImageSampleImplicitLod;
+        const auto lodMask = clamp ? spv::ImageOperandsGradMask | spv::ImageOperandsMinLodMask : explicitLod ? spv::ImageOperandsLodMask : mimg == 0xf0d40f08u ? spv::ImageOperandsBiasMask : spv::ImageOperandsMaskNone;
+        require(sampleMasks(normalizedResult.spirv.Words(), opcode) == std::vector<std::uint32_t>{lodMask | spv::ImageOperandsOffsetMask} && sampleMasks(normalizedResult.spirv.Words(), explicitLod ? spv::OpImageSampleImplicitLod : spv::OpImageSampleExplicitLod).empty(), "unnormalized texel offsets: a normalized computed offset lost its sample opcode or operands");
     }
 
     const auto gradient = program(0xf0880f08u);

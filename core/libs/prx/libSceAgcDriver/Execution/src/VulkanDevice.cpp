@@ -1394,6 +1394,12 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     }
     meshFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT};
     meshFeatures.meshShader = state->meshShader;
+    VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR derivativeFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR};
+    if (hasExtension(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME)) {
+        VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &derivativeFeatures};
+        state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
+    }
+    derivativeFeatures.computeDerivativeGroupQuads = VK_FALSE;
     VkPhysicalDeviceFragmentShaderBarycentricFeaturesKHR barycentricFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_BARYCENTRIC_FEATURES_KHR};
     if (hasExtension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &barycentricFeatures};
@@ -1472,6 +1478,11 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         deviceExtensions.push_back(VK_KHR_SHADER_CLOCK_EXTENSION_NAME);
         state->capabilities.push_back(spv::CapabilityShaderClockKHR);
         state->spirvExtensions.push_back("SPV_KHR_shader_clock");
+    }
+    if (derivativeFeatures.computeDerivativeGroupLinear == VK_TRUE) {
+        deviceExtensions.push_back(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+        state->capabilities.push_back(spv::CapabilityComputeDerivativeGroupLinearKHR);
+        state->spirvExtensions.push_back("SPV_KHR_compute_shader_derivatives");
     }
     VkPhysicalDeviceShaderAtomicInt64FeaturesKHR atomicInt64Features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_ATOMIC_INT64_FEATURES_KHR};
     if (hasExtension(VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME)) {
@@ -2000,6 +2011,10 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (state->shaderClock) {
         clockFeatures.pNext = byteFeatures.pNext;
         byteFeatures.pNext = &clockFeatures;
+    }
+    if (derivativeFeatures.computeDerivativeGroupLinear == VK_TRUE) {
+        derivativeFeatures.pNext = byteFeatures.pNext;
+        byteFeatures.pNext = &derivativeFeatures;
     }
     if (float16Rte) {
         float16Features.pNext = byteFeatures.pNext;

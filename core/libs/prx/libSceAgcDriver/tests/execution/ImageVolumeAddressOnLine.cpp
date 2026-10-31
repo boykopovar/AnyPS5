@@ -12,6 +12,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -143,7 +144,11 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
     return {0u, 0xfffu << 12u, 1u << 26u, 0u};
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& texture) {
+bool HasComputeDerivatives(const ShaderRecompiler::SpirvTarget& target) {
+    return TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
+}
+
+bool Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& texture, bool implicit = false) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto sampler = SamplerDescriptor();
@@ -155,13 +160,25 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
+    ShaderRecompiler::RecompileResult result;
+    try {
+        result = ShaderRecompiler::Recompile(request);
+    } catch (const std::exception& error) {
+        if (implicit && !HasComputeDerivatives(target)) {
+            Require(std::string_view(error.what()).find("require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives") != std::string_view::npos, std::string("image volume address on line: unexpected implicit sample refusal: ") + error.what());
+            std::puts("image volume address on line: implicit sample refused without compute derivatives");
+            return false;
+        }
+        throw;
+    }
+    Require(!implicit || HasComputeDerivatives(target), "image volume address on line: implicit sample was accepted without compute derivatives");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    return true;
 }
 
 void Expect(std::uint32_t tid, std::uint32_t result, const std::array<std::uint32_t, 4>& expected, const std::string& name) {
@@ -195,10 +212,10 @@ void CheckVolume() {
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::string& name) {
+void RequireRefused(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> code, const std::string& name) {
     std::string refusal;
     try {
-        Run(device, code, LineDescriptor());
+        Run(device, target, code, LineDescriptor());
     } catch (const std::exception& error) {
         refusal = error.what();
     }
@@ -207,23 +224,37 @@ void RequireRefused(AgcDriver::VulkanDevice& device, std::span<const std::uint32
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool forced = argc == 2 && std::string_view(argv[1]) == "--without-compute-derivatives";
+        Require(argc == 1 || forced, "image volume address on line: unexpected arguments");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        auto target = device->Target();
+        std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
+        std::vector<std::string_view> extensions(target.supportedExtensions.begin(), target.supportedExtensions.end());
+        if (forced) {
+            std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR));
+            std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+        }
+        target.supportedCapabilities = capabilities;
+        target.supportedExtensions = extensions;
         FillTexture(Line, LineDescriptor(), 1u, 1u);
         FillInput(false);
-        Run(*device, Code, LineDescriptor());
+        Run(*device, target, Code, LineDescriptor());
         CheckLine("image_sample_lz");
         CheckLineLoad();
         FillInput(false);
-        Run(*device, ImplicitLodCode, LineDescriptor());
-        CheckLine("image_sample");
+        if (Run(*device, target, ImplicitLodCode, LineDescriptor(), true)) CheckLine("image_sample");
         FillTexture(Volume, VolumeDescriptor(), Depth, Size);
         FillInput(true);
-        Run(*device, Code, VolumeDescriptor());
+        Run(*device, target, Code, VolumeDescriptor());
         CheckVolume();
-        RequireRefused(*device, ExplicitLodCode, "image_sample_l 3d");
+        RequireRefused(*device, target, ExplicitLodCode, "image_sample_l 3d");
+        if (!HasComputeDerivatives(target)) {
+            std::puts("image volume address on line explicit samples, loads and descriptor refusal passed; implicit sample refused without compute derivatives");
+            return forced ? 0 : VulkanTestSkipped;
+        }
         std::puts("image volume address on line tests passed");
         return 0;
     } catch (const std::exception& error) {

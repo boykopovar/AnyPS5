@@ -52,7 +52,8 @@ struct Sample {
 };
 
 Sample SampleOf(std::uint32_t tid) {
-    return {(tid * 7u + 3u) % Size, (tid * 5u + 1u) % Size, (tid / 3u) % Clamps};
+    const auto quad = tid / 4u;
+    return {(quad * 7u + 3u) % Size, (quad * 5u + 1u) % Size, (tid / 3u) % Clamps};
 }
 
 std::uint32_t Half(float value) {
@@ -119,7 +120,7 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
     return {0u, 0xfffu << 12u, 1u << 26u, 0u};
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
+bool Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto texture = TextureDescriptor(Texels.data());
@@ -136,9 +137,21 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
+    ShaderRecompiler::RecompileResult result;
+    try {
+        result = ShaderRecompiler::Recompile(request);
+    } catch (const std::exception& error) {
+        const auto& target = device.Target();
+        const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
+        if (!derivatives && std::string(error.what()).find("require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives") != std::string::npos) {
+            std::printf("skipped, compute derivatives are unavailable: %s\n", error.what());
+            return false;
+        }
+        throw;
+    }
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    return true;
 }
 
 std::uint32_t Wrap(std::uint32_t coordinate, std::int32_t offset, std::uint32_t size) {
@@ -173,12 +186,15 @@ int main() {
         const bool clamped = TargetHasCapability(device->Target(), spv::CapabilityMinLod);
         FillInput();
         FillTexture();
-        Run(*device, BiasCode);
-        if (clamped) {
-            Run(*device, BiasClampCode);
-        }
+        if (!Run(*device, BiasCode)) return VulkanTestSkipped;
+        if (clamped && !Run(*device, BiasClampCode)) return VulkanTestSkipped;
         Check(clamped);
-        std::puts(clamped ? "image sample a16 bias tests passed" : "image sample a16 bias tests passed, image_sample_b_cl skipped without shaderResourceMinLod");
+        std::puts("image_sample_b and image_sample_b_o a16 tests passed");
+        if (!clamped) {
+            std::puts("skipped image_sample_b_cl a16, the device has no shaderResourceMinLod");
+            return VulkanTestSkipped;
+        }
+        std::puts("image_sample_b_cl a16 tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

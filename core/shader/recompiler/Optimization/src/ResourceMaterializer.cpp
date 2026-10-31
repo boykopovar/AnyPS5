@@ -57,6 +57,7 @@ struct DecodedImage {
     bool fmask = false;
     bool depthBits = false;
     bool depthUnorm16 = false;
+    bool remappedDepth1D = false;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
     bool srgbDecode = false;
 };
@@ -140,6 +141,10 @@ bool multisamplePlaneRead(const ImageResource& image) {
     return image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && !image.depthCompare && !image.r128 && image.cubeFaceCompatible;
 }
 
+bool nativeLineCompareRemap(const ImageResource& image) {
+    return image.depthCompare && !image.remappedDepth1D && image.dimension == RdnaImageDimension::Dim2D && image.resourceClass == ImageResourceClass::Sampled && image.table == NoTable && image.flatLineCompatible && image.depthBitsCompatible && !image.r128 && !image.packed && image.byElements == 0u;
+}
+
 bool undefinedImageWords(const DescriptorValue& descriptor) {
     const auto type = static_cast<std::uint32_t>(rawImageType(descriptor));
     return !nullImageDescriptor(descriptor) && type >= 2u && (type < static_cast<std::uint32_t>(ImageType::Color1D) || !IsDefinedImageFormat(rawImageFormat(descriptor)));
@@ -202,6 +207,7 @@ PoisonReason invalidImageReason(const DescriptorValue& descriptor) {
 ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const ImageResource& base, std::uint32_t srgbDecodeFormats) {
     ImageDecode result;
     auto& decoded = result.decoded;
+    decoded.remappedDepth1D = base.remappedDepth1D;
     decoded.mipCount = storageMipCount(base, descriptor);
     if (decoded.mipCount == 0u) {
         return rejectImage(PoisonReason::InvalidFormat, "storage image descriptor has an invalid mip range");
@@ -221,6 +227,13 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     const bool queryLayers = base.dimension == RdnaImageDimension::Dim1D && base.dimensionQueryOnly && rawImageType(descriptor) == ImageType::Color2DArray;
     decoded.dimension = descriptorDimension(descriptor, queryLayers ? RdnaImageDimension::Dim2DArray : base.dimension);
     if (base.depthCompare) {
+        if ((decoded.dimension == RdnaImageDimension::Dim1D || decoded.dimension == RdnaImageDimension::Dim1DArray) && !base.remappedDepth1D) {
+            const auto format = rawImageFormat(descriptor);
+            if (rawImageType(descriptor) != ImageType::Color1D || !nativeLineCompareRemap(base) || (format != IrBufferFormat::Format32Float && format != IrBufferFormat::Format16UNorm)) {
+                return rejectImage(PoisonReason::Dimension, "comparison through a 1D descriptor requires a direct native DIM2D sample with implicit LOD or level zero");
+            }
+            decoded.remappedDepth1D = true;
+        }
         if (decoded.dimension == RdnaImageDimension::Dim1D) {
             decoded.dimension = RdnaImageDimension::Dim2D;
         } else if (decoded.dimension == RdnaImageDimension::Dim1DArray) {
@@ -2040,6 +2053,11 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         mode.shaderSwizzle = ShaderImageIdentitySwizzle;
         if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format11_11_10Float || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
         modes.push_back(mode);
+        if (nativeLineCompareRemap(image) && numeric == IrTextureNumericClass::Float && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid && !depth) {
+            auto line = mode;
+            line.remappedDepth1D = true;
+            modes.push_back(line);
+        }
         const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible && conversion != FmaskExpansion;
         const bool volumeStore = image.dimension == RdnaImageDimension::Dim2DArray && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
         const bool volumePlaneBias = image.dimension == RdnaImageDimension::Dim2D && image.singleMipPlaneBiasCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
@@ -2084,7 +2102,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             face.cube = true;
             modes.push_back(face);
         }
-        if ((image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.flatLineCompatible && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+        if ((image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.flatLineCompatible && !image.depthCompare && !storage && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
             auto line = mode;
             line.dimension = RdnaImageDimension::Dim1D;
             modes.push_back(line);
@@ -2280,18 +2298,18 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         const auto& mode = modes[index];
         if (mode.constantSwizzle) continue;
         if (((mode.emulatedCompare & EmulatedCompare::Enabled) != 0u) != emulated) continue;
-        if (mode.numericClass == decoded.numericClass && mode.dimension == decoded.dimension && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.srgbDecode == decoded.srgbDecode) {
+        if (mode.numericClass == decoded.numericClass && mode.dimension == decoded.dimension && mode.conversionFormat == decoded.conversionFormat && mode.packedFormat == decoded.packedFormat && mode.cube == decoded.cube && mode.depthBits == decoded.depthBits && mode.depthUnorm16 == decoded.depthUnorm16 && mode.remappedDepth1D == decoded.remappedDepth1D && mode.srgbDecode == decoded.srgbDecode) {
             result.mode = index;
             return result;
         }
     }
     if (image.dimension == RdnaImageDimension::Dim1D && decoded.dimension != RdnaImageDimension::Dim1D) return reject(PoisonReason::Dimension, "image address has too few coordinate components");
     if (image.foldTexelOffsetsOnly) return reject(PoisonReason::UnsupportedOperation, "image sample with a texel offset that is not a constant takes only images an unnormalized S# can sample without VK_KHR_maintenance8 and shaderImageGatherExtended");
-    const auto describe = [](IrTextureNumericClass numeric, RdnaImageDimension dimension, IrBufferFormat conversion, IrBufferFormat packed, bool cube, bool depthBits, bool depthUnorm16, bool srgb) {
-        return "{class " + std::to_string(static_cast<int>(numeric)) + ", dim " + std::to_string(static_cast<int>(dimension)) + ", conversion " + std::to_string(static_cast<int>(conversion)) + ", packed " + std::to_string(static_cast<int>(packed)) + ", cube " + std::to_string(cube) + ", depthBits " + std::to_string(depthBits) + ", unorm16 " + std::to_string(depthUnorm16) + ", srgb " + std::to_string(srgb) + "}";
+    const auto describe = [](IrTextureNumericClass numeric, RdnaImageDimension dimension, IrBufferFormat conversion, IrBufferFormat packed, bool cube, bool depthBits, bool depthUnorm16, bool remappedDepth1D, bool srgb) {
+        return "{class " + std::to_string(static_cast<int>(numeric)) + ", dim " + std::to_string(static_cast<int>(dimension)) + ", conversion " + std::to_string(static_cast<int>(conversion)) + ", packed " + std::to_string(static_cast<int>(packed)) + ", cube " + std::to_string(cube) + ", depthBits " + std::to_string(depthBits) + ", unorm16 " + std::to_string(depthUnorm16) + ", remappedDepth1D " + std::to_string(remappedDepth1D) + ", srgb " + std::to_string(srgb) + "}";
     };
-    std::string message = "image descriptor is incompatible with the static runtime image interface: descriptor format " + std::to_string(static_cast<int>(format)) + " decodes to " + describe(decoded.numericClass, decoded.dimension, decoded.conversionFormat, decoded.packedFormat, decoded.cube, decoded.depthBits, decoded.depthUnorm16, decoded.srgbDecode) + (emulated ? " (emulated compare)" : "") + "; modes:";
-    for (const auto& mode : modes) message += " " + describe(mode.numericClass, mode.dimension, mode.conversionFormat, mode.packedFormat, mode.cube, mode.depthBits, mode.depthUnorm16, mode.srgbDecode);
+    std::string message = "image descriptor is incompatible with the static runtime image interface: descriptor format " + std::to_string(static_cast<int>(format)) + " decodes to " + describe(decoded.numericClass, decoded.dimension, decoded.conversionFormat, decoded.packedFormat, decoded.cube, decoded.depthBits, decoded.depthUnorm16, decoded.remappedDepth1D, decoded.srgbDecode) + (emulated ? " (emulated compare)" : "") + "; modes:";
+    for (const auto& mode : modes) message += " " + describe(mode.numericClass, mode.dimension, mode.conversionFormat, mode.packedFormat, mode.cube, mode.depthBits, mode.depthUnorm16, mode.remappedDepth1D, mode.srgbDecode);
     char words[96];
     std::snprintf(words, sizeof(words), "; T# %08x %08x %08x %08x %08x %08x %08x %08x", descriptor.dwords[0], descriptor.dwords[1], descriptor.dwords[2], descriptor.dwords[3], descriptor.dwords[4], descriptor.dwords[5], descriptor.dwords[6], descriptor.dwords[7]);
     const auto reason = emulated ? PoisonReason::ColorCompare

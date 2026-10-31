@@ -11,6 +11,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -58,6 +59,15 @@ alignas(256) constexpr std::array<std::uint32_t, 99> SampleCode{
     0xe070122c, 0x80001503, 0xe0701230, 0x80001603, 0xe0701234, 0x80001703, 0xe0701238, 0x80001803,
     0xe070123c, 0x80001903, 0xbf810000,
 };
+
+alignas(256) constexpr auto ExplicitSampleCode = [] {
+    static_assert(SampleCode[49] == 0xf0830108u && SampleCode[66] == 0xe0701200u && SampleCode[68] == 0xe0701204u);
+    std::array<std::uint32_t, SampleCode.size() - 6u> code{};
+    auto next = std::copy_n(SampleCode.begin(), 49u, code.begin());
+    next = std::copy(SampleCode.begin() + 51u, SampleCode.begin() + 66u, next);
+    std::copy(SampleCode.begin() + 70u, SampleCode.end(), next);
+    return code;
+}();
 
 alignas(256) constexpr std::array<std::array<std::uint32_t, 3>, 3> RefusedCode{{
     {0xf1820308u, 0x00820a04u, 0xbf810000u},
@@ -225,19 +235,40 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
     return {0u, 0xfffu << 12u, 1u << 26u, 0u};
 }
 
-void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData) {
+bool Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::vector<std::uint32_t>& userData, bool withoutComputeDerivatives, bool implicit = false) {
+    auto target = device.Target();
+    std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
+    std::vector<std::string_view> extensions(target.supportedExtensions.begin(), target.supportedExtensions.end());
+    if (withoutComputeDerivatives) {
+        std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR));
+        std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+        target.supportedCapabilities = capabilities;
+        target.supportedExtensions = extensions;
+    }
+    const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
+    ShaderRecompiler::RecompileResult result;
+    try {
+        result = ShaderRecompiler::Recompile(request);
+    } catch (const std::exception& error) {
+        if (implicit && !derivatives && std::string_view(error.what()).find("require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives") != std::string_view::npos) {
+            std::printf("image texel status: observed missing compute derivative refusal: %s\n", error.what());
+            return false;
+        }
+        throw;
+    }
+    Require(!implicit || derivatives, "image texel status: implicit sampling compiled without compute derivative support");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    return true;
 }
 
 void FillBuffer(const std::array<std::array<std::uint32_t, 3>, Threads>& inputs) {
@@ -248,7 +279,7 @@ void FillBuffer(const std::array<std::array<std::uint32_t, 3>, Threads>& inputs)
     }
 }
 
-void RunStorage(AgcDriver::VulkanDevice& device) {
+void RunStorage(AgcDriver::VulkanDevice& device, bool withoutComputeDerivatives) {
     FillBuffer(StorageInputs);
     StorageTexels.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(16, 0u);
@@ -256,10 +287,10 @@ void RunStorage(AgcDriver::VulkanDevice& device) {
     const auto texture = TextureDescriptor(StorageTexels.data(), Format32UInt, StorageWidth, StorageHeight);
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
-    Dispatch(device, StorageCode, userData);
+    Require(Dispatch(device, StorageCode, userData, withoutComputeDerivatives), "image texel status: storage controls unexpectedly require compute derivatives");
 }
 
-void RunSample(AgcDriver::VulkanDevice& device) {
+bool RunSample(AgcDriver::VulkanDevice& device, bool withoutComputeDerivatives) {
     FillBuffer(SampleInputs);
     const auto mips = AgcDriver::Graphics::ComputeMipLayout(AgcDriver::Graphics::TextureTileMode::kLinear, Format32Float, SampleWidth, SampleHeight, 1);
     Require(AgcDriver::Graphics::ComputeSurfaceSize(mips, 1) <= SampleTexels.size() * 4u, "image texel status: the texture does not fit the texel storage");
@@ -276,7 +307,9 @@ void RunSample(AgcDriver::VulkanDevice& device) {
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     std::copy(sampler.begin(), sampler.end(), userData.begin() + 12);
-    Dispatch(device, SampleCode, userData);
+    const bool implicit = Dispatch(device, SampleCode, userData, withoutComputeDerivatives, true);
+    if (!implicit) Require(Dispatch(device, ExplicitSampleCode, userData, withoutComputeDerivatives), "image texel status: explicit controls unexpectedly require compute derivatives");
+    return implicit;
 }
 
 void CheckRefused(AgcDriver::VulkanDevice& device) {
@@ -318,26 +351,32 @@ void CheckStorage() {
     }
 }
 
-void CheckSample() {
+void CheckSample(bool implicit) {
     constexpr std::array<const char*, SampleResults> names{"image_sample tfe lwe", "image_sample tfe lwe status", "image_gather4 tfe lwe x", "image_gather4 tfe lwe y", "image_gather4 tfe lwe z", "image_gather4 tfe lwe w", "image_gather4 tfe lwe status", "image_get_resinfo tfe lwe width", "image_get_resinfo tfe lwe height", "image_get_resinfo tfe lwe status", "image_sample_l tfe", "image_sample_l tfe status", "image_load tfe lwe", "image_load tfe lwe status", "image_load tfe d16", "image_load tfe d16 status"};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         for (std::uint32_t j = 0; j < SampleResults; ++j) {
-            Expect(names[j], tid, Buffer[Threads * Inputs + tid * Results + j], SampleExpected[tid][j]);
+            Expect(names[j], tid, Buffer[Threads * Inputs + tid * Results + j], !implicit && j < 2u ? 0xdeadbeefu : SampleExpected[tid][j]);
         }
     }
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool withoutComputeDerivatives = argc == 2 && std::string_view(argv[1]) == "--without-compute-derivatives";
+        Require(argc == 1 || withoutComputeDerivatives, "image texel status: unexpected argument");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        RunStorage(*device);
+        RunStorage(*device, withoutComputeDerivatives);
         CheckStorage();
-        RunSample(*device);
-        CheckSample();
+        const bool implicit = RunSample(*device, withoutComputeDerivatives);
+        CheckSample(implicit);
         CheckRefused(*device);
+        if (!implicit) {
+            std::puts("image texel status explicit, storage and refusal controls passed; implicit sampling skipped");
+            return withoutComputeDerivatives ? 0 : VulkanTestSkipped;
+        }
         std::puts("image texel status tests passed");
         return 0;
     } catch (const std::exception& error) {

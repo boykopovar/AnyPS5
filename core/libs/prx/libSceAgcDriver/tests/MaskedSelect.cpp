@@ -774,7 +774,8 @@ int main() {
         memory.kind = ResourceKind::Image;
         memory.imageSampleFlags = sampleFlags;
         b.program.Resources().memoryInfo.push_back(memory);
-        auto& exec = wholeQuadExec ? wholeQuads(b, b.mask(16u)) : b.mask(16u);
+        auto& live = stage == IrShaderStage::Compute ? b.threadBit(b.constant(0x55555555u), b.constant(0x55555555u)) : b.mask(16u);
+        auto& exec = wholeQuadExec ? wholeQuads(b, live) : live;
         auto& old = b.lane();
         auto& written = b.select(exec, b.add(old, 1u), old);
         auto& address = b.emit(IrOpcode::MakeImageAddress, IrType::ImageAddress, {&written, &old});
@@ -1567,6 +1568,20 @@ int main() {
 
     passed &= run("an implicit-LOD pixel sample reads its quad's coordinates and keeps the select", [&] {
         return !sample(IrShaderStage::Pixel, 0u);
+    });
+
+    passed &= run("plain compute samples preserve inactive neighbors' coordinates", [&] {
+        return !sample(IrShaderStage::Compute, 0u);
+    });
+    passed &= run("biased compute samples preserve inactive neighbors' coordinates", [&] {
+        return !sample(IrShaderStage::Compute, RdnaImageSampleFlagBias);
+    });
+    passed &= run("clamped compute samples preserve inactive neighbors' coordinates", [&] {
+        return !sample(IrShaderStage::Compute, RdnaImageSampleFlagLodClamp);
+    });
+
+    passed &= run("explicit-LOD compute samples remain lane-local", [&] {
+        return sample(IrShaderStage::Compute, RdnaImageSampleFlagLevelZero) && sample(IrShaderStage::Compute, RdnaImageSampleFlagLod) && sample(IrShaderStage::Compute, RdnaImageSampleFlagDerivative);
     });
 
     passed &= run("an implicit-LOD pixel sample under whole quad mode reads no masked quad and drops the select", [&] {

@@ -12,6 +12,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -35,6 +36,15 @@ alignas(256) constexpr std::array<std::uint32_t, 30> Code{
     0xf0800108, 0x00610e02, 0xf0001108, 0x00010f05, 0xbf8c3f70, 0xe0701020, 0x80000c01, 0xe0701024,
     0x80000d01, 0xe0701028, 0x80000e01, 0xe070102c, 0x80000f01, 0xbf810000,
 };
+
+alignas(256) constexpr auto ExplicitCode = [] {
+    static_assert(Code[16] == 0xf0800108u && Code[25] == 0xe0701028u);
+    std::array<std::uint32_t, Code.size() - 4u> code{};
+    auto next = std::copy_n(Code.begin(), 16u, code.begin());
+    next = std::copy(Code.begin() + 18u, Code.begin() + 25u, next);
+    std::copy(Code.begin() + 27u, Code.end(), next);
+    return code;
+}();
 
 struct Lane {
     std::uint32_t x;
@@ -97,7 +107,17 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+bool Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, bool withoutComputeDerivatives, bool implicit) {
+    auto target = device.Target();
+    std::vector<std::uint32_t> capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end());
+    std::vector<std::string_view> extensions(target.supportedExtensions.begin(), target.supportedExtensions.end());
+    if (withoutComputeDerivatives) {
+        std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR));
+        std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+        target.supportedCapabilities = capabilities;
+        target.supportedExtensions = extensions;
+    }
+    const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto texture = CubeDescriptor();
@@ -105,27 +125,41 @@ void Run(AgcDriver::VulkanDevice& device) {
     std::copy(buffer.begin(), buffer.end(), userData.begin());
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
     std::copy(sampler.begin(), sampler.end(), userData.begin() + 12);
-    const std::span<const std::uint32_t> code(Code);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(Code.data()), std::as_bytes(code)}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
-        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(Code.data()), code, 0, {}},
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
         {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
-        device.Target(),
+        target,
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
+    ShaderRecompiler::RecompileResult result;
+    try {
+        result = ShaderRecompiler::Recompile(request);
+    } catch (const std::exception& error) {
+        if (implicit && !derivatives && std::string_view(error.what()).find("require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives") != std::string_view::npos) {
+            std::printf("image plane address on a cube: observed missing compute derivative refusal: %s\n", error.what());
+            return false;
+        }
+        throw;
+    }
+    Require(!implicit || derivatives, "image plane address on a cube: implicit sampling compiled without compute derivative support");
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
+    return true;
 }
 
-void Check() {
+void Check(bool implicit) {
     constexpr std::array<const char*, 4> names{"image_sample_lz", "image_sample_l", "image_sample", "image_load"};
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto lane = LaneOf(tid);
         const std::array<float, 4> expected{TexelValue(0u, lane.x, lane.y), TexelValue(0u, lane.x, lane.y), TexelValue(0u, lane.x, lane.y), TexelValue(0u, lane.loadX, lane.loadY)};
         for (std::uint32_t op = 0; op < expected.size(); ++op) {
+            if (op == 2u && !implicit) {
+                Require(Buffer[tid * Words + Result + op] == 0xdeadbeefu, "image plane address on a cube: skipped implicit sampling overwrote its sentinel");
+                continue;
+            }
             const float value = std::bit_cast<float>(Buffer[tid * Words + Result + op]);
             Require(value == expected[op], std::string("image plane address on a cube: ") + names[op] + " 2d on a cube texture, thread " + std::to_string(tid) + " is " + std::to_string(value) + ", expected " + std::to_string(expected[op]));
         }
@@ -134,14 +168,21 @@ void Check() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool withoutComputeDerivatives = argc == 2 && std::string_view(argv[1]) == "--without-compute-derivatives";
+        Require(argc == 1 || withoutComputeDerivatives, "image plane address on a cube: unexpected argument");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         FillCube();
         FillInput();
-        Run(*device);
-        Check();
+        const bool implicit = Run(*device, Code, withoutComputeDerivatives, true);
+        if (!implicit) Require(Run(*device, ExplicitCode, withoutComputeDerivatives, false), "image plane address on a cube: explicit controls unexpectedly require compute derivatives");
+        Check(implicit);
+        if (!implicit) {
+            std::puts("image plane address on cube explicit and load controls passed; implicit sampling skipped");
+            return withoutComputeDerivatives ? 0 : VulkanTestSkipped;
+        }
         std::puts("image plane address on cube tests passed");
         return 0;
     } catch (const std::exception& error) {

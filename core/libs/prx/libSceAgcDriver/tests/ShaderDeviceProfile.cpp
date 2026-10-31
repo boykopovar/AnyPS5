@@ -102,6 +102,8 @@ void CheckProfile() {
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityFragmentBarycentricKHR); }, "fragmentShaderBarycentric");
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityMeshShadingEXT); }, "meshShader");
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityDrawParameters); }, "shaderDrawParameters");
+    invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityComputeDerivativeGroupLinearKHR); }, "computeDerivativeGroupLinear");
+    invalid([](auto& value) { value.extensions.push_back("SPV_KHR_compute_shader_derivatives"); }, "computeDerivativeGroupLinear");
     invalid([](auto& value) { value.extensions.push_back("SPV_KHR_terminate_invocation"); }, "shaderTerminateInvocation");
     ProfileInput enabled;
     enabled.capabilities.push_back(spv::CapabilitySampledImageArrayDynamicIndexing);
@@ -116,6 +118,15 @@ void CheckProfile() {
     drawParameters.device.pNext = &drawFeatures;
     const AgcDriver::ShaderDeviceProfile drawParametersAccepted(drawParameters.Target(), drawParameters.device, drawParameters.limits);
     Require(std::ranges::find(drawParametersAccepted.Target().supportedCapabilities, spv::CapabilityDrawParameters) != drawParametersAccepted.Target().supportedCapabilities.end(), "enabled shaderDrawParameters was rejected");
+    ProfileInput derivativeInput;
+    derivativeInput.capabilities.push_back(spv::CapabilityComputeDerivativeGroupLinearKHR);
+    derivativeInput.extensions.push_back("SPV_KHR_compute_shader_derivatives");
+    VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR derivatives{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR, &derivativeInput.bda, VK_FALSE, VK_TRUE};
+    derivativeInput.device.pNext = &derivatives;
+    const AgcDriver::ShaderDeviceProfile derivativeProfile(derivativeInput.Target(), derivativeInput.device, derivativeInput.limits);
+    Require(std::ranges::find(derivativeProfile.Target().supportedCapabilities, spv::CapabilityComputeDerivativeGroupLinearKHR) != derivativeProfile.Target().supportedCapabilities.end(), "enabled linear compute derivatives were rejected");
+    derivatives.computeDerivativeGroupLinear = VK_FALSE;
+    Reject([&] { AgcDriver::ShaderDeviceProfile rejected(derivativeInput.Target(), derivativeInput.device, derivativeInput.limits); }, "computeDerivativeGroupLinear");
     ProfileInput terminating;
     VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR terminate{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR, &terminating.bda, VK_TRUE};
     terminating.device.pNext = &terminate;

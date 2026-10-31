@@ -456,6 +456,9 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             case IrOpcode::ImageQueryLod:
                 requirements.computeDerivatives = true;
                 break;
+            case IrOpcode::ImageSampleRaw:
+                requirements.computeDerivatives |= program.Resources().stage == IrShaderStage::Compute && !ImageSampleExplicitLod(program.Resources().memoryInfo.at(inst->Flags<MemoryFlags>().index).imageSampleFlags, IrShaderStage::Compute);
+                break;
             case IrOpcode::ImageGatherRaw:
                 requirements.imageGatherExtended = true;
                 break;
