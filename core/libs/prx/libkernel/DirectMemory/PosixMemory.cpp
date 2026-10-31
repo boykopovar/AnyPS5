@@ -5,6 +5,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/AppArchive.hpp"
+#include "prx/libc/include/HostErrno.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -52,10 +54,26 @@ constexpr std::uintptr_t GuestUserAddressEnd = 0x800000000000;
 constexpr int GuestAlignedSuper = 0x1000000;
 constexpr std::size_t SuperpageSize = std::size_t{1} << 21;
 
+class ArchiveMappingDescriptor {
+public:
+    ArchiveMappingDescriptor() = default;
+    ArchiveMappingDescriptor(const ArchiveMappingDescriptor&) = delete;
+    ArchiveMappingDescriptor& operator=(const ArchiveMappingDescriptor&) = delete;
+    ~ArchiveMappingDescriptor() {
+        if (descriptor < 0) return;
+#ifdef _WIN32
+        _close(descriptor);
+#else
+        close(descriptor);
+#endif
+    }
+    int descriptor = -1;
+};
+
 #if defined(__linux__) || defined(__APPLE__)
 class ScopedDescriptor {
 public:
-    explicit ScopedDescriptor(int value) noexcept : descriptor(fcntl(value, F_DUPFD_CLOEXEC, 0)), error(descriptor < 0 ? errno : 0) {}
+    explicit ScopedDescriptor(int value, bool duplicate) noexcept : descriptor(duplicate ? fcntl(value, F_DUPFD_CLOEXEC, 0) : value), error(descriptor < 0 ? errno : 0) {}
     ~ScopedDescriptor() {
         const int savedError = errno;
         if (descriptor >= 0) close(descriptor);
@@ -189,13 +207,41 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         return failed(GuestNotSupported);
     if (descriptor < 0) return failed(GuestBadDescriptor);
     if (File::IsVirtualDirectoryDescriptor(descriptor)) return failed(GuestNotSupported);
-    File::RefuseArchivedFile(descriptor, "mmap");
     if (offset < 0 || (static_cast<std::uint64_t>(offset) & (PS5_PAGE_SIZE - 1)) != 0 ||
         rounded > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()) ||
         static_cast<std::uint64_t>(offset) > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) - rounded)
         return failed(GuestInvalid);
+    ArchiveMappingDescriptor archive;
+    try {
+        if (File::IsArchivedFile(descriptor) && kind == GuestShared && (protection & 2) != 0) return failed(GuestAccess);
+        AppArchiveMappingDescriptor_nid_no_patch(descriptor, static_cast<std::uint64_t>(offset), rounded, &archive.descriptor);
+    } catch (const std::system_error& error) {
+        if (error.code() == std::errc::not_enough_memory) return failed(GuestNoMemory);
+        if (error.code() == std::errc::permission_denied) return failed(GuestAccess);
+        const auto condition = error.code().default_error_condition();
+        if (condition.category() == std::generic_category()) {
+            switch (condition.value()) {
+            case EMFILE:
+            case ENFILE:
+            case ENOSPC:
+            case EFBIG:
+            case EINTR:
+                return failed(GuestErrnoFromHost_nid_no_patch(condition.value()));
+            default: break;
+            }
+        }
+        return failed(GuestIoError);
+    } catch (const std::bad_alloc&) {
+        return failed(GuestNoMemory);
+    } catch (const std::exception&) {
+        return failed(GuestIoError);
+    }
+    const int sourceDescriptor = archive.descriptor >= 0 ? archive.descriptor : descriptor;
+    const auto mappingOffset = archive.descriptor >= 0 ? std::int64_t{0} : offset;
 #if defined(__linux__) || defined(__APPLE__)
-    const ScopedDescriptor pinnedDescriptor(descriptor);
+    const bool archiveBacked = archive.descriptor >= 0;
+    const ScopedDescriptor pinnedDescriptor(sourceDescriptor, !archiveBacked);
+    if (archiveBacked) archive.descriptor = -1;
     if (pinnedDescriptor.Get() < 0) return failed(pinnedDescriptor.Error());
     const int mappingDescriptor = pinnedDescriptor.Get();
     const int descriptorFlags = fcntl(mappingDescriptor, F_GETFL);
@@ -205,7 +251,7 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     if (kind == GuestShared && (protection & 2) != 0 && accessMode == O_RDONLY) return failed(GuestAccess);
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor) && !RegularFile(mappingDescriptor)) return failed(GuestNotSupported);
 #elif defined(_WIN32)
-    const int mappingDescriptor = descriptor;
+    const int mappingDescriptor = sourceDescriptor;
     {
         const HANDLE handle = WindowsDescriptorHandle_nid_no_patch(mappingDescriptor);
         if (handle == INVALID_HANDLE_VALUE) return failed(GuestBadDescriptor);
@@ -218,18 +264,18 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
         if (kind == GuestShared && (protection & 2) != 0 && accessMode == 0) return failed(GuestAccess);
         if (kind == GuestPrivate) {
             const std::size_t privateAlignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
-            return MapPrivateFileCopy(address, rounded, protection, placement, privateAlignment, handle, mappingDescriptor, offset, accessMode, failed);
+            return MapPrivateFileCopy(address, rounded, protection, placement, privateAlignment, handle, mappingDescriptor, mappingOffset, accessMode, failed);
         }
     }
 #else
-    const int mappingDescriptor = descriptor;
+    const int mappingDescriptor = sourceDescriptor;
     if (!File::IsSharedMemoryDescriptor_nid_no_patch(mappingDescriptor)) return failed(GuestNotSupported);
 #endif
     const std::size_t alignment = (flags & GuestAlignedSuper) != 0 ? SuperpageSize : PS5_PAGE_SIZE;
     void* mapped = nullptr;
     try {
         mapped = address;
-        const auto result = DoMapFileBacked_nid_no_patch(&mapped, rounded, protection, kind | placement, mappingDescriptor, static_cast<std::uint64_t>(offset), alignment);
+        const auto result = DoMapFileBacked_nid_no_patch(&mapped, rounded, protection, kind | placement, mappingDescriptor, static_cast<std::uint64_t>(mappingOffset), alignment);
         if (result != 0) return failed(result == SCE_KERNEL_ERROR_EINVAL ? GuestInvalid : GuestNoMemory);
         if ((placement & GuestMapFixed) != 0) ReleaseFlexibleMappingRange(reinterpret_cast<std::uintptr_t>(mapped), rounded);
         return mapped;

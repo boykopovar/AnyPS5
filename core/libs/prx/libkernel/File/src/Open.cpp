@@ -368,7 +368,7 @@ std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes) {
     const GuestArena::HostWrite destination(buf, nbytes);
     if (!destination.Open()) errno = EFAULT;
     else if (File::ReadRandomDevice(d, buf, nbytes)) return static_cast<std::int64_t>(nbytes);
-    else if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, nullptr)) return *archived;
+    else if (const auto archived = File::ReadArchivedFile(d, buf, nbytes, nullptr)) return *archived < 0 ? SceIoErrorFromErrno(static_cast<int>(-*archived)) : *archived;
     auto n = destination.Open() ? NativeRead(d, buf, nbytes) : -1;
     if (n < 0) return SceIoErrorFromErrno(errno);
     return static_cast<std::int64_t>(n);
