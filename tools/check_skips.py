@@ -1,4 +1,5 @@
 import sys
+import json
 import argparse
 import re
 import xml.etree.ElementTree as ET
@@ -67,7 +68,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="fail when a test is skipped that the job's device is not expected to skip")
     parser.add_argument("junit", type=Path, help="the file written by ctest --output-junit")
     parser.add_argument("--job", choices=("linux", "windows"), default="linux")
-    parser.add_argument("--list", action="store_true", help="print the skipped tests and why the file says they skipped")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true", help="emit grouped skip reasons and occurrence-based policy decisions as JSON")
+    output.add_argument("--list", action="store_true", help="print the skipped tests and why the file says they skipped")
     parser.add_argument("--require-tests", action="store_true", help="fail if the report contains no testcases")
     args = parser.parse_args(argv)
     try:
@@ -86,6 +89,14 @@ def main(argv=None):
     else:
         unexpected = [name for name, output in found if not device_limitations(output, (DEVICE_LIMITATION,)) and not high_refresh_limitation(output)]
         expected = "any test that reports the device limitation it needs, such as narrow subgroups, a missing extension, no display for a Vulkan window or a display without a 120 Hz mode"
+    if args.json:
+        grouped = {}
+        for name, output in found:
+            grouped.setdefault(name, []).append(output)
+        print(json.dumps({"job": args.job, "skips": [
+            {"name": name, "output": "\n".join(outputs), "occurrences": len(outputs), "expected": name not in unexpected}
+            for name, outputs in sorted(grouped.items())], "unexpected": unexpected}, sort_keys=True))
+        return int(bool(unexpected))
     for name in unexpected:
         print(f"error: {name} skipped")
     if unexpected:

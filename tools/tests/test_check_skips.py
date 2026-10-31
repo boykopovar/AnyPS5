@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import contextlib
 import io
@@ -34,6 +35,60 @@ OTHER = [
     "skipped, APS5_RAYTRACING replaces the node",
     "skipped, interpolation modes require",
 ]
+
+
+class SkipJsonTests(unittest.TestCase):
+    def test_policy_decisions_match_text_mode(self):
+        import json
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "result.xml"
+            report.write_text('<testsuite><testcase name="agc_missing"><skipped message="unknown"/></testcase><testcase name="window"><skipped message="no display"/></testcase><testcase name="lost"><skipped message="flaky"/></testcase></testsuite>')
+            for job in ("linux", "windows"):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    status = check_skips.main([str(report), "--job", job, "--json"])
+                data = json.loads(out.getvalue())
+                self.assertEqual(status, 1)
+                decisions = {row["name"]: row["expected"] for row in data["skips"]}
+                self.assertEqual(decisions, {"agc_missing": job == "windows", "window": True, "lost": False})
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(check_skips.main([str(report), "--job", job]), status)
+            for content in ('<testsuite/>', '<testsuite><testcase name="ok"/></testsuite>'):
+                report.write_text(content)
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    self.assertEqual(check_skips.main([str(report), "--json"]), 0)
+                self.assertEqual(json.loads(out.getvalue())["skips"], [])
+            for content in ('broken', '<testsuite><testcase status="disabled"/></testsuite>'):
+                report.write_text(content)
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                    check_skips.main([str(report), "--json"])
+                self.assertEqual(error.exception.code, 2)
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                check_skips.main([str(report), "--json", "--list"])
+
+    def test_duplicate_names_preserve_occurrences_reasons_and_policy(self):
+        report_text = '<testsuite>' + ''.join(
+            f'<testcase name="{name}"><skipped message="{reason}"/></testcase>'
+            for name, reason in (("a", "no display"), ("a", "flaky"), ("b", "no display"), ("c", "flaky"), ("c", "flaky"))) + '</testsuite>'
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "duplicates.xml"
+            report.write_text(report_text, encoding="utf-8")
+            for job in ("linux", "windows"):
+                with self.subTest(job=job):
+                    text, output = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(text):
+                        self.assertEqual(check_skips.main([str(report), "--job", job]), 1)
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(check_skips.main([str(report), "--job", job, "--json"]), 1)
+                    self.assertEqual(text.getvalue().count("error: c skipped"), 2)
+                    self.assertEqual(json.loads(output.getvalue()), {
+                        "job": job,
+                        "skips": [
+                            {"name": "a", "output": "skipped, flaky\n\n\nskipped, no display\n\n", "occurrences": 2, "expected": False},
+                            {"name": "b", "output": "skipped, no display\n\n", "occurrences": 1, "expected": True},
+                            {"name": "c", "output": "skipped, flaky\n\n\nskipped, flaky\n\n", "occurrences": 2, "expected": False}],
+                        "unexpected": ["a", "c", "c"]})
 
 
 class CheckSkipsTests(unittest.TestCase):
@@ -478,6 +533,9 @@ class NotRunTests(unittest.TestCase):
                     self.assertIn("notrun", checked.stderr)
                     self.assertIn("agc_missing", checked.stderr)
                     self.assertNotIn("Traceback", checked.stderr)
+
+
+
 
 
 if __name__ == "__main__":
