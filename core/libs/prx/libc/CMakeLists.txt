@@ -59,6 +59,10 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strings.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/RttiNames.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/NumericLimitsData.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PlaceholderData.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeConstantsData.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AllocatingStrings.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/WideConversion.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/BoundsChecking.cpp
