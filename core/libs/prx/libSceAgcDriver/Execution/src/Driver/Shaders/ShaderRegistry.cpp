@@ -563,6 +563,10 @@ ShaderPreparationTransaction::~ShaderPreparationTransaction() {
 
 PreparedShaderState& ShaderPreparationTransaction::Edit(const ShaderSnapshot& snapshot) {
     require(!committed, "shader preparation transaction is already committed");
+    if (!root->lock.owns_lock()) {
+        std::unique_lock prepared(snapshot.prepared->mutex);
+        AwaitRegisteredPreparation(*snapshot.prepared, prepared);
+    }
     root->Hold();
     auto& changes = root->changes;
     const auto found = changes.find(snapshot.prepared.get());
@@ -577,6 +581,10 @@ PreparedShaderState& ShaderPreparationTransaction::Edit(const ShaderSnapshot& sn
 
 const PreparedShaderState& ShaderPreparationTransaction::Read(const ShaderSnapshot& snapshot) const {
     require(!committed, "shader preparation transaction is already committed");
+    if (!root->lock.owns_lock()) {
+        std::unique_lock prepared(snapshot.prepared->mutex);
+        AwaitRegisteredPreparation(*snapshot.prepared, prepared);
+    }
     root->Hold();
     auto& changes = root->changes;
     const auto found = changes.find(snapshot.prepared.get());
