@@ -113,7 +113,10 @@ static void CheckPointer() {
         buffer == std::u16string(u"[      1234][1234      ][00001234][0000001a]"), "vswprintf %p width and precision");
     Require(Format(buffer, 64, u"[%.0p][%p]", address(0), address(0)) == 5 &&
         buffer == std::u16string(u"[][0]"), "vswprintf %p with a zero precision prints nothing");
-    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == 6 && buffer == std::u16string(u"[1234]"), "vswprintf %lp ignores the l");
+    Require(Format(buffer, 64, u"[%lp]", address(0x1234)) == 6 && buffer == std::u16string(u"[1234]"), "vswprintf %lp prints the pointer as %p does");
+    Require(Format(buffer, 64, u"[%lp]", address(0)) == 3 && buffer == std::u16string(u"[0]"), "vswprintf %lp of a null pointer");
+    Require(Format(buffer, 64, u"[%5.0p][%05.3p][%.0p]", address(0), address(0x1f), address(0x1f)) == 18 &&
+        buffer == std::u16string(u"[     ][  01f][1f]"), "vswprintf %p width beside a zero precision, 0 beside a precision, and %.0p of a pointer");
 }
 
 static void CheckCount() {
