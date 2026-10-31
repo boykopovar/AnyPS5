@@ -1,10 +1,13 @@
 #include "prx/libSceAgc/Cb/include/Sync.hpp"
+#include "prx/libSceAgc/include/Agc.hpp"
 
+#include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -65,6 +68,17 @@ std::uint32_t* APS5_VABI sceAgcCbMemSemaphore(CommandBuffer* buf, const volatile
     const auto guestAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(address));
     const auto maskedAddress = guestAddress & ~0xfULL;
     return Agc::Command::Emit(buf, 0x39u, {static_cast<std::uint32_t>(maskedAddress), static_cast<std::uint32_t>(maskedAddress >> 32u), 0x80100000u}, __func__);
+}
+
+std::uint32_t* APS5_VABI sceAgcCbMemsetExclusive(CommandBuffer* buffer, void* destination, const void* pattern, std::uint64_t size) {
+    Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(destination), 4, __func__);
+    Agc::Command::CheckAddress(reinterpret_cast<std::uintptr_t>(pattern), 4, __func__);
+    Agc::Command::Require(size != 0, __func__, "zero size");
+    Agc::Command::Require((size & 3u) == 0, __func__, "misaligned size");
+    Agc::Command::CheckBits(size, 0x3ffffffu, __func__);
+    std::uint32_t patternVal = 0;
+    std::memcpy(&patternVal, pattern, sizeof(patternVal));
+    return Agc::Command::WriteDma(buffer, false, 1, 0, 0, reinterpret_cast<std::uintptr_t>(destination), 2, 0, patternVal, static_cast<std::uint32_t>(size), 0, 1, 1, __func__);
 }
 
 }

@@ -4,6 +4,7 @@
 #include "prx/libSceAgc/Patch/include/IndirectRegisters.hpp"
 #include "prx/libSceAgc/Patch/include/Nop.hpp"
 #include "prx/libSceAgc/Patch/include/QueueEndOfPipeAction.hpp"
+#include "prx/libSceAgc/Patch/include/Dma.hpp"
 #include "prx/libSceAgc/Misc/include/Suspend.hpp"
 #include "prx/libSceAgc/Misc/include/RegisterDefaults.hpp"
 #include "prx/libSceAgc/Patch/include/Jump.hpp"
@@ -712,6 +713,71 @@ void testMemory() {
     const auto beforeMask = storage.words;
     expectFailure([&] { sceAgcWaitRegMemPatchMask(packet + 4, 1); });
     check(storage.words == beforeMask, "invalid mask patch modified packet memory");
+
+    Storage memsetStorage;
+    const std::uint32_t pattern = 0xa1b2c3d4u;
+    void* dst = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x20004000ull));
+    auto* memsetPacket = sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, 64);
+    check(memsetPacket == memsetStorage.words.data(), "packet pointer mismatch");
+    check(memsetStorage.buffer.cursor_up == memsetStorage.words.data() + 7, "cursor up advance mismatch");
+    const std::array<std::uint32_t, 7> expectedMemset{0xc0055000u, 0xc0000001u, 0xa1b2c3d4u, 0, 0x20004000u, 0, 0x80000040u};
+    check(std::equal(expectedMemset.begin(), expectedMemset.end(), memsetStorage.words.begin()), "memset exclusive packet mismatch");
+    void* dst64 = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x123456789abcdef0ull));
+    auto* memsetPacket64 = sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst64, &pattern, 16);
+    check(memsetPacket64 == memsetStorage.words.data() + 7, "second packet pointer mismatch");
+    check(memsetStorage.buffer.cursor_up == memsetStorage.words.data() + 14, "second cursor up advance mismatch");
+    check(memsetPacket64[0] == 0xc0055000u && memsetPacket64[1] == 0xc0000001u, "64-bit dst header mismatch");
+    check(memsetPacket64[2] == 0xa1b2c3d4u && memsetPacket64[3] == 0, "64-bit dst pattern mismatch");
+    check(memsetPacket64[4] == 0x9abcdef0u && memsetPacket64[5] == 0x12345678u, "64-bit dst address splitting mismatch");
+    check(memsetPacket64[6] == 0x80000010u, "64-bit dst command mismatch");
+
+    auto* minPacket = sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, 4);
+    check(minPacket == memsetStorage.words.data() + 14, "min packet pointer mismatch");
+    check(minPacket[6] == 0x80000004u, "min size command mismatch");
+    auto* maxPacket = sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, 0x3fffffcull);
+    check(maxPacket == memsetStorage.words.data() + 21, "max packet pointer mismatch");
+    check(maxPacket[6] == 0x83fffffcu, "max size command mismatch");
+
+    const auto patchDst = 0x5566778899aabbccull;
+    check(sceAgcDmaDataPatchSetDstAddressOrOffset(memsetPacket, patchDst) == 0, "patch dst failed");
+    check(memsetPacket[4] == 0x99aabbccu && memsetPacket[5] == 0x55667788u, "patched dst mismatch");
+    const auto patchPattern = 0xfeedfaceull;
+    check(sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(memsetPacket, patchPattern) == 0, "patch src failed");
+    check(memsetPacket[2] == 0xfeedfaceu && memsetPacket[3] == 0u, "patched src mismatch");
+
+    const auto beforeMemset = memsetStorage.words;
+    const auto* beforeCursor = memsetStorage.buffer.cursor_up;
+    expectFailure([&] { sceAgcCbMemsetExclusive(nullptr, dst, &pattern, 16); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, nullptr, &pattern, 16); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, reinterpret_cast<void*>(0x2001ull), &pattern, 16); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, reinterpret_cast<void*>(0x2002ull), &pattern, 16); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, reinterpret_cast<void*>(0x2003ull), &pattern, 16); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, nullptr, 16); });
+    const auto misalignedPatternAddr = reinterpret_cast<std::uintptr_t>(&pattern);
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, reinterpret_cast<const void*>(misalignedPatternAddr + 1), 16); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, reinterpret_cast<const void*>(misalignedPatternAddr + 2), 16); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, reinterpret_cast<const void*>(misalignedPatternAddr + 3), 16); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, 0); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, 1); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, 2); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, 3); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, 15); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, 0x4000000ull); });
+    expectFailure([&] { sceAgcCbMemsetExclusive(&memsetStorage.buffer, dst, &pattern, (1ull << 32) + 4); });
+    check(memsetStorage.words == beforeMemset, "failed memset modified buffer memory");
+    check(memsetStorage.buffer.cursor_up == beforeCursor, "failed memset modified cursor");
+
+    Storage shortStorage;
+    shortStorage.buffer.cursor_down = shortStorage.buffer.cursor_up + 6;
+    const auto beforeShort = shortStorage.words;
+    expectFailure([&] { sceAgcCbMemsetExclusive(&shortStorage.buffer, dst, &pattern, 16); });
+    check(shortStorage.words == beforeShort, "exhausted buffer modified memory");
+    check(shortStorage.buffer.cursor_up == shortStorage.words.data(), "exhausted buffer modified cursor");
+
+    expectFailure([&] { sceAgcDmaDataPatchSetDstAddressOrOffset(nullptr, patchDst); });
+    expectFailure([&] { sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(nullptr, patchPattern); });
+    expectFailure([&] { sceAgcDmaDataPatchSetDstAddressOrOffset(memsetPacket + 1, patchDst); });
+    expectFailure([&] { sceAgcDmaDataPatchSetSrcAddressOrOffsetOrImmediate(memsetPacket + 1, patchPattern); });
 }
 
 void testEndOfPipePatches() {
