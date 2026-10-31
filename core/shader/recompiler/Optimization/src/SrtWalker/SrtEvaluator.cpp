@@ -464,18 +464,29 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
 
 template<typename TNode>
 bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* value) {
+    std::unordered_map<const IrValue*, bool> decided;
+    return MayDecide(program, value, decided);
+}
+
+template<typename TNode>
+bool BasicEvaluator<TNode>::MayDecide(const IrResourcePlan& program, IrValue* value, std::unordered_map<const IrValue*, bool>& decided) {
     if (value == nullptr) return false;
-    if (MayEvaluate(program, value)) return true;
     value = value->Resolve();
-    const auto decides = [&program, value](std::size_t index) { return value->Argument(index) != nullptr && MayDecide(program, value->Argument(index)); };
-    switch (value->Opcode()) {
-        case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
-        case IrOpcode::LogicalAnd:
-        case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
-        case IrOpcode::ULessThan32:
-        case IrOpcode::UGreaterThan32: return value->ArgumentCount() == 2u && (MayEvaluate(program, value->Argument(0)) || MayEvaluate(program, value->Argument(1)));
-        default: return false;
-    }
+    if (const auto found = decided.find(value); found != decided.end()) return found->second;
+    const auto decides = [&program, &decided, value](std::size_t index) { return value->Argument(index) != nullptr && MayDecide(program, value->Argument(index), decided); };
+    const auto decidable = [&] {
+        if (MayEvaluate(program, value)) return true;
+        switch (value->Opcode()) {
+            case IrOpcode::LogicalNot: return value->ArgumentCount() == 1u && decides(0);
+            case IrOpcode::LogicalAnd:
+            case IrOpcode::LogicalOr: return value->ArgumentCount() == 2u && (decides(0) || decides(1));
+            case IrOpcode::ULessThan32:
+            case IrOpcode::UGreaterThan32: return value->ArgumentCount() == 2u && (MayEvaluate(program, value->Argument(0)) || MayEvaluate(program, value->Argument(1)));
+            default: return false;
+        }
+    }();
+    decided.emplace(value, decidable);
+    return decidable;
 }
 
 template<typename TNode>

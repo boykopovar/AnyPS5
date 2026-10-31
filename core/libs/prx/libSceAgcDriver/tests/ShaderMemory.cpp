@@ -54,6 +54,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #ifdef _WIN32
@@ -1104,6 +1105,39 @@ void verifyMayEvaluate() {
         std::uint32_t result = 0;
         require(Detail::Evaluator::MayEvaluate(plan, &value) == evaluator.Evaluate(Detail::IrNode(&value), result), (std::string("MayEvaluate disagreed with the evaluator on ") + std::string(IrOpcodeName(opcode)) + " over constants").c_str());
     }
+}
+
+void verifyMayDecideSharedConditions() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    std::vector<std::unique_ptr<IrValue>> values;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, static_cast<std::uint32_t>(values.size())));
+        for (auto* argument : arguments) values.back()->AddArgument(argument);
+        return *values.back();
+    };
+    auto& scalar = make(IrOpcode::Void, IrType::ScalarReg);
+    scalar.SetRegister({RegisterBank::Scalar, 0});
+    auto& vector = make(IrOpcode::Void, IrType::VectorReg);
+    vector.SetRegister({RegisterBank::Vector, 0});
+    auto& input = make(IrOpcode::GetUserData, IrType::U32, {&scalar});
+    auto& lane = make(IrOpcode::GetRegister, IrType::U32, {&vector});
+    const auto varying = [&] { return &make(IrOpcode::IEqual32, IrType::Bool, {&input, &lane}); };
+    const auto chain = [&](IrValue* first) {
+        auto* condition = first;
+        for (int level = 0; level < 64; ++level) {
+            auto& left = make(IrOpcode::LogicalAnd, IrType::Bool, {condition, varying()});
+            auto& right = make(IrOpcode::LogicalAnd, IrType::Bool, {condition, varying()});
+            condition = &make(IrOpcode::LogicalOr, IrType::Bool, {&left, &right});
+        }
+        return condition;
+    };
+    auto* undecided = chain(varying());
+    auto* decided = chain(&make(IrOpcode::LogicalAnd, IrType::Bool, {varying(), &make(IrOpcode::IEqual32, IrType::Bool, {&input, &input})}));
+    require(!Detail::Evaluator::MayDecide(plan, undecided), "MayDecide decided 64 levels of lane conditions that share their operands");
+    require(Detail::Evaluator::MayDecide(plan, decided), "MayDecide did not decide 64 levels of shared conditions over a uniform conjunct");
+    std::unordered_map<const IrValue*, bool> memo;
+    require(!Detail::Evaluator::MayDecide(plan, undecided, memo) && Detail::Evaluator::MayDecide(plan, decided, memo), "MayDecide answered differently through a shared memo");
 }
 
 void verifyEvaluatedValues() {
@@ -9706,6 +9740,7 @@ int main(int argc, char** argv) {
         verifyOutOfRangeConstantReads();
         verifySignedMinimum();
         verifyMayEvaluate();
+        verifyMayDecideSharedConditions();
         verifyPureFlatSlots();
         verifyPlanConditionPruning();
         verifyPlanRetention();
