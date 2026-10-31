@@ -451,6 +451,8 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         }
         submission.shaders = shaders;
         submission.serial = accepted + 1;
+        if (trace) std::fprintf(stderr, "[gpu] %.1f accepted serial=%llu queue=0x%x dwords=%zu at %p%s\n", TraceMs(), static_cast<unsigned long long>(submission.serial), queue, submission.commands.size(),
+                                static_cast<const void*>(descriptor.addr), cpuFlip ? " (cpu flip)" : "");
 
         submission.received = ++eventSerial;
         const auto now = std::chrono::steady_clock::now();
@@ -507,6 +509,8 @@ void Driver::SuspendPoint() {
     Submission boundary{};
     boundary.serial = accepted + 1;
     boundary.suspend = true;
+    static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
+    if (trace) std::fprintf(stderr, "[gpu] %.1f accepted serial=%llu suspend point\n", TraceMs(), static_cast<unsigned long long>(boundary.serial));
 
     boundary.queue = 0;
     boundary.receivedAt = receivedAt;

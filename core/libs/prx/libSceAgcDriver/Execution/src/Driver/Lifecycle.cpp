@@ -278,6 +278,16 @@ std::vector<AwaitedWait> Driver::AwaitedWaits() {
     return result;
 }
 
+void Driver::WaitForPipelineJournal() {
+    std::shared_ptr<VulkanDevice> localDevice = device.Load();
+    if (localDevice == nullptr) {
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        if (device == nullptr) device = std::make_shared<VulkanDevice>();
+        localDevice = device;
+    }
+    localDevice->WaitForPipelineJournalReplay();
+}
+
 std::pair<std::uint64_t, std::uint64_t> Driver::SerialProgress() {
     std::lock_guard lock(mutex);
     return {accepted, completed};

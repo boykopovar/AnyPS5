@@ -134,7 +134,7 @@ bool equal(const std::byte* bytes, const std::vector<std::byte>& expected) {
     return std::memcmp(bytes, expected.data(), expected.size()) == 0;
 }
 
-void testCaptureAndReplay(const std::filesystem::path& tool) {
+void testCaptureAndReplay(const std::filesystem::path& tool, bool pipelines) {
     const char* directory = std::getenv("APS5_FRAME_CAPTURE");
     check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
     const std::filesystem::path capture(directory);
@@ -186,17 +186,40 @@ void testCaptureAndReplay(const std::filesystem::path& tool) {
     check(recorded(late.base), "the block committed during the capture is not in its ranges");
     check(reader.Header().find("\"late_ranges\":1") != std::string::npos, "the capture header does not count one range committed during the capture: " + reader.Header());
 
-    const auto firstDump = capture / "first.bin";
-    const auto secondDump = capture / "second.bin";
-    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict --dump " + std::to_string(at(layout.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + firstDump.string() +
-                   "\" --dump " + std::to_string(at(late.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + secondDump.string() + "\"";
+    const auto firstDump = capture / "first dump.bin";
+    const auto secondDump = capture / "second dump.bin";
+    const auto replay = [&](const std::string& options, const std::filesystem::path& output) {
+        std::filesystem::remove(firstDump);
+        std::filesystem::remove(secondDump);
+        auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --strict " + options + " --dump " + std::to_string(at(layout.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" +
+                       firstDump.string() + "\" --dump " + std::to_string(at(late.firstTarget)) + ":" + std::to_string(DataBytes) + ":\"" + secondDump.string() + "\" > \"" + output.string() + "\" 2> \"" + output.string() + ".log\"";
 #ifdef _WIN32
-    command = "\"" + command + "\"";
+        command = "\"" + command + "\"";
 #endif
-    const auto code = std::system(command.c_str());
-    check(code == 0, "agc_frame_replay exited with " + std::to_string(code));
-    check(readFile(firstDump) == first, "the replay did not reproduce the first copy");
-    check(readFile(secondDump) == second, "the replay did not reproduce the second copy");
+        const auto code = std::system(command.c_str());
+        check(code == 0, "agc_frame_replay " + options + " exited with " + std::to_string(code));
+        check(readFile(firstDump) == first, "the replay " + options + " did not reproduce the first copy");
+        check(readFile(secondDump) == second, "the replay " + options + " did not reproduce the second copy");
+        const auto json = readFile(output);
+        return std::string(reinterpret_cast<const char*>(json.data()), json.size());
+    };
+    replay("", capture / "replay output.json");
+    if (pipelines) {
+        check(std::getenv("APS5_HEADLESS_PIPELINE_CACHE") != nullptr, "the pipeline cache switch was not inherited");
+        const auto warm = capture / "warm output.json";
+        replay("", warm);
+        const auto warmLog = readFile(warm.string() + ".log");
+        check(std::string(reinterpret_cast<const char*>(warmLog.data()), warmLog.size()).find("[pipeline-cache] loaded ") != std::string::npos, "the warm replay did not load the seeded pipeline cache");
+        const auto cold = capture / "cold output.json";
+        replay("--cold-pipelines", cold);
+        const auto coldLog = readFile(cold.string() + ".log");
+        check(std::string(reinterpret_cast<const char*>(coldLog.data()), coldLog.size()).find("[pipeline-cache] loaded ") == std::string::npos, "--cold-pipelines loaded a cache with APS5_HEADLESS_PIPELINE_CACHE inherited");
+        return;
+    }
+    const auto repeated = replay("--repeat 3", capture / "repeat output.json");
+    std::size_t passes = 0;
+    for (auto found = repeated.find("\"frames\":2,\"p50\""); found != std::string::npos; found = repeated.find("\"frames\":2,\"p50\"", found + 1)) ++passes;
+    check(passes == 3, "the repeated replay did not replay both frames in each of three passes: " + repeated);
 }
 
 void testConcurrentCopies(const std::filesystem::path& tool) {
@@ -261,16 +284,56 @@ void testConcurrentCopies(const std::filesystem::path& tool) {
     }
 }
 
+void testReservationError(const std::filesystem::path& tool) {
+    const char* directory = std::getenv("APS5_FRAME_CAPTURE");
+    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    const std::filesystem::path capture(directory);
+    std::uintptr_t base = 0;
+    std::size_t size = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &size);
+    AgcDriver::FrameCaptureWriter writer(capture);
+    AgcDriver::FrameCall output;
+    output.kind = FrameCallKind::RegisterVideoOutput;
+    output.values = {Handle};
+    writer.WriteCall(output);
+    AgcDriver::FrameCall reservation;
+    reservation.kind = FrameCallKind::ReserveEopFlip;
+    reservation.values = {Handle, static_cast<std::uint64_t>(-1), 1, 0, AgcDriver::EopFlipTokenBase};
+    writer.WriteCall(reservation);
+    AgcDriver::FrameCall start;
+    start.kind = FrameCallKind::FrameStart;
+    writer.WriteCall(start);
+    output.kind = FrameCallKind::UnregisterVideoOutput;
+    writer.WriteCall(output);
+    output.kind = FrameCallKind::RegisterVideoOutput;
+    writer.WriteCall(output);
+    reservation.values[3] = 1;
+    writer.WriteCall(reservation);
+    writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+    const auto result = capture / "reservation error.json";
+    const auto log = capture / "reservation error.log";
+    auto command = "\"" + tool.string() + "\" \"" + capture.string() + "\" --repeat 2 --strict > \"" + result.string() + "\" 2> \"" + log.string() + "\"";
+#ifdef _WIN32
+    command = "\"" + command + "\"";
+#endif
+    check(std::system(command.c_str()) != 0, "the replay accepted an incompatible reservation on the second pass");
+    const auto errors = readFile(log);
+    check(std::string(reinterpret_cast<const char*>(errors.data()), errors.size()).find("EOP flip token is reserved for a different flip") != std::string::npos, "the repeated replay did not report the incompatible reservation");
+    const auto report = readFile(result);
+    check(std::string(reinterpret_cast<const char*>(report.data()), report.size()).find("\"p50\"") == std::string::npos, "a failed repeated reservation produced a successful replay report");
+}
+
 }
 
 int main(int argc, char** argv) {
-    if (argc != 2 && !(argc == 3 && std::string(argv[2]) == "concurrent")) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent]\n");
+    if (argc != 2 && !(argc == 3 && (std::string(argv[2]) == "concurrent" || std::string(argv[2]) == "pipelines" || std::string(argv[2]) == "reservation_error"))) {
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error]\n");
         return 2;
     }
     try {
-        if (argc == 3) testConcurrentCopies(argv[1]);
-        else testCaptureAndReplay(argv[1]);
+        if (argc == 3 && std::string(argv[2]) == "concurrent") testConcurrentCopies(argv[1]);
+        else if (argc == 3 && std::string(argv[2]) == "reservation_error") testReservationError(argv[1]);
+        else testCaptureAndReplay(argv[1], argc == 3);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAILED: %s\n", error.what());
         return 1;
