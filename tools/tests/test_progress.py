@@ -1056,6 +1056,13 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("counts all its stubs as observed", page)
         self.assertIn("/docs/dev/PROGRESS.md#observed-imports", page)
         self.assertIn("<th>Declared %</th>", page)
+        self.assertIn("<p>1 of the 1 declared functions that are not implemented are unobserved stubs.</p>", page)
+
+    def test_page_text_counts_observed_stubs_by_provenance(self):
+        libraries = progress.summarize([{"name": "libA", "label": "A", "done": 1, "todo": 3, "unobserved": 2,
+                                         "observed_tags": {"X": "loader", "Y": "audit", "Z": "loader"}}])
+        page = progress.summary(libraries, dict(progress.summarize([]), extra=[]))
+        self.assertIn("2 of the 5 declared functions that are not implemented are unobserved stubs. Observed stubs by provenance: audit 1, loader 2.", page)
 
     def test_library_table_shows_each_state_and_both_percentages(self):
         groups = [{"name": "libA", "label": "A", "done": 1, "todo": 1, "unobserved": 2},
