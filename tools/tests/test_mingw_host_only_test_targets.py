@@ -78,6 +78,156 @@ class HostOnlyTargets(unittest.TestCase):
         source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
         self.assertEqual(build_mingw_host_only_tests.host_only_test_targets(source_root, targets), ["all_libraries_tests"])
 
+    def test_selects_host_test_linking_root_declared_native_helper(self):
+        helper = self.target("host_thread_local_test_library", target_type="SHARED_LIBRARY",
+                             source="core/libs/tests/HostThreadLocalLibrary.cpp")
+        helper["artifacts"] = [{"path": "core/libs/libhost_thread_local_test_library.dll.a"}]
+        helper["id"] = "helper-id"
+        host = self.target("host_thread_local_tests", dependencies=("helper-id",),
+                           source="core/libs/tests/HostThreadLocal.cpp",
+                           fragment="/build/core/libs/libhost_thread_local_test_library.dll.a")
+        build_dir = self.fixture([helper, host])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets),
+            ["host_thread_local_tests"],
+        )
+
+    def test_selects_host_test_linking_nested_test_directory_helper(self):
+        helper = self.target("nested_helper", target_type="STATIC_LIBRARY",
+                             source="core/libs/prx/custom/tests/NestedHelper.cpp")
+        helper["paths"]["source"] = "core/libs/prx/custom"
+        helper["artifacts"] = [{"path": "core/libs/prx/custom/libnested_helper.a"}]
+        helper["id"] = "nested-helper-id"
+        host = self.target("nested_helper_tests", dependencies=("nested-helper-id",),
+                           source="core/libs/tests/NestedTests.cpp",
+                           fragment="/build/core/libs/prx/custom/libnested_helper.a")
+        build_dir = self.fixture([helper, host])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets),
+            ["nested_helper_tests"],
+        )
+
+    def test_excludes_library_with_mixed_test_and_product_sources(self):
+        mixed = self.target("mixed_lib", target_type="STATIC_LIBRARY",
+                            source="core/libs/tests/Helper.cpp")
+        mixed["sources"].append({"path": "core/libs/src/Product.cpp"})
+        mixed["artifacts"] = [{"path": "core/libs/libmixed_lib.a"}]
+        mixed["id"] = "mixed-id"
+        host = self.target("mixed_dependent_tests", dependencies=("mixed-id",),
+                           source="core/libs/tests/HostOnly.cpp",
+                           fragment="/build/core/libs/libmixed_lib.a")
+        build_dir = self.fixture([mixed, host])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets),
+            [],
+        )
+
+    def test_excludes_host_test_when_helper_transitively_links_product_library(self):
+        product = self.target("product_lib", target_type="STATIC_LIBRARY",
+                              source="core/libs/utility/src/Utility.cpp")
+        product["paths"]["source"] = "core/libs/utility"
+        product["artifacts"] = [{"path": "core/libs/utility/libproduct_lib.a"}]
+        product["id"] = "product-id"
+        helper = self.target("test_helper", target_type="SHARED_LIBRARY",
+                             source="core/libs/tests/Helper.cpp",
+                             fragment="/build/core/libs/utility/libproduct_lib.a")
+        helper["artifacts"] = [{"path": "core/libs/tests/libtest_helper.dll.a"}]
+        helper["id"] = "helper-id"
+        host = self.target("host_tests", dependencies=("helper-id",),
+                           source="core/libs/tests/HostOnly.cpp",
+                           fragment="/build/core/libs/tests/libtest_helper.dll.a")
+        build_dir = self.fixture([product, helper, host])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets),
+            [],
+        )
+
+    def test_excludes_host_test_when_helper_links_guest_libc_without_libc_target(self):
+        helper = self.target("test_helper", target_type="SHARED_LIBRARY",
+                             source="core/libs/tests/Helper.cpp",
+                             fragment="C:/build/core/libs/prx/libc/libc.dll.a")
+        helper["artifacts"] = [{"path": "core/libs/tests/libtest_helper.dll.a"}]
+        helper["id"] = "helper-id"
+        host = self.target("host_tests", dependencies=("helper-id",),
+                           source="core/libs/tests/HostOnly.cpp",
+                           fragment="/build/core/libs/tests/libtest_helper.dll.a")
+        build_dir = self.fixture([helper, host])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets),
+            [],
+        )
+
+    def test_ignores_helper_order_only_dependency_on_product_target(self):
+        product = self.target("product_lib", target_type="STATIC_LIBRARY",
+                              source="core/libs/utility/src/Utility.cpp")
+        product["paths"]["source"] = "core/libs/utility"
+        product["artifacts"] = [{"path": "core/libs/utility/libproduct_lib.a"}]
+        product["id"] = "product-id"
+        helper = self.target("test_helper", target_type="SHARED_LIBRARY",
+                             source="core/libs/tests/Helper.cpp",
+                             dependencies=("product-id",))
+        helper["artifacts"] = [{"path": "core/libs/tests/libtest_helper.dll.a"}]
+        helper["id"] = "helper-id"
+        host = self.target("host_tests", dependencies=("helper-id",),
+                           source="core/libs/tests/HostOnly.cpp",
+                           fragment="/build/core/libs/tests/libtest_helper.dll.a")
+        build_dir = self.fixture([product, helper, host])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets),
+            ["host_tests"],
+        )
+
+    def test_safely_handles_finite_helper_link_cycle(self):
+        helper_a = self.target("helper_a", target_type="SHARED_LIBRARY",
+                               source="core/libs/tests/HelperA.cpp",
+                               fragment="/build/core/libs/tests/libhelper_b.dll.a")
+        helper_a["artifacts"] = [{"path": "core/libs/tests/libhelper_a.dll.a"}]
+        helper_a["id"] = "helper-a-id"
+        helper_b = self.target("helper_b", target_type="SHARED_LIBRARY",
+                               source="core/libs/tests/HelperB.cpp",
+                               fragment="/build/core/libs/tests/libhelper_a.dll.a")
+        helper_b["artifacts"] = [{"path": "core/libs/tests/libhelper_b.dll.a"}]
+        helper_b["id"] = "helper-b-id"
+        host = self.target("cycle_tests", dependencies=("helper-a-id",),
+                           source="core/libs/tests/HostOnly.cpp",
+                           fragment="/build/core/libs/tests/libhelper_a.dll.a")
+        build_dir = self.fixture([helper_a, helper_b, host])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets),
+            ["cycle_tests"],
+        )
+
+    def test_falls_back_to_declaration_directory_when_library_has_no_sources(self):
+        test_dir_lib = self.target("test_dir_lib", target_type="STATIC_LIBRARY")
+        test_dir_lib["paths"]["source"] = "core/libs/tests"
+        test_dir_lib["sources"] = []
+        test_dir_lib["artifacts"] = [{"path": "core/libs/tests/libtest_dir_lib.a"}]
+        test_dir_lib["id"] = "test-dir-lib-id"
+        parent_dir_lib = self.target("parent_dir_lib", target_type="STATIC_LIBRARY")
+        parent_dir_lib["paths"]["source"] = "core/libs"
+        parent_dir_lib["sources"] = []
+        parent_dir_lib["artifacts"] = [{"path": "core/libs/libparent_dir_lib.a"}]
+        parent_dir_lib["id"] = "parent-dir-lib-id"
+        host_ok = self.target("host_ok", dependencies=("test-dir-lib-id",),
+                              source="core/libs/tests/HostOnly.cpp",
+                              fragment="/build/core/libs/tests/libtest_dir_lib.a")
+        host_excluded = self.target("host_excluded", dependencies=("parent-dir-lib-id",),
+                                    source="core/libs/tests/HostOnly.cpp",
+                                    fragment="/build/core/libs/libparent_dir_lib.a")
+        build_dir = self.fixture([test_dir_lib, parent_dir_lib, host_ok, host_excluded])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        self.assertEqual(
+            build_mingw_host_only_tests.host_only_test_targets(source_root, targets),
+            ["host_ok"],
+        )
+
     def test_excludes_product_library_dependencies_but_keeps_test_helpers(self):
         product = self.target("product_lib", target_type="STATIC_LIBRARY", source="core/libs/utility/src/Utility.cpp")
         product["artifacts"] = [{"path": "core/libs/utility/libproduct_lib.a"}]
