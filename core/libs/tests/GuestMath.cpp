@@ -2428,6 +2428,76 @@ static void CheckLogbConsoleBits() {
         Require(std::bit_cast<std::uint32_t>(logbf_nid_postfix(std::bit_cast<float>(item.input))) == item.expected && errno == 1234);
     }
 }
+static void CheckRemainderConsoleBits() {
+    constexpr struct {
+        std::uint64_t x;
+        std::uint64_t y;
+        std::uint64_t expected;
+        int quotient;
+        int expectedErrno;
+    } cases[] = {
+        {0x4016000000000000ull, 0x4008000000000000ull, 0xbfe0000000000000ull, 2, 0},
+        {0xc01c000000000000ull, 0x4008000000000000ull, 0xbff0000000000000ull, -2, 0},
+        {0x401c000000000000ull, 0xc000000000000000ull, 0xbff0000000000000ull, -4, 0},
+        {0xc010000000000000ull, 0x4000000000000000ull, 0x8000000000000000ull, -2, 0},
+        {0x7fefffffffffffffull, 0x3ff0000000000001ull, 0x3ef8000000000000ull, 0, 0},
+        {0x7fe0000000000000ull, 0x0000000000000003ull, 0x8000000000000001ull, 3, 0},
+        {0x0000000000000007ull, 0x0000000000000002ull, 0x8000000000000001ull, 4, 0},
+        {0x3ff0000000000000ull, 0x7ff0000000000000ull, 0x3ff0000000000000ull, 0, 0},
+        {0x3ff0000000000000ull, 0x0000000000000000ull, 0xfff8000000000000ull, 0, EDOM},
+        {0xfff0000000000000ull, 0x3ff0000000000000ull, 0xfff8000000000000ull, 0, EDOM},
+        {0x7ff8000000000123ull, 0x0000000000000000ull, 0x7ff8000000000123ull, 0, 0},
+        {0x3ff0000000000000ull, 0x7ff8000000000456ull, 0x7ff8000000000456ull, 0, 0},
+        {0x7ff8000000000123ull, 0xfff8000000000456ull, 0xfff8000000000456ull, 0, 0},
+        {0xfff8000000000456ull, 0x7ff8000000000123ull, 0xfff8000000000456ull, 0, 0},
+        {0x7ff0000000000001ull, 0x3ff0000000000000ull, 0x7ff8000000000001ull, 0, 0},
+    };
+    for (const auto& item : cases) {
+        const double x = std::bit_cast<double>(item.x);
+        const double y = std::bit_cast<double>(item.y);
+        const int expectedErrno = item.expectedErrno != 0 ? item.expectedErrno : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(remainder_nid_postfix(x, y)) == item.expected && errno == expectedErrno);
+        int quotient = 77;
+        errno = 1234;
+        Require(std::bit_cast<std::uint64_t>(remquo_nid_postfix(x, y, &quotient)) == item.expected && errno == expectedErrno);
+        Require(std::isnan(std::bit_cast<double>(item.expected)) || quotient == item.quotient);
+    }
+    constexpr struct {
+        std::uint32_t x;
+        std::uint32_t y;
+        std::uint32_t expected;
+        int quotient;
+        int expectedErrno;
+    } floatCases[] = {
+        {0x40b00000u, 0x40400000u, 0xbf000000u, 2, 0},
+        {0xc0e00000u, 0x40400000u, 0xbf800000u, -2, 0},
+        {0x40e00000u, 0xc0000000u, 0xbf800000u, -4, 0},
+        {0xc0800000u, 0x40000000u, 0x80000000u, -2, 0},
+        {0x7f7fffffu, 0x3f800001u, 0x3ac00000u, 0, 0},
+        {0x7f000000u, 0x00000003u, 0x00000001u, 5, 0},
+        {0x00000007u, 0x00000002u, 0x80000001u, 4, 0},
+        {0x3f800000u, 0x7f800000u, 0x3f800000u, 0, 0},
+        {0x3f800000u, 0x00000000u, 0xffc00000u, 0, EDOM},
+        {0xff800000u, 0x3f800000u, 0xffc00000u, 0, EDOM},
+        {0x7fc00123u, 0x00000000u, 0x7fc00123u, 0, 0},
+        {0x3f800000u, 0x7fc00456u, 0x7fc00456u, 0, 0},
+        {0x7fc00123u, 0xffc00456u, 0xffc00456u, 0, 0},
+        {0xffc00456u, 0x7fc00123u, 0xffc00456u, 0, 0},
+        {0x7f800001u, 0x3f800000u, 0x7fc00001u, 0, 0},
+    };
+    for (const auto& item : floatCases) {
+        const float x = std::bit_cast<float>(item.x);
+        const float y = std::bit_cast<float>(item.y);
+        const int expectedErrno = item.expectedErrno != 0 ? item.expectedErrno : 1234;
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(remainderf_nid_postfix(x, y)) == item.expected && errno == expectedErrno);
+        int quotient = 77;
+        errno = 1234;
+        Require(std::bit_cast<std::uint32_t>(remquof_nid_postfix(x, y, &quotient)) == item.expected && errno == expectedErrno);
+        Require(std::isnan(std::bit_cast<float>(item.expected)) || quotient == item.quotient);
+    }
+}
 
 int main() {
     CheckFloatClassification();
@@ -2607,6 +2677,7 @@ int main() {
     CheckNearbyintl();
     CheckCbrtConsoleBits();
     CheckLogbConsoleBits();
+    CheckRemainderConsoleBits();
     CheckExpm1ConsoleBits();
     CheckLog1pConsoleBits();
     CheckNextafterConsoleBits();
