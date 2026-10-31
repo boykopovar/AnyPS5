@@ -119,9 +119,9 @@ void TranslationContext::writeF64Result(const RdnaOperand& operand, IrValue& val
 }
 
 bool TranslationContext::vDivScaleF64(const RdnaInstruction& inst) {
-    const auto value = readF64Bits(sourceAt(inst, 0u));
-    const auto denominator = readF64Bits(sourceAt(inst, 1u));
-    const auto numerator = readF64Bits(sourceAt(inst, 2u));
+    const auto value = flushF64Bits(readF64Bits(sourceAt(inst, 0u)), 0x40u);
+    const auto denominator = flushF64Bits(readF64Bits(sourceAt(inst, 1u)), 0x40u);
+    const auto numerator = flushF64Bits(readF64Bits(sourceAt(inst, 2u)), 0x40u);
     const auto exponent = [&](IrU32 high) {
         return IrU32(ir.Emit(IrOpcode::BitFieldUExtract, IrType::U32, {&high.Value(), &ir.Constant(20u), &ir.Constant(11u)}));
     };
@@ -160,6 +160,7 @@ bool TranslationContext::vDivScaleF64(const RdnaInstruction& inst) {
     result[1] = IrU32(ir.Select(rescale.Value(), result[1].Value(), value[1].Value()));
     result[0] = IrU32(ir.Select(zero.Value(), ir.Constant(0u), result[0].Value()));
     result[1] = IrU32(ir.Select(zero.Value(), ir.Constant(0xfff80000u), result[1].Value()));
+    result = flushF64Bits(result, 0x80u);
     writeF64Result(inst.destination, ir.ConstructU64(result[0].Value(), result[1].Value()));
     writeMask(inst.destination2, IrU1(ir.LogicalOr(nearMax.Value(), ir.LogicalAnd(notDenormal.Value(), nearMin.Value()))));
     return true;
