@@ -51,5 +51,6 @@ int APS5_VABI sceSaveDataUmount(const SaveDataMountPoint* mountPoint);
 int APS5_VABI sceSaveDataSetupSaveDataMemory(std::int32_t userId, std::size_t memorySize, const SaveDataParam* param);
 int APS5_VABI sceSaveDataGetSaveDataMemory(std::int32_t userId, void* buf, std::size_t bufSize, std::int64_t offset);
 int APS5_VABI sceSaveDataSetSaveDataMemory(std::int32_t userId, void* buf, std::size_t bufSize, std::int64_t offset);
+void SaveDataSetFileStepHook_nid_no_patch(bool (*hook)(const char* step, const char* path));
 
 }
