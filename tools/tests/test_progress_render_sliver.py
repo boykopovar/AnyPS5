@@ -24,19 +24,19 @@ class ProgressRenderSliverTests(unittest.TestCase):
         parts = progress.treemap("System libraries*", libraries, 0)
         cells = "\n".join(parts)
         self.assertEqual(cells.count('fill="#2ea043"'), 1)
-        self.assertEqual(cells.count('fill="#d29922"'), 1)
-        self.assertEqual(cells.count('fill="#8957e5"'), 2)
-        self.assertEqual(cells.count('fill="#6e7681"'), 0)
+        self.assertEqual(cells.count('fill="#da3633"'), 1)
+        self.assertEqual(cells.count('fill="#6e7681"'), 2)
         self.assertIn("libA: 1/2 (50%), 2 unobserved", cells)
         svg = progress.render(libraries, {"done": 0, "total": 0, "percent": 0, "groups": []})
-        self.assertIn(">Unobserved stub</text>", svg)
-        self.assertIn(">Not implemented (shaders)</text>", svg)
-        self.assertEqual(len({progress.DONE_COLOR, progress.TODO_COLOR, progress.UNOBSERVED_COLOR, progress.PENDING_COLOR}), 4)
+        self.assertIn(">Unobserved, not known to be needed (libraries) / Not implemented (shaders)</text>", svg)
+        self.assertEqual(svg.count('fill="#6e7681"'), 2 + 1)
+        self.assertEqual(len({progress.DONE_COLOR, progress.TODO_COLOR, progress.UNOBSERVED_COLOR}), 3)
+        self.assertFalse(hasattr(progress, "PENDING_COLOR"))
 
-    def test_shader_panel_draws_pending_instructions_in_the_pending_colour(self):
+    def test_shader_panel_draws_pending_instructions_in_the_shared_grey(self):
         shaders = {"done": 1, "total": 2, "percent": 50, "groups": [{"name": "SOP1", "label": "SOP1", "done": 1, "todo": 1}]}
         cells = "\n".join(progress.treemap("GPU shader instructions", shaders, 0, states=False))
-        self.assertEqual((cells.count('fill="#2ea043"'), cells.count('fill="#6e7681"'), cells.count('fill="#d29922"')), (1, 1, 0))
+        self.assertEqual((cells.count('fill="#2ea043"'), cells.count('fill="#6e7681"'), cells.count('fill="#da3633"')), (1, 1, 0))
 
     def test_pending_cells_show_name_provenance_origin_and_inventory_when_known(self):
         sha = "0123456789abcdef0123456789abcdef01234567"

@@ -91,7 +91,7 @@ OPCODE_VARIANTS = {
 }
 REPORT_ROWS = 100
 PANEL_WIDTH, GAP, MAP_HEIGHT, HEADER, LEGEND = 495, 10, 280, 30, 26
-DONE_COLOR, TODO_COLOR, UNOBSERVED_COLOR, PENDING_COLOR, BORDER, TEXT = "#2ea043", "#d29922", "#8957e5", "#6e7681", "#0d1117", "#ffffff"
+DONE_COLOR, TODO_COLOR, UNOBSERVED_COLOR, BORDER, TEXT = "#2ea043", "#da3633", "#6e7681", "#0d1117", "#ffffff"
 
 
 def blank(match):
@@ -521,7 +521,7 @@ def treemap(title, data, left, states=True, detail=False):
             elif i < observed:
                 index = i - group["done"]
                 name = pending[index] if index < len(pending) else None
-                parts.append(rect(*cell, TODO_COLOR if states else PENDING_COLOR, title=cell_title(group, name, "observed stub") if name and detail else None))
+                parts.append(rect(*cell, TODO_COLOR if states else UNOBSERVED_COLOR, title=cell_title(group, name, "observed stub") if name and detail else None))
             else:
                 index = i - observed
                 name = hidden[index] if index < len(hidden) else None
@@ -537,8 +537,8 @@ def treemap(title, data, left, states=True, detail=False):
 
 def legend(left, top):
     parts, x = [], left
-    for label, color in (("Implemented", DONE_COLOR), ("Observed stub", TODO_COLOR), ("Unobserved stub", UNOBSERVED_COLOR),
-                         ("Not implemented (shaders)", PENDING_COLOR)):
+    for label, color in (("Implemented", DONE_COLOR), ("Observed stub", TODO_COLOR),
+                         ("Unobserved, not known to be needed (libraries) / Not implemented (shaders)", UNOBSERVED_COLOR)):
         parts.append(rect(x, top + 7, 12, 12, color, 0.5))
         parts.append(text(x + 17, top + 18, label, 12))
         x += 17 + 7 * len(label) + 18
