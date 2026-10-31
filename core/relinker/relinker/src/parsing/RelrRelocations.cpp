@@ -77,6 +77,8 @@ std::map<Domain::VirtualAddress, std::uint64_t> ReadRelrRelocations(
     for (std::uint64_t offset = 0; offset < *size; offset += 8) {
         const auto entry = readWord(tableOffset + offset);
         if ((entry & 1) == 0) {
+            if (entry > std::numeric_limits<std::uint64_t>::max() - 8)
+                throw Domain::RelinkerException("RELR address overflow", entry);
             append(entry);
             cursor = entry + 8;
         } else {

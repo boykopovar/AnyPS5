@@ -184,7 +184,7 @@ def main():
         convert("table-size", replace_tag(build(), 35, 9, guest), "Invalid DT_RELRSZ")
         convert("table-range", replace_tag(build(), 36, 0xfffffffffffffff8, guest), "RELR table exceeds file-backed")
         convert("size-overflow", replace_tag(build(), 35, 0xfffffffffffffff8, guest), "RELR table exceeds file-backed")
-        convert("target-range", build((0xfffffffffffffffe,)), "RELR target exceeds load")
+        convert("target-range", build((0xfffffffffffffffe,)), "RELR address overflow")
         incomplete = build()
         start = 0x2000 if guest else 0x400
         for offset in range(start, start + 0x200, 16):
