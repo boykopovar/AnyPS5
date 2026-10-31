@@ -1093,8 +1093,9 @@ int APS5_VABI sceSaveDataDirNameSearch2(const SaveDataDirNameSearchCond* cond, S
 }
 
 int APS5_VABI sceSaveDataPrepareForTransferring(const SaveDataMountPoint* mountPoint, const SaveDataPrepareParam* param) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)mountPoint;
+    (void)param;
+    return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataCheckIpmiIfSize() {
