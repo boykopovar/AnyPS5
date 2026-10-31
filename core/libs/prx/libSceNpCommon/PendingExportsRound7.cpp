@@ -81,11 +81,6 @@ int APS5_VABI _ZN3sce2np10CancelLockC2Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERK16SceNpTitleSecret(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np8WorkItem10SetRunningEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -447,11 +442,6 @@ int APS5_VABI _ZN3sce2np10MemoryFileD1Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np9HttpTrans21GetResponseStatusCodeEPNS0_6HandleEPi(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

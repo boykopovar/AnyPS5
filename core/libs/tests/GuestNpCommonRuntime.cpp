@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -37,6 +38,7 @@ constexpr int NpStreamBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
 constexpr int NpUtilParseOutOfRange = static_cast<int>(0x8055060A);
 constexpr int NpTitleIdBufferTooSmall = static_cast<int>(0x80559E0D);
+constexpr int NpTitleSecretInvalid = static_cast<int>(0x80559E11);
 constexpr int NpStreamShort = static_cast<int>(0x80559E10);
 constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
 constexpr int KernelNoSuchObject = static_cast<int>(0x80020003);
@@ -301,6 +303,62 @@ void TestTitleIdObjects() {
     auto* owned = static_cast<NpTitleIdObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleIdObject), &allocator));
     _ZN3sce2np9NpTitleIdC1Ev(owned);
     using Destructor = void APS5_VABI (*)(NpTitleIdObject*);
+    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
+}
+
+void TestTitleSecretObjects() {
+    std::uint8_t data[200];
+    for (std::size_t i = 0; i < sizeof(data); ++i) data[i] = static_cast<std::uint8_t>(i * 7 + 1);
+    NpTitleSecretObject secret {};
+    _ZN3sce2np13NpTitleSecretC1Ev(&secret);
+    Require(secret.vtable != nullptr && _ZNK3sce2np13NpTitleSecret7IsEmptyEv(&secret), "a default title secret is empty");
+    Require(_ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(&secret, data, 127) == NpTitleSecretInvalid && _ZNK3sce2np13NpTitleSecret7IsEmptyEv(&secret),
+        "secret data must be 128 bytes and a refused size changes nothing");
+    Require(_ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(&secret, data, 128) == 0 && std::memcmp(secret.secret.data, data, 128) == 0,
+        "128 bytes of secret data are stored");
+    Require(_ZNK3sce2np13NpTitleSecret6EqualsEPvm(&secret, data, 128) && !_ZNK3sce2np13NpTitleSecret6EqualsEPvm(&secret, data, 127),
+        "comparing with raw data needs 128 bytes");
+
+    NpTitleSecretObject fromData {};
+    _ZN3sce2np13NpTitleSecretC1EPKvm(&fromData, data, 128);
+    bool refused = false;
+    NpTitleSecretObject wrongSize {};
+    try {
+        _ZN3sce2np13NpTitleSecretC1EPKvm(&wrongSize, data, 129);
+    } catch (const std::invalid_argument&) {
+        refused = true;
+    }
+    Require(refused && _ZN3sce2npeqERKNS0_13NpTitleSecretES3_(&fromData, &secret), "constructing from data asserts the 128-byte size");
+
+    NpTitleSecret plain = secret.secret;
+    plain.data[127] ^= 1;
+    Require(_ZN3sce2npneERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(&plain, &secret) && !_ZN3sce2npeqERKNS0_13NpTitleSecretERK16SceNpTitleSecret(&secret, &plain)
+        && !_ZNK3sce2np13NpTitleSecret6EqualsERK16SceNpTitleSecret(&secret, &plain), "all 128 bytes take part in the comparison");
+    NpTitleSecretObject copy {};
+    _ZN3sce2np13NpTitleSecretC1ERK16SceNpTitleSecret(&copy, &plain);
+    Require(_ZN3sce2npeqERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(&plain, &copy) && _ZN3sce2npneERKNS0_13NpTitleSecretES3_(&copy, &secret),
+        "a secret built from a SceNpTitleSecret compares equal to it");
+    _ZN3sce2np13NpTitleSecretaSERKS1_(&copy, &secret);
+    Require(_ZNK3sce2np13NpTitleSecret6EqualsERKS1_(&copy, &secret), "assignment copies the secret");
+
+    char hex[300];
+    std::memset(hex, 'x', sizeof(hex));
+    Require(_ZN3sce2np13NpTitleSecret8BuildHexERKS1_Pcmb(&secret, hex, 256, false) == NpBufferTooSmall && hex[0] == 'x', "the hex form needs 257 bytes");
+    Require(_ZN3sce2np13NpTitleSecret8BuildHexERKS1_Pcmb(&secret, hex, 257, true) == 0 && std::strlen(hex) == 256 && std::strncmp(hex, "01080F", 6) == 0,
+        "the secret is written as 256 hex digits");
+    NpTitleSecretObject parsed {};
+    _ZN3sce2np13NpTitleSecretC1Ev(&parsed);
+    Require(_ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(&parsed, hex, 256) == 0 && _ZN3sce2npeqERKNS0_13NpTitleSecretES3_(&parsed, &secret),
+        "the hex form parses back to the same secret");
+    Require(_ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(&parsed, hex, 255) == NpInvalidArgument
+        && _ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(&parsed, hex, 258) == NpBufferTooSmall, "parsing needs an even length of at most 256 digits");
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* owned = static_cast<NpTitleSecretObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleSecretObject), &allocator));
+    _ZN3sce2np13NpTitleSecretC1Ev(owned);
+    using Destructor = void APS5_VABI (*)(NpTitleSecretObject*);
     reinterpret_cast<Destructor>(owned->vtable[1])(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
@@ -1069,6 +1127,7 @@ int main() {
     TestObjectsThroughStoredAllocator();
     TestMemoryStreams();
     TestTitleIdObjects();
+    TestTitleSecretObjects();
     TestStreamHelpers();
     TestRefObjects();
     TestCommIdObjects();
