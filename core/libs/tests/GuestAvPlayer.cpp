@@ -2049,8 +2049,78 @@ void TestTrailingVideoAfterShortAudio() {
 
 }
 
+namespace {
+
+std::string replacedUrl;
+
+std::int32_t APS5_VABI OpenRemoteReplacement(void* object, const char* path) {
+    Check(path == replacedUrl, "file replacement did not receive the original URL");
+    return OpenFile(object, "/app0/replaced.mp4");
+}
+
+void TestHttpSources(const std::string& base) {
+    WriteMovie();
+    {
+        std::ofstream file(WebmPath, std::ios::binary | std::ios::trunc);
+        file.write(reinterpret_cast<const char*>(WebmMovie.data()), static_cast<std::streamsize>(WebmMovie.size()));
+    }
+    for (const auto& [route, expected] : std::array<std::pair<const char*, int>, 4>{{
+        {"/range/avplayer.mp4?token=one#fragment", FrameCount},
+        {"/chunk/avplayer.webm", WebmVideoFrames},
+        {"/redirect/avplayer.mp4", FrameCount},
+        {"/ignore/avplayer.mp4", FrameCount},
+    }}) {
+        Events events;
+        auto init = InitData(&events);
+        auto* player = sceAvPlayerInit(&init);
+        Check(player != nullptr, "HTTP init failed");
+        Check(sceAvPlayerAddSource(player, (base + route).c_str()) == 0, "HTTP add source failed");
+        Check(WaitFor([&] { return events.Seen(EventReady); }), "HTTP ready event missing");
+        Check(sceAvPlayerEnableStream(player, 0) == 0, "HTTP video enable failed");
+        Check(sceAvPlayerSetAvSyncMode(player, 1) == 0 && sceAvPlayerStart(player) == 0, "HTTP video start failed");
+        int frames = 0;
+        AvPlayerFrameInfoEx info{};
+        Check(WaitFor([&] {
+            if (sceAvPlayerGetVideoDataEx(player, &info)) {
+                CheckVideoFrame(info);
+                ++frames;
+            }
+            return !sceAvPlayerIsActive(player);
+        }), "HTTP playback did not finish");
+        Check(frames == expected, "HTTP delivered " + std::to_string(frames) + " frames instead of " + std::to_string(expected));
+        Check(sceAvPlayerClose(player) == 0, "HTTP close failed");
+    }
+    Events events;
+    auto init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    for (const auto& path : {base + "/bad/avplayer.mp4", base + "/range/no\r\nheader.mp4"}) {
+        Check(sceAvPlayerAddSource(player, path.c_str()) == OperationFailed, "invalid HTTP response or URL accepted");
+    }
+    bool callbackFailure = false;
+    try { sceAvPlayerAddSource(player, (base + "/bad-late/avplayer.mp4").c_str()); }
+    catch (const std::runtime_error&) { callbackFailure = true; }
+    Check(callbackFailure, "late HTTP callback failure did not survive the C ABI boundary");
+    Check(sceAvPlayerClose(player) == 0, "failed HTTP player close failed");
+    HostFile file;
+    init = InitData(&events);
+    init.file_replacement = {&file, OpenRemoteReplacement, CloseFile, ReadFile, FileSize};
+    replacedUrl = "https://no-network/replaced.mp4";
+    player = sceAvPlayerInit(&init);
+    Check(sceAvPlayerAddSource(player, replacedUrl.c_str()) == 0 && sceAvPlayerStreamCount(player) == 3, "file replacement did not take priority over HTTPS transport");
+    Check(sceAvPlayerClose(player) == 0, "replacement HTTP player close failed");
+    std::lock_guard lock(allocations.mutex);
+    Check(allocations.blocks.empty(), "HTTP playback allocations leaked");
+}
+
+}
+
 int main(int argc, char** argv) {
     try {
+        if (argc == 3 && std::strcmp(argv[1], "--http") == 0) {
+            TestHttpSources(argv[2]);
+            std::puts("AvPlayer HTTP source tests passed");
+            return 0;
+        }
         if (argc == 2 && std::strcmp(argv[1], "--callback-close") == 0) {
             WriteMovie();
             TestCloseFromEventCallback(EventReady);
