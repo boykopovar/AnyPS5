@@ -34,7 +34,6 @@ extern SonyDconst _LDenorm_nid_postfix;
 extern SonyDconst _LInf_nid_postfix;
 extern SonyDconst _LNan_nid_postfix;
 extern SonyDconst _LSnan_nid_postfix;
-
 extern int signgam_nid_postfix;
 
 struct DinkumwareFloatCharacteristics {
@@ -2543,6 +2542,78 @@ int main() {
     Require(lgamma_nid_postfix(1.) == 0. && lgamma_nid_postfix(2.) == 0. && std::isinf(lgamma_nid_postfix(0.)));
     Require(std::abs(lgamma_nid_postfix(0.5) - 0.5723649429247001) < 1e-15 && std::abs(lgamma_nid_postfix(10.) - 12.801827480081469) < 1e-13);
     Require(std::abs(lgamma_nid_postfix(-0.5) - 1.2655121234846454) < 1e-15);
+    Require(tgamma_nid_postfix(1.) == 1. && tgamma_nid_postfix(2.) == 1. && tgamma_nid_postfix(3.) == 2.);
+    Require(std::abs(tgamma_nid_postfix(0.5) - 1.7724538509055160) < 1e-15);
+    int rSign = 7;
+    Require(lgamma_r_nid_postfix(1., &rSign) == 0. && rSign == 1);
+    rSign = 7;
+    Require(std::abs(lgamma_r_nid_postfix(-0.5, &rSign) - 1.2655121234846454) < 1e-15 && rSign == -1);
+    Require(lgammaf_nid_postfix(1.f) == 0.f && lgammaf_nid_postfix(2.f) == 0.f);
+    Require(std::abs(lgammaf_nid_postfix(0.5f) - 0.57236494f) < 1e-6f);
+    signgam_nid_postfix = 7;
+    Require(lgammaf_nid_postfix(-0.5f) > 0.f && signgam_nid_postfix == -1);
+    rSign = 7;
+    Require(lgammaf_r_nid_postfix(1.f, &rSign) == 0.f && rSign == 1);
+    rSign = 7;
+    Require(lgammaf_r_nid_postfix(-0.5f, &rSign) > 0.f && rSign == -1);
+    signgam_nid_postfix = 7;
+    Require(gamma_nid_postfix(1.) == 0. && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(gamma_nid_postfix(-0.5) > 0. && signgam_nid_postfix == -1);
+    rSign = 7;
+    Require(gamma_r_nid_postfix(1., &rSign) == 0. && rSign == 1);
+    rSign = 7;
+    Require(gamma_r_nid_postfix(-0.5, &rSign) > 0. && rSign == -1);
+    signgam_nid_postfix = 7;
+    Require(gammaf_nid_postfix(1.f) == 0.f && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(gammaf_nid_postfix(-0.5f) > 0.f && signgam_nid_postfix == -1);
+    rSign = 7;
+    Require(gammaf_r_nid_postfix(1.f, &rSign) == 0.f && rSign == 1);
+    rSign = 7;
+    Require(gammaf_r_nid_postfix(-0.5f, &rSign) > 0.f && rSign == -1);
+    threw = false;
+    try { lgamma_r_nid_postfix(1.0, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { lgammaf_r_nid_postfix(1.0f, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { gamma_r_nid_postfix(1.0, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    threw = false;
+    try { gammaf_r_nid_postfix(1.0f, nullptr); } catch (const std::invalid_argument&) { threw = true; }
+    Require(threw);
+    rSign = 7;
+    Require(std::isinf(lgamma_r_nid_postfix(-0., &rSign)) && rSign == 1);
+    rSign = 7;
+    Require(std::isinf(lgammaf_r_nid_postfix(-0.f, &rSign)) && rSign == 1);
+    rSign = 7;
+    Require(std::isinf(gamma_r_nid_postfix(-0., &rSign)) && rSign == 1);
+    rSign = 7;
+    Require(std::isinf(gammaf_r_nid_postfix(-0.f, &rSign)) && rSign == 1);
+    signgam_nid_postfix = 7;
+    Require(std::isinf(lgammaf_nid_postfix(-0.f)) && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(std::isinf(gamma_nid_postfix(-0.)) && signgam_nid_postfix == 1);
+    signgam_nid_postfix = 7;
+    Require(std::isinf(gammaf_nid_postfix(-0.f)) && signgam_nid_postfix == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(-0., &rSign);
+    Require(errno == ERANGE && rSign == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(0., &rSign);
+    Require(errno == ERANGE && rSign == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(-1., &rSign);
+    Require(errno == ERANGE && rSign == 1);
+    errno = 0;
+    rSign = 7;
+    lgamma_r_nid_postfix(1., &rSign);
+    Require(errno == 0 && rSign == 1);
     for (const double sign : {1.0, -1.0}) {
         std::feclearexcept(FE_ALL_EXCEPT);
         Require(std::abs(lgamma_nid_postfix(sign * std::numeric_limits<double>::denorm_min()) - 744.44007192138122) < 1e-12);
@@ -2557,10 +2628,19 @@ int main() {
 
         return signgam_nid_postfix;
     };
-    Require(gammaSign(0.5) == 1 && gammaSign(10.) == 1 && gammaSign(0.) == 1 && gammaSign(-0.) == -1);
+    Require(gammaSign(0.5) == 1 && gammaSign(10.) == 1 && gammaSign(0.) == 1 && gammaSign(-0.) == 1);
     Require(gammaSign(-0.5) == -1 && gammaSign(-1.5) == 1 && gammaSign(-2.5) == -1 && gammaSign(-0x1p-80) == -1);
     Require(gammaSign(-1.) == 1 && gammaSign(-2.) == 1 && gammaSign(-0x1p60) == 1 && gammaSign(-4503599627370495.5) == 1);
     Require(gammaSign(INFINITY) == 1 && gammaSign(-INFINITY) == 1 && gammaSign(NAN) == 1);
+    const auto gammaErrno = [](std::uint64_t bits) {
+        errno = 0;
+        lgamma_nid_postfix(std::bit_cast<double>(bits));
+        return errno;
+    };
+    for (const std::uint64_t pole : {0x0000000000000000ull, 0x8000000000000000ull, 0xbff0000000000000ull, 0xc000000000000000ull, 0xc330000000000000ull, 0xff76c8e5ca239029ull})
+        Require(gammaErrno(pole) == ERANGE);
+    for (const std::uint64_t other : {0x3fe0000000000000ull, 0xc004000000000000ull, 0xc32fffffffffffffull, 0x7f76c8e5ca239029ull, 0x7ff0000000000000ull, 0xfff0000000000000ull, 0x7ff8000000000000ull})
+        Require(gammaErrno(other) == 0);
     Require(llroundl_nid_postfix(2.5L) == 3 && llroundl_nid_postfix(-2.5L) == -3 && llroundl_nid_postfix(0.49999999999999999L) == 0);
     Require(llroundl_nid_postfix(9007199254740993.0L) == 9007199254740993LL && llroundl_nid_postfix(-1e30L) == INT64_MIN);
     for (const int mode : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) {
