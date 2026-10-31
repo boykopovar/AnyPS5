@@ -9,6 +9,7 @@
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <cerrno>
 #include <new>
@@ -370,16 +371,26 @@ int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char*
     const auto size = (length + mask) & ~mask;
     if (size > std::numeric_limits<std::uintptr_t>::max() - first) return failed(GuestNoMemory);
     const auto end = first + size;
+    if (end > GuestUserAddressEnd || end < first) return failed(GuestNoMemory);
     if (size == 0 ? !Mapped(first) : !GuestRangeMapped(first, end)) return failed(GuestNoMemory);
     if (size == 0) return 0;
-    if (vec == nullptr) return failed(GuestFault);
+    std::array<char, 4096> chunk{};
     for (auto cursor = first; cursor < end;) {
-        VirtualQueryInfo info{};
-        sceKernelVirtualQuery(reinterpret_cast<const void*>(cursor), 0, &info, sizeof(info));
-
-        const auto extentEnd = std::min<std::uintptr_t>(info.end, end);
-        std::fill_n(vec + (cursor - first) / PS5_PAGE_SIZE, (extentEnd - cursor) / PS5_PAGE_SIZE, static_cast<char>(info.is_committed != 0 ? 1 : 0));
-        cursor = extentEnd;
+        const auto chunkPages = std::min<std::size_t>(chunk.size(), (end - cursor) / PS5_PAGE_SIZE);
+        const auto chunkEnd = cursor + chunkPages * PS5_PAGE_SIZE;
+        for (auto pageCursor = cursor; pageCursor < chunkEnd;) {
+            VirtualQueryInfo info{};
+            sceKernelVirtualQuery(reinterpret_cast<const void*>(pageCursor), 0, &info, sizeof(info));
+            const auto extentEnd = std::min<std::uintptr_t>(info.end, chunkEnd);
+            std::fill_n(chunk.data() + (pageCursor - cursor) / PS5_PAGE_SIZE,
+                        (extentEnd - pageCursor) / PS5_PAGE_SIZE,
+                        static_cast<char>(info.is_committed != 0 ? 1 : 0));
+            pageCursor = extentEnd;
+        }
+        if (!GuestCopyOut_nid_no_patch(vec + (cursor - first) / PS5_PAGE_SIZE, chunk.data(), chunkPages)) {
+            return failed(GuestFault);
+        }
+        cursor = chunkEnd;
     }
     return 0;
 }
