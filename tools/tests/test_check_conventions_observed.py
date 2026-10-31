@@ -42,7 +42,7 @@ class ObservedManifestTests(unittest.TestCase):
         return "\n".join(line for line in result.stdout.splitlines() if "[observed-manifest]" in line)
 
     def test_a_sorted_manifest_with_comments_passes(self):
-        result = self.check({"docs/dev/observed/libSceOne.txt": f"# header\n{FIRST}\n{SECOND}  # evidence: by name\n"})
+        result = self.check({"docs/dev/observed/libSceOne.txt": f"# header\n{FIRST}  # loader\n{SECOND}  # manual: by name\n"})
         self.assertEqual((result.returncode, self.findings(result)), (0, ""), result.stdout + result.stderr)
 
     def test_an_empty_manifest_passes(self):
@@ -72,6 +72,23 @@ class ObservedManifestTests(unittest.TestCase):
                 result = self.check({f"docs/dev/observed/{name}": f"{FIRST}\n"})
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("expected docs/dev/observed/<library>.txt", self.findings(result))
+
+    def test_unknown_and_incomplete_tags_fail(self):
+        result = self.check({"docs/dev/observed/libSceOne.txt": f"{FIRST}  # evidence: by name\n{SECOND}  # manual\n"})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("unknown provenance tag 'evidence'", self.findings(result))
+        self.assertIn("manual needs a written reason", self.findings(result))
+
+    def test_an_added_line_without_a_tag_is_a_warning_only(self):
+        result = self.check({"docs/dev/observed/libSceOne.txt": f"{FIRST}\n"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("docs/dev/observed/libSceOne.txt:1: warning: [observed-untagged] ", result.stdout)
+
+    def test_an_untagged_line_the_pull_request_leaves_alone_is_not_reported(self):
+        result = self.check({"docs/dev/observed/libSceOne.txt": f"{FIRST}\n{SECOND}  # loader\n"},
+                            {"docs/dev/observed/libSceOne.txt": f"{FIRST}\n"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("[observed-untagged]", result.stdout)
 
     def test_a_manifest_the_pull_request_does_not_touch_is_not_rechecked(self):
         result = self.check({"README.txt": "x\n"}, {"docs/dev/observed/libSceOne.txt": f"{SECOND}\n{FIRST}\n"})
