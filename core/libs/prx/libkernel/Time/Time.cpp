@@ -48,9 +48,9 @@
 #endif
 #endif
 
+static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
-static constexpr int GUEST_CLOCK_REALTIME = 0;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
 static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
 
@@ -410,7 +410,6 @@ int APS5_VABI usleep_nid_postfix(KernelUseconds microseconds) {
 
 #ifdef _WIN32
 static constexpr int GUEST_EIO = 5;
-static constexpr int GUEST_EPERM = 1;
 
 int APS5_VABI ClockTimeWin32ErrorToGuestErrno_nid_no_patch(std::uint32_t error) {
     if (error == ERROR_NOACCESS) return GUEST_EFAULT;
@@ -602,14 +601,10 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
     return 0;
 }
 
-static std::mutex guestTimezoneMutex;
-static KernelTimezone guestTimezone{0, 0};
-
 int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zoneOutput) {
     KernelTimeval current{};
     auto* tv = &current;
     KernelTimezone zone{};
-    auto* tz = zoneOutput == nullptr ? nullptr : &zone;
 #ifdef _WIN32
     FILETIME ft{};
     GetSystemTimePreciseAsFileTime(&ft);
@@ -625,10 +620,6 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zo
     tv->tv_sec = static_cast<std::int64_t>(native.tv_sec);
     tv->tv_usec = static_cast<std::int64_t>(native.tv_usec);
 #endif
-    if (tz != nullptr) {
-        std::lock_guard lock(guestTimezoneMutex);
-        *tz = guestTimezone;
-    }
     if (output != nullptr && !GuestCopyOut_nid_no_patch(output, &current, sizeof(current))) {
         *__error_nid_postfix() = 14;
         return -1;
@@ -730,12 +721,9 @@ int APS5_VABI clock_settime_nid_postfix(int clockId, const KernelTimespec* tp) {
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    if (clockId != GUEST_CLOCK_REALTIME || time.tv_nsec < 0 || time.tv_nsec >= 1000000000 || time.tv_sec < 0) {
-        *__error_nid_postfix() = GUEST_EINVAL;
-        return -1;
-    }
-    NotImplemented_nid_no_patch("clock_settime");
-    return 0;
+    static_cast<void>(clockId);
+    *__error_nid_postfix() = GUEST_EPERM;
+    return -1;
 }
 
 int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz) {
@@ -749,20 +737,8 @@ int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz)
         *__error_nid_postfix() = GUEST_EFAULT;
         return -1;
     }
-    if (tv != nullptr && (time.tv_usec < 0 || time.tv_usec >= 1000000 || time.tv_sec < 0)) {
-        *__error_nid_postfix() = GUEST_EINVAL;
-        return -1;
-    }
-    if (tv != nullptr) {
-        char requested[48];
-        std::snprintf(requested, sizeof(requested), "%lld.%06lld", static_cast<long long>(time.tv_sec), static_cast<long long>(time.tv_usec));
-        throw std::runtime_error(std::string("settimeofday: setting the time to ") + requested + " is not supported, the host clock is not changed");
-    }
-    if (tz != nullptr) {
-        std::lock_guard lock(guestTimezoneMutex);
-        guestTimezone = zone;
-    }
-    return 0;
+    *__error_nid_postfix() = GUEST_EPERM;
+    return -1;
 }
 
 // ---------------------------------------------------------------------------
