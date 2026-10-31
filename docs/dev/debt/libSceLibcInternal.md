@@ -289,13 +289,11 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `_malloc_postfork` | `V94pLruduLg` |
 | `_malloc_prefork` | `aLYyS4Kx6rQ` |
 | `_new_setup` | `KNNNbyRieqQ` |
-| `_readdir_unlocked` | `-u3XfqNumMU` |
 | `_rtld_atfork_pre` | `i-7v8+UGglc` |
 | `_rtld_error` | `dmHEVUqDYGw` |
 | `_rtld_get_stack_prot` | `AdYYKgtPlqg` |
 | `_rtld_thread_init` | `gRw4XrztJ4Q` |
 | `_sceLibcGetMallocParam` | `1nZ4Xfnyp38` |
-| `_seekdir` | `Do3zPpsXj1o` |
 | `backtrace_game` | `jFSmlgyyEUg` |
 | `clock_1700` | `n8onIBR4Qdk` |
 | `devname_r` | `BIALMFTZ75I` |
@@ -344,6 +342,7 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [_err, _warn](../../../core/libs/prx/libSceLibcInternal/Err.cpp) and [_getprogname](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) are assumed to be the same functions as `err`, `warn` and `getprogname` and run their code; the console's module was not read. FreeBSD 11.4 defines the underscore names and makes the public names weak references to them ([`_err`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/err.c#L70-L79), [`_warn`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/err.c#L135-L144), [`_getprogname`](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/getprogname.c#L10-L17))
 - [inet_aton, inet_addr, inet_ntoa and inet_ntoa_r](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal) follow the FreeBSD code in the console's `libSceLibcInternal.sprx` (SDK 4.5x build of `J03950001`, 0x8ADE0 to 0x8B3D0) and matched it on a PS5 (firmware 13.60) for 20 `inet_aton` inputs; a null text, which the console dereferences, throws. `inet_ntoa_r` formats through libkernel's `__inet_ntop`, so a null buffer with room for the text throws and a null buffer that is too small sets `ENOSPC`, as `__inet_ntop` does for a null destination; the console's `inet_ntoa_r` was not measured with a null buffer
 - [__inet_ntoa_r](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal) was not measured on the console: it runs `inet_ntoa_r`, as FreeBSD 11.4 names the function `__inet_ntoa_r` ([arpa/inet.h](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/include/arpa/inet.h#L129)) and makes `inet_ntoa_r` a weak alias of it ([inet_ntoa.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_ntoa.c#L62-L76))
+- [_readdir_unlocked, _seekdir](../../../core/libs/prx/libSceLibcInternal/Directory.cpp) (libSceLibcInternal) are assumed to run the same code as `readdir` and `seekdir`, following FreeBSD 11.4 ([readdir.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/readdir.c) and [seekdir.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/gen/seekdir.c)): `_readdir_unlocked` delegates to `readdir_nid_postfix` and `_seekdir` to `seekdir_nid_postfix`. A null directory handle fails with `EBADF` (9)
 
 ### Additional PS5 3.20 imports (xdCloudy #9498)
 

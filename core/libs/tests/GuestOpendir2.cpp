@@ -46,6 +46,32 @@ int main() {
         *__error_nid_postfix() = 0;
         Require(__opendir2_nid_postfix(missing.c_str(), flags) == nullptr && *__error_nid_postfix() == missingError);
     }
+    *__error_nid_postfix() = 0;
+    Require(_readdir_unlocked_nid_postfix(nullptr) == nullptr && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    _seekdir_nid_postfix(nullptr, 0);
+    Require(*__error_nid_postfix() == 9);
+    void* unlockedDir = __opendir2_nid_postfix(path.c_str(), 0);
+    Require(unlockedDir != nullptr);
+    std::map<std::string, int> unlockedEntries;
+    std::int64_t bookmark = -1;
+    std::string bookmarkedName;
+    while (auto* entry = _readdir_unlocked_nid_postfix(unlockedDir)) {
+        unlockedEntries[entry->name] = entry->type;
+        if (bookmark < 0) {
+            bookmark = telldir_nid_postfix(unlockedDir);
+            Require(bookmark >= 0);
+        } else if (bookmarkedName.empty()) {
+            bookmarkedName = entry->name;
+        }
+    }
+    Require(unlockedEntries == expected);
+    Require(!bookmarkedName.empty());
+    _seekdir_nid_postfix(unlockedDir, bookmark);
+    auto* entryAfterSeek = _readdir_unlocked_nid_postfix(unlockedDir);
+    Require(entryAfterSeek != nullptr && bookmarkedName == entryAfterSeek->name);
+    Require(closedir_nid_postfix(unlockedDir) == 0);
+
     std::filesystem::remove(root / "sample.txt");
     std::filesystem::remove(root / "subdirectory");
     std::filesystem::remove(root);
