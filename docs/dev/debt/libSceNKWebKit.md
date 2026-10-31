@@ -3266,9 +3266,6 @@
 | `_ZN7WebCore16convertToIntegerImEET_RN3JSC14JSGlobalObjectENS2_7JSValueE` | `PRi-5flaksc` |
 | `_ZN7WebCore16convertToIntegerIsEET_RN3JSC14JSGlobalObjectENS2_7JSValueE` | `41XIke70jMw` |
 | `_ZN7WebCore16convertToIntegerItEET_RN3JSC14JSGlobalObjectENS2_7JSValueE` | `QslKfV15MYY` |
-| `_ZN7WebCore16enclosingIntRectERKNS_10LayoutRectE` | `aZ1gCm7lYhU` |
-| `_ZN7WebCore16enclosingIntRectERKNS_9FloatRectE` | `VFvo8Ldr2iw` |
-| `_ZN7WebCore16findIntersectionERKNS_10FloatPointES2_S2_S2_RS0_` | `SE+sQrvs7vQ` |
 | `_ZN7WebCore16isEndOfParagraphERKNS_15VisiblePositionENS_27EditingBoundaryCrossingRuleE` | `tVGIPxZgQr4` |
 | `_ZN7WebCore16nextWordPositionERKNS_15VisiblePositionE` | `1NgqWZM7bts` |
 | `_ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE` | `yK8R9Noa6Yg` |
@@ -3701,9 +3698,7 @@
 | `_ZN7WebCore19UserContentProviderD0Ev` | `aN4xuJLVnKc` |
 | `_ZN7WebCore19UserContentProviderD1Ev` | `auKLpZXdSfw` |
 | `_ZN7WebCore19UserContentProviderD2Ev` | `9cFgcwjP8fw` |
-| `_ZN7WebCore19enclosingLayoutRectERKNS_9FloatRectE` | `BRAEBSsyFho` |
 | `_ZN7WebCore19floatValueForLengthERKNS_6LengthEf` | `aaPDegynKuY` |
-| `_ZN7WebCore19makeMapBetweenRectsERKNS_9FloatRectES2_` | `ACv0fKVga70` |
 | `_ZN7WebCore19serializationForCSSERKNS_5ColorE` | `13YTEVlQaOM` |
 | `_ZN7WebCore19toAutofillFieldNameERKN3WTF10AtomStringE` | `PhM-93-E9p8` |
 | `_ZN7WebCore19unitedBoundingBoxesERKN3WTF6VectorINS_9FloatQuadELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE` | `WzM2QIMJhO8` |
@@ -4290,7 +4285,6 @@
 | `_ZN7WebCore25WebSocketChannelInspectorC2ERNS_8DocumentE` | `JA9b3iqvtHo` |
 | `_ZN7WebCore25computeViewportAttributesENS_17ViewportArgumentsEiiifNS_7IntSizeE` | `NugBItcC7YY` |
 | `_ZN7WebCore25directionOfEnclosingBlockERKNS_8PositionE` | `d2IOtQGjd-M` |
-| `_ZN7WebCore25encloseRectToDevicePixelsERKNS_9FloatRectEf` | `N13NkeOmCiU` |
 | `_ZN7WebCore25enclosingBlockFlowElementERKNS_15VisiblePositionE` | `nLnz3XxhWuM` |
 | `_ZN7WebCore25getOutOfLineCachedWrapperEPNS_17JSDOMGlobalObjectERNS_4NodeE` | `YKwPUXLyid0` |
 | `_ZN7WebCore25unwrapSerializedCryptoKeyERKN3WTF6VectorIhLm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEES6_RS4_` | `m2S0+pUgP1s` |
