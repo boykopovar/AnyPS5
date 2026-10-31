@@ -350,7 +350,7 @@ extern "C" {
 int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
     if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
     static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::memcpy(version, parameters + 0x10, sizeof(*version));
+    if (!GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -533,6 +533,19 @@ int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t 
 
 KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
     return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
+}
+
+int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
+    if (!name) throw std::invalid_argument("sceKernelIsModuleLoaded: null name");
+    KernelModule handles[0x300];
+    std::size_t count = 0;
+    if (const int result = sceKernelGetModuleListInternal(handles, std::size(handles), &count)) return result;
+    for (std::size_t i = 0; i < count; ++i) {
+        ModuleInfo info{};
+        info.st_size = sizeof(info);
+        if (sceKernelGetModuleInfo(handles[i], &info) == 0 && std::strncmp(info.name, name, sizeof(info.name)) == 0) return 0;
+    }
+    return SCE_KERNEL_ERROR_ESRCH;
 }
 
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {
@@ -1224,9 +1237,13 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (static_cast<std::uint32_t>(bit) >= 0x3A) return static_cast<int>(0x80020016);
+    if (static_cast<std::uint32_t>(bit) > 0x7F) return static_cast<int>(0x80020016);
     *enabled = static_cast<std::int32_t>((workaround->ids[bit >> 6] >> (bit & 0x3F)) & 1);
     return 0;
+}
+
+int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+    return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {

@@ -17,6 +17,8 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
+#include "prx/libSceAudioOut/include/HostGain.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "AudioOutShutdown.hpp"
 #include "AudioOut2PadMix.hpp"
 #include "prx/libScePad/include/PadState.hpp"
@@ -124,6 +126,7 @@ struct Port {
     AudioOut2PadLayout padLayout;
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
+    HostGainRamp hostGain;
 };
 
 static std::mutex g_mutex;
@@ -296,6 +299,7 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
         queueData = padFrames.data();
     } else {
         queueData = prepareBuffer(port, data, prepareBuf);
+        queueData = HostGainFilter(port.hostGain, HostVolumeGain_nid_no_patch(), queueData, formatIsFloat(port.format), port.samplesNum, static_cast<unsigned>(port.channels), prepareBuf);
         queueSize = checkedBufferSize(port.samplesNum, static_cast<std::uint32_t>(port.channels), bytesPerSample(port.format));
     }
 
@@ -383,6 +387,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
             port.format = format;
             port.channels = channelsForFormat(format);
             port.lastDataOutputTime = 0;
+            port.hostGain = HostGainRamp(freq / 100);
             port.virtualQueueEnd = sceKernelGetProcessTime();
             port.mixLevel = type == PORT_TYPE_PADSPK ? DEFAULT_PADSPK_MIX_LEVEL : DEFAULT_VOLUME;
             if (type == PORT_TYPE_VIBRATION) {

@@ -1,5 +1,45 @@
 # libSceAudioOut technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceAudioOut/src/InventoryExports.cpp) - 33 import-resolution declarations throw through `NotImplemented_nid_no_patch`; prototypes and behavior are unverified. Both version-labelled images contain these NIDs in module `libSceAudioOut`: six under logical library `libSceAudioOut` and 27 under `libSceAudioOut2`. The labels do not independently authenticate firmware provenance; the NIDs are absent from the pinned public 3.20 catalogue. Identified names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `-3HTIXaIx7U` |
+| `Unknown` | `0Oz9yG27ovw` |
+| `Unknown` | `1pWftEwJg6w` |
+| `Unknown` | `4Ac+2ezx1lY` |
+| `Unknown` | `6hw5LpQh6-M` |
+| `Unknown` | `87IcZgIbuxQ` |
+| `Unknown` | `8qn2ceJ4HVg` |
+| `Unknown` | `96EqlBA6q4I` |
+| `Unknown` | `B88xqT6vI88` |
+| `Unknown` | `DEpjrJh-flc` |
+| `Unknown` | `GIcJie+rjvM` |
+| `Unknown` | `KeHpCnAvtGw` |
+| `Unknown` | `Oqn65W-w8bo` |
+| `Unknown` | `PNeVjMfwq1M` |
+| `Unknown` | `PSg2qlLNCqM` |
+| `Unknown` | `UAk5DtTuUMo` |
+| `Unknown` | `WKpJvbBdcbU` |
+| `Unknown` | `WOfIge9NmBA` |
+| `Unknown` | `YSm2BXd3gfE` |
+| `Unknown` | `Zk1Cn7Z2tVs` |
+| `Unknown` | `bd5H255vnsk` |
+| `Unknown` | `f3xQNbru2m8` |
+| `Unknown` | `g33sQzMRRmQ` |
+| `Unknown` | `gaUU6uC15vs` |
+| `Unknown` | `jEcHKuQ4k8I` |
+| `Unknown` | `lyHeaetMYXg` |
+| `Unknown` | `r5LqvBxfG+0` |
+| `Unknown` | `rSyeebu6wWI` |
+| `Unknown` | `rzjbvXzvDtE` |
+| `Unknown` | `spvw78DsDzU` |
+| `Unknown` | `tqTyWw6NgyU` |
+| `Unknown` | `tvPlXmc4MHs` |
+| `Unknown` | `yt9g5kdJy1o` |
+
 ### Silent stubs
 
 - [sceAudioOut2LoTerminate](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Low.cpp) (libSceAudioOut) - returns 0, as the PS5 13.60 module (0x248d0) does whether or not the low-latency service runs. The module disconnects from the audio server and clears the service tables; here `sceAudioOut2LoInit` starts no service and open contexts and ports are left as they are
@@ -134,11 +174,12 @@
 
 ### Functional
 
+- [sceAudioOut2ContextPush](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) - a blocking Push waits for room before it queues its grain and again after, so it returns once fewer grains than the queue depth wait to be played (each wait ends after at most 200 ms, so on a queue that never drains a blocking Push returns after up to 400 ms). Inferred from PPSA02530, whose sound engine pushes one grain per call from a feeder thread and wakes its renderer after each push: while Push returned as soon as the grain was queued, the renderer found the queue full and slept until the next rendered frame. When the console's blocking Push returns is unmeasured. Both waits release the context lock, so destroying a context while a push is waiting on it is not supported.
 - [sceAudioOutMasteringInit, sceAudioOutMasteringTerm and sceAudioOutMasteringSetParam](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - non-zero flags, a null pointer and a params id other than 1 throw; a repeated Init, a Term without Init and a SetParam or GetState before Init are unknown. There is no mastering stage, so Init and Term keep no state and SetParam reads only the id. The signatures and the default params id 1 follow [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Audio/AudioOut.cs#L312-L344), not a console measurement. SharpProspero documents flag bit 0 as `SwapEqCompressor`, and shadPS4's PS4 stub [rejects any non-zero Init flags](https://github.com/shadps4-emu/shadPS4/blob/8d50471b7dc141dd700b51276b8edd1f293bce26/src/core/libraries/audio/audioout.cpp#L956-L962) with 0x80260201
 - [sceAudioOutMasteringGetState](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Mastering.cpp) (libSceAudioOut) - the states id 1 and the meter offsets 32, 128, 240, 272 and 304 in a 336-byte struct follow [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Audio/AudioOutMastering.cs#L97-L110), not a console measurement. With no mastering stage it zeroes the compressor input RMS and gain, and the limiter input, output and gain peaks, and leaves the other bytes, including the descriptors the AudioOut2 call writes, untouched; zero is not known to be what the console reports for an idle chain. A null pointer and a states id other than 1 throw; the console error codes are unknown
 - [sceAudioOut2EnableChat and sceAudioOut2DisableChat](../../../core/libs/prx/libSceAudioOut/src/AudioOut2System.cpp) - both PS5 exports take no arguments, return 0x80268006 before AudioOut2 initialization, and invoke the system chat service with selector 3. A negative service result maps to 0x80268000, otherwise they return zero. The host only records a local enabled flag, without a chat service; repeated-call and no-session behavior therefore still depends on the missing service.
 - [AudioOut2 contexts](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) with an SDL device and no `sceAudioOut2ContextAdvance` calls read a grain's port buffers at the next push, at least 100 us after the grain was pushed, and play the mix behind a 40 ms cushion that the queue level leaves out. When the hardware reads the buffers is not known. The timing follows a title whose mixer fills a buffer after pushing it, reuses it two pushes later, and may still be writing it when the next push follows within microseconds. The last grain pushed before a title stops pushing is never read or played.
 - [AudioOut2 context handles](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) are the context's host address, checked against the set of live contexts. `AudioOut2FindContext` releases the set's lock before the caller uses the context, so a `sceAudioOut2ContextDestroy` on another thread during a `Push`, `Advance`, `GetQueueLevel`, `SetAttributes` or `sceAudioOut2PortCreate` on the same handle can still free the context under that call. A destroyed handle becomes valid again if a later `sceAudioOut2ContextCreate` gets the same allocation. What the console returns for a reused or concurrently destroyed handle is unknown.
 - [sceAudioOut2ContextGetQueueLevel](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Context.cpp) (libSceAudioOut) with an SDL device counts the grains that `sceAudioOut2ContextAdvance` completed and no push has consumed as queued, together with the pushed grains beyond the 40 ms cushion, up to `queue_depth`. Whether the console counts them is unknown. Pushes that fill the cushion leave the level at 0, so a title that renders as many grains as the level leaves room for and pushes them on another thread rendered a full queue again after each of those pushes: PPSA23226's Wwise sink passes the available count to the sound engine as the number of frames to render, advances once per frame and pushes on a separate thread, and exceeded 16 completed grains. Counted, the completed grains keep such a title at most `queue_depth` grains ahead of its pushes.
-- [sceAudioOut2LoInit, sceAudioOut2LoContext* and sceAudioOut2LoPort* calls](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Low.cpp) (libSceAudioOut) have no low-latency path: each forwards to its `sceAudioOut2` counterpart, so grain and queue depth are the context's `num_grains` and `queue_depth`, and playback keeps the 40 ms cushion. [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Audio/AudioOut2.cs#L489-L545) only says each call takes the same handles and parameter blocks as its counterpart and drives the low-latency clock with a shallow queue and a small grain ([docs](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/docs/audio.md#L662-L668)). Unverified: the console's grain and depth limits, its error for a handle of the other service (accepted here) and what `sceAudioOut2LoInit` returns when repeated (0 here).
+- [sceAudioOut2LoInit, sceAudioOut2LoContext* and sceAudioOut2LoPort* calls](../../../core/libs/prx/libSceAudioOut/src/AudioOut2Low.cpp) (libSceAudioOut) have no low-latency path: each forwards to its `sceAudioOut2` counterpart (`sceAudioOut2LoInit` only marks initialized), so grain and queue depth are the context's `num_grains` and `queue_depth`, and playback keeps the 40 ms cushion. [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Audio/AudioOut2.cs#L489-L545) only says each call takes the same handles and parameter blocks as its counterpart and drives the low-latency clock with a shallow queue and a small grain ([docs](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/docs/audio.md#L662-L668)). Unverified: the console's grain and depth limits, its error for a handle of the other service (accepted here) and what `sceAudioOut2LoInit` returns when repeated (0 here).
 - [sceAudioOutSysGetHdmiMonitorInfo](../../../core/libs/prx/libSceAudioOut/src/AudioOut.cpp) - native validation requires a non-null buffer and exactly 384 bytes, then accepts types 1 and 16. Mapped pointer/size/type errors are 0x80260004/06/0C. The host still zeroes type 1 output and throws for type 16: native monitor descriptors and system audio settings are unavailable. Driver initialization failures and service errors are not represented.

@@ -12,6 +12,19 @@ import run_job_manager_reference as runner
 import test_import_audit as fixtures
 
 
+class ResolveCliPathTests(unittest.TestCase):
+    def test_symlink_loop_is_rejected_without_path_resolve(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = Path(directory) / "loop"
+            try:
+                loop.symlink_to(loop)
+            except OSError as error:
+                self.skipTest(f"Symlinks unavailable: {error}")
+            with self.assertRaises(ValueError) as error:
+                runner.resolve_cli_path(loop)
+            self.assertIn("symbolic link loop", str(error.exception))
+
+
 class DependencyStagingTests(unittest.TestCase):
     def test_valid_transitive_dependencies_are_staged(self):
         with tempfile.TemporaryDirectory() as directory:

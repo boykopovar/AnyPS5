@@ -18,6 +18,8 @@ namespace {
     constexpr std::uint64_t kLatchExpiryLimit = 500000;
     constexpr std::uint32_t kInterceptedButton = 0x80000000;
     std::uint64_t injectedTimestamp = 0;
+    std::uint32_t injectedHeldThroughCapture = 0;
+    std::uint64_t injectedHeldAt = 0;
 
     struct QueuedInput {
         PadInputState input;
@@ -243,7 +245,7 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
     return data;
 }
 
-Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
+Pad::InputCommandFile& InjectedCommands() {
     static Pad::InputCommandFile commands([] {
 #ifdef _WIN32
         const auto* path = _wgetenv(L"APS5_PAD_INPUT_FILE");
@@ -252,13 +254,26 @@ Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
 #endif
         return path ? std::filesystem::path(path) : std::filesystem::path{};
     }());
+    return commands;
+}
+
+Pad::InputCommandFile::Input InjectedInput(std::uint64_t now) {
     static Pad::InputCommandFile::Input lastInjected;
-    const auto injected = commands.Poll(now);
+    const auto injected = InjectedCommands().Poll(now);
     if (injected != lastInjected) {
         lastInjected = injected;
         slots[0].timestamp = now;
         injectedTimestamp = now;
     }
+    return injected;
+}
+
+Pad::InputCommandFile::Input InjectedTitleInput(std::uint64_t now) {
+    auto injected = InjectedInput(now);
+    if (slots[0].state.intercepted) injectedHeldThroughCapture |= injected.buttons;
+    else injectedHeldThroughCapture &= InjectedCommands().HeldThrough(injectedHeldAt, now);
+    injectedHeldAt = now;
+    injected.buttons &= ~injectedHeldThroughCapture;
     return injected;
 }
 
@@ -273,7 +288,7 @@ PadData Pad::ReadState(int port) {
     if (failure) std::rethrow_exception(failure);
     if (!initialized) throw std::runtime_error("Pad: read before initialization");
     const std::uint64_t now = sceKernelGetProcessTime();
-    const auto injected = port == 0 ? InjectedInput(now) : Pad::InputCommandFile::Input{};
+    const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
     auto& slot = slots[port];
     PadData data = BuildData(slot, slot.state, slot.timestamp, now, injected, port);
     if (slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
@@ -296,7 +311,7 @@ int Pad::Read(PadData* data, int num, int port) {
     auto& slot = slots[port];
     slot.pressedSinceRead = 0;
     const std::uint64_t now = sceKernelGetProcessTime();
-    const auto injected = port == 0 ? InjectedInput(now) : Pad::InputCommandFile::Input{};
+    const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
     if (slot.queue.empty()) {
         data[0] = BuildData(slot, slot.state, slot.timestamp, now, injected, port);
         return 1;
@@ -503,6 +518,16 @@ extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState
 
 extern "C" void PadPublishInput_nid_postfix(const PadInputState& input) {
     PadPublishInputForPort_nid_postfix(0, input);
+}
+
+extern "C" void PadApplyInjectedInput_nid_postfix(PadInputState* state) {
+    if (state == nullptr) return;
+    std::lock_guard lock(stateMutex);
+    const auto injected = InjectedInput(sceKernelGetProcessTime());
+    injectedHeldThroughCapture |= injected.buttons;
+    injectedHeldAt = sceKernelGetProcessTime();
+    state->buttons |= injected.buttons;
+    if (injected.hasSticks) state->sticks = injected.sticks;
 }
 
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error) {

@@ -278,7 +278,11 @@ A Windows executable started without a standard output or error handle, such as 
 
 ### Display resolution and window size
 
-The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen; set `ANYPS5_FULLSCREEN` to a non-empty value other than `0` to open the window fullscreen from the start. Changing the window size does not change the game's render resolution. AnyPS5 does not currently provide a global render-resolution override; use a game's own display setting when it offers one.
+The game chooses its video-output resolution; AnyPS5 uses that mode for rendering. The display window can be resized or switched to fullscreen, which scales the presented image to fit the window. F11 switches between window and fullscreen; set `ANYPS5_FULLSCREEN` to a non-empty value other than `0` to open the window fullscreen from the start. Changing the window size does not change the game's render resolution. The only host setting that changes the resolution a game reads is `APS5_OUTPUT_RESOLUTION`, described below; otherwise AnyPS5 provides no render-resolution override, so use a game's own display setting when it offers one.
+
+`APS5_OUTPUT_RESOLUTION=<width>x<height>`, for example `APS5_OUTPUT_RESOLUTION=1920x1080`, makes the game's video output status report the 1080p class when the width is below 3840 and the height below 2160, and the 2160p class otherwise, instead of the class of the display's current mode. The two numbers must be positive integers separated by `x` or `X`. An empty value is the same as an unset one; any other value stops the game with an error that names the variable.
+
+`ANYPS5_DISPLAY_INDEX=<n>` opens the window centred on display `n`, counted from 0 in the order SDL lists the displays. Unset, the first display is used. A value that is not the index of a connected display, including an empty value, stops the game at start with an error that names the variable.
 
 ### VR compatibility
 
@@ -302,6 +306,10 @@ python3 tools/pad_input.py /tmp/anyps5-pad l1+r1
 For timed button sequences, see [Controller timelines](INPUT_MAPPING.md#controller-timelines).
 
 Run the helper in a second terminal. Commands are polled at most every 100 ms during controller reads, and their buttons add to physical controller input. A press lasts 300 ms by default, starting when the application reads it, and releases automatically; `--hold-ms` accepts 1–5000 ms. `--left-stick X Y` and `--right-stick X Y` hold the sticks for the same time: each axis is 0-255, 128 is the centre, X grows to the right and Y grows downward. While such a command is active both sticks come from it instead of the physical controller, and a stick that was not named stays centred. `touch-left` and `touch-right` press the touchpad with a finger on its left or right half, as the `TouchLeft` and `TouchRight` keys do; in the command file they are bits `0x200000` and `0x400000` of the button field. Button names joined by `+`, such as `l1+r1`, are pressed together in one command; `release` cannot be joined. Wait for the application to observe a release before sending another press. The file holds only the latest command; rapid commands can replace one another. On POSIX, replacing an existing command file retains its permission mode; a privileged helper also retains its owner and group so the game user can still read it. Commands left over when the application first reads the controller are ignored. Without the environment variable, file input is disabled.
+
+Set `APS5_NO_PAD_INPUT` to any value, an empty one included, to make the window ignore its keyboard and mouse events. The keyboard and mouse bindings, the mouse stick and the window keys (F10, F11 and F12 among them) then do nothing. Controllers and the `APS5_PAD_INPUT_FILE` commands are not affected.
+
+On Windows, set `APS5_NO_WGI` to any value to turn off SDL's Windows Gaming Input controller backend. AnyPS5 turns off DirectInput there in every case, and this variable is read once when the video output driver is created.
 
 ### Controller vibration strength
 
@@ -368,6 +376,18 @@ Leave the variable unset to keep the explicit error. Any other value also stops 
 ### Screenshots
 
 Press F12 in the game window to save the next displayed frame as a PNG at the resolution of the game's display buffer, without the window's scaling, letterbox or [performance overlay](#performance-overlay). A BT.2100 PQ display buffer is saved converted to SDR, also while it is shown through [HDR output](#hdr-output). Files are named `<title ID>-<YYYYMMDD-HHMMSS>.png` and written to an `anyps5-screenshots/` directory beside the output executable, which is created when needed; set `ANYPS5_SCREENSHOTS` to use another directory. The saved path is printed to stderr. Presses while the previous screenshot is still being written are merged into one. The key is the `Screenshot` action of the [input mapping](INPUT_MAPPING.md). A screenshot that cannot be written stops the game with the error.
+
+### Host volume and mute
+
+F5 lowers, F6 raises and F8 mutes the host's output volume for the game window; the keys can be changed with `VolumeDown`, `VolumeUp` and `ToggleMute` in [the input mapping](INPUT_MAPPING.md). This is a control of the host, like the volume of a media player: it is not a console behaviour, the title does not see it, and its own volume settings are not changed.
+
+The volume goes from 0 to 100 in steps of 5 and starts at 100, or at `ANYPS5_VOLUME` (a whole number from 0 to 100). The output amplitude is the square of the volume as a fraction of 100, so 50 is a quarter of the amplitude. Mute is separate from the volume: unmuting brings the volume back, and a volume key while muted unmutes. A change of gain moves over 10 ms instead of jumping. Each press prints one line on stderr with the resulting level or mute; there is no on-screen indicator.
+
+At volume 100 and not muted the audio is passed to the host device unchanged, with no processing at all. The volume applies to what the title plays through `libSceAudioOut` and `libSceAudioOut2`, including what `libSceAudio3d` plays through them. The controller's own sound card and haptics, and the microphone, are not affected.
+
+Set `ANYPS5_MUTE_ON_FOCUS_LOSS=1` to mute the audio while the display window has no focus and restore it when the focus returns. `0` or unset leaves the audio alone. It does not change the mute set with the key: a window you muted stays muted when it regains focus. Only focus events count, so a window minimized without losing focus stays audible, and a window that opens without focus starts muted. An invalid value of either variable, including an empty one, stops the game with an error naming it.
+
+The keys work while the display window has focus. Not measured on a real audio device or on a console.
 
 ### GPU selection
 
