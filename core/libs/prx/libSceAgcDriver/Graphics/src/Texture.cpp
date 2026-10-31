@@ -120,6 +120,7 @@ std::atomic<std::uint64_t> flushedAfterSkip{0}, flushedAfterSkipSameSite{0}, sta
 std::atomic<std::uint64_t> depthCopyTextures{0}, depthCopyRefreshes{0};
 std::atomic<std::uint64_t> refreshesProved{0};
 std::atomic<std::uint64_t> untrackedCompares{0};
+std::atomic<std::uint64_t> guestSnapshots{0};
 
 struct StorageTraffic {
     AgcDriver::Mutex mutex;
@@ -2554,6 +2555,10 @@ std::uint64_t StorageTexture::UntrackedCompares() {
     return untrackedCompares.load(std::memory_order_relaxed);
 }
 
+std::uint64_t StorageTexture::GuestSnapshots() {
+    return guestSnapshots.load(std::memory_order_relaxed);
+}
+
 bool StorageTexture::ServesKeysAt(std::uint64_t dccAddress) const {
     const bool locked = GuestMemory::GpuMutex().HeldByThisThread();
     const auto readFollowed = [&] {
@@ -2589,6 +2594,7 @@ void traceKeyStore(const char* path, const GuestTextureResource& descriptor, std
 }
 
 void StorageTexture::captureGuestBytes(const std::vector<bool>* layers) {
+    guestSnapshots.fetch_add(1, std::memory_order_relaxed);
     original.resize(static_cast<std::size_t>(guestBytes));
     comparedRanges = {};
     std::vector<bool> selected(trackedLayers, true);
@@ -2601,6 +2607,19 @@ void StorageTexture::captureGuestBytes(const std::vector<bool>* layers) {
         layerOriginal[layer] = true;
         cancelStoredSave(layer);
     }
+}
+
+bool StorageTexture::guestBytesStillHeld() const {
+    const auto bytes = static_cast<std::size_t>(guestBytes);
+    if (original.size() != bytes || !originalHolds(descriptor.baseAddress, bytes)) return false;
+    if (std::any_of(savedTicket.begin(), savedTicket.end(), [](std::uint64_t ticket) { return ticket != 0; })) return false;
+    for (const auto& [from, unitGeneration] : keptAtUnwatch) {
+        if (keptAtUnwatchHolds(from, static_cast<std::uint32_t>((from - descriptor.baseAddress) / trackedLayerBytes))) return false;
+    }
+    constexpr std::uint64_t blockBytes = 65536;
+    std::vector<std::uint8_t> blocks(static_cast<std::size_t>((descriptor.baseAddress + guestBytes - 1) / blockBytes - descriptor.baseAddress / blockBytes + 1));
+    if (!compareUntracked(descriptor.baseAddress, bytes, blocks, true)) return false;
+    return std::all_of(blocks.begin(), blocks.end(), [](std::uint8_t block) { return block == GuestMemory::BlockUnchanged; });
 }
 
 bool StorageTexture::originalHolds(std::uint64_t address, std::size_t bytes) const {
@@ -2726,7 +2745,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         if (GuestMemory::Watched(descriptor.baseAddress, static_cast<std::size_t>(guestBytes))) {
             layerOriginal.assign(trackedLayers, false);
             cancelStoredSaves();
-        } else {
+        } else if (!guestBytesStillHeld()) {
             captureGuestBytes(nullptr);
         }
         forgetBorrowed(0, trackedLayers);
