@@ -101,5 +101,8 @@ int APS5_VABI FT_Stroker_BeginSubPath_nid_postfix(void* stroker, const FreeType:
 int APS5_VABI FT_Stroker_ConicTo_nid_postfix(void* stroker, const FreeType::GuestVector* control, const FreeType::GuestVector* to);
 int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
 int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
+const char* APS5_VABI FT_Get_Font_Format_nid_postfix(FreeType::GuestFaceRec* face);
+std::uint8_t APS5_VABI FT_Face_CheckTrueTypePatents_nid_postfix(FreeType::GuestFaceRec* face);
+std::uint8_t APS5_VABI FT_Face_SetUnpatentedHinting_nid_postfix(FreeType::GuestFaceRec* face, std::uint8_t value);
 
 }
