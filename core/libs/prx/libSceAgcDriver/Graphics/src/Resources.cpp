@@ -48,11 +48,15 @@ VkBuffer BindExactBuffer(const Context& context, std::size_t size, VkBufferUsage
     return buffer;
 }
 
+VkBufferUsageFlags UsageWithoutUnsupportedAddress(const Context& context, VkBufferUsageFlags requested, VkBufferUsageFlags pooled) {
+    if (!context.bufferDeviceAddress && (requested & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) == 0) return pooled & ~static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    return pooled;
 }
 
-Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
+}
+
+Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(UsageWithoutUnsupportedAddress(context, usage, BufferPool::Usage(usage, properties))), properties(properties) {
     Require(size != 0, "zero-sized GPU buffer");
-    if (!context.bufferDeviceAddress && (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) == 0) this->usage &= ~static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     const bool addressable = (this->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0;
     Require(!addressable || context.bufferDeviceAddress, "buffer device address is not enabled");
     cache = GetBufferPool(context);
@@ -170,9 +174,8 @@ void Buffer::Invalidate() {
     Check(context.Function<PFN_vkInvalidateMappedMemoryRanges>("vkInvalidateMappedMemoryRanges")(context.device, 1, &range), "vkInvalidateMappedMemoryRanges");
 }
 
-DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(UsageWithoutUnsupportedAddress(context, usage, BufferPool::Usage(usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))) {
     Require(size != 0, "zero-sized device buffer");
-    if (!context.bufferDeviceAddress && (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) == 0) this->usage &= ~static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     cache = GetBufferPool(context);
     if (const auto allocation = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
         buffer = allocation->buffer;

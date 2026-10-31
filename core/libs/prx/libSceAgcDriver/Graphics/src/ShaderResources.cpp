@@ -20,6 +20,7 @@
 #include <mutex>
 #include <array>
 #include <chrono>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -2061,6 +2062,28 @@ void ValidateRuntimeResources(const CompiledShader& shader, std::span<const std:
     }
 }
 
+enum class HeapBindingClass { SharedImage, ShaderData, PerDraw, Unsupported };
+
+HeapBindingClass ClassifyHeapBinding(const ShaderRecompiler::DescriptorBinding& binding) {
+    using Role = ShaderRecompiler::DescriptorRole;
+    switch (binding.role) {
+        case Role::GuestImages:
+            return binding.kind == ShaderRecompiler::DescriptorKind::StorageImage ? HeapBindingClass::PerDraw : HeapBindingClass::SharedImage;
+        case Role::GuestSamplers:
+            return HeapBindingClass::SharedImage;
+        case Role::BdaPagetable:
+        case Role::FaultBuffer:
+        case Role::Gds:
+        case Role::GuestBuffers:
+            return HeapBindingClass::PerDraw;
+        case Role::ShaderData:
+        case Role::FlattenedSrt:
+            return HeapBindingClass::ShaderData;
+        default:
+            return HeapBindingClass::Unsupported;
+    }
+}
+
 }
 
 void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) {
@@ -2097,7 +2120,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                 Require(stageStorageBuffers <= limits.maxPerStageDescriptorUpdateAfterBindStorageBuffers && stageResources <= limits.maxPerStageUpdateAfterBindResources, "shader descriptors exceed per-stage limits");
                 updateAfterBind = true;
             };
-            const bool heapShader = shader.program->gpuResolvedImages;
+            const bool heapShader = HeapShader(shader);
             if (heapShader) {
                 Require(DescriptorHeapEnabled(), "a GPU-mode stage needs VK_EXT_descriptor_heap (APS5_GPU_HEAP)");
                 heapStage = true;
@@ -2151,27 +2174,24 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
                         bindings.back().heap = true;
                         continue;
                     }
-                    if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) goto perDrawBinding;
-                    if (binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers) {
+                    const auto heapClass = ClassifyHeapBinding(binding);
+                    if (heapClass == HeapBindingClass::Unsupported) Require(false, std::string("a GPU-mode fragment stage has an unsupported ") + roleName(binding.role) + " binding");
+                    if (heapClass == HeapBindingClass::SharedImage) {
                         Require(binding.kind == ShaderRecompiler::DescriptorKind::SampledImage || binding.kind == ShaderRecompiler::DescriptorKind::Sampler, "a GPU-mode stage binds sampled images and samplers only");
                         addImageBinding(binding, DrawGuestWords(shader, binding), flags);
                         bindings.back().heap = true;
                         continue;
                     }
-                    if (binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer || binding.role == ShaderRecompiler::DescriptorRole::Gds) goto perDrawBinding;
-                    if (binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
-                        goto perDrawBinding;
+                    if (heapClass == HeapBindingClass::ShaderData) {
+                        Require(binding.count == 1 && !DrawGuestWords(shader, binding).empty(), "invalid GPU-mode shader data binding");
+                        if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, DrawGuestWords(shader, binding));
+                        Binding item{{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {}, {}};
+                        item.heap = true;
+                        item.role = binding.role;
+                        bindings.push_back(std::move(item));
+                        continue;
                     }
-                    Require(binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt, std::string("a GPU-mode fragment stage has an unsupported ") + roleName(binding.role) + " binding");
-                    Require(binding.count == 1 && !DrawGuestWords(shader, binding).empty(), "invalid GPU-mode shader data binding");
-                    if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) ValidateRuntimeResources(shader, DrawGuestWords(shader, binding));
-                    Binding item{{binding.binding, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, flags, nullptr}, {}, {}};
-                    item.heap = true;
-                    item.role = binding.role;
-                    bindings.push_back(std::move(item));
-                    continue;
                 }
-            perDrawBinding:
                 const bool addressRole = binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable || binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer;
                 const bool bufferRole = addressRole || binding.role == ShaderRecompiler::DescriptorRole::GuestBuffers || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt || binding.role == ShaderRecompiler::DescriptorRole::Gds;
                 const bool imageRole = binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers;
@@ -2302,7 +2322,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         const auto heapDataBytes = [&](std::int64_t ring) -> std::uint64_t {
             const auto stage = HeapRingStage(ring);
             for (const auto& shader : shaders) {
-                if (HeapStageIndex(shader.stage) != stage || shader.program == nullptr || !shader.program->gpuResolvedImages) continue;
+                if (HeapStageIndex(shader.stage) != stage || !HeapShader(shader)) continue;
                 for (const auto& binding : shader.program->bindings) {
                     if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData) return binding.guestDescriptor.size() * sizeof(std::uint32_t);
                 }
@@ -2371,7 +2391,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         };
         if (heapStage) {
             Require(splitSets && descriptions[1].empty(), "a GPU-mode fragment stage needs split sets and no per-draw fragment bindings");
-            fragmentLayoutKey = {0x48454150u};
+            fragmentLayoutKey = {HeapLayoutKeyTag};
         }
         _layout = createLayout(layoutKey, descriptions[0], layoutBindingFlags, ownsLayout);
         if (splitSets && !heapStage) {
@@ -2457,8 +2477,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
 bool SplitsSets(const Context& context, std::span<const CompiledShader> shaders) {
     const auto fragmentSet = [](const CompiledShader& shader) { return shader.program != nullptr && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const auto& binding) { return binding.descriptorSet == ShaderRecompiler::RuntimeAbi::FragmentDescriptorSet; }); };
     const auto fragmentStage = [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Fragment; };
-    const auto heapStage = [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->gpuResolvedImages; };
-    return std::any_of(shaders.begin(), shaders.end(), fragmentSet) || std::any_of(shaders.begin(), shaders.end(), heapStage) || (context.graphicsPipelineLibrary && std::any_of(shaders.begin(), shaders.end(), fragmentStage));
+    return std::any_of(shaders.begin(), shaders.end(), fragmentSet) || AnyHeapShader(shaders) || (context.graphicsPipelineLibrary && std::any_of(shaders.begin(), shaders.end(), fragmentStage));
 }
 
 DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const CompiledShader> shaders) {
@@ -2472,12 +2491,11 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
     bool updateAfterBind = false;
     bool tablesUpdateAfterBind = false;
     std::uint64_t storageBuffers = 0;
-    const auto heapShader = [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->gpuResolvedImages; };
-    const bool heapStage = std::any_of(shaders.begin(), shaders.end(), heapShader);
+    const bool heapStage = AnyHeapShader(shaders);
     for (const auto& shader : shaders) {
         Require(shader.program != nullptr, "missing compiled shader");
         const VkShaderStageFlags flags = VulkanStage(shader.stage);
-        const bool gpuMode = heapShader(shader);
+        const bool gpuMode = HeapShader(shader);
         std::uint64_t stageStorageBuffers = 0;
         std::uint64_t stageResources = 0;
         const bool addressedStage = gpuMode && shader.program->dataAddressPush;
@@ -2500,8 +2518,8 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
                 continue;
             }
             if (gpuMode) {
-                const bool heapImage = (binding.role == ShaderRecompiler::DescriptorRole::GuestImages && binding.kind != ShaderRecompiler::DescriptorKind::StorageImage) || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers;
-                if (heapImage || binding.role == ShaderRecompiler::DescriptorRole::ShaderData || binding.role == ShaderRecompiler::DescriptorRole::FlattenedSrt) continue;
+                const auto heapClass = ClassifyHeapBinding(binding);
+                if (heapClass == HeapBindingClass::SharedImage || heapClass == HeapBindingClass::ShaderData) continue;
             }
             if (binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) {
                 descriptions[set].push_back({binding.binding, VK_DESCRIPTOR_TYPE_SAMPLER, context.samplerTableCapacity, flags, nullptr});
@@ -2548,7 +2566,7 @@ DescribedSetLayouts DescribeSetLayouts(const Context& context, std::span<const C
     result.layouts.main = context.descriptorCache->Layout(result.mainKey, descriptions[0], updateAfterBind, bindingFlags[0]);
     if (heapStage) {
         Require(split && descriptions[1].empty(), "a GPU-mode stage needs split sets and no per-draw fragment bindings");
-        result.fragmentKey = {0x48454150u};
+        result.fragmentKey = {HeapLayoutKeyTag};
         return result;
     }
     if (split) result.layouts.fragment = context.descriptorCache->Layout(result.fragmentKey, descriptions[1], updateAfterBind, bindingFlags[1]);
@@ -2844,7 +2862,8 @@ bool ShaderResources::AddressTableGuardCurrent() {
 }
 
 bool ShaderResources::SpaceReuseDisabled() {
-    return !GpuHeapEnabled();
+    static const bool disabled = std::getenv("APS5_NO_SPACE_REUSE") != nullptr;
+    return disabled || !GpuHeapEnabled();
 }
 
 // APS5_PROFILE_DRAW: the per-device descriptor caches' counters, every 10 s.
@@ -2871,7 +2890,7 @@ void VisitContentKey(const CompiledShader& shader, bool dataWords, bool movableB
     visit(static_cast<std::uint32_t>(program.PipelineVariantId() >> 32u));
     if (shader.heap != nullptr && program.heapTemplateId != 0) {
         visit(0u);
-        visit(0x48454150u);
+        visit(HeapLayoutKeyTag);
         visit(static_cast<std::uint32_t>(program.heapTemplateId));
         visit(static_cast<std::uint32_t>(program.heapTemplateId >> 32u));
         for (const auto& binding : program.bindings) {
@@ -4889,7 +4908,7 @@ VkBuffer ShaderResources::shaderDataBuffer(const CompiledShader& shader) const {
 }
 
 void ShaderResources::forgetShaderDataWords(const CompiledShader& shader) {
-    if (shader.program != nullptr && shader.program->gpuResolvedImages) {
+    if (HeapShader(shader)) {
         auto& stageState = heapStages[HeapStageIndex(shader.stage)];
         stageState.data.mark.entry = 0;
         stageState.data.words.clear();
@@ -5356,7 +5375,7 @@ ShaderResources::TableStage& ShaderResources::tableStage(const CompiledShader& s
     table.program = shader.program;
     table.poison = shader.program->imageTablePoison;
     table.messages.assign(table.poison.size(), nullptr);
-    table.heap = shader.program->gpuResolvedImages && shader.program->dataAddressPush;
+    table.heap = HeapShader(shader) && shader.program->dataAddressPush;
     return table;
 }
 
@@ -5846,7 +5865,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE && !heapStage) || (usesBda && !spaceReuse)) return moved;
     for (const auto& shader : shaders) {
         if (shader.program == nullptr) return std::nullopt;
-        const bool heapShader = shader.program->gpuResolvedImages;
+        const bool heapShader = HeapShader(shader);
         for (const auto& binding : shader.program->bindings) {
             if (heapShader && (DataRole(binding.role) || binding.role == ShaderRecompiler::DescriptorRole::GuestImages || binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers)) continue;
             if (DataRole(binding.role)) {
@@ -6184,32 +6203,37 @@ PipelineSetLayouts ShaderResources::SetLayouts() const {
 
 void ShaderResources::RefreshHeapStage(std::span<const CompiledShader> shaders) {
     for (const auto& shader : shaders) {
-        if (shader.program != nullptr && shader.program->gpuResolvedImages) writeHeapStage(shader);
+        if (HeapShader(shader)) writeHeapStage(shader);
     }
 }
 
 void ShaderResources::writeBufferAddresses(std::span<std::uint32_t> words, std::uint32_t dataStage, const std::vector<VkDescriptorBufferInfo>* overrides) const {
-    thread_local VkDevice addressDevice = VK_NULL_HANDLE;
-    thread_local PFN_vkGetBufferDeviceAddressKHR bufferAddress = nullptr;
-    if (addressDevice != context.device || bufferAddress == nullptr) {
-        bufferAddress = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR");
-        addressDevice = context.device;
-    }
     for (const auto& binding : bindings) {
         if (!binding.addressed || binding.dataStage != dataStage) continue;
         for (std::size_t element = 0; element < binding.allocations.size(); ++element) {
             const auto index = binding.allocations[element];
-            auto info = overrides != nullptr && (*overrides)[index].buffer != VK_NULL_HANDLE ? (*overrides)[index] : const_cast<ShaderResources*>(this)->descriptor(const_cast<Allocation&>(allocations[index]));
-            if (info.buffer == VK_NULL_HANDLE) info = {context.emptyBuffer, 0, EmptyBufferBytes};
-            const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, info.buffer};
-            const auto base = bufferAddress(context.device, &addressInfo);
-            Require(base != 0, "an addressed buffer has no device address");
-            const auto address = base + info.offset;
+            const auto& allocation = allocations[index];
+            const bool overridden = overrides != nullptr && (*overrides)[index].buffer != VK_NULL_HANDLE;
+            const bool owned = !overridden && !allocation.guest && allocation.buffer != nullptr && allocation.role != ShaderRecompiler::DescriptorRole::GuestBuffers && allocation.role != ShaderRecompiler::DescriptorRole::BdaPagetable && allocation.role != ShaderRecompiler::DescriptorRole::FaultBuffer;
+            VkDeviceAddress address = 0;
+            VkDeviceSize range = 0;
+            if (owned) {
+                address = allocation.buffer->DeviceAddress();
+                range = allocation.size;
+            } else {
+                auto adjustment = allocation.adjustment;
+                auto info = overridden ? (*overrides)[index] : descriptor(allocation, adjustment);
+                if (info.buffer == VK_NULL_HANDLE) info = {context.emptyBuffer, 0, EmptyBufferBytes};
+                const auto base = BufferDeviceAddress(context, info.buffer);
+                Require(base != 0, "an addressed buffer has no device address");
+                address = base + info.offset;
+                range = info.range;
+            }
             const auto at = static_cast<std::size_t>(binding.addressDword) + element * 4u;
             Require(at + 3u < words.size(), "buffer address words lie outside the shader data");
             words[at] = static_cast<std::uint32_t>(address);
             words[at + 1u] = static_cast<std::uint32_t>(address >> 32u);
-            words[at + 2u] = static_cast<std::uint32_t>(std::min<VkDeviceSize>(info.range, 0xffffffffu));
+            words[at + 2u] = static_cast<std::uint32_t>(std::min<VkDeviceSize>(range, 0xffffffffu));
             words[at + 3u] = 0u;
         }
     }
@@ -6225,7 +6249,7 @@ std::size_t DataOffsetIndex(std::size_t stage, ShaderRecompiler::RuntimeAbi::Bin
 }
 
 std::pair<VkBuffer, VkDeviceSize> ShaderResources::shaderDataLocation(const CompiledShader& shader, const DrawBindings* rewritten) const {
-    if (!heapStage || shader.program == nullptr || !shader.program->gpuResolvedImages) return {shaderDataBuffer(shader), 0};
+    if (!heapStage || !HeapShader(shader)) return {shaderDataBuffer(shader), 0};
     const auto& offsets = rewritten != nullptr && rewritten->addressOffsets ? rewritten->heapOffsets : heapOffsets;
     const auto& heap = BindlessHeap::For(context);
     return {heap.RingBuffer(), heap.RingOffset() + offsets[DataOffsetIndex(HeapStageIndex(shader.stage), ShaderRecompiler::RuntimeAbi::Binding::ShaderData)]};
@@ -6245,10 +6269,8 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
     const bool tableBound = binds(ShaderRecompiler::DescriptorRole::BdaPagetable);
     const bool faultBound = binds(ShaderRecompiler::DescriptorRole::FaultBuffer);
     if (bda != nullptr && (tableBound || faultBound)) {
-        const auto address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR");
         const auto of = [&](const VkDescriptorBufferInfo& info) {
-            const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, info.buffer};
-            const auto base = address(context.device, &addressInfo);
+            const auto base = BufferDeviceAddress(context, info.buffer);
             Require(base != 0, "a BDA buffer has no device address");
             return base + info.offset;
         };
@@ -6283,10 +6305,10 @@ void ShaderResources::PatchDataAddresses(std::span<std::byte, PipelinePushConsta
     root[Abi::RootPagetableDwords] = tableDwords;
     if (gdsAllocation != std::numeric_limits<std::size_t>::max()) {
         const auto* overrides = rewritten != nullptr && rewritten->addressOffsets ? &rewritten->addressOverrides : nullptr;
-        auto info = overrides != nullptr && (*overrides)[gdsAllocation].buffer != VK_NULL_HANDLE ? (*overrides)[gdsAllocation] : const_cast<ShaderResources*>(this)->descriptor(const_cast<Allocation&>(allocations[gdsAllocation]));
+        auto adjustment = allocations[gdsAllocation].adjustment;
+        const auto info = overrides != nullptr && (*overrides)[gdsAllocation].buffer != VK_NULL_HANDLE ? (*overrides)[gdsAllocation] : descriptor(allocations[gdsAllocation], adjustment);
         Require(info.buffer != VK_NULL_HANDLE, "the GDS buffer is missing");
-        const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, info.buffer};
-        const auto base = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+        const auto base = BufferDeviceAddress(context, info.buffer);
         Require(base != 0, "the GDS buffer has no device address");
         split(Abi::RootGdsAddress, base + info.offset);
     }
@@ -6557,6 +6579,19 @@ void ShaderResources::verifyHeapSlots(const BindlessHeap& heap, const HeapStageS
     }
 }
 
+namespace {
+
+[[noreturn]] void ThrowHeapSlotMismatch(const char* format, ...) {
+    char text[320];
+    va_list arguments;
+    va_start(arguments, format);
+    std::vsnprintf(text, sizeof(text), format, arguments);
+    va_end(arguments);
+    throw std::runtime_error(text);
+}
+
+}
+
 void ShaderResources::patchHeapSlotWords(const CompiledShader& shader, const HeapStageState& stageState,
                                          std::vector<std::uint32_t>& patched, bool current) const {
     namespace Abi = ShaderRecompiler::RuntimeAbi;
@@ -6573,14 +6608,11 @@ void ShaderResources::patchHeapSlotWords(const CompiledShader& shader, const Hea
         auto& first = patched[offset + offsetof(Abi::ResourceMetadata, firstElement) / 4u];
         if (kind < Abi::FirstImageBinding) continue;
         if (!(kind < slots.size() && first < slots[kind].size())) {
-            char text[320];
-            std::snprintf(
-                text, sizeof(text),
+            ThrowHeapSlotMismatch(
                 "AGC graphics: GPU-mode image metadata names an element the stage does not bind (stage %u, image %u of %u, kind %u, first %u, slots of the kind %zu, flags 0x%x, element count %u, bindings %zu, stage state reused %d)",
                 static_cast<unsigned>(shader.stage), image, program.runtimeImageCount, kind, first,
                 kind < slots.size() ? slots[kind].size() : std::size_t{0}, patched[offset + offsetof(Abi::ResourceMetadata, flags) / 4u],
                 patched[offset + offsetof(Abi::ResourceMetadata, elementCount) / 4u], bindings.size(), current ? 1 : 0);
-            throw std::runtime_error(text);
         }
         first = slots[kind][first];
     }
@@ -6588,23 +6620,17 @@ void ShaderResources::patchHeapSlotWords(const CompiledShader& shader, const Hea
         Require(word.dword < patched.size(), "a GPU-mode slot word lies outside the shader data");
         if (word.kind == static_cast<std::uint32_t>(Abi::Binding::Samplers)) {
             if (word.element >= samplerSlots.size()) {
-                char text[256];
-                std::snprintf(text, sizeof(text),
-                              "AGC graphics: a GPU-mode slot word names a sampler the stage does not bind (stage %u, element %u, sampler slots %zu, bindings %zu)",
-                              static_cast<unsigned>(shader.stage), word.element, samplerSlots.size(), bindings.size());
-                throw std::runtime_error(text);
+                ThrowHeapSlotMismatch("AGC graphics: a GPU-mode slot word names a sampler the stage does not bind (stage %u, element %u, sampler slots %zu, bindings %zu)",
+                                      static_cast<unsigned>(shader.stage), word.element, samplerSlots.size(), bindings.size());
             }
             patched[word.dword] = samplerSlots[word.element];
             continue;
         }
         if (!(word.kind < slots.size() && word.element < slots[word.kind].size())) {
-            char text[256];
-            std::snprintf(
-                text, sizeof(text),
+            ThrowHeapSlotMismatch(
                 "AGC graphics: a GPU-mode slot word names an image the stage does not bind (stage %u, kind %u, element %u, slots of the kind %zu, bindings %zu)",
                 static_cast<unsigned>(shader.stage), word.kind, word.element,
                 word.kind < slots.size() ? slots[word.kind].size() : std::size_t{0}, bindings.size());
-            throw std::runtime_error(text);
         }
         patched[word.dword] = slots[word.kind][word.element];
     }

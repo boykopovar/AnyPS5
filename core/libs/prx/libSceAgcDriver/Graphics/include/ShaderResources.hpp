@@ -547,7 +547,8 @@ private:
     void forgetDeferredInputs();
     void release() noexcept;
     void prepareAddressBindings(std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots);
-    VkDescriptorBufferInfo descriptor(Allocation& allocation);
+    VkDescriptorBufferInfo descriptor(Allocation& allocation) { return descriptor(allocation, allocation.adjustment); }
+    VkDescriptorBufferInfo descriptor(const Allocation& allocation, std::uint32_t& adjustment) const;
     VkDescriptorBufferInfo wholeDwordRange(VkDescriptorBufferInfo info) const;
     void noteReusable();
     void reportDescriptorCaches() const;

@@ -112,14 +112,7 @@ std::span<const VkDynamicState> PipelineLibraryDynamicStates() {
     return dynamicStates;
 }
 
-bool DescriptorHeapPipelineInfo(const VkGraphicsPipelineCreateInfo& info) {
-    for (auto* next = static_cast<const VkBaseInStructure*>(info.pNext); next != nullptr; next = next->pNext) {
-        if (next->sType == VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR) return (reinterpret_cast<const VkPipelineCreateFlags2CreateInfoKHR*>(next)->flags & VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT) != 0;
-    }
-    return false;
-}
-
-VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys, std::shared_ptr<OptimizedPipeline>* optimized, bool partsOnly, std::span<VkShaderModule> modules) {
+VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPipelineCreateInfo& info, const VkPipelineRenderingCreateInfoKHR& rendering, const VkPipelineLayoutCreateInfo& layout, const PipelineLibraryKeys& keys, bool descriptorHeap, std::shared_ptr<OptimizedPipeline>* optimized, bool partsOnly, std::span<VkShaderModule> modules) {
     Require(info.renderPass == VK_NULL_HANDLE && info.pDynamicState != nullptr, "pipeline library parts need dynamic rendering and the library dynamic states");
     const bool split = (layout.flags & VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT) != 0;
     Require(!split || ((layout.setLayoutCount == 2u || layout.setLayoutCount == 3u) && layout.pSetLayouts != nullptr && ((keys.preRasterizationSets | keys.fragmentSets) & ~((1u << layout.setLayoutCount) - 1u)) == 0u), "split pipeline library layout requires two or three descriptor set slots and a valid mask");
@@ -156,7 +149,6 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &info, nullptr, &handle), "vkCreatePipelineLayout library");
         return device.layouts.emplace(key, handle).first->second;
     };
-    const bool descriptorHeap = DescriptorHeapPipelineInfo(info);
     const std::array<std::byte, 1> memoryMarker{std::byte{descriptorHeap ? std::uint8_t{2} : std::uint8_t{0}}};
     const Key memoryKey(memoryMarker.begin(), memoryMarker.end());
     const auto fullLayout = descriptorHeap ? VkPipelineLayout{VK_NULL_HANDLE} : layoutFor(Combined(keys.layout, memoryKey), std::nullopt);
@@ -208,7 +200,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
         library.flags = flags[part];
         VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &library};
         create.flags = optimize ? VK_PIPELINE_CREATE_LIBRARY_BIT_KHR | VK_PIPELINE_CREATE_RETAIN_LINK_TIME_OPTIMIZATION_INFO_BIT_EXT : VK_PIPELINE_CREATE_LIBRARY_BIT_KHR;
-        VkPipelineCreateFlags2CreateInfoKHR partFlags{VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR, &library, static_cast<VkPipelineCreateFlags2KHR>(create.flags) | VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT};
+        auto partFlags = DescriptorHeapFlags(static_cast<VkPipelineCreateFlags2KHR>(create.flags), &library);
         create.pDynamicState = info.pDynamicState;
         create.layout = partLayouts[part];
         switch (flags[part]) {
@@ -289,7 +281,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
     VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
     create.flags = 0;
     create.layout = info.layout;
-    VkPipelineCreateFlags2CreateInfoKHR linkFlags{VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR, &linked, VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT};
+    auto linkFlags = DescriptorHeapFlags(0, &linked);
     if (descriptorHeap) {
         create.pNext = &linkFlags;
         create.flags = 0;
@@ -325,7 +317,7 @@ VkPipeline LinkPipelineFromLibraries(const Context& context, const VkGraphicsPip
             VkGraphicsPipelineCreateInfo create{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &linked};
             create.flags = VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT;
             create.layout = libraryLayout;
-            VkPipelineCreateFlags2CreateInfoKHR relinkFlags{VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR, &linked, static_cast<VkPipelineCreateFlags2KHR>(VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT) | VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT};
+            auto relinkFlags = DescriptorHeapFlags(static_cast<VkPipelineCreateFlags2KHR>(VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT), &linked);
             if (descriptorHeap) {
                 create.pNext = &relinkFlags;
                 create.flags = 0;

@@ -962,6 +962,7 @@ void forgetHeapBinding(VkCommandBuffer commands) {
 }
 
 void NoteHeapRecord(bool compute, bool heap) {
+    if (!pipelineStats()) return;
     heapRecords[heapRecordIndex(compute, heap)].fetch_add(1, std::memory_order_relaxed);
     reportHeapStatistics();
 }
@@ -1007,7 +1008,7 @@ void CmdBindDescriptorSets(const Context& context, VkCommandBuffer commands, VkP
                            std::uint32_t firstSet, std::uint32_t setCount, const VkDescriptorSet* sets, SetBindSite site) {
     context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, bindPoint, layout, firstSet, setCount,
                                                                                          sets, 0, nullptr);
-    setBinds[static_cast<std::size_t>(site)].fetch_add(1, std::memory_order_relaxed);
+    if (pipelineStats()) setBinds[static_cast<std::size_t>(site)].fetch_add(1, std::memory_order_relaxed);
     forgetHeapBinding(commands);
 }
 

@@ -11,6 +11,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 
 namespace AgcDriver::Graphics {
@@ -29,11 +30,8 @@ public:
     bool RequiresNonSeamlessCube() const;
     static void Validate(const Context& context, const GuestSamplerResource& descriptor);
     static bool ReadsOpaqueBlackBorder(const GuestSamplerResource& descriptor);
-    const std::array<std::uint32_t, 5>* CacheKey() const { return keyed ? &cacheKey : nullptr; }
-    void SetCacheKey(const std::array<std::uint32_t, 5>& key) {
-        cacheKey = key;
-        keyed = true;
-    }
+    const std::array<std::uint32_t, 5>* CacheKey() const { return cacheKey ? &*cacheKey : nullptr; }
+    void SetCacheKey(const std::array<std::uint32_t, 5>& key) { cacheKey = key; }
 
 private:
     void release() noexcept;
@@ -44,8 +42,7 @@ private:
     bool requiresFilterMinmax = false;
     bool opaqueBlackBorder = false;
     bool requiresNonSeamlessCube = false;
-    std::array<std::uint32_t, 5> cacheKey{};
-    bool keyed = false;
+    std::optional<std::array<std::uint32_t, 5>> cacheKey;
 };
 
 // One VkSampler per distinct S# (its 4 words plus the shader's depth-compare use and the

@@ -282,8 +282,7 @@ const PresentationPass::Target& PresentationPass::target(VkFormat format, VkImag
             mappingInfo.mappingCount = static_cast<std::uint32_t>(mappings.size());
             mappingInfo.pMappings = mappings.data();
             stages[1].pNext = &mappingInfo;
-            VkPipelineCreateFlags2CreateInfoKHR heapFlags{VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR};
-            heapFlags.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
+            auto heapFlags = Graphics::DescriptorHeapFlags();
             pipelineInfo.pNext = &heapFlags;
             pipelineInfo.layout = VK_NULL_HANDLE;
             Graphics::Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, context.pipelineCache, 1, &pipelineInfo, nullptr, &created.heapPipeline), "vkCreateGraphicsPipelines presentation pass heap");

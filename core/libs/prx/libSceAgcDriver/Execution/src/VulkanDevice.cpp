@@ -262,8 +262,7 @@ const char* ComputePipelineDumpDirectory() { return std::getenv("APS5_DUMP_COMPU
 #endif
 
 void CreateComputeHeapPipeline(VkDevice device, PFN_vkCreateComputePipelines create, VkPipelineCache cache, VkShaderModule module, VkPipelineCreateFlags flags, VkPipelineShaderStageCreateFlags stageFlags, const VkSpecializationInfo* specialization, std::uint32_t subgroupSize, std::span<const VkDescriptorSetAndBindingMappingEXT> mappings, VkPipeline* pipeline, Graphics::PipelineCacheSynchronization* synchronization) {
-    VkPipelineCreateFlags2CreateInfoKHR flags2{VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR};
-    flags2.flags = static_cast<VkPipelineCreateFlags2KHR>(flags) | VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
+    auto flags2 = Graphics::DescriptorHeapFlags(static_cast<VkPipelineCreateFlags2KHR>(flags));
     VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO, &flags2};
     info.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     info.stage.flags = stageFlags;
@@ -761,10 +760,7 @@ struct VulkanDevice::State {
         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         write.pBufferInfo = &described;
         DeviceFunction<PFN_vkUpdateDescriptorSets>("vkUpdateDescriptorSets")(device, 1, &write, 0, nullptr);
-        if (context.descriptorHeap) {
-            const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, memory->buffer->Handle()};
-            memory->address = DeviceFunction<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(device, &addressInfo);
-        }
+        if (context.descriptorHeap) memory->address = Graphics::BufferDeviceAddress(context, memory->buffer->Handle());
         workgroupMemory = std::move(memory);
         return workgroupMemory;
     }

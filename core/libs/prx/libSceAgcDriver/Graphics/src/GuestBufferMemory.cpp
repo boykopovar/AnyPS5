@@ -574,8 +574,7 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     allocated = true;
     entry.memoryType = allocation.memoryTypeIndex;
     if (const auto result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, entry.buffer, entry.memory, 0); result != VK_SUCCESS) return failed("vkBindBufferMemory", result);
-    const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, entry.buffer};
-    entry.address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    entry.address = BufferDeviceAddress(context, entry.buffer);
     if (entry.address == 0) return failed("vkGetBufferDeviceAddressKHR", VK_ERROR_UNKNOWN);
     return nullptr;
 }
@@ -772,10 +771,9 @@ const char* createChunkedDmaBufImport(const Context& context, HostImport& entry,
         failure = result;
         return "vkBindBufferMemory";
     }
-    const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
     entry.buffer = buffer;
     entry.memory = VK_NULL_HANDLE;
-    entry.address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    entry.address = BufferDeviceAddress(context, buffer);
     entry.chunk = std::move(chunk);
     entry.dmaBuf = true;
     return nullptr;
@@ -864,8 +862,7 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
     context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     if (bound != VK_SUCCESS) fail("vkQueueBindSparse", bound);
     if (waited != VK_SUCCESS) fail("vkWaitForFences", waited);
-    const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
-    const auto address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    const auto address = BufferDeviceAddress(context, buffer);
     if (address == 0) fail("vkGetBufferDeviceAddressKHR", VK_ERROR_UNKNOWN);
     entry.buffer = buffer;
     entry.memory = VK_NULL_HANDLE;
@@ -3105,6 +3102,13 @@ std::vector<std::pair<std::size_t, std::uint64_t>> refreshHeapRuns(const GuestBu
     return checked;
 }
 
+void refreshWritableMirrors(const GuestBufferMemory::AddressSpace& space, std::vector<RefreshBlock>& blocks) {
+    for (const auto index : space.writableMirrors) {
+        const auto& region = space.base[index];
+        if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
+    }
+}
+
 bool heapMirrorWatched(ImageMirror& mirror) {
     const auto serial = GuestMemory::UnwatchSerial();
     if (mirror.watchedSerial.load(std::memory_order_relaxed) == serial) return true;
@@ -4449,10 +4453,7 @@ void GuestBufferMemory::AcquireRegistered() {
             // before any of them is dereferenced.
             served = true;
             mirrored = space->mirrored;
-            for (const auto index : space->writableMirrors) {
-                const auto& region = space->base[index];
-                if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
-            }
+            refreshWritableMirrors(*space, blocks);
             lap(timing.mirrorsUs, at);
         }
     }
@@ -4947,10 +4948,6 @@ std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
 
 namespace {
 
-bool epochMirrors() {
-    return DrawPipelineEnabled();
-}
-
 void noteEpochMirrors(bool reused, const GuestBufferMemory::AddressSpace& space) {
     static std::atomic<std::uint64_t> reuses{0}, refreshes{0}, compared{0}, differing{0};
     static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
@@ -5004,15 +5001,12 @@ bool GuestBufferMemory::RetakeSpace() {
     std::vector<RefreshBlock> blocks;
     const auto epoch = GuestMemory::CollectEpoch();
     const auto proof = GuestMemory::ProofSerial();
-    const bool reuse = epochMirrors() && epoch != 0 && space->refreshedEpoch.load(std::memory_order_relaxed) == epoch && space->refreshedProof.load(std::memory_order_relaxed) == proof;
+    const bool reuse = DrawPipelineEnabled() && epoch != 0 && space->refreshedEpoch.load(std::memory_order_relaxed) == epoch && space->refreshedProof.load(std::memory_order_relaxed) == proof;
     if (reuse) {
         noteEpochMirrors(true, *space);
     } else {
-        for (const auto index : space->writableMirrors) {
-            const auto& region = space->base[index];
-            if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
-        }
-        if (epochMirrors()) noteEpochMirrors(false, *space);
+        refreshWritableMirrors(*space, blocks);
+        if (DrawPipelineEnabled()) noteEpochMirrors(false, *space);
     }
     const auto checked = refreshHeapRuns(*space, blocks);
     compareBlocks(blocks);

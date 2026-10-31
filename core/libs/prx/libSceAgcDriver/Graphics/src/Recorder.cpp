@@ -2456,15 +2456,14 @@ void Recorder::dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, 
         std::uint32_t phase;
     } parameters{sampleCounter->DeviceAddress(), sampleCounter->DeviceAddress() + DumpListOffset, firstDump, dumps, firstSegment, lastSegment, 0u};
     static_assert(sizeof(parameters) == SampleDumpPushBytes);
-    const auto push = [&](VkCommandBuffer target, VkPipelineLayout layout, VkShaderStageFlags stages, std::uint32_t offset, std::uint32_t size, const void* values) { CmdPushConstants(context, target, layout, stages, offset, size, values); };
     const auto dispatch = function(cmdDispatch, "vkCmdDispatch");
-    push(commands, dumpLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes, &parameters);
+    CmdPushConstants(context, commands, dumpLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes, &parameters);
     dispatch(commands, 1, 1, 1);
     if (dumps == 0) return;
     const auto publish = [&](std::uint32_t phase) {
         recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
         parameters.phase = phase;
-        push(commands, dumpLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes, &parameters);
+        CmdPushConstants(context, commands, dumpLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes, &parameters);
         dispatch(commands, 1, 1, 1);
     };
     publish(1u);
@@ -2507,7 +2506,6 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
     const auto commands = batch.commands;
     const auto copy = function(cmdCopyQueryPoolResults, "vkCmdCopyQueryPoolResults");
     const auto bind = function(cmdBindPipeline, "vkCmdBindPipeline");
-    const auto push = [&](VkCommandBuffer target, VkPipelineLayout layout, VkShaderStageFlags stages, std::uint32_t offset, std::uint32_t size, const void* values) { CmdPushConstants(context, target, layout, stages, offset, size, values); };
     const auto dispatch = function(cmdDispatch, "vkCmdDispatch");
     std::size_t done = 0;
     do {
@@ -2529,13 +2527,13 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
             std::uint32_t store;
         } parameters{sampleCounter->DeviceAddress(), target, count, last && target != 0 ? 1u : 0u};
         static_assert(sizeof(parameters) == SampleCounterPushBytes);
-        push(commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
+        CmdPushConstants(context, commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
         dispatch(commands, 1, 1, 1);
         if (parameters.store == 1u) {
             const auto publish = [&](std::uint32_t store) {
                 recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
                 parameters.store = store;
-                push(commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
+                CmdPushConstants(context, commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
                 dispatch(commands, 1, 1, 1);
             };
             publish(3u);

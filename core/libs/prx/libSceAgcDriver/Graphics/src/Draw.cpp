@@ -197,8 +197,7 @@ void PreparePixelFunctionLds(const Context& context, VkCommandBuffer commands, s
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, pool.buffer, pool.memory, 0), "vkBindBufferMemory pixel function LDS");
         pool.bytes = bytes;
         if (addressed) {
-            const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, pool.buffer};
-            pool.address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+            pool.address = BufferDeviceAddress(context, pool.buffer);
         }
         Check(context.Function<PFN_vkMapMemory>("vkMapMemory")(context.device, pool.memory, 0, 16, 0, reinterpret_cast<void**>(&pool.header)), "vkMapMemory pixel function LDS");
         pool.header[0] = 0u;
@@ -297,8 +296,7 @@ void PrepareMeshWindow(const Context& context) {
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, pool.buffer, pool.memory, 0), "vkBindBufferMemory mesh window");
         pool.bytes = bytes;
         if (addressed) {
-            const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, pool.buffer};
-            pool.address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+            pool.address = BufferDeviceAddress(context, pool.buffer);
         }
         const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1u};
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -2609,8 +2607,9 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         record.pipeline->Begin(commands, *record.framebuffer, state.renderExtent, state);
     }
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
-    NoteHeapRecord(false, record.pipeline->DescriptorHeap());
-    if (record.pipeline->DescriptorHeap()) {
+    const bool heapPipeline = record.pipeline->DescriptorHeap();
+    NoteHeapRecord(false, heapPipeline);
+    if (heapPipeline) {
         resources.BindDescriptorHeaps(commands);
         NoteEmptyResourceSet();
     } else if (drawBindings != nullptr) {
@@ -2623,8 +2622,8 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         Require(!resources.HeapStage(), "a GPU-mode draw needs a VK_EXT_descriptor_heap pipeline");
         resources.Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, record.pipeline->Layout());
     }
-    if (!record.pipeline->DescriptorHeap() && std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
-    if (!record.pipeline->DescriptorHeap() && UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
+    if (!heapPipeline && std::ranges::any_of(shaders, [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->functionLdsBuffer; })) BindPixelFunctionLds(context, commands, record.pipeline->Layout());
+    if (!heapPipeline && UsesMeshWindow(shaders)) BindMeshWindow(context, commands, record.pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*record.pipeline, commands, state, draw, shaders, resources, record.pushBytes, record.pushStages, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty(), drawBindings.get());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");
@@ -2964,7 +2963,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     }
     if (state.quadList || StripPatches(state, shaders)) recipeOut = nullptr;
     if (context.recorder != nullptr) context.recorder->BoundKeptBytes();
-    if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program != nullptr && shader.program->gpuResolvedImages; })) recipeOut = nullptr;
+    if (AnyHeapShader(shaders)) recipeOut = nullptr;
     auto& timing = prepared.timing.emplace("Graphics.Draw");
     // APS5_PROFILE_DRAW prints the time of each phase of the draw (microseconds) and the [draws] totals.
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -3562,12 +3561,13 @@ void recordPreparedDraw(const Context& context, const State& state, const Pm4::D
     APS5_LOG_OUT_DEBUG("Beginning pipeline renderExtent=%ux%u", state.renderExtent.width, state.renderExtent.height);
     pipeline->Begin(commands, *framebuffer, state.renderExtent, state);
     APS5_LOG_CHARS_OUT_DEBUG("Pipeline Begin OK");
-    if (pipeline->DescriptorHeap()) {
+    const bool heapPipeline = pipeline->DescriptorHeap();
+    if (heapPipeline) {
         resources->BindDescriptorHeaps(commands);
         NoteEmptyResourceSet();
     } else resources->Bind(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline->Layout());
-    if (pixelLdsSubgroup != 0u && !pipeline->DescriptorHeap()) BindPixelFunctionLds(context, commands, pipeline->Layout());
-    if (!pipeline->DescriptorHeap() && UsesMeshWindow(shaders)) BindMeshWindow(context, commands, pipeline->Layout());
+    if (pixelLdsSubgroup != 0u && !heapPipeline) BindPixelFunctionLds(context, commands, pipeline->Layout());
+    if (!heapPipeline && UsesMeshWindow(shaders)) BindMeshWindow(context, commands, pipeline->Layout());
     APS5_LOG_CHARS_OUT_DEBUG("Resources bound");
     pushDrawConstants(*pipeline, commands, state, draw, shaders, *resources, nullptr, 0, meshArguments != nullptr ? meshArguments->DeviceAddress() : 0, !inputs.restartTable.empty());
     APS5_LOG_CHARS_OUT_DEBUG("Push constants recorded");

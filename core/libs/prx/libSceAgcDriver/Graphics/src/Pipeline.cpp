@@ -343,10 +343,10 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, shader.pushConstantOffset);
         if (resources.split) {
             auto& sets = shader.stage == Stage::Fragment ? keys.fragmentSets : keys.preRasterizationSets;
-            if (shader.program->gpuResolvedImages) {
-                sets |= 2u;
+            if (HeapShader(shader)) {
+                sets |= HeapSetBit;
                 for (const auto& binding : shader.program->bindings) {
-                    if (binding.descriptorSet == 0u) sets |= 1u;
+                    if (binding.descriptorSet == 0u) sets |= MainSetBit;
                 }
             } else {
                 for (const auto& binding : shader.program->bindings) {
@@ -356,14 +356,14 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
             }
         }
     }
-    if (resources.split && std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program->gpuResolvedImages; })) {
-        keys.preRasterizationSets |= 2u;
-        keys.fragmentSets |= 2u;
+    if (resources.split && AnyHeapShader(shaders)) {
+        keys.preRasterizationSets |= HeapSetBit;
+        keys.fragmentSets |= HeapSetBit;
     }
     if (resources.split) {
         const auto unused = 3u & ~(keys.preRasterizationSets | keys.fragmentSets);
-        keys.preRasterizationSets |= unused & 1u;
-        keys.fragmentSets |= unused & 2u;
+        keys.preRasterizationSets |= unused & MainSetBit;
+        keys.fragmentSets |= unused & HeapSetBit;
     }
     for (const auto& binding : input.bindings) {
         appendKey(keys.vertexInput, binding.binding);
@@ -440,15 +440,15 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
         appendKey(key, ~0u);
         appendKey(key, sets);
         appendKey(key, pushStagesOf(context));
-        if ((sets & 1u) != 0u) {
+        if ((sets & MainSetBit) != 0u) {
             appendKey(key, resources.mainKey.size());
             for (const auto word : resources.mainKey) appendKey(key, word);
         }
-        if ((sets & 2u) != 0u) {
+        if ((sets & HeapSetBit) != 0u) {
             appendKey(key, resources.fragmentKey.size());
             for (const auto word : resources.fragmentKey) appendKey(key, word);
         }
-        if ((sets & 4u) != 0u) appendKey(key, 0x44415441u);
+        if ((sets & DataSetBit) != 0u) appendKey(key, DataSetKeyTag);
     };
     splitKey(keys.layout, 3u);
     splitKey(keys.preRasterizationLayout, keys.preRasterizationSets);
@@ -514,16 +514,16 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         specializations.reserve(shaders.size());
         std::vector<std::vector<VkDescriptorSetAndBindingMappingEXT>> heapMappings(shaders.size());
         std::vector<VkShaderDescriptorSetAndBindingMappingInfoEXT> heapMappingInfos(shaders.size(), VkShaderDescriptorSetAndBindingMappingInfoEXT{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT});
-        if (context.descriptorHeap && DescriptorHeapEnabled() && std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program->gpuResolvedImages; })) {
+        if (context.descriptorHeap && DescriptorHeapEnabled() && AnyHeapShader(shaders)) {
             auto& heap = BindlessHeap::For(context);
             const bool rooted = std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program->dataAddressPush; });
             descriptorHeap = std::all_of(shaders.begin(), shaders.end(), [&](const CompiledShader& shader) {
                 const auto index = static_cast<std::size_t>(&shader - shaders.data());
-                const bool generatedFault = !shader.program->gpuResolvedImages && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer; });
+                const bool generatedFault = !HeapShader(shader) && std::any_of(shader.program->bindings.begin(), shader.program->bindings.end(), [](const auto& binding) { return binding.role == ShaderRecompiler::DescriptorRole::FaultBuffer; });
                 return heap.DescriptorHeapMappings(std::span<const std::uint32_t>(shader.program->spirv.data(), shader.program->spirv.size()), heapMappings[index], ~0u, shader.program->dataAddressPush, generatedFault && rooted, shader.program->functionLdsBuffer, shader.program->meshWindowBuffer);
             });
         }
-        Require(descriptorHeap || std::none_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.program->gpuResolvedImages; }), "a pipeline with GPU-mode stages does not map onto VK_EXT_descriptor_heap");
+        Require(descriptorHeap || !AnyHeapShader(shaders), "a pipeline with GPU-mode stages does not map onto VK_EXT_descriptor_heap");
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT meshSubgroup{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT, nullptr, 32u};
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
@@ -756,10 +756,9 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         pipelineInfo.layout = layout;
         pipelineInfo.renderPass = renderPass;
         if (dynamicRendering) pipelineInfo.pNext = &rendering;
-        VkPipelineCreateFlags2CreateInfoKHR heapFlags{VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR};
+        VkPipelineCreateFlags2CreateInfoKHR heapFlags{};
         if (descriptorHeap) {
-            heapFlags.flags = static_cast<VkPipelineCreateFlags2KHR>(pipelineInfo.flags) | VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
-            heapFlags.pNext = pipelineInfo.pNext;
+            heapFlags = DescriptorHeapFlags(static_cast<VkPipelineCreateFlags2KHR>(pipelineInfo.flags), pipelineInfo.pNext);
             pipelineInfo.pNext = &heapFlags;
             pipelineInfo.flags = 0;
             pipelineInfo.layout = VK_NULL_HANDLE;
@@ -771,14 +770,14 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             return;
         }
         if (prebuilding) {
-            static_cast<void>(LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, true, _modules));
+            static_cast<void>(LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, descriptorHeap, &optimized, true, _modules));
             for (const auto module : _modules) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
             _modules.clear();
             prebuilt = true;
             return;
         }
         const VkPipelineCache pipelineCache = state.stages.tessellation && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
-        if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, false, _modules);
+        if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, descriptorHeap, &optimized, false, _modules);
         else {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
             Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, pipelineCache, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateGraphicsPipelines");
