@@ -77,6 +77,7 @@ int APS5_VABI posix_spawn_file_actions_addclose_nid_postfix(PosixSpawnFileAction
 int APS5_VABI posix_spawn_nid_postfix(std::int32_t* processId, const char* path, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment);
 int APS5_VABI posix_spawnp_nid_postfix(std::int32_t* processId, const char* file, PosixSpawnFileActions* const* actions, PosixSpawnAttributes* const* attributes, char* const* arguments, char* const* environment);
 void APS5_VABI makecontext_nid_postfix(UserUcontext* context, void (APS5_VABI* start)(), int count, ...);
+int APS5_VABI __kernel_rem_pio2_nid_postfix(double* x, double* y, int e0, int nx, int prec);
 
 [[noreturn]] void APS5_VABI verrc_nid_postfix(int status, int code, const char* format, VaList* args);
 [[noreturn]] void APS5_VABI verr_nid_postfix(int status, const char* format, VaList* args);
