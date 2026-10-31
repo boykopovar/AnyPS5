@@ -1380,8 +1380,10 @@ static int CopyIovecs(const KernelIovec* iov, int iovcnt, std::vector<KernelIove
 #elif defined(__linux__)
     iovec local{vectors.data(), bytes};
     iovec remote{const_cast<KernelIovec*>(iov), bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("iovec: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     if (copied < 0 || static_cast<std::size_t>(copied) != bytes) return SceErrorFromErrno(GUEST_EFAULT);
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;

@@ -91,8 +91,10 @@ bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes) {
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
+    const int saved = errno;
     const auto copied = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("guest path: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
@@ -839,9 +841,13 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
 #elif defined(__linux__)
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
+    const int saved = errno;
     const ssize_t copied = ::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0) {
-        if (errno == EFAULT) return false;
+        if (errno == EFAULT) {
+            errno = saved;
+            return false;
+        }
         throw std::runtime_error("GuestCopyOut: process_vm_writev failed with errno " + std::to_string(errno));
     }
     return static_cast<std::size_t>(copied) == bytes;

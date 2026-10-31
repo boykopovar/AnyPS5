@@ -1666,9 +1666,12 @@ static bool GuestPagesAllow(std::uintptr_t start, std::size_t bytes, DWORD allow
     return true;
 }
 #elif defined(__linux__)
-static bool Transferred(ssize_t copied, std::size_t bytes, const char* call) {
+static bool Transferred(ssize_t copied, std::size_t bytes, const char* call, int saved) {
     if (copied >= 0) return static_cast<std::size_t>(copied) == bytes;
-    if (errno == EFAULT) return false;
+    if (errno == EFAULT) {
+        errno = saved;
+        return false;
+    }
     throw std::runtime_error(std::string("recvmsg: ") + call + " failed with errno " + std::to_string(errno));
 }
 #endif
@@ -1688,7 +1691,8 @@ static bool ReadGuest(void* destination, const void* source, std::size_t bytes) 
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
-    return Transferred(::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0), bytes, "process_vm_readv");
+    const int saved = errno;
+    return Transferred(::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0), bytes, "process_vm_readv", saved);
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
     return ::mach_vm_read_overwrite(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(source), bytes,
@@ -1711,7 +1715,8 @@ static bool WriteGuest(void* destination, const void* source, std::size_t bytes)
 #elif defined(__linux__)
     iovec local{const_cast<void*>(source), bytes};
     iovec remote{destination, bytes};
-    return Transferred(::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0), bytes, "process_vm_writev");
+    const int saved = errno;
+    return Transferred(::process_vm_writev(::getpid(), &local, 1, &remote, 1, 0), bytes, "process_vm_writev", saved);
 #elif defined(__APPLE__)
     return ::mach_vm_write(::mach_task_self(), reinterpret_cast<mach_vm_address_t>(destination),
         reinterpret_cast<vm_offset_t>(source), static_cast<mach_msg_type_number_t>(bytes)) == KERN_SUCCESS;
