@@ -1381,13 +1381,13 @@ int main(int argc, char** argv) {
                 std::printf("skipped, no usable Vulkan device: %s\n", error.what());
                 return VulkanTestSkipped;
             }
-            if (!heapDevice->GraphicsContext().descriptorHeap) {
+            if (!heapDevice->graphicsContext().descriptorHeap) {
                 std::puts("skipped, the device has no VK_EXT_descriptor_heap");
                 return VulkanTestSkipped;
             }
             bool tested = false;
             {
-                const auto context = heapDevice->GraphicsContext();
+                const auto context = heapDevice->graphicsContext();
                 {
                     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
                     heapHeldReleaseTests(context);

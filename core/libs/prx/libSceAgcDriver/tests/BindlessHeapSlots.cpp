@@ -346,7 +346,7 @@ int main(int argc, char** argv) {
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
             return VulkanTestSkipped;
         }
-        if (!device->GraphicsContext().descriptorHeap) {
+        if (!device->graphicsContext().descriptorHeap) {
             std::printf("skipped, the device has no VK_EXT_descriptor_heap\n");
             return VulkanTestSkipped;
         }
@@ -357,7 +357,7 @@ int main(int argc, char** argv) {
 #endif
         if (comesBack) {
             {
-                const auto context = device->GraphicsContext();
+                const auto context = device->graphicsContext();
                 const PlaceholderImages placeholders(context);
                 const auto sampled = placeholders.View(Abi::FirstImageBinding);
                 const auto storage = placeholders.View(Abi::FirstStorageImageBinding);
@@ -377,7 +377,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         {
-            const auto context = device->GraphicsContext();
+            const auto context = device->graphicsContext();
             const PlaceholderImages placeholders(context);
             textureSlots(context, placeholders.View(Abi::FirstImageBinding));
             samplerSlots(context);

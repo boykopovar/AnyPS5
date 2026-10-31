@@ -420,7 +420,7 @@ void NoRecords(Scene& scene) {
 constexpr std::size_t MultisampleTargetOffset = 32768;
 
 bool MultisampleTargetsAvailable(Scene& scene) {
-    const auto context = scene.device.GraphicsContext();
+    const auto context = scene.device.graphicsContext();
     if (AgcDriver::GuestMemory::WriteWatched() && (context.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) != 0) return true;
     Require(std::getenv("ANYPS5_REQUIRE_VULKAN") == nullptr, "address draw space reuse: the multisample target cases require write tracking and 4x color targets");
     std::puts("skipped, the multisample target cases require write tracking and 4x color targets");
@@ -428,7 +428,7 @@ bool MultisampleTargetsAvailable(Scene& scene) {
 }
 
 void PlaceMultisampleTarget(Scene& scene, std::uint64_t address) {
-    const auto context = scene.device.GraphicsContext();
+    const auto context = scene.device.graphicsContext();
     AgcDriver::Graphics::ColorTarget target{};
     target.address = address;
     target.surfaceAddress = address;
@@ -446,7 +446,7 @@ void PlaceMultisampleTarget(Scene& scene, std::uint64_t address) {
 }
 
 void RetireMultisampleTargets(Scene& scene) {
-    const auto context = scene.device.GraphicsContext();
+    const auto context = scene.device.graphicsContext();
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     scene.device.WaitIdle();
     AgcDriver::Graphics::ClearMultisampleTargets(context.device);

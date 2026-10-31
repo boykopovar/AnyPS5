@@ -87,7 +87,7 @@ std::map<std::uint64_t, HeapSlotted> heapSlotsByAddress;
 std::shared_ptr<StorageTexture> heapSlotted(AgcDriver::VulkanDevice& device, std::uint64_t address, std::shared_ptr<StorageTexture> image) {
     if (!heapSlots || image == nullptr) return image;
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    auto& heap = AgcDriver::Graphics::BindlessHeap::For(device.GraphicsContext());
+    auto& heap = AgcDriver::Graphics::BindlessHeap::For(device.graphicsContext());
     const auto slot = heap.StorageSlot(ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding, image.get(), image->StorageView(0, false));
     Require(slot.has_value(), "the stored image took no GPU heap storage slot");
     heapSlotsByAddress.try_emplace(address, HeapSlotted{*slot, heap.SlotGeneration(*slot)});
@@ -97,7 +97,7 @@ std::shared_ptr<StorageTexture> heapSlotted(AgcDriver::VulkanDevice& device, std
 bool heapSlotFreed(AgcDriver::VulkanDevice& device, std::uint64_t address) {
     const auto found = heapSlotsByAddress.find(address);
     Require(found != heapSlotsByAddress.end(), "no GPU heap slot was recorded for the surface");
-    return AgcDriver::Graphics::BindlessHeap::For(device.GraphicsContext()).SlotGeneration(found->second.slot) != found->second.generation;
+    return AgcDriver::Graphics::BindlessHeap::For(device.graphicsContext()).SlotGeneration(found->second.slot) != found->second.generation;
 }
 
 std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint64_t base, std::uint32_t surface, bool flush = true) {
@@ -120,7 +120,7 @@ int RetainedBatch() {
 #endif
     const auto device = OpenVulkanTestDevice();
     if (!device) return VulkanTestSkipped;
-    if (heapSlots && !device->GraphicsContext().descriptorHeap) {
+    if (heapSlots && !device->graphicsContext().descriptorHeap) {
         std::puts("skipped, the device has no VK_EXT_descriptor_heap");
         return VulkanTestSkipped;
     }
@@ -185,7 +185,7 @@ int main(int argc, char** argv) {
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (heapSlots && !device->GraphicsContext().descriptorHeap) {
+        if (heapSlots && !device->graphicsContext().descriptorHeap) {
             std::puts("skipped, the device has no VK_EXT_descriptor_heap");
             return VulkanTestSkipped;
         }

@@ -157,6 +157,27 @@ std::optional<std::uint32_t> ActiveValidationLayerVersion(PFN_vkGetInstanceProcA
     return std::nullopt;
 }
 
+constexpr std::uint32_t MinHeapValidationLayerVersion = VK_MAKE_API_VERSION(0, 1, 4, 363);
+constexpr std::uint32_t HeapDataUniformDwordCap = 16384u;
+
+bool DescriptorHeapAvailable(const std::vector<VkExtensionProperties>& availableExtensions, PFN_vkGetInstanceProcAddr instanceProc) {
+    if (!Graphics::GpuHeapEnabled()) return false;
+    const auto heapExtension = std::find_if(availableExtensions.begin(), availableExtensions.end(), [](const auto& item) { return std::strcmp(item.extensionName, VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME) == 0; });
+    if (heapExtension == availableExtensions.end()) return false;
+    if (heapExtension->specVersion < VK_EXT_DESCRIPTOR_HEAP_SPEC_VERSION) {
+        std::fprintf(stderr, "[gpu-heap] the driver's VK_EXT_descriptor_heap is revision %u, older than the released revision %u, so the GPU heap stays off\n",
+                     heapExtension->specVersion, static_cast<unsigned>(VK_EXT_DESCRIPTOR_HEAP_SPEC_VERSION));
+        return false;
+    }
+    const auto validationVersion = ActiveValidationLayerVersion(instanceProc);
+    if (validationVersion.has_value() && *validationVersion < MinHeapValidationLayerVersion) {
+        std::fprintf(stderr, "[gpu-heap] VK_LAYER_KHRONOS_validation %u.%u.%u predates its descriptor heap rules (1.4.363 is the oldest layer that validates heap push data), so the GPU heap stays off\n",
+                     VK_API_VERSION_MAJOR(*validationVersion), VK_API_VERSION_MINOR(*validationVersion), VK_API_VERSION_PATCH(*validationVersion));
+        return false;
+    }
+    return true;
+}
+
 
 void check(VkResult result, const char* operation) {
     if (result == VK_ERROR_DEVICE_LOST) Graphics::ReportDeviceLost();
@@ -1968,20 +1989,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         }
     }
     VkPhysicalDeviceDescriptorHeapFeaturesEXT descriptorHeapFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_HEAP_FEATURES_EXT};
-    const auto heapExtension = std::find_if(availableExtensions.begin(), availableExtensions.end(), [](const auto& item) { return std::strcmp(item.extensionName, VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME) == 0; });
-    bool releasedDescriptorHeap = heapExtension != availableExtensions.end() && heapExtension->specVersion >= VK_EXT_DESCRIPTOR_HEAP_SPEC_VERSION;
-    if (Graphics::GpuHeapEnabled() && heapExtension != availableExtensions.end() && !releasedDescriptorHeap)
-        std::fprintf(stderr, "[gpu-heap] the driver's VK_EXT_descriptor_heap is revision %u, older than the released revision %u, so the GPU heap stays off\n",
-                     heapExtension->specVersion, static_cast<unsigned>(VK_EXT_DESCRIPTOR_HEAP_SPEC_VERSION));
-    if (Graphics::GpuHeapEnabled() && releasedDescriptorHeap && hasExtension(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME)) {
-        const auto validationVersion = ActiveValidationLayerVersion(state->instanceProc);
-        if (validationVersion.has_value() && *validationVersion < VK_MAKE_API_VERSION(0, 1, 4, 363)) {
-            std::fprintf(stderr, "[gpu-heap] VK_LAYER_KHRONOS_validation %u.%u.%u predates its descriptor heap rules (1.4.363 is the oldest layer that validates heap push data), so the GPU heap stays off\n",
-                         VK_API_VERSION_MAJOR(*validationVersion), VK_API_VERSION_MINOR(*validationVersion), VK_API_VERSION_PATCH(*validationVersion));
-            releasedDescriptorHeap = false;
-        }
-    }
-    if (Graphics::GpuHeapEnabled() && releasedDescriptorHeap && hasExtension(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME) && hasExtension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME) && hasExtension(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME) && hasExtension(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME) && hasExtension(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME)) {
+    if (DescriptorHeapAvailable(availableExtensions, state->instanceProc) && hasExtension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME) && hasExtension(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME) && hasExtension(VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME) && hasExtension(VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME)) {
         VkPhysicalDeviceMaintenance5FeaturesKHR heapMaintenance5{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR, &descriptorHeapFeatures};
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &heapMaintenance5};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
@@ -1993,7 +2001,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             state->descriptorHeap = true;
             state->maintenance5 = true;
             if (Graphics::BindlessHeap::RingInResourceHeap(state->descriptorHeapProperties, state->properties.limits.minUniformBufferOffsetAlignment))
-                state->heapDataUniformDwords = std::min<std::uint32_t>(16384u, state->properties.limits.maxUniformBufferRange / 4u);
+                state->heapDataUniformDwords = std::min<std::uint32_t>(HeapDataUniformDwordCap, state->properties.limits.maxUniformBufferRange / 4u);
             deviceExtensions.push_back(VK_EXT_DESCRIPTOR_HEAP_EXTENSION_NAME);
             for (const char* required : {VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME}) {
                 if (std::find_if(deviceExtensions.begin(), deviceExtensions.end(), [&](const char* name) { return std::strcmp(name, required) == 0; }) == deviceExtensions.end()) deviceExtensions.push_back(required);
@@ -4301,10 +4309,15 @@ bool VulkanDevice::GraphicsPipelineLibraries() const {
     return state->graphicsPipelineLibrary;
 }
 
-Graphics::Context VulkanDevice::graphicsContext() const {
+const Graphics::Context& VulkanDevice::contextRef(std::optional<Graphics::Context>& scratch) const {
     static const bool noCache = std::getenv("APS5_NO_CONTEXT_CACHE") != nullptr;
     if (state->contextReady && !noCache) return state->context;
-    return buildContext();
+    return scratch.emplace(buildContext());
+}
+
+Graphics::Context VulkanDevice::graphicsContext() const {
+    std::optional<Graphics::Context> scratch;
+    return contextRef(scratch);
 }
 
 Graphics::Context VulkanDevice::buildContext() const {
@@ -4432,9 +4445,8 @@ VulkanDevice::IndirectDrawSupport VulkanDevice::DrawIndirectSupport() const {
 }
 
 std::optional<std::string> VulkanDevice::KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const {
-    static const bool noCache = std::getenv("APS5_NO_CONTEXT_CACHE") != nullptr;
-    if (state->contextReady && !noCache) return Graphics::KnownValidationFailure(state->context, shaders, graphics);
-    return Graphics::KnownValidationFailure(buildContext(), shaders, graphics);
+    std::optional<Graphics::Context> scratch;
+    return Graphics::KnownValidationFailure(contextRef(scratch), shaders, graphics);
 }
 
 void VulkanDevice::ColorMetadataPass(const Graphics::ColorMetadataPass& pass) {
@@ -5491,14 +5503,19 @@ void VulkanDevice::recordDispatch(RecordedDispatch& record) {
         recorder.Keep(std::move(memory));
     }
     if (record.pushStages != 0) {
-        auto pushed = *record.pushBytes;
-        resources.PatchDataAddresses(pushed, std::span<const Graphics::CompiledShader>(record.shader, 1), record.bindings.get());
+        std::array<std::byte, Graphics::PipelinePushConstantBytes> patchedBytes;
+        const std::byte* pushed = record.pushBytes->data();
+        if (resources.HeapStage() || record.objects->descriptorHeap) {
+            patchedBytes = *record.pushBytes;
+            resources.PatchDataAddresses(patchedBytes, std::span<const Graphics::CompiledShader>(record.shader, 1), record.bindings.get());
+            pushed = patchedBytes.data();
+        }
         if (record.objects->descriptorHeap) {
-            std::memcpy(pushed.data() + Graphics::ComputePushConstantBytes, &workgroupAddress, sizeof(workgroupAddress));
-            const VkPushDataInfoEXT push{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {pushed.data(), pushed.size()}};
+            std::memcpy(patchedBytes.data() + Graphics::ComputePushConstantBytes, &workgroupAddress, sizeof(workgroupAddress));
+            const VkPushDataInfoEXT push{VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT, nullptr, 0, {patchedBytes.data(), patchedBytes.size()}};
             context.Function<PFN_vkCmdPushDataEXT>("vkCmdPushDataEXT")(commands, &push);
         } else {
-            Graphics::CmdPushConstants(context, commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes, pushed.data());
+            Graphics::CmdPushConstants(context, commands, record.objects->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, Graphics::ComputePushConstantBytes, pushed);
         }
     }
     const auto gpuTiming = recorder.BeginGpuTiming(record.programAddress != 0 ? record.programAddress : record.shader->program->variantId);
@@ -5638,7 +5655,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
     objects->descriptorHeap = heapDevice && Graphics::BindlessHeap::For(context).DescriptorHeapMappings(spirv, heapMappings, workgroupAddressOffset, shader.dataAddressPush);
     require(!gpuMode || objects->descriptorHeap, "a GPU-mode compute stage does not map onto VK_EXT_descriptor_heap");
     const auto createPipelines = state->DeviceFunction<PFN_vkCreateComputePipelines>("vkCreateComputePipelines");
-    if (objects->descriptorHeap) CreateComputeHeapPipeline(state->device, createPipelines, context.pipelineCache, objects->module, computePipelineFlags(), stageFlags, specialization.Info(), subgroupSize, heapMappings, &objects->pipeline, context.pipelineCacheSynchronization);
+    if (objects->descriptorHeap) CreateComputeHeapPipeline(state->device, createPipelines, context.pipelineCache, objects->module, pipelineFlags, stageFlags, specialization.Info(), subgroupSize, heapMappings, &objects->pipeline, context.pipelineCacheSynchronization);
     else CreateComputePipeline(state->device, createPipelines, context.pipelineCache, objects->module, objects->layout, pipelineFlags, stageFlags, specialization.Info(), subgroupSize, &objects->pipeline, context.pipelineCacheSynchronization);
     objects->destroyModule(objects->device, objects->module, nullptr);
     objects->module = VK_NULL_HANDLE;

@@ -189,8 +189,8 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         localDevice->ComputeTarget((packet[4] & 0x8000u) != 0 ? 32u : 64u),
         {0, 0, 0, threadGroup != std::array<std::uint32_t, 3>{} ? 0u : 128u}
     };
-    constexpr std::size_t computeHeapKey = std::size_t{1} << 61u;
-    if (request.target.gpuResolvedImages && (HeapRefused() || HeapStageExcluded(ShaderRecompiler::ShaderStage::Compute) || HeapFragmentKnown(&snapshot, codeOffset | computeHeapKey) == std::optional(false))) request.target.gpuResolvedImages = false;
+    const std::size_t computeHeapKey = HeapFragmentKey(codeOffset, HeapKeyClass::Compute);
+    if (request.target.gpuResolvedImages && (HeapRefused() || HeapStageExcluded(ShaderRecompiler::ShaderStage::Compute) || HeapFragmentKnown(&snapshot, computeHeapKey) == std::optional(false))) request.target.gpuResolvedImages = false;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static double captureMs = 0, keyMs = 0, recompileMs = 0, deviceMs = 0;
     static std::uint64_t cacheHits = 0;
@@ -401,7 +401,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
             compiledResult = invocation.Materialize(*capture);
             if (compiledResult->gpuResolvedImages && !HeapStageMappable(*compiledResult, compiledResult->workgroupMemoryDwords != 0)) {
                 Graphics::NoteHeapFallback(Graphics::HeapFallback::DispatchUnmapped);
-                NoteHeapFragment(&snapshot, codeOffset | computeHeapKey, false);
+                NoteHeapFragment(&snapshot, computeHeapKey, false);
                 request.target.gpuResolvedImages = false;
                 invocation = InvocationFor(snapshot, codeOffset, request);
                 capture = shaderMemory->Capture(invocation);

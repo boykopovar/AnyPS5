@@ -834,7 +834,7 @@ int main() {
                 std::printf("skipped, the device has no descriptor heap\n");
                 return VulkanTestSkipped;
             }
-            const auto context = heapDevice->GraphicsContext();
+            const auto context = heapDevice->graphicsContext();
             Require(BindlessHeap::For(context).DescriptorHeapMode(), "the test device did not open the descriptor heap");
             residentPresentTests(context);
         }

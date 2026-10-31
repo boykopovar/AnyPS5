@@ -135,6 +135,8 @@ struct StageCapture {
     bool ring = false;
     std::shared_ptr<ShaderRecompiler::HeapStageWords> heapWords;
     std::shared_ptr<const std::vector<std::uint32_t>> heapReadWords;
+
+    bool Cacheable() const { return !direct || ring; }
 };
 
 struct RelocatableUserWord {
