@@ -307,6 +307,20 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertIn("Unobserved stubs 0", svg)
         self.assertNotIn("Commit", svg)
 
+    def test_table_links_each_commit_and_shows_the_stubs_declared_since_the_previous_day(self):
+        first, second = "a" * 40, "b" * 40
+        shaders = {"done": 1, "total": 1, "percent": 100.0}
+        points = [{"date": "2026-01-01", "commit": first, "libraries": {"done": 2, "total": 4, "percent": 50.0}, "shaders": shaders},
+                  {"date": "2026-01-02", "commit": second,
+                   "libraries": {"done": 2, "total": 4, "percent": 50.0, "unobserved": 8, "declared_total": 12}, "shaders": shaders}]
+        html = progress_history.page(points)
+        self.assertIn(f'<a href="{progress.commit_url(second)}">{second[:10]}</a></td><td>2/4</td><td>50.0%</td><td>8</td><td>12</td><td>+8</td>', html)
+        self.assertIn(f'{first[:10]}</a></td><td>2/4</td><td>50.0%</td><td>0</td><td>4</td><td></td>', html)
+        self.assertIn("<th>Declared since previous day</th>", html)
+        self.assertIn("points at the commit that added the stubs", html)
+        table = html[html.index("<table>"):]
+        self.assertLess(table.index(second[:10]), table.index(first[:10]))
+
     def test_axis_labels_fall_on_calendar_days_without_commits(self):
         start = date(2026, 8, 3).toordinal()
         skipped = {date(2026, 8, 10), date(2026, 8, 17), date(2026, 8, 31)}

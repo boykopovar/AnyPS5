@@ -234,10 +234,25 @@ def chart(points):
     return "\n".join(out)
 
 
+def declared(point):
+    return point["libraries"].get("declared_total", point["libraries"]["total"])
+
+
+def commit_cell(point):
+    sha = point.get("commit")
+    return f'<a href="{progress.commit_url(sha)}">{sha[:10]}</a>' if sha else ""
+
+
+def row(point, previous):
+    added = f"{declared(point) - declared(previous):+}" if previous else ""
+    return (f'<tr><td>{point["date"]}</td><td>{commit_cell(point)}</td>'
+            f'<td>{point["libraries"]["done"]}/{point["libraries"]["total"]}</td><td>{point["libraries"]["percent"]}%</td>'
+            f'<td>{point["libraries"].get("unobserved", 0)}</td><td>{declared(point)}</td><td>{added}</td>'
+            f'<td>{point["shaders"]["done"]}/{point["shaders"]["total"]}</td><td>{point["shaders"]["percent"]}%</td></tr>')
+
+
 def page(points):
-    rows = "\n".join(f'<tr><td>{p["date"]}</td>' + "".join(
-        f'<td>{p[name]["done"]}/{p[name]["total"]}</td><td>{p[name]["percent"]}%</td>' for name, _, _ in SERIES) + "</tr>"
-        for p in reversed(points))
+    rows = "\n".join(row(p, q) for p, q in reversed(list(zip(points, [None] + points))))
     return "\n".join([
         '<!DOCTYPE html>',
         '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -257,7 +272,13 @@ def page(points):
         f'<a href="{progress.SOURCE}/docs/dev/PROGRESS.md#observed-imports">observed manifests</a> have none, so every stub counts as observed and their '
         'counted figure is the declared one. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
         '<a href="progress.html">Back to the current progress</a>.</p>',
-        '<table><tr><th>Date</th>' + "".join(f'<th>{escape(label)}</th><th>%</th>' for _, label, _ in SERIES) + '</tr>',
+        '<p>The table lists, for each day, the commit measured, the library functions counted and the percentage, the unobserved '
+        'stubs, every function declared (implemented, observed and unobserved) and how many were declared since the previous day, '
+        'so a jump in the declared column points at the commit that added the stubs. Days before the observed manifests have '
+        'no unobserved stubs.</p>',
+        '<table><tr><th>Date</th><th>Commit</th>' + "".join(
+            f'<th>{escape(label)}</th><th>%</th>' + ('<th>Unobserved stubs</th><th>Declared</th><th>Declared since previous day</th>' if name == "libraries" else "")
+            for name, label, _ in SERIES) + '</tr>',
         rows,
         '</table>',
         '</body></html>',
