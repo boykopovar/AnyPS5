@@ -253,7 +253,7 @@ private:
 
 class Amd64OnlyConverter : public IAmd64OnlyConverter {
 public:
-    Amd64OnlyConverter(const Amd64OnlyTarget target, std::function<void(std::uint64_t, std::uint64_t)> progress) : _matcher(MakeAmd64OnlyInstructionMatcher(target)), progress(std::move(progress)) {}
+    Amd64OnlyConverter(const Amd64OnlyTarget target, std::function<void(std::uint64_t, std::uint64_t)> progress, const bool lowerBitPermutation) : _matcher(MakeAmd64OnlyInstructionMatcher(target, lowerBitPermutation)), progress(std::move(progress)) {}
 
     [[nodiscard]] ConvertResult Convert(
         std::vector<std::uint8_t> fileBytes,
@@ -524,8 +524,8 @@ ConvertResult Amd64OnlyConverter::Convert(
 
 }
 
-std::unique_ptr<IAmd64OnlyConverter> MakeAmd64OnlyConverter(const Amd64OnlyTarget target, std::function<void(std::uint64_t, std::uint64_t)> progress) {
-    return std::make_unique<Amd64OnlyConverter>(target, std::move(progress));
+std::unique_ptr<IAmd64OnlyConverter> MakeAmd64OnlyConverter(const Amd64OnlyTarget target, std::function<void(std::uint64_t, std::uint64_t)> progress, const bool lowerBitPermutation) {
+    return std::make_unique<Amd64OnlyConverter>(target, std::move(progress), lowerBitPermutation);
 }
 
 }

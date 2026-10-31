@@ -59,6 +59,8 @@ The executable, registry, Windows import diagnostics, icon and desktop entry out
 
 ## Options
 
+`--lower-bit-permutation` requires `--to-rosetta` and explicitly enables scalar PEXT/PDEP lowering for register masks and unsegmented, unindexed 64-bit RSP-relative masks. Other memory masks, spill overlaps and displacements that cannot be adjusted remain native. Without this option, PEXT and PDEP remain native. This is an experimental compatibility option; modern Rosetta versions already execute both instructions.
+
 All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath` defaults to `$ORIGIN/libs`.
 
 | Option                        | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |

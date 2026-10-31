@@ -22,6 +22,7 @@ const char* Usage() {
            "  --windows-diagnostics          Include startup dependency diagnostics. Requires --windows.\n"
            "  --windows-gui                  Select the Windows GUI subsystem. Requires --windows.\n"
            "  --to-intel                     Convert supported AMD-only instructions for Intel CPUs.\n"
+           "  --lower-bit-permutation         Opt in to scalar PEXT/PDEP lowering; requires --to-rosetta.\n"
            "  --to-rosetta                   Convert as --to-intel and lower what Rosetta lacks too. Implies --to-intel.\n"
            "  --frame-red-zone               Windows: give leaf functions a frame so an exception on a guest thread can unwind.\n"
            "  --rpath <path>                 System library search path. Default: $ORIGIN/libs.\n"
@@ -66,7 +67,7 @@ namespace {
 
 constexpr std::string_view kVerifyRejectedOptions[] = {
     "--windows", "--macos", "--windows-gui", "--windows-diagnostics", "--windows-fixed-base", "--trace-imports", "--linux-fixed-base", "--macos-fixed-base",
-    "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
+    "--lower-bit-permutation", "--to-intel", "--to-rosetta", "--frame-red-zone", "--skip-syscall-check", "--trap-sdk-syscall-stubs", "unused-filter=",
     "--rpath", "--registry", "--lazy-binding", "--autorun", "--patches", "--no-patches",
 };
 
@@ -147,6 +148,8 @@ Args ParseArgs(int argc, char* argv[]) {
             args.toIntel = true;
         } else if (arg == "--frame-red-zone") {
             args.frameRedZone = true;
+        } else if (arg == "--lower-bit-permutation") {
+            args.lowerBitPermutation = true;
         } else if (arg == "--to-rosetta") {
             args.toRosetta = true;
             args.toIntel = true;
@@ -231,6 +234,8 @@ Args ParseArgs(int argc, char* argv[]) {
 
     if (args.toWindows && args.toMacos)
         throw std::runtime_error("--windows conflicts with --macos");
+    if (args.lowerBitPermutation && !args.toRosetta)
+        throw std::runtime_error("--lower-bit-permutation requires --to-rosetta");
     if (args.toRosetta && args.toWindows)
         throw std::runtime_error("--to-rosetta conflicts with --windows");
     if (args.windowsDiagnostics && !args.toWindows)

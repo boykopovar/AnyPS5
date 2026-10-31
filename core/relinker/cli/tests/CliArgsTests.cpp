@@ -303,8 +303,11 @@ void sceModulePath() {
 void targetSelection() {
     const auto macos = parse({"--macos", "input.elf", "output.elf"});
     require(macos.toMacos && !macos.toWindows, "--macos did not select only the macOS target");
+    const auto bitPermutation = parse({"--to-rosetta", "--lower-bit-permutation", "input.elf", "output.elf"});
+    require(bitPermutation.lowerBitPermutation && bitPermutation.toRosetta, "Bit permutation opt-in was lost");
+    expectThrows({"--lower-bit-permutation", "input.elf", "output.elf"}, "--lower-bit-permutation requires --to-rosetta");
     const auto rosetta = parse({"--to-rosetta", "input.elf", "output.elf"});
-    require(rosetta.toRosetta && rosetta.toIntel, "--to-rosetta did not imply --to-intel");
+    require(rosetta.toRosetta && rosetta.toIntel && !rosetta.lowerBitPermutation, "--to-rosetta did not imply --to-intel");
     const auto rosettaOnMacos = parse({"--macos", "--to-rosetta", "input.elf", "output.elf"});
     require(rosettaOnMacos.toMacos && rosettaOnMacos.toRosetta && rosettaOnMacos.toIntel, "--to-rosetta was rejected with --macos");
     const std::string targetConflict = "--windows conflicts with --macos";
