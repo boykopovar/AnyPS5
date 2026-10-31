@@ -1,6 +1,7 @@
 #pragma once
 
 #include "prx/libSceFreeType/include/GuestList.hpp"
+#include "prx/libSceFreeType/include/PostScriptPrivate.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libSceFreeType/include/PostScriptInfo.hpp"
 #include "SceTypes.hpp"
@@ -49,6 +50,7 @@ std::uint64_t APS5_VABI FT_Get_CMap_Language_ID_nid_postfix(FreeType::GuestCharM
 std::int64_t APS5_VABI FT_Get_CMap_Format_nid_postfix(FreeType::GuestCharMapRec* charmap);
 const char* APS5_VABI FT_Get_X11_Font_Format_nid_postfix(FreeType::GuestFaceRec* face);
 std::uint16_t APS5_VABI FT_Get_FSType_Flags_nid_postfix(FreeType::GuestFaceRec* face);
+int APS5_VABI FT_Get_PS_Font_Private_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestPSPrivate* privateDictionary);
 FreeType::GuestListNodeRec* APS5_VABI FT_List_Find_nid_postfix(FreeType::GuestListRec* list, void* data);
 void APS5_VABI FT_List_Add_nid_postfix(FreeType::GuestListRec* list, FreeType::GuestListNodeRec* node);
 void APS5_VABI FT_List_Insert_nid_postfix(FreeType::GuestListRec* list, FreeType::GuestListNodeRec* node);

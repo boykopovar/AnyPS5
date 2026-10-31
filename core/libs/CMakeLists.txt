@@ -219,6 +219,8 @@ if(WIN32)
     file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/release-implibs.txt CONTENT "${RELEASE_IMPLIBS}")
 endif()
 
+include(prx/libSceFreeType/PostScriptPrivate.cmake)
+
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
 include(prx/libSceFreeType/PostScriptInfo.cmake)
