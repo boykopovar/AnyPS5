@@ -106,6 +106,16 @@ void RejectProgramHeaders(Bytes bytes) {
 
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> cases = {
+        {"program header table truncation", [] {
+            auto bytes = Fixture();
+            bytes.resize(64 + 56 - 1);
+            RejectProgramHeaders(std::move(bytes));
+        }},
+        {"program header table offset overflow", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 32, std::numeric_limits<std::uint64_t>::max() - 31);
+            RejectProgramHeaders(std::move(bytes));
+        }},
         {"load file range past end of file", [] {
             auto bytes = Fixture();
             Write<std::uint64_t>(bytes, 96, 0xd0);
