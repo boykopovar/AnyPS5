@@ -13,7 +13,8 @@ began. Presents per 10 s and frame time come from the [ab] lines (settled line t
 and idle gaps per frame from [present], GPU time per present from [gputime] (APS5_PROFILE_GPU), the committer and
 drains from [draw] pipelined, unlocked hook waits from [syncwait] (APS5_PROFILE_DRAW). The noise column compares
 each B phase with the mean of its neighbouring A phases, which cancels a linear drift: mean difference, standard
-error, standard deviation and count."""
+error, standard deviation and count. A requested program's phase metric is omitted if a report lists 12 programs
+without it: the list may be truncated, so the program's time is unknown."""
 
 PHASE = re.compile(r"^\[ab\] phase ([AB]) (\d+) (begins|settled) at present (\d+) \(t ([\d.]+) s\)")
 KINDS = (("present", "[present] "), ("gputime", "[gputime] "), ("draw", "[draw] pipelined"), ("syncwait", "[syncwait] "))
@@ -57,7 +58,8 @@ def parse_report(kind, text):
             programs[key] = programs.get(key, 0.0) + finite(float(ms))
         for name, ms in re.findall(r" ([a-z][a-z-]*) x\d+ ([\d.]+)ms [\d.]+MiB \(per present", classes_text):
             classes[name] = classes.get(name, 0.0) + finite(float(ms))
-        return {"total": total, "presents": presents, "programs": programs, "classes": classes}
+        truncated = len(re.findall(r" (?:draw )?0x[0-9a-f]+ x\d+ [\d.]+ms", programs_text)) >= 12
+        return {"total": total, "presents": presents, "programs": programs, "programs_truncated": truncated, "classes": classes}
     if kind == "draw":
         commits, per_commit = number(r": (\d+) commits at", text), number(r"commits at ([\d.]+) us each", text)
         enqueued, room = number(r"; (\d+) enqueued behind", text), number(r"waiting ([\d.]+) us per draw for room", text)
@@ -129,7 +131,8 @@ def metrics(phase, programs, classes):
     if presents:
         out["gputime ms/present"] = finite_sum(row["total"] for row in rows) / presents
         for key in programs:
-            out[f"{key} ms/present"] = finite_sum(row["programs"].get(key, 0.0) for row in rows) / presents
+            if all(key in row["programs"] or not row["programs_truncated"] for row in rows):
+                out[f"{key} ms/present"] = finite_sum(row["programs"].get(key, 0.0) for row in rows) / presents
         for name in classes:
             out[f"{name} ms/present"] = finite_sum(row["classes"].get(name, 0.0) for row in rows) / presents
     rows = phase["reports"]["draw"]
