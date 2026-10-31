@@ -242,6 +242,15 @@ class ObservedStubTests(unittest.TestCase):
         self.assertEqual(group["done_unobserved_names"], ["Ready"])
         self.assertNotIn("done_unobserved_names", self.scan(source))
 
+    def test_summary_keeps_the_declared_figure_next_to_the_headline(self):
+        source = ("int APS5_VABI Ready() { return 0; }\n"
+                  "int APS5_VABI Imported() { NotImplemented_nid_no_patch(__func__); }\n"
+                  "int APS5_VABI Unseen() { NotImplemented_nid_no_patch(__func__); }\n")
+        observed = frozenset({progress.tokenizer.compute_nid("Imported")})
+        data = progress.summarize([self.scan(source, observed), self.scan(source)])
+        self.assertEqual((data["done"], data["total"], data["percent"]), (2, 5, 40.0))
+        self.assertEqual((data["unobserved"], data["declared_total"], data["declared_percent"]), (1, 6, 33.33))
+
     def test_an_alias_export_is_observed_under_its_nid(self):
         alias = "AbCdEfGhIjK"
         source = (f'APS5_EXPORT("{alias}", Renamed);\n'

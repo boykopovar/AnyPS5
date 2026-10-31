@@ -227,7 +227,11 @@ def scan_library(path, observed=None):
 def summarize(groups):
     done = sum(g["done"] for g in groups)
     total = done + sum(g["todo"] for g in groups)
-    return {"done": done, "total": total, "percent": round(100 * done / total, 2) if total else 0, "groups": groups}
+    unobserved = sum(g.get("unobserved", 0) for g in groups)
+    declared = total + unobserved
+    return {"done": done, "total": total, "percent": round(100 * done / total, 2) if total else 0,
+            "unobserved": unobserved, "declared_total": declared,
+            "declared_percent": round(100 * done / declared, 2) if declared else 0, "groups": groups}
 
 
 def observed_nids(library):
