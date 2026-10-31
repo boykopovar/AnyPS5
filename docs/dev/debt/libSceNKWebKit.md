@@ -1799,8 +1799,6 @@
 | `_ZN3WTF15memoryFootprintEv` | `DLog94EYwFI` |
 | `_ZN3WTF16addSignalHandlerENS_6SignalEONS_8FunctionIFNS_12SignalActionES0_RNS_7SigInfoERNS_17PlatformRegistersEEEE` | `l0Z0NQiqr3M` |
 | `_ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE` | `DDIR4QpfiIg` |
-| `_ZN3WTF16codePointCompareENS_10StringViewES0_` | `PAp-xS1m7bI` |
-| `_ZN3WTF16codePointCompareERKNS_6StringES2_` | `qpi9pgZKF5g` |
 | `_ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE` | `9NbKoZNi0Jo` |
 | `_ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE` | `jRKHSzq25WA` |
 | `_ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE` | `S6NzIicbleU` |
