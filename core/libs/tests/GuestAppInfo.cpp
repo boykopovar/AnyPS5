@@ -98,6 +98,8 @@ int main(int argc, char** argv) {
     std::memset(expected + 0x50, 0xff, 4);
     Require(std::memcmp(wide, expected, sizeof(wide)) == 0);
     Require(sceKernelGetAppInfo(self, nullptr) == 0);
+    Require(sceKernelGetAppInfo(self, reinterpret_cast<void*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetAppInfo(0, reinterpret_cast<void*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     const auto empty = std::filesystem::temp_directory_path() / ("guest_app_info_empty_" + std::to_string(self));

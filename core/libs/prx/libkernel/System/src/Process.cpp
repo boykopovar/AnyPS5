@@ -662,18 +662,18 @@ int APS5_VABI sceKernelGetAppInfo(int pid, void* info) {
     constexpr std::size_t TitleIdOffset = 0x10;
     constexpr std::size_t TitleIdBytes = 10;
     constexpr std::size_t MarkerOffset = 0x50;
-    auto* bytes = static_cast<std::uint8_t*>(info);
-    std::memset(bytes, 0, StructureBytes);
+    std::array<std::uint8_t, StructureBytes> buffer{};
     if (own) {
         const auto titleId = GetAppTitleId_nid_postfix();
         char field[TitleIdBytes] = {};
         std::strncpy(field, titleId.value, sizeof(field) - 1);
         const std::uint32_t appId = 1;
-        std::memcpy(bytes, &appId, sizeof(appId));
-        std::memcpy(bytes + TitleIdOffset, field, TitleIdBytes);
+        std::memcpy(buffer.data(), &appId, sizeof(appId));
+        std::memcpy(buffer.data() + TitleIdOffset, field, TitleIdBytes);
     }
     const std::uint32_t marker = 0xffffffffu;
-    std::memcpy(bytes + MarkerOffset, &marker, sizeof(marker));
+    std::memcpy(buffer.data() + MarkerOffset, &marker, sizeof(marker));
+    if (!GuestCopyOut_nid_no_patch(info, buffer.data(), buffer.size())) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
