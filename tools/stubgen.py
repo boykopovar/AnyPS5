@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import errno
 import os
 import re
 import stat
@@ -8,9 +9,9 @@ import tempfile
 from pathlib import Path
 
 try:
-    from tools.nid_names import CHARSET, SUFFIX, compute_nid
+    from tools.nid_names import SUFFIX, compute_nid
 except ImportError:
-    from nid_names import CHARSET, SUFFIX, compute_nid
+    from nid_names import SUFFIX, compute_nid
 
 
 def strip_nid_token(raw):
@@ -195,14 +196,22 @@ def case_insensitive_directory(directory):
         os.unlink(name)
 
 
+LOOP_MESSAGE = "Too many levels of symbolic links"
+
+
 def resolved_path(path):
-    path = Path(path)
+    original = path = Path(path)
     for _ in range(40):
         if not path.is_symlink():
             break
         target = Path(link_target(os.readlink(path)))
         path = target if target.is_absolute() else path.parent / target
-    return path.resolve()
+    if path.is_symlink():
+        raise OSError(errno.ELOOP, LOOP_MESSAGE, str(original))
+    try:
+        return path.resolve()
+    except RuntimeError as error:
+        raise OSError(errno.ELOOP, LOOP_MESSAGE, str(original)) from error
 
 
 def link_target(text):

@@ -1,3 +1,4 @@
+#include "prx/libScePSNowGkp/include/InventoryExports.hpp"
 #include "prx/libScePSNowGkp/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -24,6 +25,30 @@ int APS5_VABI sceCloudClientSetAuthCodes() {
 int APS5_VABI sceCloudClientTestConnection() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceCloudClientGetStatus() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceCloudClientInitialize() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceCloudClientRequestClientId() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceCloudClientSetSettings() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceCloudClientTerminate() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

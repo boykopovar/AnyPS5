@@ -68,6 +68,8 @@ struct MbusPriorityInfo;
 
 extern "C" {
 
+int APS5_VABI sceMbusDebugGetStringToShow();
+
 std::int32_t APS5_VABI sceDeviceServiceInitialize(std::int32_t mode, const DeviceServiceInitParam* param);
 std::int32_t APS5_VABI sceDeviceServiceTerminate();
 std::int32_t APS5_VABI sceDeviceServiceGetEventState(std::int32_t clear);
@@ -188,5 +190,16 @@ int APS5_VABI sceMbusTerm();
 int APS5_VABI sceMbusUnregisterDriver(std::int32_t driverId);
 int APS5_VABI sceMbusUserLogin(std::int32_t userId);
 int APS5_VABI sceMbusUserLogout(std::int32_t userId);
+int APS5_VABI sceMbusGetCurrentChatBalanceId();
+int APS5_VABI sceMbusGetInitialUser();
+int APS5_VABI sceMbusGetSimulatedBusUsableStatusByBusType2();
+int APS5_VABI sceMbusSetChatBalance();
+int APS5_VABI sceMbusSetCronosOutputMode();
+int APS5_VABI sceMbusSetCronosPrimaryUser();
+int APS5_VABI sceMbusSetHmd2SocialScreenAudioMode();
+int APS5_VABI sceMbusSetVibrationTriggerEffectWeakWhileEmbeddedMicInUse();
+int APS5_VABI sceMbusSetVolumeDownForDiscPlayerFG();
+int APS5_VABI sceMbusStartAudioOutScreenShare();
+int APS5_VABI sceMbusStopAudioOutScreenShare();
 
 }
