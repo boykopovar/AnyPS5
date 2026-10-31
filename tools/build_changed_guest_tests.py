@@ -79,7 +79,7 @@ def target_artifact_names(target):
             names.add(name)
     names.add(target.get("name", ""))
     names.discard("")
-    return {name.casefold(): name for name in names}
+    return {name.casefold(): target["name"] for name in names}
 
 
 def test_owner(command, targets_by_name):

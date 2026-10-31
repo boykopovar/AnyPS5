@@ -46,3 +46,17 @@
 - [AJM Opus mapping family 255 with several channels](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp) (libSceAjm.native): the initialization words carry no stream count or channel mapping, so the decoder opens on the first packet. It counts the self-delimited streams of that multistream packet ([RFC 6716 appendix B](https://datatracker.ietf.org/doc/html/rfc6716#appendix-B)) and takes each stream's stereo flag from its TOC byte as coupled, then decodes with an identity channel mapping. A packet whose streams do not add up to the channel count throws. The layout is inferred, not read from the console; unverified on hardware.
 
 - [AJM three-, four- and five-channel AAC](../../../core/libs/prx/libSceAjm.native/src/Ajm.cpp): PS5 PCM equivalence and speaker masks for three and five channels remain unverified. Raw configuration numbers follow the pinned shadPS4 decoder above; PCM follows its FDK-AAC backend's default WAV channel order, documented by [FDK-AAC](https://github.com/mstorsjo/fdk-aac/blob/v2.0.3/libAACdec/include/aacdecoder_lib.h), using FFmpeg's corresponding native layouts. Three- and five-channel format sidebands throw before decoding; format queries after decoding also throw. Four-channel metadata retains the existing source's quad mask even though AAC configuration 4 carries a center and a back-center speaker. Other AAC layouts, including PCE-based configurations and seven/eight channels, still throw.
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceAjm.native/Export.cpp) - 7 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `IfQ-AhcmW9k` |
+| `Unknown` | `JAPya-QyJlU` |
+| `Unknown` | `MgTTRx1YSFw` |
+| `Unknown` | `POOw6Y5luA8` |
+| `Unknown` | `mKgie3ed4ao` |
+| `Unknown` | `mwtwIZb60YM` |
+| `Unknown` | `qkuXdR4-Ihc` |

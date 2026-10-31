@@ -36,4 +36,32 @@ int APS5_VABI sceNpWebApiUnregisterPushEventCallback(int titleUserCtxId, int cal
 int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback(int titleUserCtxId, int callbackId);
 int APS5_VABI sceNpWebApiUtilityParseNpId();
 
+int APS5_VABI sceNpWebApiAbortHandle(int libCtxId, int handleId);
+int APS5_VABI sceNpWebApiAddHttpRequestHeader(std::int64_t requestId, const char* fieldName, const char* value);
+int APS5_VABI sceNpWebApiAddMultipartPart();
+void APS5_VABI sceNpWebApiCheckTimeout();
+int APS5_VABI sceNpWebApiClearAllUnusedConnection();
+int APS5_VABI sceNpWebApiClearUnusedConnection();
+int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, std::int64_t* requestId);
+int APS5_VABI sceNpWebApiGetConnectionStats();
+int APS5_VABI sceNpWebApiGetErrorCode();
+int APS5_VABI sceNpWebApiInitializeForPresence();
+int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter();
+int APS5_VABI sceNpWebApiIntCreateRequest();
+int APS5_VABI sceNpWebApiIntCreateServicePushEventFilter();
+int APS5_VABI sceNpWebApiIntInitialize();
+int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallback();
+int APS5_VABI sceNpWebApiIntRegisterServicePushEventCallbackA();
+int APS5_VABI sceNpWebApiRegisterExtdPushEventCallback();
+int APS5_VABI sceNpWebApiRegisterNotificationCallback();
+int APS5_VABI sceNpWebApiSendMultipartRequest();
+int APS5_VABI sceNpWebApiSendMultipartRequest2();
+int APS5_VABI sceNpWebApiSendRequest2(std::int64_t requestId, const void* data, std::size_t dataSize, void* responseInformation);
+int APS5_VABI sceNpWebApiSetHandleTimeout(int libCtxId, int handleId, std::uint32_t timeout);
+int APS5_VABI sceNpWebApiSetMaxConnection();
+int APS5_VABI sceNpWebApiSetMultipartContentType(std::int64_t requestId, const char* typeName, const char* boundary);
+int APS5_VABI sceNpWebApiSetRequestTimeout(std::int64_t requestId, std::uint32_t timeout);
+int APS5_VABI sceNpWebApiUnregisterNotificationCallback();
+int APS5_VABI sceNpWebApiVshInitialize();
+
 }

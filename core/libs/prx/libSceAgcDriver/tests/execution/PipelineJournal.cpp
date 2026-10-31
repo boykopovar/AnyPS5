@@ -494,6 +494,37 @@ std::vector<ShaderRecompiler::PipelineIdentity> ReadJournalComputeIdentities(con
     return identities;
 }
 
+void ReplayRacesDispatchTests() {
+    using namespace NarrowConstantStoreFixture;
+    constexpr std::uint32_t Pipelines = 32;
+    Block compute(BlockBytes);
+    const auto words = AddressWords(compute);
+    std::vector<std::vector<std::uint32_t>> codes;
+    for (std::uint32_t salt = 16; salt < 16 + Pipelines; ++salt) codes.push_back(ComputeCode(salt));
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device recording the raced pipelines could not be opened");
+        device->WaitForPipelineJournalReplay();
+        for (const auto& code : codes) device->Dispatch(CompileCompute(*device, code, words, 32), 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        device->WaitIdle();
+        AgcDriver::Graphics::FlushPipelineJournal();
+    }
+    const auto before = Snapshot();
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the device racing the replay could not be opened");
+        std::vector<ShaderRecompiler::RecompileResult> shaders;
+        for (const auto& code : codes) shaders.push_back(CompileCompute(*device, code, words, 32));
+        for (std::size_t index = 0; index < shaders.size(); ++index) device->Dispatch(shaders[index], 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(codes[index].data()));
+        device->WaitIdle();
+        device->WaitForPipelineJournalReplay();
+        const auto after = Snapshot();
+        Require(after.journal.replayRejected == before.journal.replayRejected && after.journal.replayFailed == before.journal.replayFailed, "the raced replay rejected or failed a compute pipeline");
+        const auto visited = (after.journal.replayedCompute - before.journal.replayedCompute) + (after.journal.replayPresent - before.journal.replayPresent);
+        Require(device->ComputePipelinesCreated() == visited, "a dispatch and the replay both built a compute pipeline: " + std::to_string(device->ComputePipelinesCreated()) + " built for " + std::to_string(visited) + " replayed");
+    }
+}
+
 void NewestEntriesTests() {
     using namespace NarrowConstantStoreFixture;
     Block compute(BlockBytes);
@@ -743,6 +774,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         JournalTests();
+        ReplayRacesDispatchTests();
         NewestEntriesTests();
         EvictionTests();
         EvictionWatermarkTests();

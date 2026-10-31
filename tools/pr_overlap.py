@@ -38,7 +38,18 @@ def git(*args):
         for index in range(separator + 1, len(args)):
             pathspec = args[index]
             if pathspec.startswith(("../", "..\\")):
-                absolute = (cwd / pathspec).resolve()
+                absolute = cwd / pathspec
+                try:
+                    absolute = absolute.resolve()
+                except RuntimeError as error:
+                    raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
+                except OSError as error:
+                    raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
+                if absolute.is_symlink():
+                    try:
+                        absolute.stat()
+                    except OSError as error:
+                        raise ValueError(f"cannot resolve path {pathspec!r}: {error}") from error
                 try:
                     args[index] = absolute.relative_to(Path(root)).as_posix()
                 except ValueError:
@@ -529,6 +540,10 @@ def write_reports(out, rows, blob, main_exports=None):
         (out / f"{number}.md").write_text(report(found, blob, main_exports.get(number)), encoding="utf-8")
 
 
+def unverified_overlaps(rows):
+    return {number: set(found["uncompared"]) for number, found in rows.items() if found.get("uncompared")}
+
+
 def main_export_findings(prs, current_exports):
     findings = {}
     for number, pr in prs.items():
@@ -591,6 +606,12 @@ def main(argv=None):
         raise SystemExit(f"pr_overlap: {error}")
     if args.branch:
         print(report(rows[0], blob, main_exports.get(0)) or "No overlap with open pull requests.", end="")
+        unresolved = unverified_overlaps(rows[0])
+        if unresolved:
+            for number, files in sorted(unresolved.items()):
+                progress(f"cannot confirm overlap with PR {number}: {', '.join(sorted(files))}")
+            progress("overlap check failed closed; manually compare every reported PR branch before opening this one")
+            return 2
         return 0
     write_reports(args.out, rows, blob, main_exports)
     return 0
