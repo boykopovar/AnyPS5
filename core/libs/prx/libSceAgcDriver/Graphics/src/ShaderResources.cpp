@@ -1138,7 +1138,7 @@ std::shared_ptr<StorageTexture> evictStorage(StorageTextureCache& cache, std::li
 // mode): the image holds the whole mip chain, and render targets in the same memory attach to it.
 std::array<std::uint32_t, 8> SurfaceKey(const Context& context, const GuestTextureResource& resource) {
     // Guest formats that store in the same Vulkan format share the image (views carry the difference).
-    return {static_cast<std::uint32_t>(resource.baseAddress | resource.pipeBankXor), static_cast<std::uint32_t>(resource.baseAddress >> 32u), resource.width, resource.height, (resource.depthOrLastArray << 16u) | (resource.mipCount & 0xffffu), (static_cast<std::uint32_t>(resource.tileMode) << 12u) | (static_cast<std::uint32_t>(resource.dimension) << 20u), resource.baseArray, static_cast<std::uint32_t>(StorageFormatForGuest(context, resource.format))};
+    return {static_cast<std::uint32_t>(resource.baseAddress | resource.pipeBankXor), static_cast<std::uint32_t>(resource.baseAddress >> 32u), resource.width, resource.height, (resource.depthOrLastArray << 16u) | (resource.mipCount & 0xffffu), (static_cast<std::uint32_t>(resource.tileMode) << 12u) | (static_cast<std::uint32_t>(StorageDimension(resource)) << 20u), resource.baseArray, static_cast<std::uint32_t>(StorageFormatForGuest(context, resource.format))};
 }
 
 struct ExtendedSurfaces {
@@ -1262,7 +1262,9 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             std::shared_ptr<StorageTexture> created;
             {
                 const CacheHold reclaimable(storageCacheReclaimable);
-                created = StorageTexture::Create(context, *context.detiler, resource, mip);
+                auto made = resource;
+                made.dimension = StorageDimension(made);
+                created = StorageTexture::Create(context, *context.detiler, made, mip);
             }
             CachedStorageTexture entry{key, mip, std::move(created)};
             static const bool keepNew = std::getenv("APS5_NO_KEEP_NEW_STORAGE") == nullptr;
@@ -2502,7 +2504,7 @@ void ShaderResources::buildComplete() {
                         for (auto element = first; element < last; ++element) {
                             const auto index = binding.imageAllocations[element];
                             if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER) images.push_back({samplers[index]->Handle(), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED});
-                            else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], binding.layout.binding >= ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 7u && binding.layout.binding < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 14u), VK_IMAGE_LAYOUT_GENERAL});
+                            else if (binding.layout.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index], storageLayered[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayered[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], binding.layout.binding >= ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 7u && binding.layout.binding < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 14u, storageLayered[index]), VK_IMAGE_LAYOUT_GENERAL});
                             else images.push_back({VK_NULL_HANDLE, textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View(), textures[index]->Layout()});
                         }
                         if (recorded) runs.emplace_back(write.dstArrayElement, write.descriptorCount);
@@ -2547,7 +2549,7 @@ void ShaderResources::buildComplete() {
                         for (const auto index : binding.imageAllocations) {
                             if (index == std::numeric_limits<std::size_t>::max()) images.push_back(absentImage(binding.layout.binding));
                             else if (storageTextures[index] == nullptr) images.push_back({VK_NULL_HANDLE, multisampleStorageViews[index], VK_IMAGE_LAYOUT_GENERAL});
-                            else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], binding.layout.binding >= ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 7u && binding.layout.binding < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 14u), VK_IMAGE_LAYOUT_GENERAL});
+                            else images.push_back({VK_NULL_HANDLE, storageAtomic64[index] ? storageTextures[index]->Atomic64View(storageMips[index], storageFirstLayer[index], storageLayered[index]) : storageAtomic[index] ? storageTextures[index]->AtomicView(storageMips[index], storageFirstLayer[index], storageLayered[index]) : storageTextures[index]->StorageView(storageMips[index], storageFirstLayer[index], binding.layout.binding >= ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 7u && binding.layout.binding < ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + 14u, storageLayered[index]), VK_IMAGE_LAYOUT_GENERAL});
                         }
                         Require(binding.imageAllocations.size() == binding.layout.descriptorCount, "descriptor allocations disagree with compact binding");
                         break;
@@ -5069,6 +5071,7 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
             storageMips.push_back(0);
             storageKeys.push_back(0);
             storageFirstLayer.push_back(false);
+            storageLayered.push_back(false);
             storageWritten.push_back(false);
             storageAtomic.push_back(false);
             storageAtomic64.push_back(false);
@@ -5087,7 +5090,8 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         else storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes, written));
         storageMips.push_back(mip);
         storageKeys.push_back(resource.dccAddress);
-        storageFirstLayer.push_back(firstLayer);
+        storageFirstLayer.push_back(binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2D && storageTextures.back()->Descriptor().dimension == TextureDimension::k2DArray);
+        storageLayered.push_back(binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DArray && storageTextures.back()->Descriptor().dimension == TextureDimension::k2D);
         storageWritten.push_back(written);
         storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
         storageAtomic64.push_back(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]);
@@ -5372,7 +5376,8 @@ void ShaderResources::resolveImageTables() {
                 }
                 storageMips.push_back(mip);
                 storageKeys.push_back(resource.dccAddress);
-                storageFirstLayer.push_back(firstLayer);
+                storageFirstLayer.push_back(shape == ShaderRecompiler::DescriptorImageShape::Image2D && storageTextures.back()->Descriptor().dimension == TextureDimension::k2DArray);
+                storageLayered.push_back(shape == ShaderRecompiler::DescriptorImageShape::Image2DArray && storageTextures.back()->Descriptor().dimension == TextureDimension::k2D);
                 storageWritten.push_back(true);
                 storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
                 storageAtomic64.push_back(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]);
