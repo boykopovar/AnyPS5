@@ -124,8 +124,9 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     if (target.depthSwizzle != 24u || target.firstSlice != 0u || target.lastSlice != 0u) return refuse("native multisample depth arrays or non-Z_X layout are not implemented");
     if ((target.pipeBankXor & ~0xcf00u) != 0u) return refuse("unsupported native multisample depth XOR");
     if (target.address == 0u || (target.address & 65535u) != 0u) return refuse("native multisample depth base is not aligned");
-    if (target.htileStencil) return refuse("native multisample HTILE stencil import is not implemented");
-    if (target.htileAddress == 0u || (target.htileAddress & 255u) != 0u || !target.htilePipeAligned || target.htileVrsEncoding != 0u) return refuse("native multisample depth initial import requires pipe-aligned HTILE without VRS");
+    if ((target.stencilAddress != 0u && !target.htileDepthOnly) || target.htileStencil) return refuse("native multisample stencil import is not implemented");
+    if (target.htileAddress == 0u || (target.htileAddress & 255u) != 0u || (!target.htilePipeAligned && !target.htileDepthOnly)) return refuse("native multisample depth initial import requires pipe-aligned or depth-only HTILE");
+    if (target.htileVrsEncoding != 0u && !target.htileDepthOnly) return refuse("native multisample depth initial import requires HTILE without VRS");
     if (target.clearDepth != 0.0f && target.clearDepth != 1.0f) return refuse("native multisample depth initial clear value is not implemented");
     state.initial = {{{target.address, static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(target.extent, target.format == VK_FORMAT_D16_UNORM ? 2u : 4u, target.samples)), 0u}, {target.htileAddress, static_cast<std::size_t>(HtileMetadataBytes(target.extent)), 0u}}};
     for (const auto& range : state.initial) {
@@ -145,6 +146,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
     }
     std::vector<std::uint32_t> metadata(htile.bytes / sizeof(std::uint32_t));
     GuestMemory::Read(target.htileAddress, std::as_writable_bytes(std::span(metadata)), 256u);
+    if (!target.htilePipeAligned && std::adjacent_find(metadata.begin(), metadata.end(), [](std::uint32_t first, std::uint32_t second) { return first != second; }) != metadata.end()) return refuse("native multisample depth HTILE that is not pipe-aligned holds more than one word");
     for (const auto word : metadata) {
         if (!htileProvesClear(word, target.htileDepthOnly, target.clearDepth)) return refuse("native multisample depth initial HTILE does not prove its clear value");
     }
