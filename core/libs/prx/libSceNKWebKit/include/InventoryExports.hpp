@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/include/WtfCryptoUtilities.hpp"
 
 extern "C" {
 

@@ -1,7 +1,6 @@
-add_library(libSceNKWebKit SHARED EXCLUDE_FROM_ALL Export.cpp DateParsing.cpp CharactersToNumber.cpp)
+add_library(libSceNKWebKit SHARED EXCLUDE_FROM_ALL Export.cpp DateParsing.cpp CharactersToNumber.cpp WtfCryptoUtilities.cpp)
 target_include_directories(libSceNKWebKit PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNKWebKit)
-target_sources(libSceNKWebKit PRIVATE WtfCryptoUtilities.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_nkwebkit_dates_tests ${LIBS_INCLUDE_DIR}/tests/GuestNKWebKitDates.cpp)
