@@ -16,6 +16,11 @@
 [submodule "3rdparty/glslang"]
 	path = 3rdparty/glslang
 	url = https://github.com/KhronosGroup/glslang.git
+[submodule "3rdparty/llvm-project"]
+	path = 3rdparty/llvm-project
+	url = https://github.com/llvm/llvm-project.git
+	shallow = true
+	update = none
 [submodule "3rdparty/VulkanMemoryAllocator"]
 	path = 3rdparty/VulkanMemoryAllocator
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git

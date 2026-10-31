@@ -494,6 +494,11 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+option(ANYPS5_BUILD_AOT "Build the experimental integer leaf compiler from LLVM sources" OFF)
+if(ANYPS5_BUILD_AOT)
+    add_subdirectory(core/aot)
+endif()
+
 if(ANYPS5_RELINKER_ONLY)
     add_subdirectory(core/relinker)
     return()
