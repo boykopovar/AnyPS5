@@ -300,6 +300,58 @@ class OriginFlagTests(unittest.TestCase):
         self.assertIn("--origins needs a git work tree", stderr.getvalue())
 
 
+class InventorySourceTests(unittest.TestCase):
+    def scan(self, listing):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "int APS5_VABI A() { NotImplemented_nid_no_patch(__func__); }\n"
+                "int APS5_VABI B() { NotImplemented_nid_no_patch(__func__); }\n"
+                "int APS5_VABI Done() { return 1; }\n", encoding="utf-8")
+            path = Path(directory) / "libSceExample.txt"
+            path.write_text(listing, encoding="utf-8")
+            return progress.scan_library(library, None, None, progress.read_inventory(path))
+
+    def test_each_listed_stub_records_its_inventory_source(self):
+        nid = progress.tokenizer.compute_nid
+        group = self.scan(f"# header\n{nid('A')}  Firmware-3.20_Libs\n{nid('Done')}  Firmware-3.20_Libs\n")
+        self.assertEqual(group["inventory"], {"A": "Firmware-3.20_Libs"})
+
+    def test_no_listing_adds_no_field(self):
+        self.assertNotIn("inventory", self.scan(""))
+
+    def test_problems_name_malformed_duplicate_and_unsorted_lines(self):
+        text = "BbBbBbBbBbB src\nAaAaAaAaAaA src\nBbBbBbBbBbB src\nCcCcCcCcCcC\nDdDdDdDdDdD bad source\nEeEeEeEeEeE no/slash\n"
+        problems = dict(progress.inventory_problems(text))
+        self.assertEqual(sorted(problems), [2, 3, 4, 5, 6])
+        self.assertIn("not in sorted order", problems[2])
+        self.assertIn("duplicate NID", problems[3])
+        self.assertEqual(progress.inventory_problems("# header\nAaAaAaAaAaA src-1.0\n\nBbBbBbBbBbB src_2+x\n"), [])
+
+    def test_a_malformed_listing_is_an_error_naming_the_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "libSceExample.txt"
+            path.write_text("short src\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, ":1: expected"):
+                progress.read_inventory(path)
+
+    def test_root_reads_the_listings_of_that_tree_and_restores_the_location(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / "core" / "libs" / "prx" / "libSceA"
+            library.mkdir(parents=True)
+            (library / "Export.cpp").write_text("int APS5_VABI Pending() { NotImplemented_nid_no_patch(__func__); }\n", encoding="utf-8")
+            (root / "docs" / "dev" / "inventory").mkdir(parents=True)
+            (root / "docs" / "dev" / "inventory" / "libSceA.txt").write_text(f"{progress.tokenizer.compute_nid('Pending')} Listing-1\n", encoding="utf-8")
+            before = progress.INVENTORY
+            output = io.StringIO()
+            with patch.object(progress, "collect_shaders", return_value=progress.summarize([])), patch("sys.stdout", output):
+                self.assertEqual(progress.main(["--root", str(root), "--json"]), 0)
+            self.assertEqual(json.loads(output.getvalue())["libraries"]["groups"][0]["inventory"], {"Pending": "Listing-1"})
+            self.assertEqual(progress.INVENTORY, before)
+
+
 class ObservedTagScanTests(unittest.TestCase):
     def scan(self, manifest):
         with tempfile.TemporaryDirectory() as directory:

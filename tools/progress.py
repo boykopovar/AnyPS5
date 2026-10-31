@@ -27,6 +27,9 @@ TAG_COMMENT = re.compile(r"([A-Za-z][\w-]*)(?::\s*(.*))?")
 UNTAGGED = "untagged"
 OBSERVED_RELATIVE = Path("docs/dev/observed")
 OBSERVED = ROOT / OBSERVED_RELATIVE
+INVENTORY_RELATIVE = Path("docs/dev/inventory")
+INVENTORY = ROOT / INVENTORY_RELATIVE
+SOURCE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 SOURCE = f'https://github.com/{os.environ.get("GITHUB_REPOSITORY", "boykopovar/AnyPS5")}/blob/main'
 DEFINITION = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\([^;{]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
 EXPORT = re.compile(r"\bAPS5_EXPORT\s*\(\s*LITERAL\s*,\s*(\w+)\s*\)")
@@ -233,6 +236,36 @@ def read_provenance(path):
     return provenance
 
 
+def inventory_entries(text):
+    for number, line in enumerate(text.splitlines(), 1):
+        entry = line.split("#", 1)[0].split()
+        if entry:
+            yield number, entry
+
+
+def inventory_problems(text):
+    problems, seen, previous = [], set(), ""
+    for number, entry in inventory_entries(text):
+        if len(entry) != 2 or NID.fullmatch(entry[0]) is None or SOURCE_LABEL.fullmatch(entry[1]) is None:
+            problems.append((number, "expected '<NID> <source>' with an 11-character NID and a source name of letters, digits and . _ + -"))
+            continue
+        if entry[0] in seen:
+            problems.append((number, f"duplicate NID {entry[0]}"))
+        elif entry[0] < previous:
+            problems.append((number, f"{entry[0]} is not in sorted order after {previous}"))
+        seen.add(entry[0])
+        previous = max(previous, entry[0])
+    return problems
+
+
+def read_inventory(path):
+    text = path.read_text(encoding="utf-8-sig")
+    problems = inventory_problems(text)
+    if problems:
+        raise ValueError(f"{path}:{problems[0][0]}: {problems[0][1]}")
+    return {entry[0]: entry[1] for _, entry in inventory_entries(text)}
+
+
 def read_manifest(path):
     observed = set()
     for number, entry in manifest_entries(path.read_text(encoding="utf-8-sig")):
@@ -242,7 +275,7 @@ def read_manifest(path):
     return frozenset(observed)
 
 
-def scan_library(path, observed=None, provenance=None):
+def scan_library(path, observed=None, provenance=None, inventory=None):
     done, todo, unobserved, inert, live = set(), set(), set(), set(), set()
     raw = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
            if "tests" not in source.relative_to(path).parts]
@@ -278,6 +311,10 @@ def scan_library(path, observed=None, provenance=None):
              "inert_names": sorted(inert)}
     if observed is not None:
         group["done_unobserved_names"] = sorted(name for name in done if not tokenizer.nids_of(name, aliases) & observed)
+    if inventory:
+        sources = {name: inventory[nid] for name in sorted(todo | unobserved) for nid in sorted(tokenizer.nids_of(name, aliases)) if nid in inventory}
+        if sources:
+            group["inventory"] = sources
     if provenance is not None and todo:
         group["observed_tags"] = {name: provenance.get(min(tokenizer.nids_of(name, aliases) & observed), UNTAGGED) for name in sorted(todo)}
     if not (done or todo or unobserved):
@@ -313,13 +350,18 @@ def observed_nids(library):
     return read_manifest(manifest) if manifest.is_file() else None
 
 
+def inventory_sources(library):
+    listing = INVENTORY / f"{library.name}.txt"
+    return read_inventory(listing) if listing.is_file() else None
+
+
 def observed_provenance(library):
     manifest = OBSERVED / f"{library.name}.txt"
     return read_provenance(manifest) if manifest.is_file() else None
 
 
 def collect_libraries():
-    return summarize([scan_library(p, observed_nids(p), observed_provenance(p)) for p in sorted(PRX.iterdir()) if p.is_dir()])
+    return summarize([scan_library(p, observed_nids(p), observed_provenance(p), inventory_sources(p)) for p in sorted(PRX.iterdir()) if p.is_dir()])
 
 
 def add_origins(libraries, root):
@@ -761,8 +803,8 @@ def main(argv=None):
         sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
-    global PRX, OPCODES, OBSERVED
-    previous = PRX, OPCODES, OBSERVED
+    global PRX, OPCODES, OBSERVED, INVENTORY
+    previous = PRX, OPCODES, OBSERVED, INVENTORY
     parser = argparse.ArgumentParser()
     parser.add_argument("output", type=Path, nargs="?")
     parser.add_argument("--root", type=Path, help="source tree to measure instead of the one containing this script")
@@ -799,6 +841,7 @@ def main(argv=None):
             PRX = args.root / "core" / "libs" / "prx"
             OPCODES = args.root / previous[1].relative_to(ROOT)
             OBSERVED = args.root / OBSERVED_RELATIVE
+            INVENTORY = args.root / INVENTORY_RELATIVE
         try:
             libraries, shaders = collect_libraries(), collect_shaders()
         except FileNotFoundError as error:
@@ -828,7 +871,7 @@ def main(argv=None):
             print(f'shaders {shaders["done"]}/{shaders["total"]} ({shaders["percent"]}%)')
         return 0
     finally:
-        PRX, OPCODES, OBSERVED = previous
+        PRX, OPCODES, OBSERVED, INVENTORY = previous
 
 
 if __name__ == "__main__":

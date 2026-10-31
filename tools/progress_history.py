@@ -56,15 +56,16 @@ def measure(sha):
                 archive.extractall(root)
         except subprocess.CalledProcessError:
             return None
-        saved = progress.PRX, progress.OPCODES, progress.OBSERVED
+        saved = progress.PRX, progress.OPCODES, progress.OBSERVED, progress.INVENTORY
         progress.PRX, progress.OPCODES = root / paths[0], root / paths[1]
         progress.OBSERVED = root / progress.OBSERVED_RELATIVE
+        progress.INVENTORY = root / progress.INVENTORY_RELATIVE
         try:
             libraries, shaders = progress.collect_libraries(), progress.collect_shaders()
         except (OSError, AttributeError):
             return None
         finally:
-            progress.PRX, progress.OPCODES, progress.OBSERVED = saved
+            progress.PRX, progress.OPCODES, progress.OBSERVED, progress.INVENTORY = saved
     return {name: {key: data[key] for key in ("done", "total", "percent")}
             for name, data in (("libraries", libraries), ("shaders", shaders))}
 
