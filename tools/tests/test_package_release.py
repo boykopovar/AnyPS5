@@ -292,6 +292,18 @@ class ReleasePackageTests(unittest.TestCase):
         (self.build / "CMakeCache.txt").write_bytes(b"\xef\xbb\xbfCMAKE_CXX_COMPILER:STRING=" + compiler.as_posix().encode("utf-8") + b"\n")
         self.assertEqual(package_release.windows_runtime(self.build), compiler.parent)
 
+    def test_windows_runtime_finds_a_bare_compiler_name_on_path(self):
+        compiler = self.root / "custom toolchain" / "bin" / "g++.exe"
+        (self.build / "CMakeCache.txt").write_text("CMAKE_CXX_COMPILER:UNINITIALIZED=g++\n", encoding="utf-8")
+        with patch.object(package_release.shutil, "which", return_value=str(compiler)) as which:
+            self.assertEqual(package_release.windows_runtime(self.build), compiler.parent)
+        which.assert_called_once_with("g++")
+        with patch.object(package_release.shutil, "which", return_value=os.path.join(".", "g++.exe")):
+            self.assertEqual(package_release.windows_runtime(self.build), Path.cwd())
+        with patch.object(package_release.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "not on PATH"):
+                package_release.windows_runtime(self.build)
+
     def test_tracy_runtime_decodes_cmake_cache_with_utf8_bom(self):
         client = self.build / "core/libs/libs/libTracyClient.dll"
         client.write_bytes(b"client")
