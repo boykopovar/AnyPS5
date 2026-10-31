@@ -18,7 +18,11 @@ target_include_directories(libSceAudioOut PRIVATE
         ${LIBS_INCLUDE_DIR}
         ${ANYPS5_SDL2_INCLUDE_DIR}
 )
-target_link_libraries(libSceAudioOut PRIVATE libc libkernel libScePad SDL2-static)
+if(APPLE)
+    target_link_libraries(libSceAudioOut PRIVATE libc libkernel libScePad libSceAgcDriver)
+else()
+    target_link_libraries(libSceAudioOut PRIVATE libc libkernel libScePad SDL2-static)
+endif()
 configure_windows_unwind(libSceAudioOut)
 
 if(BUILD_TESTING)
