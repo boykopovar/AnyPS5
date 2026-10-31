@@ -5,6 +5,14 @@
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <initializer_list>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using Nanosleep = int (APS5_VABI *)(const KernelTimespec*, KernelTimespec*);
 
@@ -95,7 +103,74 @@ static void CompletedSleepLeavesTheRemainingTimeAlone(Nanosleep sleep) {
     Require(remaining.tv_sec == 7 && remaining.tv_nsec == 9);
 }
 
+class GuardedRequest {
+public:
+    GuardedRequest() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, 2 * pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+#else
+        const long size = sysconf(_SC_PAGESIZE);
+        Require(size > 0);
+        pageSize = static_cast<std::size_t>(size);
+        void* mapping = mmap(nullptr, 2 * pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED);
+        memory = static_cast<unsigned char*>(mapping);
+#endif
+    }
+    ~GuardedRequest() {
+#ifdef _WIN32
+        Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+#else
+        Require(munmap(memory, 2 * pageSize) == 0);
+#endif
+    }
+    KernelTimespec* AtBoundary(std::size_t readableBytes) {
+        return reinterpret_cast<KernelTimespec*>(memory + pageSize - readableBytes);
+    }
+    void Protect(bool readable) {
+#ifdef _WIN32
+        DWORD oldProtect{};
+        Require(VirtualProtect(memory + pageSize, pageSize, readable ? PAGE_READWRITE : PAGE_NOACCESS, &oldProtect) != 0);
+#else
+        Require(mprotect(memory + pageSize, pageSize, readable ? PROT_READ | PROT_WRITE : PROT_NONE) == 0);
+#endif
+    }
+private:
+    unsigned char* memory{};
+    std::size_t pageSize{};
+};
+
+static void RejectsUnreadableRequests(Nanosleep sleep, bool sce) {
+    GuardedRequest mapping;
+    for (const std::size_t readableBytes : {std::size_t{0}, sizeof(std::int64_t)}) {
+        auto* request = mapping.AtBoundary(readableBytes);
+        const KernelTimespec zero{};
+        std::memcpy(request, &zero, sizeof(zero));
+        Require(sleep(request, nullptr) == SCE_OK);
+        mapping.Protect(false);
+        KernelTimespec remaining{7, 9};
+        *__error_nid_postfix() = GUEST_EACCES;
+        const int result = sleep(request, &remaining);
+        Require(result == (sce ? SCE_KERNEL_ERROR_EFAULT : -1));
+        Require(*__error_nid_postfix() == (sce ? GUEST_EACCES : GUEST_EFAULT));
+        Require(remaining.tv_sec == 7 && remaining.tv_nsec == 9);
+        auto* inside = mapping.AtBoundary(sizeof(KernelTimespec));
+        std::memcpy(inside, &zero, sizeof(zero));
+        Require(sleep(inside, nullptr) == SCE_OK);
+        mapping.Protect(true);
+        std::memcpy(request, &zero, sizeof(zero));
+        Require(sleep(request, nullptr) == SCE_OK);
+    }
+}
+
 int main() {
+    RejectsUnreadableRequests(nanosleep_nid_postfix, false);
+    RejectsUnreadableRequests(_nanosleep_nid_postfix, false);
+    RejectsUnreadableRequests(sceKernelNanosleep, true);
     PosixRejectsInvalidRequests(nanosleep_nid_postfix);
     PosixRejectsInvalidRequests(_nanosleep_nid_postfix);
     SceRejectsInvalidRequests();
