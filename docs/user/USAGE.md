@@ -548,6 +548,12 @@ A line is the player number (the controller's slot: a controller that reconnects
 
 The panel uses the font and scale of the [performance overlay](#performance-overlay) and sits in the corner mirrored horizontally from `ANYPS5_OVERLAY_POS`, the top right by default, so it never covers that overlay. While the system on-screen keyboard is shown the panel is not drawn, and its 4 seconds keep running. Screenshots do not include it. While it is hidden, which is always so unless F9 or `ANYPS5_PAD_STATUS=1` shows it, nothing is drawn, no render pass or memory is allocated for it and the presented image is unchanged. What still runs is a lock and a clock read in each present and in each video-out loop pass, to see whether the panel is wanted. With `ANYPS5_PAD_STATUS` unset or 0 and no F9 press, no controller name is copied and no battery level is read for it; they are read on every loop pass with `ANYPS5_PAD_STATUS=1`, and while the panel is shown after F9.
 
+### PSN-only dialogs
+
+Some system dialogs need PlayStation Network: the profile, the friend list, the store, the invitation dialog, the Facebook link and the authorized-apps dialog. AnyPS5 does not provide PlayStation Network, so these dialogs finish at once with the same answer as a cancel, and nothing is shown. The web browser dialog is not known to need PlayStation Network, so its notice only says that the system feature is not available.
+
+Set `ANYPS5_PSN_DIALOGS=show` to show a notice on the game's screen when one of these dialogs opens. The notice has one OK button and takes the controller until it is answered. It is not shown again within two seconds of the previous one, and it is not shown while another dialog or notice is showing. The game's result is the same either way. `silent`, an unset variable and an empty one show nothing. Any other value stops the game at its first such dialog with an error that names `ANYPS5_PSN_DIALOGS`.
+
 ### Windows crash diagnostics
 
 When a register points at readable memory that starts with at least four printable ASCII characters, either as UTF-16LE or as single bytes, the crash report prints that text after the register memory dump, as `[r13] u"..."` for UTF-16LE or `[rdi] "..."` for single bytes. The text ends at a NUL, at the first character that is not printable ASCII, a tab, a line feed or a carriage return, after 512 characters or at the end of readable memory. Tabs, line breaks, quotes and backslashes are escaped, and `...` after the closing quote means that no NUL ended the text within those limits.
