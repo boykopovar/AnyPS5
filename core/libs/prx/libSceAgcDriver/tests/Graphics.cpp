@@ -12432,6 +12432,16 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         BuildPipelineStoreKey(partialKey, context, partialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
         BuildPipelineStoreKey(partialReplayed, context, partialDecoded.state, partialDecoded.vertexInput, layouts.View(), shaders, partialDecoded.attachmentLayout);
         Require(partialKey != original && partialKey == partialReplayed, "the decoded partial write state keys another pipeline");
+        auto layeredPartialState = partialState;
+        layeredPartialState.meshLayerBase = 2048u;
+        layeredPartialState.meshLayerCount = 32u;
+        GraphicsPipelineRecipe layeredPartialDecoded;
+        Require(DecodeGraphicsPipelineRecipe(EncodeGraphicsPipelineRecipe(MakeGraphicsPipelineRecipe(layeredPartialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL)), layeredPartialDecoded), "the layered partial write recipe does not decode");
+        Require(layeredPartialDecoded.state.meshLayerBase == 2048u && layeredPartialDecoded.state.meshLayerCount == 32u && layeredPartialDecoded.state.colors[0].partialWriteMask == 0xf000u, "the recipe lost mesh layers or the partial write mask");
+        std::vector<std::byte> layeredPartialKey, layeredPartialReplayed;
+        BuildPipelineStoreKey(layeredPartialKey, context, layeredPartialState, input, layouts.View(), shaders, VK_IMAGE_LAYOUT_GENERAL);
+        BuildPipelineStoreKey(layeredPartialReplayed, context, layeredPartialDecoded.state, layeredPartialDecoded.vertexInput, layouts.View(), shaders, layeredPartialDecoded.attachmentLayout);
+        Require(layeredPartialKey != partialKey && layeredPartialKey == layeredPartialReplayed, "the decoded layered partial write state keys another pipeline");
         auto movedState = state;
         movedState.viewport.x = 5;
         movedState.colors[0].address = 0x9000;
@@ -12560,17 +12570,21 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
             Require(cancelled->Done() && after.replayFailed == 0 && after.replayRejected == 0 && after.replayedGraphics + after.replayPresent <= before.replayedGraphics + before.replayPresent + 1, "a cancelled replay did not stop cleanly");
         }
         {
-            const std::uint32_t meshWithoutOutputSize = 2u;
-            std::fstream file(journalFile, std::ios::in | std::ios::out | std::ios::binary);
-            file.seekp(4);
-            file.write(reinterpret_cast<const char*>(&meshWithoutOutputSize), sizeof(meshWithoutOutputSize));
-            file.close();
-            Require(file.good(), "the journal header could not be rewritten");
-            auto stale = StartPipelineJournalReplay(context, fingerprint, hooks);
-            Require(stale != nullptr, "the replay of a journal in the previous format did not start");
-            stale->Wait();
-            const auto discarded = PipelineJournalTotals();
-            Require(discarded.loadedRecipes == 0 && discarded.loadedModules == 0, "a journal in format 2, whose mesh records lack the output primitive size, was loaded");
+            std::vector<std::byte> currentJournal;
+            Require(ShaderRecompiler::ReadWholeFile(journalFile, currentJournal), "cannot read the current journal for version rejection");
+            for (const std::uint32_t previousFormat : {10u, 2u}) {
+                std::fstream file(journalFile, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
+                file.write(reinterpret_cast<const char*>(currentJournal.data()), static_cast<std::streamsize>(currentJournal.size()));
+                file.seekp(4);
+                file.write(reinterpret_cast<const char*>(&previousFormat), sizeof(previousFormat));
+                file.close();
+                Require(file.good(), "the journal header could not be rewritten");
+                auto stale = StartPipelineJournalReplay(context, fingerprint, hooks);
+                Require(stale != nullptr, "the replay of a journal in the previous format did not start");
+                stale->Wait();
+                const auto discarded = PipelineJournalTotals();
+                Require(discarded.loadedRecipes == 0 && discarded.loadedModules == 0, "a journal in previous format " + std::to_string(previousFormat) + " was loaded");
+            }
         }
         ClearCachedPipelines(context.device);
     }

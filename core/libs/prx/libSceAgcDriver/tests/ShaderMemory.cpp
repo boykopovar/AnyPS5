@@ -439,6 +439,54 @@ void verifySpecializedModuleRelease() {
     require(shared.spirv.data() == again.spirv.data(), "specialized module release: a second result of a live module copied its words");
 }
 
+void verifyLayerSpecializationRelease() {
+    using namespace ShaderRecompiler;
+    const std::array<std::uint32_t, 10> code{
+        0x7e000280u, 0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0x7e080280u,
+        0xf80000cfu, 0x03020100u, 0xf80008d4u, 0x00040000u, 0xbf810000u
+    };
+    const std::array<std::uint32_t, 8> hidden{};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Mesh, 0x10000u, code, 0, {}};
+    request.context.waveSize = 64u;
+    request.context.userData = hidden;
+    request.context.vertex = ShaderVertexStageInfo{};
+    request.context.vertex->paClVsOutCntl = (1u << 18u) | (1u << 21u);
+    request.graphics = GraphicsCompileContext{0u, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}, std::nullopt, {}};
+    static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityImageGatherExtended, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance, spv::CapabilityMeshShadingEXT};
+    static constexpr std::array<std::string_view, 3> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_EXT_mesh_shader"};
+    request.target = BufferTarget();
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010400u;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+    request.target.maxWorkgroupInvocations = 1024u;
+    request.target.maxWorkgroupSharedMemoryBytes = 32768u;
+    request.target.mesh = MeshTargetLimits{{128u, 1u, 1u}, 128u, 32768u, 256u, 256u, 128u, 32768u, 1u, 1u};
+    request.useCache = true;
+    const std::vector<PipelineSpecializationConstant> expected{
+        {PipelineSpecialization::MeshLayerBase, 0u},
+        {PipelineSpecialization::MeshLayerCount, 0xffffffffu}
+    };
+    SharedSpirv::Weak released;
+    std::uint64_t specializationId = 0;
+    std::vector<std::uint32_t> words;
+    {
+        const auto first = Recompile(request);
+        require(first.specialization == expected, "layer module release: the prepared layer constants were lost");
+        released = first.spirv.Weaken();
+        specializationId = first.specializationId;
+        words = first.spirv.Copy();
+    }
+    require(released.Expired(), "layer module release: the metadata retained unused SPIR-V words");
+    const auto again = Recompile(request);
+    require(again.specialization == expected, "layer module release: rebuilding the words lost the layer constants");
+    require(again.specializationId == specializationId && std::ranges::equal(again.spirv.Words(), words), "layer module release: rebuilding changed the module identity or words");
+    const auto shared = Recompile(request);
+    require(shared.specialization == expected && shared.spirv.data() == again.spirv.data(), "layer module release: a live cache hit lost constants or copied the words");
+}
+
 const std::vector<std::uint32_t>& resultMemoPixelCode() {
     static const std::vector<std::uint32_t> code{0xbf800000u, 0x7e000200u, 0xf800180fu, 0u, 0xbf810000u};
     return code;
@@ -9585,6 +9633,11 @@ int main(int argc, char** argv) {
         setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
 #endif
         using namespace ShaderRecompiler;
+        if (argc == 2 && std::string_view(argv[1]) == "--layer-specialization-release") {
+            verifyLayerSpecializationRelease();
+            std::cout << "Layer specialization metadata survives SPIR-V release and rebuild\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--specialized-bda-abi") {
             verifySpecializedBufferAtomicBindings(true);
             std::cout << "Specialized programs retain the BDA ABI only while a fault buffer remains\n";
@@ -9719,6 +9772,7 @@ int main(int argc, char** argv) {
         verifyImageTableKeys();
         verifyImageTables();
         verifySpecializedModuleRelease();
+        verifyLayerSpecializationRelease();
         verifyImageTableRegistration();
         verifyScalarAddressRule();
         verifyPointerImageTable();
