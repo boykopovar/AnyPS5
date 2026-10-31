@@ -77,6 +77,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_FSR_SHARPNESS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0.2 | RCAS sharpness in stops under `ANYPS5_UPSCALE=fsr`, from 0.0 (sharpest) to 2.0 (weakest); a value outside that range or not a number is refused |
 | `ANYPS5_GPU` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | restricts physical device selection to device names containing this case-insensitive substring |
 | `ANYPS5_HOST_REPORT` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0 | prints the host report to stderr once when the presenting device is chosen: 1 prints it; 0, empty or unset prints nothing, and any other value stops the start with an error naming the variable |
 | `ANYPS5_OVERLAY` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceOverlay.cpp` | 0 | the performance overlay's page at start: 1 the overlay, 2 its detailed page; 0 or unset hides it, and any other value is refused |
@@ -87,6 +88,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_REQUIRE_ROBUST2` | presence | `core/libs/prx/libSceAgcDriver/tests/execution/LdsMixedWidthAtomics.cpp` |  | fails the LDS lock-budget test when the device does not enable robustBufferAccess2, instead of only printing it |
 | `ANYPS5_REQUIRE_VULKAN` | presence | `core/libs/prx/libSceAgcDriver/tests/BdaDevice.cpp` |  | fails a test instead of skipping when no usable Vulkan device is present |
 | `ANYPS5_SCREENSHOTS` | string | `core/libs/prx/libSceAgcDriver/Execution/src/Screenshot.cpp` |  | directory the screenshot key saves its PNG files to, defaulting to anyps5-screenshots beside the executable |
+| `ANYPS5_UPSCALE` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | fsr scales the presentation with FSR 1 (EASU and RCAS) when the window is larger than the display buffer; unset or empty keeps the bilinear scaler, and any other value is refused |
 | `APS5_AB` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/RuntimeSwitches.cpp` |  | `<seconds>:<switch>[+<switch>...]`: alternates phase A (switches as the environment sets them) and phase B (the listed runtime switches toggled) at flip packets, each phase at least `<seconds>` long; prints `[ab]` lines; a name that is not a runtime switch fails the first flip |
 | `APS5_AB_SETTLE` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/RuntimeSwitches.cpp` | 2 | seconds into a phase after which APS5_AB prints the phase's `settled` line; shorter than the phase |
 | `APS5_AB_START` | string | `core/libs/prx/libSceAgcDriver/Graphics/src/RuntimeSwitches.cpp` | 0 | flip packet count (from 1) at which APS5_AB starts, or `<n>s` for seconds after the first flip |
