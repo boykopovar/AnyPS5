@@ -1,4 +1,5 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
+#include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
 
 #include <algorithm>
@@ -367,6 +368,20 @@ void TestCallouts() {
 
 bool Equals(const char* actual, const char* expected) {
     return std::strcmp(actual, expected) == 0;
+}
+
+void TestUserIdList() {
+    std::array<int, 20> users;
+    users.fill(0x5A5A);
+    int count = 0x5A5A;
+    for (std::size_t capacity = 0; capacity < users.size(); ++capacity) {
+        Require(sceNpUserGetUserIdList(users.data(), capacity, &count) == NpInvalidArgument,
+            "a short user id list is refused");
+        Require(count == 0x5A5A, "a short user id list leaves the count unchanged");
+        for (const int user : users) Require(user == 0x5A5A, "a short user id list leaves the users unchanged");
+    }
+    Require(sceNpUserGetUserIdList(users.data(), users.size(), &count) == 0, "the registered user ids are read");
+    Require(count == 1 && users[0] == USER_SERVICE_INITIAL_USER_ID, "the initial user is the only registered user");
 }
 
 void TestIds() {
@@ -1081,5 +1096,6 @@ int main() {
     TestJsonText();
     TestJsonParser();
     TestTitleIds();
+    TestUserIdList();
     std::puts("guest np common runtime: PASS");
 }

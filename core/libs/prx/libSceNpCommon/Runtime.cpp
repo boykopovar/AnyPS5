@@ -787,13 +787,12 @@ int APS5_VABI sceNpRtcFormatRFC3339(char* text, std::size_t size, const RtcTick*
 
 int APS5_VABI sceNpUserGetUserIdList(int* users, std::size_t capacity, int* count) {
     if (capacity < NP_USER_ID_LIST_SIZE) return NP_ERROR_INVALID_ARGUMENT;
-    int registered[NP_USER_ID_LIST_SIZE];
-    std::fill(std::begin(registered), std::end(registered), USER_ID_INVALID);
-    static_assert(sizeof(UserServiceRegisteredUserIdList) <= sizeof(registered));
-    const int result = sceUserServiceGetRegisteredUserIdList(reinterpret_cast<UserServiceRegisteredUserIdList*>(registered));
+    UserServiceRegisteredUserIdList registered{};
+    std::fill(std::begin(registered.user_id), std::end(registered.user_id), USER_ID_INVALID);
+    const int result = sceUserServiceGetRegisteredUserIdList(&registered);
     if (result < 0) return result;
     int found = 0;
-    for (const int user : registered)
+    for (const int user : registered.user_id)
         if (user != USER_ID_INVALID) users[found++] = user;
     *count = found;
     return 0;
