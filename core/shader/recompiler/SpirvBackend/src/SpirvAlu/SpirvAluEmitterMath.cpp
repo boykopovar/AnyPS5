@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <ranges>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -562,6 +563,79 @@ private:
     std::unordered_set<const IrValue*> zeroValues;
     std::unordered_set<const IrValue*> phis;
     std::uint32_t budget = 1024u;
+};
+
+class OwnLaneSelectorWalk {
+public:
+    explicit OwnLaneSelectorWalk(std::uint32_t waveSize) : laneMask(waveSize - 1u) {}
+
+    bool Selector(const IrValue* value) {
+        return walk(value, SelectorKind);
+    }
+
+private:
+    static constexpr std::uint32_t SelectorKind = 2u;
+
+    bool walk(const IrValue* value, std::uint32_t kind) {
+        value = Resolved(value);
+        if (value == nullptr || !spend()) return false;
+        const std::pair<const IrValue*, std::uint32_t> key{value, kind};
+        if (const auto found = known.find(key); found != known.end()) return found->second;
+        bool result = false;
+        if (Is(value, IrOpcode::Phi)) {
+            if (!assumed.insert(key).second) return true;
+            result = value->ArgumentCount() != 0u;
+            for (std::size_t index = 0; result && index < value->ArgumentCount(); ++index) result = walk(value->Argument(index), kind);
+            assumed.erase(key);
+        } else {
+            result = kind == SelectorKind ? selector(value) : ownWord(value, kind);
+        }
+        if (!result || assumed.empty()) known.emplace(key, result);
+        return result;
+    }
+
+    bool selector(const IrValue* value) {
+        if (value->HasImmediate()) return value->Type() == IrType::U32 && (value->ImmediateU32() & laneMask) == 0u;
+        if (Is(value, IrOpcode::FindILsb32)) return walk(value->Argument(0), 0u);
+        if (!Is(value, IrOpcode::SelectU32)) return false;
+        const auto* low = Resolved(value->Argument(1));
+        if (Is(low, IrOpcode::FindILsb32) && walk(low->Argument(0), 0u) && noLane(value->Argument(2))) return true;
+        return walk(value->Argument(1), SelectorKind) && walk(value->Argument(2), SelectorKind);
+    }
+
+    bool noLane(const IrValue* value) {
+        if (IsU32(value, 0xffffffffu)) return true;
+        const auto* upper = Resolved(value);
+        if (!Is(upper, IrOpcode::SelectU32) || !IsU32(upper->Argument(2), 0xffffffffu)) return false;
+        const auto* test = Resolved(upper->Argument(0));
+        return Is(test, IrOpcode::INotEqual32) && EitherOrder(test, [this](const IrValue* word, const IrValue* zero) { return IsU32(zero, 0u) && walk(word, 1u); });
+    }
+
+    bool ownWord(const IrValue* word, std::uint32_t half) {
+        if (word->HasImmediate()) return word->Type() == IrType::U32 && (word->ImmediateU32() & (half == 0u ? ~1u : ~0u)) == 0u;
+        switch (word->Opcode()) {
+            case IrOpcode::CompositeExtractU32x4: {
+                const auto* index = Resolved(word->Argument(1));
+                return Is(Resolved(word->Argument(0)), IrOpcode::Ballot) && index != nullptr && index->HasImmediate() && (half == 0u || index->ImmediateU32() != 0u);
+            }
+            case IrOpcode::BitwiseAnd32: return walk(word->Argument(0), half) || walk(word->Argument(1), half);
+            case IrOpcode::BitwiseOr32:
+            case IrOpcode::BitwiseXor32: return walk(word->Argument(0), half) && walk(word->Argument(1), half);
+            case IrOpcode::SelectU32: return walk(word->Argument(1), half) && walk(word->Argument(2), half);
+            default: return false;
+        }
+    }
+
+    bool spend() {
+        if (budget == 0u) return false;
+        --budget;
+        return true;
+    }
+
+    std::uint32_t laneMask;
+    std::map<std::pair<const IrValue*, std::uint32_t>, bool> known;
+    std::set<std::pair<const IrValue*, std::uint32_t>> assumed;
+    std::uint32_t budget = 4096u;
 };
 
 bool RowShiftFlags(const IrValue* value, std::uint32_t control, bool zeroFill) {
@@ -1433,6 +1507,8 @@ std::uint32_t EmitReadLane(SpirvValueEmitContext& ctx, const IrValue& inst) {
             if (index >= 32u && UpperLaneWalk{state.program.Resources().stage}.ZeroValue(inst.Argument(0))) return ConstantU32(state, 0u);
             FailOutsideHostSubgroup(ctx, inst, "v_readlane_b32 of lane " + std::to_string(index));
         }
+    } else if (HostSubgroupNarrowerThanWave(state) && HostSubgroupSingleLane(state) && !OwnLaneSelectorWalk{state.program.WaveSize()}.Selector(selector)) {
+        FailOutsideHostSubgroup(ctx, inst, "v_readlane_b32 of a register-selected lane");
     }
     const auto lane = Binary(state, spv::OpBitwiseAnd, TypeU32(state), ctx.Arg(inst, 1), ConstantU32(state, state.program.WaveSize() - 1u));
     return ctx.Shuffle(inst, 0, lane);
