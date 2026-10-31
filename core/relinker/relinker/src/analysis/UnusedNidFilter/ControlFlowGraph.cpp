@@ -38,6 +38,7 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
     while (codeSize > 0 && text[codeSize - 1] == 0) --codeSize;
     const Codegen::X64InstructionDecoder decoder;
     std::unordered_set<VirtualAddress> visited;
+    if (reachable.empty()) reachable.reserve(codeSize / 4);
     std::queue<VirtualAddress> worklist;
     std::vector<VirtualAddress> addressTaken;
     bool speculative = false;
