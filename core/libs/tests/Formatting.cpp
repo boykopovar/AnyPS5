@@ -204,6 +204,22 @@ static bool CheckWidePrecision() {
     return correct;
 }
 
+static int constraintCalls = 0;
+static std::string constraintMessage;
+
+static void APS5_VABI RecordConstraint(const char* message, void* pointer, int error) {
+    ++constraintCalls;
+    constraintMessage = message;
+    Require(pointer == nullptr && error == 22);
+}
+
+static bool Constraint(const char* message) {
+    const bool matches = message == nullptr ? constraintCalls == 0 : constraintCalls == 1 && constraintMessage == message;
+    constraintCalls = 0;
+    constraintMessage.clear();
+    return matches;
+}
+
 static void CheckIntegerScanWidths() {
     int value = 7;
     *__error_nid_postfix() = 0;
@@ -261,37 +277,62 @@ static void CheckIntegerScanWidths() {
 }
 
 static void CheckSecureFormat() {
-    constexpr size_t rsizeMax = SIZE_MAX >> 1;
+    constexpr size_t rsizeMax = (size_t{1} << 61) - 1;
+    void* previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(RecordConstraint));
     char buffer[16];
-    std::memset(buffer, '!', sizeof(buffer));
-    Require(FormatListS(buffer, 5, "%s", "abcdef") == 6 && std::strcmp(buffer, "abcd") == 0 && buffer[5] == '!');
-    Require(snprintf_s_nid_postfix(buffer, 5, "%d-%ls", 42, u"abcd") == 7 && std::strcmp(buffer, "42-a") == 0);
-    Require(FormatListS(buffer, 1, "%x", 0xabcu) == 3 && buffer[0] == 0);
-    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "") == 0 && buffer[0] == 0);
-    buffer[0] = 'x';
-    Require(FormatListS(buffer, sizeof(buffer), nullptr) < 0 && buffer[0] == 0);
-    Require(FormatListS(nullptr, sizeof(buffer), "a") < 0 && snprintf_s_nid_postfix(nullptr, sizeof(buffer), "a") < 0);
-    buffer[0] = 'x';
-    Require(FormatListS(buffer, 0, "a") < 0 && snprintf_s_nid_postfix(buffer, 0, "a") < 0 && buffer[0] == 'x');
-    Require(FormatListS(buffer, rsizeMax + 1, "a") < 0 && snprintf_s_nid_postfix(buffer, rsizeMax + 1, "a") < 0 && buffer[0] == 'x');
-    int written = -7;
-    Require(FormatListS(buffer, sizeof(buffer), "ab%n", &written) < 0 && buffer[0] == 0 && written == -7);
-    buffer[0] = 'x';
-    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "ab%hhn", &written) < 0 && buffer[0] == 0 && written == -7);
-    buffer[0] = 'x';
-    Require(FormatListS(buffer, sizeof(buffer), "a%s", static_cast<const char*>(nullptr)) < 0 && buffer[0] == 0);
-    buffer[0] = 'x';
-    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "a%ls", static_cast<const char16_t*>(nullptr)) < 0 && buffer[0] == 0);
-    buffer[0] = 'x';
-    Require(FormatListS(buffer, sizeof(buffer), "%2$s%1$S", static_cast<const char16_t*>(nullptr), "a") < 0 && buffer[0] == 0);
-    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%.0s|%c", "", 'z') == 2 && std::strcmp(buffer, "|z") == 0);
-    bool threw = false;
-    try {
-        FormatListS(buffer, sizeof(buffer), "%y", 1);
-    } catch (const std::invalid_argument&) {
-        threw = true;
+    const auto holds = [&](const char* expected, size_t size) { return std::memcmp(buffer, expected, size) == 0; };
+    const auto both = [&](size_t size, const char* format, auto... args) {
+        std::memset(buffer, '~', sizeof(buffer));
+        const int direct = snprintf_s_nid_postfix(buffer, size, format, args...);
+        const std::string directMessage = constraintMessage;
+        const int directCalls = constraintCalls;
+        const std::string directText(buffer, sizeof(buffer));
+        Constraint(nullptr);
+        std::memset(buffer, '~', sizeof(buffer));
+        const int listed = FormatListS(buffer, size, format, args...);
+        const bool same = listed == direct && directText == std::string(buffer, sizeof(buffer)) && directCalls == constraintCalls &&
+            (directCalls == 0 || "v" + directMessage == constraintMessage || directMessage == constraintMessage);
+        Require(same);
+        return direct;
+    };
+    Require(both(16, "%d-%s", 42, "xy") == 5 && holds("42-xy\0~", 7) && Constraint(nullptr));
+    Require(both(16, "") == 0 && holds("\0~", 2) && Constraint(nullptr));
+    Require(both(6, "%s", "abcde") == 5 && holds("abcde\0~", 7) && Constraint(nullptr));
+    Require(both(5, "%s", "abcdef") == 6 && holds("abcd\0~", 6) && Constraint(nullptr));
+    Require(both(1, "%s", "abc") == 3 && holds("\0~", 2) && Constraint(nullptr));
+    Require(both(2, "%d", 12345) == 5 && holds("1\0~", 3) && Constraint(nullptr));
+    Require(both(5, "%d-%ls", 42, u"abcd") == 7 && holds("42-a\0~", 6) && Constraint(nullptr));
+    Require(both(16, "a%ls|%S", u"wx", u"y") == 5 && holds("awx|y\0~", 7) && Constraint(nullptr));
+    Require(both(16, "%%n") == 2 && holds("%n\0~", 4) && Constraint(nullptr));
+    Require(both(rsizeMax, "a") == 1 && holds("a\0~", 3) && Constraint(nullptr));
+    for (const size_t size : {size_t{0}, rsizeMax + 1, SIZE_MAX >> 1, SIZE_MAX}) {
+        Require(both(size, "a") == -1 && holds("~", 1) && Constraint("vsnprintf_s: bad argument"));
     }
-    Require(threw);
+    Require(snprintf_s_nid_postfix(nullptr, 16, "a") == -1 && Constraint("snprintf_s: bad argument"));
+    Require(FormatListS(nullptr, 16, "a") == -1 && Constraint("vsnprintf_s: bad argument"));
+    Require(snprintf_s_nid_postfix(nullptr, 0, "a") == -1 && Constraint("snprintf_s: bad argument"));
+    std::memset(buffer, '~', sizeof(buffer));
+    Require(snprintf_s_nid_postfix(buffer, 16, nullptr) == -1 && holds("\0~", 2) && Constraint("snprintf_s: bad format argument"));
+    std::memset(buffer, '~', sizeof(buffer));
+    Require(FormatListS(buffer, 16, nullptr) == -1 && holds("\0~", 2) && Constraint("vsnprintf_s: bad format argument"));
+    int written = -7;
+    Require(both(16, "ab%n", &written) == -23 && holds("\0b~", 3) && written == -7 && Constraint("printf_s: %n disallowed"));
+    short half = -7;
+    Require(both(16, "ab%hn", &half) == -23 && holds("\0b~", 3) && half == -7 && Constraint("printf_s: %n disallowed"));
+    Require(both(3, "abcdef%n", static_cast<int*>(nullptr)) == -23 && holds("\0b~", 3) && Constraint("printf_s: %n disallowed"));
+    const char* noText = nullptr;
+    const char16_t* noWide = nullptr;
+    Require(both(16, "a%s", noText) == -23 && holds("\0~", 2) && Constraint("printf_s: bad %s argument"));
+    Require(both(16, "a%.0s", noText) == -23 && holds("\0~", 2) && Constraint("printf_s: bad %s argument"));
+    Require(both(2, "abc%s", noText) == -23 && holds("\0~", 2) && Constraint("printf_s: bad %s argument"));
+    Require(both(16, "%d%s", 12, noText) == -23 && holds("\0" "2~", 3) && Constraint("printf_s: bad %s argument"));
+    Require(both(16, "%s|%s", "xy", noText) == -23 && holds("\0y|~", 4) && Constraint("printf_s: bad %s argument"));
+    Require(both(16, "%2$s%1$d", 5, noText) == -23 && holds("\0~", 2) && Constraint("printf_s: bad %s argument"));
+    Require(both(16, "a%ls", noWide) == -23 && holds("\0~", 2) && Constraint("printf_s: bad %ls argument"));
+    Require(both(16, "a%S", noWide) == -23 && holds("\0~", 2) && Constraint("printf_s: bad %ls argument"));
+    Require(both(16, "%2$s%1$S", noWide, "a") == -23 && holds("\0~", 2) && Constraint("printf_s: bad %ls argument"));
+    Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%.0s|%c", "", 'z') == 2 && std::strcmp(buffer, "|z") == 0);
+    set_constraint_handler_s_nid_postfix(previous);
 }
 
 static void CheckScanInputFailureErrno() {
@@ -465,14 +506,14 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
         Require(sscanf_nid_postfix("1 xyz", "%d %l[a-c]", &number, first) == 1);
         Require(ScanList("hi there", "%ls %lc", first, &letter) == 2 && std::u16string(first) == u"hi" && letter == u't');
         char16_t fits[6] = {};
-        Require(ScanListS("hello world", "%ls", fits, 6u) == 1 && std::u16string(fits) == u"hello");
+        Require(ScanListS("hello world", "%ls", fits, size_t{6}) == 1 && std::u16string(fits) == u"hello");
         char16_t small[5] = {u'!', u'!', u'!', u'!', u'!'};
-        Require(ScanListS("hello", "%ls", small, 5u) == 0 && small[0] == 0);
-        Require(ScanListS("hello", "%4ls", small, 5u) == 1 && std::u16string(small) == u"hell");
-        Require(ScanListS("xy", "%lc", &letter, 1u) == 1 && letter == u'x');
+        Require(ScanListS("hello", "%ls", small, size_t{5}) == 0 && std::u16string(small, 5) == u"hello");
+        Require(ScanListS("hello", "%4ls", small, size_t{5}) == 1 && std::u16string(small) == u"hell");
+        Require(ScanListS("xy", "%lc", &letter, size_t{1}) == 1 && letter == u'x');
         small[0] = u'!';
-        Require(ScanListS("xyz", "%3lc", small, 2u) == 0 && small[0] == 0);
-        Require(ScanListS("ab cd", "%*ls %l[a-z]", fits, 6u) == 1 && std::u16string(fits) == u"cd");
+        Require(ScanListS("xyz", "%3lc", small, size_t{2}) == 1 && small[0] == u'x' && small[1] == u'y' && small[2] == u'l');
+        Require(ScanListS("ab cd", "%*ls %l[a-z]", fits, size_t{6}) == 1 && std::u16string(fits) == u"cd");
         char16_t untouched[4] = {u'!', u'!', u'!', u'!'};
         const auto rejects = [&](const char* input, const char* format) {
             try { sscanf_nid_postfix(input, format, untouched); } catch (const std::runtime_error&) { return untouched[0] == u'!'; }
@@ -520,9 +561,9 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     CheckSecureFormat();
     int scanNum = 0;
     char scanWord[8] = {};
-    Require(ScanListS("123 test", "%d %s", &scanNum, scanWord, 8u) == 2 && scanNum == 123 && std::strcmp(scanWord, "test") == 0);
+    Require(ScanListS("123 test", "%d %s", &scanNum, scanWord, size_t{8}) == 2 && scanNum == 123 && std::strcmp(scanWord, "test") == 0);
     char tooSmall[4] = {'x', 'x', 'x', 'x'};
-    Require(ScanListS("abcdef", "%s", tooSmall, 4u) == 0 && tooSmall[0] == '\0');
+    Require(ScanListS("abcdef", "%s", tooSmall, size_t{4}) == 0 && std::memcmp(tooSmall, "abcd", 4) == 0);
     CheckIntegerScanWidths();
     std::puts("Formatting checks passed: 10000 iterations");
 }
