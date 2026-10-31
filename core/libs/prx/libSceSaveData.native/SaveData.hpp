@@ -54,6 +54,9 @@ inline std::array<MountSlot, SAVE_DATA_MOUNT_SLOTS> g_slots;
 inline std::mutex g_slots_mutex;
 
 inline int find_slot_by_mount_point(const char* mount_point) {
+    if (mount_point == nullptr) {
+        return -1;
+    }
     for (int i = 0; i < static_cast<int>(SAVE_DATA_MOUNT_SLOTS); i++) {
         if (g_slots[i].used && g_slots[i].mount_point == mount_point) {
             return i;

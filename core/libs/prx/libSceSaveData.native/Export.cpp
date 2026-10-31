@@ -333,6 +333,10 @@ static std::string blocks_path(const std::string& real_path) {
     return real_path + ".blocks";
 }
 
+static bool isValidMountPoint(const SaveDataMountPoint* mount_point) {
+    return mount_point != nullptr && std::memchr(mount_point->data, '\0', sizeof(mount_point->data)) != nullptr;
+}
+
 static bool isMountedDirectory(const std::string& path, std::error_code& error) {
     for (const auto& slot : g_slots) {
         if (!slot.used) continue;
@@ -554,7 +558,7 @@ int APS5_VABI sceSaveDataGetEventResult(const void* event_param, SaveDataEvent* 
 }
 
 static int getMountInfo(const SaveDataMountPoint* mount_point, SaveDataMountInfo* info) {
-    if (mount_point == nullptr || info == nullptr) {
+    if (!isValidMountPoint(mount_point) || info == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -571,12 +575,12 @@ static int getMountInfo(const SaveDataMountPoint* mount_point, SaveDataMountInfo
 
 int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint* mount_point, SaveDataMountInfo* info) {
     const int rc = getMountInfo(mount_point, info);
-    SAVEDATA_TRACE("getMountInfo point=%s -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("getMountInfo point=%.*s -> 0x%08x", static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
     return rc;
 }
 
 static int getParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf, size_t param_buf_size, size_t* got_size) {
-    if (mount_point == nullptr || param_buf == nullptr) {
+    if (!isValidMountPoint(mount_point) || param_buf == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -598,7 +602,7 @@ static int getParam(const SaveDataMountPoint* mount_point, uint32_t param_type, 
 
 int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, void* param_buf, size_t param_buf_size, size_t* got_size) {
     const int rc = getParam(mount_point, param_type, param_buf, param_buf_size, got_size);
-    SAVEDATA_TRACE("getParam point=%s type=%u size=%zu -> 0x%08x got=%zu", mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc), got_size != nullptr ? *got_size : static_cast<size_t>(0));
+    SAVEDATA_TRACE("getParam point=%.*s type=%u size=%zu -> 0x%08x got=%zu", static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc), got_size != nullptr ? *got_size : static_cast<size_t>(0));
     return rc;
 }
 
@@ -659,7 +663,7 @@ int APS5_VABI sceSaveDataInitialize3(const void* init) {
 
 int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDataIcon* icon) {
     (void)icon;
-    if (mount_point == nullptr) {
+    if (!isValidMountPoint(mount_point)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -765,7 +769,7 @@ int APS5_VABI sceSaveDataPrepare(const SaveDataMountPoint* mount_point, const Sa
 
 int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mount_point, const SaveDataIcon* icon) {
     (void)icon;
-    if (mount_point == nullptr) {
+    if (!isValidMountPoint(mount_point)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -776,13 +780,15 @@ int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mount_point, const S
 }
 
 int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint* mount_point, const char* path) {
-    (void)mount_point;
     (void)path;
+    if (!isValidMountPoint(mount_point)) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     return SAVE_DATA_OK;
 }
 
 static int setParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf, size_t param_buf_size) {
-    if (mount_point == nullptr || param_buf == nullptr) {
+    if (!isValidMountPoint(mount_point) || param_buf == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -813,7 +819,7 @@ static int setParam(const SaveDataMountPoint* mount_point, uint32_t param_type, 
 
 int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_t param_type, const void* param_buf, size_t param_buf_size) {
     const int rc = setParam(mount_point, param_type, param_buf, param_buf_size);
-    SAVEDATA_TRACE("setParam point=%s type=%u size=%zu -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("setParam point=%.*s type=%u size=%zu -> 0x%08x", static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_point != nullptr ? mount_point->data : "(null)", param_type, param_buf_size, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -988,7 +994,7 @@ int APS5_VABI sceSaveDataTransferringMount(const SaveDataTransferringMount* moun
 
 static int umount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
     (void)mode;
-    if (mount_point == nullptr) {
+    if (!isValidMountPoint(mount_point)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     std::lock_guard lock(g_slots_mutex);
@@ -1003,7 +1009,7 @@ static int umount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
 
 int APS5_VABI sceSaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
     const int rc = umount2(mode, mount_point);
-    SAVEDATA_TRACE("umount2 mode=0x%x point=%s -> 0x%08x", mode, mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
+    SAVEDATA_TRACE("umount2 mode=0x%x point=%.*s -> 0x%08x", mode, static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
     return rc;
 }
 

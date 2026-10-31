@@ -63,6 +63,17 @@ void CheckUnmountedCalls() {
     Check(sceSaveDataSetParam(nullptr, 1, buf, sizeof(buf)) == SaveDataErrorParameter, "setParam null point is PARAMETER");
     Check(sceSaveDataSetParam(&point, 1, nullptr, sizeof(buf)) == SaveDataErrorParameter, "setParam null buf is PARAMETER");
     Check(sceSaveDataSetParam(&point, 1, buf, sizeof(buf)) == SaveDataErrorNotMounted, "setParam unmounted point is NOT_MOUNTED");
+    SaveDataMountPoint unterminatedPoint{};
+    std::memset(unterminatedPoint.data, 'a', sizeof(unterminatedPoint.data));
+    Check(sceSaveDataUmount2(0, &unterminatedPoint) == SaveDataErrorParameter, "umount2 unterminated point is PARAMETER");
+    Check(sceSaveDataLoadIcon(&unterminatedPoint, &icon) == SaveDataErrorParameter, "loadIcon unterminated point is PARAMETER");
+    Check(sceSaveDataSaveIcon(&unterminatedPoint, &icon) == SaveDataErrorParameter, "saveIcon unterminated point is PARAMETER");
+    Check(sceSaveDataSaveIconByPath(&unterminatedPoint, "test.png") == SaveDataErrorParameter, "saveIconByPath unterminated point is PARAMETER");
+    Check(sceSaveDataGetMountInfo(&unterminatedPoint, &info) == SaveDataErrorParameter, "getMountInfo unterminated point is PARAMETER");
+    Check(sceSaveDataGetParam(&unterminatedPoint, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam unterminated point is PARAMETER");
+    Check(sceSaveDataSetParam(&unterminatedPoint, 1, buf, sizeof(buf)) == SaveDataErrorParameter, "setParam unterminated point is PARAMETER");
+    unterminatedPoint.data[sizeof(unterminatedPoint.data) - 1] = '\0';
+    Check(sceSaveDataUmount2(0, &unterminatedPoint) == SaveDataErrorNotMounted, "umount2 terminated unmounted point is NOT_MOUNTED");
     Check(sceSaveDataBackup(nullptr) == SaveDataErrorParameter, "backup null backup is PARAMETER");
     SaveDataBackup nullDirBackup{};
     Check(sceSaveDataBackup(&nullDirBackup) == SaveDataErrorParameter, "backup null dir_name is PARAMETER");
@@ -131,6 +142,15 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     Check(sceSaveDataSetParam(point, 1, newTitle, sizeof(newTitle)) == 0, "setParam on mounted save succeeds");
     Check(sceSaveDataGetParam(point, 1, readTitle, sizeof(readTitle), &gotSize) == 0, "getParam reads back set title");
     Check(std::strcmp(readTitle, newTitle) == 0, "readTitle matches newTitle");
+    SaveDataMountPoint unterminatedMounted{};
+    std::memset(unterminatedMounted.data, 'a', sizeof(unterminatedMounted.data));
+    Check(sceSaveDataUmount2(0, &unterminatedMounted) == SaveDataErrorParameter, "umount2 unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataLoadIcon(&unterminatedMounted, &icon) == SaveDataErrorParameter, "loadIcon unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataSaveIcon(&unterminatedMounted, &icon) == SaveDataErrorParameter, "saveIcon unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataSaveIconByPath(&unterminatedMounted, "icon.png") == SaveDataErrorParameter, "saveIconByPath unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataGetMountInfo(&unterminatedMounted, &info) == SaveDataErrorParameter, "getMountInfo unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataGetParam(&unterminatedMounted, 1, buf, sizeof(buf), &gotSize) == SaveDataErrorParameter, "getParam unterminated point is PARAMETER on mounted save");
+    Check(sceSaveDataSetParam(&unterminatedMounted, 1, newTitle, sizeof(newTitle)) == SaveDataErrorParameter, "setParam unterminated point is PARAMETER on mounted save");
 }
 
 void MountAndCheck(const char* name, std::uint32_t mode, std::uint32_t expectedStatus, const std::string& what) {
