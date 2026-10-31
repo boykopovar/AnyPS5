@@ -4,6 +4,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
 #include <unordered_set>
 #include <vector>
@@ -1503,6 +1505,263 @@ std::uint32_t ScalarU64Constant(SpirvEmitterState& state, std::uint32_t value) {
     return state.module.Constant(spv::OpConstant, TypeScalarU64(state), value, 0u);
 }
 
+struct LaneOrderedReduction {
+    spv::Op atomic;
+    spv::Op scan;
+    std::uint32_t identity;
+};
+
+std::optional<LaneOrderedReduction> AggregatedLdsReduction(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::SharedAtomicIAdd32: return LaneOrderedReduction{spv::OpAtomicIAdd, spv::OpGroupNonUniformIAdd, 0u};
+    case IrOpcode::SharedAtomicISub32: return LaneOrderedReduction{spv::OpAtomicISub, spv::OpGroupNonUniformIAdd, 0u};
+    case IrOpcode::SharedAtomicSMin32: return LaneOrderedReduction{spv::OpAtomicSMin, spv::OpGroupNonUniformSMin, 0x7fffffffu};
+    case IrOpcode::SharedAtomicUMin32: return LaneOrderedReduction{spv::OpAtomicUMin, spv::OpGroupNonUniformUMin, 0xffffffffu};
+    case IrOpcode::SharedAtomicSMax32: return LaneOrderedReduction{spv::OpAtomicSMax, spv::OpGroupNonUniformSMax, 0x80000000u};
+    case IrOpcode::SharedAtomicUMax32: return LaneOrderedReduction{spv::OpAtomicUMax, spv::OpGroupNonUniformUMax, 0u};
+    case IrOpcode::SharedAtomicAnd32: return LaneOrderedReduction{spv::OpAtomicAnd, spv::OpGroupNonUniformBitwiseAnd, 0xffffffffu};
+    case IrOpcode::SharedAtomicOr32: return LaneOrderedReduction{spv::OpAtomicOr, spv::OpGroupNonUniformBitwiseOr, 0u};
+    case IrOpcode::SharedAtomicXor32: return LaneOrderedReduction{spv::OpAtomicXor, spv::OpGroupNonUniformBitwiseXor, 0u};
+    default: return std::nullopt;
+    }
+}
+
+std::uint32_t CombineReduction(SpirvEmitterState& state, spv::Op scan, std::uint32_t left, std::uint32_t right) {
+    const auto u32 = TypeU32(state);
+    const auto pick = [&](spv::Op compare) { return Select(state, u32, Binary(state, compare, TypeBool(state), left, right), left, right); };
+    switch (scan) {
+    case spv::OpGroupNonUniformIAdd: return Binary(state, spv::OpIAdd, u32, left, right);
+    case spv::OpGroupNonUniformSMin: return pick(spv::OpSLessThan);
+    case spv::OpGroupNonUniformUMin: return pick(spv::OpULessThan);
+    case spv::OpGroupNonUniformSMax: return pick(spv::OpSGreaterThan);
+    case spv::OpGroupNonUniformUMax: return pick(spv::OpUGreaterThan);
+    case spv::OpGroupNonUniformBitwiseAnd: return Binary(state, spv::OpBitwiseAnd, u32, left, right);
+    case spv::OpGroupNonUniformBitwiseOr: return Binary(state, spv::OpBitwiseOr, u32, left, right);
+    case spv::OpGroupNonUniformBitwiseXor: return Binary(state, spv::OpBitwiseXor, u32, left, right);
+    default: FailEmit("lane-ordered LDS atomic has no reduction");
+    }
+}
+
+std::uint32_t SubgroupReduction(SpirvEmitterState& state, spv::Op scan, spv::GroupOperation operation, std::uint32_t value) {
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(scan, TypeU32(state), result, ConstantU32(state, spv::ScopeSubgroup), static_cast<std::uint32_t>(operation), value);
+    return result;
+}
+
+std::uint32_t BallotWord(SpirvEmitterState& state, std::uint32_t ballot, std::uint32_t component) {
+    const auto word = state.module.AllocateId();
+    state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), word, ballot, component);
+    return word;
+}
+
+std::uint32_t BallotAny(SpirvEmitterState& state, std::uint32_t ballot) {
+    std::uint32_t bits = ConstantU32(state, 0u);
+    for (std::uint32_t component = 0; component < 4u; ++component) bits = Binary(state, spv::OpBitwiseOr, TypeU32(state), bits, BallotWord(state, ballot, component));
+    return Binary(state, spv::OpINotEqual, TypeBool(state), bits, ConstantU32(state, 0u));
+}
+
+std::uint32_t HostBallot(SpirvEmitterState& state, std::uint32_t predicate) {
+    const auto ballot = state.module.AllocateId();
+    EmitHostSubgroupBallot(state, ballot, predicate);
+    return ballot;
+}
+
+std::uint32_t WaveBallotOf(SpirvEmitterState& state, std::uint32_t predicate) {
+    const auto ballot = state.module.AllocateId();
+    EmitSubgroupBallot(state, ballot, predicate);
+    return EmitWaveBallot(state, ballot);
+}
+
+std::uint32_t FindLowestBit(SpirvEmitterState& state, std::uint32_t word) {
+    const auto lowest = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeU32(state), lowest, GlslStd450(state), GLSLstd450FindILsb, word);
+    return lowest;
+}
+
+std::uint32_t HostLane(SpirvEmitterState& state) {
+    if (state.subgroupLocalInvocationIdVariable == 0u) FailEmit("lane-ordered LDS atomics need SubgroupLocalInvocationId");
+    const auto lane = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), lane, state.subgroupLocalInvocationIdVariable);
+    return lane;
+}
+
+std::uint32_t HostShuffle(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value, std::uint32_t lane) {
+    const auto result = state.module.AllocateId();
+    state.module.AddFunction(spv::OpGroupNonUniformShuffle, type, result, ConstantU32(state, spv::ScopeSubgroup), value, lane);
+    return result;
+}
+
+std::uint32_t ExclusiveScanByShuffle(SpirvEmitterState& state, spv::Op scan, std::uint32_t identity, std::uint32_t key, std::uint32_t lane) {
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    auto inclusive = key;
+    for (std::uint32_t distance = 1; distance < state.hostSubgroupSize; distance <<= 1u) {
+        const auto reaches = Binary(state, spv::OpUGreaterThanEqual, boolean, lane, ConstantU32(state, distance));
+        const auto source = Select(state, u32, reaches, Binary(state, spv::OpISub, u32, lane, ConstantU32(state, distance)), lane);
+        inclusive = Select(state, u32, reaches, CombineReduction(state, scan, HostShuffle(state, u32, inclusive, source), inclusive), inclusive);
+    }
+    const auto first = Binary(state, spv::OpIEqual, boolean, lane, ConstantU32(state, 0u));
+    const auto previous = Select(state, u32, first, lane, Binary(state, spv::OpISub, u32, lane, ConstantU32(state, 1u)));
+    return Select(state, u32, first, identity, HostShuffle(state, u32, inclusive, previous));
+}
+
+struct LaneOrderedValues {
+    std::array<std::uint32_t, 2> pending{};
+    std::array<std::uint32_t, 2> results{};
+};
+
+template<typename TRound, typename TRemaining>
+LaneOrderedValues EmitLaneOrderedLoop(SpirvEmitterState& state, std::uint32_t halves, std::uint32_t type, std::uint32_t zero, const std::array<std::uint32_t, 2>& participating, TRound&& round, TRemaining&& remaining) {
+    const auto entry = state.currentLabel;
+    const auto header = state.module.AllocateId();
+    const auto body = state.module.AllocateId();
+    const auto cont = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    LaneOrderedValues current;
+    LaneOrderedValues next;
+    for (std::uint32_t half = 0; half < halves; ++half) {
+        current.pending[half] = state.module.AllocateId();
+        current.results[half] = state.module.AllocateId();
+        next.pending[half] = state.module.AllocateId();
+        next.results[half] = state.module.AllocateId();
+    }
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, header);
+    for (std::uint32_t half = 0; half < halves; ++half) {
+        state.module.AddFunction(spv::OpPhi, TypeBool(state), current.pending[half], participating[half], entry, next.pending[half], cont);
+        state.module.AddFunction(spv::OpPhi, type, current.results[half], zero, entry, next.results[half], cont);
+    }
+    state.module.AddFunction(spv::OpLoopMerge, merge, cont, spv::LoopControlMaskNone);
+    state.module.AddFunction(spv::OpBranch, body);
+    EmitLabel(state, body);
+    const LaneOrderedValues served = round(current);
+    for (std::uint32_t half = 0; half < halves; ++half) {
+        state.module.AddFunction(spv::OpCopyObject, TypeBool(state), next.pending[half], served.pending[half]);
+        state.module.AddFunction(spv::OpCopyObject, type, next.results[half], served.results[half]);
+    }
+    state.module.AddFunction(spv::OpBranchConditional, remaining(next), cont, merge);
+    EmitLabel(state, cont);
+    state.module.AddFunction(spv::OpBranch, header);
+    EmitLabel(state, merge);
+    return next;
+}
+
+std::uint32_t AggregatedLdsAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, const LaneOrderedReduction& reduction) {
+    auto& state = ctx.state;
+    const auto& mem = SharedMemory(ctx, inst);
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const std::uint32_t halves = state.laneCount;
+    const auto resource = PrepareMemoryResourceAccess(state, mem);
+    RequireAlignedAtomic(ctx, resource);
+    std::array<std::uint32_t, 2> index{};
+    std::array<std::uint32_t, 2> value{};
+    std::array<std::uint32_t, 2> participating{};
+    for (std::uint32_t half = 0; half < halves; ++half) {
+        auto& lane = half == ctx.half ? ctx : *ctx.otherHalf;
+        index[half] = EmitMemoryElementIndex(state, resource, DwordIndex(lane, inst, mem));
+        value[half] = lane.Arg(inst, inst.ArgumentCount() - 2u);
+        participating[half] = AndCondition(state, ActiveArgument(lane, inst), EmitMemoryElementInBounds(state, resource, index[half]));
+    }
+    state.module.EmitCapability(spv::CapabilityGroupNonUniformArithmetic);
+    const auto identity = ConstantU32(state, reduction.identity);
+    const auto hostLane = HostLane(state);
+    const auto served = EmitLaneOrderedLoop(state, halves, u32, ConstantU32(state, 0u), participating, [&](const LaneOrderedValues& current) {
+        const auto low = BallotWord(state, HostBallot(state, current.pending[0]), 0u);
+        std::uint32_t leader = 0;
+        std::uint32_t leaderHigh = ConstantBool(state, false);
+        if (halves == 2u) {
+            const auto high = BallotWord(state, HostBallot(state, current.pending[1]), 0u);
+            leaderHigh = Binary(state, spv::OpIEqual, boolean, low, ConstantU32(state, 0u));
+            leader = Select(state, u32, leaderHigh, FindLowestBit(state, high), FindLowestBit(state, low));
+        } else {
+            leader = state.module.AllocateId();
+            state.module.AddFunction(spv::OpGroupNonUniformBallotFindLSB, u32, leader, ConstantU32(state, spv::ScopeSubgroup), HostBallot(state, current.pending[0]));
+        }
+        leader = Binary(state, spv::OpBitwiseAnd, u32, leader, ConstantU32(state, state.hostSubgroupSize - 1u));
+        std::uint32_t address = HostShuffle(state, u32, index[0], leader);
+        if (halves == 2u) address = Select(state, u32, leaderHigh, HostShuffle(state, u32, index[1], leader), address);
+        std::array<std::uint32_t, 2> match{};
+        std::array<std::uint32_t, 2> exclusive{};
+        std::array<std::uint32_t, 2> total{};
+        for (std::uint32_t half = 0; half < halves; ++half) {
+            match[half] = AndCondition(state, current.pending[half], Binary(state, spv::OpIEqual, boolean, index[half], address));
+            const auto key = Select(state, u32, match[half], value[half], identity);
+            exclusive[half] = reduction.scan == spv::OpGroupNonUniformIAdd ? SubgroupReduction(state, reduction.scan, spv::GroupOperationExclusiveScan, key) : ExclusiveScanByShuffle(state, reduction.scan, identity, key, hostLane);
+            total[half] = SubgroupReduction(state, reduction.scan, spv::GroupOperationReduce, key);
+        }
+        const auto sum = halves == 2u ? CombineReduction(state, reduction.scan, total[0], total[1]) : total[0];
+        const auto leaderPending = halves == 2u ? Select(state, boolean, leaderHigh, current.pending[1], current.pending[0]) : current.pending[0];
+        const auto leads = AndCondition(state, leaderPending, Binary(state, spv::OpIEqual, boolean, hostLane, leader));
+        const auto own = EmitValueIfElse(state, leads, u32, [&] {
+            const auto old = state.module.AllocateId();
+            state.module.AddFunction(reduction.atomic, u32, old, EmitMemoryElementPointer(state, resource, address), ConstantU32(state, spv::ScopeWorkgroup), ConstantU32(state, spv::MemorySemanticsMaskNone), sum);
+            return old;
+        }, [&] { return ConstantU32(state, 0u); });
+        const auto old = HostShuffle(state, u32, own, leader);
+        LaneOrderedValues next;
+        for (std::uint32_t half = 0; half < halves; ++half) {
+            const auto prefix = half == 0u ? exclusive[0] : CombineReduction(state, reduction.scan, total[0], exclusive[1]);
+            const auto returned = reduction.atomic == spv::OpAtomicISub ? Binary(state, spv::OpISub, u32, old, prefix) : CombineReduction(state, reduction.scan, old, prefix);
+            next.results[half] = Select(state, u32, match[half], returned, current.results[half]);
+            next.pending[half] = AndCondition(state, current.pending[half], Unary(state, spv::OpLogicalNot, boolean, match[half]));
+        }
+        return next;
+    }, [&](const LaneOrderedValues& next) {
+        auto pending = next.pending[0];
+        if (halves == 2u) pending = Binary(state, spv::OpLogicalOr, boolean, pending, next.pending[1]);
+        return BallotAny(state, HostBallot(state, pending));
+    });
+    state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, LdsMemoryBarrierScope(state)), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state)));
+    if (halves == 2u) ctx.otherHalf->Define(inst, served.results[1]);
+    return served.results[0];
+}
+
+std::uint32_t SerializedLdsAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t (*emit)(SpirvValueEmitContext&, const IrValue&)) {
+    auto& state = ctx.state;
+    const auto boolean = TypeBool(state);
+    const std::uint32_t halves = state.laneCount;
+    const bool wide = inst.Type() == IrType::U64;
+    const auto type = TypeId(state, inst.Type());
+    const auto zero = wide ? ConstantU64(state, 0u) : ConstantU32(state, 0u);
+    std::array<std::uint32_t, 2> participating{};
+    std::array<std::uint32_t, 2> lanes{};
+    for (std::uint32_t half = 0; half < halves; ++half) participating[half] = ActiveArgument(half == ctx.half ? ctx : *ctx.otherHalf, inst);
+    lanes[0] = EmitSubgroupLocalInvocationId(state);
+    if (halves == 2u) lanes[1] = EmitAddU32(state, lanes[0], ConstantU32(state, 32u));
+    const auto served = EmitLaneOrderedLoop(state, halves, type, zero, participating, [&](const LaneOrderedValues& current) {
+        std::uint32_t leader = 0;
+        if (halves == 2u) {
+            const auto low = BallotWord(state, WaveBallotOf(state, current.pending[0]), 0u);
+            const auto high = BallotWord(state, WaveBallotOf(state, current.pending[1]), 0u);
+            const auto lowActive = Binary(state, spv::OpINotEqual, boolean, low, ConstantU32(state, 0u));
+            leader = Select(state, TypeU32(state), lowActive, FindLowestBit(state, low), EmitAddU32(state, FindLowestBit(state, high), ConstantU32(state, 32u)));
+        } else {
+            leader = state.module.AllocateId();
+            EmitSubgroupBallotFindLsb(state, leader, WaveBallotOf(state, current.pending[0]));
+        }
+        LaneOrderedValues next;
+        for (std::uint32_t half = 0; half < halves; ++half) {
+            const auto leads = AndCondition(state, current.pending[half], Binary(state, spv::OpIEqual, boolean, lanes[half], leader));
+            next.results[half] = EmitValueIfElse(state, leads, type, [&] {
+                auto& lane = half == ctx.half ? ctx : *ctx.otherHalf;
+                state.laneHalf = half;
+                const auto old = emit(lane, inst);
+                state.laneHalf = 0;
+                return old;
+            }, [&] { return current.results[half]; });
+            next.pending[half] = AndCondition(state, current.pending[half], Unary(state, spv::OpLogicalNot, boolean, leads));
+        }
+        return next;
+    }, [&](const LaneOrderedValues& next) {
+        auto any = BallotAny(state, WaveBallotOf(state, next.pending[0]));
+        if (halves == 2u) any = Binary(state, spv::OpLogicalOr, boolean, any, BallotAny(state, WaveBallotOf(state, next.pending[1])));
+        return any;
+    });
+    if (halves == 2u) ctx.otherHalf->Define(inst, served.results[1]);
+    return served.results[0];
+}
+
 }
 
 std::uint32_t AtomicIncrement(SpirvEmitterState& state, std::uint32_t old, std::uint32_t limit) {
@@ -2063,6 +2322,23 @@ std::uint32_t EmitSharedAtomicMskor64(SpirvValueEmitContext& ctx, const IrValue&
         const auto kept = Binary(state, spv::OpBitwiseAnd, TypeScalarU64(state), old, Unary(state, spv::OpNot, TypeScalarU64(state), mask));
         return Binary(state, spv::OpBitwiseOr, TypeScalarU64(state), kept, source);
     });
+}
+
+bool LaneOrderedLdsAtomic(const SpirvEmitterState& state, const IrValue& inst) {
+    if (!state.laneOrderedLdsAtomics || !inst.HasUses() || state.requirements.ldsLock || state.pixelFunctionLdsBuffer || HostSubgroupSingleLane(state)) return false;
+    const auto& memory = state.program.Resources().memoryInfo.at(inst.Flags<MemoryFlags>().index);
+    return memory.kind == ResourceKind::Lds && !InFunctionStorage(state, memory.kind);
+}
+
+std::uint32_t EmitLaneOrderedSharedAtomic(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t (*emit)(SpirvValueEmitContext&, const IrValue&)) {
+    auto& state = ctx.state;
+    if (!LaneOrderedLdsAtomic(state, inst)) return emit(ctx, inst);
+    if (ctx.half != 0u) return ctx.Result(inst);
+    const auto& capabilities = state.supportedCapabilities;
+    const bool arithmetic = std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformArithmetic)) != capabilities.end();
+    const auto reduction = AggregatedLdsReduction(inst.Opcode());
+    if (reduction && arithmetic && !state.spannedWave) return AggregatedLdsAtomic(ctx, inst, *reduction);
+    return SerializedLdsAtomic(ctx, inst, emit);
 }
 
 std::uint32_t EmitBufferAtomicInc32(SpirvValueEmitContext& ctx, const IrValue& inst) {

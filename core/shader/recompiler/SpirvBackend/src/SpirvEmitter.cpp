@@ -46,6 +46,17 @@ const ShaderWorkgroupInputInfo* ShaderWorkgroupInputFor(const SpirvEmitterState&
     }
 }
 
+bool LaneOrdersLdsAtomics(const SpirvEmitterState& state) {
+    const auto stage = state.program.Resources().stage;
+    if (!state.laneOrderedLdsAtomics || state.requirements.ldsLock || (stage != IrShaderStage::Compute && stage != IrShaderStage::Mesh)) return false;
+    for (const auto* block : state.program.BlockOrder()) {
+        for (const auto* instruction : block->Instructions()) {
+            if (SharedAccessOf(instruction->Opcode()) == SharedAccess::Atomic && LaneOrderedLdsAtomic(state, *instruction)) return true;
+        }
+    }
+    return false;
+}
+
 // Lanes of one guest wave run in lockstep, so a lane reads LDS another lane of its wave wrote without a
 // barrier. Host invocations need one; it can be issued wherever the guest wave's control flow is
 // uniform across the barrier's scope: the host subgroup when it holds exactly one guest wave, or the
@@ -283,6 +294,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.fusedExactArithmetic = target.fusedExactArithmetic;
     state.deviceScopeLdsMemoryBarriers = target.deviceScopeLdsMemoryBarriers;
     state.ldsLockFences = target.ldsLockFences;
+    state.laneOrderedLdsAtomics = target.laneOrderedLdsAtomics;
     state.hostSubgroupSize = target.subgroupSize;
     if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
         state.pixelFunctionLdsBuffer = true;
@@ -292,6 +304,11 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     if (state.requirements.ldsLock && LdsInDeviceMemory(state) && std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != target.supportedCapabilities.end()) {
         state.requirements.ldsLock = false;
         state.requirements.ldsBufferInt64Atomics = true;
+    }
+    if (LaneOrdersLdsAtomics(state)) {
+        state.requirements.subgroupBallot = true;
+        state.requirements.subgroupShuffle = true;
+        state.requirements.subgroupLocalInvocationId = true;
     }
     const bool int64Atomics = std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != state.supportedCapabilities.end();
     state.requirements.bufferU64View = state.requirements.bufferInt64Atomics || (state.requirements.coherentBufferPairs && int64Atomics);

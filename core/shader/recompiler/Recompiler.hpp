@@ -350,6 +350,7 @@ struct SpirvTarget {
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
     bool ldsLockFences = false;
+    bool laneOrderedLdsAtomics = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
 };

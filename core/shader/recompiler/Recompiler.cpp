@@ -678,6 +678,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.waveLdsMemoryBarriers = request.target.waveLdsMemoryBarriers;
     targetOptions.deviceScopeLdsMemoryBarriers = request.target.deviceScopeLdsMemoryBarriers;
     targetOptions.ldsLockFences = request.target.ldsLockFences;
+    targetOptions.laneOrderedLdsAtomics = request.target.laneOrderedLdsAtomics;
     targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;
 
     constexpr SpirvEmitter spirvEmitter;

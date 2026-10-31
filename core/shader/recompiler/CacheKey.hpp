@@ -357,6 +357,7 @@ private:
         append(key, value.pixelFunctionStorageDwords);
         append(key, value.deviceScopeLdsMemoryBarriers);
         append(key, value.ldsLockFences);
+        append(key, value.laneOrderedLdsAtomics);
         append(key, value.meshWindowBuffer);
     }
 };
