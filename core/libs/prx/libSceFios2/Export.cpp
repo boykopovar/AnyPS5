@@ -4,6 +4,13 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
+namespace {
+
+bool g_initialized = false;
+int g_suspend_count = 0;
+
+}
+
 extern "C" {
 
 int APS5_VABI sceFiosArchiveGetDecompressorThreadCount() {
@@ -122,7 +129,6 @@ int APS5_VABI sceFiosCachePrefetchFileSync() {
 }
 
 int APS5_VABI sceFiosCancelAllOps() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -132,7 +138,6 @@ int APS5_VABI sceFiosClearTimeStamps() {
 }
 
 int APS5_VABI sceFiosCloseAllFiles() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -172,12 +177,10 @@ int APS5_VABI sceFiosDHReadSync() {
 }
 
 int APS5_VABI sceFiosDLLInitialize() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceFiosDLLTerminate() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -547,8 +550,7 @@ int APS5_VABI sceFiosGetGlobalDefaultOpAttr() {
 }
 
 int APS5_VABI sceFiosGetSuspendCount() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return g_suspend_count;
 }
 
 int APS5_VABI sceFiosGetThreadDefaultOpAttr() {
@@ -582,23 +584,20 @@ int APS5_VABI sceFiosIOFilterRemove() {
 }
 
 int APS5_VABI sceFiosInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+    g_initialized = true;
     return 0;
 }
 
 int APS5_VABI sceFiosIsIdle() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return g_initialized ? 1 : 0;
 }
 
 int APS5_VABI sceFiosIsInitialized() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return g_initialized ? 1 : 0;
 }
 
 int APS5_VABI sceFiosIsSuspended() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return g_suspend_count > 0 ? 1 : 0;
 }
 
 int APS5_VABI sceFiosIsValidHandle() {
@@ -772,7 +771,7 @@ int APS5_VABI sceFiosResolveSync() {
 }
 
 int APS5_VABI sceFiosResume() {
-    NotImplemented_nid_no_patch(__func__);
+    if (g_suspend_count > 0) --g_suspend_count;
     return 0;
 }
 
@@ -792,7 +791,7 @@ int APS5_VABI sceFiosSetThreadDefaultOpAttr() {
 }
 
 int APS5_VABI sceFiosShutdownAndCancelOps() {
-    NotImplemented_nid_no_patch(__func__);
+    g_suspend_count = 0;
     return 0;
 }
 
@@ -807,12 +806,13 @@ int APS5_VABI sceFiosStatSync() {
 }
 
 int APS5_VABI sceFiosSuspend() {
-    NotImplemented_nid_no_patch(__func__);
+    ++g_suspend_count;
     return 0;
 }
 
 int APS5_VABI sceFiosTerminate() {
-    NotImplemented_nid_no_patch(__func__);
+    g_initialized = false;
+    g_suspend_count = 0;
     return 0;
 }
 
