@@ -1,4 +1,5 @@
 #include "ShaderDiskCache.hpp"
+#include "ImageTableAbi.hpp"
 #include "CacheKey.hpp"
 #include "ShaderCachePack.hpp"
 #include "VertexInputSpecialization.hpp"
@@ -1735,6 +1736,7 @@ struct PlanFixture {
     ShaderStage stage = ShaderStage::Compute;
     std::uint64_t codeAddress = 0;
     std::uint32_t waveSize = 64;
+    bool groupId = false;
     std::vector<std::uint32_t> code;
     std::vector<std::uint32_t> userData;
     std::vector<std::pair<std::uint64_t, std::vector<std::uint32_t>>> regions;
@@ -1751,7 +1753,7 @@ struct PlanFixture {
         request.context.waveSize = waveSize;
         request.context.userDataBaseRegister = 0;
         request.context.userData = userData;
-        if (stage == ShaderStage::Compute) request.context.compute = ShaderComputeStageInfo{{waveSize, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+        if (stage == ShaderStage::Compute) request.context.compute = ShaderComputeStageInfo{{waveSize, 1u, 1u}, 0u, {groupId, false, false}, false, 1u};
         request.context.pixel = pixel;
         request.context.memory = memory;
         request.target.vulkanVersion = 0x00401000u;
@@ -1850,6 +1852,60 @@ std::vector<PlanFixture> planFixtures() {
     place(palette, 0x10u, imageWords(PlanTextureAddress));
     place(palette, 0x18u, imageWords(PlanTextureAddress + 0x100u));
     add("pointer image table", 64, {0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u, 0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, palette}, {PlanMaterialAddress, {0u, 1u, 0u, 1u, 0u, 0u, 0u, 0u}}});
+
+    std::vector<std::uint32_t> nestedSrt(16u, 0u);
+    place(nestedSrt, 0u, bufferWords(PlanTableAddress, 16u, 4u));
+    place(nestedSrt, 4u, bufferWords(PlanMaterialAddress, 0u, 32u));
+    place(nestedSrt, 8u, bufferWords(PlanOutputAddress, 0u, 4096u));
+    std::vector<std::uint32_t> parents(16u, 0u);
+    place(parents, 2u, {static_cast<std::uint32_t>(PlanPointerAddress), static_cast<std::uint32_t>(PlanPointerAddress >> 32u)});
+    place(parents, 6u, {static_cast<std::uint32_t>(PlanPointerAddress + 256u), static_cast<std::uint32_t>(PlanPointerAddress >> 32u)});
+    std::vector<std::uint32_t> nestedBuffers(128u, 0u);
+    place(nestedBuffers, 40u, bufferWords(PlanPayloadAddress, 64u, 1u));
+    place(nestedBuffers, 104u, bufferWords(PlanPayloadAddress + 64u, 64u, 1u));
+    std::vector<std::uint32_t> nestedImages(32u, 0u);
+    place(nestedImages, 0u, imageWords(PlanTextureAddress));
+    place(nestedImages, 8u, imageWords(PlanTextureAddress + 256u));
+    place(nestedImages, 16u, imageWords(PlanTextureAddress + 256u));
+    place(nestedImages, 24u, imageWords(PlanTextureAddress + 512u));
+    std::vector<std::uint32_t> nestedCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0xf4200504u, 0x20000004u, 0x8f128411u, 0x8f148514u,
+    0xf4240b02u, 0x24000008u, 0xf4080616u, 0xfa0000a0u, 0xf42c090cu, 0x28000000u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,};
+    nestedCode.insert(nestedCode.begin() + 13u, 0x87118311u);
+    nestedCode.insert(nestedCode.begin() + 15u, 0x87148114u);
+    add("nested pointer image table", 64u, std::move(nestedCode), srtPointer, {{PlanSrtAddress, nestedSrt}, {PlanTableAddress, parents}, {PlanPointerAddress, nestedBuffers}, {PlanPayloadAddress, nestedImages}, {PlanMaterialAddress, {0u, 0u, 0u, 1u, 1u, 0u, 1u, 1u}}});
+    fixtures.back().groupId = true;
+    std::vector<std::uint32_t> samplerSrt(20u, 0u);
+    std::copy(nestedSrt.begin(), nestedSrt.end(), samplerSrt.begin());
+    place(samplerSrt, 12u, imageWords(PlanTextureAddress));
+    const std::vector<std::uint32_t> pointClamp{0x92u, 0x400000u, 0u, 0u};
+    const std::vector<std::uint32_t> pointWrap{0u, 0x400000u, 1u << 24u, 0u};
+    std::vector<std::uint32_t> nestedSamplers(32u, 0u);
+    place(nestedSamplers, 0u, pointWrap);
+    place(nestedSamplers, 4u, pointClamp);
+    place(nestedSamplers, 16u, pointClamp);
+    place(nestedSamplers, 20u, pointWrap);
+    std::vector<std::uint32_t> samplerCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf40c0900u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0xf4200504u, 0x20000004u, 0x8f128411u, 0x8f148414u,
+    0xf4240b02u, 0x24000008u, 0xf4080616u, 0xfa0000a0u, 0xf428080cu, 0x28000000u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,};
+    samplerCode.insert(samplerCode.begin() + 13u, 0x87118311u);
+    samplerCode.insert(samplerCode.begin() + 15u, 0x87148114u);
+    add("nested pointer sampler table", 64u, std::move(samplerCode), srtPointer, {{PlanSrtAddress, samplerSrt}, {PlanTableAddress, parents}, {PlanPointerAddress, nestedBuffers}, {PlanPayloadAddress, nestedSamplers}, {PlanMaterialAddress, {0u, 0u, 0u, 1u, 1u, 0u, 1u, 1u}}});
+    fixtures.back().groupId = true;
+    std::vector<std::uint32_t> pointees(128u, 0u);
+    place(pointees, 8u, pointWrap);
+    place(pointees, 72u, pointClamp);
+    std::vector<std::uint32_t> pointerCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf40c0900u, 0xfa000030u,
+    0x8f108302u, 0xf4200444u, 0x20000000u, 0x8f128411u, 0xf4240b02u, 0x24000008u, 0xf4080816u, 0xfa000020u,
+    0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x060202f2u, 0x7e0402ffu, 0x3e000000u, 0xf09c0f08u,
+    0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,};
+    pointerCode.insert(pointerCode.begin() + 14u, {0xbf068011u, 0xbf840002u, 0xbeac03ffu, 0x000000eau});
+    add("pointer phi sampler table", 64u, std::move(pointerCode), srtPointer, {{PlanSrtAddress, samplerSrt}, {PlanTableAddress, parents}, {PlanPointerAddress, pointees}, {PlanMaterialAddress, {1u, 0u, 0u, 0u, 1u, 0u, 0u, 0u}}});
+    fixtures.back().groupId = true;
 
     PlanFixture fragment;
     fragment.name = "fragment parameters";
@@ -1960,7 +2016,7 @@ IrResourcePlan handBuiltPlan() {
     DescriptorSource table;
     table.dwordCount = 8u;
     table.dwords[0] = &readConst(3);
-    table.tableColumn = TableColumn{2u, 32u, 16u, 4u, 8u, 0xffu, false, true, {KeyDomain{3u, 4u, 16u, false}, KeyDomain{2u, 8u, 4u, true}}, false};
+    table.tableColumn = TableColumn{2u, 32u, 16u, 4u, 8u, 0xffu, false, true, false, {KeyDomain{3u, 4u, 16u, false}, KeyDomain{2u, 8u, 4u, true}}, false};
     table.tableColumn->selected = true;
     table.tableColumn->selection = 2u;
     table.tableColumn->pointerHops = {PointerHop{0u, 0x10u}, PointerHop{8u, 0x20u}};
@@ -2113,6 +2169,66 @@ void mutateWords(std::vector<std::uint32_t>& words, std::mt19937& random) {
     }
 }
 
+void verifyNestedResolutionReuse(const IrResourcePlan& plan, const ResourceSnapshot& snapshot) {
+    auto info = plan.info;
+    ResourceMaterializer::PrepareImageModes(info);
+    constexpr std::uint64_t MemoKey = 0x6e6573746564u;
+    const auto first = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, MemoKey);
+    const auto same = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, MemoKey);
+    if (std::getenv("APS5_NO_TABLE_RESOLUTION_REUSE") == nullptr) require(first == same, "nested table resolution: an unchanged snapshot was not shared");
+    auto changed = snapshot;
+    auto codes = changed.tables.nested.at(0).codes.Copy();
+    require(!codes.empty(), "nested table resolution: the child fixture is empty");
+    codes[0] = ImageTableAbi::PoisonCode(ImageTableAbi::OutsideDomainPoison);
+    changed.tables.nested[0].codes = SharedValues<std::uint32_t>(std::move(codes));
+    const auto child = ResourceMaterializer::ResolveImageTablesShared(info, changed, MemoKey);
+    const auto freshChild = ResourceMaterializer::ResolveImageTables(info, changed);
+    require(child->map == freshChild.map && child->map != first->map, "nested table resolution: changing only a child reused the old map");
+    changed = snapshot;
+    auto pointers = changed.tables.tables.at(0).pointers.Copy();
+    require(!pointers.empty(), "nested table resolution: the pointer fixture is empty");
+    pointers[0] += 0x120u;
+    changed.tables.tables[0].pointers = SharedValues<std::uint64_t>(std::move(pointers));
+    const auto pointer = ResourceMaterializer::ResolveImageTablesShared(info, changed, MemoKey);
+    const auto freshPointer = ResourceMaterializer::ResolveImageTables(info, changed);
+    require(pointer->map == freshPointer.map && pointer->map != first->map, "nested table resolution: changing only a pointer reused the old map");
+}
+
+std::size_t resolutionMemoReadRangeChecks = 0;
+
+void verifyResolutionMemoReadRanges(const IrResourcePlan& plan, const ResourceSnapshot& snapshot) {
+    if (std::getenv("APS5_NO_TABLE_RESOLUTION_REUSE") != nullptr) return;
+    auto info = plan.info;
+    ResourceMaterializer::PrepareImageModes(info);
+    constexpr std::uint64_t PlainKey = 0x72616e676573u;
+    constexpr std::size_t BudgetRanges = std::size_t{1} << 21u;
+    struct Resolved {
+        bool same = false;
+        std::uint64_t resolutions = 0;
+        std::uint64_t shared = 0;
+    };
+    const auto resolveTwice = [&](const ResourceSnapshot& resolving, std::uint64_t memoKey) {
+        const auto before = ResourceMaterializer::TableReuse();
+        const auto first = ResourceMaterializer::ResolveImageTablesShared(info, resolving, memoKey);
+        const auto second = ResourceMaterializer::ResolveImageTablesShared(info, resolving, memoKey);
+        const auto after = ResourceMaterializer::TableReuse();
+        require(first->map == second->map, "resolution memo read ranges: two resolutions of one snapshot differ");
+        return Resolved{first == second, after.resolutions - before.resolutions, after.resolutionsShared - before.resolutionsShared};
+    };
+    const auto plain = resolveTwice(snapshot, PlainKey);
+    require(plain.same && plain.resolutions == 1u && plain.shared == 1u, "resolution memo read ranges: the snapshot without read ranges was not memoized");
+    for (const bool nested : {false, true}) {
+        auto ranged = snapshot;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges(BudgetRanges);
+        for (std::size_t index = 0; index < ranges.size(); index++) ranges[index] = {0x100000000ull + index * 0x40u, 0x20u};
+        auto& column = nested ? ranged.tables.nested.at(0) : ranged.tables.tables.at(0);
+        column.readRanges = SharedValues<std::pair<std::uint64_t, std::uint64_t>>(std::move(ranges));
+        const auto counted = resolveTwice(ranged, PlainKey + (nested ? 2u : 1u));
+        require(!counted.same && counted.resolutions == 2u && counted.shared == 0u, nested ? "resolution memo read ranges: a nested table's read ranges past the memo budget were not counted" : "resolution memo read ranges: a table's read ranges past the memo budget were not counted");
+    }
+    ++resolutionMemoReadRangeChecks;
+}
+
 std::size_t verifyRoundTripRuntimes(const IrResourcePlan& plan, const IrResourcePlan& decoded, const PlanFixture& fixture, std::uint32_t seed, const std::string& what) {
     std::mt19937 random(seed);
     std::size_t succeeded = 0;
@@ -2131,6 +2247,10 @@ std::size_t verifyRoundTripRuntimes(const IrResourcePlan& plan, const IrResource
         const auto original = materializePlan(plan, runtime);
         const auto loaded = materializePlan(decoded, runtime);
         require(sameMaterialization(original, loaded), what + ": runtime " + std::to_string(run) + " materialized differently from the decoded plan (" + original.error + " / " + loaded.error + ")");
+        if (run == 0u && original.ok && !original.snapshot.tables.nested.empty()) {
+            verifyNestedResolutionReuse(plan, original.snapshot);
+            verifyResolutionMemoReadRanges(plan, original.snapshot);
+        }
         if (original.ok) ++succeeded;
     }
     return succeeded;
@@ -2212,7 +2332,11 @@ void verifyMalformedPlans() {
     rejects("a uniform fill of five words", [](IrResourcePlan& plan) { plan.uniformFill.fill.words = 5u; });
     rejects("an image table heap past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 4u; });
     rejects("an image table key past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->keyDomains[1].source = 4u; });
+    rejects("a buffer table with eight dwords", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->buffer = true; });
+    rejects("an image table cycle", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->heapSource = 1u; });
+    rejects("an image table parent that is not a buffer", [](IrResourcePlan& plan) { plan.descriptorSources[2].tableColumn = *plan.descriptorSources[1].tableColumn; });
     rejects("an image table selection past the sources", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->selection = 4u; });
+    rejects("a pointer-keyed table that is not indirect", [](IrResourcePlan& plan) { plan.descriptorSources[1].tableColumn->pointerKeyed = true; });
     auto foreign = handBuiltPlan();
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
     foreign.srtReads[0].value = &stray;
@@ -2266,6 +2390,18 @@ void verifyPlanRoundTrip() {
     require(phi.IsPhi() && phi.PhiBlockCount() == 2u && phi.PhiBlock(0)->Id() == 3u && phi.PhiBlock(1)->Id() == 7u && phi.Argument(1)->ImmediateU32() == 0u, "the decoded phi lost its blocks or operands");
     require(handDecoded.uniformFill.values[0] == handDecoded.uniformFill.values[1] && handDecoded.uniformFill.values[0] != nullptr && handDecoded.uniformFill.values[2] == nullptr, "the decoded uniform fill lost its shared or null values");
     require(samePlan(handBuilt, handDecoded), "the decoded hand-built plan differs from the plan in a field or a value");
+    auto bufferTable = handBuiltPlan();
+    bufferTable.descriptorSources[1].tableColumn->buffer = true;
+    bufferTable.descriptorSources[1].tableColumn->dwordCount = 4u;
+    const auto bufferBytes = encodedPlan(bufferTable);
+    IrResourcePlan bufferDecoded;
+    require(bufferBytes != handBytes && ShaderDiskCache::DecodePlan(bufferBytes, bufferDecoded) && samePlan(bufferTable, bufferDecoded), "the nested buffer column changed in a disk-cache round trip");
+    auto pointerTable = handBuiltPlan();
+    pointerTable.descriptorSources[1].tableColumn->indirect = true;
+    pointerTable.descriptorSources[1].tableColumn->pointerKeyed = true;
+    const auto pointerBytes = encodedPlan(pointerTable);
+    IrResourcePlan pointerDecoded;
+    require(pointerBytes != handBytes && ShaderDiskCache::DecodePlan(pointerBytes, pointerDecoded) && samePlan(pointerTable, pointerDecoded) && pointerDecoded.descriptorSources[1].tableColumn->pointerKeyed, "the pointer-keyed column changed in a disk-cache round trip");
     PlanFixture handFixture;
     handFixture.userData = {static_cast<std::uint32_t>(PlanSrtAddress), static_cast<std::uint32_t>(PlanSrtAddress >> 32u), 0u, 0u};
     std::vector<std::uint32_t> handSrt(16, 0u);
@@ -2296,6 +2432,7 @@ void verifyPlanRoundTrip() {
         std::cout << "plan round trip: " << fixture.name << ", " << plan->valueStorage.Size() << " values, " << ShaderDiskCache::EncodePlanEntry(key, *plan).size() << " bytes per entry, " << succeeded << " of 1000 runtimes materialized\n";
         ++index;
     }
+    require(resolutionMemoReadRangeChecks != 0u || std::getenv("APS5_NO_TABLE_RESOLUTION_REUSE") != nullptr, "resolution memo read ranges: no plan fixture has nested tables");
     auto releaseFixture = fixtures.front();
     releaseFixture.waveSize = 32u;
     auto registeredRequest = releaseFixture.Request(true);
