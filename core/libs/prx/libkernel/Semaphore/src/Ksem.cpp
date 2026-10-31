@@ -152,7 +152,8 @@ int APS5_VABI ksem_getvalue_nid_postfix(std::intptr_t id, int* value) {
     if (!ksem) return Fail(GuestEinval);
     if (value == nullptr) return Fail(GuestEfault);
     std::lock_guard lock(ksem->lock);
-    *value = static_cast<int>(ksem->count);
+    const int count = static_cast<int>(ksem->count);
+    if (!GuestCopyOut_nid_no_patch(value, &count, sizeof(count))) return Fail(GuestEfault);
     return 0;
 }
 
