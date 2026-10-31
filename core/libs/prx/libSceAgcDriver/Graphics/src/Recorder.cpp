@@ -1394,6 +1394,13 @@ void Recorder::ForgetQueuedLabels() {
     labelTableOwner->recordedLabels.store(recorded.size(), std::memory_order_relaxed);
 }
 
+bool Recorder::QueuedLabelsPending() {
+    std::lock_guard tableLock(labelTableMutex);
+    if (labelTableOwner == nullptr) return false;
+    const auto& recorded = labelTableOwner->labels;
+    return !labelTableOwner->queuedLabels.empty() || std::any_of(recorded.begin(), recorded.end(), [](const auto& entry) { return entry.second.batch == nullptr; });
+}
+
 void Recorder::SetQueuedLabelRecorder(void (*recorder)()) {
     queuedLabelRecorder.store(recorder, std::memory_order_release);
 }

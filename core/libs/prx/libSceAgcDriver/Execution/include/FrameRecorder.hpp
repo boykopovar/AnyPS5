@@ -72,7 +72,7 @@ private:
     void start();
     void finish();
     void snapshot(const Range& range);
-    void readGuest(std::uint64_t address, std::span<std::byte> bytes, GuestRead read);
+    void readGuest(std::uint64_t address, std::span<std::byte> bytes);
     void writeReferenceFrames();
     bool abandonIfDiskLow();
     void stop(const char* reason);
