@@ -262,6 +262,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.supportedCapabilities = target.supportedCapabilities;
     state.supportedExtensions = target.supportedExtensions;
     state.nonConstantImageOffsets = target.nonConstantImageOffsets;
+    state.shaderImageMinLod = target.shaderImageMinLod;
     state.narrowSubgroupClock = target.narrowSubgroupClock;
     state.float64DenormPreserve = target.float64DenormPreserve;
     state.depthRangeRemap = target.depthRangeRemap;

@@ -2433,11 +2433,14 @@ void ShaderResources::buildComplete() {
         // The lookups run in plan order: Revalidate walks the bindings the same way, and consecutive
         // storage elements of one mip chain share the previous element's image.
         previousSampled = {};
-        for (auto& source : samplerSources) source.singleLevelImage = source.mipmappedImage = false;
+        for (auto& source : samplerSources) {
+            source.singleLevelImage = source.mipmappedImage = false;
+            source.pinnedLod.reset();
+        }
         for (const auto& deferred : deferredImages) resolveImageBinding(*deferred.binding, bindings[deferred.index], std::span<const std::shared_ptr<Sampler>>(samplers).subspan(deferred.firstSampler, deferred.samplerCount));
         previousSampled = {};
         deferredImages.clear();
-        applyAnisoOverride();
+        applySamplerVariants();
         // The records served their purpose: each holds the cache entry's objects as of stage A,
         // which would otherwise keep a replaced texture or an evicted storage image (and its device
         // memory) alive, outside the caches' budgets, for as long as this object is cached.
@@ -4944,12 +4947,12 @@ std::shared_ptr<Texture> ShaderResources::fastTexture(const ImageRecord& record)
     return record.texture;
 }
 
-void ShaderResources::applyAnisoOverride() {
+void ShaderResources::applySamplerVariants() {
     for (std::size_t index = 0; index < samplerSources.size(); ++index) {
         const auto& source = samplerSources[index];
         const auto variant = SingleLevelSamplerWords(source.words, source.singleLevelImage, source.mipmappedImage);
-        if (!variant.has_value()) continue;
-        const auto& words = *variant;
+        if (!variant.has_value() && !source.pinnedLod.has_value()) continue;
+        const auto words = source.pinnedLod.has_value() ? PinnedLodSamplerWords(variant.has_value() ? *variant : source.words, *source.pinnedLod) : *variant;
         if (context.samplerCache != nullptr && !SamplerCacheDisabled()) {
             samplers[index] = context.samplerCache->Get(context, words, source.compareEnable, source.unnormalized, true, source.integerBorder);
         } else {
@@ -4978,6 +4981,16 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
                 continue;
             }
             const auto resource = record != nullptr && record->decoded ? record->resource : DecodeTextureResource(words);
+            const auto minLod = context.shaderImageMinLod && resource.minLod > resource.baseLevel * 256u && resource.lastLevel > resource.baseLevel ? std::min(resource.minLod - resource.baseLevel * 256u, (resource.lastLevel - resource.baseLevel) * 256u) : 0u;
+            if (minLod != 0u && !shaderSamplers.empty()) {
+                const auto firstSampler = static_cast<std::size_t>(shaderSamplers.data() - samplers.data());
+                for (std::uint32_t sampler = 0; sampler < shaderSamplers.size() && sampler < 32u; ++sampler) {
+                    auto& source = samplerSources.at(firstSampler + sampler);
+                    if (((binding.imageSamplers[element] >> sampler) & 1u) == 0 || !HoldsLodAtZero(source.words)) continue;
+                    Require(!source.pinnedLod.has_value() || *source.pinnedLod == minLod, "an S# that holds the LOD at 0 is paired with images of different minimum LODs");
+                    source.pinnedLod = minLod;
+                }
+            }
             const bool forcedSrgb = ForcesDegammaOn(resource.format, binding.imageSamplers[element], shaderSamplers);
             RequireNonSeamlessCube(resource.dimension == TextureDimension::kCube, binding.imageSamplers[element], shaderSamplers);
             const bool depthCompare = !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element);
@@ -5398,6 +5411,7 @@ void ShaderResources::resolveImageTables() {
             const bool depthCompare = binding.imageDepthCompare.at(element);
             const VkImageViewType multisampleViewType = shape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
             try {
+                Require(context.imageViewMinLod || EffectiveMinLod(resource) == 0.0f, "a sampled image table entry has a minimum LOD clamp, which needs VK_EXT_image_view_min_lod");
                 texture = cachedTexture(context, sampledWords, resource, components, guestBytes, depthCompare, multisampleViewType);
             } catch (const std::runtime_error& error) {
                 table.map[faults + element] = rejectTableElement(table, words, error.what());

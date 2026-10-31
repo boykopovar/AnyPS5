@@ -138,6 +138,7 @@ struct SpirvEmitterState {
     std::span<const std::uint32_t> supportedCapabilities;
     std::span<const std::string_view> supportedExtensions;
     bool nonConstantImageOffsets = false;
+    bool shaderImageMinLod = false;
     bool tableIndexNonUniform = true;
     std::uint32_t storageBufferVariable = 0;
     std::uint32_t storageBufferU64Variable = 0;
