@@ -116,10 +116,21 @@ void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
     voice.atrac9.window.reserve(static_cast<std::size_t>(info.frameSamples) * info.channels);
 }
 
-std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block) {
+bool Ngs2Atrac9FrameInfo(const Ngs2WaveformFormat& format, Ngs2Atrac9Frame& frame) {
+    Atrac9CodecInfo info{};
+    if (!MatchingCodecInfo(format, info)) return false;
+    frame = {static_cast<std::uint32_t>(info.frameSamples), static_cast<std::uint32_t>(info.framesInSuperframe), static_cast<std::uint32_t>(info.superframeSize)};
+    return true;
+}
+
+std::size_t Ngs2Atrac9BlockBytes(const Ngs2Atrac9Frame& frame, const Ngs2WaveformBlock& block) {
     const std::uint64_t samples = static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples;
-    const std::uint64_t superframeSamples = static_cast<std::uint64_t>(voice.atrac9.frameSamples) * voice.atrac9.framesInSuperframe;
-    return static_cast<std::size_t>((samples + superframeSamples - 1) / superframeSamples * voice.atrac9.superframeBytes);
+    const std::uint64_t superframeSamples = static_cast<std::uint64_t>(frame.frameSamples) * frame.framesInSuperframe;
+    return static_cast<std::size_t>((samples + superframeSamples - 1) / superframeSamples * frame.superframeBytes);
+}
+
+std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block) {
+    return Ngs2Atrac9BlockBytes(Ngs2Atrac9Frame{voice.atrac9.frameSamples, voice.atrac9.framesInSuperframe, voice.atrac9.superframeBytes}, block);
 }
 
 void Ngs2RestartAtrac9(Ngs2Voice& voice) {
@@ -484,14 +495,13 @@ int APS5_VABI sceNgs2GetWaveformFrameInfo(const Ngs2WaveformFormat* format, uint
     if (format == nullptr || format->num_channels == 0 || format->num_channels > NGS2_MAX_CHANNELS || format->sample_rate == 0 || format->sample_rate > MAX_SAMPLE_RATE) {
         return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     }
-    if (format->waveform_type == SCE_NGS2_WAVEFORM_TYPE_PCM_I16L) {
-        *out_frame_size = format->num_channels * sizeof(std::int16_t);
+    if (format->waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
+        *out_frame_size = static_cast<std::uint32_t>(format->num_channels * Ngs2PcmSampleBytes(format->waveform_type));
         *out_num_frame_samples = 1;
         *out_units_per_frame = 1;
         *out_num_delay_samples = 0;
         return SCE_NGS2_OK;
     }
-    if (format->waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) throw std::runtime_error("NGS2: the frame info of waveform type " + Ngs2Hex(format->waveform_type) + " is not implemented");
     Atrac9CodecInfo codec{};
     if (!MatchingCodecInfo(*format, codec)) return SCE_NGS2_ERROR_INVALID_WAVEFORM_FORMAT;
     *out_frame_size = static_cast<std::uint32_t>(codec.superframeSize);

@@ -236,13 +236,14 @@ def collect_shaders():
     opcodes = [o for o in re.findall(r"^\s*([A-Z]\w*)\s*[,=]", enum, re.M) if o not in OPCODE_SENTINELS]
     supported, extra = set(), []
     for opcode in opcodes:
-        supported.update(name for name in OPCODE_VARIANTS.get(opcode, ()) if name in isa)
+        variants = [name for name in OPCODE_VARIANTS.get(opcode, ()) if name in isa]
+        supported.update(variants)
         name = OPCODE_ALIASES.get(opcode) or by_camel.get(opcode)
         if name in isa:
             supported.add(name)
             if name.startswith("FLAT_"):
                 supported.update(n for n in (s + name.removeprefix("FLAT_") for s in FLAT_SEGMENTS) if n in isa)
-        else:
+        elif not variants:
             extra.append(opcode)
     groups = {}
     for name, encoding in isa.items():
@@ -473,6 +474,12 @@ def library_progress(group):
     return f'{group["done"]}/{total} ({percent:.2f}%)', percent
 
 
+def percent_change(old_percent, new_percent):
+    if old_percent is None or new_percent is None:
+        return "n/a"
+    return f'{round(new_percent - old_percent, 2) or 0:+.2f}%'
+
+
 def library_report(base, head):
     before, after = ({group["name"]: group for group in data["groups"]} for data in (base, head))
     fields = ("done", "todo", "done_names", "todo_names", "shared_sources")
@@ -483,14 +490,12 @@ def library_report(base, head):
             continue
         old_text, old_percent = library_progress(old)
         new_text, new_percent = library_progress(new)
-        delta = "n/a"
-        if old_percent is not None and new_percent is not None:
-            change = round(new_percent - old_percent, 2)
-            delta = f'{change or 0:+.2f} pp'
+        delta = percent_change(old_percent, new_percent)
+        if delta == "+0.00%":
             exact = exact_delta({"done": old["done"], "total": old["done"] + old["todo"]},
-                                {"done": new["done"], "total": new["done"] + new["todo"]}) if change == 0 else None
+                                {"done": new["done"], "total": new["done"] + new["todo"]})
             if exact:
-                delta = f"{small_delta(exact)} pp"
+                delta = f"{small_delta(exact)}%"
         rows.append(f"| {name} | {old_text} | {new_text} | {delta} |")
     if not rows:
         return []

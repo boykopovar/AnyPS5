@@ -8,8 +8,15 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <sys/mman.h>
 #include <unistd.h>
+#endif
 
 namespace RelinkerTests {
 
@@ -112,13 +119,58 @@ inline Bytes MakeModule(const std::span<const std::uint8_t> code) {
     return image;
 }
 
+#ifdef _WIN32
+inline DWORD WindowsProtection(const bool read, const bool write, const bool execute) {
+    if (execute) return write ? PAGE_EXECUTE_READWRITE : read ? PAGE_EXECUTE_READ : PAGE_EXECUTE;
+    if (write) return PAGE_READWRITE;
+    return read ? PAGE_READONLY : PAGE_NOACCESS;
+}
+#endif
+
+inline std::uint64_t PageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    return system.dwPageSize;
+#else
+    return static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
+#endif
+}
+
+inline void* MapImageMemory(const std::size_t size) {
+#ifdef _WIN32
+    return VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+#else
+    void* base = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    return base == MAP_FAILED ? nullptr : base;
+#endif
+}
+
+inline bool ProtectImageMemory(void* address, const std::size_t size, const bool read, const bool write, const bool execute) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    return VirtualProtect(address, size, WindowsProtection(read, write, execute), &previous) != 0;
+#else
+    return mprotect(address, size, (read ? PROT_READ : 0) | (write ? PROT_WRITE : 0) | (execute ? PROT_EXEC : 0)) == 0;
+#endif
+}
+
+inline void UnmapImageMemory(void* address, const std::size_t size) {
+#ifdef _WIN32
+    (void)size;
+    VirtualFree(address, 0, MEM_RELEASE);
+#else
+    munmap(address, size);
+#endif
+}
+
 class MappedImage {
 public:
     explicit MappedImage(const Bytes& elf) {
         const auto phOffset = Read<std::uint64_t>(elf, 32);
         const auto phSize = Read<std::uint16_t>(elf, 54);
         const auto phCount = Read<std::uint16_t>(elf, 56);
-        const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
+        const auto page = PageSize();
         linkBase = std::numeric_limits<std::uint64_t>::max();
         std::uint64_t last = 0;
         for (std::uint16_t index = 0; index < phCount; ++index) {
@@ -129,8 +181,8 @@ public:
         }
         if (last == 0) throw std::runtime_error("ELF has no PT_LOAD segment");
         size = static_cast<std::size_t>(last - linkBase);
-        base = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        if (base == MAP_FAILED) throw std::runtime_error("Cannot map executable memory for the ELF image");
+        base = MapImageMemory(size);
+        if (base == nullptr) throw std::runtime_error("Cannot map executable memory for the ELF image");
         for (std::uint16_t index = 0; index < phCount; ++index) {
             const auto header = phOffset + index * phSize;
             if (Read<std::uint32_t>(elf, header) != 1) continue;
@@ -139,7 +191,7 @@ public:
             if (offset > elf.size() || fileSize > elf.size() - offset) throw std::runtime_error("PT_LOAD exceeds the ELF file");
             std::memcpy(static_cast<std::uint8_t*>(base) + (Read<std::uint64_t>(elf, header + 16) - linkBase), elf.data() + offset, fileSize);
         }
-        if (mprotect(base, size, PROT_NONE) != 0) throw std::runtime_error("Cannot protect the ELF image");
+        if (!ProtectImageMemory(base, size, false, false, false)) throw std::runtime_error("Cannot protect the ELF image");
         for (std::uint16_t index = 0; index < phCount; ++index) {
             const auto header = phOffset + index * phSize;
             if (Read<std::uint32_t>(elf, header) != 1) continue;
@@ -147,8 +199,7 @@ public:
             const auto vaddr = Read<std::uint64_t>(elf, header + 16) - linkBase;
             const auto start = vaddr / page * page;
             const auto end = (vaddr + Read<std::uint64_t>(elf, header + 40) + page - 1) / page * page;
-            const int protection = ((flags & 4) != 0 ? PROT_READ : 0) | ((flags & 2) != 0 ? PROT_WRITE : 0) | ((flags & 1) != 0 ? PROT_EXEC : 0);
-            if (mprotect(static_cast<std::uint8_t*>(base) + start, std::min<std::uint64_t>(end, size) - start, protection) != 0) throw std::runtime_error("Cannot apply PT_LOAD permissions");
+            if (!ProtectImageMemory(static_cast<std::uint8_t*>(base) + start, std::min<std::uint64_t>(end, size) - start, (flags & 4) != 0, (flags & 2) != 0, (flags & 1) != 0)) throw std::runtime_error("Cannot apply PT_LOAD permissions");
         }
     }
 
@@ -156,7 +207,7 @@ public:
     MappedImage& operator=(const MappedImage&) = delete;
 
     ~MappedImage() {
-        munmap(base, size);
+        UnmapImageMemory(base, size);
     }
 
     template<typename TFunction>
