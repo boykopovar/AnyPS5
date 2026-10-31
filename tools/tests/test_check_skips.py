@@ -50,7 +50,7 @@ class CheckSkipsTests(unittest.TestCase):
                 with self.subTest(job=job, report=report):
                     junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
                     result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                                            capture_output=True, text=True)
+                                            capture_output=True, encoding="utf-8")
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn("all expected", result.stdout)
 
@@ -67,7 +67,7 @@ class CheckSkipsTests(unittest.TestCase):
                     with self.subTest(job=job, report=report):
                         junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
                         result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                                                capture_output=True, text=True)
+                                                capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn("error: guest_probe skipped", result.stdout)
 
@@ -87,7 +87,7 @@ class CheckSkipsTests(unittest.TestCase):
                     with self.subTest(job=job, report=report):
                         junit.write_text(f'<testsuite><testcase name="guest_video_out_high_frame_rate">{report}</testcase></testsuite>', encoding="utf-8")
                         result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                                                capture_output=True, text=True)
+                                                capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, expected_code, result.stdout + result.stderr)
 
     def test_list_reports_device_reason_after_ctest_status(self):
@@ -97,7 +97,7 @@ class CheckSkipsTests(unittest.TestCase):
             junit = Path(directory) / "junit.xml"
             junit.write_text(xml, encoding="utf-8")
             result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--list"],
-                                    capture_output=True, text=True)
+                                    capture_output=True, encoding="utf-8")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("guest_probe: skipped, the device has no native f16", result.stdout)
             self.assertNotIn("SKIP_RETURN_CODE", result.stdout)
@@ -115,7 +115,7 @@ class CheckSkipsTests(unittest.TestCase):
                 with self.subTest(job=job, report=report):
                     junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
                     result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                                            capture_output=True, text=True)
+                                            capture_output=True, encoding="utf-8")
                     self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                     self.assertIn("error: guest_probe skipped", result.stdout)
 
@@ -130,7 +130,7 @@ class CheckSkipsTests(unittest.TestCase):
                 with self.subTest(job=job, report=report):
                     junit.write_text(f'<testsuite><testcase name="guest_probe">{report}</testcase></testsuite>', encoding="utf-8")
                     result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                                            capture_output=True, text=True)
+                                            capture_output=True, encoding="utf-8")
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_non_junit_xml_fails_in_every_cli_mode(self):
@@ -142,7 +142,7 @@ class CheckSkipsTests(unittest.TestCase):
                 for arguments in (("--job", "linux"), ("--job", "windows"), ("--list",)):
                     with self.subTest(report=report, arguments=arguments):
                         result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), *arguments],
-                                                capture_output=True, text=True, timeout=5)
+                                                capture_output=True, encoding="utf-8", timeout=5)
                         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                         self.assertIn("expected a JUnit", result.stderr)
                         self.assertNotIn("Traceback", result.stderr)
@@ -168,7 +168,7 @@ class CheckSkipsTests(unittest.TestCase):
                     with self.subTest(job=job, report=report):
                         result = subprocess.run(
                             [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                            capture_output=True, text=True)
+                            capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         self.assertIn("1 test(s) skipped, all expected", result.stdout)
 
@@ -197,7 +197,7 @@ class CheckSkipsTests(unittest.TestCase):
                     with self.subTest(job=job, report=report):
                         result = subprocess.run(
                             [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                            capture_output=True, text=True)
+                            capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn("error: guest_video_out_high_frame_rate skipped", result.stdout)
 
@@ -214,7 +214,7 @@ class CheckSkipsTests(unittest.TestCase):
                     with self.subTest(job=job, reason=reason):
                         result = subprocess.run(
                             [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                            capture_output=True, text=True)
+                            capture_output=True, encoding="utf-8")
                         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                         self.assertIn("error: guest_video_out_high_frame_rate skipped", result.stdout)
 
@@ -227,7 +227,7 @@ class CheckSkipsTests(unittest.TestCase):
                 with self.subTest(job=job):
                     result = subprocess.run(
                         [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                        capture_output=True, text=True)
+                        capture_output=True, encoding="utf-8")
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("agc_disabled", result.stderr)
                     self.assertIn("disabled", result.stderr)
@@ -252,7 +252,7 @@ class CheckSkipsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
             junit.write_text(xml, encoding="utf-8")
-            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"], capture_output=True, encoding="utf-8")
         self.assertEqual(result.returncode, 1)
         self.assertIn("error: odd skipped", result.stdout)
         self.assertNotIn("error: geometry skipped", result.stdout)
@@ -262,7 +262,7 @@ class CheckSkipsTests(unittest.TestCase):
             with self.subTest(job=job), tempfile.TemporaryDirectory() as directory:
                 junit = Path(directory) / "junit.xml"
                 junit.write_text(f'<testsuite><testcase name="gpu"><skipped>\n{reason}\n</skipped></testcase></testsuite>', encoding="utf-8")
-                result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job], capture_output=True, text=True)
+                result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job], capture_output=True, encoding="utf-8")
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("all expected", result.stdout)
 
@@ -275,7 +275,7 @@ class CheckSkipsTests(unittest.TestCase):
                 with self.subTest(job=job):
                     result = subprocess.run(
                         [sys.executable, "-I", str(TOOL), str(junit), "--job", job],
-                        capture_output=True, text=True)
+                        capture_output=True, encoding="utf-8")
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn("all expected", result.stdout)
 
@@ -285,7 +285,7 @@ class CheckSkipsTests(unittest.TestCase):
             junit.write_text('<testsuite><testcase name="shader_subgroup"><skipped/><system-out>skipped, the device lacks shaderSubgroupClock</system-out></testcase></testsuite>', encoding="utf-8")
             result = subprocess.run(
                 [sys.executable, "-I", str(TOOL), str(junit), "--job", "windows"],
-                capture_output=True, text=True)
+                capture_output=True, encoding="utf-8")
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertIn("error: shader_subgroup skipped", result.stdout)
 
@@ -300,7 +300,7 @@ class CheckSkipsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             junit = Path(directory) / "junit.xml"
             junit.write_text(xml, encoding="utf-8")
-            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--list"], capture_output=True, text=True)
+            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--list"], capture_output=True, encoding="utf-8")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("normal: skipped, device limitation", result.stdout)
             self.assertIn("indented: skipped, host imports are unavailable", result.stdout)
@@ -356,12 +356,12 @@ class RequiredTestsTests(unittest.TestCase):
                         with self.subTest(xml=xml, job=job, options=options):
                             result = subprocess.run(
                                 [sys.executable, "-I", str(TOOL), str(junit), "--job", job, "--require-tests", *options],
-                                capture_output=True, text=True, timeout=5)
+                                capture_output=True, encoding="utf-8", timeout=5)
                             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                             self.assertIn("no testcases", result.stderr)
                             result = subprocess.run(
                                 [sys.executable, "-I", str(TOOL), str(junit), "--job", job, *options],
-                                capture_output=True, text=True, timeout=5)
+                                capture_output=True, encoding="utf-8", timeout=5)
                             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_executed_tests_without_skips_pass_in_both_jobs(self):
@@ -374,7 +374,7 @@ class RequiredTestsTests(unittest.TestCase):
                     with self.subTest(xml=xml, job=job):
                         result = subprocess.run(
                             [sys.executable, "-I", str(TOOL), str(junit), "--job", job, "--require-tests"],
-                            capture_output=True, text=True, timeout=5)
+                            capture_output=True, encoding="utf-8", timeout=5)
                         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                         self.assertIn("0 test(s) skipped, all expected", result.stdout)
 
@@ -405,7 +405,7 @@ class SkipReportTests(unittest.TestCase):
                 encoding="utf-8",
             )
             result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
-                                    capture_output=True, text=True)
+                                    capture_output=True, encoding="utf-8")
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("listed more than once", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
@@ -467,13 +467,13 @@ class NotRunTests(unittest.TestCase):
             (root / "CTestTestfile.cmake").write_text('add_test(agc_missing "' + (root / "missing-program").as_posix() + '")\n', encoding="utf-8")
             report = root / "report.xml"
             generated = subprocess.run(["ctest", "--test-dir", str(root), "--output-junit", str(report)],
-                                       capture_output=True, text=True, timeout=10)
+                                       capture_output=True, encoding="utf-8", timeout=10)
             self.assertNotEqual(generated.returncode, 0)
             self.assertIn('status="notrun"', report.read_text(encoding="utf-8"))
             for job in ("windows", "linux"):
                 with self.subTest(job=job):
                     checked = subprocess.run([sys.executable, str(TOOL), str(report), "--job", job, "--require-tests"],
-                                             capture_output=True, text=True, timeout=10)
+                                             capture_output=True, encoding="utf-8", timeout=10)
                     self.assertEqual(checked.returncode, 2, checked.stdout + checked.stderr)
                     self.assertIn("notrun", checked.stderr)
                     self.assertIn("agc_missing", checked.stderr)
