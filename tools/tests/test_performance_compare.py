@@ -56,6 +56,17 @@ class PerformanceCompareTests(unittest.TestCase):
         path.write_text("\n" + "\n\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
 
     def run_cli(self, *args):
+        argv = [str(self.before), str(self.after), *args]
+        returncode = 0
+        with patch.object(sys, "stdout", new_callable=io.StringIO) as output, \
+                patch.object(sys, "stderr", new_callable=io.StringIO) as errors:
+            try:
+                performance_compare.main(argv)
+            except SystemExit as error:
+                returncode = error.code
+        return subprocess.CompletedProcess(argv, returncode, output.getvalue(), errors.getvalue())
+
+    def run_process(self, *args):
         return subprocess.run([sys.executable, str(Path(performance_compare.__file__)), str(self.before), str(self.after), *args],
                               capture_output=True, text=True, encoding="utf-8", timeout=5,
                               env=dict(os.environ, PYTHONIOENCODING="ascii"))
@@ -133,6 +144,69 @@ class PerformanceCompareTests(unittest.TestCase):
         for text in ("Other GPU", "Driver 2", "source tree is dirty", "trace events were dropped", "do not isolate"):
             self.assertIn(text, rendered)
 
+    def test_trace_loss_and_totals_overflow_are_reported_separately(self):
+        for label in ("baseline", "candidate"):
+            for totals_full in (False, True):
+                for events_lost in (None, 0, 7):
+                    for args in ((), ("--json",)):
+                        with self.subTest(label=label, totals_full=totals_full, events_lost=events_lost, args=args):
+                            baseline = copy.deepcopy(self.baseline)
+                            candidate = copy.deepcopy(self.candidate)
+                            summary = baseline if label == "baseline" else candidate
+                            details = {"totals_full": totals_full}
+                            if events_lost is not None:
+                                details["events_lost"] = events_lost
+                            summary["trace_dropped"] = totals_full or bool(events_lost)
+                            summary["trace_dropped_threads"] = {"queue worker 0x0": details}
+                            self.write(self.before, baseline)
+                            self.write(self.after, candidate)
+                            result = self.run_cli(*args)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            output = "\n".join(json.loads(result.stdout)["notes"]) if args else result.stdout
+                            self.assertEqual(f"{label}: phase totals are incomplete" in output, totals_full)
+                            self.assertEqual(f"{label}: trace events were dropped" in output, bool(events_lost))
+                            if totals_full:
+                                self.assertNotIn("work included in phase totals", output)
+
+    def test_trace_loss_and_totals_overflow_on_different_threads_are_both_reported(self):
+        self.candidate.update(trace_dropped=True, trace_dropped_threads={
+            "gpu": {"events_lost": 3, "totals_full": False},
+            "presenter": {"totals_full": True},
+        })
+        self.write(self.before, self.baseline)
+        self.write(self.after, self.candidate)
+        result = self.run_cli("--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        notes = "\n".join(report["notes"])
+        self.assertIn("candidate: phase totals are incomplete", notes)
+        self.assertIn("candidate: trace events were dropped", notes)
+        self.assertNotIn("work included in phase totals", notes)
+        self.assertEqual(report["metrics_ms"]["frame_ms.p50"]["change"], 0)
+        self.assertEqual(report["candidate"], self.candidate)
+
+    def test_legacy_trace_loss_warning_is_preserved_without_thread_details(self):
+        for dropped in (False, True):
+            with self.subTest(dropped=dropped):
+                self.candidate["trace_dropped"] = dropped
+                report = performance_compare.compare(self.baseline, self.candidate)
+                warning = "candidate: trace events were dropped; the event trace omits some of the work included in phase totals."
+                self.assertEqual(warning in report["notes"], dropped)
+                self.assertNotIn("phase totals are incomplete", "\n".join(report["notes"]))
+
+    def test_invalid_trace_loss_details_are_rejected_with_location(self):
+        for details in (None, [], {"worker": None}, {"worker": {"totals_full": 1}},
+                        {"worker": {"events_lost": True}}, {"worker": {"events_lost": -1}}):
+            with self.subTest(details=details):
+                self.baseline["trace_dropped_threads"] = details
+                self.write(self.before, self.baseline)
+                self.write(self.after, self.candidate)
+                result = self.run_cli("--json")
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("before.jsonl:2:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_unknown_metadata_is_not_a_claim_of_equivalent_machines(self):
         self.baseline.update(dirty=None, gpu="", driver="")
         report = performance_compare.compare(self.baseline, self.candidate)
@@ -166,6 +240,19 @@ class PerformanceCompareTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, r"before.jsonl:2:"):
                     performance_compare.load_summary(self.before)
 
+    def test_invalid_worker_busy_percentages_are_rejected_with_location(self):
+        for workers in (None, [], {"worker": "busy"}, {"worker": True},
+                        {"worker": -1}, {"worker": float("inf")}):
+            with self.subTest(workers=workers):
+                self.baseline["worker_busy_pct"] = workers
+                self.write(self.before, self.baseline)
+                with self.assertRaisesRegex(ValueError, r"before.jsonl:2: worker_busy_pct"):
+                    performance_compare.load_summary(self.before)
+
+    def test_worker_busy_share_above_one_hundred_remains_valid(self):
+        self.baseline["worker_busy_pct"] = {"queue worker 0x0": 125.0}
+        self.assertIs(performance_compare.validate(self.baseline), self.baseline)
+
     def test_bad_json_and_missing_file_produce_only_a_cli_error(self):
         self.write(self.after, self.candidate)
         for content in ("{bad json", "[]", "{}", '{"frame_ms": Infinity}'):
@@ -181,6 +268,23 @@ class PerformanceCompareTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_duplicate_json_fields_are_rejected_at_every_object_level(self):
+        record = json.dumps(self.baseline)
+        duplicates = (
+            (record.replace('"commit": "abc123"', '"commit": "wrong", "commit": "abc123"', 1), "commit"),
+            (record.replace('"spec": "frames 600:4"', '"spec": "seconds 0:1", "spec": "frames 600:4"', 1), "spec"),
+            (record.replace('"Driver.Packet": 12.0', '"Driver.Packet": 1.0, "Driver.Packet": 12.0', 1), "Driver.Packet"),
+        )
+        for content, field in duplicates:
+            with self.subTest(field=field):
+                self.before.write_text(content + "\n", encoding="utf-8")
+                original = self.before.read_bytes()
+                with self.assertRaises(ValueError) as raised:
+                    performance_compare.load_summary(self.before)
+                self.assertIn(f"before.jsonl:1: duplicate JSON field: {field!r}", str(raised.exception))
+                self.assertIsInstance(raised.exception.__cause__, ValueError)
+                self.assertEqual(self.before.read_bytes(), original)
 
     def test_percentage_overflow_is_an_error(self):
         self.baseline["gpu_busy_ms_per_present"] = 1e-308
@@ -211,7 +315,7 @@ class PerformanceCompareTests(unittest.TestCase):
                 record = json.dumps(self.baseline)[:-1] + ', "extra": ' + excessive_json_value(opening, closing) + "}"
                 path.write_text("\n\n" + record + "\n", encoding="utf-8")
                 original = (self.before.read_bytes(), self.after.read_bytes())
-                result = self.run_cli(*args)
+                result = self.run_process(*args)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertEqual(result.stdout, "")
                 self.assertIn(f"{path}:3:", result.stderr)
@@ -263,11 +367,11 @@ class PerformanceCompareTests(unittest.TestCase):
         self.write(self.after, self.candidate)
         for args in ((), ("--json",)):
             with self.subTest(args=args):
-                result = self.run_cli(*args)
+                result = self.run_process(*args)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("GPU \u03a9", result.stdout)
         self.before.write_text("bad", encoding="utf-8")
-        result = self.run_cli()
+        result = self.run_process()
         self.assertEqual(result.returncode, 2)
         self.assertIn("avant-\u00e9.jsonl:1:", result.stderr)
 

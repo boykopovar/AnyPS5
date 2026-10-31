@@ -30,6 +30,62 @@ void reject(TAction action) {
     throw std::runtime_error("expected guest allocation ownership rejection");
 }
 
+void heapHeaderTests() {
+    for (const auto [alignment, bytes] : std::array<std::pair<std::size_t, std::size_t>, 4>{{{32, 32}, {256, 32}, {32, 131072}, {32, 0}}}) {
+        void* pointer = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+        void* neighbor = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+        auto& raw = reinterpret_cast<void**>(pointer)[-2];
+        auto& blockBytes = reinterpret_cast<std::size_t*>(pointer)[-1];
+        void* savedRaw = raw;
+        const auto savedBytes = blockBytes;
+        void* forgedRaw = static_cast<std::byte*>(pointer) - 2 * sizeof(void*);
+        if (forgedRaw == savedRaw) forgedRaw = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(savedRaw) - sizeof(void*));
+        raw = forgedRaw;
+        reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+        reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64); });
+        reject([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 64, 256); });
+        reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 0); });
+        reject([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 0, alignment); });
+        {
+            const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+            Require(lease.size() == (bytes == 0 ? 0u : 2u), "rejected heap operation changed the registered allocations");
+            const auto found = std::find_if(lease.begin(), lease.end(), [&](const auto& range) { return range->address == reinterpret_cast<std::uintptr_t>(pointer); });
+            Require(bytes == 0 || (found != lease.end() && (*found)->bytes == bytes), "rejected free lost the original registered range");
+        }
+        Require(GuestHeap::GuestHeapUsableSize_nid_postfix(pointer) == bytes && GuestHeap::GuestHeapUsableSize_nid_postfix(neighbor) == bytes, "rejected free lost a registered allocation");
+        void* next = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
+        void* nextRaw = reinterpret_cast<void**>(next)[-2];
+        const auto nextBytes = reinterpret_cast<std::size_t*>(next)[-1];
+        const auto start = reinterpret_cast<std::uintptr_t>(savedRaw);
+        const auto nextStart = reinterpret_cast<std::uintptr_t>(nextRaw);
+        Require(nextRaw != forgedRaw && (nextStart >= start + savedBytes || start >= nextStart + nextBytes), "same-class allocation received a forged overlapping block");
+        GuestHeap::GuestHeapFree_nid_postfix(next);
+        raw = savedRaw;
+        for (const auto corruptedBytes : {std::size_t{0}, savedBytes * 2}) {
+            blockBytes = corruptedBytes;
+            reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+            Require(GuestHeap::GuestHeapUsableSize_nid_postfix(pointer) == bytes, "size corruption removed the allocation");
+        }
+        blockBytes = savedBytes;
+        raw = reinterpret_cast<void**>(neighbor)[-2];
+        reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+        raw = savedRaw;
+        GuestHeap::GuestHeapFree_nid_postfix(pointer);
+        GuestHeap::GuestHeapFree_nid_postfix(neighbor);
+        Require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().empty(), "restored heap allocations remain registered");
+    }
+    alignas(32) std::array<std::byte, 128> mapping{};
+    void* pointer = mapping.data() + 32;
+    reinterpret_cast<void**>(pointer)[-2] = mapping.data();
+    reinterpret_cast<std::size_t*>(pointer)[-1] = mapping.size();
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(pointer, 32, true, true, false);
+    }
+    reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+    GuestAllocations::Mutation().Remove(pointer);
+}
+
 void leaseSnapshotTests() {
     std::array<std::byte, 128> memory{};
     const auto address = reinterpret_cast<std::uintptr_t>(memory.data());
@@ -171,6 +227,7 @@ void RunGuestAllocationTests() {
     Require(static_cast<unsigned char*>(pointer)[31] == 0x66, "aligned guest realloc lost data");
     GuestHeap::GuestHeapFree_nid_postfix(pointer);
     Require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().empty(), "freed guest allocations remain registered");
+    heapHeaderTests();
     std::array<std::byte, 128> mapping{};
     {
         GuestAllocations::Mutation mutation;
