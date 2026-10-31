@@ -3,6 +3,7 @@ target_include_directories(libwebrtc PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libwebrtc)
 
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ExpFilter.cpp)
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/IpAddress.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RtcpCommonHeader.cpp)
 target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Opus.cpp)
 target_link_libraries(libwebrtc PRIVATE opus)
