@@ -802,40 +802,6 @@ void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t co
     return nullptr;
 }
 
-int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
-    if (size < 4) {
-        errno = 22;
-        return -1;
-    }
-    if (count == 0) return 0;
-    if (!compare) throw std::invalid_argument("mergesort: null comparator");
-    if (!base) throw std::invalid_argument("mergesort: null base");
-    if (count > (std::numeric_limits<size_t>::max() - 8) / size) throw std::overflow_error("mergesort: array size overflow");
-    auto* const scratch = static_cast<unsigned char*>(malloc_nid_postfix(count * size + 8));
-    if (!scratch) return -1;
-    auto* source = static_cast<unsigned char*>(base);
-    auto* target = scratch;
-    for (size_t width = 1; width < count; width *= 2) {
-        for (size_t low = 0; low < count; low += 2 * width) {
-            const size_t middle = std::min(low + width, count);
-            const size_t high = std::min(low + 2 * width, count);
-            size_t left = low, right = middle, out = low;
-            while (left < middle && right < high) {
-                const size_t taken = compare(source + left * size, source + right * size) <= 0 ? left++ : right++;
-                std::memcpy(target + out++ * size, source + taken * size, size);
-            }
-            std::memcpy(target + out * size, source + left * size, (middle - left) * size);
-            out += middle - left;
-            std::memcpy(target + out * size, source + right * size, (high - right) * size);
-        }
-        std::swap(source, target);
-    }
-    if (source != base) std::memcpy(base, source, count * size);
-    free_nid_postfix(scratch);
-
-    return 0;
-}
-
 int APS5_VABI heapsort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare) {
     if (count <= 1) return 0;
     if (size == 0) {
