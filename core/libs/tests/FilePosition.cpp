@@ -49,6 +49,23 @@ int main() {
     Require(fgetpos_nid_postfix(&file, &position) == 0 && position == 1);
     file.Close();
 
+    FileStream reread(std::tmpfile());
+    Require(std::fputs("position", reread.GetHandle()) >= 0);
+    Require(fsetpos_nid_postfix(&reread, &beginning) == 0);
+    for (const char expected : {'p', 'o', 's'}) Require(fgetc_nid_postfix(&reread) == expected);
+    Require(fgetpos_nid_postfix(&reread, &position) == 0 && position == 3);
+    const std::int64_t third = position;
+    while (fgetc_nid_postfix(&reread) != EOF) {}
+    Require(feof_nid_postfix(&reread) != 0);
+    Require(fsetpos_nid_postfix(&reread, &third) == 0);
+    Require(feof_nid_postfix(&reread) == 0);
+    Require(fgetc_nid_postfix(&reread) == 'i');
+    const std::int64_t negative = -1;
+    errno = 0;
+    Require(fsetpos_nid_postfix(&reread, &negative) != 0);
+    Require(errno == EINVAL);
+    reread.Close();
+
     int descriptors[2];
 #ifdef _WIN32
     Require(_pipe(descriptors, 4096, _O_BINARY) == 0);
