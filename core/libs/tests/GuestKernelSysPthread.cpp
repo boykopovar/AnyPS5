@@ -4,7 +4,11 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <cstdlib>
+#include <thread>
 
 static constexpr int SCOPE_PROCESS = 0;
 static constexpr int SCOPE_SYSTEM = 2;
@@ -74,10 +78,46 @@ static void TestAtfork() {
     Require(handlers[before + 1].prepare == nullptr && handlers[before + 1].parent == nullptr && handlers[before + 1].child == nullptr);
 }
 
+struct TimedjoinGate {
+    std::atomic<bool> release{false};
+    std::atomic<bool> entered{false};
+};
+
+static void* APS5_VABI TimedjoinWorker(void* argument) {
+    auto& gate = *static_cast<TimedjoinGate*>(argument);
+    gate.entered.store(true, std::memory_order_release);
+    while (!gate.release.load(std::memory_order_acquire)) std::this_thread::yield();
+    return reinterpret_cast<void*>(std::uintptr_t{0x12345678});
+}
+
+static void TestTimedjoin() {
+    Require(scePthreadTimedjoin(nullptr, nullptr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadTimedjoin(scePthreadSelf(), nullptr, 1000000) == SCE_KERNEL_ERROR_EDEADLK);
+
+    TimedjoinGate gate;
+    Pthread thread = nullptr;
+    Require(scePthreadCreate(&thread, nullptr, TimedjoinWorker, &gate, nullptr) == 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!gate.entered.load(std::memory_order_acquire)) {
+        Require(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+
+    void* returnValue = reinterpret_cast<void*>(std::uintptr_t{0x55});
+    Require(scePthreadTimedjoin(thread, &returnValue, 0) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(returnValue == reinterpret_cast<void*>(std::uintptr_t{0x55}));
+
+    gate.release.store(true, std::memory_order_release);
+    Require(scePthreadTimedjoin(thread, &returnValue, 3000000) == 0);
+    Require(returnValue == reinterpret_cast<void*>(std::uintptr_t{0x12345678}));
+    Require(scePthreadTimedjoin(thread, nullptr, 3000000) == SCE_KERNEL_ERROR_ESRCH);
+}
+
 int main() {
     TestScope();
     TestMutexAttributeGeneration();
     TestConcurrency();
     TestAtfork();
+    TestTimedjoin();
     return 0;
 }
