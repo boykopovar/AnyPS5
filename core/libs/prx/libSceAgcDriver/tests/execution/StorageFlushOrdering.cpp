@@ -131,7 +131,7 @@ bool AddressBasedStorePending(std::uint64_t image, bool open) {
 void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t offset, bool submit, const char* name) {
     const auto* words = guest.Words() + offset / 4u;
     const auto image = guest.Address() + offset;
-    const auto target = device.Target();
+    const auto target = device.ComputeTarget(64);
     const auto storeImage = Compile(StoreImageCode, ImageUserData(image), target);
     const auto storeGlobal = Compile(StoreGlobalCode, GlobalUserData(image), target);
     device.Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));

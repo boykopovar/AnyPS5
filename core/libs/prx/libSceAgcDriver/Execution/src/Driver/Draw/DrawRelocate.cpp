@@ -324,6 +324,10 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
             copy->flatBinding = variant->flatBinding;
             copy->pushOffset = variant->pushOffset;
             copy->vertexInfo = variant->vertexInfo;
+            copy->ring = variant->ring;
+            copy->ringAttributes = variant->ringAttributes;
+            copy->ringFlat = variant->ringFlat;
+            copy->ringBindings = variant->ringBindings;
             for (const auto& move : moves) {
                 if (move.program != i) continue;
                 const auto delta = AlignedWord(move.to) - AlignedWord(move.from);
@@ -354,7 +358,7 @@ void Driver::applyShaderDataPatches(DispatchVariant& variant) {
     auto rebased = std::make_shared<ShaderRecompiler::RecompileResult>(*variant.compiled);
     for (const auto& [slot, value] : variant.shaderDataPatches) {
         const auto at = static_cast<std::size_t>(slot) * sizeof(std::uint32_t);
-        if (at + sizeof(std::uint32_t) <= rebased->pushConstants.size()) std::memcpy(rebased->pushConstants.data() + at, &value, sizeof(value));
+        if (!rebased->dataAddressPush && at + sizeof(std::uint32_t) <= rebased->pushConstants.size()) std::memcpy(rebased->pushConstants.data() + at, &value, sizeof(value));
         for (auto& binding : rebased->bindings) {
             if (binding.role == ShaderRecompiler::DescriptorRole::ShaderData && slot < binding.guestDescriptor.size()) binding.guestDescriptor[slot] = value;
         }

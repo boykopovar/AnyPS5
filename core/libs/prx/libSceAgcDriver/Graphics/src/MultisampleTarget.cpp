@@ -1,5 +1,6 @@
 #include <shared_mutex>
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
@@ -755,6 +756,10 @@ private:
         for (const auto& [format, resolvePass] : resolvePasses) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, resolvePass, nullptr);
         if (orderView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, orderView, nullptr);
         if (twinView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, twinView, nullptr);
+        if (auto* heap = BindlessHeap::Existing(context)) {
+            if (storageView) heap->ReleaseViewSlots(reinterpret_cast<const void*>(storageView));
+            if (uintStorageView) heap->ReleaseViewSlots(reinterpret_cast<const void*>(uintStorageView));
+        }
         if (storageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, storageView, nullptr);
         if (uintStorageView) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, uintStorageView, nullptr);
         destroy({image, memory, view});

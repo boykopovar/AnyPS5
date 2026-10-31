@@ -21,6 +21,8 @@
 
 namespace ShaderRecompiler {
 
+struct IrResourcePlan;
+
 enum class ShaderStage {
     Compute,
     Vertex,
@@ -349,9 +351,13 @@ struct SpirvTarget {
     bool largePixelFunctionLdsBuffer = false;
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
+    bool gpuResolvedImages = false;
+    bool descriptorMemory = false;
+    std::uint32_t heapDataUniformDwords = 0;
     bool ldsLockFences = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
+    bool deviceImageTables = false;
 };
 
 struct BindingLayout {
@@ -425,6 +431,7 @@ inline constexpr std::uint32_t MeshCapturedItemAddressDword = 0;
 inline constexpr std::uint32_t TessellationCaptureArgumentAddressDword = 2;
 inline constexpr std::uint32_t MeshIndexBufferUserWord = 4;
 inline constexpr std::uint32_t WorkgroupMemoryDescriptorSet = 1;
+inline constexpr std::uint32_t GpuWorkgroupMemoryDescriptorSet = 3;
 
 struct GraphicsDrawParameters {
     std::uint64_t indexAddress;
@@ -466,6 +473,22 @@ struct GraphicsCompileContext {
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
+};
+
+struct VertexAttribute;
+
+struct HeapTemplateCacheCounts {
+    std::uint64_t entries = 0;
+    std::uint64_t bytes = 0;
+    std::uint64_t evicted = 0;
+};
+HeapTemplateCacheCounts HeapTemplateCounts();
+
+struct HeapStageWords {
+    std::vector<std::uint32_t> userData;
+    std::vector<std::uint32_t> flattenedSrt;
+    std::vector<VertexAttribute> vertexAttributes;
+    std::vector<std::vector<std::uint32_t>> bindings;
 };
 
 struct RecompileRequest {
@@ -742,6 +765,13 @@ struct CompiledShaderArtifact {
     std::uint32_t runtimeImageCount = 0;
     std::vector<std::uint32_t> runtimeImageResources;
     bool registrationModule = false;
+    bool gpuResolvedImages = false;
+    std::uint32_t samplerSlotDword = 0;
+    std::uint32_t bufferAddressDword = 0;
+    std::uint32_t bufferAddressCount = 0;
+    bool dataAddressPush = false;
+    bool bdaStores = false;
+    bool deviceImageTables = false;
     std::uint32_t bdaAbiVersion = 0;
     std::uint32_t windowLaneGuards = 0;
     std::uint32_t descriptorFaults = 0;
@@ -770,6 +800,7 @@ struct CompiledShaderArtifact {
 
 struct ShaderInvocation {
     std::vector<PipelineSpecializationConstant> specialization;
+    std::vector<RuntimeAbi::HeapSlotWord> heapSlotWords;
     std::uint64_t specializationId = 0;
     std::vector<DescriptorBinding> bindings;
     std::vector<std::byte> pushConstants;
@@ -782,6 +813,8 @@ struct ShaderInvocation {
     std::vector<std::vector<std::pair<std::uint64_t, std::uint64_t>>> imageTableReadRanges;
     std::uint64_t imageTableShader = 0;
     std::uint32_t imageTableFaults = 0;
+    std::vector<std::uint64_t> deviceImageInterfaces;
+    std::vector<std::uint32_t> deviceSamplerClasses;
 };
 
 // What a Vulkan pipeline built from a result depends on besides the fixed-function state and the
@@ -809,10 +842,13 @@ struct ResultKeyMemo {
 };
 
 struct RecompileResult : CompiledShaderArtifact, ShaderInvocation {
+    std::uint64_t heapTemplateId = 0;
+    std::vector<std::uint32_t> heapUserWords;
     ResultKeyMemo drawKeyMemo;
     bool cacheHit = false;
     std::uint32_t workgroupMemoryDwords = 0;
     std::vector<std::uint32_t> shaderDataUserWords;
+    std::shared_ptr<const IrResourcePlan> deviceImagePlan;
     [[nodiscard]] std::uint64_t PipelineVariantId() const { return specializationId != 0 ? specializationId : variantId; }
     [[nodiscard]] PipelineIdentity Identity() const {
         const auto hash = spirv.ContentHash();
