@@ -735,6 +735,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_tls_export_references COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls_export_references.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_tls_export_references PROPERTIES TIMEOUT 30)
+        add_test(NAME tls_initial_image COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_tls_initial_image.py $<TARGET_FILE:relinker>)
+        set_tests_properties(tls_initial_image PROPERTIES TIMEOUT 20)
         add_test(NAME guest_needed_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_needed_modules.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_module_dir COMMAND ${Python3_EXECUTABLE}
