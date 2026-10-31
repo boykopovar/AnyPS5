@@ -707,6 +707,38 @@ NpAllocatorEx* APS5_VABI sceNpGlobalHeapGetAllocatorExPtr(void) {
     return &g_globalAllocatorEx;
 }
 
+NpAllocator* APS5_VABI _sceNpAllocatorExConvertAllocator(NpAllocatorEx* allocator) {
+    return &allocator->allocator;
+}
+
+void* APS5_VABI _sceNpAllocatorExMalloc(NpAllocatorEx* allocator, std::size_t size) {
+    return allocator->allocator.allocate(size, allocator->allocator.context);
+}
+
+void* APS5_VABI _sceNpAllocatorExRealloc(NpAllocatorEx* allocator, void* pointer, std::size_t size) {
+    return allocator->allocator.reallocate(pointer, size, allocator->allocator.context);
+}
+
+void APS5_VABI _sceNpAllocatorExFree(NpAllocatorEx* allocator, void* pointer) {
+    allocator->allocator.release(pointer, allocator->allocator.context);
+}
+
+char* APS5_VABI _sceNpAllocatorExStrdup(NpAllocatorEx* allocator, const char* text) {
+    const std::size_t size = std::strlen(text) + 1;
+    auto* copy = static_cast<char*>(_sceNpAllocatorExMalloc(allocator, size));
+    if (copy != nullptr) std::memcpy(copy, text, size);
+    return copy;
+}
+
+char* APS5_VABI _sceNpAllocatorExStrndup(NpAllocatorEx* allocator, const char* text, std::size_t maxLength) {
+    const std::size_t length = strnlen(text, maxLength);
+    auto* copy = static_cast<char*>(_sceNpAllocatorExMalloc(allocator, length + 1));
+    if (copy == nullptr) return nullptr;
+    std::memcpy(copy, text, length);
+    copy[length] = '\0';
+    return copy;
+}
+
 void* APS5_VABI _ZN3sce2np6ObjectnwEmR14SceNpAllocator(std::size_t size, NpAllocator* allocator) {
     return AllocateObject(size, allocator);
 }
