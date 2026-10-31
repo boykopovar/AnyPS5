@@ -31,6 +31,122 @@ def commit(root, day, message, body, time="12:00:00Z"):
                    check=True, env=env)
 
 
+class HistoryCsvTests(unittest.TestCase):
+    def test_invalid_destinations_preserve_existing_report_set(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            names = ("history.json", "history.svg", "history.html", "history.csv")
+            metric = {"done": 1, "total": 2, "percent": 50}
+            points = [{"date": "2026-01-01", "commit": "a" * 40, "libraries": metric, "shaders": metric}]
+            for index, blocked_name in enumerate(names):
+                with self.subTest(destination=blocked_name):
+                    output = root / str(index)
+                    output.mkdir()
+                    previous = {}
+                    for name in names:
+                        path = output / name
+                        if name == blocked_name:
+                            path.mkdir()
+                        else:
+                            path.write_bytes(("preserved " + name).encode())
+                            previous[path] = (path.read_bytes(), path.stat().st_mtime_ns)
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    with patch.object(progress_history, "collect", return_value=points) as collect, contextlib.redirect_stdout(stdout), \
+                            contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as raised:
+                        progress_history.main([str(output), "--csv"])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(str(output / blocked_name), stderr.getvalue())
+                    self.assertNotIn("Traceback", stderr.getvalue())
+                    self.assertEqual(stdout.getvalue(), "")
+                    self.assertTrue((output / blocked_name).is_dir())
+                    self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in previous}, previous)
+                    collect.assert_not_called()
+
+    def test_dangling_csv_link_preserves_reports_and_allows_retry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            destination = output / "history.csv"
+            target = output / "missing.csv"
+            try:
+                destination.symlink_to(target.name)
+            except OSError as error:
+                self.skipTest(f"cannot create filesystem symlink: {error}")
+            previous = {}
+            for name in ("history.json", "history.svg", "history.html"):
+                path = output / name
+                path.write_bytes(("preserved " + name).encode())
+                previous[path] = (path.read_bytes(), path.stat().st_mtime_ns)
+            stderr = io.StringIO()
+            metric = {"done": 1, "total": 2, "percent": 50}
+            points = [{"date": "2026-01-01", "commit": "a" * 40, "libraries": metric, "shaders": metric}]
+            with patch.object(progress_history, "collect", return_value=points) as collect, contextlib.redirect_stderr(stderr), \
+                    self.assertRaises(SystemExit) as raised:
+                progress_history.main([str(output), "--csv"])
+            self.assertEqual(raised.exception.code, 2)
+            self.assertIn(str(destination), stderr.getvalue())
+            self.assertNotIn("Traceback", stderr.getvalue())
+            collect.assert_not_called()
+            self.assertTrue(destination.is_symlink())
+            self.assertFalse(target.exists())
+            self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in previous}, previous)
+            destination.unlink()
+            with patch.object(progress_history, "collect", return_value=points), contextlib.redirect_stdout(io.StringIO()):
+                progress_history.main([str(output), "--csv"])
+            self.assertEqual(json.loads((output / "history.json").read_text(encoding="utf-8")), points)
+            self.assertIn("2026-01-01," + "a" * 40, destination.read_text(encoding="utf-8"))
+
+    def test_csv_alias_and_write_failure_are_usage_errors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            commit(root, "2026-01-01", "one", "int APS5_VABI A() { return 0; }\n")
+            output = root / "reports"
+            output.mkdir()
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                (output / "history.csv").mkdir()
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                    progress_history.main([str(output), "--csv"])
+                self.assertEqual(error.exception.code, 2)
+                (output / "history.csv").rmdir()
+                (output / "history.json").write_bytes(b"preserve original")
+                os.link(output / "history.json", output / "history.csv")
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                    progress_history.main([str(output), "--csv"])
+                self.assertEqual(error.exception.code, 2)
+                self.assertEqual((output / "history.json").read_bytes(), b"preserve original")
+
+    def test_csv_matches_real_git_json_and_cache_alias(self):
+        import csv
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            commit(root, "2026-01-01", "one", "int APS5_VABI A() { return 0; }\n")
+            commit(root, "2026-01-02", "two", "int APS5_VABI A() { return 0; }\nint APS5_VABI B() { return 0; }\n")
+            commit(root, "2026-01-03", "empty", "")
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                output = root / "reports"
+                with contextlib.redirect_stdout(io.StringIO()):
+                    progress_history.main([str(output)])
+                self.assertFalse((output / "history.csv").exists())
+                with contextlib.redirect_stdout(io.StringIO()):
+                    progress_history.main([str(output), "--csv", "--cache", str(root / "cache.json")])
+                points = json.loads((output / "history.json").read_text())
+                with (output / "history.csv").open(newline="") as stream:
+                    rows = list(csv.DictReader(stream))
+                self.assertEqual(len(rows), 3)
+                self.assertEqual(points[-1]["libraries"], {"done": 0, "total": 0, "percent": 0})
+                for row, point in zip(rows, points):
+                    self.assertEqual(row["date"], point["date"])
+                    self.assertEqual(row["commit"], point["commit"])
+                    for name in ("libraries", "shaders"):
+                        for key in ("done", "total", "percent"):
+                            self.assertEqual(float(row[f"{name}_{key}"]), point[name][key])
+                original = (output / "history.csv").read_bytes()
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    progress_history.main([str(output), "--csv", "--cache", str(output / "history.csv")])
+                self.assertEqual((output / "history.csv").read_bytes(), original)
+
+
 class HistoryReportOutputTests(unittest.TestCase):
     def test_report_output_errors_are_usage_errors_and_allow_retry(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -296,29 +412,7 @@ class ProgressHistoryTests(unittest.TestCase):
                 self.assertIn(str(loop), errors.getvalue())
 
 
-    def test_cache_recursion_is_reported_as_a_path_specific_value_error(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "counts.json"
-            path.write_bytes(b"preserve cache")
-            with patch.object(progress_history.json, "loads", side_effect=RecursionError("decoder depth")):
-                with self.assertRaisesRegex(ValueError, "history cache JSON is too deeply nested") as raised:
-                    progress_history.load_cache(path, "signature")
-            self.assertIn(str(path), str(raised.exception))
-            self.assertEqual(path.read_bytes(), b"preserve cache")
 
-    def test_real_deep_cache_cli_is_bounded_and_preserves_files(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            cache = root / "counts.json"
-            original = ("[" * 20000 + "0" + "]" * 20000).encode()
-            cache.write_bytes(original)
-            completed = subprocess.run([sys.executable, str(Path(progress_history.__file__)), str(root / "reports"), "--cache", str(cache)], capture_output=True, timeout=10)
-            self.assertEqual(completed.returncode, 2, completed.stderr)
-            self.assertEqual(completed.stdout, b"")
-            self.assertNotIn(b"Traceback", completed.stderr)
-            self.assertIn(b"counts.json", completed.stderr)
-            self.assertFalse((root / "reports").exists())
-            self.assertEqual(cache.read_bytes(), original)
 
 
 

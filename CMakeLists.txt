@@ -219,6 +219,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_labels.py)
         add_test(NAME progress_history COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py ProgressHistoryTests)
+        add_test(NAME progress_history_csv COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryCsvTests)
+        set_tests_properties(progress_history_csv PROPERTIES TIMEOUT 20)
         add_test(NAME progress_history_output COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_history.py HistoryReportOutputTests)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
