@@ -1354,15 +1354,10 @@ public:
         try {
             Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image), "vkCreateImage depth plane copy");
             owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
-            VkMemoryRequirements requirements{};
-            context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image, &requirements);
-            VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
-            allocation.allocationSize = requirements.size;
-            allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory depth plane copy");
-            memory = owned->memory;
-            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory depth plane copy");
-            imageBytes = requirements.size;
+            owned->Allocate(context, info, "vkAllocateMemory depth plane copy");
+            memory = owned->allocation.Memory();
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, owned->allocation.Offset()), "vkBindImageMemory depth plane copy");
+            imageBytes = owned->memoryBytes;
         } catch (...) {
             release();
             throw;
