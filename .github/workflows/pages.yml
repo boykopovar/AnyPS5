@@ -8,9 +8,11 @@ on:
       - CMakeLists.txt
       - core/relinker/**
       - demo/web/**
+      - docs/dev/observed/**
       - tools/build_web.py
       - tools/package_release.py
       - tools/nid_names.py
+      - tools/observed_imports.py
       - tools/progress.py
       - tools/progress_history.py
       - tools/rdna_isa.txt

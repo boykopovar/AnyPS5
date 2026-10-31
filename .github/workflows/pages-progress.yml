@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - core/libs/prx/**
+      - docs/dev/observed/**
       - core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp
 
 permissions:

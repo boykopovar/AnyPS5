@@ -8,6 +8,7 @@ on:
       - 'tools/nid_names.py'
       - 'tools/progress.py'
       - 'tools/rdna_isa.txt'
+      - 'docs/dev/observed/**'
       - '.github/workflows/progress-report.yml'
 
 permissions:
