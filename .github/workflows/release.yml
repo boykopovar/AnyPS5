@@ -194,7 +194,7 @@ jobs:
                 echo "::error::Draft release $RELEASE_TAG was not created by this workflow for $GITHUB_SHA"
                 exit 1
               fi
-              gh release edit "$RELEASE_TAG" --draft=true --verify-tag --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-body.md"
+              gh release edit "$RELEASE_TAG" --draft=true --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-body.md"
               gh release upload "$RELEASE_TAG" dist/* --clobber
               ;;
             published)
