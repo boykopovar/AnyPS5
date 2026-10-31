@@ -83,4 +83,44 @@ LibcException::TypeInfoVtable _ZTVN10__cxxabiv120__function_type_infoE_nid_postf
     LibcException::IsPointerTypeInfo,
     LibcException::IsFunctionTypeInfoTrue
 };
+LibcException::TypeInfoVtable _ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix {
+    0,
+    &typeid(__cxxabiv1::__fundamental_type_info)
+};
+}
+
+namespace {
+struct FundamentalTypeRecord { const void* const* vtable; const char* name; };
+const void* const* FundamentalVtable() {
+    return reinterpret_cast<const void* const*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix) + 2;
+}
+}
+
+extern "C" {
+FundamentalTypeRecord _ZTIv_nid_postfix {FundamentalVtable(), "v"};
+FundamentalTypeRecord _ZTIw_nid_postfix {FundamentalVtable(), "w"};
+FundamentalTypeRecord _ZTIb_nid_postfix {FundamentalVtable(), "b"};
+FundamentalTypeRecord _ZTIc_nid_postfix {FundamentalVtable(), "c"};
+FundamentalTypeRecord _ZTIa_nid_postfix {FundamentalVtable(), "a"};
+FundamentalTypeRecord _ZTIh_nid_postfix {FundamentalVtable(), "h"};
+FundamentalTypeRecord _ZTIs_nid_postfix {FundamentalVtable(), "s"};
+FundamentalTypeRecord _ZTIt_nid_postfix {FundamentalVtable(), "t"};
+FundamentalTypeRecord _ZTIi_nid_postfix {FundamentalVtable(), "i"};
+FundamentalTypeRecord _ZTIj_nid_postfix {FundamentalVtable(), "j"};
+FundamentalTypeRecord _ZTIl_nid_postfix {FundamentalVtable(), "l"};
+FundamentalTypeRecord _ZTIm_nid_postfix {FundamentalVtable(), "m"};
+FundamentalTypeRecord _ZTIx_nid_postfix {FundamentalVtable(), "x"};
+FundamentalTypeRecord _ZTIy_nid_postfix {FundamentalVtable(), "y"};
+FundamentalTypeRecord _ZTIn_nid_postfix {FundamentalVtable(), "n"};
+FundamentalTypeRecord _ZTIo_nid_postfix {FundamentalVtable(), "o"};
+FundamentalTypeRecord _ZTIf_nid_postfix {FundamentalVtable(), "f"};
+FundamentalTypeRecord _ZTId_nid_postfix {FundamentalVtable(), "d"};
+FundamentalTypeRecord _ZTIe_nid_postfix {FundamentalVtable(), "e"};
+FundamentalTypeRecord _ZTIg_nid_postfix {FundamentalVtable(), "g"};
+FundamentalTypeRecord _ZTIz_nid_postfix {FundamentalVtable(), "z"};
+FundamentalTypeRecord _ZTIDn_nid_postfix {FundamentalVtable(), "Dn"};
+FundamentalTypeRecord _ZTIDs_nid_postfix {FundamentalVtable(), "Ds"};
+FundamentalTypeRecord _ZTIDi_nid_postfix {FundamentalVtable(), "Di"};
+FundamentalTypeRecord _ZTIDu_nid_postfix {FundamentalVtable(), "Du"};
+FundamentalTypeRecord _ZTIDh_nid_postfix {FundamentalVtable(), "Dh"};
 }
