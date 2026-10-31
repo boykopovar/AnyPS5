@@ -24,6 +24,7 @@ LIMITATIONS = [
     "skipped, no usable Vulkan device: ErrorInitializationFailed",
     "skipped, unit shadows or host imports are unavailable",
     "skipped, the device has no compute queue",
+    "skipped, not enough free disk space for a file of more than 2 GiB",
     "skipped, the device reports 4 lanes",
     "skipped, subgroup size 8",
     "skipped, no display",
