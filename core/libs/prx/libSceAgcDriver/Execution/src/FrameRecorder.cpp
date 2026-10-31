@@ -301,12 +301,24 @@ void FrameRecorder::recordLocked(FrameCall call, bool prologueCall, std::span<co
 
 void FrameRecorder::FrameBoundary() {
     std::lock_guard lock(mutex);
+    frameBoundaryLocked();
+}
+
+void FrameRecorder::frameBoundaryLocked() {
     ++boundaries;
     if (state == State::Recording) {
         if (++recordedFrames >= frames) finish();
         return;
     }
     if (state == State::Waiting && triggered()) start();
+}
+
+void FrameRecorder::RewindTailFlips(std::uint64_t flips) {
+    std::lock_guard lock(mutex);
+    while (rewindTailFlips < flips) {
+        ++rewindTailFlips;
+        frameBoundaryLocked();
+    }
 }
 
 bool FrameRecorder::triggered() {
@@ -514,14 +526,14 @@ void FrameRecorder::stop(const char* reason) {
 void FrameRecorder::start() {
     ++startAttempts;
     auto& driver = DriverDetail::Driver::Get();
-    if (!driver.WaitIdleFor(std::chrono::seconds(10))) {
-        std::fprintf(stderr, "[frame-capture] the driver did not go idle within 10 s at frame boundary %llu (attempt %llu)\n", static_cast<unsigned long long>(boundaries), static_cast<unsigned long long>(startAttempts));
-        if (startAttempts >= 5) {
-            std::fprintf(stderr, "[frame-capture] giving up: no idle frame boundary\n");
+    if (!driver.WaitIdleUnlessTitleWaitsFor(std::chrono::seconds(10))) {
+        if (startAttempts >= 600) {
+            std::fprintf(stderr, "[frame-capture] giving up: the driver was not idle at any of %llu frame boundaries\n", static_cast<unsigned long long>(startAttempts));
             state = State::Done;
         }
         return;
     }
+    rewindTailFlips = std::max(rewindTailFlips, driver.RewindTailFlips());
     if (!GuestMemory::WriteWatched()) throw std::runtime_error("frame capture: the guest write watch is unavailable, so CPU stores during the frames cannot be recorded");
     startedAt = std::chrono::steady_clock::now();
     startBoundary = boundaries;

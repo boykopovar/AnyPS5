@@ -20,6 +20,7 @@ void Submit(const Packet* packet, std::uint32_t queue) try {
         return;
     }
     GuestMemory::CheckRange(packet, sizeof(Packet), alignof(Packet));
+    recorder->RewindTailFlips(driver.RewindTailFlips());
     const auto flips = driver.FlipSubmissions();
     recorder->Submit(*packet, queue, [&] { driver.Submit(packet, queue); });
     if (driver.FlipSubmissions() != flips) recorder->FrameBoundary();
@@ -136,7 +137,10 @@ extern "C" void AgcDriverSuspendPoint_nid_postfix() try {
 
 extern "C" std::uint32_t AgcDriverReserveEopFlip_nid_postfix(const AgcDriver::FlipInfo& info) {
     const auto token = AgcDriver::DriverDetail::Driver::Get().ReserveEopFlip(info);
-    if (auto* const recorder = AgcDriver::FrameRecorder::Active(); recorder != nullptr && token != 0) recorder->ReserveEopFlip(info, token);
+    if (auto* const recorder = AgcDriver::FrameRecorder::Active(); recorder != nullptr && token != 0) {
+        recorder->RewindTailFlips(AgcDriver::DriverDetail::Driver::Get().RewindTailFlips());
+        recorder->ReserveEopFlip(info, token);
+    }
     return token;
 }
 
@@ -163,6 +167,7 @@ extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info)
         AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info);
         return;
     }
+    recorder->RewindTailFlips(AgcDriver::DriverDetail::Driver::Get().RewindTailFlips());
     recorder->Flip(info, [&] { AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info); });
     recorder->FrameBoundary();
 } catch (const ProcessShutdown&) {

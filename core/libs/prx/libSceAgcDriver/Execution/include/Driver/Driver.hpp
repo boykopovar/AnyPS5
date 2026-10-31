@@ -77,8 +77,10 @@ public:
     std::vector<std::uint32_t> PendingEopFlipTokens();
     std::pair<std::uint64_t, std::uint64_t> SerialProgress();
     std::uint64_t FlipSubmissions() const;
+    std::uint64_t RewindTailFlips() const;
     std::vector<AwaitedWait> AwaitedWaits();
     bool WaitIdleFor(std::chrono::milliseconds timeout);
+    bool WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout);
     void RegisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void AttachWindow(const PresentationWindow& window);
@@ -391,6 +393,7 @@ private:
     std::shared_ptr<FrameTiming> pendingFrameTiming;
 
     std::atomic<std::uint64_t> flipsCounted{0};
+    std::atomic<std::uint64_t> rewindTailFlips{0};
     struct AwaitedSlot {
         std::atomic<std::uint64_t> address{0};
         std::atomic<std::uint64_t> reference{0};

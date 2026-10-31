@@ -101,6 +101,10 @@ std::uint64_t Driver::FlipSubmissions() const {
     return flipSubmissionsOfThread();
 }
 
+std::uint64_t Driver::RewindTailFlips() const {
+    return rewindTailFlips.load(std::memory_order_acquire);
+}
+
 std::deque<const std::uint32_t*>& Driver::releasedTails() {
     struct ReleasedTailsStorage {};
     return HostThreadLocal<std::deque<const std::uint32_t*>, ReleasedTailsStorage>();
@@ -368,6 +372,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
         rethrowFailure();
         checkStopping();
         reserveOutputs(tail);
+        if (!tail.flips.empty()) rewindTailFlips.fetch_add(1, std::memory_order_acq_rel);
         tail.shaders = shaders;
         tail.serial = stalled.serial;
         tail.received = ++eventSerial;
