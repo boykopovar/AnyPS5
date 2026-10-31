@@ -2212,6 +2212,8 @@ private:
         const bool flatLineAccess = image.dimension == RdnaImageDimension::Dim2DArray ? flatLineLevelZero || flatLineExplicitLod : flatLineLoad || flatLineSample || flatLineExplicitLod;
         image.flatLineCompatible = image.flatLineCompatible && flatLineAccess && !memory.imagePacked && memory.imageByElements == 0u;
         image.flatVolumeLineCompatible = image.flatVolumeLineCompatible && (flatLineLoad || flatLineSample) && !memory.imagePacked && memory.imageByElements == 0u;
+        const bool layerRowsSample = op == IrOpcode::ImageSampleRaw && (memory.imageSampleFlags == RdnaImageSampleFlagLevelZero || memory.imageSampleFlags == RdnaImageSampleFlagLod);
+        image.layerRowsCompatible = image.layerRowsCompatible && layerRowsSample && !memory.imageR128 && !memory.imagePacked && memory.imageByElements == 0u;
         image.dimensionQueryOnly = image.dimensionQueryOnly && op == IrOpcode::ImageQueryDimensions;
         image.sampledOnly = image.sampledOnly && ImageOpcodeInfoOf(op).needsSampler;
         if ((memory.imageSampleFlags & RdnaImageSampleFlagCompare) != 0u) {

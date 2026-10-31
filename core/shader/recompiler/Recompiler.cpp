@@ -360,8 +360,12 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     deadCodeEliminator.Eliminate(program);
     dumpIr("resources");
     program.Resources().srgbDecodeFormats = request.target.srgbDecodeFormats;
+    program.Resources().maxImageArrayLayers = request.target.maxImageArrayLayers;
     if (request.context.convertedSamples) {
         for (auto& image : program.Resources().info.images) image.convertedSamples = true;
+    }
+    if (request.context.layerRowSamples) {
+        for (auto& image : program.Resources().info.images) image.maxArrayLayers = request.target.maxImageArrayLayers;
     }
 
     return program;
@@ -1454,14 +1458,18 @@ RecompileResult recompileOnce(const RecompileRequest& request) {
 }
 
 RecompileResult RecompileImpl(const RecompileRequest& request) {
-    try {
-        return recompileOnce(request);
-    } catch (const ConvertedSampleRequired&) {
-        if (request.context.convertedSamples) throw;
+    auto current = request;
+    while (true) {
+        try {
+            return recompileOnce(current);
+        } catch (const ConvertedSampleRequired&) {
+            if (current.context.convertedSamples) throw;
+            current.context.convertedSamples = true;
+        } catch (const LayerRowSamplesRequired&) {
+            if (current.context.layerRowSamples) throw;
+            current.context.layerRowSamples = true;
+        }
     }
-    auto converted = request;
-    converted.context.convertedSamples = true;
-    return recompileOnce(converted);
 }
 
 // APS5_NO_RESULT_MEMO=1: every Recompile(request, capture) materializes its own result as before.
@@ -1719,6 +1727,23 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     }
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
+    mix(snapshot.registeredImages.size());
+    for (const auto& view : snapshot.registeredImages) {
+        mix(view.resource);
+        mix(view.record);
+        mix(view.address);
+        mix(view.rangeAddress);
+        mix(view.rangeBytes);
+        mix(view.allocationAddress);
+        mix(view.allocationBytes);
+        mix(view.backingSerial);
+        mix(view.hasRange);
+        mix(view.readable);
+        mix(view.writable);
+        mix(view.gpu);
+        for (const auto word : view.provenance.dwords) mix(word);
+        for (const auto word : view.effective.dwords) mix(word);
+    }
     if (masked) {
         mix(snapshot.flattenedSrt.size());
         mix(snapshot.userData.size());

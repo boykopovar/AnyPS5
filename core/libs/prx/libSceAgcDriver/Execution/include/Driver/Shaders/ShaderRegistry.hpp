@@ -169,6 +169,7 @@ struct PreparedShaders : PreparedShaderState {
     std::atomic<bool> demanded{false};
     bool pending = false;
     std::vector<std::size_t> convertedSamples;
+    std::vector<std::size_t> layerRowSamples;
 };
 
 struct RegisteredShaderState {

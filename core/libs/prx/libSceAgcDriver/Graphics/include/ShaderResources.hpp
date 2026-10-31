@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Sampler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "Recompiler.hpp"
+#include "IntermediateRepresentation/IrMetadata/ResourcePlan.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <array>
 #include <chrono>
@@ -499,6 +500,7 @@ private:
         bool depthCompare = false;
         VkImageViewType multisampleViewType = VK_IMAGE_VIEW_TYPE_2D;
         bool firstSample = false;
+        bool layerRows = false;
         std::shared_ptr<Texture> texture;
     };
     PreviousSampled previousSampled;
@@ -650,6 +652,7 @@ private:
     bool reusable = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
+    std::vector<ShaderRecompiler::RegisteredImageView> registeredImageViews;
     // The pending registry's serial at the last Revalidate that proved this object, taken before
     // its checks and kept only when unchanged after them (0: none): while it is still the serial,
     // no image other than the object's own sources has results pending over its surfaces and
