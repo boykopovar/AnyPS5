@@ -1319,6 +1319,8 @@ int main() {
         Require(std::memcmp(buffer, "sub", 3) == 0 && buffer[3] == '#');
         Require(readlink_nid_postfix(link.c_str(), nullptr, 0) == 0);
         Require(readlink_nid_postfix(link.c_str(), nullptr, sizeof(buffer)) == -1 && Error() == 14);
+        auto* unmapped = reinterpret_cast<char*>(0x800000000000);
+        Require(readlink_nid_postfix(link.c_str(), unmapped, sizeof(buffer)) == -1 && Error() == 14);
         Require(readlink_nid_postfix((root / "LINK").string().c_str(), buffer, sizeof(buffer)) == 14);
         const int linkDir = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
         Require(linkDir >= 0);
@@ -1328,9 +1330,11 @@ int main() {
         Require(readlinkat_nid_postfix(linkDir, "link", buffer, 3) == 3 && std::memcmp(buffer, "sub", 3) == 0);
         Require(readlinkat_nid_postfix(linkDir, "link", nullptr, 0) == 0);
         Require(readlinkat_nid_postfix(linkDir, "link", nullptr, sizeof(buffer)) == -1 && Error() == 14);
+        Require(readlinkat_nid_postfix(linkDir, "link", unmapped, sizeof(buffer)) == -1 && Error() == 14);
         const auto guestLink = "/" + root.filename().string() + "/link";
         Require(readlinkat_nid_postfix(-1, guestLink.c_str(), buffer, sizeof(buffer)) == 14 && std::memcmp(buffer, "sub/target.txt", 14) == 0);
         Require(readlinkat_nid_postfix(-100, link.c_str(), buffer, sizeof(buffer)) == 14 && std::memcmp(buffer, "sub/target.txt", 14) == 0);
+        Require(readlinkat_nid_postfix(-100, link.c_str(), unmapped, sizeof(buffer)) == -1 && Error() == 14);
         Require(sceKernelClose(linkDir) == 0);
 #ifndef _WIN32
         std::filesystem::create_symlink("loopB", root / "loopA");
