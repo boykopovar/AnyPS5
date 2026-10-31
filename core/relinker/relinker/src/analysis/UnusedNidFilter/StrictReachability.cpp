@@ -59,16 +59,18 @@ public:
             enqueue(entry);
         }
         for (const auto root : addressTaken) enqueue(root);
+        bool unknownSegmentAccess = false;
         while (!pending.empty()) {
             const auto begin = pending.front();
             pending.pop_front();
             const auto& region = regions.at(begin);
             result.Instructions.insert(region.Instructions.begin(), region.Instructions.end());
             result.ImportSlots.insert(region.Imports.begin(), region.Imports.end());
-            if (region.UnknownSegmentAccess) result.ImportSlots.insert(input.ImportSlots.begin(), input.ImportSlots.end());
+            unknownSegmentAccess |= region.UnknownSegmentAccess;
             result.IndirectTransfers += region.IndirectTransfers;
             for (const auto target : region.Edges) enqueue(target);
         }
+        if (unknownSegmentAccess) result.ImportSlots = input.ImportSlots;
         result.LiveRegions = live.size();
         result.TotalRegions = regions.size();
         result.AddressTakenRoots = addressTaken.size();
