@@ -275,6 +275,7 @@ def page(points):
         '</head><body>',
         '<h1>Progress history</h1>',
         chart(points),
+        progress.legend_block(),
         f'<p>Each panel has its own scale: the solid line is what is implemented, the dashed line what is counted: implemented '
         'functions plus observed stubs, the figure the percentage uses. Unobserved stubs are not counted. Library functions are '
         'declared in the <code>prx</code> sources; the shader total is the AMD RDNA 1 + RDNA 2 instruction list '

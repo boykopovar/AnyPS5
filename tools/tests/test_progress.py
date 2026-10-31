@@ -1095,6 +1095,10 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("an unobserved stub otherwise", page)
         self.assertIn("so unobserved stubs do not lower it", page)
         self.assertIn("has only unobserved stubs", page)
+        for expected in ("How to read the graphs", "Green: implemented.", "Red: observed stub.", "Grey: unobserved stub", "<b>Headline</b> = implemented / (implemented + observed stubs)", "<b>Declared</b>", "no measured use is known"):
+            self.assertIn(expected, page)
+        for color in (progress.DONE_COLOR, progress.TODO_COLOR, progress.UNOBSERVED_COLOR):
+            self.assertIn(f"background:{color}", page)
         self.assertIn("/docs/dev/PROGRESS.md#observed-imports", page)
         self.assertIn("<th>Declared %</th>", page)
         self.assertIn("<p>1 of the 1 declared functions that are not implemented are unobserved stubs.</p>", page)

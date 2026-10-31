@@ -28,7 +28,7 @@ class ProgressRenderSliverTests(unittest.TestCase):
         self.assertEqual(cells.count('fill="#6e7681"'), 2)
         self.assertIn("libA: 1/2 (50%), 2 unobserved", cells)
         svg = progress.render(libraries, {"done": 0, "total": 0, "percent": 0, "groups": []})
-        self.assertIn(">Unobserved, not known to be needed (libraries) / Not implemented (shaders)</text>", svg)
+        self.assertIn(">Unobserved stub (libraries) / Not implemented (shaders)</text>", svg)
         self.assertEqual(svg.count('fill="#6e7681"'), 2 + 1)
         self.assertEqual(len({progress.DONE_COLOR, progress.TODO_COLOR, progress.UNOBSERVED_COLOR}), 3)
         self.assertFalse(hasattr(progress, "PENDING_COLOR"))

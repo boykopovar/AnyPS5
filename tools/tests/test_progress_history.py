@@ -282,6 +282,9 @@ class ProgressHistoryTests(unittest.TestCase):
         page = progress_history.page([point])
         self.assertIn("every stub in them is unobserved and their counted figure holds only what a manifest of that day names", page)
         self.assertIn("Unobserved stubs are not counted", page)
+        self.assertIn("How to read the graphs", page)
+        self.assertIn("Grey: unobserved stub", page)
+        self.assertIn("<b>Declared</b>", page)
         self.assertIn("/docs/dev/PROGRESS.md#observed-imports", page)
 
     def test_libraries_panel_draws_observed_and_unobserved_series_with_labels(self):
