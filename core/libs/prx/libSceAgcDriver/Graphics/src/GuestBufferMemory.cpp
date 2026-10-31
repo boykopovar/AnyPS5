@@ -6337,10 +6337,7 @@ void GuestBufferMemory::addAddressStoreSpans() {
         for (const auto& [first, last] : clipPieces(region.mirror->committed, region.begin, served)) writes.emplace_back(first, last);
     };
     if (space != nullptr) {
-        for (const auto& region : space->base) {
-            if (region.mirror != nullptr && !region.mirror->sparse && (servedEnd(region) - region.begin) > (256ull << 20)) continue;
-            add(region);
-        }
+        for (const auto& region : space->base) add(region);
     }
     for (const auto& region : regions) add(region);
 }

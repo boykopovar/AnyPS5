@@ -79,31 +79,32 @@ private:
 
 class GuestHeap {
 public:
-    explicit GuestHeap(bool writable, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs = {}) {
+    explicit GuestHeap(bool writable, std::span<const std::pair<std::uint64_t, std::uint64_t>> runs = {}, std::uint64_t bytes = HeapBytes)
+        : heapBytes(bytes) {
 #ifdef _WIN32
-        raw = GuestArena::GuestArenaAllocate_nid_postfix(HeapBytes, Block);
+        raw = GuestArena::GuestArenaAllocate_nid_postfix(heapBytes, Block);
         Require(raw != nullptr, "BDA store heap mirror: cannot allocate the guest heap");
         base = static_cast<std::uint8_t*>(raw);
-        if (runs.empty()) GuestArena::GuestArenaCommit_nid_postfix(raw, HeapBytes, PAGE_READWRITE, HeapBytes);
+        if (runs.empty()) GuestArena::GuestArenaCommit_nid_postfix(raw, heapBytes, PAGE_READWRITE, heapBytes);
         for (const auto& [begin, end] : runs) GuestArena::GuestArenaCommit_nid_postfix(base + begin, end - begin, PAGE_READWRITE, Block);
 #else
-        raw = mmap(nullptr, HeapBytes + Block, runs.empty() ? PROT_READ | PROT_WRITE : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+        raw = mmap(nullptr, heapBytes + Block, runs.empty() ? PROT_READ | PROT_WRITE : PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
         Require(raw != MAP_FAILED, "BDA store heap mirror: cannot map the guest heap");
         base = reinterpret_cast<std::uint8_t*>((reinterpret_cast<std::uintptr_t>(raw) + Block - 1) / Block * Block);
         for (const auto& [begin, end] : runs) Require(mprotect(base + begin, end - begin, PROT_READ | PROT_WRITE) == 0, "BDA store heap mirror: cannot commit a run of the sparse guest heap");
 #endif
-        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(base, HeapBytes);
-        GuestAllocations::Mutation().Add(base, HeapBytes, true, writable, true);
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(base, heapBytes);
+        GuestAllocations::Mutation().Add(base, heapBytes, true, writable, true);
     }
 
     ~GuestHeap() {
         GuestAllocations::Mutation().Remove(base);
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(base, HeapBytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(base, heapBytes);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(raw, HeapBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(raw, HeapBytes);
+        GuestArena::GuestArenaReset_nid_postfix(raw, heapBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(raw, heapBytes);
 #else
-        munmap(raw, HeapBytes + Block);
+        munmap(raw, heapBytes + Block);
 #endif
     }
 
@@ -121,6 +122,7 @@ public:
     }
 
 private:
+    std::uint64_t heapBytes = HeapBytes;
     void* raw = nullptr;
     std::uint8_t* base = nullptr;
 };
@@ -295,6 +297,21 @@ void SparseTests(AgcDriver::VulkanDevice& device) {
     Require(heap.Load(LastRun + sizeof(std::uint32_t)) == 0x77777777u, "BDA store heap mirror: a later sparse write-back rolled back the CPU's bytes");
 }
 
+void BoundaryTests(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint64_t BoundaryHeapBytes = (256ull << 20u) + Block;
+    GuestHeap heap(true, {}, BoundaryHeapBytes);
+    heap.Store(Neighbor, 0x11111111u);
+    const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
+    const auto log = Store(device, heap.Address() + StoreOffset);
+    Require(AgcDriver::Graphics::HeapMirrorsWithin(heap.Address(), heap.Address() + BoundaryHeapBytes).mirrors == 1, "BDA store heap mirror: the 256 MiB+ writable heap was not heap mirrored");
+    Require(log.find("BDA access failed") == std::string::npos && log.find("write-back failed") == std::string::npos, "BDA store heap mirror: a FLAT/GLOBAL store into a 256 MiB+ writable heap mirror was refused:\n" + log);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        const auto value = heap.Load(StoreOffset + thread * sizeof(std::uint32_t));
+        Require(value == Stored(thread), "BDA store heap mirror: the GLOBAL store of thread " + std::to_string(thread) + " into the 256 MiB+ writable heap mirror reached guest memory as " + Hex(value) + ", expected " + Hex(Stored(thread)));
+    }
+    Require(heap.Load(Neighbor) == 0x11111111u, "BDA store heap mirror: the 256 MiB+ write-back changed a guest dword no thread stored to");
+}
+
 void ReadOnlyTests(AgcDriver::VulkanDevice& device) {
     GuestHeap heap(false);
     heap.Store(StoreOffset, 0x33333333u);
@@ -320,6 +337,7 @@ int main() {
             return VulkanTestSkipped;
         }
         WritableTests(*device);
+        BoundaryTests(*device);
         MixedTests(*device);
         SparseTests(*device);
         ReadOnlyTests(*device);
