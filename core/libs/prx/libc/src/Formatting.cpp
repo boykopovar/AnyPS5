@@ -78,10 +78,37 @@ bool HasGuestWideScan(const char* format) {
     return false;
 }
 
-bool ScansWideInProcess(const char* format) {
-    if (!HasGuestWideScan(format)) return false;
-    LibcDetail::RequireNoPositionalWideScan(format);
-    return true;
+bool HasNarrowCharacterScan(const char* format) {
+    if (format == nullptr) return false;
+    while ((format = std::strchr(format, '%')) != nullptr) {
+        ++format;
+        if (*format == '%') { ++format; continue; }
+        const char* digits = format;
+        while (std::isdigit(static_cast<unsigned char>(*format))) ++format;
+        if (*format == '$') ++format;
+        else format = digits;
+        if (*format == '*') ++format;
+        while (std::isdigit(static_cast<unsigned char>(*format))) ++format;
+        const char* length = format;
+        while (*format && std::strchr("hljztL", *format)) ++format;
+        if (*format == 'c' && !(format - length == 1 && *length == 'l')) return true;
+        if (*format == '[') {
+            ++format;
+            if (*format == '^') ++format;
+            if (*format == ']') ++format;
+            while (*format && *format != ']') ++format;
+        }
+        if (*format) ++format;
+    }
+    return false;
+}
+
+bool ScansInProcess(const char* format) {
+    if (HasGuestWideScan(format)) {
+        LibcDetail::RequireNoPositionalWideScan(format);
+        return true;
+    }
+    return HasNarrowCharacterScan(format);
 }
 
 void RejectGuestWideScan(const char* format) {
@@ -275,6 +302,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         const std::string length(lengthStart, cursor);
         const char conversion = *cursor;
         if (conversion == '\0') return finish(assigned);
+        if (!secure && std::strchr("diouxXaAeEfFgGcspn[SC", conversion) == nullptr) return finish(assigned);
         std::string specifier(1, conversion);
         if (conversion == '[') {
             const char* setStart = cursor++;
@@ -298,6 +326,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
                     std::memcpy(target, &value, sizeof(value));
                 } else throw std::invalid_argument("Invalid scan count length");
             }
+            if (!secure) converted = true;
             continue;
         }
 #ifndef _WIN32
@@ -366,8 +395,9 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             target = nextPointer();
             if (target == nullptr) return EOF;
         }
-        if constexpr (!TSource::Contiguous) if (conversion == 'c' && length != "l") {
-            const unsigned long wanted = width == 0 ? 1 : width;
+        if (conversion == 'c' && length != "l" && (!TSource::Contiguous || !secure)) {
+            const auto narrowWidth = static_cast<std::uint32_t>(width);
+            const unsigned long wanted = secure ? (width == 0 ? 1 : width) : (narrowWidth == 0 || narrowWidth > INT_MAX ? 1 : narrowWidth);
             if (secure && !suppress) {
                 const auto capacity = static_cast<unsigned long>(nextCapacity());
                 if (capacity == 0 || wanted > capacity) {
@@ -405,7 +435,10 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         directive += "%n";
         int consumed = -1;
         const int matched = source.Scan(directive.c_str(), suppress, target, &consumed);
-        if (consumed < 0 || (!suppress && matched != 1)) return finish(!converted && source.Peek() == EOF ? EOF : assigned);
+        if (consumed < 0 || (!suppress && matched != 1)) {
+            const bool inputFailure = TSource::Contiguous ? source.Peek() == EOF : matched == EOF;
+            return finish(!converted && inputFailure ? EOF : assigned);
+        }
         source.Advance(consumed);
         if (capped && conversion != 'c') {
             const int next = source.Peek();
@@ -435,7 +468,7 @@ int ScanGuest(const char* buffer, const char* format, bool secure, NextPointer n
 }
 
 template <typename NextPointer, typename NextCapacity>
-int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPointer, NextCapacity nextCapacity) {
+int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPointer, NextCapacity nextCapacity, bool secure = true) {
     if (stream == nullptr || format == nullptr) return EOF;
     if (!stream->IsOpen()) { errno = 9; return EOF; }
     flockfile_nid_postfix(stream);
@@ -448,8 +481,9 @@ int ScanGuestStream(FileStream* stream, const char* format, NextPointer nextPoin
 #ifndef _WIN32
     RejectGuestWideScan(format);
 #endif
-    const int result = ScanSource(StreamSource(native), format, true, nextPointer, nextCapacity);
+    const int result = ScanSource(StreamSource(native), format, secure, nextPointer, nextCapacity);
     stream->SyncStatus();
+    if (!secure) stream->KeepDirectoryReadError(result == -1);
     return result;
 }
 
@@ -536,6 +570,15 @@ int APS5_VABI fprintf_nid_postfix(FileStream* stream, const char* format, ...) {
 }
 
 int APS5_VABI fscanf_nid_postfix(FileStream* stream, const char* format, ...) {
+#ifndef _WIN32
+    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+        std::va_list args;
+        va_start(args, format);
+        const int result = ScanGuestStream(stream, format, [&] { return va_arg(args, void*); }, [] { return 0u; }, false);
+        va_end(args);
+        return result;
+    }
+#endif
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToReading()) return EOF;
@@ -636,7 +679,7 @@ int APS5_VABI vsscanf_nid_postfix(const char* input, const char* format, VaList*
 #else
     std::string head;
     format = CutAtQuadScanDirective(format, head);
-    if (ScansWideInProcess(format)) {
+    if (ScansInProcess(format)) {
         LibcDetail::FormatArguments arguments(args);
         return ScanGuest(input, format, false, [&] { return arguments.Next<void*>(); }, [] { return 0u; });
     }
@@ -662,7 +705,7 @@ int APS5_VABI sscanf_nid_postfix(const char* input, const char* format, ...) {
     va_start(args, format);
     std::string head;
     format = CutAtQuadScanDirective(format, head);
-    const int result = ScansWideInProcess(format) ? ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
+    const int result = ScansInProcess(format) ? ScanGuest(input, format, false, [&] { return va_arg(args, void*); }, [] { return 0u; })
                                                   : HostVsscanf(input, format, args);
     va_end(args);
     return result;
@@ -868,6 +911,12 @@ int APS5_VABI puts_nid_postfix(const char* s) {
 extern FileStream* __stdinp_nid_postfix;
 
 int APS5_VABI vfscanf_nid_postfix(FileStream* stream, const char* format, VaList* args) {
+#ifndef _WIN32
+    if (HasNarrowCharacterScan(format) && LibcDetail::FindQuadScanDirective(format) == nullptr) {
+        LibcDetail::FormatArguments arguments(args);
+        return ScanGuestStream(stream, format, [&] { return arguments.Next<void*>(); }, [] { return 0u; }, false);
+    }
+#endif
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     auto* native = GetNativeStream(stream);
     if (!stream->SwitchToReading()) return EOF;
