@@ -364,6 +364,24 @@ ImageMemoEntry& imageMemoSlot(std::span<const std::uint32_t> words) {
     return (*imageMemo)[(hash ^ (hash >> 29u)) % ImageMemoSlots];
 }
 
+struct SampledKeyProofEntry {
+    std::uint64_t dccAddress = 0;
+    std::uint64_t guestBytes = 0;
+    std::uint32_t format = 0;
+    bool dccAlphaOnMsb = false;
+    DccKeyProof proof;
+};
+
+constexpr std::size_t SampledKeyProofSlots = 1024;
+struct SampledKeyProofTag {};
+
+SampledKeyProofEntry& sampledKeyProofSlot(std::uint64_t dccAddress, std::uint64_t guestBytes, std::uint32_t format, bool dccAlphaOnMsb) {
+    auto& proofs = HostThreadLocal<std::unique_ptr<std::array<SampledKeyProofEntry, SampledKeyProofSlots>>, SampledKeyProofTag>();
+    if (proofs == nullptr) proofs = std::make_unique<std::array<SampledKeyProofEntry, SampledKeyProofSlots>>();
+    const auto hash = dccAddress ^ (guestBytes * 0x9e3779b97f4a7c15ull) ^ (static_cast<std::uint64_t>(format) << 32u) ^ (dccAlphaOnMsb ? 0x94d049bb133111ebull : 0ull);
+    return (*proofs)[(hash ^ (hash >> 29u)) % SampledKeyProofSlots];
+}
+
 const ImageMemoEntry& decodedImage(VkDevice device, std::span<const std::uint32_t> words) {
     auto& slot = imageMemoSlot(words);
     if (slot.device == device && std::equal(words.begin(), words.end(), slot.words.begin())) return slot;
@@ -426,6 +444,7 @@ TextureCounters& TextureCounts() {
 }
 
 thread_local std::uint64_t sampledLookupKeyScans = 0;
+thread_local std::uint64_t sampledLookupKeyProofs = 0;
 
 void reportTextureCounters() {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -798,10 +817,25 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     std::optional<DccKeys> scanned;
     const auto scanKeys = [&] {
         if (scanned.has_value()) return *scanned;
+        if (resource.dccAddress == 0) {
+            scanned = DccKeys::Uncompressed;
+            return *scanned;
+        }
         const auto scanStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-        scanned = TextureClearKeys(resource, guestBytes);
-        if (resource.dccAddress != 0) ++sampledLookupKeyScans;
-        if (profile && resource.dccAddress != 0) LookupOutcomes::Add(LookupOutcomes::DccScan, scanStart);
+        auto& memo = sampledKeyProofSlot(resource.dccAddress, guestBytes, resource.format, resource.dccAlphaOnMsb);
+        if (memo.dccAddress != resource.dccAddress || memo.guestBytes != guestBytes || memo.format != resource.format || memo.dccAlphaOnMsb != resource.dccAlphaOnMsb) {
+            memo.dccAddress = resource.dccAddress;
+            memo.guestBytes = guestBytes;
+            memo.format = resource.format;
+            memo.dccAlphaOnMsb = resource.dccAlphaOnMsb;
+            memo.proof = {};
+        }
+        const auto scans = KeyProofCounts().scanned;
+        const auto proofs = KeyProofCounts().proved;
+        scanned = ProvedClearKeys(resource, guestBytes, memo.proof);
+        if (KeyProofCounts().scanned != scans) ++sampledLookupKeyScans;
+        if (KeyProofCounts().proved != proofs) ++sampledLookupKeyProofs;
+        if (profile) LookupOutcomes::Add(LookupOutcomes::DccScan, scanStart);
         return *scanned;
     };
     auto& counters = TextureCounts();
@@ -5435,6 +5469,10 @@ void ShaderResources::resolveImageTables() {
 
 std::uint64_t SampledLookupKeyScans() {
     return sampledLookupKeyScans;
+}
+
+std::uint64_t SampledLookupKeyProofs() {
+    return sampledLookupKeyProofs;
 }
 
 ImageTableReuseCounts ImageTableReuses() {
