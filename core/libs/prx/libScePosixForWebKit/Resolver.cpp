@@ -289,6 +289,7 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     int failure = 0;
     for (auto* item = native; item; item = item->ai_next) {
         if (item->ai_family != AF_INET && item->ai_family != AF_INET6) { failure = 5; break; }
+        if (!rawQuery && item->ai_socktype == SOCK_RAW) continue;
         auto* converted = static_cast<GuestResolver::AddressInfo*>(std::calloc(1, sizeof(GuestResolver::AddressInfo)));
         if (!converted) { failure = 6; break; }
         *tail = converted;
@@ -323,6 +324,7 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     }
     ::freeaddrinfo(native);
     if (failure) { freeaddrinfo_nid_postfix(first); return failure; }
+    if (!first) return 4;
     *output = first;
     return 0;
 }
