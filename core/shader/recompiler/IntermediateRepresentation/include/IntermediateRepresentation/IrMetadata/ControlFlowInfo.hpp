@@ -35,6 +35,27 @@ struct PointerHop {
     bool operator==(const PointerHop& other) const = default;
 };
 
+inline constexpr std::uint32_t MaxPointerChaseDepth = 4;
+
+struct DescriptorWordEdit {
+    std::uint32_t shift = 0;
+    std::uint32_t mask = 0xffffffffu;
+    std::uint32_t bits = 0;
+
+    [[nodiscard]] std::uint32_t Apply(std::uint32_t word) const { return ((word << shift) & mask) | bits; }
+    bool operator==(const DescriptorWordEdit& other) const = default;
+};
+
+struct PointerChase {
+    std::uint32_t offset = 0;
+    std::uint32_t immediate = 0;
+    std::uint32_t readOffset = 0;
+    std::uint32_t readImmediate = 0;
+    std::array<DescriptorWordEdit, 4> edits {};
+
+    bool operator==(const PointerChase& other) const = default;
+};
+
 struct TableColumn {
     std::uint32_t heapSource = 0;
     std::uint32_t stride = 0;
@@ -44,19 +65,23 @@ struct TableColumn {
     std::uint32_t maxKey = 0xffffffffu;
     bool sampler = false;
     bool address = false;
+    bool buffer = false;
     std::vector<KeyDomain> keyDomains;
     bool unkeyed = false;
     bool indirect = false;
     std::uint32_t indirectOffset = 0;
     std::uint32_t indirectImmediate = 0;
     std::vector<PointerHop> pointerHops;
+    std::vector<PointerChase> pointerChases;
+    std::uint32_t pointerChaseDepth = 0;
     std::uint32_t foldedAddend = 0;
     std::uint32_t foldedCarry = 0;
     bool selected = false;
     std::uint32_t selection = 0;
+    bool pointerKeyed = false;
 
     bool operator==(const TableColumn& other) const {
-        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && indirect == other.indirect && indirectOffset == other.indirectOffset && indirectImmediate == other.indirectImmediate && pointerHops == other.pointerHops && foldedAddend == other.foldedAddend && foldedCarry == other.foldedCarry && selected == other.selected && selection == other.selection;
+        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && buffer == other.buffer && indirect == other.indirect && indirectOffset == other.indirectOffset && indirectImmediate == other.indirectImmediate && pointerHops == other.pointerHops && pointerChases == other.pointerChases && pointerChaseDepth == other.pointerChaseDepth && foldedAddend == other.foldedAddend && foldedCarry == other.foldedCarry && selected == other.selected && selection == other.selection && pointerKeyed == other.pointerKeyed;
     }
 };
 

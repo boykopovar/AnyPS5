@@ -15,10 +15,12 @@
 #include <limits>
 #include <map>
 #include <numeric>
+#include <set>
 #include <span>
 #include <string>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -155,7 +157,8 @@ public:
             const auto& column = *m_sources[plan.source].tableColumn;
             IrValue* offset = column.selected ? &m_builder.Constant(column.addend) : plan.offset;
             for (std::uint32_t argument = 0; argument < plan.handle->ArgumentCount(); argument++) {
-                plan.handle->ReplaceArgument(argument, offset);
+                const auto value = plan.parentPointer != nullptr && (argument == 1u || argument == 2u) ? plan.parentPointer->Argument(argument - 1u) : offset;
+                plan.handle->ReplaceArgument(argument, value);
             }
             KeepSourceAlive(*plan.handle, m_sources[column.heapSource], referenced);
             if (column.selected) {
@@ -194,6 +197,7 @@ private:
         IrValue* handle = nullptr;
         std::uint32_t source = 0;
         IrValue* offset = nullptr;
+        IrValue* parentPointer = nullptr;
         std::vector<std::uint32_t> memory;
         std::vector<const IrValue*> reads;
         std::vector<std::uint32_t> hopMemory;
@@ -718,9 +722,9 @@ private:
         return left.shift == right.shift && EquivalentValue(m_program.Resources(), left.mask, right.mask) && EquivalentValue(m_program.Resources(), left.lane, right.lane);
     }
 
-    bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan) {
-        const auto expected = sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
-        const std::uint32_t width = sampler ? 4u : 8u;
+    bool TryMakeTableColumn(IrValue& handle, bool sampler, bool r128, TableColumnPlan& plan, bool buffer = false) {
+        const auto expected = buffer ? IrOpcode::GetBufferResource : sampler ? IrOpcode::GetSamplerResource : IrOpcode::GetImageResource;
+        const std::uint32_t width = sampler || buffer ? 4u : 8u;
         if (handle.Opcode() != expected || handle.ArgumentCount() != width) {
             return false;
         }
@@ -808,7 +812,13 @@ private:
         if (address && immediateU32(offset, descriptorOffset)) {
             return TryMakeIndirectColumn(handle, *heapHandle, sampler, words, descriptorOffset, first, plan);
         }
-        if (!MatchAffineOffset(offset, key, stride, addend)) {
+        std::uint32_t fixedOffset = 0;
+        const bool fixed = !address && !buffer && immediateU32(offset, fixedOffset);
+        if (fixed) {
+            key = &m_builder.Constant(0u);
+            stride = width * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+            addend = fixedOffset;
+        } else if (!MatchAffineOffset(offset, key, stride, addend)) {
             if (!MatchMaskedOffset(offset, key, stride) && (address || !MatchFirstLaneOffset(offset, key, stride))) {
                 return false;
             }
@@ -816,8 +826,30 @@ private:
         }
         DescriptorSource heapSource;
         std::uint32_t heapIndex = 0;
-        if (!MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
-            return false;
+        if (MakeRuntimeSource(*heapHandle, address ? IrOpcode::GetAddressResource : IrOpcode::GetBufferResource, address ? 2u : 4u, heapIndex, heapSource)) {
+            if (fixed) return false;
+        } else {
+            if (address || buffer || heapHandle->Opcode() != IrOpcode::GetBufferResource || !std::ranges::all_of(heapHandle->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); })) return false;
+            const auto sameHandle = [&](const IrValue* user) {
+                if (user->Opcode() != handle.Opcode() || user->ArgumentCount() != handle.ArgumentCount()) return false;
+                for (std::uint32_t argument = 0; argument < handle.ArgumentCount(); argument++) {
+                    if (user->Argument(argument)->Resolve() != handle.Argument(argument)->Resolve()) return false;
+                }
+                return true;
+            };
+            if (!std::ranges::all_of(plan.reads, [&](const IrValue* read) { return std::ranges::all_of(read->Uses(), sameHandle); })) return false;
+            TableColumnPlan parent;
+            if (!TryMakeTableColumn(*heapHandle, false, false, parent, true)) return false;
+            if (parent.parentPointer == nullptr) return false;
+            if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
+                return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
+                    return user->Opcode() == IrOpcode::GetBufferResource && std::ranges::all_of(user->Uses(), [&](const IrValue* use) { return std::ranges::find(plan.reads, use) != plan.reads.end(); });
+                });
+            })) return false;
+            heapIndex = parent.source;
+            heapSource = m_sources[heapIndex];
+            plan.parentPointer = parent.parentPointer;
+            m_tableColumns.push_back(std::move(parent));
         }
         TableColumn column;
         column.heapSource = heapIndex;
@@ -828,6 +860,7 @@ private:
         column.maxKey = possibleU32Bits(key);
         column.sampler = sampler;
         column.address = address;
+        column.buffer = buffer;
         column.foldedAddend = folded ? baseAddend : 0u;
         column.foldedCarry = folded ? carry : 0u;
         if (!address && !sampler && std::ranges::find(m_unselectedHandles, &handle) == m_unselectedHandles.end()) {
@@ -857,6 +890,308 @@ private:
             shared.keyDomains.push_back(*domain);
         }
         plan.offset = offset;
+        return true;
+    }
+
+    static bool LaneMaskWord(const IrValue& value) {
+        return value.Opcode() == IrOpcode::CompositeExtractU32x4 && value.ArgumentCount() == 2u && value.Argument(0)->Resolve()->Opcode() == IrOpcode::Ballot && value.Argument(1)->Resolve()->HasImmediate();
+    }
+
+    bool SameRecordColumn(IrValue& first, IrValue& second) const {
+        IrValue* firstKey = nullptr;
+        IrValue* secondKey = nullptr;
+        std::uint32_t firstStride = 0;
+        std::uint32_t firstAddend = 0;
+        std::uint32_t secondStride = 0;
+        std::uint32_t secondAddend = 0;
+        return EquivalentValue(m_program.Resources(), first.Argument(0), second.Argument(0)) && MatchAffineOffset(first.Argument(1), firstKey, firstStride, firstAddend) && MatchAffineOffset(second.Argument(1), secondKey, secondStride, secondAddend) && firstStride == secondStride && firstAddend == secondAddend;
+    }
+
+    static bool LaneIndex(const IrValue* value) {
+        std::vector<const IrValue*> pending{value};
+        std::unordered_set<const IrValue*> seen;
+        while (!pending.empty()) {
+            const IrValue* current = pending.back()->Resolve();
+            pending.pop_back();
+            if (!seen.insert(current).second || (current->HasImmediate() && current->Type() == IrType::U32)) continue;
+            switch (current->Opcode()) {
+                case IrOpcode::FindILsb32:
+                case IrOpcode::FindUMsb32:
+                case IrOpcode::ReadFirstLane: continue;
+                case IrOpcode::BitwiseAnd32:
+                case IrOpcode::IAdd32:
+                case IrOpcode::ISub32:
+                    if (current->ArgumentCount() != 2u) return false;
+                    pending.push_back(current->Argument(0));
+                    pending.push_back(current->Argument(1));
+                    continue;
+                case IrOpcode::SelectU32:
+                    if (current->ArgumentCount() != 3u) return false;
+                    pending.push_back(current->Argument(1));
+                    pending.push_back(current->Argument(2));
+                    continue;
+                default: return false;
+            }
+        }
+        return true;
+    }
+
+    static bool LaneBit(const IrValue& value) {
+        if (value.Opcode() != IrOpcode::ShiftLeftLogical32 || value.ArgumentCount() != 2u) return false;
+        const IrValue* one = value.Argument(0)->Resolve();
+        return one->HasImmediate() && one->Type() == IrType::U32 && one->ImmediateU32() == 1u && LaneIndex(value.Argument(1));
+    }
+
+    static bool LaneMaskOperand(const IrValue* value) {
+        const IrValue* root = value->Resolve();
+        std::vector<const IrValue*> pending{root};
+        std::unordered_set<const IrValue*> seen;
+        bool lane = false;
+        while (!pending.empty()) {
+            const IrValue* current = pending.back()->Resolve();
+            pending.pop_back();
+            if (!seen.insert(current).second) continue;
+            if (LaneMaskWord(*current) || LaneBit(*current)) {
+                lane = true;
+                continue;
+            }
+            if (current != root && current->HasImmediate() && current->Type() == IrType::U32) continue;
+            const auto opcode = current->Opcode();
+            const bool combines = (opcode == IrOpcode::BitwiseAnd32 || opcode == IrOpcode::BitwiseOr32) && current->ArgumentCount() == 2u;
+            const bool inverts = opcode == IrOpcode::BitwiseNot32 && current->ArgumentCount() == 1u;
+            if (!current->IsPhi() && !combines && !inverts) return false;
+            for (std::size_t index = 0; index < current->ArgumentCount(); ++index) pending.push_back(current->Argument(index));
+        }
+        return lane;
+    }
+
+    bool PointerRecordReads(IrValue* value, std::vector<IrValue*>& reads) const {
+        std::vector<IrValue*> pending{value};
+        std::unordered_set<const IrValue*> seen;
+        while (!pending.empty()) {
+            auto* current = pending.back()->Resolve();
+            pending.pop_back();
+            if (!seen.insert(current).second) continue;
+            if (current->IsPhi()) {
+                for (std::size_t index = 0; index < current->ArgumentCount(); ++index) pending.push_back(current->Argument(index));
+                continue;
+            }
+            if (current->HasImmediate() && current->Type() == IrType::U32) continue;
+            std::uint32_t memory = 0;
+            const MemoryInfo* info = ScalarReadMemory(*current, memory);
+            if (info == nullptr || !MemoryIndexBelongsTo(memory, *current)) return false;
+            if (!reads.empty() && !EquivalentValue(m_program.Resources(), reads.back(), current)) return false;
+            reads.push_back(current);
+        }
+        return !reads.empty();
+    }
+
+    static bool PointerFreeWord(const IrValue& word) {
+        return (word.HasImmediate() && word.Type() == IrType::U32) || LaneMaskOperand(&word);
+    }
+
+    static IrValue* MaskedRecordWord(const IrValue& word) {
+        if (word.Opcode() != IrOpcode::BitwiseAnd32 || word.ArgumentCount() != 2u) return nullptr;
+        const bool left = LaneMaskOperand(word.Argument(0));
+        if (left == LaneMaskOperand(word.Argument(1))) return nullptr;
+        return word.Argument(left ? 1u : 0u);
+    }
+
+    bool PointerRecordRead(IrValue& read, std::vector<IrValue*>& reads) const {
+        std::uint32_t memory = 0;
+        const MemoryInfo* info = ScalarReadMemory(read, memory);
+        if (info == nullptr || !MemoryIndexBelongsTo(memory, read)) return false;
+        if (std::ranges::find(reads, &read) != reads.end()) return true;
+        if (!reads.empty() && (ScalarReadMemory(*reads.back(), memory)->offset != info->offset || !SameRecordColumn(*reads.back(), read))) return false;
+        reads.push_back(&read);
+        return true;
+    }
+
+    struct ChaseSite {
+        IrValue* handle = nullptr;
+        IrValue* pointer = nullptr;
+        PointerChase chase;
+        std::vector<std::size_t> inner;
+    };
+
+    bool ChaseRead(IrValue& read, IrValue*& handle, std::uint32_t& readOffset, std::uint32_t& readImmediate) const {
+        std::uint32_t memory = 0;
+        const MemoryInfo* info = ScalarReadMemory(read, memory);
+        if (info == nullptr || !MemoryIndexBelongsTo(memory, read) || !immediateU32(read.Argument(1), readOffset)) return false;
+        handle = read.Argument(0)->Resolve();
+        readImmediate = info->offset;
+        return handle->Opcode() == IrOpcode::GetBufferResource && handle->ArgumentCount() == 4u;
+    }
+
+    static IrValue* EditedWord(IrValue* word, DescriptorWordEdit& edit) {
+        word = word->Resolve();
+        std::uint32_t operand = 0;
+        if (word->ArgumentCount() != 2u) return word;
+        if (word->Opcode() == IrOpcode::ShiftLeftLogical32) {
+            if (!immediateU32(word->Argument(1), operand) || operand > 31u) return word;
+            edit.shift = operand;
+            return word->Argument(0)->Resolve();
+        }
+        if (word->Opcode() != IrOpcode::BitwiseAnd32 && word->Opcode() != IrOpcode::BitwiseOr32) return word;
+        const bool left = immediateU32(word->Argument(0), operand);
+        if (!left && !immediateU32(word->Argument(1), operand)) return word;
+        (word->Opcode() == IrOpcode::BitwiseAnd32 ? edit.mask : edit.bits) = operand;
+        return word->Argument(left ? 1u : 0u)->Resolve();
+    }
+
+    bool ChaseVsharp(IrValue& handle, IrValue*& pointer, PointerChase& chase) const {
+        for (std::uint32_t dword = 0; dword < 4u; dword++) {
+            IrValue* word = EditedWord(handle.Argument(dword), chase.edits[dword]);
+            std::uint32_t memoryIndex = 0;
+            const MemoryInfo* memory = ScalarAddressMemory(*word, memoryIndex);
+            std::uint32_t offset = 0;
+            if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *word) || !immediateU32(word->Argument(1), offset)) return false;
+            IrValue* address = word->Argument(0)->Resolve();
+            if (address->Opcode() != IrOpcode::GetAddressResource || address->ArgumentCount() != 2u) return false;
+            if (dword == 0u) {
+                pointer = address;
+                chase.offset = offset;
+                chase.immediate = memory->offset;
+            } else if (offset != chase.offset || memory->offset != chase.immediate + dword * static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (address != pointer && !EquivalentValue(m_program.Resources(), pointer, address))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool ChaseHighRead(IrValue& read, const IrValue& handle, std::uint32_t readOffset, std::uint32_t readImmediate) const {
+        IrValue* highHandle = nullptr;
+        std::uint32_t highOffset = 0;
+        std::uint32_t highImmediate = 0;
+        return ChaseRead(read, highHandle, highOffset, highImmediate) && (highHandle == &handle || EquivalentValue(m_program.Resources(), &handle, highHandle)) && highOffset == readOffset && highImmediate == readImmediate + static_cast<std::uint32_t>(sizeof(std::uint32_t));
+    }
+
+    bool PointerRecordPairs(IrValue* low, IrValue* high, std::vector<IrValue*>& lowReads, std::vector<IrValue*>& highReads, std::vector<PointerChase>& chases, std::uint32_t& chaseDepth) const {
+        std::vector<ChaseSite> sites;
+        std::vector<const IrValue*> looseHandles;
+        const auto site = [&](IrValue& handle, IrValue& pointer, const PointerChase& chase) {
+            const auto found = std::ranges::find_if(sites, [&](const ChaseSite& known) { return known.chase == chase && (known.handle == &handle || EquivalentValue(m_program.Resources(), known.handle, &handle)); });
+            if (found != sites.end()) return static_cast<std::size_t>(found - sites.begin());
+            sites.push_back(ChaseSite{&handle, &pointer, chase, {}});
+            return sites.size() - 1u;
+        };
+        const auto walk = [&](IrValue* rootLow, IrValue* rootHigh, std::vector<std::size_t>& reached) {
+            std::vector<std::pair<IrValue*, IrValue*>> pending{{rootLow, rootHigh}};
+            std::set<std::pair<const IrValue*, const IrValue*>> seen;
+            while (!pending.empty()) {
+                auto* lowWord = pending.back().first->Resolve();
+                auto* highWord = pending.back().second->Resolve();
+                pending.pop_back();
+                if (!seen.emplace(lowWord, highWord).second || PointerFreeWord(*lowWord)) continue;
+                if (lowWord->IsPhi()) {
+                    const bool paired = highWord->IsPhi() && highWord->Parent() == lowWord->Parent();
+                    for (std::size_t index = 0; index < lowWord->ArgumentCount(); ++index) {
+                        IrValue* edge = paired ? PhiIncoming(*highWord, lowWord->PhiBlock(index)) : highWord;
+                        if (edge == nullptr) return false;
+                        if (paired && lowWord->Argument(index)->Resolve()->HasImmediate() && edge->Resolve()->HasImmediate()) return false;
+                        pending.emplace_back(lowWord->Argument(index), edge);
+                    }
+                    continue;
+                }
+                if (IrValue* word = MaskedRecordWord(*lowWord)) {
+                    pending.emplace_back(word, highWord);
+                    continue;
+                }
+                IrValue* handle = nullptr;
+                IrValue* pointer = nullptr;
+                PointerChase chase;
+                std::uint32_t looseOffset = 0;
+                std::uint32_t looseImmediate = 0;
+                if (ChaseRead(*lowWord, handle, chase.readOffset, chase.readImmediate) && ChaseVsharp(*handle, pointer, chase)) {
+                    if (highWord->IsPhi()) {
+                        for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
+                        continue;
+                    }
+                    if (!ChaseHighRead(*highWord, *handle, chase.readOffset, chase.readImmediate)) return false;
+                    const auto index = site(*handle, *pointer, chase);
+                    if (std::ranges::find(reached, index) == reached.end()) reached.push_back(index);
+                    continue;
+                }
+                if (!PointerRecordRead(*lowWord, lowReads)) return false;
+                if (highWord->IsPhi()) {
+                    for (std::size_t index = 0; index < highWord->ArgumentCount(); ++index) pending.emplace_back(lowWord, highWord->Argument(index));
+                } else if (IrValue* word = MaskedRecordWord(*highWord)) {
+                    pending.emplace_back(lowWord, word);
+                } else if (PointerFreeWord(*highWord) || PointerRecordRead(*highWord, highReads)) {
+                    continue;
+                } else if (IrValue* highHandle = nullptr; ChaseRead(*highWord, highHandle, looseOffset, looseImmediate)) {
+                    looseHandles.push_back(highHandle);
+                } else {
+                    return false;
+                }
+            }
+            return true;
+        };
+        std::vector<std::size_t> roots;
+        if (!walk(low, high, roots)) return false;
+        for (std::size_t index = 0; index < sites.size(); ++index) {
+            std::vector<std::size_t> inner;
+            if (!walk(sites[index].pointer->Argument(0), sites[index].pointer->Argument(1), inner)) return false;
+            sites[index].inner = std::move(inner);
+        }
+        if (!std::ranges::all_of(looseHandles, [&](const IrValue* handle) {
+            return std::ranges::any_of(sites, [&](const ChaseSite& known) { return known.handle == handle || EquivalentValue(m_program.Resources(), known.handle, handle); });
+        })) return false;
+        std::vector<std::uint32_t> depths(sites.size(), 0u);
+        std::vector<std::uint8_t> states(sites.size(), 0u);
+        const auto depthOf = [&](const auto& self, std::size_t index) -> std::optional<std::uint32_t> {
+            if (states[index] == 2u) return depths[index];
+            if (states[index] == 1u) return std::nullopt;
+            states[index] = 1u;
+            std::uint32_t deepest = 0;
+            for (const auto inner : sites[index].inner) {
+                const auto depth = self(self, inner);
+                if (!depth.has_value()) return std::nullopt;
+                deepest = std::max(deepest, *depth);
+            }
+            states[index] = 2u;
+            depths[index] = deepest + 1u;
+            return depths[index];
+        };
+        chaseDepth = 0;
+        for (const auto root : roots) {
+            const auto depth = depthOf(depthOf, root);
+            if (!depth.has_value()) return false;
+            chaseDepth = std::max(chaseDepth, *depth);
+        }
+        if (chaseDepth > MaxPointerChaseDepth) return false;
+        chases.clear();
+        for (const auto& known : sites) {
+            if (std::ranges::find(chases, known.chase) == chases.end()) chases.push_back(known.chase);
+        }
+        if (chaseDepth == 0u) chases.clear();
+        return !lowReads.empty() && !highReads.empty();
+    }
+
+    bool Precedes(const IrValue* value, const IrValue& use) const {
+        value = value->Resolve();
+        const IrBlock* definition = value->Parent();
+        const IrBlock* target = use.Parent();
+        if (definition == nullptr) return true;
+        if (target == nullptr) return false;
+        if (definition == target) {
+            for (const IrValue* inst : target->Instructions()) {
+                if (inst == value) return true;
+                if (inst == &use) return false;
+            }
+            return false;
+        }
+        std::vector<const IrBlock*> pending{m_program.BlockOrder().front()};
+        std::unordered_set<const IrBlock*> seen{pending.front()};
+        while (!pending.empty()) {
+            const IrBlock* block = pending.back();
+            pending.pop_back();
+            if (block == definition) continue;
+            if (block == target) return false;
+            for (const IrBlock* successor : block->Successors()) {
+                if (seen.insert(successor).second) pending.push_back(successor);
+            }
+        }
         return true;
     }
 
@@ -957,12 +1292,22 @@ private:
         }
         IrValue* bufferHandle = nullptr;
         IrValue* offset = nullptr;
+        const bool buffer = handle.Opcode() == IrOpcode::GetBufferResource;
+        const bool merged = pointer->Argument(0)->Resolve()->IsPhi() && UnwrapTableRead(pointer->Argument(0)) == nullptr;
+        const bool pointerKeyed = merged && !buffer;
+        if (!hops.empty() && buffer) return false;
+        std::vector<IrValue*> lowReads;
+        std::vector<IrValue*> highReads;
+        std::vector<PointerChase> chases;
+        std::uint32_t chaseDepth = 0;
+        if (pointerKeyed ? !PointerRecordPairs(pointer->Argument(0), pointer->Argument(1), lowReads, highReads, chases, chaseDepth) : merged && !PointerRecordReads(pointer->Argument(0), lowReads)) return false;
+        auto* low = merged ? lowReads.back() : UnwrapTableRead(pointer->Argument(0));
+        if (low == nullptr) return false;
+        auto* high = pointerKeyed ? pointer->Argument(1)->Resolve() : UnwrapTableRead(pointer->Argument(1));
+        if (high == nullptr) return false;
         std::uint32_t first = 0;
         for (std::uint32_t dword = 0; dword < 2u; dword++) {
-            IrValue* read = UnwrapTableRead(pointer->Argument(dword));
-            if (read == nullptr) {
-                return false;
-            }
+            IrValue* read = dword == 0u ? low : pointerKeyed ? highReads.back() : high;
             std::uint32_t memoryIndex = 0;
             const MemoryInfo* memory = ScalarReadMemory(*read, memoryIndex);
             if (memory == nullptr || !MemoryIndexBelongsTo(memoryIndex, *read)) {
@@ -972,9 +1317,28 @@ private:
                 first = memory->offset;
                 bufferHandle = read->Argument(0)->Resolve();
                 offset = read->Argument(1)->Resolve();
-            } else if (memory->offset != first + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || read->Argument(0)->Resolve() != bufferHandle || !EquivalentValue(m_program.Resources(), offset, read->Argument(1))) {
+            } else if (memory->offset != first + static_cast<std::uint32_t>(sizeof(std::uint32_t)) || (pointerKeyed ? !SameRecordColumn(*low, *read) : read->Argument(0)->Resolve() != bufferHandle || !EquivalentValue(m_program.Resources(), offset, read->Argument(1)))) {
                 return false;
             }
+        }
+        IrValue* recordOffset = offset;
+        if (pointerKeyed) {
+            IrValue* source = high;
+            if (highReads.size() != 1u || highReads.front() != high) {
+                lowReads.insert(lowReads.begin(), highReads.begin(), highReads.end());
+                const auto found = std::ranges::find_if(lowReads, [&](const IrValue* read) {
+                    const IrValue* table = read->Argument(0)->Resolve();
+                    for (std::size_t index = 0; index < table->ArgumentCount(); ++index) {
+                        if (!Precedes(table->Argument(index), handle)) return false;
+                    }
+                    return true;
+                });
+                if (found == lowReads.end()) return false;
+                source = *found;
+            }
+            bufferHandle = source->Argument(0)->Resolve();
+            recordOffset = source->Argument(1)->Resolve();
+            offset = source == high ? recordOffset : high;
         }
         if (!AvailableAt(offset, handle.Parent())) {
             return false;
@@ -982,7 +1346,7 @@ private:
         IrValue* key = nullptr;
         std::uint32_t stride = 0;
         std::uint32_t addend = 0;
-        if (!MatchAffineOffset(offset, key, stride, addend)) {
+        if (!MatchAffineOffset(recordOffset, key, stride, addend)) {
             return false;
         }
         DescriptorSource heapSource;
@@ -996,13 +1360,17 @@ private:
         column.addend = addend;
         column.offset = first;
         column.dwordCount = words;
-        column.maxKey = possibleU32Bits(key);
+        column.maxKey = merged ? 0xffffffffu : possibleU32Bits(key);
         column.sampler = sampler;
         column.indirect = true;
+        column.buffer = buffer;
         column.indirectOffset = descriptorOffset;
         column.indirectImmediate = descriptorImmediate;
+        column.pointerKeyed = pointerKeyed;
         column.pointerHops = std::move(hops);
-        const auto domain = MatchKeyDomain(key);
+        column.pointerChases = std::move(chases);
+        column.pointerChaseDepth = chaseDepth;
+        const auto domain = merged ? std::optional<KeyDomain>{} : MatchKeyDomain(key);
         DescriptorSource columnSource = heapSource;
         columnSource.tableColumn = column;
         plan.handle = &handle;
@@ -1017,6 +1385,7 @@ private:
             shared.keyDomains.push_back(*domain);
         }
         plan.offset = offset;
+        if (buffer || merged) plan.parentPointer = pointer;
         return true;
     }
 
