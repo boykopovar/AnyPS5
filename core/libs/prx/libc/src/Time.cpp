@@ -600,17 +600,22 @@ size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* 
     return formatGuestTime(str, count, format, *timeptr);
 }
 
-char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
-    static thread_local char result[ASCTIME_SIZE];
+char* APS5_VABI asctime_r_nid_postfix(const GuestTm* timeptr, char* buffer) {
+    if (buffer == nullptr) throw std::invalid_argument("asctime_r: null buffer");
     if (timeptr == nullptr) {
         errno = EINVAL;
-        std::memcpy(result, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
-        return result;
+        std::memcpy(buffer, "??? ??? ?? ??:??:?? ????\n", sizeof("??? ??? ?? ??:??:?? ????\n"));
+        return buffer;
     }
     const std::int64_t year = static_cast<std::int64_t>(timeptr->tm_year) + YEAR_BASE;
-    std::snprintf(result, sizeof(result), "%s %s%3d %02d:%02d:%02d %04d\n", tableName(timeptr->tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(timeptr->tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
+    std::snprintf(buffer, 26, "%s %s%3d %02d:%02d:%02d %04d\n", tableName(timeptr->tm_wday, WEEKDAY_NAMES, WEEKDAY_NAMES, 7), tableName(timeptr->tm_mon, MONTH_NAMES, MONTH_NAMES, 12),
         clampedField(timeptr->tm_mday, 100), clampedField(timeptr->tm_hour, 100), clampedField(timeptr->tm_min, 100), clampedField(timeptr->tm_sec, 100), clampedField(year, 10000));
-    return result;
+    return buffer;
+}
+
+char* APS5_VABI asctime_nid_postfix(const GuestTm* timeptr) {
+    static thread_local char result[ASCTIME_SIZE];
+    return asctime_r_nid_postfix(timeptr, result);
 }
 
 char* APS5_VABI ctime_nid_postfix(const int64_t* timer) {
