@@ -47,7 +47,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 tools/build_web.py --build build-wasm --release
-      - run: python3 tools/progress.py build-wasm/web
+      - run: |
+          set -e
+          set -o pipefail
+          log=$RUNNER_TEMP/progress.log
+          python3 tools/progress.py build-wasm/web | tee "$log"
+          {
+            echo "## Progress"
+            echo ""
+            grep -E '^libraries |^shaders ' "$log"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
       - run: python3 tools/progress_history.py build-wasm/web
       - uses: actions/upload-pages-artifact@v5
         with:
