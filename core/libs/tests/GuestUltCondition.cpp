@@ -11,6 +11,7 @@
 #include <thread>
 
 constexpr int Null = -2139029503;
+constexpr int Alignment = -2139029502;
 constexpr int Invalid = -2139029500;
 constexpr int Permission = -2139029499;
 constexpr int State = -2139029498;
@@ -64,6 +65,8 @@ static void Validation() {
     CHECK(sceUltConditionVariableDestroy(&unused) == State);
     CHECK(sceUltConditionVariableSignal(nullptr) == Null);
     CHECK(sceUltConditionVariableSignal(&unused) == State);
+    CHECK(sceUltConditionVariableSignal(reinterpret_cast<unsigned char*>(&unused) + 1) == Alignment);
+    CHECK(sceUltConditionVariableSignal(reinterpret_cast<unsigned char*>(&unused) + 4) == Alignment);
     CHECK(sceUltConditionVariableWait(nullptr) == Null);
     CHECK(sceUltConditionVariableWait(&unused) == State);
     CHECK(_sceUltConditionVariableCreate(&unused, nullptr, nullptr, nullptr, 0) == Null);

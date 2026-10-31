@@ -431,11 +431,13 @@ int APS5_VABI sceUltConditionVariableDestroy(void* condition) {
 }
 
 int APS5_VABI sceUltConditionVariableSignal(void* condition) {
+    if (condition == nullptr) return ULT_ERROR_NULL;
+    if ((reinterpret_cast<std::uintptr_t>(condition) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
     std::shared_ptr<UltConditionState> state;
     {
         std::lock_guard lock(gMutex);
         const auto it = gConditions.find(condition);
-        if (it == gConditions.end()) return condition == nullptr ? ULT_ERROR_NULL : ULT_ERROR_STATE;
+        if (it == gConditions.end()) return ULT_ERROR_STATE;
         state = it->second;
     }
     std::lock_guard stateLock(state->_mutex->_mutex);
