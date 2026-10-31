@@ -83,6 +83,7 @@ public:
     void UnregisterVideoOutput(std::uint32_t handle, const std::shared_ptr<IVideoOutput>& output);
     void AttachWindow(const PresentationWindow& window);
     void Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context);
+    void TracePresent(std::uint32_t width, std::uint32_t height);
     void ReleaseWindow(void* window);
     void RegisterShader(const Shader* shader);
     void ResolveShaderAbi(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive);
