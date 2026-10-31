@@ -70,6 +70,35 @@ class PublicHeaderPackageTests(unittest.TestCase):
                 self.assertEqual(list(self.output.iterdir()), [previous])
                 self.assertEqual(previous.read_bytes(), b"previous")
 
+    def test_archive_promotion_failure_restores_the_pair(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        original_replace = Path.replace
+
+        def replace(source, target):
+            if source.name == names[1] and source.parent.name.startswith(".headers-"):
+                raise OSError("second promotion failed")
+            return original_replace(source, target)
+
+        for existing in (False, True):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output"
+                output.mkdir()
+                previous = {}
+                if existing:
+                    for name in names:
+                        data = ("previous " + name).encode()
+                        (output / name).write_bytes(data)
+                        previous[name] = data
+                with patch.object(Path, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
+                    package_headers.package(self.source, output, "v1")
+                for name in names:
+                    path = output / name
+                    if existing:
+                        self.assertEqual(path.read_bytes(), previous[name])
+                    else:
+                        self.assertFalse(path.exists())
+                self.assertEqual({path.name for path in output.iterdir()}, set(names) if existing else set())
+
     def test_ambiguous_quoted_include_is_rejected(self):
         (self.libs / "Api.hpp").write_text("", encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "Ambiguous"):

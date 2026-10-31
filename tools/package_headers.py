@@ -102,6 +102,32 @@ def package(root, output, version):
         with tarfile.open(staging / names[1], "w:gz", dereference=True) as archive:
             for source, destination in entries:
                 archive.add(source, destination)
-        for name in names:
-            (staging / name).replace(output / name)
+        previous = staging / "previous"
+        previous.mkdir()
+        backed_up = []
+        replaced = []
+        try:
+            for name in names:
+                destination = output / name
+                if destination.exists() or destination.is_symlink():
+                    destination.replace(previous / name)
+                    backed_up.append(name)
+            for name in names:
+                (staging / name).replace(output / name)
+                replaced.append(name)
+        except OSError:
+            restore_error = None
+            for name in reversed(replaced):
+                try:
+                    (output / name).unlink(missing_ok=True)
+                except OSError as error:
+                    restore_error = restore_error or error
+            for name in reversed(backed_up):
+                try:
+                    (previous / name).replace(output / name)
+                except OSError as error:
+                    restore_error = restore_error or error
+            if restore_error is not None:
+                raise RuntimeError("Could not restore public header release archives") from restore_error
+            raise
     print(f"Packaged {len(headers)} public headers and recursive dependencies")
