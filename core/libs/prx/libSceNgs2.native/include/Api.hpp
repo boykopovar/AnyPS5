@@ -21,5 +21,6 @@ int APS5_VABI sceNgs2StreamResetOption(void);
 int APS5_VABI sceNgs2StreamRunCommands(void);
 int APS5_VABI sceNgs2SystemQueryInfo(void);
 int APS5_VABI sceNgs2SystemRunCommands(void);
+int APS5_VABI sceNgs2SystemSetLoudThreshold(void);
 
 }
