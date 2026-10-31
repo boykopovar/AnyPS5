@@ -837,7 +837,74 @@ double APS5_VABI log1p_nid_postfix(double x) {
     }
     return k * ln2_hi - ((hfsq - (s * (hfsq + R) + (k * ln2_lo + c))) - f);
 }
-float APS5_VABI log1pf_nid_postfix(float x) { return std::log1p(x); }
+static float Log1pfMsun(float x) {
+    constexpr float Ln2High = 6.9313812256e-01f, Ln2Low = 9.0580006145e-06f, Two25 = 3.355443200e+07f;
+    constexpr float Lp1 = 6.6666668653e-01f, Lp2 = 4.0000000596e-01f, Lp3 = 2.8571429849e-01f, Lp4 = 2.2222198546e-01f;
+    constexpr float Lp5 = 1.8183572590e-01f, Lp6 = 1.5313838422e-01f, Lp7 = 1.4798198640e-01f;
+    const std::int32_t hx = std::bit_cast<std::int32_t>(x);
+    const std::int32_t ax = hx & 0x7fffffff;
+    std::int32_t k = 1;
+    std::int32_t hu = 0;
+    float f = 0.0f;
+    float c = 0.0f;
+    if (hx < 0x3ed413d0) {
+        if (ax < 0x38000000) {
+            volatile float two25 = Two25;
+            if (two25 + x > 0.0f && ax < 0x33800000) return x;
+            return x - x * x * 0.5f;
+        }
+        if (hx > 0 || hx <= static_cast<std::int32_t>(0xbe95f619u)) {
+            k = 0;
+            f = x;
+            hu = 1;
+        }
+    }
+    if (k != 0) {
+        float u;
+        if (hx < 0x5a000000) {
+            volatile float sum = 1.0f + x;
+            u = sum;
+            hu = std::bit_cast<std::int32_t>(u);
+            k = (hu >> 23) - 127;
+            c = k > 0 ? 1.0f - (u - x) : x - (u - 1.0f);
+            c /= u;
+        } else {
+            u = x;
+            hu = std::bit_cast<std::int32_t>(u);
+            k = (hu >> 23) - 127;
+            c = 0.0f;
+        }
+        hu &= 0x007fffff;
+        if (hu < 0x3504f4) {
+            u = std::bit_cast<float>(hu | 0x3f800000);
+        } else {
+            k += 1;
+            u = std::bit_cast<float>(hu | 0x3f000000);
+            hu = (0x00800000 - hu) >> 2;
+        }
+        f = u - 1.0f;
+    }
+    const float hfsq = 0.5f * f * f;
+    if (hu == 0) {
+        if (f == 0.0f) {
+            if (k == 0) return 0.0f;
+            c += static_cast<float>(k) * Ln2Low;
+            return static_cast<float>(k) * Ln2High + c;
+        }
+        const float R = hfsq * (1.0f - 0.66666666666666666f * f);
+        if (k == 0) return f - R;
+        return static_cast<float>(k) * Ln2High - ((R - (static_cast<float>(k) * Ln2Low + c)) - f);
+    }
+    const float s = f / (2.0f + f);
+    const float z = s * s;
+    const float R = z * (Lp1 + z * (Lp2 + z * (Lp3 + z * (Lp4 + z * (Lp5 + z * (Lp6 + z * Lp7))))));
+    if (k == 0) return f - (hfsq - s * (hfsq + R));
+    return static_cast<float>(k) * Ln2High - ((hfsq - (s * (hfsq + R) + (static_cast<float>(k) * Ln2Low + c))) - f);
+}
+float APS5_VABI log1pf_nid_postfix(float x) {
+    if (!std::isfinite(x) || x <= -1.0f) return std::log1p(x);
+    return Log1pfMsun(x);
+}
 static double Expm1(double x) {
     const double tiny = 1.0e-300;
     const double o_threshold = 7.09782712893383973096e+02;
