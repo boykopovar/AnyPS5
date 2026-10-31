@@ -236,6 +236,16 @@ inline bool Instructions(const Byte* p, const Byte* end, const Frame& frame, Wor
 }
 
 extern "C" {
+    _Unwind_Word APS5_VABI _Unwind_GetGR_nid_postfix(_Unwind_Context*, int);
+    void APS5_VABI _Unwind_SetGR_nid_postfix(_Unwind_Context*, int, _Unwind_Word);
+    _Unwind_Ptr APS5_VABI _Unwind_GetIP_nid_postfix(_Unwind_Context*);
+    void APS5_VABI _Unwind_SetIP_nid_postfix(_Unwind_Context*, _Unwind_Ptr);
+    _Unwind_Ptr APS5_VABI _Unwind_GetIPInfo_nid_postfix(_Unwind_Context*, int*);
+    _Unwind_Word APS5_VABI _Unwind_GetCFA_nid_postfix(_Unwind_Context*);
+    _Unwind_Ptr APS5_VABI _Unwind_GetLanguageSpecificData_nid_postfix(_Unwind_Context*);
+    _Unwind_Ptr APS5_VABI _Unwind_GetRegionStart_nid_postfix(_Unwind_Context*);
+    _Unwind_Ptr APS5_VABI _Unwind_GetDataRelBase_nid_postfix(_Unwind_Context*);
+    _Unwind_Ptr APS5_VABI _Unwind_GetTextRelBase_nid_postfix(_Unwind_Context*);
     _Unwind_Reason_Code APS5_VABI __gxx_personality_v0_nid_postfix(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
     _Unwind_Reason_Code APS5_VABI __gcc_personality_v0_nid_postfix(int, _Unwind_Action, std::uint64_t, _Unwind_Exception*, _Unwind_Context*);
     _Unwind_Reason_Code APS5_VABI _Unwind_RaiseException_nid_postfix(_Unwind_Exception*);
