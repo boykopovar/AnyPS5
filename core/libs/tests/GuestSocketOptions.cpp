@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -57,6 +58,16 @@ void SetInt(int descriptor, int option, int value) {
 
 bool SetFails(int descriptor, int level, int option, const void* value, std::uint32_t length, int error) {
     return setsockopt_nid_postfix(descriptor, level, option, value, length) == -1 && *__error_nid_postfix() == error;
+}
+
+template <typename F>
+bool Throws(F call) {
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 std::array<std::uint8_t, 16> Loopback(std::uint16_t portNetworkOrder) {
@@ -402,6 +413,36 @@ void UnknownRequestsFail() {
     Require(close_nid_postfix(stream) == 0, "close failed");
 }
 
+void UnknownLevelsFollowFreeBsd() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    const int datagram = socket_nid_postfix(2, Datagram, 0);
+    const int stream6 = socket_nid_postfix(28, Stream, 0);
+    Require(stream >= 0 && datagram >= 0 && stream6 >= 0, "socket failed");
+    const int one = 1;
+    int value = 0;
+    std::uint32_t size = sizeof(value);
+    for (const int level : {999, 17, -1}) {
+        Require(SetFails(stream, level, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on a stream socket must fail with EINVAL (22), ip_ctloutput");
+        size = sizeof(value);
+        Require(getsockopt_nid_postfix(stream, level, 1, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt with an unknown protocol level must fail with EINVAL (22)");
+    }
+    Require(SetFails(datagram, 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on a datagram socket must fail with EINVAL (22)");
+    Require(SetFails(stream6, 0, 1, &one, sizeof(one), ErrorInvalid), "the IP level on an AF_INET6 socket must fail with EINVAL (22), ip6_ctloutput");
+    Require(SetFails(stream6, 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on an AF_INET6 socket must fail with EINVAL (22)");
+    Require(SetFails(stream, 0, 0x7777, &one, sizeof(one), ErrorNoProtocolOption), "an unknown IP-level option must fail with ENOPROTOOPT (42)");
+    Require(SetFails(datagram, 17, 77, &one, sizeof(one), ErrorNoProtocolOption), "a UDP-level option with no case in udp_ctloutput must fail with ENOPROTOOPT (42)");
+    int pair[2]{-1, -1};
+    Require(socketpair_nid_postfix(1, Stream, 0, pair) == 0, "socketpair failed");
+    Require(SetFails(pair[0], 999, 1, &one, sizeof(one), ErrorInvalid), "an unknown protocol level on an AF_UNIX socket must fail with EINVAL (22), uipc_ctloutput");
+    Require(SetFails(pair[0], 0, 77, &one, sizeof(one), 45), "an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45), uipc_ctloutput");
+    size = sizeof(value);
+    Require(getsockopt_nid_postfix(pair[0], 0, 77, &value, &size) == -1 && *__error_nid_postfix() == 45, "getsockopt of an unknown option at level 0 on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
+    Require(SetFails(pair[0], 0, 1, &one, sizeof(one), 45), "setting LOCAL_PEERCRED on an AF_UNIX socket must fail with EOPNOTSUPP (45)");
+    for (const int option : {2, 4}) Require(Throws([&] { setsockopt_nid_postfix(pair[0], 0, option, &one, sizeof(one)); }), "LOCAL_CREDS and LOCAL_CONNWAIT are accepted by 11.4 and must not be answered with an error here");
+    for (const int option : {1, 2, 4}) Require(Throws([&] { size = sizeof(value); getsockopt_nid_postfix(pair[0], 0, option, &value, &size); }), "LOCAL_PEERCRED, LOCAL_CREDS and LOCAL_CONNWAIT are answered by 11.4 and must not be answered with an error here");
+    for (const int descriptor : {stream, datagram, stream6, pair[0], pair[1]}) Require(close_nid_postfix(descriptor) == 0, "close failed");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -420,5 +461,6 @@ int main(int argc, char** argv) {
     IpLevelFollowsThePs5();
     MulticastMembership();
     UnknownRequestsFail();
+    UnknownLevelsFollowFreeBsd();
     return 0;
 }
