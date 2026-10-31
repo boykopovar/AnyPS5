@@ -30,8 +30,25 @@ constexpr const char* MONTH_NAMES[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
 constexpr std::size_t ASCTIME_SIZE = sizeof("Sun Jan-2147483648 -2147483648:-2147483648:-2147483648     -2147481748\n");
 constexpr std::int64_t SECONDS_PER_DAY = 86400;
 constexpr std::int64_t DAYS_FROM_MARCH_TO_YEAR_END = 306;
-#if defined(_WIN32) || defined(__APPLE__)
 constexpr std::int64_t CALENDAR_CYCLE_YEARS = 400;
+
+std::int64_t calendarCycles(std::int64_t value, std::int64_t cycle) {
+    return value >= 0 ? value / cycle : -((-(value + 1)) / cycle + 1);
+}
+
+std::int64_t utcSeconds(const std::tm& time) {
+    const std::int64_t years = calendarCycles(time.tm_mon, 12);
+    const std::int64_t month = time.tm_mon - years * 12 + 1;
+    const std::int64_t year = std::int64_t{time.tm_year} + 1900 + years - (month <= 2 ? 1 : 0);
+    const std::int64_t era = calendarCycles(year, CALENDAR_CYCLE_YEARS);
+    const std::int64_t yearOfEra = year - era * CALENDAR_CYCLE_YEARS;
+    const std::int64_t dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5;
+    const std::int64_t dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+    const std::int64_t days = era * 146097 + dayOfEra - 719468 + time.tm_mday - 1;
+    return days * SECONDS_PER_DAY + std::int64_t{time.tm_hour} * 3600 + std::int64_t{time.tm_min} * 60 + time.tm_sec;
+}
+
+#if defined(_WIN32) || defined(__APPLE__)
 constexpr std::int64_t CALENDAR_CYCLE_SECONDS = 146097 * SECONDS_PER_DAY;
 #ifdef _WIN32
 constexpr int HOST_ORDINARY_FIRST_YEAR = 70;
@@ -44,10 +61,6 @@ constexpr int HOST_ORDINARY_LAST_YEAR = std::numeric_limits<int>::max();
 constexpr std::int64_t HOST_FIRST_SECOND = -2208988800;
 constexpr std::int64_t HOST_LAST_SECOND = std::numeric_limits<std::int64_t>::max();
 #endif
-
-std::int64_t calendarCycles(std::int64_t value, std::int64_t cycle) {
-    return value >= 0 ? value / cycle : -((-(value + 1)) / cycle + 1);
-}
 
 #ifdef __APPLE__
 bool timeOfLocalSeconds(std::int64_t local, std::int64_t& time) {
@@ -65,17 +78,6 @@ bool timeOfLocalSeconds(std::int64_t local, std::int64_t& time) {
 }
 #endif
 
-std::int64_t utcSeconds(const std::tm& time) {
-    const std::int64_t years = calendarCycles(time.tm_mon, 12);
-    const std::int64_t month = time.tm_mon - years * 12 + 1;
-    const std::int64_t year = std::int64_t{time.tm_year} + 1900 + years - (month <= 2 ? 1 : 0);
-    const std::int64_t era = calendarCycles(year, CALENDAR_CYCLE_YEARS);
-    const std::int64_t yearOfEra = year - era * CALENDAR_CYCLE_YEARS;
-    const std::int64_t dayOfYear = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5;
-    const std::int64_t dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
-    const std::int64_t days = era * 146097 + dayOfEra - 719468 + time.tm_mday - 1;
-    return days * SECONDS_PER_DAY + std::int64_t{time.tm_hour} * 3600 + std::int64_t{time.tm_min} * 60 + time.tm_sec;
-}
 #endif
 
 void copyCalendarFields(const std::tm& host, GuestTm& guest) {
@@ -222,7 +224,12 @@ int& zoneDepth() {
 class ZoneScope {
 public:
     ZoneScope() : lock(zoneMutex()) {
-        if (zoneDepth() == 0) applyGuestZone();
+        if (zoneDepth() == 0) {
+            applyGuestZone();
+#ifdef _WIN32
+            SonyRefreshHostZone_nid_no_patch();
+#endif
+        }
         ++zoneDepth();
     }
 
@@ -553,6 +560,20 @@ GuestTm* APS5_VABI gmtime_nid_postfix(const int64_t* timer) {
 int64_t APS5_VABI libc_mktime_nid_postfix(GuestTm* timeptr) {
     const ZoneScope zone;
     std::tm host = toHostTm(*timeptr);
+    if (host.tm_isdst > 0) {
+        const auto local = utcSeconds(host);
+        GuestTm early{};
+        GuestTm late{};
+        constexpr std::int64_t searchSeconds = 12 * 2629746 + SECONDS_PER_DAY;
+        if (utcCalendarFields(local - searchSeconds, early) && utcCalendarFields(local + searchSeconds, late)) {
+            const int saved = *__error_nid_postfix();
+            const auto guess = SonyHostZoneAt_nid_no_patch(local);
+            const auto zone = SonyHostZoneAt_nid_no_patch(local - guess.standardEast - guess.daylight);
+            const auto daylight = SonyHostDaylightAmount_nid_no_patch(local - zone.standardEast - zone.daylight);
+            *__error_nid_postfix() = saved;
+            if (daylight == 0) host.tm_isdst = -1;
+        }
+    }
     host.tm_wday = -1;
     int64_t moved = 0;
 #if defined(_WIN32) || defined(__APPLE__)

@@ -8,6 +8,7 @@
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
@@ -762,43 +763,14 @@ int SetTimeOfDay_nid_no_patch(const KernelTimeval* tv, const KernelTimezone* tz)
 
 static constexpr int SceKernelErrorEfault = static_cast<int>(0x8002000e);
 
-struct HostZone {
-    std::int64_t standardEast;
-    std::int64_t daylight;
-};
+using HostZone = SonyHostTimeZone;
 
 static HostZone HostZoneAt(std::int64_t utcTime) {
-    std::tm local{};
-#ifdef _WIN32
-    constexpr std::int64_t cycleSeconds = 146097LL * 86400LL;
-    constexpr std::int64_t lastHostSecond = 32535215999LL;
-    const std::int64_t cycles = utcTime >= 0 && utcTime <= lastHostSecond ? 0 : (utcTime >= 0 ? utcTime / cycleSeconds : -((-(utcTime + 1)) / cycleSeconds + 1));
-    const std::time_t t = static_cast<std::time_t>(utcTime - cycles * cycleSeconds);
-    _tzset();
-    if (localtime_s(&local, &t) != 0) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
-    long standardBias = 0;
-    long daylightBias = 0;
-    _get_timezone(&standardBias);
-    _get_dstbias(&daylightBias);
-    return {-static_cast<std::int64_t>(standardBias), local.tm_isdst > 0 ? -static_cast<std::int64_t>(daylightBias) : 0};
-#else
-    const std::time_t t = static_cast<std::time_t>(utcTime);
-    ::tzset();
-    if (localtime_r(&t, &local) == nullptr) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
-    const std::int64_t daylight = local.tm_isdst > 0 ? static_cast<std::int64_t>(local.tm_gmtoff) + ::timezone : 0;
-    return {static_cast<std::int64_t>(local.tm_gmtoff) - daylight, daylight};
-#endif
+    return SonyHostZoneAt_nid_no_patch(utcTime);
 }
 
 static std::int64_t HostDaylightAmount(std::int64_t utcTime) {
-    constexpr std::int64_t monthSeconds = 2629746;
-    for (int month = 0; month <= 11; ++month) {
-        for (const int direction : {1, -1}) {
-            const HostZone zone = HostZoneAt(utcTime + direction * month * monthSeconds);
-            if (zone.daylight != 0) return zone.daylight;
-        }
-    }
-    return 0;
+    return SonyHostDaylightAmount_nid_no_patch(utcTime);
 }
 
 static KernelTimesec ZoneState(std::int64_t time, const HostZone& zone) {
