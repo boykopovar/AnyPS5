@@ -323,14 +323,16 @@ bool FrameRecorder::triggered() {
 
 void FrameRecorder::emitDelta() {
     std::vector<Span> spans;
-    for (const auto& range : ranges) {
-        if (range.kind == FrameRangeKind::Watched || range.kind == FrameRangeKind::Unwatched) spans.push_back({range.address, range.bytes, generation});
+    std::vector<std::size_t> owners;
+    for (std::size_t index = 0; index < ranges.size(); ++index) {
+        const auto& range = ranges[index];
+        if (range.kind != FrameRangeKind::Watched && range.kind != FrameRangeKind::Unwatched) continue;
+        spans.push_back({range.address, range.bytes, range.since});
+        owners.push_back(index);
     }
-    const auto mark = GuestMemory::WriteGeneration();
     const auto added = newRanges();
     writeDelta(spans, {}, added);
-    generation = mark;
-    shaderMarks.clear();
+    for (std::size_t index = 0; index < owners.size(); ++index) ranges[owners[index]].since = spans[index].since;
 }
 
 std::vector<FrameRecorder::Range> FrameRecorder::newRanges() {
@@ -392,23 +394,33 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
         for (const auto* sharps : shader->user_data->sharp_resource_offset) note(sharps);
     }
     if (blocks.empty() && hostPages.empty()) return;
-    const auto mark = GuestMemory::WriteGeneration();
     std::vector<Span> spans;
-    for (const auto block : blocks) {
-        const auto found = shaderMarks.find(block);
-        spans.push_back({block, FrameCaptureWriter::BlockBytes, found != shaderMarks.end() ? std::max(found->second, generation) : generation});
-    }
+    for (const auto block : blocks) spans.push_back({block, FrameCaptureWriter::BlockBytes, blockSince(block)});
     const std::vector<std::uint64_t> pages(hostPages.begin(), hostPages.end());
     writeDelta(spans, pages);
-    for (const auto block : blocks) shaderMarks[block] = mark;
+    for (const auto& span : spans) shaderMarks[span.address] = span.since;
 }
 
-void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added) {
+std::uint64_t FrameRecorder::blockSince(std::uint64_t block) const {
+    const auto end = block + FrameCaptureWriter::BlockBytes;
+    const auto found = shaderMarks.find(block);
+    const std::uint64_t mark = found != shaderMarks.end() ? found->second : startGeneration;
+    std::uint64_t covered = 0;
+    auto since = std::numeric_limits<std::uint64_t>::max();
+    for (const auto& range : ranges) {
+        if ((range.kind != FrameRangeKind::Watched && range.kind != FrameRangeKind::Unwatched) || range.address >= end || block >= range.address + range.bytes) continue;
+        covered += std::min(end, range.address + range.bytes) - std::max(block, range.address);
+        since = std::min(since, range.since);
+    }
+    return covered == FrameCaptureWriter::BlockBytes ? std::max(mark, since) : mark;
+}
+
+void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added) {
     if (abandonIfDiskLow()) return;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
-    for (const auto& span : spans) {
-        GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
+    for (auto& span : spans) {
+        span.since = GuestMemory::CollectWrittenBlocks(span.address, static_cast<std::size_t>(span.bytes), span.since, written);
         blocks.insert(blocks.end(), written.begin(), written.end());
     }
     auto& driver = DriverDetail::Driver::Get();
@@ -425,7 +437,8 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
     std::vector<std::byte> bytes;
     for (const auto& range : added) {
         writer->WriteRange(range.address, range.bytes, range.kind, range.protection, range.access);
-        ranges.push_back(range);
+        auto& stored = ranges.emplace_back(range);
+        if (stored.kind == FrameRangeKind::Watched || stored.kind == FrameRangeKind::Unwatched) stored.since = GuestMemory::CollectWrittenBlocks(stored.address, static_cast<std::size_t>(stored.bytes), std::numeric_limits<std::uint64_t>::max(), written);
         ++lateRanges;
         if (!range.readable) {
             unreadableBytes += range.bytes;
@@ -433,7 +446,7 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
         }
         for (std::uint64_t at = 0; at < range.bytes;) {
             bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, range.bytes - at)));
-            readGuest(range.address + at, bytes, GuestMemory::ReadCommittedUnsynced);
+            readGuest(range.address + at, bytes);
             const bool zero = std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; });
             if (!zero) {
                 writer->WriteDelta(group, completed, range.address + at, bytes);
@@ -457,7 +470,7 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
     }
     for (const auto& [begin, end] : blocks) {
         bytes.resize(static_cast<std::size_t>(end - begin));
-        readGuest(begin, bytes, GuestMemory::ReadCommittedUnsynced);
+        readGuest(begin, bytes);
         writer->WriteDelta(group, completed, begin, bytes);
         deltaBytes += bytes.size();
         any = true;
@@ -482,13 +495,13 @@ void FrameRecorder::snapshot(const Range& range) {
     for (std::uint64_t at = 0; at < range.bytes; at += SnapshotPieceBytes) {
         if (abandonIfDiskLow()) return;
         bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(SnapshotPieceBytes, range.bytes - at)));
-        readGuest(range.address + at, bytes, GuestMemory::ReadCommitted);
+        readGuest(range.address + at, bytes);
         snapshotBytes += writer->WriteSnapshot(range.address + at, bytes);
     }
 }
 
-void FrameRecorder::readGuest(std::uint64_t address, std::span<std::byte> bytes, GuestRead read) {
-    hostOnlySampleBytes += ReadAroundRanges(address, bytes, Graphics::HostOnlySampleRanges(address, bytes.size()), read);
+void FrameRecorder::readGuest(std::uint64_t address, std::span<std::byte> bytes) {
+    hostOnlySampleBytes += ReadAroundRanges(address, bytes, Graphics::HostOnlySampleRanges(address, bytes.size()), GuestMemory::ReadCommitted);
 }
 
 bool FrameRecorder::abandonIfDiskLow() {
@@ -530,10 +543,10 @@ void FrameRecorder::start() {
     ranges = committedRanges();
     writer = std::make_unique<FrameCaptureWriter>(directory);
     std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
-    for (const auto& range : ranges) {
-        if (range.kind == FrameRangeKind::Watched || range.kind == FrameRangeKind::Unwatched) GuestMemory::CollectWrittenBlocks(range.address, static_cast<std::size_t>(range.bytes), std::numeric_limits<std::uint64_t>::max(), written);
+    for (auto& range : ranges) {
+        if (range.kind == FrameRangeKind::Watched || range.kind == FrameRangeKind::Unwatched) range.since = GuestMemory::CollectWrittenBlocks(range.address, static_cast<std::size_t>(range.bytes), std::numeric_limits<std::uint64_t>::max(), written);
     }
-    generation = GuestMemory::WriteGeneration();
+    startGeneration = GuestMemory::TrackerGeneration();
     for (const auto& range : ranges) {
         snapshot(range);
         if (!writer) return;
