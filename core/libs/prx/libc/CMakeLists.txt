@@ -1403,6 +1403,48 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+add_test_executable(guest_heap_small_spans_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestHeapSmallSpans.cpp)
+target_include_directories(guest_heap_small_spans_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_heap_small_spans_tests PRIVATE libc)
+configure_windows_unwind(guest_heap_small_spans_tests)
+set_target_properties(guest_heap_small_spans_tests PROPERTIES CXX_EXTENSIONS OFF)
+if(BUILD_TESTING)
+    set_target_properties(guest_heap_small_spans_tests PROPERTIES EXCLUDE_FROM_ALL FALSE)
+    foreach(mode IN ITEMS default reclaim live reuse alignment threads boundaries rollback quarantine pinning phases sparse growth-rollback growth-quarantine)
+        add_test(NAME guest_heap_small_spans_${mode} COMMAND guest_heap_small_spans_tests ${mode})
+        set_tests_properties(guest_heap_small_spans_${mode} PROPERTIES TIMEOUT 30
+            ENVIRONMENT "APS5_HEAP_CACHE_MIB=0")
+        if(mode STREQUAL "default")
+            set_property(TEST guest_heap_small_spans_${mode} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                "APS5_RECLAIM_SMALL_HEAP=unset:")
+        else()
+            set_property(TEST guest_heap_small_spans_${mode} APPEND PROPERTY ENVIRONMENT
+                "APS5_RECLAIM_SMALL_HEAP=1")
+        endif()
+        if(WIN32)
+            set_property(TEST guest_heap_small_spans_${mode} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    foreach(mode IN ITEMS live reuse alignment threads boundaries rollback pinning)
+        add_test(NAME guest_heap_small_spans_default_${mode} COMMAND guest_heap_small_spans_tests ${mode})
+        set_tests_properties(guest_heap_small_spans_default_${mode} PROPERTIES TIMEOUT 30
+            ENVIRONMENT "APS5_HEAP_CACHE_MIB=0"
+            ENVIRONMENT_MODIFICATION "APS5_RECLAIM_SMALL_HEAP=unset:")
+        if(WIN32)
+            set_property(TEST guest_heap_small_spans_default_${mode} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    add_test(NAME guest_heap_small_spans_unwatched COMMAND guest_heap_small_spans_tests reclaim)
+    set_tests_properties(guest_heap_small_spans_unwatched PROPERTIES TIMEOUT 30
+        ENVIRONMENT "APS5_HEAP_CACHE_MIB=0;APS5_RECLAIM_SMALL_HEAP=1;APS5_NO_WRITE_WATCH=1")
+    if(WIN32)
+        set_property(TEST guest_heap_small_spans_unwatched APPEND PROPERTY ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
 add_test_executable(guest_heap_trace_info_tests EXCLUDE_FROM_ALL ${LIBS_INCLUDE_DIR}/tests/GuestHeapTraceInfo.cpp)
 target_include_directories(guest_heap_trace_info_tests PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(guest_heap_trace_info_tests PRIVATE libc)
