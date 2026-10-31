@@ -2622,24 +2622,25 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession14set
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsers10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_60PostPlayerSessionsSessionIdJoinableSpecifiedUsersRequestBodyEEE() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsers10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_60PostPlayerSessionsSessionIdJoinableSpecifiedUsersRequestBodyEEE(void* self, const std::uint64_t* context, const char* sessionId, const IntrusivePtr* body) {
+    return InitializeParameterWithBody(self, context, sessionId != nullptr, body);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionProperties10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_39PatchPlayerSessionsSessionIdRequestBodyEEE(void* self, const std::uint64_t* context, const char* sessionId, const IntrusivePtr* body) {
+    return InitializeParameterWithBody(self, context, sessionId != nullptr, body);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeader9terminateEv(void* self) {
+    return TerminateParameter(self);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionPropertiesC1Ev(void* self) {
+    ConstructParameter(self);
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionProperties10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_39PatchPlayerSessionsSessionIdRequestBodyEEE() {
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeader9terminateEv() {
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionPropertiesC1Ev() {
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsers9terminateEv() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsers9terminateEv(void* self) {
+    return TerminateParameter(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V120RequestPlayerSession14setCustomData1EPKvm() {
@@ -2656,12 +2657,13 @@ int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V124GetBlockingUsersResponse9get
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionPropertiesD1Ev() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionPropertiesD1Ev(void* self) {
+    (void)self;
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitations10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_49PostPlayerSessionsSessionIdInvitationsRequestBodyEEE() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitations10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_49PostPlayerSessionsSessionIdInvitationsRequestBodyEEE(void* self, const std::uint64_t* context, const char* sessionId, const IntrusivePtr* body) {
+    return InitializeParameterWithBody(self, context, sessionId != nullptr, body);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V146PatchPlayerSessionsSessionIdRequestBodyFactory6createEPNS1_6Common10LibContextEPNS5_12IntrusivePtrINS3_39PatchPlayerSessionsSessionIdRequestBodyEEE() {
@@ -2690,15 +2692,16 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28Parame
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessions9terminateEv() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessions9terminateEv(void* self) {
+    return TerminateParameter(self);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi29ParameterToLeavePlayerSession9terminateEv(void* self) {
     return TerminateParameter(self);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitationsD1Ev() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitationsD1Ev(void* self) {
+    (void)self;
     return 0;
 }
 
@@ -2742,11 +2745,13 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead9get
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitationsC1Ev() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitationsC1Ev(void* self) {
+    ConstructParameter(self);
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessionsD1Ev() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessionsD1Ev(void* self) {
+    (void)self;
     return 0;
 }
 
@@ -2771,7 +2776,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V119JoinableUserFactory6creat
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeaderD1Ev() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeaderD1Ev(void* self) {
+    (void)self;
     return 0;
 }
 
@@ -2779,15 +2785,16 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V156PostPlayerSessionsSession
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitations9terminateEv() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi39ParameterToSendPlayerSessionInvitations9terminateEv(void* self) {
+    return TerminateParameter(self);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessions10initializeEPNS1_6Common10LibContextEPKc() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessions10initializeEPNS1_6Common10LibContextEPKc(void* self, const std::uint64_t* context, const char* sessionIds) {
+    return InitializeParameter(self, context, sessionIds != nullptr);
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessionsC1Ev() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi28ParameterToGetPlayerSessionsC1Ev(void* self) {
+    ConstructParameter(self);
     return 0;
 }
 
@@ -2809,24 +2816,26 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V19ToFactory6createEPNS1_6Com
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsersD1Ev() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsersD1Ev(void* self) {
+    (void)self;
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeader10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_43PutPlayerSessionsSessionIdLeaderRequestBodyEEE() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeader10initializeEPNS1_6Common10LibContextEPKcNS6_12IntrusivePtrINS3_43PutPlayerSessionsSessionIdLeaderRequestBodyEEE(void* self, const std::uint64_t* context, const char* sessionId, const IntrusivePtr* body) {
+    return InitializeParameterWithBody(self, context, sessionId != nullptr, body);
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V167PostPlayerSessionsSessionIdJoinableSpecifiedUsersRequestBodyFactory6createEPNS1_6Common10LibContextERKNS5_6VectorINS5_12IntrusivePtrINS3_12JoinableUserEEEEEPNS9_INS3_60PostPlayerSessionsSessionIdJoinableSpecifiedUsersRequestBodyEEE() {
     return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeaderC1Ev() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi36ParameterToChangePlayerSessionLeaderC1Ev(void* self) {
+    ConstructParameter(self);
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionProperties9terminateEv() {
-    return 0;
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi37ParameterToSetPlayerSessionProperties9terminateEv(void* self) {
+    return TerminateParameter(self);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V118LeaderWithOnlineId12getAccountIdEv() {
@@ -2843,7 +2852,8 @@ int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V129GetPlayerSessionsResponse
     return 0;
 }
 
-int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsersC1Ev() {
+int APS5_VABI _ZN3sce2Np9CppWebApi14SessionManager2V117PlayerSessionsApi49ParameterToAddPlayerSessionJoinableSpecifiedUsersC1Ev(void* self) {
+    ConstructParameter(self);
     return 0;
 }
 
