@@ -89,8 +89,7 @@ static void CheckCodecvtWideVtableObject() {
     Require(vtable->in(&facet, state, source, source + 6, &nextSource, reinterpret_cast<char*>(wide), reinterpret_cast<char*>(wide + 4), &nextWide) == 0);
     Require(nextSource == source + 6 && nextWide == reinterpret_cast<char*>(wide + 3));
     Require(wide[0] == 'A' && wide[1] == 0xe9 && wide[2] == 0x20ac);
-    Require(vtable->length(&facet, state, source, source + 6, 2) == 2);
-    Require(vtable->length(&facet, state, source, source + 6, 4) == 3);
+    RequireException([&] { vtable->length(&facet, state, source, source + 6, 2); });
 
     std::uint64_t outputState[2]{};
     char bytes[8]{};

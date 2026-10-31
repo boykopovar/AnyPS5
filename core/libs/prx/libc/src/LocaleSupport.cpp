@@ -297,19 +297,8 @@ int APS5_VABI WideCodecvtUnshift(GuestLocale::Facet*, std::uint64_t* state, char
     return 0;
 }
 
-std::size_t APS5_VABI WideCodecvtLength(GuestLocale::Facet*, std::uint64_t* state, const char* first1, const char* last1, std::size_t count) {
-    std::uint64_t localState[GuestMbstateSize / sizeof(std::uint64_t)];
-    std::memcpy(localState, state, GuestMbstateSize);
-    std::size_t length = 0;
-    while (count != 0 && first1 != last1) {
-        std::uint16_t converted = 0;
-        const auto result = mbrtowc_nid_postfix(&converted, first1, static_cast<std::size_t>(last1 - first1), localState);
-        if (result == static_cast<std::size_t>(-1) || result == static_cast<std::size_t>(-2)) break;
-        first1 += result == 0 ? 1 : result;
-        ++length;
-        --count;
-    }
-    return length;
+std::size_t APS5_VABI WideCodecvtLength(GuestLocale::Facet*, std::uint64_t*, const char*, const char*, std::size_t) {
+    throw std::runtime_error("codecvt<wchar_t,char>::length: console behavior unverified");
 }
 
 GuestLocale::String* APS5_VABI AssignCString(GuestLocale::String* result, const char* source) {
