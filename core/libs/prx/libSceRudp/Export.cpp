@@ -99,6 +99,7 @@ struct RudpPoll {
 
 int g_next_poll = 1;
 std::map<int, RudpPoll> g_polls;
+std::map<int, int> g_polls_leaving;
 TimedWait::Condition g_polls_changed;
 
 struct RudpPollWaitRegistration {
@@ -112,6 +113,9 @@ struct RudpPollWaitRegistration {
         }
         const auto poll = g_polls.find(pollId);
         if (poll == g_polls.end()) {
+            const auto leaving = g_polls_leaving.find(pollId);
+            if (leaving != g_polls_leaving.end() && --leaving->second == 0) g_polls_leaving.erase(leaving);
+            g_polls_changed.NotifyAll();
             return;
         }
         if (poll->second.cancels == cancels) {
@@ -131,6 +135,10 @@ void remove_ctx_from_polls(int ctx) {
     for (auto& [id, poll] : g_polls) {
         poll.entries.erase(ctx);
     }
+}
+
+int waiters_inside(const RudpPoll& poll) {
+    return poll.waiters + poll.draining;
 }
 }  // namespace
 
@@ -175,14 +183,20 @@ int APS5_VABI sceRudpGetStatus(void* status, std::size_t size) {
 }
 
 int APS5_VABI sceRudpEnd(void) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::unique_lock<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    std::map<int, int> leaving;
+    for (const auto& [id, poll] : g_polls) {
+        if (const int inside = waiters_inside(poll)) leaving.emplace(id, inside);
     }
     g_inited = false;
     g_ctx.clear();
     g_polls.clear();
+    g_polls_leaving.merge(leaving);
     g_polls_changed.NotifyAll();
+    g_polls_changed.Wait(lk, [] { return g_polls_leaving.empty(); });
     return 0;
 }
 
@@ -495,28 +509,28 @@ int APS5_VABI sceRudpPollWait(int pollId, RudpPollEvent* events, std::size_t eve
     } else {
         signalled = g_polls_changed.WaitUntil(lk, TimedWait::DeadlineNanos(timeout), woken);
     }
-    if (!g_inited) {
-        return RUDP_ERROR_NOT_INITIALIZED;
-    }
-    const auto current = g_polls.find(pollId);
-    if (current == g_polls.end()) {
-        return RUDP_ERROR_INVALID_POLL_ID;
+    if (!g_inited || g_polls.find(pollId) == g_polls.end()) {
+        return RUDP_ERROR_CANCELLED;
     }
     return signalled ? RUDP_ERROR_CANCELLED : 0;
 }
 
 int APS5_VABI sceRudpPollDestroy(int pollId) {
-    std::lock_guard<std::mutex> lk(g_mutex);
+    std::unique_lock<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
     }
     if (pollId < 0) {
         return RUDP_ERROR_INVALID_ARGUMENT;
     }
-    if (g_polls.erase(pollId) == 0) {
+    const auto poll = g_polls.find(pollId);
+    if (poll == g_polls.end()) {
         return RUDP_ERROR_INVALID_POLL_ID;
     }
+    if (const int inside = waiters_inside(poll->second)) g_polls_leaving[pollId] = inside;
+    g_polls.erase(poll);
     g_polls_changed.NotifyAll();
+    g_polls_changed.Wait(lk, [pollId] { return g_polls_leaving.count(pollId) == 0; });
     return 0;
 }
 
