@@ -1919,6 +1919,44 @@ void testStallPromptRealPath() {
     AgcDriver::DriverDetail::SetStallPresenter(nullptr);
 }
 
+AgcDriver::DriverDetail::StallWatch* nestedStall = nullptr;
+
+AgcDriver::DriverDetail::StallChoice nestingStallPrompt(const char* message) {
+    ++stallPrompts;
+    lastStallMessage = message;
+    if (nestedStall != nullptr) {
+        auto* watch = nestedStall;
+        nestedStall = nullptr;
+        watch->Check("WAIT_REG_MEM at", 0x40);
+    }
+    return stallAnswer;
+}
+
+void testStallPromptOneAtATime() {
+    using AgcDriver::DriverDetail::StallChoice;
+    AgcDriver::DriverDetail::SetStallClock(fakeStallClock);
+    AgcDriver::DriverDetail::SetStallPresenter(nestingStallPrompt);
+    CapturedStderr capture;
+    stallAnswer = StallChoice::Wait;
+    stallPrompts = 0;
+    {
+        AgcDriver::DriverDetail::StallWatch outer(0);
+        AgcDriver::DriverDetail::StallWatch inner(1);
+        outer.Check("WAIT_REG_MEM at", 0x40);
+        inner.Check("WAIT_REG_MEM at", 0x41);
+        fakeStallNow += std::chrono::seconds(1);
+        nestedStall = &inner;
+        outer.Check("WAIT_REG_MEM at", 0x40);
+        check(stallPrompts == 1, "a second wait asked the host while a prompt was open");
+        check(stallDumpCount(capture) == 2, "a wait held back by an open prompt did not dump the rings");
+        inner.Check("WAIT_REG_MEM at", 0x41);
+        check(stallPrompts == 2, "a wait held back by an open prompt did not ask the host after it was answered");
+        check(stallDumpCount(capture) == 2, "a held-back wait dumped the rings again");
+    }
+    AgcDriver::DriverDetail::SetStallPresenter(nullptr);
+    AgcDriver::DriverDetail::SetStallClock(nullptr);
+}
+
 void testStallPromptQuit() {
     AgcDriver::DriverDetail::SetStallClock(fakeStallClock);
     AgcDriver::DriverDetail::SetStallPresenter(recordStallPrompt);
@@ -2259,7 +2297,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-quit", testStallPromptQuit}, {"rewind-trace", testRewindTailTrace}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"rewind-trace", testRewindTailTrace}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
