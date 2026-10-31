@@ -16,6 +16,7 @@ jobs:
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           gh pr list -R "$GITHUB_REPOSITORY" --label stale -L 1000 --json number,labels \
             --jq '.[] | select(all(.labels[]; .name != "needs rebase")) | .number' |
