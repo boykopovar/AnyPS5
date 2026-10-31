@@ -99,6 +99,45 @@ class PublicHeaderPackageTests(unittest.TestCase):
                         self.assertFalse(path.exists())
                 self.assertEqual({path.name for path in output.iterdir()}, set(names) if existing else set())
 
+    def test_archive_restore_failure_preserves_unrestored_backup(self):
+        names = ("prx-headers-v1.zip", "prx-headers-v1.tar.gz")
+        original_replace = Path.replace
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output"
+            output.mkdir()
+            previous = {}
+            for name in names:
+                data = ("previous " + name).encode()
+                (output / name).write_bytes(data)
+                previous[name] = data
+
+            def replace(source, target):
+                if (
+                    source.name == names[1]
+                    and source.parent.name.startswith(".headers-")
+                    and source.parent.name != "previous"
+                ):
+                    raise OSError("second promotion failed")
+                if source.name == names[1] and source.parent.name == "previous":
+                    raise PermissionError("tar restore failed")
+                return original_replace(source, target)
+
+            with patch.object(Path, "replace", replace), self.assertRaisesRegex(
+                RuntimeError, "second promotion failed.*unrestored backups .* retained"
+            ) as raised:
+                package_headers.package(self.source, output, "v1")
+
+            self.assertIsInstance(raised.exception.__cause__, PermissionError)
+            self.assertRegex(str(raised.exception.__cause__), "tar restore failed")
+            self.assertIn(names[1], str(raised.exception))
+            self.assertEqual((output / names[0]).read_bytes(), previous[names[0]])
+            self.assertFalse((output / names[1]).exists())
+            recovery = [path for path in output.glob(".headers-*/previous") if path.is_dir()]
+            self.assertEqual(len(recovery), 1)
+            self.assertEqual((recovery[0] / names[1]).read_bytes(), previous[names[1]])
+            self.assertIn(str(recovery[0]), str(raised.exception))
+
     def test_ambiguous_quoted_include_is_rejected(self):
         (self.libs / "Api.hpp").write_text("", encoding="utf-8")
         with self.assertRaisesRegex(RuntimeError, "Ambiguous"):
