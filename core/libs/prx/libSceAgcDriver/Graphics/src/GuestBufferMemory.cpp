@@ -6251,6 +6251,12 @@ bool GuestBufferMemory::CopiedWritesOverlap(std::uint64_t address, std::size_t b
     return false;
 }
 
+void GuestBufferMemory::RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const {
+    if (HoldsLease()) out.push_back({0, std::numeric_limits<std::uint64_t>::max(), Recorder::RunAccessWritten});
+    for (const auto& region : regions) out.push_back({region.begin, region.end, 0});
+    for (const auto& [begin, end] : writes) out.push_back({begin, end, Recorder::RunAccessWritten});
+}
+
 void GuestBufferMemory::MarkDirectWrites() const {
     for (const auto& [begin, end] : writes) {
         const auto* found = owner(begin, end);

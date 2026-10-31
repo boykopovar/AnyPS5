@@ -372,6 +372,11 @@ public:
     // regions was recorded (ShaderResources::MarkGpuWrites), under GuestMemory::GpuMutex. A use that
     // never calls it (a synchronous draw) stores the staging bytes from the CPU in WriteBack.
     void RecordCopyBacks(Recorder& recorder);
+    bool HasGpuCopies() const {
+        for (const auto& region : regions) if (region.gpuCopy) return true;
+        return false;
+    }
+    void RunAccesses(std::vector<std::array<std::uint64_t, 3>>& out) const;
     // Whether registered allocations are pinned until write-back (address-based shaders): by this
     // build's own lease, or by the cached address space it holds.
     bool HoldsLease() const { return !lease.empty() || space != nullptr; }
