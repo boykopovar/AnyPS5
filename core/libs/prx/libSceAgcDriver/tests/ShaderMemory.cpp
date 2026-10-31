@@ -6817,7 +6817,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTEAAAA=", "new requests did not use serialization version 49");
+    require(requestPrefix(encoded, 8u) == "NVNQQTIAAAA=", "new requests did not use serialization version 50");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -6938,7 +6938,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTMAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -7057,14 +7057,15 @@ void verifyDepthExportClamp() {
         const auto both = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(tail));
         require(both.request.target.largePixelFunctionLdsBuffer && both.request.target.pixelFunctionStorageDwords == 2048u &&
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
-            "depth export: a version 49 request lost the bounds or the version 45 target tail");
+            "depth export: a version 50 request lost the bounds or the version 45 target tail");
         auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
-        require(bytes.size() > 8u && bytes[4] == 49u, "depth export: a depth exporting request did not use serialization version 49");
+        require(bytes.size() > 8u && bytes[4] == 50u, "depth export: a depth exporting request did not use serialization version 50");
         static constexpr std::array<std::uint8_t, 8> boundBytes{0x00u, 0x00u, 0x80u, 0x3eu, 0x00u, 0x00u, 0x40u, 0x3fu};
         const auto found = std::search(bytes.begin(), bytes.end(), boundBytes.begin(), boundBytes.end());
         require(found != bytes.end() && std::search(found + 1, bytes.end(), boundBytes.begin(), boundBytes.end()) == bytes.end(),
             "depth export: the clamp bounds were not written exactly once");
         bytes.erase(found, found + boundBytes.size());
+        bytes.pop_back();
         for (const std::uint8_t legacyVersion : {48u, 47u, 46u}) {
             if (legacyVersion == 47u) bytes.pop_back();
             bytes[4] = legacyVersion;
@@ -7084,12 +7085,13 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
             auto ditheredBytes = decodeBase64(RequestSerializer{}.Serialize(dithered));
-            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 49u, "a two-sample dithered request did not use serialization version 49");
+            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 50u, "a two-sample dithered request did not use serialization version 50");
             if (depthExport) {
                 const auto bounds = std::search(ditheredBytes.begin(), ditheredBytes.end(), boundBytes.begin(), boundBytes.end());
                 require(bounds != ditheredBytes.end(), "a two-sample dithered depth exporting request lacks the clamp bounds");
                 ditheredBytes.erase(bounds, bounds + boundBytes.size());
             }
+            ditheredBytes.pop_back();
             ditheredBytes[4] = 48u;
             const auto main48 = RequestSerializer{}.Deserialize(encodeBase64(ditheredBytes));
             require(main48.request.context.pixel->ditheredAlphaToCoverage && main48.request.context.pixel->ditheredAlphaSamples == 2u && main48.request.context.pixel->depthExportEnable == depthExport &&
@@ -7155,6 +7157,7 @@ void verifyVertexInfoVersion19() {
     require(offset + 4u <= plain.size() && flagged[offset] == 0xefu && flagged[offset + 1u] == 0xcdu && flagged[offset + 2u] == 0xabu && flagged[offset + 3u] == 0x89u, "PA_CL_VS_OUT_CNTL is not the four bytes the version 20 vertex info adds");
     require(std::equal(plain.begin() + offset + 4u, plain.end(), flagged.begin() + offset + 4u), "PA_CL_VS_OUT_CNTL moved the fields after it");
     auto version20Vertex = flagged;
+    version20Vertex.pop_back();
     version20Vertex.resize(version20Vertex.size() - sizeof(std::uint32_t));
     version20Vertex.pop_back();
     version20Vertex.pop_back();
@@ -7169,6 +7172,7 @@ void verifyVertexInfoVersion19() {
     const auto layered = serializer.Deserialize(serializer.Serialize(vertex));
     require(layered.request.context.vertex.has_value() && layered.request.context.vertex->paClVsOutCntl == vertex.context.vertex->paClVsOutCntl, "a layered vertex info lost its clip distances or render target index");
     auto legacy = plain;
+    legacy.pop_back();
     legacy.resize(legacy.size() - sizeof(std::uint32_t));
     legacy.pop_back();
     legacy.pop_back();
@@ -7246,7 +7250,7 @@ void verifyVertexInfoVersion19() {
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
         bytes.erase(bytes.begin() + mergeOffset, bytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
-        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 3u);
+        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 4u);
         return bytes;
     };
     auto version42 = version43Bytes(plainPixel);
@@ -7408,9 +7412,10 @@ void verifyDepthRemapRequests() {
     const auto plainBytes = decodeBase64(plain);
     const auto remappedBytes = decodeBase64(remapped);
     constexpr std::size_t pointTailBytes = 13u;
-    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 14u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 14 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 7 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 7 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size and the barycentric built-in flag of a vertex request");
+    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 15u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 15 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 8 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 8 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size and the barycentric built-in flag of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
         auto legacyBytes = remappedBytes;
+        legacyBytes.pop_back();
         legacyBytes.resize(legacyBytes.size() - sizeof(std::uint32_t));
         legacyBytes.pop_back();
         legacyBytes.pop_back();
@@ -7423,6 +7428,7 @@ void verifyDepthRemapRequests() {
         require(serializer.Serialize(legacy.request) == plain, ("a version " + std::to_string(legacyVersion) + " vertex request misread the fields before the depth remap").c_str());
     }
     auto version35 = remappedBytes;
+    version35.pop_back();
     version35.resize(version35.size() - sizeof(std::uint32_t));
     version35.pop_back();
     version35.pop_back();
@@ -7475,8 +7481,8 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 55u + pointTailBytes && legacy[4] == 49u, "a merged hull request did not use serialization version 49");
-    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 3u - pointTailBytes);
+    require(legacy.size() > 56u + pointTailBytes && legacy[4] == 50u, "a merged hull request did not use serialization version 50");
+    legacy.resize(legacy.size() - sizeof(std::uint32_t) - 4u - pointTailBytes);
     legacy.pop_back();
     require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
     legacy.erase(legacy.end() - 52);
@@ -7697,7 +7703,7 @@ void verifyPixelInputs() {
     }
 }
 
-ShaderRecompiler::RecompileResult recompileSlots(std::initializer_list<std::uint32_t> controls, std::span<const std::uint32_t> code) {
+ShaderRecompiler::RecompileRequest slotRequest(std::initializer_list<std::uint32_t> controls, std::span<const std::uint32_t> code, bool hostInterpolationFirst) {
     using namespace ShaderRecompiler;
     ShaderPixelStageInfo pixel{};
     pixel.interpolatorCount = static_cast<std::uint32_t>(controls.size());
@@ -7715,15 +7721,21 @@ ShaderRecompiler::RecompileResult recompileSlots(std::initializer_list<std::uint
     request.target.spirvVersion = 0x00010300u;
     request.target.subgroupSize = 64;
     request.target.fragmentShaderBarycentricEnabled = true;
+    request.target.fragmentBarycentricBuiltins = true;
+    request.target.hostInterpolationFirst = hostInterpolationFirst;
     static constexpr std::array<std::uint32_t, 1> capabilities{spv::CapabilityFloat64};
     request.target.supportedCapabilities = capabilities;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
-    return Recompile(request);
+    return request;
 }
 
-std::vector<std::pair<std::uint32_t, bool>> slotInputs(std::initializer_list<std::uint32_t> controls, std::span<const std::uint32_t> code) {
-    const auto result = recompileSlots(controls, code);
+ShaderRecompiler::RecompileResult recompileSlots(std::initializer_list<std::uint32_t> controls, std::span<const std::uint32_t> code, bool hostInterpolationFirst = false) {
+    return ShaderRecompiler::Recompile(slotRequest(controls, code, hostInterpolationFirst));
+}
+
+std::vector<std::pair<std::uint32_t, bool>> slotInputs(std::initializer_list<std::uint32_t> controls, std::span<const std::uint32_t> code, bool hostInterpolationFirst = false) {
+    const auto result = recompileSlots(controls, code, hostInterpolationFirst);
     const auto& words = result.spirv.Words();
     std::map<std::uint32_t, std::uint32_t> locations;
     std::map<std::uint32_t, bool> perVertex;
@@ -7767,6 +7779,43 @@ void verifyPixelParameterSlots() {
     require(inputs.size() == 1u && inputs[0].first == 3u && inputs[0].second && subtracts({0x403u}) == 2u, "v_interp_mov p10/p20 of a flat input did not read differences to vertex 0");
     require(slotInputs({0x23u}, vertices).empty(), "a defaulted input (OFFSET bit 5 without FLAT_SHADE) was declared as a parameter");
     expectFailure([] { static_cast<void>(recompileSlots({0x423u, 0x3u}, shared)); }, "passes its vertices through unchanged", "an interpolated pass-through input was accepted");
+}
+
+void verifyHostInterpolationFirst() {
+    static constexpr std::array<std::uint32_t, 7> shared{0xc8100000u, 0xc8110001u, 0xc8140500u, 0xc8150501u, 0xf800180fu, 0x05040504u, 0xbf810000u};
+    auto inputs = slotInputs({0x3u, 0x3u}, shared, true);
+    require(inputs.size() == 1u && inputs[0].first == 3u && !inputs[0].second, "host interpolation first still read a plain v_interp input per vertex");
+    static constexpr std::array<std::uint32_t, 8> mixed{0xc8100000u, 0xc8110001u, 0xc8160402u, 0xc81a0802u, 0xc81e0f02u, 0xf800180fu, 0x07060504u, 0xbf810000u};
+    inputs = slotInputs({0x0u, 0x400u, 0x22u, 0x320u}, mixed, true);
+    require(inputs.size() == 1u && inputs[0].first == 0u && inputs[0].second, "host interpolation first did not keep KHR barycentrics for a slot read flat and interpolated");
+    require(!recompileSlots({0x0u, 0x400u, 0x22u, 0x320u}, mixed, true).barycentricEmulation.active, "host interpolation first emulated barycentrics the device provides");
+    using namespace ShaderRecompiler;
+    const RequestSerializer serializer;
+    const auto replayFixture = [&](std::initializer_list<std::uint32_t> controls, std::span<const std::uint32_t> code) {
+        std::vector<std::uint64_t> keys[2];
+        for (const bool hostFirst : {false, true}) {
+            auto request = slotRequest(controls, code, hostFirst);
+            const auto encoded = serializer.Serialize(request);
+            const auto replay = serializer.Deserialize(encoded);
+            require(replay.request.target.hostInterpolationFirst == hostFirst && serializer.Serialize(replay.request) == encoded, "replay lost host interpolation first");
+            std::vector<std::uint64_t> replayKey;
+            RecompileCacheKey::Build(request, keys[hostFirst]);
+            RecompileCacheKey::Build(replay.request, replayKey);
+            require(replayKey == keys[hostFirst], "replay changed the cache key of a host interpolation first request");
+            const auto original = Recompile(request);
+            const auto replayed = Recompile(replay.request);
+            require(replayed.barycentricEmulation.active == original.barycentricEmulation.active, "replay changed the barycentric path of a host interpolation first request");
+            verifyResult(original, replayed);
+            request.useCache = true;
+            const auto cached = Recompile(request);
+            const auto hit = Recompile(serializer.Deserialize(serializer.Serialize(request)).request);
+            require(hit.cacheHit && hit.variantId == cached.variantId, "host interpolation first replay did not reuse the original shader variant");
+            verifyResult(cached, hit);
+        }
+        require(keys[0] != keys[1], "the cache key ignores host interpolation first");
+    };
+    replayFixture({0x3u, 0x3u}, shared);
+    replayFixture({0x0u, 0x400u, 0x22u, 0x320u}, mixed);
 }
 
 void verifyF16PixelParameterSlots() {
@@ -10123,6 +10172,7 @@ int main(int argc, char** argv) {
         verifyLegacyPixelRequests();
         verifyPixelExportReplay();
         verifyPixelParameterSlots();
+        verifyHostInterpolationFirst();
         verifyF16PixelParameterSlots();
         verifyComputedTexelOffsets();
         verifyShaderClockScopes();
