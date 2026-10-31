@@ -4,6 +4,7 @@
 #include "prx/libSceLibreSsl3/include/Key.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Cipher.hpp"
+#include "prx/libSceLibreSsl3/include/Bignum.hpp"
 
 extern "C" {
 
@@ -98,6 +99,7 @@ unsigned char* APS5_VABI SHA1_nid_postfix(const unsigned char* data, std::size_t
 int APS5_VABI BIO_clear_flags_nid_postfix();
 int APS5_VABI BIO_set_flags_nid_postfix();
 int APS5_VABI BN_clear_free_nid_postfix();
+int APS5_VABI BN_is_negative_nid_postfix(const LibreSsl3Bignum* number);
 int APS5_VABI BN_dup_nid_postfix();
 int APS5_VABI ERR_func_error_string_nid_postfix();
 int APS5_VABI EVP_CIPHER_iv_length_nid_postfix(const LibreSsl3EvpCipher* cipher);
@@ -182,7 +184,6 @@ int APS5_VABI Unknown_8kct4CSWwOA_nid_no_patch();
 int APS5_VABI Unknown_A_minus_Hs_minus_8mau_plus_8_nid_no_patch();
 int APS5_VABI Unknown_A0lZtFjhcTw_nid_no_patch();
 int APS5_VABI Unknown_A65b_plus_ZhOt9k_nid_no_patch();
-int APS5_VABI Unknown_AiNud8LR8B4_nid_no_patch();
 int APS5_VABI Unknown_Ax_plus_Uu_plus__plus_rnrA_nid_no_patch();
 int APS5_VABI Unknown_BRjfzlGULmU_nid_no_patch();
 int APS5_VABI Unknown_BS5yWv6X_minus_hg_nid_no_patch();

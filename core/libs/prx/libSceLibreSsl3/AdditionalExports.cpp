@@ -352,11 +352,6 @@ int APS5_VABI Unknown_A65b_plus_ZhOt9k_nid_no_patch() {
 }
 APS5_EXPORT("A65b+ZhOt9k", Unknown_A65b_plus_ZhOt9k_nid_no_patch);
 
-int APS5_VABI Unknown_AiNud8LR8B4_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("AiNud8LR8B4", Unknown_AiNud8LR8B4_nid_no_patch);
-
 int APS5_VABI Unknown_Ax_plus_Uu_plus__plus_rnrA_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
