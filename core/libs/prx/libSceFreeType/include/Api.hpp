@@ -2,6 +2,7 @@
 
 #include "prx/libSceFreeType/include/GuestList.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "prx/libSceFreeType/include/PostScriptInfo.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {
@@ -58,6 +59,9 @@ void APS5_VABI FT_List_Finalize_nid_postfix(FreeType::GuestListRec* list, FreeTy
 int APS5_VABI FT_Get_Glyph_Name_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t glyphIndex, void* buffer, std::uint32_t bufferSize);
 std::uint32_t APS5_VABI FT_Get_Name_Index_nid_postfix(FreeType::GuestFaceRec* face, const char* glyphName);
 const char* APS5_VABI FT_Get_Postscript_Name_nid_postfix(FreeType::GuestFaceRec* face);
+int APS5_VABI FT_Get_PS_Font_Info_nid_postfix(FreeType::GuestFaceRec* face, FreeType::GuestPSFontInfo* info);
+int APS5_VABI FT_Has_PS_Glyph_Names_nid_postfix(FreeType::GuestFaceRec* face);
+int APS5_VABI sceFreeTypeOtHasPSGlyphNames_nid_no_patch();
 std::uint32_t APS5_VABI FT_Get_Sfnt_Name_Count_nid_postfix(FreeType::GuestFaceRec* face);
 int APS5_VABI FT_Get_Sfnt_Name_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t index, FreeType::GuestSfntName* name);
 int APS5_VABI FT_Sfnt_Table_Info_nid_postfix(FreeType::GuestFaceRec* face, std::uint32_t tableIndex, std::uint64_t* tag, std::uint64_t* length);
@@ -95,5 +99,7 @@ void APS5_VABI FT_Stroker_Set_nid_postfix(void* stroker, std::int64_t radius, st
 void APS5_VABI FT_Stroker_Rewind_nid_postfix(void* stroker);
 int APS5_VABI FT_Stroker_BeginSubPath_nid_postfix(void* stroker, const FreeType::GuestVector* to, std::uint8_t open);
 int APS5_VABI FT_Stroker_ConicTo_nid_postfix(void* stroker, const FreeType::GuestVector* control, const FreeType::GuestVector* to);
+int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
+int APS5_VABI ft_corner_orientation_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y);
 
 }
