@@ -23,6 +23,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
+    add_test_executable(guest_strndup_guarded_tests ${LIBS_INCLUDE_DIR}/tests/GuestStrndupGuarded.cpp)
+    target_include_directories(guest_strndup_guarded_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_strndup_guarded_tests PRIVATE libc)
+    configure_windows_unwind(guest_strndup_guarded_tests)
+    add_test(NAME guest_strndup_guarded COMMAND guest_strndup_guarded_tests)
+    set_tests_properties(guest_strndup_guarded PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_strndup_guarded PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_stream_purge_tests ${LIBS_INCLUDE_DIR}/tests/GuestStreamPurge.cpp)
     target_include_directories(guest_stream_purge_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_stream_purge_tests PRIVATE libc)
