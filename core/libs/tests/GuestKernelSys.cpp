@@ -1184,6 +1184,7 @@ int main() {
     Require(kqueueDescriptor >= 0);
     CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
     CheckUnsupportedPathconf(_fpathconf_nid_postfix, kqueueDescriptor);
+    Require(fchdir_nid_postfix(kqueueDescriptor) == -1 && Error() == 22);
     Require(close_nid_postfix(kqueueDescriptor) == 0);
     const std::string namedSharedMemory = "/anyps5-kernel-sys-pathconf-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
