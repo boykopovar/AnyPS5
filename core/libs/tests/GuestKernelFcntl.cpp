@@ -207,6 +207,10 @@ static void SocketsKeepTheirPath() {
     Require(sceKernelFcntl(socket, DarwinReadAhead, 1) == SceEbadf);
     int queued = -1;
     Require(ioctl_nid_postfix(socket, ReadableRequest, &queued) == 0 && queued == 0);
+    Require(ioctl_nid_postfix(socket, CloseOnExecRequest, nullptr) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 1);
+    Require(ioctl_nid_postfix(socket, CloseOnExecRequest, &queued) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 1);
+    Require(ioctl_nid_postfix(socket, KeepOnExecRequest, nullptr) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 0);
+    Require(ioctl_nid_postfix(socket, KeepOnExecRequest, &queued) == 0 && fcntl_nid_postfix(socket, GetDescriptorFlags) == 0);
     RequireMalformedRequestsFail(socket);
     RequireFailure(ioctl_nid_postfix(socket, IntegerArgumentRequest, nullptr), GuestEfault);
     RequireFailure(ioctl_nid_postfix(socket, EmptyInputRequest, nullptr), GuestEfault);
