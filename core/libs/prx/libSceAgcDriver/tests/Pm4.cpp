@@ -2163,9 +2163,9 @@ std::future<void> inBackground(Action action) {
 }
 
 void checkDriverLockFree() {
-    alignas(8) static std::uint32_t probe = 0;
+    alignas(8) static std::uint32_t flag = 1;
     auto submitted = inBackground([] {
-        auto words = writeWord(probe, 1);
+        auto words = joinPackets({makePacket(0x3c, {0x13, low(&flag), high(&flag), 1, 0xffffffffu, 0x19})});
         submitWords(words, 0x21);
     });
     check(submitted.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "a submission waited for the driver lock while the stall prompt was open");
