@@ -216,13 +216,17 @@ void HostPlacement() {
         placed = MemoryOf(large.Handle());
         Expect(mock.memoryTypes.at(placed) == 1, "a device buffer over the device-local budget was not placed in the host memory type");
     }
-    Expect(!mock.memoryBytes.contains(placed) && mock.liveBuffers.empty(), "a device buffer placed in host memory was kept in the device pool after its release");
+    Expect(mock.memoryBytes.contains(placed), "a device buffer placed in host memory was not kept in the pool after its release");
+    {
+        DeviceBuffer again(context, 176 * MiB, usage);
+        Expect(MemoryOf(again.Handle()) == placed, "a device buffer over the device-local budget did not reuse the retained host-placed buffer");
+    }
     reportedUsage = 200 * MiB;
     VkDeviceMemory device = VK_NULL_HANDLE;
     {
         DeviceBuffer large(context, 176 * MiB, usage);
         device = MemoryOf(large.Handle());
-        Expect(mock.memoryTypes.at(device) == 0, "a device buffer within the device-local budget was not placed in device-local memory");
+        Expect(mock.memoryTypes.at(device) == 0 && device != placed, "a device buffer within the device-local budget reused host memory instead of device-local memory");
     }
     Expect(mock.memoryBytes.contains(device), "a device-local buffer was not kept in the device pool after its release");
     DeviceBuffer again(context, 176 * MiB, usage);
@@ -242,9 +246,13 @@ void RefusedDevicePlacement() {
         placed = MemoryOf(refused.Handle());
         Expect(mock.memoryTypes.at(placed) == 1, "a device buffer whose device-local allocation ran out of device memory within the reported budget was not placed in the host memory type");
     }
-    Expect(!mock.memoryBytes.contains(placed) && mock.liveBuffers.empty(), "a device buffer placed in host memory after a refused device-local allocation was kept in the device pool after its release");
+    {
+        DeviceBuffer within(context, 4 * MiB, usage);
+        Expect(MemoryOf(within.Handle()) != placed && mock.memoryTypes.at(MemoryOf(within.Handle())) == 0, "a device buffer within the device-local budget reused a host-placed buffer");
+    }
     mock.results = {VK_ERROR_OUT_OF_DEVICE_MEMORY, VK_ERROR_OUT_OF_DEVICE_MEMORY};
     context.memory.memoryHeaps[1].flags = VK_MEMORY_HEAP_DEVICE_LOCAL_BIT;
+    const auto live = mock.liveBuffers.size();
     bool threw = false;
     try {
         DeviceBuffer refused(context, 9 * MiB, usage);
@@ -252,7 +260,7 @@ void RefusedDevicePlacement() {
         threw = true;
     }
     Expect(threw, "a refused device-local allocation without a host memory type did not fail");
-    Expect(mock.liveBuffers.empty(), "a failed device buffer left its VkBuffer alive");
+    Expect(mock.liveBuffers.size() <= live, "a failed device buffer left its VkBuffer alive");
 }
 
 void AttachmentReclaim() {
@@ -935,6 +943,35 @@ void IdleDeviceReclaim() {
     Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "idle device reclaim leaked an allocation");
 }
 
+void IdleReclaimSkipsHostPlaced() {
+    mock = MockDevice{};
+    {
+        auto context = budgetContext();
+        constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        reportedBudget = 1620 * MiB;
+        reportedUsage = 1600 * MiB;
+        VkDeviceMemory placed = VK_NULL_HANDLE;
+        {
+            DeviceBuffer large(context, 176 * MiB, usage);
+            placed = MemoryOf(large.Handle());
+            Expect(mock.memoryTypes.at(placed) == 1, "the older device buffer was not placed in host memory");
+        }
+        reportedUsage = 200 * MiB;
+        VkDeviceMemory device = VK_NULL_HANDLE;
+        {
+            DeviceBuffer small(context, 4 * MiB, usage);
+            device = MemoryOf(small.Handle());
+            Expect(mock.memoryTypes.at(device) == 0, "the younger device buffer was not placed in device-local memory");
+        }
+        auto& pool = *context.bufferPool;
+        const auto start = std::chrono::steady_clock::time_point{std::chrono::seconds(1)};
+        Expect(pool.ReclaimIdleDevice(MiB, start) == 0, "the first pressure observation reclaimed a buffer");
+        Expect(pool.ReclaimIdleDevice(MiB, start + std::chrono::seconds(1)) == 4 * MiB, "idle device reclaim counted a host-placed buffer as device memory");
+        Expect(mock.memoryBytes.contains(placed) && !mock.memoryBytes.contains(device), "idle device reclaim freed the host-placed buffer instead of the idle device-local one");
+    }
+    Expect(mock.liveBytes == 0 && mock.liveBuffers.empty(), "host-placed reclaim test leaked an allocation");
+}
+
 void IdleReclaimPreservesWorkingSet() {
     mock = MockDevice{};
     {
@@ -1233,6 +1270,7 @@ int main(int argc, char** argv) {
         ImageMemoryOverBudget();
         HostPlacement();
         RefusedDevicePlacement();
+        IdleReclaimSkipsHostPlaced();
         AttachmentReclaim();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());

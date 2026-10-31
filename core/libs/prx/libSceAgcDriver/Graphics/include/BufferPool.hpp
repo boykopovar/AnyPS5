@@ -28,6 +28,7 @@ struct BufferAllocation {
     bool slab = false;
     std::size_t bufferBytes = 0;
     std::uint32_t memoryType = 0;
+    bool hostPlaced = false;
 };
 
 struct SlabSlot {
@@ -71,7 +72,7 @@ public:
     VkDeviceMemory TakeImageMemory(const VkMemoryAllocateInfo& allocation, const char* operation, std::optional<std::uint32_t> hostType = std::nullopt, std::uint32_t* allocatedType = nullptr, bool newImage = false);
     void PutImageMemory(VkDeviceMemory memory, VkDeviceSize bytes, std::uint32_t memoryType) noexcept;
     std::size_t RetainedImages();
-    std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    std::optional<BufferAllocation> Take(std::size_t bytes, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, bool hostPlaced = false);
     void Put(const BufferAllocation& allocation) noexcept;
     VkDeviceSize ReclaimIdleDevice(VkDeviceSize bytes, std::chrono::steady_clock::time_point now);
     static bool SlabEligible(std::size_t capacity, VkDeviceSize alignment, VkDeviceSize size, VkDeviceSize atom);
@@ -106,11 +107,12 @@ private:
         VkBufferUsageFlags usage;
         VkMemoryPropertyFlags properties;
         std::uint32_t memoryType = 0;
+        bool hostPlaced = false;
         bool operator==(const SlotKey&) const = default;
     };
     struct SlotKeyHash {
         std::size_t operator()(const SlotKey& key) const noexcept {
-            return std::hash<std::size_t>{}(key.bytes) ^ (static_cast<std::size_t>(key.usage) << 32u) ^ (static_cast<std::size_t>(key.properties) << 48u) ^ (static_cast<std::size_t>(key.memoryType) << 56u);
+            return std::hash<std::size_t>{}(key.bytes) ^ (static_cast<std::size_t>(key.usage) << 32u) ^ (static_cast<std::size_t>(key.properties) << 48u) ^ (static_cast<std::size_t>(key.memoryType) << 56u) ^ (static_cast<std::size_t>(key.hostPlaced) << 63u);
         }
     };
     // One retention tier: its slots by key (each list oldest first), their count and bytes, the
