@@ -95,6 +95,7 @@ struct DrawEntryCounters {
     std::array<std::uint64_t, static_cast<std::size_t>(DrawMiss::Count)> misses{};
     std::array<std::uint64_t, MaxDispatchVariants> variantHitsByRank{};
     double validateUs = 0;
+    std::uint64_t bypassed = 0;
 
     std::uint64_t registerKeyLookups = 0, registerKeyHits = 0, decodeSkipped = 0, decodePartial = 0, facadeMismatches = 0, verifyDecodes = 0, verifyDecodeMismatches = 0;
     double keyUs = 0;
@@ -111,8 +112,11 @@ public:
     static constexpr std::size_t Ways = 4;
     explicit DrawKeySightings(std::size_t keys);
     bool SeenBefore(std::uint64_t key);
+    bool Holds(std::uint64_t key) const;
 
 private:
+    std::size_t bucketOf(std::uint64_t key) const;
+
     std::vector<std::uint64_t> keys;
     std::vector<std::uint8_t> filled;
     std::vector<std::uint8_t> next;
@@ -159,6 +163,25 @@ struct DrawRelocationTrial {
 
 struct DrawRelocationCounters {
     std::uint64_t lookups = 0, donors = 0, refused = 0, hits = 0, evicted = 0;
+};
+
+class DrawCacheBypass {
+public:
+    static constexpr std::uint32_t Window = 2048, LowWindowsToBypass = 2, FirstBypassDraws = 2048, BypassDraws = 16384;
+    explicit DrawCacheBypass(std::uint32_t percent);
+    std::uint32_t Percent() const { return percent; }
+    bool Skip();
+    void Note(bool useful);
+    std::uint64_t TakeBypassed();
+
+private:
+    static constexpr std::uint32_t CountBits = 12, LowShift = 2 * CountBits, LowBits = 3, LeftShift = 32;
+    static constexpr std::uint64_t CountMask = (std::uint64_t{1} << CountBits) - 1u, LowMask = (std::uint64_t{1} << LowBits) - 1u;
+    static_assert(Window <= CountMask + 1u && LowWindowsToBypass + 3u <= LowMask && LowShift + LowBits <= LeftShift);
+
+    std::uint32_t percent, minimumHits;
+    std::atomic<std::uint64_t> state{0};
+    std::atomic<std::uint64_t> bypassed{0};
 };
 
 bool DecodeProgramsCurrent(const DrawDecode& decode, const ShaderRegistry& registry);
