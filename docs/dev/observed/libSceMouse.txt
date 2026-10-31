@@ -1,0 +1,2 @@
+# NIDs of libSceMouse that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+oB2fBhW84tQ  # manual: reported in comment #11477

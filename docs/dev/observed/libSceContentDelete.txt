@@ -1,0 +1,2 @@
+# NIDs of libSceContentDelete that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+qC3QW+AltHs  # manual: reported in issue #4109

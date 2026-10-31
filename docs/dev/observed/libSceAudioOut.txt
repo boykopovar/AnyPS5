@@ -1,0 +1,2 @@
+# NIDs of libSceAudioOut that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+8By20nPynEo  # manual: reported in PR #11160

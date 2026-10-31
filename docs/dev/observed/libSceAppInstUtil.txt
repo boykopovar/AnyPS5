@@ -1,0 +1,2 @@
+# NIDs of libSceAppInstUtil that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+540lotO7oHE  # manual: reported in PR #8346
