@@ -134,7 +134,11 @@ public:
         return released;
     }
 
-    void CheckBindings(const std::vector<VkImage>& images, bool sharing) {
+    void PreferDedicated(bool value) {
+        preferDedicated = value;
+    }
+
+    bool CheckBindings(const std::vector<VkImage>& images, bool sharing) {
         std::lock_guard lock(mutex);
         std::size_t eligible = 0;
         std::size_t shared = 0;
@@ -143,7 +147,7 @@ public:
             VkMemoryRequirements2 requirements{VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2, &dedicated};
             VkImageMemoryRequirementsInfo2 info{VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2};
             info.image = images[i];
-            reinterpret_cast<PFN_vkGetImageMemoryRequirements2>(original(device, "vkGetImageMemoryRequirements2"))(device, &info, &requirements);
+            ImageRequirements(device, &info, &requirements);
             const auto& memory = requirements.memoryRequirements;
             const auto binding = bindings.at(images[i]);
             Require(binding.offset % memory.alignment == 0, "image memory: an image is bound at an unaligned offset");
@@ -159,6 +163,7 @@ public:
         }
         if (sharing && eligible > 1) Require(shared != 0, "image memory: simultaneous small production images each allocate separate memory");
         std::printf("image memory: %zu images, %zu eligible, %zu shared-memory pairs\n", images.size(), eligible, shared);
+        return !sharing || eligible > 1;
     }
 
     void CheckReleased() {
@@ -181,7 +186,24 @@ private:
         if (std::strcmp(name, "vkDestroyImageView") == 0) return reinterpret_cast<PFN_vkVoidFunction>(DestroyView);
         if (std::strcmp(name, "vkAllocateMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(Allocate);
         if (std::strcmp(name, "vkFreeMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(Free);
+        if (std::strcmp(name, "vkGetImageMemoryRequirements2") == 0) return reinterpret_cast<PFN_vkVoidFunction>(ImageRequirements);
         return hooks->original(device, name);
+    }
+
+    static VKAPI_ATTR void VKAPI_CALL ImageRequirements(VkDevice device, const VkImageMemoryRequirementsInfo2* info, VkMemoryRequirements2* requirements) {
+        auto& self = *hooks;
+        reinterpret_cast<PFN_vkGetImageMemoryRequirements2>(self.original(device, "vkGetImageMemoryRequirements2"))(device, info, requirements);
+        if (!self.preferDedicated) return;
+        for (auto* next = static_cast<VkBaseOutStructure*>(requirements->pNext); next != nullptr; next = next->pNext) {
+            if (next->sType == VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS) reinterpret_cast<VkMemoryDedicatedRequirements*>(next)->prefersDedicatedAllocation = VK_TRUE;
+        }
+    }
+
+    static bool ImportsHostPointer(const VkMemoryAllocateInfo* info) {
+        for (auto* next = static_cast<const VkBaseInStructure*>(info->pNext); next != nullptr; next = next->pNext) {
+            if (next->sType == VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT) return true;
+        }
+        return false;
     }
 
     static VKAPI_ATTR VkResult VKAPI_CALL Allocate(VkDevice device, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* allocator, VkDeviceMemory* memory) {
@@ -197,7 +219,7 @@ private:
             }
         }
         const auto result = reinterpret_cast<PFN_vkAllocateMemory>(self.original(device, "vkAllocateMemory"))(device, info, allocator, memory);
-        if (result == VK_SUCCESS) {
+        if (result == VK_SUCCESS && !ImportsHostPointer(info)) {
             std::lock_guard lock(self.mutex);
             self.allocations[*memory] = info->allocationSize;
         }
@@ -264,7 +286,45 @@ private:
     std::map<VkDeviceMemory, std::uint64_t> frees;
     Pressure pressure;
     bool freedLiveImage = false;
+    bool preferDedicated = false;
 };
+
+void HostImportTracking() {
+    Context context;
+    context.device = reinterpret_cast<VkDevice>(std::uintptr_t{1});
+    context.deviceProc = [](VkDevice, const char* name) -> PFN_vkVoidFunction {
+        if (std::strcmp(name, "vkAllocateMemory") == 0) {
+            return reinterpret_cast<PFN_vkVoidFunction>(+[](VkDevice, const VkMemoryAllocateInfo*, const VkAllocationCallbacks*, VkDeviceMemory* memory) -> VkResult {
+                *memory = reinterpret_cast<VkDeviceMemory>(std::uintptr_t{2});
+                return VK_SUCCESS;
+            });
+        }
+        if (std::strcmp(name, "vkFreeMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(+[](VkDevice, VkDeviceMemory, const VkAllocationCallbacks*) {});
+        throw std::runtime_error("image memory: unexpected hook regression function");
+    };
+    Hooks native(context);
+    const VkImportMemoryHostPointerInfoEXT imported{VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT};
+    const VkMemoryAllocateFlagsInfo flags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, &imported};
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
+    allocation.allocationSize = 524288;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    const auto allocate = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory");
+    const auto free = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
+    Check(allocate(context.device, &allocation, nullptr, &memory), "vkAllocateMemory hook import regression");
+    native.CheckDeviceReleased();
+    allocation.pNext = nullptr;
+    Check(allocate(context.device, &allocation, nullptr, &memory), "vkAllocateMemory hook image regression");
+    bool retained = false;
+    try {
+        native.CheckDeviceReleased();
+    } catch (const std::runtime_error& error) {
+        retained = std::string_view(error.what()).find("device teardown retained hooked driver allocations") != std::string_view::npos;
+    }
+    Require(retained, "image memory: the hook stopped tracking ordinary image allocations");
+    free(context.device, memory, nullptr);
+    native.CheckDeviceReleased();
+    std::puts("image memory: host imports excluded and ordinary allocations tracked");
+}
 
 GuestTextureResource Resource(std::uint64_t address) {
     GuestTextureResource resource{};
@@ -282,7 +342,7 @@ GuestTextureResource Resource(std::uint64_t address) {
     return resource;
 }
 
-void SampledImages(const Context& context, TextureDetiler& detiler, Hooks& native, bool sharing) {
+bool SampledImages(const Context& context, TextureDetiler& detiler, Hooks& native, bool sharing) {
     const auto resource = Resource(0x100000);
     const auto geometry = DescribeSurface(resource);
     std::vector<std::byte> snapshot(static_cast<std::size_t>(geometry.guestBytes), std::byte{0x35});
@@ -290,6 +350,7 @@ void SampledImages(const Context& context, TextureDetiler& detiler, Hooks& nativ
     std::vector<VkImage> pending;
     std::vector<VkImage> all;
     std::vector<std::unique_ptr<Texture>> textures;
+    bool covered = true;
     {
         Recorder recorder(context);
         recorder.Activate();
@@ -298,7 +359,7 @@ void SampledImages(const Context& context, TextureDetiler& detiler, Hooks& nativ
             pending.push_back(native.ImageOf(texture->View()));
             textures.push_back(std::move(texture));
         }
-        native.CheckBindings(pending, sharing);
+        covered = native.CheckBindings(pending, sharing);
         textures.clear();
         for (const auto image : pending) Require(!native.Destroyed(image), "image memory: a texture released its image while a recorded upload still uses it");
         all = pending;
@@ -307,13 +368,14 @@ void SampledImages(const Context& context, TextureDetiler& detiler, Hooks& nativ
             all.push_back(native.ImageOf(texture->View()));
             textures.push_back(std::move(texture));
         }
-        native.CheckBindings(all, sharing);
+        covered = native.CheckBindings(all, sharing) && covered;
         recorder.Sync();
     }
     for (const auto image : pending) Require(native.Destroyed(image), "image memory: recorder teardown still holds its released texture image");
     for (std::size_t i = pending.size(); i < all.size(); ++i) Require(!native.Destroyed(all[i]), "image memory: recorder teardown destroyed a texture that is still live");
     textures.clear();
     native.CheckReleased();
+    return covered;
 }
 
 class GuestBlock {
@@ -346,7 +408,7 @@ private:
     void* data = nullptr;
 };
 
-void StorageImages(const Context& context, TextureDetiler& detiler, Hooks& native, bool sharing) {
+bool StorageImages(const Context& context, TextureDetiler& detiler, Hooks& native, bool sharing) {
     GuestBlock guest;
     std::vector<std::shared_ptr<StorageTexture>> textures;
     std::vector<VkImage> images;
@@ -355,7 +417,7 @@ void StorageImages(const Context& context, TextureDetiler& detiler, Hooks& nativ
         images.push_back(texture->Image());
         textures.push_back(std::move(texture));
     }
-    native.CheckBindings(images, sharing);
+    const bool covered = native.CheckBindings(images, sharing);
     Buffer readback(context, ImageCount * PixelBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
     CommandBatch batch(context);
     const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
@@ -396,9 +458,10 @@ void StorageImages(const Context& context, TextureDetiler& detiler, Hooks& nativ
     }
     textures.clear();
     native.CheckReleased();
+    return covered;
 }
 
-void CachePressure(Context context, Hooks& native) {
+bool CachePressure(Context context, Hooks& native) {
     constexpr std::size_t MaxImages = 64;
     auto resource = Resource(0);
     resource.width = 512;
@@ -423,7 +486,7 @@ void CachePressure(Context context, Hooks& native) {
     const auto& needed = smallRequirements.memoryRequirements;
     if (dedicated.requiresDedicatedAllocation || dedicated.prefersDedicatedAllocation || !FitsSharedPair(needed)) {
         std::printf("image memory: cache-pressure subcase skipped: dedicated=%u preferred=%u size=%llu alignment=%llu require standalone memory\n", dedicated.requiresDedicatedAllocation, dedicated.prefersDedicatedAllocation, static_cast<unsigned long long>(needed.size), static_cast<unsigned long long>(needed.alignment));
-        return;
+        return false;
     }
     const auto geometry = DescribeSurface(resource);
     const auto stride = (geometry.guestBytes + GuestStride - 1) / GuestStride * GuestStride;
@@ -491,7 +554,7 @@ void CachePressure(Context context, Hooks& native) {
         }
         Require(full && !evicted.empty() && !held.empty(), "image memory: bounded cache-pressure fixture did not fill two shared blocks");
         Require(count + 2 < MaxImages, "image memory: the partial-return fixtures exceed the bounded guest allocation");
-        native.CheckBindings(heldImages, true);
+        Require(native.CheckBindings(heldImages, true), "image memory: cache-pressure fixture did not exercise sharing");
         const auto heldFrees = native.Frees(heldMemory);
         native.BeginPressure(blockBytes);
         resource.baseAddress = guest.Address(0) + count * stride;
@@ -563,11 +626,12 @@ void CachePressure(Context context, Hooks& native) {
     }
     cleanup();
     native.CheckReleased();
+    return true;
 }
 
 struct TeardownFailure {};
 
-int RunImages(std::optional<Hooks>& lifetime, bool sharing, bool lifetimesOnly, bool teardownFailure) {
+int RunImages(std::optional<Hooks>& lifetime, bool sharing, bool lifetimesOnly, bool teardownFailure, bool dedicatedImages, bool dedicatedPressure, bool& covered) {
     const auto device = OpenVulkanTestDevice();
     if (!device) return VulkanTestSkipped;
     std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
@@ -576,9 +640,11 @@ int RunImages(std::optional<Hooks>& lifetime, bool sharing, bool lifetimesOnly, 
     context.bufferPool = std::make_shared<BufferPool>(context);
     TextureDetiler detiler(context);
     context.detiler = &detiler;
-    SampledImages(context, detiler, native, sharing);
-    if (!lifetimesOnly) StorageImages(context, detiler, native, sharing);
-    if (sharing) CachePressure(context, native);
+    native.PreferDedicated(dedicatedImages);
+    covered = SampledImages(context, detiler, native, sharing);
+    if (!lifetimesOnly) covered = StorageImages(context, detiler, native, sharing) && covered;
+    native.PreferDedicated(dedicatedPressure);
+    if (sharing) covered = CachePressure(context, native) && covered;
     if (teardownFailure) throw TeardownFailure{};
     return 0;
 }
@@ -587,9 +653,15 @@ int RunImages(std::optional<Hooks>& lifetime, bool sharing, bool lifetimesOnly, 
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--check-hooks") {
+            HostImportTracking();
+            return 0;
+        }
         bool sharing = true;
         bool lifetimesOnly = false;
         bool teardownFailure = false;
+        bool dedicatedImages = false;
+        bool dedicatedPressure = false;
         for (int i = 1; i < argc; ++i) {
             const std::string_view argument = argv[i];
             if (argument == "--no-sharing-check") sharing = false;
@@ -597,19 +669,26 @@ int main(int argc, char** argv) {
                 sharing = false;
                 lifetimesOnly = true;
             } else if (argument == "--teardown-failure") teardownFailure = true;
+            else if (argument == "--dedicated-images") dedicatedImages = true;
+            else if (argument == "--dedicated-pressure") dedicatedPressure = true;
             else Require(false, "image memory: unknown arguments");
         }
         std::optional<Hooks> lifetime;
         int result = 0;
         bool failed = false;
+        bool covered = true;
         try {
-            result = RunImages(lifetime, sharing, lifetimesOnly, teardownFailure);
+            result = RunImages(lifetime, sharing, lifetimesOnly, teardownFailure, dedicatedImages, dedicatedPressure, covered);
         } catch (const TeardownFailure&) {
             failed = true;
         }
         if (result != 0) return result;
         Require(failed == teardownFailure, "image memory: teardown failure injection did not run");
         lifetime->CheckDeviceReleased();
+        if (!covered) {
+            std::puts("image memory: sharing coverage unavailable after teardown");
+            return VulkanTestSkipped;
+        }
         std::puts("production image memory tests passed");
         return 0;
     } catch (const std::exception& error) {
