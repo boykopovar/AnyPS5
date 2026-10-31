@@ -983,6 +983,7 @@ char* APS5_VABI strpbrk_nid_postfix(const char* text, const char* accept);
 std::size_t APS5_VABI strcspn_nid_postfix(const char* text, const char* reject);
 std::size_t APS5_VABI strlcat_nid_postfix(char* destination, const char* source, std::size_t capacity);
 char* APS5_VABI stpcpy_nid_postfix(char* destination, const char* source);
+char* APS5_VABI stpncpy_nid_postfix(char* destination, const char* source, std::size_t count);
 char* APS5_VABI strtok_r_nid_postfix(char* text, const char* delimiters, char** state);
 char* APS5_VABI strtok_nid_postfix(char* text, const char* delimiters);
 int APS5_VABI __inet_aton_nid_postfix(const char* text, void* address);
