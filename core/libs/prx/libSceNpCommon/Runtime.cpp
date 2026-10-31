@@ -8,6 +8,7 @@
 #include <iterator>
 #include <mutex>
 #include <random>
+#include <stdexcept>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -253,6 +254,24 @@ NpAllocator MemoryHeapAllocator(NpMemoryHeap* heap) {
 }
 
 constexpr std::size_t NP_OBJECT_HEADER_SIZE = 16;
+
+constexpr int NP_ERROR_OBJECT_ALREADY_INITIALIZED = static_cast<int>(0x80559E03);
+constexpr std::int32_t NP_SEMAPHORE_CREATED = 1;
+constexpr std::int32_t NP_SEMAPHORE_OPENED = 2;
+
+void* const NpSemaphoreVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np9SemaphoreD1Ev), reinterpret_cast<void*>(&_ZN3sce2np9SemaphoreD0Ev),
+};
+
+void RequireSemaphoreInit(const NpSemaphoreObject* self, const char* message) {
+    if (self->state == 0) throw std::invalid_argument(message);
+}
+
+void ReleaseSemaphore(NpSemaphoreObject* self) {
+    if (self->state == NP_SEMAPHORE_OPENED) NotImplemented_nid_no_patch("sce::np::Semaphore: closing an opened semaphore (sceKernelCloseSema)");
+    else if (self->state == NP_SEMAPHORE_CREATED) sceNpDeleteSema(self->sema);
+}
 
 constexpr int NP_ERROR_STREAM_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
 constexpr std::size_t NP_MEMORY_STREAM_SIZE = 0x20;
@@ -560,6 +579,11 @@ int APS5_VABI sceNpPollSema(KernelSema sema) {
 
 int APS5_VABI sceNpSignalSema(KernelSema sema) {
     return NpResult(sceKernelSignalSema(sema, 1));
+}
+
+int APS5_VABI sceNpWaitSema(KernelSema sema, KernelUseconds* timeout) {
+    const int status = sceKernelWaitSema(sema, 1, timeout);
+    return status == KERNEL_ERROR_ETIMEDOUT ? NP_ERROR_TIMEOUT : NpResult(status);
 }
 
 int APS5_VABI sceNpCreateThread(Pthread* thread, PthreadEntry entry, void* arg, int priority, std::size_t stackSize, KernelCpumask affinity, const char* name) {
@@ -1011,6 +1035,64 @@ void APS5_VABI sceNpDbgDumpBinary(const void* data, std::size_t size) {
     std::putchar('\n');
 }
 
+void APS5_VABI _ZN3sce2np9SemaphoreC1Ev(NpSemaphoreObject* self) {
+    self->vtable = &NpSemaphoreVtable[2];
+    self->state = 0;
+}
+
+void APS5_VABI _ZN3sce2np9SemaphoreC2Ev(NpSemaphoreObject* self) {
+    _ZN3sce2np9SemaphoreC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9SemaphoreD1Ev(NpSemaphoreObject* self) {
+    self->vtable = &NpSemaphoreVtable[2];
+    if (self->state == NP_SEMAPHORE_OPENED) NotImplemented_nid_no_patch("sce::np::Semaphore: closing an opened semaphore (sceKernelCloseSema)");
+    else if (self->state == NP_SEMAPHORE_CREATED) sceKernelDeleteSema(self->sema);
+}
+
+void APS5_VABI _ZN3sce2np9SemaphoreD2Ev(NpSemaphoreObject* self) {
+    _ZN3sce2np9SemaphoreD1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np9SemaphoreD0Ev(NpSemaphoreObject* self) {
+    self->vtable = &NpSemaphoreVtable[2];
+    ReleaseSemaphore(self);
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+bool APS5_VABI _ZNK3sce2np9Semaphore6IsInitEv(const NpSemaphoreObject* self) {
+    return self->state != 0;
+}
+
+int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(NpSemaphoreObject* self, int initial, int maximum, const char* name) {
+    if (self->state != 0) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    const int result = sceNpCreateSema(&self->sema, 0, initial, maximum, name);
+    if (result < 0) return result;
+    self->state = NP_SEMAPHORE_CREATED;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2np9Semaphore4OpenEPKc(NpSemaphoreObject* self, const char*) {
+    if (self->state != 0) return NP_ERROR_OBJECT_ALREADY_INITIALIZED;
+    NotImplemented_nid_no_patch("sce::np::Semaphore::Open: opening a named semaphore (sceKernelOpenSema)");
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2np9Semaphore7DestroyEv(NpSemaphoreObject* self) {
+    ReleaseSemaphore(self);
+    self->state = 0;
+}
+
+int APS5_VABI _ZN3sce2np9Semaphore4WaitEj(NpSemaphoreObject* self, std::uint32_t usec) {
+    RequireSemaphoreInit(self, "sce::np::Semaphore::Wait: the semaphore is not initialized");
+    KernelUseconds timeout = usec;
+    return NpResult(sceNpWaitSema(self->sema, usec != 0 ? &timeout : nullptr));
+}
+
+int APS5_VABI _ZN3sce2np9Semaphore6SignalEv(NpSemaphoreObject* self) {
+    RequireSemaphoreInit(self, "sce::np::Semaphore::Signal: the semaphore is not initialized");
+    return NpResult(sceNpSignalSema(self->sema));
+}
 void APS5_VABI _ZN3sce2np18MemoryStreamReaderC1EPKvm(NpMemoryStreamReader* self, const void* data, std::size_t size) {
     self->vtable = &NpMemoryStreamReaderVtable[2];
     self->data = data;
