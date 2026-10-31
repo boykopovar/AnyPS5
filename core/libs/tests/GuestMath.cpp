@@ -1312,6 +1312,97 @@ static void CheckCbrtfConsoleBits() {
     }
 }
 
+struct X87Call { long double result; std::uint16_t control; std::uint16_t x87Flags; unsigned sseFlags; };
+
+template<typename Call>
+static X87Call CallAtControlWord(std::uint16_t control, Call call) {
+    const std::uint16_t savedControl = X87ControlWord();
+    const unsigned savedCsr = _mm_getcsr();
+    asm volatile("fnclex");
+    asm volatile("fldcw %0" : : "m"(control));
+    _mm_setcsr(0x1f80);
+    const long double result = call();
+    const X87Call outcome{result, X87ControlWord(), static_cast<std::uint16_t>(X87StatusWord() & 0x3f), _mm_getcsr() & 0x3f};
+    asm volatile("fnclex");
+    asm volatile("fldcw %0" : : "m"(savedControl));
+    _mm_setcsr(savedCsr);
+    return outcome;
+}
+
+static void CheckCbrtlConsoleBits() {
+    struct Case { std::uint64_t inputMantissa; std::uint16_t inputSignExponent; std::uint64_t outputMantissa; std::uint16_t outputSignExponent; std::uint16_t x87Flags; unsigned sseFlags; };
+    const Case extended[] = {
+        {0xd800000000000000ull, 0x4003, 0xc000000000000000ull, 0x4000, 0x20, 0x20}, {0xd800000000000000ull, 0xc003, 0xc000000000000000ull, 0xc000, 0x20, 0x20},
+        {0x8000000000000000ull, 0x4000, 0xa14517cc6b945711ull, 0x3fff, 0x20, 0x20}, {0xa000000000000000ull, 0x4002, 0x89e24209c3827654ull, 0x4000, 0x20, 0x20},
+        {0x0000000000000001ull, 0x0000, 0xa14517cc6b945711ull, 0x2a95, 0x22, 0x20}, {0xffffffffffffffffull, 0x7ffe, 0xa14517cc6b945711ull, 0x5554, 0x20, 0x20},
+        {0x8659809ec6db32bcull, 0x401d, 0x82151d1b393fd44dull, 0x4009, 0x20, 0x20}, {0xbd15357afb7986bdull, 0x4020, 0x91c70e7b9838a077ull, 0x400a, 0x20, 0x20},
+        {0xcf76fe67ae88c153ull, 0xc00b, 0x965b32c8c1d51019ull, 0xc003, 0x20, 0x20}, {0xa69c3c7f2132c2d6ull, 0x4015, 0xb0153af818af832full, 0x4006, 0x20, 0x20},
+        {0x9949610354ae1362ull, 0x4021, 0xab421a4bf7053065ull, 0x400a, 0x20, 0x20}, {0xe62954cd7699f167ull, 0x3fe2, 0xc41b843c989056a9ull, 0x3ff5, 0x20, 0x20},
+        {0x0000000000000000ull, 0x0000, 0x0000000000000000ull, 0x0000, 0x00, 0x00}, {0x0000000000000000ull, 0x8000, 0x0000000000000000ull, 0x8000, 0x00, 0x00},
+        {0x8000000000000000ull, 0x7fff, 0x8000000000000000ull, 0x7fff, 0x00, 0x00}, {0x8000000000000000ull, 0xffff, 0x8000000000000000ull, 0xffff, 0x00, 0x00},
+        {0xc000000000000001ull, 0x7fff, 0xc000000000000001ull, 0x7fff, 0x00, 0x00},
+    };
+    const Case doublePrecision[] = {
+        {0x8000000000000000ull, 0x4000, 0xa14517cc6b945800ull, 0x3fff, 0x20, 0x20}, {0xd800000000000000ull, 0xc003, 0xc000000000000000ull, 0xc000, 0x20, 0x20},
+        {0x0000000000000001ull, 0x0000, 0xa14517cc6b945800ull, 0x2a95, 0x22, 0x20}, {0x7fffffffffffffffull, 0x0000, 0xa14517cc6b945800ull, 0x2aaa, 0x22, 0x20},
+        {0xd82f8566779298d8ull, 0xb21c, 0x986f23ff4a11e000ull, 0xbb5e, 0x20, 0x20}, {0xf8d1d07800000000ull, 0x2284, 0xc94503ff4f674800ull, 0x362b, 0x20, 0x20},
+        {0x88e06c5dd95a24c0ull, 0x4020, 0x82e49bff760a1800ull, 0x400a, 0x20, 0x20}, {0xc000000000000001ull, 0x7fff, 0xc000000000000001ull, 0x7fff, 0x00, 0x00},
+    };
+    const auto check = [](std::uint16_t control, const auto& cases) {
+        for (const Case& test : cases) {
+            *__error_nid_postfix() = 12345;
+            const X87Call call = CallAtControlWord(control, [&] { return cbrtl_nid_postfix(MakeExtended(test.inputMantissa, test.inputSignExponent)); });
+            if (!ExtendedBits(call.result, test.outputMantissa, test.outputSignExponent) || call.control != control || call.x87Flags != test.x87Flags || call.sseFlags != test.sseFlags || *__error_nid_postfix() != 12345) {
+                std::fprintf(stderr, "Guest cbrtl failed for %016llx:%04x with control word %04x\n", static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent, control);
+                std::abort();
+            }
+        }
+    };
+    check(0x037f, extended);
+    check(0x027f, doublePrecision);
+}
+
+static void CheckHypotlConsoleBits() {
+    struct Expected { std::uint64_t mantissa; std::uint16_t signExponent; std::uint16_t x87Flags; };
+    struct Case { std::uint64_t xMantissa; std::uint16_t xSignExponent; std::uint64_t yMantissa; std::uint16_t ySignExponent; Expected extended; Expected doublePrecision; };
+    const Case cases[] = {
+        {0xc000000000000000ull, 0x4000, 0x8000000000000000ull, 0x4001, {0xa000000000000000ull, 0x4001, 0x00}, {0xa000000000000000ull, 0x4001, 0x00}},
+        {0xffffffffffffffffull, 0x7ffe, 0xffffffffffffffffull, 0x7ffe, {0x8000000000000000ull, 0x7fff, 0x28}, {0x8000000000000000ull, 0x7fff, 0x28}},
+        {0xffffffffffffffffull, 0x7ffd, 0xffffffffffffffffull, 0x7ffd, {0xb504f333f9de6484ull, 0x7ffe, 0x20}, {0xb504f333f9de6800ull, 0x7ffe, 0x20}},
+        {0x8000000000000000ull, 0x7000, 0xc000000000000000ull, 0x7001, {0xca62c1d6d2da9490ull, 0x7001, 0x20}, {0xca62c1d6d2da9800ull, 0x7001, 0x20}},
+        {0x8000000000000000ull, 0x0100, 0xc000000000000000ull, 0x0101, {0xca62c1d6d2da9490ull, 0x0101, 0x20}, {0xca62c1d6d2da9800ull, 0x0101, 0x20}},
+        {0x8000000000000000ull, 0x0001, 0x8000000000000000ull, 0x0001, {0xb504f333f9de6484ull, 0x0001, 0x20}, {0xb504f333f9de6800ull, 0x0001, 0x20}},
+        {0x8000000000000000ull, 0x3fff, 0x8000000000000000ull, 0x3f9b, {0x8000000000000000ull, 0x3fff, 0x20}, {0x8000000000000000ull, 0x3fff, 0x20}},
+        {0xb504f333f9de6484ull, 0x3fff, 0x8000000000000000ull, 0x3fe0, {0xb504f333f9de6485ull, 0x3fff, 0x20}, {0xb504f333f9de6800ull, 0x3fff, 0x20}},
+        {0xcce56ce05f6cdac4ull, 0xbfdd, 0xdc86e8ada6c48b60ull, 0xbff3, {0xdc86e8ada6ca7e5cull, 0x3ff3, 0x20}, {0xdc86e8ada6ca8000ull, 0x3ff3, 0x20}},
+        {0xcf60e4336a5ee9f5ull, 0x3ff1, 0xc2bb0393d4243f62ull, 0x3ff2, {0xdc9db48c47121f38ull, 0x3ff2, 0x20}, {0xdc9db48c47122000ull, 0x3ff2, 0x20}},
+        {0x8e0412b10b328599ull, 0x4021, 0xa5e56711d52bca5eull, 0xc00f, {0x8e0412b11140db2full, 0x4021, 0x20}, {0x8e0412b11140e000ull, 0x4021, 0x20}},
+        {0x9f6238ecb845578aull, 0xbfd9, 0x97bf0c39555930eaull, 0x3fe8, {0x97bf0c3aa428cb0bull, 0x3fe8, 0x20}, {0x97bf0c3aa428c800ull, 0x3fe8, 0x20}},
+        {0xef49df1b6b66f9c5ull, 0x401e, 0xfe63a94b5f780114ull, 0xc006, {0xef49df1b6b6780fdull, 0x401e, 0x20}, {0xef49df1b6b678000ull, 0x401e, 0x20}},
+        {0xcceddc08359cab33ull, 0x4018, 0xe4234da9b58ee241ull, 0xc00d, {0xccedde0428dd7f3aull, 0x4018, 0x20}, {0xccedde0428dd8000ull, 0x4018, 0x20}},
+        {0x8000000000000000ull, 0x7fff, 0xc000000000000001ull, 0x7fff, {0x8000000000000000ull, 0x7fff, 0x00}, {0x8000000000000000ull, 0x7fff, 0x00}},
+        {0xc000000000000001ull, 0x7fff, 0x8000000000000000ull, 0xffff, {0x8000000000000000ull, 0x7fff, 0x00}, {0x8000000000000000ull, 0x7fff, 0x00}},
+        {0xc000000000000001ull, 0xffff, 0x8000000000000000ull, 0x3fff, {0xc000000000000001ull, 0x7fff, 0x00}, {0xc000000000000001ull, 0x7fff, 0x00}},
+        {0x0000000000000000ull, 0x8000, 0x0000000000000000ull, 0x8000, {0x0000000000000000ull, 0x0000, 0x00}, {0x0000000000000000ull, 0x0000, 0x00}},
+        {0x0000000000000003ull, 0x0000, 0x0000000000000004ull, 0x0000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x0000300000000000ull, 0x0000, 0x0000400000000000ull, 0x8000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x095f2ce63cfd8f12ull, 0x8024, 0x000000000005f660ull, 0x8000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x0000000000000000ull, 0x0000, 0x0000000000000003ull, 0x0000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x0000000000000003ull, 0x0000, 0x0000000000000000ull, 0x8000, {0x0000000000000003ull, 0x0000, 0x00}, {0x0000000000000003ull, 0x0000, 0x00}},
+        {0x0000000000000001ull, 0x0000, 0xffffffffffffffffull, 0x0047, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+    };
+    for (const Case& test : cases) {
+        for (const auto& [control, expected] : {std::pair{std::uint16_t{0x037f}, test.extended}, std::pair{std::uint16_t{0x027f}, test.doublePrecision}}) {
+            *__error_nid_postfix() = 12345;
+            const X87Call call = CallAtControlWord(control, [&] { return hypotl_nid_postfix(MakeExtended(test.xMantissa, test.xSignExponent), MakeExtended(test.yMantissa, test.ySignExponent)); });
+            if (!ExtendedBits(call.result, expected.mantissa, expected.signExponent) || call.control != control || call.x87Flags != expected.x87Flags || call.sseFlags != 0 || *__error_nid_postfix() != 12345) {
+                std::fprintf(stderr, "Guest hypotl failed for %016llx:%04x, %016llx:%04x with control word %04x\n", static_cast<unsigned long long>(test.xMantissa), test.xSignExponent, static_cast<unsigned long long>(test.yMantissa), test.ySignExponent, control);
+                std::abort();
+            }
+        }
+    }
+}
+
 static void CheckIntegerConversions() {
     for (const long long numerator : {4294967301LL, -4294967301LL}) {
         for (const long long denominator : {3LL, -3LL}) {
@@ -2437,6 +2528,8 @@ int main() {
     CheckFloatMathExports();
     CheckIntegerConversions();
     CheckCbrtfConsoleBits();
+    CheckCbrtlConsoleBits();
+    CheckHypotlConsoleBits();
     CheckExtendedMath();
     CheckTrigfConsoleBits();
     Require(atof_nid_postfix(" -12.5tail") == -12.5);
