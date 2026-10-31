@@ -360,7 +360,9 @@ bool SystemImage(const GuestImage& image) {
 template<typename TInfo>
 int FillModuleInfo(KernelModule handle, TInfo* info, bool titleOnly) {
     if (!info) return SCE_KERNEL_ERROR_EFAULT;
-    if (info->st_size != sizeof(TInfo)) return SCE_KERNEL_ERROR_EINVAL;
+    std::size_t size = 0;
+    if (!GuestCopyIn_nid_no_patch(&size, &info->st_size, sizeof(size))) return SCE_KERNEL_ERROR_EFAULT;
+    if (size != sizeof(TInfo)) return SCE_KERNEL_ERROR_EINVAL;
     for (const auto& image : GuestImages()) {
         if (ModuleIdForImage_nid_no_patch(image.native) != handle) continue;
         if (titleOnly && SystemImage(image)) return SCE_KERNEL_ERROR_EPERM;
@@ -374,7 +376,7 @@ int FillModuleInfo(KernelModule handle, TInfo* info, bool titleOnly) {
         if (!search.found) return SCE_KERNEL_ERROR_ESRCH;
         if constexpr (std::is_same_v<TInfo, ModuleInfoEx>) result.id = handle;
 #endif
-        *info = result;
+        if (!GuestCopyOut_nid_no_patch(info, &result, sizeof(result))) return SCE_KERNEL_ERROR_EFAULT;
         return 0;
     }
     return SCE_KERNEL_ERROR_ESRCH;
@@ -384,10 +386,14 @@ int FillModuleList(KernelModule* handles, std::size_t count, std::size_t* actual
     if (!handles) return SCE_KERNEL_ERROR_EFAULT;
     auto images = GuestImages();
     if (titleOnly) std::erase_if(images, SystemImage);
-    for (std::size_t i = 0; i < images.size() && i < count; ++i) handles[i] = ModuleIdForImage_nid_no_patch(images[i].native);
+    for (std::size_t i = 0; i < images.size() && i < count; ++i) {
+        const KernelModule id = ModuleIdForImage_nid_no_patch(images[i].native);
+        if (!GuestCopyOut_nid_no_patch(&handles[i], &id, sizeof(id))) return SCE_KERNEL_ERROR_EFAULT;
+    }
     if (images.size() > count) return SCE_KERNEL_ERROR_ENOMEM;
     if (!actual) return SCE_KERNEL_ERROR_EFAULT;
-    *actual = images.size();
+    const std::size_t size = images.size();
+    if (!GuestCopyOut_nid_no_patch(actual, &size, sizeof(size))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -398,7 +404,8 @@ extern "C" {
 int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info) {
     if (flags != 1 && flags != 2) {
         if (!info) throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: null info with flags " + std::to_string(flags));
-        *info = {};
+        ModuleInfoEx cleared{};
+        if (!GuestCopyOut_nid_no_patch(info, &cleared, sizeof(cleared))) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_EINVAL;
     }
     if (!info) return SCE_KERNEL_ERROR_EFAULT;
@@ -419,10 +426,11 @@ int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, M
     const GuestImage image{native, 0};
 #endif
     if (!found || (flags == 2 && SystemImage(image))) {
-        *info = {};
+        ModuleInfoEx cleared{};
+        if (!GuestCopyOut_nid_no_patch(info, &cleared, sizeof(cleared))) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_ESRCH;
     }
-    *info = result;
+    if (!GuestCopyOut_nid_no_patch(info, &result, sizeof(result))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 

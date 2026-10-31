@@ -97,6 +97,8 @@ int main(int argc, char** argv) {
     std::vector<KernelModule> written(count, -1);
     Require(sceKernelGetModuleList(written.data(), written.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Require(written == handles);
+    Require(sceKernelGetModuleList(reinterpret_cast<KernelModule*>(0x10), count, &untouched) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetModuleList(written.data(), written.size(), reinterpret_cast<std::size_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     const auto kernelEx = Query(reinterpret_cast<const void*>(&sceKernelGetModuleInfo), 0);
     ModuleInfo kernelInfo{};
     kernelInfo.st_size = sizeof(ModuleInfo);
@@ -133,6 +135,7 @@ int main(int argc, char** argv) {
         Require(sceKernelGetModuleInfo(kernel, &sized) == SCE_KERNEL_ERROR_EINVAL && sized.st_size == size && sized.name[0] == 'x');
     }
     Require(sceKernelGetModuleInfo(kernel, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetModuleInfo(kernel, reinterpret_cast<ModuleInfo*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     ModuleInfo unknown{};
     unknown.st_size = sizeof(ModuleInfo);
     Require(sceKernelGetModuleInfo(info.id, &unknown) == SCE_KERNEL_ERROR_ESRCH);
@@ -154,6 +157,8 @@ int main(int argc, char** argv) {
     Require(sceKernelGetModuleList2(titleHandles.data(), titleCount - 1, &titleUntouched) == SCE_KERNEL_ERROR_ENOMEM && titleUntouched == 99);
     Require(sceKernelGetModuleList2(nullptr, 0, &titleUntouched) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelGetModuleList2(titleHandles.data(), titleHandles.size(), nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetModuleList2(reinterpret_cast<KernelModule*>(0x10), titleCount, &titleUntouched) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetModuleList2(titleHandles.data(), titleHandles.size(), reinterpret_cast<std::size_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     for (const auto handle : handles) {
         if (std::count(titleHandles.begin(), titleHandles.end(), handle) != 0) continue;
         ModuleInfo system{};
@@ -161,6 +166,7 @@ int main(int argc, char** argv) {
         system.name[0] = 'x';
         Require(sceKernelGetModuleInfo2(handle, &system) == SCE_KERNEL_ERROR_EPERM && system.name[0] == 'x');
         Require(sceKernelGetModuleInfo2(handle, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+        Require(sceKernelGetModuleInfo2(handle, reinterpret_cast<ModuleInfo*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
         system.st_size = 0x158;
         Require(sceKernelGetModuleInfo2(handle, &system) == SCE_KERNEL_ERROR_EINVAL);
     }
@@ -170,6 +176,9 @@ int main(int argc, char** argv) {
     int local = 0;
     Query(&local, SCE_KERNEL_ERROR_ESRCH);
     Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 2, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 2, reinterpret_cast<ModuleInfoEx*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 1, reinterpret_cast<ModuleInfoEx*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(add), 0, reinterpret_cast<ModuleInfoEx*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     ModuleInfoEx invalid{};
     invalid.st_size = sizeof(ModuleInfoEx);
     for (const int flags : {-1, 0, 3, 4, 8}) {
