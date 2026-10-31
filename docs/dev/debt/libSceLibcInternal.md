@@ -1,5 +1,9 @@
 # libSceLibcInternal technical debt
 
+### Floating-point word access
+
+- [Floating-point word access](../../../core/libs/prx/libSceLibcInternal/FloatWords.cpp): `_Plsw`, `_Pmsw`, `_FPlsw`, `_FPmsw`, `_LPlsw` and `_LPmsw` return writable pointers to the least or most significant 16-bit word of a double, float or 80-bit extended value. The signatures and word-selection model follow Dinkumware's `xmath.h`, `xdtest.c`, `xfdtest.c` and `xldtest.c` ([reference tree](https://github.com/dorpxtos/xtos/tree/master/Crt/stl)). This is not verified on PS5. The implementation assumes the guest's little-endian IEEE binary32/binary64 and padded x87 extended layout (the extended sign/exponent word starts at byte 8; bytes 10â€“15 are padding) and rejects null pointers by throwing instead of reproducing native pointer arithmetic on a null address.
+
 ### Additional callable exports
 
 The named entries below use provider-specific NID aliases to avoid interposing host libc and C++ runtime symbols.
@@ -347,7 +351,7 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 
 ### Additional PS5 3.20 imports (xdCloudy #9498)
 
-- [3.20 pending imports](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - The following PS5 3.20 inventory names are declared for import resolution only; their prototypes and behavior are unverified, and each call throws through `NotImplemented_nid_no_patch`. The source list is [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
+- [3.20 imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - The following list records PS5 3.20 inventory names, including the floating-point word helpers implemented above. Other listed names remain import-resolution stubs with unverified prototypes and behavior, throwing through `NotImplemented_nid_no_patch`. The source list is [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Atan`, `_Atqexit`, `_Atthreadexit`, `_CStrftime`, `_CStrxfrm`, `_CWcsxfrm`, `_Call_onceEx`, `_Closreg`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Daysto`, `_Deletegloballocale`, `_Do_call`, `_Dtento`, `_Erfc`, `_FAtan`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FDtento`, `_FErfc`, `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
