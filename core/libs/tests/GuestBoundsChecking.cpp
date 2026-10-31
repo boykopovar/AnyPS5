@@ -137,6 +137,64 @@ void CheckWcstok() {
     RequireViolation(before, "wcstok_s: bad argument", 22);
 }
 
+void CheckStrtok() {
+    char text[] = ",,ab;c,,;";
+    std::size_t remaining = sizeof(text);
+    char* context = nullptr;
+    char* token = strtok_s_nid_postfix(text, &remaining, ",;", &context);
+    Require(token == text + 2 && std::strcmp(token, "ab") == 0 && remaining == 5 && context == text + 5, "strtok_s did not return the first token");
+    token = strtok_s_nid_postfix(nullptr, &remaining, ",;", &context);
+    Require(token == text + 5 && std::strcmp(token, "c") == 0 && remaining == 3 && context == text + 7, "strtok_s did not return the second token");
+    token = strtok_s_nid_postfix(nullptr, &remaining, ",;", &context);
+    Require(token == nullptr && remaining == 1 && context == text + 9, "strtok_s did not stop at the end of the string");
+
+    int before = constraintCalls;
+    char unterminated[] = "abc";
+    remaining = 2;
+    Require(strtok_s_nid_postfix(unterminated, &remaining, ",;", &context) == nullptr, "strtok_s read past s1max");
+    RequireViolation(before, "strtok_s: missing delimiter", 22);
+    before = constraintCalls;
+    char separators[] = ",,,x";
+    remaining = 3;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr, "strtok_s skipped past s1max");
+    RequireViolation(before, "strtok_s: missing token", 22);
+    before = constraintCalls;
+    remaining = 0;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr, "strtok_s accepted a zero s1max");
+    RequireViolation(before, "strtok_s: missing token", 22);
+    before = constraintCalls;
+    remaining = tooLarge;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr, "strtok_s accepted an oversized s1max");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    context = nullptr;
+    remaining = 4;
+    Require(strtok_s_nid_postfix(nullptr, &remaining, ",;", &context) == nullptr, "strtok_s accepted a null context string");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    Require(strtok_s_nid_postfix(separators, &remaining, nullptr, &context) == nullptr, "strtok_s accepted null delimiters");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    Require(strtok_s_nid_postfix(separators, nullptr, ",;", &context) == nullptr, "strtok_s accepted a null s1max");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", nullptr) == nullptr && remaining == 4, "strtok_s accepted a null ptr");
+    RequireViolation(before, "strtok_s: bad argument", 22);
+    before = constraintCalls;
+    char exact[] = "ab,";
+    remaining = 2;
+    context = nullptr;
+    Require(strtok_s_nid_postfix(exact, &remaining, ",;", &context) == nullptr && remaining == 2 && context == nullptr, "strtok_s accepted a token that fills s1max");
+    RequireViolation(before, "strtok_s: missing delimiter", 22);
+    before = constraintCalls;
+    char largest[] = ",x";
+    remaining = tooLarge - 1;
+    Require(strtok_s_nid_postfix(largest, &remaining, ",;", &context) == largest + 1 && remaining == tooLarge - 3 && context == largest + 2 && constraintCalls == before, "strtok_s rejected the largest s1max");
+    remaining = 3;
+    Require(strtok_s_nid_postfix(separators, &remaining, ",;", &context) == nullptr && remaining == 3 && context == largest + 2, "strtok_s changed its state on a missing token");
+    RequireViolation(before, "strtok_s: missing token", 22);
+}
+
 void CheckWideToMultibyte() {
     int status = 7;
     char bytes[4] = {'x', 'x', 'x', 'x'};
@@ -261,6 +319,7 @@ int main(int argc, char** argv) {
 
     CheckBsearch();
     CheckWcstok();
+    CheckStrtok();
     CheckWideToMultibyte();
     CheckMultibyteToWide();
     CheckGets(argv[1]);

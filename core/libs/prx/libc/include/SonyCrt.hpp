@@ -64,23 +64,50 @@ inline void SonyInvokeConstraintHandler(const char* message, void* pointer, int 
     if (handler) handler(message, pointer, error);
 }
 
-inline char* SonyStrtokS(char* str, const char* delim, char** context) {
-    if (!delim || !context) return nullptr;
-    char* cursor = str ? str : *context;
-    if (!cursor) return nullptr;
-    cursor += std::strspn(cursor, delim);
-    if (*cursor == '\0') {
-        *context = cursor;
+inline char* SonyStrtokS(char* str, std::size_t* remaining, const char* delimiters, char** context) {
+    if (!remaining || !context || !delimiters || *remaining > (SIZE_MAX >> 3) || (!str && !*context)) {
+        SonyInvokeConstraintHandler("strtok_s: bad argument", nullptr, EINVAL);
         return nullptr;
     }
-    char* token = cursor;
-    cursor += std::strcspn(cursor, delim);
-    if (*cursor != '\0') {
-        *cursor = '\0';
-        *context = cursor + 1;
-    } else {
-        *context = cursor;
+    if (!str) str = *context;
+    const auto isDelimiter = [delimiters](char value) {
+        for (const char* delimiter = delimiters; *delimiter != '\0'; ++delimiter)
+            if (*delimiter == value) return true;
+        return false;
+    };
+    const std::size_t available = *remaining;
+    std::size_t skipped = 0;
+    if (available == 0) {
+        SonyInvokeConstraintHandler("strtok_s: missing token", nullptr, EINVAL);
+        return nullptr;
     }
+    while (str[skipped] != '\0' && isDelimiter(str[skipped])) {
+        if (++skipped == available) {
+            SonyInvokeConstraintHandler("strtok_s: missing token", nullptr, EINVAL);
+            return nullptr;
+        }
+    }
+    char* const token = str + skipped;
+    const std::size_t left = available - skipped;
+    *remaining = left;
+    if (*token == '\0') {
+        *context = token;
+        return nullptr;
+    }
+    std::size_t length = 0;
+    while (token[length] != '\0' && !isDelimiter(token[length])) {
+        if (++length == left) {
+            SonyInvokeConstraintHandler("strtok_s: missing delimiter", nullptr, EINVAL);
+            return nullptr;
+        }
+    }
+    char* next = token + length;
+    *remaining = left - length;
+    if (*next != '\0') {
+        *next++ = '\0';
+        *remaining = left - length - 1;
+    }
+    *context = next;
     return token;
 }
 

@@ -1078,7 +1078,7 @@ int APS5_VABI _WStopfx_nid_postfix(const char16_t** cursor, char16_t** end);
 int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second);
 size_t APS5_VABI wcsxfrm_nid_postfix(char16_t* destination, const char16_t* source, size_t count);
 size_t APS5_VABI strxfrm_nid_postfix(char* destination, const char* source, size_t count);
-char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** context);
+char* APS5_VABI strtok_s_nid_postfix(char* str, std::size_t* remaining, const char* delimiters, char** context);
 int APS5_VABI wmemcpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count);
 int APS5_VABI wmemmove_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count);
 int APS5_VABI wcsncpy_s_nid_postfix(char16_t* dest, size_t destsz, const char16_t* src, size_t count);
