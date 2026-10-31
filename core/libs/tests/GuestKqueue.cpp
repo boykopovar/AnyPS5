@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <chrono>
 #include <cstdint>
 #include <ctime>
@@ -16,6 +17,8 @@
 #ifdef _WIN32
 #include <aclapi.h>
 #include <windows.h>
+#elif defined(__linux__)
+#include <sched.h>
 #endif
 #include <fcntl.h>
 #ifdef _WIN32
@@ -127,6 +130,46 @@ template <typename TCall> static std::string ThrownMessage(TCall call) {
         return error.what();
     }
     return {};
+}
+
+static void BadPointersFaultAndBatchesFill() {
+    constexpr int fault = 14;
+    const int kq = kqueue_nid_postfix();
+    for (std::uintptr_t ident = 100; ident < 112; ++ident) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    KernelEvent events[16]{};
+    Require(Poll(kq, events, 16) == 12);
+    std::uint32_t seen = 0;
+    for (int i = 0; i < 12; ++i) seen |= 1u << (events[i].ident - 100);
+    Require(seen == 0xfff);
+    std::vector<KernelEvent> many(100);
+    Require(Poll(kq, many.data(), 100) == 12);
+    Require(Poll(kq, events, 9) == 9);
+    Require(Poll(kq, events, 5) == 5);
+    auto* unmapped = reinterpret_cast<KernelEvent*>(std::uintptr_t{0x10});
+    const KernelTimespec zero{0, 0};
+    RequireFailure(kevent_nid_postfix(kq, unmapped, 1, nullptr, 0, nullptr), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, events, 16, reinterpret_cast<const KernelTimespec*>(unmapped)), fault);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, unmapped, 16, &zero), fault);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    auto* readOnly = static_cast<KernelEvent*>(page);
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    RequireFailure(kevent_nid_postfix(kq, nullptr, 0, readOnly, 16, &zero), fault);
+    Require(readOnly[0].ident == 0 && readOnly[0].filter == 0);
+    const KernelEvent bad = Change(200, EvfiltUser, 0, NoteTrigger);
+    RequireFailure(kevent_nid_postfix(kq, &bad, 1, readOnly, 1, &zero), fault);
+    Require(Poll(kq, events, INT_MAX) == 12);
+    for (std::uintptr_t ident = 1000; ident < 2030; ++ident) {
+        Require(Apply(kq, Change(ident, EvfiltUser, EvAdd)) == 0);
+        Require(Apply(kq, Change(ident, EvfiltUser, 0, NoteTrigger)) == 0);
+    }
+    std::vector<KernelEvent> plenty(2000);
+    Require(Poll(kq, plenty.data(), 2000) == 1024);
+    for (std::uintptr_t ident = 1000; ident < 2030; ++ident) Require(Apply(kq, Change(ident, EvfiltUser, EvDelete)) == 0);
+    Require(close_nid_postfix(kq) == 0);
 }
 
 static void CreateAndClose() {
@@ -570,8 +613,8 @@ static void WatchKqueue() {
 
     RequireFailure(Apply(outer, Change(watched, EvfiltWrite, EvAdd)), GuestEinval);
     RequireFailure(Apply(outer, Change(watched, EvfiltVnode, EvAdd, NoteWrite)), GuestEinval);
-    Require(ThrownMessage([outer, watched] { Apply(outer, Change(watched, EvfiltRead, EvAdd | EvClear)); }).find("EV_CLEAR on a kqueue descriptor") != std::string::npos);
-    RequireFailure(Apply(outer, Change(watched, EvfiltRead, EvDelete)), GuestEnoent);
+    Require(Apply(outer, Change(watched, EvfiltRead, EvAdd | EvClear)) == 0);
+    Require(Apply(outer, Change(watched, EvfiltRead, EvDelete)) == 0);
     Require(Apply(outer, Change(watched, EvfiltRead, EvAdd)) == 0);
     Require(ThrownMessage([inner, outer] { Apply(inner, Change(static_cast<std::uintptr_t>(outer), EvfiltRead, EvAdd)); }).find("watches the kqueue") != std::string::npos);
     Require(Apply(inner, Change(5, EvfiltUser, 0, NoteTrigger)) == 0);
@@ -581,6 +624,110 @@ static void WatchKqueue() {
     Require(Poll(outer, events, 4) == 0);
     RequireFailure(Apply(outer, Change(watched, EvfiltRead, EvDelete)), GuestEbadf);
     Require(close_nid_postfix(outer) == 0);
+}
+
+static void ClearedKqueue() {
+    const int inner = kqueue_nid_postfix();
+    const int outer = kqueue_nid_postfix();
+    Require(inner >= 0 && outer >= 0);
+    const auto watched = static_cast<std::uintptr_t>(inner);
+    KernelEvent events[4]{};
+    Require(Apply(inner, Change(7, EvfiltUser, EvAdd)) == 0);
+    Require(Apply(inner, Change(8, EvfiltUser, EvAdd)) == 0);
+    Require(Apply(outer, Change(watched, EvfiltRead, EvAdd | EvClear)) == 0);
+    Require(Poll(outer, events, 4) == 0);
+
+    Require(Apply(inner, Change(7, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(Poll(outer, events, 4) == 1 && events[0].ident == watched && events[0].data == 1 && (events[0].flags & EvClear) != 0);
+    Require(Poll(outer, events, 4) == 0);
+    Require(Poll(inner, events, 4) == 1);
+    Require(Poll(outer, events, 4) == 0);
+
+    Require(Apply(inner, Change(8, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(Poll(outer, events, 4) == 1 && events[0].data == 2);
+    Require(Poll(outer, events, 4) == 0);
+
+    Require(Apply(outer, Change(watched, EvfiltRead, EvDelete)) == 0);
+    Require(Apply(outer, Change(watched, EvfiltRead, EvAdd | EvClear)) == 0);
+    Require(Poll(outer, events, 4) == 1 && events[0].data == 2);
+    Require(Poll(outer, events, 4) == 0);
+    Require(close_nid_postfix(outer) == 0 && close_nid_postfix(inner) == 0);
+}
+
+static void ClearedKqueueRechecksTheWatchedCount() {
+    const int inner = kqueue_nid_postfix();
+    const int outer = kqueue_nid_postfix();
+    Require(inner >= 0 && outer >= 0);
+    const auto watched = static_cast<std::uintptr_t>(inner);
+    KernelEvent events[4]{};
+    Require(Apply(inner, Change(7, EvfiltUser, EvAdd | EvClear)) == 0);
+    Require(Apply(inner, Change(8, EvfiltUser, EvAdd | EvClear)) == 0);
+    Require(Apply(outer, Change(1, EvfiltUser, EvAdd | EvClear)) == 0);
+    Require(Apply(outer, Change(watched, EvfiltRead, EvAdd | EvClear)) == 0);
+
+    Require(Apply(inner, Change(7, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(Apply(outer, Change(1, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(Poll(inner, events, 4) == 1 && events[0].ident == 7);
+    Require(Poll(outer, events, 4) == 1 && events[0].ident == 1 && events[0].filter == EvfiltUser);
+    Require(Poll(outer, events, 4) == 0);
+
+    Require(Apply(inner, Change(7, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(Apply(inner, Change(8, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(Apply(outer, Change(1, EvfiltUser, 0, NoteTrigger)) == 0);
+    Require(Poll(inner, events, 1) == 1);
+    Require(Poll(outer, events, 4) == 2);
+    const bool watchedFirst = events[0].ident == watched;
+    const KernelEvent& userEvent = events[watchedFirst ? 1 : 0];
+    const KernelEvent& watchedEvent = events[watchedFirst ? 0 : 1];
+    Require(userEvent.ident == 1 && userEvent.filter == EvfiltUser);
+    Require(watchedEvent.ident == watched && watchedEvent.filter == EvfiltRead && watchedEvent.data == 1);
+    Require(Poll(outer, events, 4) == 0);
+
+    Require(Apply(outer, Change(watched, EvfiltRead, EvAdd | EvClear)) == 0);
+    Require(Poll(outer, events, 4) == 1 && events[0].ident == watched && events[0].data == 1);
+    Require(Poll(outer, events, 4) == 0);
+    Require(Apply(outer, Change(watched, EvfiltRead, EvDisable)) == 0);
+    Require(Apply(outer, Change(watched, EvfiltRead, EvEnable)) == 0);
+    Require(Poll(outer, events, 4) == 1 && events[0].ident == watched && events[0].data == 1);
+    Require(Poll(inner, events, 4) == 1);
+    Require(Apply(outer, Change(watched, EvfiltRead, EvAdd | EvClear)) == 0);
+    Require(Poll(outer, events, 4) == 0);
+    Require(close_nid_postfix(outer) == 0 && close_nid_postfix(inner) == 0);
+}
+
+static void RunOnOneCpuOnLinux() {
+#ifdef __linux__
+    cpu_set_t allowed;
+    CPU_ZERO(&allowed);
+    Require(sched_getaffinity(0, sizeof(allowed), &allowed) == 0);
+    int first = 0;
+    while (first < CPU_SETSIZE && !CPU_ISSET(first, &allowed)) ++first;
+    Require(first < CPU_SETSIZE);
+    cpu_set_t one;
+    CPU_ZERO(&one);
+    CPU_SET(first, &one);
+    Require(sched_setaffinity(0, sizeof(one), &one) == 0);
+#endif
+}
+
+static void ClearedKqueueKeepsConcurrentActivations() {
+    RunOnOneCpuOnLinux();
+    const int inner = kqueue_nid_postfix();
+    const int outer = kqueue_nid_postfix();
+    Require(inner >= 0 && outer >= 0);
+    const auto watched = static_cast<std::uintptr_t>(inner);
+    KernelEvent events[4]{};
+    Require(Apply(inner, Change(7, EvfiltUser, EvAdd | EvClear)) == 0);
+    for (std::uintptr_t filler = 100; filler < 12100; ++filler) Require(Apply(inner, Change(filler, EvfiltUser, EvAdd)) == 0);
+    Require(Apply(outer, Change(watched, EvfiltRead, EvAdd | EvClear)) == 0);
+    for (int round = 0; round < 1250; ++round) {
+        std::thread trigger([inner] { Require(Apply(inner, Change(7, EvfiltUser, 0, NoteTrigger)) == 0); });
+        const int reported = Wait(outer, events, 4);
+        trigger.join();
+        Require(reported == 1 && events[0].ident == watched);
+        Require(Poll(inner, events, 4) == 1);
+    }
+    Require(close_nid_postfix(outer) == 0 && close_nid_postfix(inner) == 0);
 }
 
 static void LowWaterMarks() {
@@ -1470,7 +1617,11 @@ static void StandardInput() {
     Require(close_nid_postfix(kq) == 0);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "cleared-race") {
+        ClearedKqueueKeepsConcurrentActivations();
+        return 0;
+    }
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
@@ -1497,6 +1648,8 @@ int main() {
     ReportedKnotesMoveToTail();
     Errors();
     LowWaterMarks();
+    ClearedKqueue();
+    ClearedKqueueRechecksTheWatchedCount();
     FileWatch();
 #ifndef _WIN32
     RenameAndDeleteWatchedFile();
@@ -1516,5 +1669,6 @@ int main() {
     DeniedParentWatch();
 #endif
     Timeout();
+    BadPointersFaultAndBatchesFill();
     return 0;
 }

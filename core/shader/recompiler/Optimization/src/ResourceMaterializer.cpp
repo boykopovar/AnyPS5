@@ -1613,9 +1613,34 @@ std::uint32_t emulatedCompareState(const ShaderInfo& info, const ResourceSnapsho
     return *samplerState | (reference << EmulatedCompare::ReferenceShift) | (singleLevel ? EmulatedCompare::SingleLevel : 0u);
 }
 
+bool disabledBufferDescriptor(const BufferResource& buffer, const DescriptorValue& descriptor) {
+    const auto decoded = decodeBufferDescriptor(descriptor);
+    const auto format = decoded.RawFormat();
+    if (decoded.Type() == 0u) return format == 0u;
+    return (decoded.Type() == 2u || decoded.Type() == 3u) && format <= static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) && !buffer.read;
+}
+
+bool disabledBufferAccesses(const IrResourcePlan& plan, std::uint32_t index, const DescriptorValue& descriptor) {
+    const auto& buffer = plan.info.buffers[index];
+    if (GcnGuestShaders() || buffer.atomic || buffer.scalar || buffer.imageAlias != BufferResource::NoImageAlias || !disabledBufferDescriptor(buffer, descriptor)) return false;
+    const bool measuredOnly = decodeBufferDescriptor(descriptor).Type() != 0u;
+    bool accessed = false;
+    for (const auto& memory : plan.memoryInfo) {
+        if (memory.kind != ResourceKind::Buffer || memory.resource != index) continue;
+        if (memory.typed || memory.gpuDescriptor) return false;
+        if (measuredOnly && (memory.dataDwords != 1u || memory.componentCount != 1u)) return false;
+        accessed = true;
+    }
+    return accessed;
+}
+
 void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
     for (std::uint32_t i = 0u; i < plan.info.buffers.size(); ++i) {
         const auto& buffer = plan.info.buffers[i];
+        if (disabledBufferAccesses(plan, i, snapshot.buffers.at(i))) {
+            auto& words = snapshot.buffers.at(i).dwords;
+            std::fill(words.begin(), words.begin() + 4, 0u);
+        }
         const bool scalarOnly = buffer.scalar && !buffer.written && !buffer.atomic && !buffer.formatted && buffer.imageAlias == BufferResource::NoImageAlias
             && std::none_of(plan.memoryInfo.begin(), plan.memoryInfo.end(), [i](const MemoryInfo& memory) { return memory.kind == ResourceKind::Buffer && memory.resource == i; });
         if (scalarOnly) {
@@ -2018,7 +2043,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible && conversion != FmaskExpansion;
         const bool volumeStore = image.dimension == RdnaImageDimension::Dim2DArray && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
         const bool volumePlaneBias = image.dimension == RdnaImageDimension::Dim2D && image.singleMipPlaneBiasCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
-        const bool volumeArraySample = image.dimension == RdnaImageDimension::Dim2DArray && image.volumeArraySampleCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
+        const bool volumeArraySample = image.dimension == RdnaImageDimension::Dim2DArray && image.volumeArraySampleCompatible && !image.adjustedSample && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
         if ((volumeLoad || volumeStore || volumePlaneBias || volumeArraySample) && !depth && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
             auto volume = mode;
             volume.dimension = RdnaImageDimension::Dim3D;
@@ -2053,7 +2078,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             modes.push_back(line);
         }
         const bool cubeFaceStorage = image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
-        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && (!storage || cubeFaceStorage) && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && !image.adjustedSample && (!storage || cubeFaceStorage) && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
             auto face = mode;
             face.dimension = RdnaImageDimension::Dim2DArray;
             face.cube = true;
