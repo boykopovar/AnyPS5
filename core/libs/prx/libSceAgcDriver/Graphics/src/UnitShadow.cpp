@@ -319,7 +319,7 @@ void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copie
     recorder->MarkCovered(publishedAccess);
     for (const auto& entry : copies) recorder->Keep(entry.slab);
     // CPU readers reach the import's bytes only after the hook's SyncThrough waits by this note.
-    recorder->NotePendingWrites(ranges);
+    recorder->NoteStampedWrites(ranges);
 }
 
 // APS5_SHADOW_VERIFY=1: the published bytes read back from the slabs equal the guest bytes.

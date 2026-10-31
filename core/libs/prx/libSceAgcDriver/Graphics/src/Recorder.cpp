@@ -3082,6 +3082,13 @@ void Recorder::NotePendingWrites(std::span<const std::pair<std::uint64_t, std::u
     std::atomic_thread_fence(std::memory_order_seq_cst);
 }
 
+void Recorder::NoteStampedWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    const auto first = writeNoteCount + 1;
+    NotePendingWrites(ranges);
+    if (open == nullptr) return;
+    for (auto note = first; note <= writeNoteCount; ++note) open->stampedNotes.push_back(note);
+}
+
 void Recorder::publishPendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> additions) const {
     if (activeRecorder != this) {
         publishedWriteRangesValid = false;
@@ -3199,6 +3206,18 @@ bool Recorder::PendingWriteSettled(std::uint64_t address, std::size_t bytes) con
         if (overlaps(*batch, address, end) && !signaled(*batch)) return false;
     }
     return true;
+}
+
+std::vector<std::uint64_t> Recorder::StampedNotesSince(std::uint64_t note) const {
+    std::vector<std::uint64_t> notes;
+    const auto collect = [&](const Batch& batch) {
+        for (const auto stamped : batch.stampedNotes) {
+            if (stamped > note) notes.push_back(stamped);
+        }
+    };
+    for (const auto& batch : inFlight) collect(*batch);
+    if (open != nullptr) collect(*open);
+    return notes;
 }
 
 std::uint64_t Recorder::LastWriteNote(std::uint64_t address, std::size_t bytes) const {

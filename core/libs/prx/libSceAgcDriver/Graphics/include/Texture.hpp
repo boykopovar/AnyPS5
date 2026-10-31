@@ -681,6 +681,7 @@ private:
     bool pendingFromOthers = false;
     std::vector<DrawnRect> drawnRects;
     std::vector<std::uint64_t> storeNotes;
+    std::vector<std::uint64_t> flushNotes;
     std::uint64_t version = 0;
     std::uint64_t writes = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.

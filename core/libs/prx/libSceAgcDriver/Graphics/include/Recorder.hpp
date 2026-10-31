@@ -129,12 +129,15 @@ public:
     void NotePendingWordFill(std::uint64_t address, std::size_t bytes, std::uint32_t word);
     // Notes several [begin, end) ranges and publishes the snapshot once (a dispatch writes many buffers).
     void NotePendingWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
+    void NoteStampedWrites(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     bool PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) const;
     // Whether no unfinished batch writes the range any more: no open-batch overlap, and every
     // overlapping in-flight batch's fence has signaled (its in-place GPU stores are final in host
     // memory; its completion stores are the caller's business, see VulkanDevice::CopyBuffer).
     bool PendingWriteSettled(std::uint64_t address, std::size_t bytes) const;
     std::uint64_t LastWriteNote(std::uint64_t address, std::size_t bytes) const;
+    std::uint64_t WriteNoteCount() const { return writeNoteCount; }
+    std::vector<std::uint64_t> StampedNotesSince(std::uint64_t note) const;
     std::uint64_t NewestWriteNote(std::uint64_t address, std::size_t bytes) const;
     struct PendingWrite {
         std::uint64_t begin;
@@ -571,6 +574,7 @@ private:
         std::vector<std::function<void()>> completions;
         std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
         std::vector<std::uint64_t> writeNotes;
+        std::vector<std::uint64_t> stampedNotes;
         std::vector<std::int16_t> writeValues;
         std::vector<std::int64_t> writeWords;
         // In-place reads (see NotePendingRead), dying with the batch: a finished batch's reads are done.
