@@ -234,8 +234,10 @@ int AddHeader(Settings& settings, const char* name, const char* value, std::uint
         "sceHttp2AddRequestHeader: invalid header name");
     Require(nghttp2_check_header_value_rfc9113(reinterpret_cast<const std::uint8_t*>(value), std::strlen(value)),
         "sceHttp2AddRequestHeader: invalid header value");
+    if (key == "host") Require(value[0] != '\0' && std::string_view(value).find_first_of(" \t") == std::string_view::npos,
+        "sceHttp2AddRequestHeader: invalid host header value");
     Require(key != "connection" && key != "proxy-connection" && key != "keep-alive" && key != "upgrade" &&
-        key != "transfer-encoding" && key != "host" && key != "content-length" &&
+        key != "transfer-encoding" && key != "content-length" &&
         (key != "te" || std::string_view(value) == "trailers"), "sceHttp2AddRequestHeader: unsupported HTTP/2 control header");
     auto updated = settings.headers;
     if (mode == 0) std::erase_if(updated, [&](const auto& header) { return header.first == key; });
@@ -548,11 +550,13 @@ struct Request::State {
         CheckNg(nghttp2_session_client_new2(&session, raw, this, optionsRaw));
         const nghttp2_settings_entry settingsEntry{NGHTTP2_SETTINGS_ENABLE_PUSH, 0};
         CheckNg(nghttp2_submit_settings(session, NGHTTP2_FLAG_NONE, &settingsEntry, 1));
+        std::string authority = url.authority;
+        for (const auto& [name, value] : settings.headers) if (name == "host") authority = value;
         std::vector<std::pair<std::string, std::string>> fields{
-            {":method", method}, {":scheme", "https"}, {":authority", url.authority}, {":path", url.path}};
+            {":method", method}, {":scheme", "https"}, {":authority", authority}, {":path", url.path}};
         if (!settings.userAgent.empty() && std::none_of(settings.headers.begin(), settings.headers.end(), [](const auto& header) { return header.first == "user-agent"; }))
             fields.emplace_back("user-agent", settings.userAgent);
-        fields.insert(fields.end(), settings.headers.begin(), settings.headers.end());
+        for (const auto& header : settings.headers) if (header.first != "host") fields.push_back(header);
         if (!settings.noContentLength) fields.emplace_back("content-length", std::to_string(settings.contentLength));
         std::vector<nghttp2_nv> headers;
         for (auto& [name, value] : fields) headers.push_back({reinterpret_cast<std::uint8_t*>(name.data()),
