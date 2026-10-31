@@ -214,6 +214,7 @@ struct Context {
     bool depthBiasClamp = false;
     bool dualSrcBlend = false;
     bool logicOp = false;
+    bool independentBlend = false;
     bool samplerFilterMinmax = false;
     bool nonSeamlessCubeMap = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
