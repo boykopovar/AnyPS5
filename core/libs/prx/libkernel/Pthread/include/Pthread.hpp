@@ -35,6 +35,7 @@ struct PthreadMutexattrPrivate {
     int protocol = 0;
     int ceiling = 0;
     int pshared = 0;
+    int generation = 0;
 };
 
 constexpr int ADAPTIVE_MUTEX_SPINS = 2000;
@@ -45,8 +46,8 @@ struct PthreadMutexPrivate {
     MutexType _type;
     std::atomic<std::thread::id> _owner;
     int _count;
-    int _spinloops = 0;
-    int _yieldloops = 0;
+    std::atomic<int> _spinloops = 0;
+    std::atomic<int> _yieldloops = 0;
     std::string _name;
     bool _named = false;
 

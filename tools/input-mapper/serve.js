@@ -3,7 +3,8 @@ import {readFile} from 'node:fs/promises';
 
 const files = new Set(['index.html', 'styles.css', 'app.js', 'mapping.js', 'keys.js', 'capture.js', 'validation.js', 'i18n.js', 'dropdown.js']);
 const mime = {html: 'text/html', css: 'text/css', js: 'text/javascript'};
-const port = Number(process.env.PORT || 4173);
+const configuredPort = process.env.PORT || '4173';
+const port = configuredPort.trim() ? Number(configuredPort) : Number.NaN;
 const server = createServer(async (request, response) => {
     let path;
     try {

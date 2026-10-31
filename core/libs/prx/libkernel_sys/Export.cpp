@@ -350,7 +350,7 @@ extern "C" {
 int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
     if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
     static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::memcpy(version, parameters + 0x10, sizeof(*version));
+    if (!GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -535,6 +535,19 @@ KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFi
     return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
 }
 
+int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
+    if (!name) throw std::invalid_argument("sceKernelIsModuleLoaded: null name");
+    KernelModule handles[0x300];
+    std::size_t count = 0;
+    if (const int result = sceKernelGetModuleListInternal(handles, std::size(handles), &count)) return result;
+    for (std::size_t i = 0; i < count; ++i) {
+        ModuleInfo info{};
+        info.st_size = sizeof(info);
+        if (sceKernelGetModuleInfo(handles[i], &info) == 0 && std::strncmp(info.name, name, sizeof(info.name)) == 0) return 0;
+    }
+    return SCE_KERNEL_ERROR_ESRCH;
+}
+
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {
     return static_cast<int>(_fstat_nid_postfix(d, sb));
 }
@@ -659,17 +672,25 @@ static int LinkNative(const std::filesystem::path& source, const std::filesystem
     return 0;
 }
 
-#ifndef _WIN32
 static int LinkSymbolicLinkItself(const std::filesystem::path& source, const std::filesystem::path& destination) {
     if (const int error = LinkDestinationError(destination)) return static_cast<int>(Fail(error));
+#ifdef _WIN32
+    if ((GetFileAttributesW(source.c_str()) & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        NotImplemented_nid_no_patch("linkat: a hard link to a directory symbolic link itself on Windows");
+    if (!CreateHardLinkW(destination.c_str(), source.c_str(), nullptr)) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_NOT_SAME_DEVICE) return static_cast<int>(Fail(GuestExdev));
+        throw std::system_error(static_cast<int>(error), std::system_category(), "linkat");
+    }
+#else
     if (::linkat(AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), 0) != 0) {
         if (errno == EXDEV) return static_cast<int>(Fail(GuestExdev));
         throw std::system_error(errno, std::generic_category(), "linkat");
     }
+#endif
     RecordWrittenPath_nid_no_patch(destination);
     return 0;
 }
-#endif
 
 int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
     std::string existingCopy, createdCopy;
@@ -699,16 +720,11 @@ int APS5_VABI linkat_nid_postfix(int fd1, const char* path1, int fd2, const char
     std::filesystem::path source, destination;
     if (const int error = ResolveAtPath(fd1, path1, source)) return static_cast<int>(Fail(error));
     const bool linkItself = flag == 0 && IsSymbolicLink(source);
-#ifdef _WIN32
-    if (linkItself) NotImplemented_nid_no_patch("linkat: a hard link to a symbolic link itself on Windows");
-#endif
     if (!linkItself)
         if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(path2, copy2)) return static_cast<int>(Fail(error));
     if (const int error = ResolveAtPath(fd2, path2, destination)) return static_cast<int>(Fail(error));
-#ifndef _WIN32
     if (linkItself) return LinkSymbolicLinkItself(source, destination);
-#endif
     return LinkNative(source, destination);
 }
 
@@ -1221,9 +1237,13 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (static_cast<std::uint32_t>(bit) >= 0x3A) return static_cast<int>(0x80020016);
+    if (static_cast<std::uint32_t>(bit) > 0x7F) return static_cast<int>(0x80020016);
     *enabled = static_cast<std::int32_t>((workaround->ids[bit >> 6] >> (bit & 0x3F)) & 1);
     return 0;
+}
+
+int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+    return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {
