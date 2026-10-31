@@ -659,6 +659,13 @@ void APS5_VABI free_nid_postfix(void* ptr) {
     ApplicationHeapFree_nid_no_patch(ptr);
 }
 
+void APS5_VABI freezero_nid_postfix(void* ptr, size_t size) {
+    if (ptr == nullptr) return;
+    auto* bytes = static_cast<volatile unsigned char*>(ptr);
+    for (size_t index = 0; index < size; ++index) bytes[index] = 0;
+    free_nid_postfix(ptr);
+}
+
 void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize) {
     return heapAllocation(newSize, [ptr, newSize] { return ApplicationHeapReallocate_nid_no_patch(ptr, newSize); });
 }

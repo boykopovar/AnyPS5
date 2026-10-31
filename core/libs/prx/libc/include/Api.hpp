@@ -257,6 +257,7 @@ int APS5_VABI malloc_stats_fast_nid_postfix(void* stats);
 size_t APS5_VABI malloc_usable_size_nid_postfix(void* pointer);
 void* APS5_VABI malloc_nid_postfix(size_t size);
 void APS5_VABI free_nid_postfix(void* ptr);
+void APS5_VABI freezero_nid_postfix(void* ptr, size_t size);
 void* APS5_VABI realloc_nid_postfix(void* ptr, size_t newSize);
 void* APS5_VABI reallocf_nid_postfix(void* ptr, size_t newSize);
 void* APS5_VABI reallocarray_nid_postfix(void* ptr, size_t nmemb, size_t size);
