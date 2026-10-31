@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 
 extern "C" {
 
@@ -190,6 +191,7 @@ int APS5_VABI _ZN3sce2np20BufferedStreamReaderD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+APS5_EXPORT("PHWvRXbOnYs", _ZN3sce2np20BufferedStreamReaderD1Ev);
 
 int APS5_VABI _ZN3sce2np3ipc10IpmiClient7ConnectEPKvm(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -285,6 +287,7 @@ int APS5_VABI _ZN3sce2np8SelectorD2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+APS5_EXPORT("asZdig1mPlA", _ZN3sce2np8SelectorD2Ev);
 
 int APS5_VABI _ZN3sce2np10CancelableD1Ev(void) {
     NotImplemented_nid_no_patch(__func__);
