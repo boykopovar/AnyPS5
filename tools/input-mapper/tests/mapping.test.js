@@ -75,6 +75,13 @@ test('a signed zero deadzone imports like the native parser', () => {
     assert.equal(serialize(imported.entries, imported.settings), 'LeftStickDeadzone = -0\nRightStickDeadzone = -00\n');
 });
 
+test('the mouse stick target imports and round trips', () => {
+    const imported = parseIni('MouseStickTarget = Left\n');
+    assert.deepEqual(imported.errors, []);
+    assert.deepEqual(imported.settings, [{name: 'MouseStickTarget', value: 'Left'}]);
+    assert.equal(serialize(imported.entries, imported.settings), 'MouseStickTarget = Left\n');
+});
+
 test('out-of-range and malformed setting values report their line', () => {
     const cases = {
         'LeftStickDeadzone = 91': 'LeftStickDeadzone must be a whole percentage from 0 to 90.',
@@ -89,14 +96,15 @@ test('out-of-range and malformed setting values report their line', () => {
         'MouseSensitivity = +2.5': 'MouseSensitivity must be a number greater than 0 and at most 10.',
         'MouseCurve = 0.1': 'MouseCurve must be a number from 0.2 to 5.',
         'MouseDecayMs = 0': 'MouseDecayMs must be a number from 1 to 1000.',
-        'StickModifierScale = 1.1': 'StickModifierScale must be a number from 0.05 to 1.'
+        'StickModifierScale = 1.1': 'StickModifierScale must be a number from 0.05 to 1.',
+        'MouseStickTarget = Middle': 'MouseStickTarget must be LEFT or RIGHT.'
     };
     for (const [line, message] of Object.entries(cases)) {
         const result = parseIni(line);
         assert.deepEqual(result.errors, [{line: 1, message}], line);
         assert.deepEqual(result.settings, [], line);
     }
-    for (const line of ['MouseSensitivity = 10', 'MouseCurve = 1e0', 'MouseDeadzoneOffset = 0', 'KeyboardRampMs = 2000', 'LeftStickDeadzone = 0', 'RightStickDeadzone = 90']) {
+    for (const line of ['MouseSensitivity = 10', 'MouseCurve = 1e0', 'MouseDeadzoneOffset = 0', 'KeyboardRampMs = 2000', 'MouseStickTarget = Left', 'MouseStickTarget = right', 'LeftStickDeadzone = 0', 'RightStickDeadzone = 90']) {
         assert.deepEqual(parseIni(line).errors, [], line);
     }
 });

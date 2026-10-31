@@ -35,6 +35,7 @@ test('language substitution preserves canonical inputs and exported INI bytes', 
 test('Egyptian diagnostics retain action tokens and unknown technical details', () => {
     assert.equal(diagnostic('ar-EG', 'Cross: Unknown or empty KEY value.'), 'Cross: قيمة KEY مش معروفة أو فاضية.');
     assert.equal(diagnostic('ar-EG', 'Unexpected diagnostic'), 'Unexpected diagnostic');
+    assert.equal(diagnostic('ar-EG', 'Composition and dead keys are ambiguous. Select an SDL key from the list.'), 'زرار تركيب الحروف مش واضح في التسجيل. اختار زرار SDL من القائمة.');
     assert.equal(diagnostic('fr', 'Cross: Unknown or empty KEY value.'), 'Cross: Unknown or empty KEY value.');
 });
 
@@ -44,4 +45,17 @@ test('Egyptian diagnostics translate setting refusals with their names and range
     assert.equal(diagnostic('ar-EG', 'MouseSensitivity must be a number greater than 0 and at most 10.'), 'MouseSensitivity لازم يكون رقم أكبر من 0 وبحد أقصى 10.');
     assert.equal(diagnostic('ar-EG', 'MouseCurve must be a number from 0.2 to 5.'), 'MouseCurve لازم يكون رقم من 0.2 لـ 5.');
     assert.equal(diagnostic('ar-EG', 'MadeUp: unknown input setting.'), 'الإعداد MadeUp مش معروف.');
+});
+
+test('Portuguese diagnostics keep action and type tokens', () => {
+    assert.equal(diagnostic('pt-BR', 'Cross: Unknown or empty KEY value.'), 'Cross: Valor KEY desconhecido ou vazio.');
+    assert.equal(diagnostic('pt-BR', 'Cross: duplicate KEY:F will be omitted.'), 'Cross: duplicado KEY:F será omitido.');
+    assert.equal(diagnostic('pt-BR', 'Composition and dead keys are ambiguous. Select an SDL key from the list.'), 'A composição e as teclas mortas são ambíguas. Escolha uma tecla SDL na lista.');
+    assert.equal(diagnostic('pt-BR', 'Unexpected diagnostic'), 'Unexpected diagnostic');
+});
+
+test('inherited property names fall back to the original message', () => {
+    for (const locale of ['xx', 'constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+        assert.equal(diagnostic(locale, 'Unexpected diagnostic'), 'Unexpected diagnostic');
+    }
 });
