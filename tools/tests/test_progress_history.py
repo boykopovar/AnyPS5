@@ -68,6 +68,34 @@ class HistoryReportOutputTests(unittest.TestCase):
                             self.assertGreater((output / filename).stat().st_size, 0)
 
 
+class HistoryDateWindowTests(unittest.TestCase):
+    def test_window_filters_days_before_measurement_and_reuses_cache(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            subprocess.run(["git", "init", "-q", directory], check=True)
+            for day, time, name in (("2026-01-01", "23:59:59Z", "A"), ("2026-01-02", "00:00:00Z", "B"), ("2026-01-02", "23:59:59Z", "C"), ("2026-01-03", "00:00:00Z", "D")):
+                commit(root, day, name, f"int APS5_VABI {name}() {{ return 0; }}\n", time)
+            with patch.multiple(progress, ROOT=root, PRX=root / "core/libs/prx", OPCODES=root / OPCODES):
+                all_days = progress_history.daily_commits("HEAD")
+                expected = [all_days[1][1]]
+                actual_measure = progress_history.measure
+                with patch.object(progress_history, "measure", wraps=actual_measure) as measure:
+                    selected = progress_history.collect("HEAD", root / "cache", "2026-01-02", "2026-01-02")
+                    self.assertEqual([c.args[0] for c in measure.call_args_list], expected)
+                self.assertEqual([p["date"] for p in selected], ["2026-01-02"])
+                with patch.object(progress_history, "measure", side_effect=AssertionError("cache missed")):
+                    self.assertEqual(progress_history.collect("HEAD", root / "cache", "2026-01-02", "2026-01-02"), selected)
+                self.assertEqual(len(progress_history.collect("HEAD", root / "cache")), 3)
+                self.assertEqual(progress_history.collect("HEAD", since="2027-01-01"), [])
+
+    def test_invalid_cli_bounds(self):
+        for options in (("--since", "20260201"), ("--until", "2026-02-30"), ("--since", "2026-02-02", "--until", "2026-02-01")):
+            with self.subTest(options=options), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                progress_history.main(["unused-output", *options])
+            self.assertEqual(error.exception.code, 2)
+
+
+
 class ProgressHistoryTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "requires Windows read-only replacement semantics")
     def test_readonly_cache_failure_cleans_temporary_and_can_retry(self):

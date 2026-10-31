@@ -116,11 +116,22 @@ def save_cache(path, signature, commits):
             temporary.unlink(missing_ok=True)
 
 
-def collect(ref, cache=None):
+def utc_day(value):
+    try:
+        if date.fromisoformat(value).isoformat() == value:
+            return value
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError("date bounds must be valid YYYY-MM-DD UTC days")
+
+
+def collect(ref, cache=None, since=None, until=None):
     signature = cache_signature() if cache is not None else None
     records = load_cache(cache, signature) if cache is not None else {}
     points, changed = [], False
     for day, sha in daily_commits(ref):
+        if (since is not None and day < since) or (until is not None and day > until):
+            continue
         if sha not in records:
             records[sha] = measure(sha)
             changed = True
@@ -238,6 +249,8 @@ def same_location(first, second):
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
+    parser.add_argument("--since", type=utc_day, help="first UTC day to measure, inclusive (YYYY-MM-DD)")
+    parser.add_argument("--until", type=utc_day, help="last UTC day to measure, inclusive (YYYY-MM-DD)")
     parser.add_argument("output", type=Path)
     parser.add_argument("--ref", default="HEAD", help="branch or commit whose first-parent history is measured")
     parser.add_argument("--cache", type=Path, help="reuse per-commit counts while the scanner, ISA list and Python version match")
@@ -252,7 +265,9 @@ def main(argv=None):
             if any(same_location(args.cache, path) or
                    (args.cache.exists() and path.exists() and args.cache.samefile(path)) for path in outputs):
                 raise ValueError("history cache must differ from generated reports")
-        points = collect(args.ref, args.cache)
+        if args.since and args.until and args.since > args.until:
+            raise ValueError("--since must not be later than --until")
+        points = collect(args.ref, args.cache, args.since, args.until)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     if not points:
