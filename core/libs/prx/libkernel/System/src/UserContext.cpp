@@ -281,7 +281,7 @@ extern "C" {
 int APS5_VABI setcontext_nid_postfix(const UserUcontext* context) {
     if (context == nullptr) return Fail(GuestEinval);
     UserUcontext local{};
-    if (!GuestCopyIn_nid_no_patch(&local, context, sizeof(local))) return Fail(GuestEfault);
+    if (!GuestCopyIn_nid_no_patch(&local, context, offsetof(UserUcontext, link))) return Fail(GuestEfault);
     const auto& machine = local.mcontext;
     if (machine.len != sizeof(UserMcontext) || (machine.flags & ~McontextFlagMask) != 0) return Fail(GuestEinval);
     RestoreContext(&local, FpuSource::Context);
