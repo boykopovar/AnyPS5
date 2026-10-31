@@ -38,7 +38,7 @@ struct Guarded {
 
 namespace FreeType {
 
-GuestFace* FaceOf(const GuestFaceRec* face) {
+GuestFace* FaceOf_nid_no_patch(const GuestFaceRec* face) {
     Require(face == nullptr, "fixture received a nonnull face");
     return nullptr;
 }

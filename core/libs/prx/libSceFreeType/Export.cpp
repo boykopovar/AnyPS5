@@ -53,7 +53,7 @@ void PublishFace(GuestLibrary* library, std::unique_ptr<GuestFace> face, FT_Face
     std::unique_ptr<FT_FaceRec, decltype(&FT_Done_Face)> hostOwner(host, &FT_Done_Face);
     face->library = library;
     face->host = host;
-    SyncFace(*face);
+    SyncFace_nid_no_patch(*face);
     auto* owner = face.get();
     library->faces.push_back(std::move(face));
     host->generic = {owner, FinalizeFace};
@@ -120,7 +120,7 @@ int APS5_VABI FT_Done_FreeType_nid_postfix(GuestLibrary* library) {
 }
 
 int APS5_VABI FT_Select_Size_nid_postfix(GuestFaceRec* face, std::int32_t strikeIndex) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     const FT_Error error = FT_Select_Size(owner ? owner->host : nullptr, strikeIndex);
     if (owner) SyncSize(*owner);
     return error;
@@ -157,19 +157,19 @@ int APS5_VABI FT_New_Memory_Face_nid_postfix(GuestLibrary* library, const unsign
 }
 
 int APS5_VABI FT_Reference_Face_nid_postfix(GuestFaceRec* face) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Reference_Face(owner ? owner->host : nullptr);
 }
 
 int APS5_VABI FT_Done_Face_nid_postfix(GuestFaceRec* face) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     const FT_Error error = FT_Done_Face(owner ? owner->host : nullptr);
     if (error == 0 && owner->finalized) owner->library->faces.remove_if([owner](const auto& entry) { return entry.get() == owner; });
     return error;
 }
 
 int APS5_VABI FT_New_Size_nid_postfix(GuestFaceRec* face, GuestSizeRec** asize) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     FT_Face hostFace = owner ? owner->host : nullptr;
     if (!hostFace || !asize || !hostFace->driver) {
         FT_Size unused = nullptr;
@@ -223,7 +223,7 @@ int APS5_VABI FT_Done_Size_nid_postfix(GuestSizeRec* size) {
 }
 
 int APS5_VABI FT_Set_Pixel_Sizes_nid_postfix(GuestFaceRec* face, std::uint32_t pixel_width, std::uint32_t pixel_height) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     const FT_Error error = FT_Set_Pixel_Sizes(owner ? owner->host : nullptr, pixel_width, pixel_height);
     if (owner) SyncSize(*owner);
     return error;
@@ -231,7 +231,7 @@ int APS5_VABI FT_Set_Pixel_Sizes_nid_postfix(GuestFaceRec* face, std::uint32_t p
 
 int APS5_VABI FT_Set_Char_Size_nid_postfix(GuestFaceRec* face, std::int64_t charWidth, std::int64_t charHeight,
                                         std::uint32_t horizontalResolution, std::uint32_t verticalResolution) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     if (!owner) return FT_Err_Invalid_Face_Handle;
     if (!owner->host->size) return FT_Err_Invalid_Size_Handle;
     if (!charWidth) charWidth = charHeight;
@@ -252,12 +252,12 @@ int APS5_VABI FT_Set_Char_Size_nid_postfix(GuestFaceRec* face, std::int64_t char
 }
 
 std::uint32_t APS5_VABI FT_Get_Char_Index_nid_postfix(GuestFaceRec* face, std::uint64_t charcode) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Get_Char_Index(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(charcode)));
 }
 
 int APS5_VABI FT_Get_Kerning_nid_postfix(GuestFaceRec* face, std::uint32_t leftGlyph, std::uint32_t rightGlyph, std::uint32_t kernMode, GuestVector* kerning) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     if (!owner || !kerning) return FT_Get_Kerning(owner ? owner->host : nullptr, leftGlyph, rightGlyph, kernMode, nullptr);
     if (leftGlyph > std::numeric_limits<std::uint16_t>::max() && FT_IS_SFNT(owner->host)) {
         *kerning = {0, 0};
@@ -270,7 +270,7 @@ int APS5_VABI FT_Get_Kerning_nid_postfix(GuestFaceRec* face, std::uint32_t leftG
 }
 
 int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec* face, std::uint32_t glyph_index, std::int32_t load_flags) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     const FT_Error error = FT_Load_Glyph(owner ? owner->host : nullptr, glyph_index, load_flags);
     if (owner) SyncSlot(*owner);
     return error;
@@ -278,27 +278,27 @@ int APS5_VABI FT_Load_Glyph_nid_postfix(GuestFaceRec* face, std::uint32_t glyph_
 
 int APS5_VABI FT_Get_CID_Registry_Ordering_Supplement_nid_postfix(GuestFaceRec* face, const char** registry,
                                                                const char** ordering, std::int32_t* supplement) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Get_CID_Registry_Ordering_Supplement(owner ? owner->host : nullptr, registry, ordering, supplement);
 }
 
 int APS5_VABI FT_Get_CID_Is_Internally_CID_Keyed_nid_postfix(GuestFaceRec* face, std::uint8_t* isCid) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Get_CID_Is_Internally_CID_Keyed(owner ? owner->host : nullptr, isCid);
 }
 
 int APS5_VABI FT_Get_CID_From_Glyph_Index_nid_postfix(GuestFaceRec* face, std::uint32_t glyphIndex, std::uint32_t* cid) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Get_CID_From_Glyph_Index(owner ? owner->host : nullptr, glyphIndex, cid);
 }
 
 int APS5_VABI FT_Get_Gasp_nid_postfix(GuestFaceRec* face, std::uint32_t ppem) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Get_Gasp(owner ? owner->host : nullptr, ppem);
 }
 
 int APS5_VABI FT_Load_Char_nid_postfix(GuestFaceRec* face, std::uint64_t charCode, std::int32_t loadFlags) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     const FT_Error error = FT_Load_Char(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(charCode)), loadFlags);
     if (owner) SyncSlot(*owner);
     return error;
@@ -341,7 +341,7 @@ int APS5_VABI FT_Outline_Get_Orientation_nid_postfix(GuestOutline* outline) {
 }
 
 int APS5_VABI FT_Render_Glyph_nid_postfix(GuestGlyphSlotRec* slot, std::int32_t render_mode) {
-    GuestFace* owner = FaceOf(slot);
+    GuestFace* owner = FaceOfSlot_nid_no_patch(slot);
     if (owner) WriteBackOutline(*owner);
     const FT_Error error = FT_Render_Glyph(owner ? owner->host->glyph : nullptr, static_cast<FT_Render_Mode>(render_mode));
     if (owner) SyncSlot(*owner);
@@ -362,14 +362,14 @@ int APS5_VABI FT_Outline_Copy_nid_postfix(const GuestOutline* source, GuestOutli
 }
 
 int APS5_VABI FT_Select_Charmap_nid_postfix(GuestFaceRec* face, std::int32_t encoding) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     const FT_Error error = FT_Select_Charmap(owner ? owner->host : nullptr, static_cast<FT_Encoding>(encoding));
     if (error == 0) owner->rec.charmap = owner->charmapPointers.at(FT_Get_Charmap_Index(owner->host->charmap));
     return error;
 }
 
 int APS5_VABI FT_Set_Charmap_nid_postfix(GuestFaceRec* face, GuestCharMapRec* charmap) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     if (!owner || !charmap || owner->charmapPointers.empty()) return FT_Set_Charmap(owner ? owner->host : nullptr, nullptr);
     for (std::size_t index = 0; index < owner->charmapPointers.size(); ++index) {
         if (owner->charmapPointers[index] != charmap) continue;
@@ -381,17 +381,17 @@ int APS5_VABI FT_Set_Charmap_nid_postfix(GuestFaceRec* face, GuestCharMapRec* ch
 }
 
 std::uint64_t APS5_VABI FT_Get_First_Char_nid_postfix(GuestFaceRec* face, std::uint32_t* glyphIndex) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Get_First_Char(owner ? owner->host : nullptr, glyphIndex);
 }
 
 std::uint64_t APS5_VABI FT_Get_Next_Char_nid_postfix(GuestFaceRec* face, std::uint64_t charcode, std::uint32_t* glyphIndex) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     return FT_Get_Next_Char(owner ? owner->host : nullptr, static_cast<FT_ULong>(static_cast<std::uint32_t>(charcode)), glyphIndex);
 }
 
 void APS5_VABI FT_Set_Transform_nid_postfix(GuestFaceRec* face, const GuestMatrix* matrix, const GuestVector* delta) {
-    GuestFace* owner = FaceOf(face);
+    GuestFace* owner = FaceOf_nid_no_patch(face);
     if (!owner) return;
     const auto component = [](std::int64_t value) {
         if (value < std::numeric_limits<FT_Long>::min() || value > std::numeric_limits<FT_Long>::max()) {

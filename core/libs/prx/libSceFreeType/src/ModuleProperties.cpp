@@ -19,7 +19,7 @@ struct GuestGlyphToScriptMap {
 static int ReadGlyphToScriptMap(FT_Library library, const char* moduleName, const char* propertyName, void* output) {
     GuestFaceRec* face = nullptr;
     std::memcpy(&face, output, sizeof(face));
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     FT_Prop_GlyphToScriptMap property{owner ? owner->host : nullptr, nullptr};
     const int error = FT_Property_Get(library, moduleName, propertyName, &property);
     if (!error) std::memcpy(static_cast<char*>(output) + offsetof(GuestGlyphToScriptMap, map), &property.map, sizeof(property.map));
@@ -72,7 +72,7 @@ int Read(FT_Library library, const char* moduleName, const char* propertyName, v
 int ReadIncreaseXHeight(FT_Library library, const char* moduleName, const char* propertyName, void* output) {
     GuestFaceRec* guestFace = nullptr;
     std::memcpy(&guestFace, output, sizeof(guestFace));
-    const auto face = FaceOf(guestFace);
+    const auto face = FaceOf_nid_no_patch(guestFace);
     FT_Prop_IncreaseXHeight hostProp{};
     hostProp.face = face ? face->host : nullptr;
     const auto error = FT_Property_Get(library, moduleName, propertyName, &hostProp);
@@ -93,7 +93,7 @@ int Write(FT_Library library, const char* moduleName, const char* propertyName, 
 int WriteIncreaseXHeight(FT_Library library, const char* moduleName, const char* propertyName, const void* input) {
     GuestPropIncreaseXHeight guestProp{};
     std::memcpy(&guestProp, input, sizeof(guestProp));
-    const auto face = FaceOf(guestProp.face);
+    const auto face = FaceOf_nid_no_patch(guestProp.face);
     FT_Prop_IncreaseXHeight hostProp{};
     hostProp.face = face ? face->host : nullptr;
     hostProp.limit = guestProp.limit;

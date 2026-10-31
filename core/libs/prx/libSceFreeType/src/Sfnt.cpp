@@ -29,7 +29,7 @@ FT_Error QueryTableLength(FT_Face face, std::uint64_t tag, FT_ULong& length) {
 extern "C" {
 
 int APS5_VABI FT_Sfnt_Table_Info_nid_postfix(GuestFaceRec* face, std::uint32_t tableIndex, std::uint64_t* tag, std::uint64_t* length) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     FT_ULong nativeTag = 0;
     FT_ULong nativeLength = 0;
     const auto error = FT_Sfnt_Table_Info(owner ? owner->host : nullptr, tableIndex, tag ? &nativeTag : nullptr, length ? &nativeLength : nullptr);
@@ -47,7 +47,7 @@ int APS5_VABI FT_Sfnt_Table_Info_nid_postfix(GuestFaceRec* face, std::uint32_t t
 }
 
 int APS5_VABI FT_Load_Sfnt_Table_nid_postfix(GuestFaceRec* face, std::uint64_t tag, std::int64_t offset, unsigned char* buffer, std::uint64_t* length) {
-    const GuestFace* owner = FaceOf(face);
+    const GuestFace* owner = FaceOf_nid_no_patch(face);
     const FT_Face native = owner ? owner->host : nullptr;
     FT_ULong tableSize = 0;
     const auto error = QueryTableLength(native, tag, tableSize);

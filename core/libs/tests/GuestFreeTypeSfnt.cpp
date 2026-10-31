@@ -79,7 +79,7 @@ static FT_Error ReadMatches(GuestFaceRec* guest, FT_Face native, std::uint32_t t
     Require(FT_Load_Sfnt_Table_nid_postfix(guest, tag, offset, actual.data() + 8, withLength ? &actualLength : nullptr) == error);
     Require(actual == expected);
     Require(actualLength == (withLength && requested == 0 && error == 0 ? static_cast<std::uint64_t>(nativeLength) : requested));
-    if (guest) Require(FaceOf(guest)->host->stream->pos == native->stream->pos);
+    if (guest) Require(FaceOf_nid_no_patch(guest)->host->stream->pos == native->stream->pos);
     ++comparisons;
     return error;
 }
@@ -93,7 +93,7 @@ static FT_ULong VirtualRead(FT_Stream stream, FT_ULong offset, unsigned char* bu
 
 static void WideStreamAccess(FacePair& face, int& comparisons) {
     if constexpr (sizeof(FT_Long) < sizeof(std::int64_t)) {
-        FT_Stream stream = FaceOf(face.guest)->host->stream;
+        FT_Stream stream = FaceOf_nid_no_patch(face.guest)->host->stream;
         FT_Stream native = face.native->stream;
         const auto original = stream->size;
         const auto originalNative = native->size;
