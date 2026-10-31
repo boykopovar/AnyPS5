@@ -474,23 +474,31 @@ def compare(title, column, unit, base, head):
     previous = {g["name"]: g.get("shared_sources") for g in base["groups"]}
     shared = {(name, owner) for name, owner in owners.items() if previous.get(name) != owner}
     base_done, head_done = names(base, "done", owners), names(head, "done", owners)
-    base_all, head_all = base_done | names(base, "todo", owners), head_done | names(head, "todo", owners)
-    implemented, declared = head_done - base_done, head_all - base_all - head_done
+    base_observed, head_observed = names(base, "todo", owners), names(head, "todo", owners)
+    base_unobserved, head_unobserved = names(base, "unobserved", owners), names(head, "unobserved", owners)
+    base_all, head_all = base_done | base_observed | base_unobserved, head_done | head_observed | head_unobserved
+    implemented = head_done - base_done
+    declared = head_all - base_all - head_done
+    declared_observed, declared_unobserved = declared & head_observed, declared & head_unobserved
     regressed, removed = base_done & (head_all - head_done), base_all - head_all
     inert = implemented & names(head, "inert", owners)
+    unseen = implemented & names(head, "done_unobserved", owners)
     if not (implemented or declared or regressed or removed or shared):
         return []
     delta = round(head["percent"] - base["percent"], 2)
     exact = exact_delta(base, head) if delta == 0 else None
     shown = small_delta(exact) if exact else f"{delta:+}"
     icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
-    counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
-                                                (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
+    counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared_observed), "observed stubs"),
+                                                (len(declared_unobserved), "unobserved stubs"), (-len(regressed), "reverted"),
+                                                (-len(removed), "removed")) if n]
     changes = f', {", ".join(counts)} {unit}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
-    lines += details("🆕", "declared as stubs", column, declared)
+    lines += details("🔍", "implemented but not observed by any title", column, unseen)
+    lines += details("🆕", "declared as observed stubs", column, declared_observed)
+    lines += details("👻", "declared as unobserved stubs (no audited title imports them)", column, declared_unobserved)
     lines += details("⚠️", "went back to stubs", column, regressed)
     lines += details("🗑️", "removed", column, removed)
     lines += details("🔗", "now sharing sources", column, shared)
