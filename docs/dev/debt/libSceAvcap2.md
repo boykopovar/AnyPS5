@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-Signatures and behavior are unverified for the 35 additional exports listed below, whose name/NID pairs are recorded in the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceavcap2-9035a2a4ef.jsonl). Parameterless `int` declarations only resolve imports and make no ABI claim; every call throws through `NotImplemented_nid_no_patch`. Not measured on a console.
+Signatures and behavior are unverified for the additional exports listed below, whose name/NID pairs are recorded in the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceavcap2-9035a2a4ef.jsonl). Parameterless `int` declarations only resolve imports and make no ABI claim; every call throws through `NotImplemented_nid_no_patch`. Not measured on a console.
 
 - [sceAvcap2AllocateVideoEncoderMemory, sceAvcap2AllocateVideoEncoderMemory2, sceAvcap2FreeEncoderVideoMemory, sceAvcap2GetAudioOutVolume, sceAvcap2GetFramePitch, sceAvcap2GetImagePasteMemory, sceAvcap2GetMicVolume](../../../core/libs/prx/libSceAvcap2/Export.cpp) - unknown signatures and behavior; every call throws.
 - [sceAvcap2GetNonVclNalUnitStream, sceAvcap2GetNonVclNalUnitStream2, sceAvcap2GetNonVclNalUnitStream3, sceAvcap2GetRecProhibit, sceAvcap2GetSupportInformation, sceAvcap2GetVideoOutMode, sceAvcap2LockInputDataBuffer](../../../core/libs/prx/libSceAvcap2/Export.cpp) - unknown signatures and behavior; every call throws.

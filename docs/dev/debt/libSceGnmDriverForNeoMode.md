@@ -3,7 +3,7 @@
 ### Unknown function info
 
 - [sceGnmDingDongForWorkload, sceGnmRegisterOwner](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - the first throws through `NotImplemented_nid_no_patch` and `sceGnmRegisterOwner` returns `Failure` (0x8EEE00FF) without registering anything; behaviour and the PS5 prototypes are unmeasured. The only source of the parameter lists is shadPS4's PS4-derived prototypes (GPLv2, used as a reference only), with no second reference; structure pointers are `void*` because no layout is known.
-- [libSceGnmDriverForNeoMode pending exports](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - 34 named callable exports are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceGnmDriverForNeoMode.c) and were cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [libSceGnmDriverForNeoMode pending exports](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - these named callable exports are listed in the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceGnmDriverForNeoMode.c) and were cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 ### Functional
 
@@ -18,4 +18,4 @@
 
 ### Additional callable exports
 
-- [Additional callable exports](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - 20 callable NIDs are present in both version-labelled images. Both images also export these NIDs from the distinct normal Gnm provider; matching NIDs do not establish behavioral equivalence. Future declarations or implementations in that provider require loader analysis. Image labels are not authenticated. Names, signatures and behavior are unverified; each declaration throws.
+- [Additional callable exports](../../../core/libs/prx/libSceGnmDriverForNeoMode/Export.cpp) - these callable NIDs are present in both version-labelled images. Both images also export these NIDs from the distinct normal Gnm provider; matching NIDs do not establish behavioral equivalence. Future declarations or implementations in that provider require loader analysis. Image labels are not authenticated. Names, signatures and behavior are unverified; each declaration throws.

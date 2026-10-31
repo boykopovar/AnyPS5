@@ -18,7 +18,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceBgft/Export.cpp) - 12 import-resolution declarations (7 named candidates and 5 unresolved NIDs). All entries call `NotImplemented_nid_no_patch`. Parameterless `int` declarations do not establish parameter or return ABI; no runtime implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceBgft/Export.cpp) - import-resolution declarations of named candidates and unresolved NIDs. All entries call `NotImplemented_nid_no_patch`. Parameterless `int` declarations do not establish parameter or return ABI; no runtime implementation or title unblock is claimed.
 
 #### Membership and identity evidence
 

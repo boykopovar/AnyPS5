@@ -2,7 +2,7 @@
 
 ### Unknown function info
 
-- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 80 named callable exports, excluding `CRYPTO_memcmp`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref`, `EC_KEY_up_ref` and `RSA_up_ref`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - these named callable exports, excluding `CRYPTO_memcmp`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref`, `EC_KEY_up_ref` and `RSA_up_ref`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 ### Functional
 
@@ -19,7 +19,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 176 callable exports: 50 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare callable exports, some named and some known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |

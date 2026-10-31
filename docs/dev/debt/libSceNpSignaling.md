@@ -8,7 +8,7 @@
 
 ### Additional callable export inventory
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpSignaling/Export.cpp) - 15 entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
+- [Additional callable exports](../../../core/libs/prx/libSceNpSignaling/Export.cpp) - all entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |

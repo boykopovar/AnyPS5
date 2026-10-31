@@ -11,7 +11,7 @@
 
 - [Query structures](../../../core/libs/prx/libSceNpTrophy2/include/NpTrophy2Types.hpp): a progress value is a 16-byte `{int32 type, 4 reserved bytes, uint64 value}` and the game, group and trophy structures are 152, 24, 152, 32, 1312 and 32 bytes, as [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/9e41d8320a2774b303fbad344c2347e8d0292e83/src/libs/libTrophy.cpp) asserts; no other public source confirms the layout. Progress type 1 marks a progressive trophy's target and progress, as in KytyPS5. Trophies without a `groupId` belong to group -1, KytyPS5's base game group.
 
-- [libSceNpTrophy2 pending exports](../../../core/libs/prx/libSceNpTrophy2/Export.cpp) - 23 named callable exports were identified in the PS5 3.20 export table and cross-checked against firmware 13.60. Signatures and behavior remain unverified; declarations use the unknown-signature convention and throw through `NotImplemented_nid_no_patch`. Evidence: [3.20 export list](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpTrophy2.c).
+- [libSceNpTrophy2 pending exports](../../../core/libs/prx/libSceNpTrophy2/Export.cpp) - these named callable exports were identified in the PS5 3.20 export table and cross-checked against firmware 13.60. Signatures and behavior remain unverified; declarations use the unknown-signature convention and throw through `NotImplemented_nid_no_patch`. Evidence: [3.20 export list](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceNpTrophy2.c).
 
 ### Functional
 
@@ -24,7 +24,7 @@
 
 ### Additional callable export inventory
 
-- [Additional callable exports](../../../core/libs/prx/libSceNpTrophy2/Export.cpp) - 15 entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
+- [Additional callable exports](../../../core/libs/prx/libSceNpTrophy2/Export.cpp) - all entries have import-resolution declarations only. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. No runtime support, implemented-function increase or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
