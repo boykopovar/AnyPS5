@@ -19,7 +19,6 @@ std::uint32_t EmitStageRingWordPointer(SpirvEmitterState& state, RuntimeAbi::Roo
 std::uint32_t EmitFlattenedSrtLoad(SpirvEmitterState& state, std::uint32_t index);
 bool HasFlattenedSrt(const SpirvEmitterState& state);
 void EmitMemoryOffsets(SpirvEmitterState& state);
-void EmitHeapSlotPreload(SpirvEmitterState& state);
 std::uint32_t LoadHeapSlotWord(SpirvEmitterState& state, std::uint32_t dword);
 std::uint32_t LdsDwordCount(const SpirvEmitterState& state);
 bool LdsInDeviceMemory(const SpirvEmitterState& state);

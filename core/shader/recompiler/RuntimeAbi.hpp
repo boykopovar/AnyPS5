@@ -19,11 +19,36 @@ inline constexpr std::uint32_t FirstComparisonImageBinding = 22u;
 inline constexpr std::uint32_t FirstStorageImageBinding = 29u;
 inline constexpr std::uint32_t ImageBindingCount = 56u;
 inline constexpr bool GpuHeapStorageKind(std::uint32_t kind) { return kind >= FirstStorageImageBinding && kind < FirstImageBinding + ImageBindingCount; }
-inline constexpr std::uint32_t FirstUintStorageImageBinding = FirstStorageImageBinding + 7u;
-inline constexpr std::uint32_t FirstAtomicImageBinding = FirstStorageImageBinding + 14u;
-inline constexpr std::uint32_t FirstAtomic64ImageBinding = FirstStorageImageBinding + 21u;
+inline constexpr std::uint32_t StorageKindStride = 7u;
+inline constexpr std::uint32_t FirstUintStorageImageBinding = FirstStorageImageBinding + StorageKindStride;
+inline constexpr std::uint32_t FirstAtomicImageBinding = FirstStorageImageBinding + 2u * StorageKindStride;
+inline constexpr std::uint32_t FirstAtomic64ImageBinding = FirstStorageImageBinding + 3u * StorageKindStride;
+inline constexpr std::uint32_t SamplerSlotWords = 2u;
+inline constexpr std::uint32_t BufferAddressWords = 4u;
 inline constexpr bool AtomicImageKind(std::uint32_t kind) { return kind >= FirstAtomicImageBinding && kind < FirstAtomic64ImageBinding; }
 inline constexpr bool Atomic64ImageKind(std::uint32_t kind) { return kind >= FirstAtomic64ImageBinding && kind < FirstImageBinding + ImageBindingCount; }
+inline constexpr bool UintStorageImageKind(std::uint32_t kind) { return kind >= FirstUintStorageImageBinding && kind < FirstAtomicImageBinding; }
+
+enum class HeapPart : std::uint32_t { Sampled, Storage, Sampler, Atomic, Atomic64, UintStorage };
+
+inline constexpr HeapPart StorageHeapPart(std::uint32_t kind) {
+    if (AtomicImageKind(kind)) return HeapPart::Atomic;
+    if (Atomic64ImageKind(kind)) return HeapPart::Atomic64;
+    if (UintStorageImageKind(kind)) return HeapPart::UintStorage;
+    return HeapPart::Storage;
+}
+
+inline constexpr std::uint32_t HeapPartFirstBinding(HeapPart part) {
+    switch (part) {
+    case HeapPart::Sampled: return FirstImageBinding;
+    case HeapPart::Storage: return FirstStorageImageBinding;
+    case HeapPart::Atomic: return FirstAtomicImageBinding;
+    case HeapPart::Atomic64: return FirstAtomic64ImageBinding;
+    case HeapPart::UintStorage: return FirstUintStorageImageBinding;
+    case HeapPart::Sampler: break;
+    }
+    return 0u;
+}
 
 enum class Binding : std::uint32_t {
     Buffers = 0u,
@@ -41,6 +66,13 @@ enum class Binding : std::uint32_t {
 };
 
 enum class Stage : std::uint32_t { Main, Fragment, TessellationControl, TessellationEvaluation };
+
+inline constexpr Stage StageGroup(bool fragment, bool tessellationControl, bool tessellationEvaluation) {
+    if (fragment) return Stage::Fragment;
+    if (tessellationControl) return Stage::TessellationControl;
+    if (tessellationEvaluation) return Stage::TessellationEvaluation;
+    return Stage::Main;
+}
 
 inline constexpr std::uint32_t UserDataCapacity = 128u;
 inline constexpr std::uint32_t BufferCapacity = 128u;

@@ -73,13 +73,8 @@ std::shared_ptr<StorageTexture> RepeatStorageSurface(const Context& context, con
 bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const StorageTexture* except);
 
 inline std::size_t HeapStageIndex(ShaderRecompiler::ShaderStage stage) {
-    namespace Abi = ShaderRecompiler::RuntimeAbi;
-    switch (stage) {
-    case ShaderRecompiler::ShaderStage::Fragment: return static_cast<std::size_t>(Abi::Stage::Fragment);
-    case ShaderRecompiler::ShaderStage::TessellationControl: return static_cast<std::size_t>(Abi::Stage::TessellationControl);
-    case ShaderRecompiler::ShaderStage::TessellationEvaluation: return static_cast<std::size_t>(Abi::Stage::TessellationEvaluation);
-    default: return static_cast<std::size_t>(Abi::Stage::Main);
-    }
+    using ShaderRecompiler::ShaderStage;
+    return static_cast<std::size_t>(ShaderRecompiler::RuntimeAbi::StageGroup(stage == ShaderStage::Fragment, stage == ShaderStage::TessellationControl, stage == ShaderStage::TessellationEvaluation));
 }
 
 struct PipelineSetLayouts {

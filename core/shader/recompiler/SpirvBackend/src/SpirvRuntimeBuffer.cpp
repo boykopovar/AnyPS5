@@ -201,7 +201,7 @@ MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue&
     const auto& memory = context.Memory(instruction);
     if (state.addressedBuffers) {
         const auto element = ResourceForDescriptor(state, DescriptorBindingKind::Buffers, memory.resource);
-        const auto dword = state.program.Metadata().bindings.BufferAddressDword() + element * 4u;
+        const auto dword = state.program.Metadata().bindings.BufferAddressDword() + element * RuntimeAbi::BufferAddressWords;
         const auto u64 = TypeScalarU64(state);
         const auto low = Unary(state, spv::OpUConvert, u64, EmitShaderDataDwordLoad(state, dword));
         const auto high = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, EmitShaderDataDwordLoad(state, dword + 1u)), BdaConstant(state, 32u));

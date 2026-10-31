@@ -58,7 +58,7 @@ std::uint32_t takenSlot(std::optional<std::uint32_t> slot, const char* what) {
 
 bool UintStorageBinding(std::uint32_t binding) {
     const auto kind = binding % static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Count);
-    return kind >= ShaderRecompiler::RuntimeAbi::FirstUintStorageImageBinding && kind < ShaderRecompiler::RuntimeAbi::FirstAtomicImageBinding;
+    return ShaderRecompiler::RuntimeAbi::UintStorageImageKind(kind);
 }
 
 bool overlap(std::uint64_t first, std::size_t firstSize, std::uint64_t second, std::size_t secondSize) {

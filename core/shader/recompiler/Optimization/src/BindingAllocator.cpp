@@ -68,7 +68,8 @@ bool usesGds(const IrProgram& program) {
 
 }
 
-BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules, bool stencilReplay, bool gpuResolvedImages, bool descriptorMemory) const {
+BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const BindingLayout& layout, const AllocationOptions& options) const {
+    const auto [registrationModules, stencilReplay, gpuResolvedImages, descriptorMemory] = options;
     IrProgramMetadata& metadata = program.Metadata();
     if (!metadata.shaderInfoComplete || metadata.bindingLayoutComplete) {
         fail(metadata.shaderInfoComplete ? "shader binding layout failed: binding layout already allocated"
@@ -114,7 +115,7 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         next.runtimeStateDwords = (attributes + RuntimeAbi::VertexSelectorsPerDword - 1u) / RuntimeAbi::VertexSelectorsPerDword;
     }
     if (gpuResolvedImages) {
-        next.samplerSlotDwords = static_cast<std::uint32_t>(info.samplers.size()) * 2u;
+        next.samplerSlotDwords = static_cast<std::uint32_t>(info.samplers.size()) * RuntimeAbi::SamplerSlotWords;
         next.gpuResolvedImages = true;
     }
     const auto pushSize = layout.pushConstantSizeBytes / 4u;
@@ -160,13 +161,13 @@ BindingAllocationResult BindingAllocator::Allocate(IrProgram& program, const Bin
         }
     }
 
-    next.heapStorageImages = gpuResolvedImages && descriptorMemory && next.gpuResolvedImages;
+    next.heapStorageImages = gpuResolvedImages && descriptorMemory;
     if (gpuResolvedImages && !registrationModules) {
         for (const auto& descriptor : next.descriptors) {
             if (next.HeapImageKind(descriptor.kind)) next.imageSlotDwords += static_cast<std::uint32_t>(descriptor.resources.size());
         }
     }
-    if (descriptorMemory && next.gpuResolvedImages) next.bufferAddressDwords = static_cast<std::uint32_t>(info.buffers.size()) * 4u;
+    if (descriptorMemory && gpuResolvedImages) next.bufferAddressDwords = static_cast<std::uint32_t>(info.buffers.size()) * RuntimeAbi::BufferAddressWords;
 
     std::vector<std::uint32_t> samplers;
     for (std::uint32_t i = 0; i < info.samplers.size(); i++) {

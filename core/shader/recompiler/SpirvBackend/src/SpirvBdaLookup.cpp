@@ -2,7 +2,6 @@
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
-#include <array>
 #include <bit>
 #include <utility>
 #include <iterator>

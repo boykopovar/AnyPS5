@@ -475,20 +475,18 @@ void DefineDescriptors(SpirvEmitterState& state) {
         state.module.AddName(state.pushConstantVariable, "vsharp");
     }
     for (const IrDescriptorBinding& binding : layout.descriptors) {
+        const bool gpuHeap = state.gpuResolvedImages && (binding.kind == DescriptorBindingKind::Samplers || layout.HeapImageKind(binding.kind));
         const auto Define = [&](std::uint32_t type, const char* name, std::uint32_t storage = spv::StorageClassStorageBuffer) {
             const auto variable = state.module.DefineGlobalVariable(TypePointer(state, storage, type), storage);
             state.module.AddName(variable, name);
             const bool gpuData = state.gpuResolvedImages && (binding.kind == DescriptorBindingKind::ShaderData || binding.kind == DescriptorBindingKind::FlattenedSrt);
-            const bool gpuHeap = binding.kind == DescriptorBindingKind::Samplers || layout.HeapImageKind(binding.kind);
-            const bool sharedHeap = state.gpuResolvedImages && gpuHeap;
-            const bool fragmentSet = sharedHeap || (!state.gpuResolvedImages && state.fragmentDescriptorSet && stage == IrShaderStage::Pixel);
+            const bool fragmentSet = gpuHeap || (!state.gpuResolvedImages && state.fragmentDescriptorSet && stage == IrShaderStage::Pixel);
             state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, binding.kind == DescriptorBindingKind::Gds && layout.UsesDataAddress() ? RuntimeAbi::GpuGdsSet : gpuData ? RuntimeAbi::GpuDataSet : fragmentSet ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet);
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(sharedHeap ? IrShaderStage::Pixel : stage, binding.kind));
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(gpuHeap ? IrShaderStage::Pixel : stage, binding.kind));
             return variable;
         };
         const auto ArrayType = [&](std::uint32_t type) {
             const bool heap = binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) != ImageResourceClass::None;
-            const bool gpuHeap = state.gpuResolvedImages && (binding.kind == DescriptorBindingKind::Samplers || layout.HeapImageKind(binding.kind));
             const auto count = gpuHeap ? (binding.kind == DescriptorBindingKind::Samplers ? RuntimeAbi::GpuSamplerHeapSlots : RuntimeAbi::GpuImageHeapSlots) : static_cast<std::uint32_t>(binding.resources.size());
             const auto length = heap && !gpuHeap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
             return state.module.Type(spv::OpTypeArray, type, length);
@@ -570,7 +568,8 @@ void DefineDescriptors(SpirvEmitterState& state) {
                     const auto name = "table_images_" + std::to_string(static_cast<std::uint32_t>(kind));
                     if (state.tableHeap) {
                         const auto value = static_cast<std::uint32_t>(kind);
-                        const auto heapKind = binding.kind != DescriptorBindingKind::ImageStorageTable ? RuntimeAbi::FirstImageBinding : RuntimeAbi::AtomicImageKind(value) ? RuntimeAbi::FirstAtomicImageBinding : RuntimeAbi::Atomic64ImageKind(value) ? RuntimeAbi::FirstAtomic64ImageBinding : RuntimeAbi::FirstStorageImageBinding;
+                        const auto part = RuntimeAbi::StorageHeapPart(value);
+                        const auto heapKind = binding.kind != DescriptorBindingKind::ImageStorageTable ? RuntimeAbi::FirstImageBinding : part == RuntimeAbi::HeapPart::Atomic || part == RuntimeAbi::HeapPart::Atomic64 ? RuntimeAbi::HeapPartFirstBinding(part) : RuntimeAbi::FirstStorageImageBinding;
                         const auto type = state.module.Type(spv::OpTypeArray, ImageType(state, mode), ConstantU32(state, RuntimeAbi::GpuImageHeapSlots));
                         const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, type), spv::StorageClassUniformConstant);
                         state.module.AddName(variable, name.c_str());

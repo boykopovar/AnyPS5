@@ -33,15 +33,6 @@ std::uint32_t EmitBinaryU32(SpirvEmitterState& state, std::uint32_t opcode, std:
     return result;
 }
 
-RuntimeAbi::Stage RootStage(const SpirvEmitterState& state) {
-    switch (state.program.Resources().stage) {
-    case IrShaderStage::Pixel: return RuntimeAbi::Stage::Fragment;
-    case IrShaderStage::TessellationControl: return RuntimeAbi::Stage::TessellationControl;
-    case IrShaderStage::TessellationEvaluation: return RuntimeAbi::Stage::TessellationEvaluation;
-    default: return RuntimeAbi::Stage::Main;
-    }
-}
-
 std::uint32_t EmitRootDword(SpirvEmitterState& state, std::uint32_t field) {
     if (!state.program.Metadata().bindings.UsesDataAddress()) FailEmit("the root is read only by stages that take their data through it");
     const auto u32 = TypeU32(state);
@@ -53,7 +44,8 @@ std::uint32_t EmitRootDword(SpirvEmitterState& state, std::uint32_t field) {
 }
 
 std::uint32_t EmitStageRootDword(SpirvEmitterState& state, RuntimeAbi::RootStageField field) {
-    return EmitRootDword(state, RuntimeAbi::RootStageDword(RootStage(state), field));
+    const auto stage = state.program.Resources().stage;
+    return EmitRootDword(state, RuntimeAbi::RootStageDword(RuntimeAbi::StageGroup(stage == IrShaderStage::Pixel, stage == IrShaderStage::TessellationControl, stage == IrShaderStage::TessellationEvaluation), field));
 }
 
 namespace {

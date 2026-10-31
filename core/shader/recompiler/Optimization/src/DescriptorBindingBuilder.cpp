@@ -415,6 +415,14 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     plan.bindings.reserve(layout.descriptors.size());
     const bool slotWords = layout.gpuResolvedImages && !registrationModules;
     std::uint32_t imageSlotBase = layout.ImageSlotDword();
+    const auto descriptorSetFor = [&](DescriptorBindingKind kind) {
+        if (kind == DescriptorBindingKind::Gds && layout.UsesDataAddress()) return RuntimeAbi::GpuGdsSet;
+        if (layout.gpuResolvedImages) {
+            const bool heapSetBinding = layout.HeapImageKind(kind) || kind == DescriptorBindingKind::Samplers || kind == DescriptorBindingKind::ShaderData || kind == DescriptorBindingKind::FlattenedSrt;
+            return heapSetBinding ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
+        }
+        return fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
+    };
     for (const auto& logical : layout.descriptors) {
         const bool imageHeap = ImageBindingResourceClass(logical.kind) != ImageResourceClass::None;
         const bool samplerHeap = logical.kind == DescriptorBindingKind::Samplers;
@@ -455,9 +463,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         PreparedDescriptorBinding entry{};
         auto& physical = entry.descriptor;
         const bool heapImage = layout.HeapImageKind(compact.kind);
-        const bool heapSetBinding = heapImage || samplerHeap || compact.kind == DescriptorBindingKind::ShaderData || compact.kind == DescriptorBindingKind::FlattenedSrt;
         const bool sharedHeapArray = layout.gpuResolvedImages && (heapImage || samplerHeap);
-        physical.descriptorSet = compact.kind == DescriptorBindingKind::Gds && layout.UsesDataAddress() ? RuntimeAbi::GpuGdsSet : layout.gpuResolvedImages ? (heapSetBinding ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet) : fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
+        physical.descriptorSet = descriptorSetFor(compact.kind);
         physical.binding = NativeBinding(sharedHeapArray ? IrShaderStage::Pixel : stage, compact.kind);
         physical.count = compact.resources.empty() ? 1u : static_cast<std::uint32_t>(compact.resources.size());
         physical.kind = PhysicalKindFor(compact.kind);
@@ -556,22 +563,39 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     return plan;
 }
 
+namespace {
+
+bool IsAddressedRole(const DescriptorBindingPlan& plan, DescriptorRole role) {
+    switch (role) {
+    case DescriptorRole::GuestBuffers: return plan.addressedBuffers;
+    case DescriptorRole::ShaderData:
+    case DescriptorRole::FlattenedSrt:
+    case DescriptorRole::BdaPagetable:
+    case DescriptorRole::FaultBuffer:
+    case DescriptorRole::ImageTable:
+    case DescriptorRole::ImageStorageTable:
+    case DescriptorRole::SamplerTable:
+    case DescriptorRole::ImageTableMap: return plan.addressedData;
+    default: return false;
+    }
+}
+
+}
+
 DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings) const {
     DescriptorBindingPlan selected;
     std::set<std::uint32_t> remaining(bindings.begin(), bindings.end());
     selected.bindings.reserve(remaining.size());
     for (const auto& binding : plan.bindings) {
-        const bool addressed = (plan.addressedBuffers && binding.descriptor.role == DescriptorRole::GuestBuffers) || (plan.addressedData && (binding.descriptor.role == DescriptorRole::ShaderData || binding.descriptor.role == DescriptorRole::FlattenedSrt || binding.descriptor.role == DescriptorRole::BdaPagetable || binding.descriptor.role == DescriptorRole::FaultBuffer || binding.descriptor.role == DescriptorRole::ImageTable || binding.descriptor.role == DescriptorRole::ImageStorageTable || binding.descriptor.role == DescriptorRole::SamplerTable || binding.descriptor.role == DescriptorRole::ImageTableMap));
+        const bool addressed = IsAddressedRole(plan, binding.descriptor.role);
         if (remaining.erase(binding.descriptor.binding) == 0u && !addressed) continue;
         selected.storageData |= binding.descriptor.role == DescriptorRole::ShaderData;
         selected.bindings.push_back(binding);
     }
     if (plan.addressedData) {
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(RuntimeAbi::FirstImageBinding)));
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(RuntimeAbi::FirstStorageImageBinding)));
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(RuntimeAbi::FirstAtomicImageBinding)));
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(RuntimeAbi::FirstAtomic64ImageBinding)));
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, DescriptorBindingKind::Samplers));
+        for (const auto kind : {RuntimeAbi::FirstImageBinding, RuntimeAbi::FirstStorageImageBinding, RuntimeAbi::FirstAtomicImageBinding, RuntimeAbi::FirstAtomic64ImageBinding, static_cast<std::uint32_t>(DescriptorBindingKind::Samplers)}) {
+            remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(kind)));
+        }
     }
     if (!remaining.empty()) fail("specialized module bindings disagree with the prepared plan");
     const bool hasSamplers = std::any_of(selected.bindings.begin(), selected.bindings.end(), [](const auto& binding) { return binding.descriptor.role == DescriptorRole::GuestSamplers; });

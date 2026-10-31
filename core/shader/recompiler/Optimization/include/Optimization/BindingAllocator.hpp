@@ -22,9 +22,16 @@ struct BindingAllocationResult : CompiledBindingLayout {
     std::vector<std::uint32_t> shaderDataUserWords;
 };
 
+struct AllocationOptions {
+    bool registrationModules = false;
+    bool stencilReplay = false;
+    bool gpuResolvedImages = false;
+    bool descriptorMemory = false;
+};
+
 class BindingAllocator {
 public:
-    [[nodiscard]] BindingAllocationResult Allocate(IrProgram& program, const BindingLayout& layout, bool registrationModules = false, bool stencilReplay = false, bool gpuResolvedImages = false, bool descriptorMemory = false) const;
+    [[nodiscard]] BindingAllocationResult Allocate(IrProgram& program, const BindingLayout& layout, const AllocationOptions& options = {}) const;
     [[nodiscard]] const IrDescriptorBinding& FindBinding(const IrBindingLayout& layout, DescriptorBindingKind kind) const;
 
 };
