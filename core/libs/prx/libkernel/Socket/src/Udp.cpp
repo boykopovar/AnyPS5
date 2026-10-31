@@ -763,7 +763,7 @@ int GuestSockets::DuplicateTo(int descriptor, int target) {
             }
         }
     }
-    if (replaced) EqueueDescriptorClosed(target);
+    EqueueDescriptorClosed(target);
     {
         std::lock_guard lock(socketsMutex);
         closeOnExecDescriptors.erase(target);
