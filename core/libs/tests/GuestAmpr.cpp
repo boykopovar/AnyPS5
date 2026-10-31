@@ -1012,6 +1012,16 @@ void TestAmmUsageStats() {
     Require(stats[0] == 0 && stats[1] == 0xdeadbeef);
 }
 
+void TestAmmOccupancyThresholdKeepsPoolIdle() {
+    std::array<std::uint64_t, 4> stats{};
+    stats = {0x18, 0, 0, 0};
+    for (int threshold : {0, 1, 50, 100, 512}) {
+        Require(sceAmprAmmSetPageTablePoolOccupancyNotificationThreshold(threshold) == 0);
+        Require(sceAmprAmmGetUsageStatsData(reinterpret_cast<AmmUsageStatsData*>(stats.data())) == 0);
+        Require((stats[1] & 0xffffu) == 512u && (stats[1] >> 16u) == 0u);
+    }
+}
+
 void TestAmm() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1819,6 +1829,7 @@ int main() {
     TestGatherScatter();
     TestAmmRangesAboveHintedMaps();
     TestAmmUsageStats();
+    TestAmmOccupancyThresholdKeepsPoolIdle();
     TestAmmRemapKeepsPoolReferences();
     TestAmmMapFailureKeepsPoolOwnership();
     TestAmmMapsScatteredPoolPages();
