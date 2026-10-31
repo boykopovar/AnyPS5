@@ -231,6 +231,35 @@ class SelectArgumentTests(SelectFixture):
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
 
+    def test_build_argument_inputs_select_their_consuming_tests(self):
+        cmake, source = self.source / "alpha/CMakeLists.txt", self.source / "alpha/tool.c"
+        header = self.source / "alpha/tool.h"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            source.write_text('#include "tool.h"\nint main(void) { return TOOL; }\n', encoding="utf-8")
+            header.write_text("#define TOOL 0\n", encoding="utf-8")
+            cmake.write_text(original + "add_executable(alpha_tool tool.c)\n"
+                                        "add_test(NAME alpha_tool_direct COMMAND alpha_tool)\n"
+                                        "add_test(NAME alpha_tool_argument COMMAND alpha_tests $<TARGET_FILE:alpha_tool>)\n"
+                                        "add_test(NAME alpha_tool_definition COMMAND alpha_tests -DTOOL=$<TARGET_FILE:alpha_tool>)\n"
+                                        "add_test(NAME alpha_not_built COMMAND alpha_tests ${CMAKE_BINARY_DIR}/missing.txt ${CMAKE_BINARY_DIR})\n",
+                             encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+            graph = self.build / "argument-graph.json"
+            self.tool("dump", self.build, graph)
+            for changed in ("alpha/tool.c", "alpha/tool.h"):
+                with self.subTest(changed=changed):
+                    self.assertEqual(self.select(changed, graph=graph)[1],
+                                     {"alpha_tool_direct", "alpha_tool_argument", "alpha_tool_definition", "script"})
+            self.assertEqual(self.select("data/input.txt", graph=graph)[1], {"alpha_data", "script"})
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            source.unlink(missing_ok=True)
+            header.unlink(missing_ok=True)
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
     def test_retargeted_test_does_not_prune_its_previous_executable(self):
         cmake = self.source / "alpha/CMakeLists.txt"
         original = cmake.read_text(encoding="utf-8")

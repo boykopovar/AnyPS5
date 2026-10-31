@@ -26,5 +26,10 @@ int APS5_VABI sceImeBackendModeCaretPrevious(void);
 int APS5_VABI sceImeBackendGetCandidateList(void);
 int APS5_VABI sceImeBackendGetCandidateListSize(void);
 int APS5_VABI sceImeBackendGetCandidateSelect(void);
+int APS5_VABI sceImeBackendGetConvertMode(void);
+int APS5_VABI sceImeBackendTemporalConfirm(void);
+int APS5_VABI sceImeBackendSetConvertMode(void);
+int APS5_VABI sceImeBackendForTestFunction(void);
+int APS5_VABI sceImeBackendDeleteCharacter(void);
 
 }

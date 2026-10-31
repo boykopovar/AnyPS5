@@ -10,16 +10,25 @@
 
 namespace Http2 {
 
+using LookupHook = int (*)(const char* host);
+
+inline std::atomic<LookupHook>& LookupHookSlot() {
+    static std::atomic<LookupHook> hook{nullptr};
+    return hook;
+}
+
 struct Settings {
     std::string userAgent;
     std::vector<std::pair<std::string, std::string>> headers;
     std::uint64_t contentLength = 0;
     bool noContentLength = false;
+    bool inflateGzip = false;
     bool auth = true;
     int redirect = 1;
     std::uint32_t verifyFlags = 0x3d;
     std::uint32_t timeout = 120000000;
     std::uint32_t connectTimeout = 30000000;
+    std::int32_t resolveRetry = 0;
     std::uint32_t sendTimeout = 120000000;
     std::uint32_t recvTimeout = 120000000;
     std::uint32_t resolveTimeout = 30000000;
@@ -57,3 +66,5 @@ std::shared_ptr<Capacity> CreateCapacity_nid_no_patch(int maximum);
 std::shared_ptr<Request> CreateRequest_nid_no_patch(int sslContext, std::shared_ptr<Capacity> capacity, Settings settings, std::string method, std::string url);
 
 }
+
+extern "C" void Http2SetLookupHook_nid_no_patch(Http2::LookupHook hook);

@@ -225,6 +225,38 @@ void CheckAsyncRequestLifecycle() {
     Require(sceNpDeleteRequest(unusedAsyncResult) == RequestNotFound, "second delete");
 }
 
+void CheckWaitAsync() {
+    NpCreateAsyncRequestParameter param{};
+    const int liveId = sceNpCreateAsyncRequest(&param);
+    Require(liveId > 0, "sceNpCreateAsyncRequest must return a positive request id");
+    const int deletedId = sceNpCreateAsyncRequest(&param);
+    Require(deletedId > 0 && deletedId != liveId, "sceNpCreateAsyncRequest must return distinct positive request ids");
+    Require(sceNpDeleteRequest(deletedId) == 0, "initial delete");
+
+    constexpr int resultSentinel = 0x5a5a5a5a;
+    for (const int id : {0, -1, 0x7fffffff, deletedId}) {
+        int result = resultSentinel;
+        Require(sceNpWaitAsync(id, &result) == RequestNotFound, "wait must reject an absent or deleted id");
+        Require(result == resultSentinel, "wait must not touch the result for an absent or deleted id");
+        Require(sceNpWaitAsync(id, nullptr) == InvalidArgument, "wait must reject a null result before the id");
+    }
+    Require(sceNpWaitAsync(liveId, nullptr) == InvalidArgument, "wait must reject a null result for a live request");
+
+    for (int round = 0; round < 2; ++round) {
+        int result = resultSentinel;
+        Require(sceNpWaitAsync(liveId, &result) == 0, "wait on a live async request");
+        Require(result == SignedOut, "wait must report the signed-out result on a live async request");
+    }
+    int pollResult = resultSentinel;
+    Require(sceNpPollAsync(liveId, &pollResult) == 0, "poll after wait");
+    Require(pollResult == SignedOut, "poll after wait must report the same result");
+
+    Require(sceNpDeleteRequest(liveId) == 0, "delete after wait");
+    int result = resultSentinel;
+    Require(sceNpWaitAsync(liveId, &result) == RequestNotFound, "wait after delete");
+    Require(result == resultSentinel, "wait must not touch the result after delete");
+}
+
 void CheckIdMapperRequests() {
     for (const int reqId : {0, -1, -0x7fffffff}) {
         Require(sceNpIdMapperAbortRequest(reqId) == IdMapperRefusedRequestId, "sceNpIdMapperAbortRequest must refuse a request id of 0 or less");
@@ -575,6 +607,7 @@ int main() {
     CheckLegacyStateCallback();
     CheckRequestTimeouts();
     CheckAsyncRequestLifecycle();
+    CheckWaitAsync();
     CheckIdMapperRequests();
     CheckManagerIntRequests();
     CheckIdMapperLookup("sceNpIdMapperNpIdToAccountId", sceNpIdMapperNpIdToAccountId);
