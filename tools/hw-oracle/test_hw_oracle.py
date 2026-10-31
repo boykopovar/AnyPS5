@@ -199,6 +199,25 @@ class InputRowsTests(unittest.TestCase):
             results = hw_oracle.run("s_nop 0", [(0, Indexable(), 0x80000000, True)], b"extra", **MODES)
         self.assertEqual(results, [tuple([0] * 16)])
 
+    def test_extra_stays_at_same_offset_across_dispatches(self):
+        for wave64, expected_dispatches in ((False, [1024, 32]), (True, [512, 512, 64])):
+            calls = []
+
+            def dispatch(command, **kwargs):
+                threads = int(command[2])
+                calls.append((threads, Path(command[3]).read_bytes()))
+                Path(command[4]).write_bytes(bytes(threads * 64))
+
+            with self.subTest(wave64=wave64), patch.object(hw_oracle, "assemble", return_value="kernel.co"), \
+                    patch.object(hw_oracle, "oracle", return_value="oracle"), \
+                    patch.object(hw_oracle.subprocess, "run", side_effect=dispatch):
+                hw_oracle.run("s_nop 0", [(0, 0, 0, 0)] * 1025, b"extra", wave64=wave64, **MODES)
+            rows_per_dispatch = 512 if wave64 else 1024
+            self.assertEqual([threads for threads, _ in calls], expected_dispatches)
+            for threads, data in calls:
+                self.assertEqual(data[threads * 16:rows_per_dispatch * 16], bytes((rows_per_dispatch - threads) * 16))
+                self.assertEqual(data[rows_per_dispatch * 16:], b"extra")
+
     def test_cli_accepts_zero_padded_decimal_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             body, rows = Path(tmp) / "body.s", Path(tmp) / "rows.txt"
