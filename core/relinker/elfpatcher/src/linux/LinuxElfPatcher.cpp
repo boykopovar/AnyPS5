@@ -177,7 +177,8 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
     for (std::size_t position = 0; position < loads.size(); ++position) {
         auto& load = headers[loads[position]];
         const auto prefix = load.MappedAddress % kDefaultLoadAlignment;
-        if (prefix == 0 || load.FileSize == 0 || load.Offset % kDefaultLoadAlignment != prefix)
+        const bool congruent = load.Offset % kDefaultLoadAlignment == prefix;
+        if (load.FileSize == 0 || (congruent && prefix == 0))
             continue;
         const auto pageStart = load.MappedAddress - prefix;
         std::vector<std::uint8_t> image(static_cast<std::size_t>(prefix), 0);
@@ -192,19 +193,18 @@ void SeparateSharedLoadPages(std::vector<std::uint8_t>& buf, std::vector<Domain:
             }
         }
         const auto mapped = load.Offset - prefix;
-        bool differs = false;
+        bool differs = !congruent;
         for (std::size_t index = 0; index < image.size() && !differs; ++index)
             differs = covered[index] && buf[static_cast<std::size_t>(mapped) + index] != image[index];
         if (!differs)
             continue;
-        const auto alignment = std::max<std::uint64_t>(load.Alignment, kDefaultLoadAlignment);
-        while ((buf.size() + prefix) % alignment != load.MappedAddress % alignment)
-            buf.push_back(0);
+        Io::AlignBuffer(buf, static_cast<std::size_t>(kDefaultLoadAlignment));
         buf.insert(buf.end(), image.begin(), image.end());
         const auto offset = static_cast<std::uint64_t>(buf.size());
         buf.resize(static_cast<std::size_t>(offset + load.FileSize));
         std::copy_n(buf.begin() + static_cast<std::ptrdiff_t>(load.Offset), static_cast<std::size_t>(load.FileSize), buf.begin() + static_cast<std::ptrdiff_t>(offset));
         load.Offset = offset;
+        load.Alignment = std::min(load.Alignment, kDefaultLoadAlignment);
     }
 }
 
@@ -317,6 +317,11 @@ std::vector<std::uint8_t> TracePrologue(const std::uint64_t vaddr, const std::ui
     return code;
 }
 
+void RequireBaseAlignment(const std::uint64_t base, const std::uint64_t alignment) {
+    if (alignment > 1 && base % alignment != 0)
+        throw Domain::RelinkerException("Fixed Linux base " + Hex(base) + " is not a multiple of the PT_LOAD alignment " + Hex(alignment));
+}
+
 void RebaseProgramHeaders(std::vector<std::uint8_t>& buf, const std::uint64_t tableOffset, const std::uint16_t entrySize, const std::uint16_t count, const std::uint64_t base) {
     for (std::uint16_t index = 0; index < count; ++index) {
         const auto header = static_cast<std::size_t>(tableOffset + static_cast<std::uint64_t>(index) * entrySize);
@@ -326,9 +331,7 @@ void RebaseProgramHeaders(std::vector<std::uint8_t>& buf, const std::uint64_t ta
         const auto address = Rebased(base, Io::ReadU64(buf, header + kPhdrVaddrOffset), "Program header address");
         const auto physical = Rebased(base, Io::ReadU64(buf, header + kPhdrPaddrOffset), "Program header physical address");
         if (type == PT_LOAD) {
-            const auto alignment = Io::ReadU64(buf, header + kPhdrAlignOffset);
-            if (alignment > 1 && base % alignment != 0)
-                throw Domain::RelinkerException("Fixed Linux base " + Hex(base) + " is not a multiple of the PT_LOAD alignment " + Hex(alignment));
+            RequireBaseAlignment(base, Io::ReadU64(buf, header + kPhdrAlignOffset));
             if (Io::ReadU64(buf, header + kPhdrMemSizeOffset) > kLinuxUserAddressEnd - address)
                 throw Domain::RelinkerException("PT_LOAD at " + Hex(address) + " ends outside the Linux user address space");
         }
@@ -622,6 +625,10 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
 
     auto headers = originalHeaders;
+    if (_fixedBase)
+        for (const auto& header : headers)
+            if (header.Type == PT_LOAD)
+                RequireBaseAlignment(*_fixedBase, header.Alignment);
     SeparateSharedLoadPages(buf, headers);
 
     ProgramHeaderLayoutRequest layoutRequest{};
