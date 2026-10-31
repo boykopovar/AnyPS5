@@ -60,6 +60,78 @@ def excessive_trace_json(opening, closing):
     raise AssertionError("JSON decoder accepted every bounded nesting probe")
 
 
+class TraceEventLossTests(unittest.TestCase):
+    def marker(self, tid=1, lost=8):
+        return {"name": "trace buffer full", "ph": "i", "ts": 1500, "pid": 7, "tid": tid,
+                "s": "t", "args": {"events_lost": lost}}
+
+    def test_cli_reports_loss_without_an_adjacent_summary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "capture.json.gz"
+            path.write_bytes(gzip.compress(json.dumps({"traceEvents": EVENTS + [self.marker()]}).encode()))
+            for output in ([], ["--json"]):
+                with self.subTest(output=output):
+                    result = subprocess.run([sys.executable, trace_digest.__file__, str(path), *output],
+                                            capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if output:
+                        digest = json.loads(result.stdout)
+                        self.assertTrue(digest["trace_incomplete"])
+                        self.assertEqual(digest["event_loss"], [{"thread": "queue worker 0x0", "at_ms": 1.5, "events_lost": 8}])
+                        self.assertIsNone(digest["summary"])
+                    else:
+                        self.assertIn("Incomplete trace", result.stdout)
+                        self.assertIn("8 events lost", result.stdout)
+                        self.assertIn("missing slices are not idle time", result.stdout)
+
+    def test_loss_does_not_change_frame_bounds_or_retained_slice_timings(self):
+        expected = trace_digest.digest(trace_digest.Trace(EVENTS), SUMMARY)
+        result = trace_digest.digest(trace_digest.Trace(EVENTS + [self.marker()]), SUMMARY)
+        self.assertTrue(result.pop("trace_incomplete"))
+        result.pop("event_loss")
+        self.assertEqual(result, expected)
+        self.assertFalse(SUMMARY["trace_dropped"])
+
+    def test_summary_loss_is_reported_without_event_markers(self):
+        summary = dict(SUMMARY, trace_dropped=True)
+        result = trace_digest.digest(trace_digest.Trace(EVENTS), summary)
+        self.assertTrue(result["trace_incomplete"])
+        self.assertEqual(result["event_loss"], [])
+        self.assertIn("Incomplete trace", trace_digest.markdown(result))
+
+    def test_markdown_loss_escapes_thread_names(self):
+        for name, escaped in (("a|b", "a&#124;b"), ("<x>", "&lt;x&gt;")):
+            with self.subTest(name=name):
+                metadata = {"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": 1, "args": {"name": name}}
+                result = trace_digest.digest(trace_digest.Trace(EVENTS + [metadata, self.marker()]))
+                self.assertEqual(result["event_loss"][0]["thread"], name)
+                markdown = trace_digest.markdown(result)
+                self.assertIn(f"- {escaped}: 8 events lost; buffer full at 1.5 ms", markdown)
+                self.assertNotIn(f"- {name}: 8 events lost", markdown)
+
+    def test_thread_filter_keeps_only_relevant_loss_markers(self):
+        trace = trace_digest.Trace(EVENTS + [self.marker()])
+        trace.select_threads(["presenter"])
+        result = trace_digest.digest(trace)
+        self.assertNotIn("trace_incomplete", result)
+        self.assertNotIn("Incomplete trace", trace_digest.markdown(result))
+        trace = trace_digest.Trace(EVENTS + [self.marker(tid=9)])
+        trace.select_threads(["tid 9"])
+        result = trace_digest.digest(trace)
+        self.assertEqual(result["event_loss"], [{"thread": "tid 9", "at_ms": 1.5, "events_lost": 8}])
+
+    def test_loss_counters_are_validated(self):
+        for lost in (None, True, -1, 1.5, "8"):
+            with self.subTest(lost=lost):
+                with self.assertRaisesRegex(ValueError, "args.events_lost must be a nonnegative integer"):
+                    trace_digest.Trace(EVENTS + [self.marker(lost=lost)])
+
+    def test_zero_loss_does_not_change_the_digest(self):
+        expected = trace_digest.digest(trace_digest.Trace(EVENTS))
+        result = trace_digest.digest(trace_digest.Trace(EVENTS + [self.marker(lost=0)]))
+        self.assertEqual(result, expected)
+
+
 class TraceJsonNestingTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
