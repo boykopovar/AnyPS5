@@ -6,7 +6,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
 
-extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName);
+extern "C" [[noreturn]] void (NotImplemented_nid_no_patch)(const char* funcName);
 extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 
 namespace {

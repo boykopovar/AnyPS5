@@ -2,7 +2,10 @@
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
 #include "prx/libkernel/AppMetadata/include/ParamSfoParser.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/RunReport.hpp"
+#include "prx/libc/include/RunReportComponent.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -57,6 +60,23 @@ void ensureTitleLoaded() {
     std::memcpy(g_userDefinedParams, parsed.userDefinedParams, sizeof(g_userDefinedParams));
     g_titleLoaded = true;
 }
+
+bool ProvideRunReportGame(RunReportGame* game) {
+    try {
+        ensureTitleLoaded();
+    } catch (const std::exception&) {
+        return false;
+    }
+    std::lock_guard lock(g_metadataMutex);
+    std::memcpy(game->titleId, g_titleId, std::min(sizeof(g_titleId), sizeof(game->titleId) - 1u));
+    std::memcpy(game->contentVersion, g_contentVersion, std::min(sizeof(g_contentVersion), sizeof(game->contentVersion) - 1u));
+    std::memcpy(game->name, g_title, std::min(sizeof(g_title), sizeof(game->name) - 1u));
+    return true;
+}
+
+APS5_RUN_REPORT_COMPONENT("libkernel")
+
+[[maybe_unused]] const bool g_runReportGameProvider = (LibcRunReportSetGameProvider_nid_no_patch(&ProvideRunReportGame), true);
 
 const bool g_downloadDataMounted = [] {
     try {

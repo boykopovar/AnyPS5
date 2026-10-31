@@ -53,6 +53,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FailureReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LogFilePlatform.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LogFile.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/RunReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/gcc/StackGuard.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/windows/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/x86_64/CallTrace.cpp
@@ -119,6 +120,26 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
 )
 
+find_package(Git QUIET)
+set(runReportRevisionRoot ${CMAKE_CURRENT_BINARY_DIR}/run_report_generated)
+add_custom_target(run_report_revision
+        COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE} -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${runReportRevisionRoot}/RunReportRevision.hpp -P ${CMAKE_CURRENT_SOURCE_DIR}/run_report_revision.cmake
+        BYPRODUCTS ${runReportRevisionRoot}/RunReportRevision.hpp
+        VERBATIM
+)
+add_dependencies(libc run_report_revision)
+target_include_directories(libc PRIVATE ${runReportRevisionRoot})
+
+function(run_report_stamp_components root)
+    foreach(component libkernel)
+        if(TARGET ${component})
+            target_include_directories(${component} PRIVATE ${root})
+            add_dependencies(${component} run_report_revision)
+        endif()
+    endforeach()
+endfunction()
+cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL run_report_stamp_components [[${runReportRevisionRoot}]])")
+
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 
@@ -142,7 +163,40 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
+if(WIN32)
+    target_link_libraries(libc PRIVATE shell32)
+endif()
+
 if(BUILD_TESTING)
+    add_test_executable(run_report_tests ${LIBS_INCLUDE_DIR}/tests/RunReport.cpp)
+    target_include_directories(run_report_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(run_report_tests PRIVATE libc)
+    if(WIN32)
+        target_link_libraries(run_report_tests PRIVATE shell32)
+    endif()
+    configure_windows_unwind(run_report_tests)
+    add_test(NAME run_report COMMAND run_report_tests)
+    set_tests_properties(run_report PROPERTIES TIMEOUT 60)
+    find_package(Python3 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        execute_process(COMMAND ${Python3_EXECUTABLE} -c "import jsonschema" RESULT_VARIABLE runReportHasJsonschema OUTPUT_QUIET ERROR_QUIET)
+        if(runReportHasJsonschema EQUAL 0)
+            add_test(NAME run_report_schema COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/validate_run_report_dump.py $<TARGET_FILE:run_report_tests>)
+            set_tests_properties(run_report_schema PROPERTIES TIMEOUT 60)
+        endif()
+    endif()
+    if(GIT_FOUND)
+        add_test(NAME run_report_revision COMMAND ${CMAKE_COMMAND} -DGIT=${GIT_EXECUTABLE}
+                -DSCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/run_report_revision.cmake
+                -DWORK=${CMAKE_CURRENT_BINARY_DIR}/run_report_revision_test
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/tests_run_report_revision.cmake)
+        set_tests_properties(run_report_revision PROPERTIES TIMEOUT 120)
+    endif()
+    if(WIN32)
+        set_tests_properties(run_report PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_update_env_tests ${LIBS_INCLUDE_DIR}/tests/GuestUpdateEnv.cpp)
     target_include_directories(guest_update_env_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_update_env_tests PRIVATE libc ${CMAKE_DL_LIBS})
