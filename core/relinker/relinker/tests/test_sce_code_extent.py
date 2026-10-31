@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 
+PT_NULL = 0
 PT_LOAD = 1
 PT_DYNAMIC = 2
 PT_INTERP = 3
@@ -32,7 +33,7 @@ LATER_FUNCTION = 0x300
 def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False, data_pointer=False, gap_entry=False,
             plt_at=None, early_function=False, function_tls=False, pointer_target=None, gap_bytes=None, functions=None,
             tls=False, gap_embedded_data=False, gap_data_then_syscall=False, gap_callback_syscall_undecodable=False,
-            gap_decoded_padding_syscall=False, gap_stub_then_data=False):
+            gap_decoded_padding_syscall=False, gap_stub_then_data=False, eh_frame_header=True):
     has_gap_embedded = gap_embedded_data or gap_data_then_syscall or gap_callback_syscall_undecodable or gap_decoded_padding_syscall or gap_stub_then_data
     plt = (LATER_FUNCTION + FUNCTION_SIZE + gap if has_gap_embedded else FUNCTION + FUNCTION_SIZE + gap) if plt_at is None else plt_at
     entry = FUNCTION + FUNCTION_SIZE if gap_entry else FUNCTION
@@ -61,8 +62,8 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
                      *((PT_SCE_DYNLIBDATA, 0, 0, 0, 0, len(image), len(image), 1) if sce_block
                        else (PT_SCE_VERSION, 0, 0, 0, 0, 0, 0, 1)))
     header_size = 12 + 8 * len(functions)
-    struct.pack_into("<IIQQQQQQ", image, 232, PT_GNU_EH_FRAME, 4, EH_FRAME_HEADER, EH_FRAME_HEADER, EH_FRAME_HEADER,
-                     header_size, header_size, 4)
+    struct.pack_into("<IIQQQQQQ", image, 232, PT_GNU_EH_FRAME if eh_frame_header else PT_NULL, 4, EH_FRAME_HEADER,
+                     EH_FRAME_HEADER, EH_FRAME_HEADER, header_size, header_size, 4)
     if interpreter_pointer:
         struct.pack_into("<IIQQQQQQ", image, 288, PT_INTERP, 4, interpreter, interpreter, interpreter,
                          len(INTERPRETER), len(INTERPRETER), 1)
@@ -142,13 +143,14 @@ def fixture(sce_block=True, plt_push_offset=8, gap=0, interpreter_pointer=False,
     return image, plt
 
 
-def run(relinker, work, name, built, expected_error=None, target="windows", expected_output=None, absent_bytes=None):
+def run(relinker, work, name, built, expected_error=None, target="windows", expected_output=None, absent_bytes=None,
+        flags=None):
     image, plt = built
     source = work / (name + ".elf")
     output = work / (name + ".out")
     source.write_bytes(image)
-    result = subprocess.run([str(relinker), "--skip-sce-module", "--" + target, "--registry", str(source), str(output)],
-                            capture_output=True, text=True, timeout=20)
+    result = subprocess.run([str(relinker), "--skip-sce-module", *(["--" + target] if flags is None else flags),
+                             "--registry", str(source), str(output)], capture_output=True, text=True, timeout=20)
     if expected_error is None:
         assert result.returncode == 0 and output.exists(), (name, result.stdout, result.stderr)
         registry = json.loads((work / (name + ".registry.json")).read_text())
@@ -203,6 +205,23 @@ def main():
             "PLT overlaps an unwind function")
         run(relinker, work, "sysv-data-after-plt", fixture(sce_block=False),
             "Cannot decode instruction")
+        for system, flags in (("linux-to-intel", ["--to-intel"]), ("windows-to-intel", ["--windows", "--to-intel"]),
+                              ("macos-to-rosetta", ["--macos", "--to-rosetta"])):
+            for name, sce_block in (("sce", True), ("sysv", False)):
+                built = fixture(sce_block=sce_block, gap_embedded_data=True)
+                run(relinker, work, name + "-gap-embedded-data-" + system, built, flags=flags)
+                table = built[0][FUNCTION + FUNCTION_SIZE + 0x10:LATER_FUNCTION]
+                assert table in (work / (name + "-gap-embedded-data-" + system + ".out")).read_bytes(), (name, system)
+            run(relinker, work, "gap-data-then-syscall-" + system, fixture(sce_block=False, gap_data_then_syscall=True),
+                "Forbidden syscall instruction", flags=flags)
+            run(relinker, work, "gap-decoded-padding-syscall-" + system,
+                fixture(sce_block=False, gap_decoded_padding_syscall=True), "Forbidden syscall instruction", flags=flags)
+        for system, flags in (("linux", []), ("windows", ["--windows"]), ("macos", ["--macos"]),
+                              ("linux-to-intel", ["--to-intel"]), ("windows-to-intel", ["--windows", "--to-intel"]),
+                              ("macos-to-rosetta", ["--macos", "--to-rosetta"])):
+            run(relinker, work, "sysv-no-eh-gap-embedded-data-" + system,
+                fixture(sce_block=False, gap_embedded_data=True, eh_frame_header=False),
+                "Cannot decode instruction: Unsupported 0F 78 opcode without SSE4A prefix (offset 0x220)", flags=flags)
         for target in ("windows", "macos"):
             run(relinker, work, "sce-interpreter-pointer-" + target, fixture(gap=0x60, interpreter_pointer=True),
                 target=target)

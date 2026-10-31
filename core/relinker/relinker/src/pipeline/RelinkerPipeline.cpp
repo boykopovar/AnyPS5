@@ -3,7 +3,6 @@
 #include <relinker/analysis/UnusedNidFilter/PltCompactor.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
-#include <relinker/analysis/RelativeJumpTables.hpp>
 #include <algorithm>
 #include <iterator>
 #include <sstream>
@@ -30,7 +29,7 @@ constexpr std::uint16_t kEtSceDynamic = 0xfe18;
 
 }
 
-RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress)
+RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress, std::optional<std::vector<CodeRange>> dataTables)
     : elfReader(std::move(elfReader))
     , syscallScanner(std::move(syscallScanner))
     , callSiteResolver(std::move(callSiteResolver))
@@ -39,6 +38,7 @@ RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::s
     , unusedNidFilter(std::move(unusedNidFilter))
     , unusedFilterLevel(unusedFilterLevel)
     , progress(progress)
+    , knownDataTables(std::move(dataTables))
 {
     if (!this->elfReader || !this->syscallScanner || !this->callSiteResolver || !this->validationPolicy || !this->dynamicSectionBuilder || !this->unusedNidFilter) throw RelinkerException("Missing relinker pipeline dependency");
     if (unusedFilterLevel > 2) throw RelinkerException("Unused NID filter level must be 0, 1 or 2");
@@ -430,14 +430,13 @@ RelinkResult RelinkerPipeline::Relink() {
     extractRela(dynRelaOffset, dynRelaSize, false);
     extractRela(dynJmpRelOffset, dynJmpRelSize, true);
 
-    std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
+    auto dataTables = knownDataTables.value_or(std::vector<CodeRange>{});
     std::vector<std::vector<CodeRange>> segmentUnwindRanges(executableSegments.size());
     const bool sceImage = std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_SCE_DYNLIBDATA; });
     const bool hasEhFrame = sceImage || std::any_of(programHeaders.begin(), programHeaders.end(), [](const ProgramHeader& ph) { return ph.Type == PT_GNU_EH_FRAME; });
     if (hasEhFrame) {
         const auto functions = UnusedNidFilter::ReadExceptionFunctions(raw, programHeaders, {}, {});
-        for (const auto& function : functions) unwindRanges.emplace_back(function.Begin, function.End);
-        std::sort(unwindRanges.begin(), unwindRanges.end());
+        if (!knownDataTables) dataTables = DataTableRanges(raw, programHeaders, functions, gotVAddr, dynJmpRelSize);
         if (sceImage)
             for (std::size_t index = 0; index < executableSegments.size(); ++index) {
                 auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
@@ -452,8 +451,9 @@ RelinkResult RelinkerPipeline::Relink() {
     for (const auto& [segment, segmentVAddr, segmentFileOffset] : executableSegments) {
         static_cast<void>(segmentFileOffset);
         auto& scanSegment = scanSegments.emplace_back(segment);
-        for (const auto& table : FindRelativeJumpTables(segment, segmentVAddr, unwindRanges))
-            std::fill(scanSegment.begin() + static_cast<std::ptrdiff_t>(table.Begin - segmentVAddr), scanSegment.begin() + static_cast<std::ptrdiff_t>(table.End - segmentVAddr), std::uint8_t{0x90});
+        for (const auto& table : dataTables)
+            if (table.Begin >= segmentVAddr && table.End <= segmentVAddr + scanSegment.size())
+                std::fill(scanSegment.begin() + static_cast<std::ptrdiff_t>(table.Begin - segmentVAddr), scanSegment.begin() + static_cast<std::ptrdiff_t>(table.End - segmentVAddr), std::uint8_t{0x90});
     }
 
     std::vector<RelinkPatch> syscallPatches;

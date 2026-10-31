@@ -201,6 +201,13 @@ def main():
             run_module(relinker, work, "sce-module-gap-callback-syscall-" + system, sce_module(gap_callback_syscall_undecodable=True), flags, "Forbidden syscall instruction")
             run_module(relinker, work, "sce-module-gap-decoded-padding-syscall-" + system, sce_module(gap_decoded_padding_syscall=True), flags, "Forbidden syscall instruction")
             run_module(relinker, work, "sce-module-gap-stub-then-data-" + system, sce_module(gap_stub_then_data=True), flags, "Forbidden syscall instruction")
+        for system, flags in (("linux-to-intel", ["--to-intel"]), ("windows-to-intel", ["--windows", "--to-intel"]),
+                              ("macos-to-rosetta", ["--macos", "--to-rosetta"])):
+            run_module(relinker, work, "sce-module-gap-embedded-data-" + system, sce_module(gap_embedded_data=True), flags)
+            guest = work / ("sce-module-gap-embedded-data-" + system) / "app0" / "sce_module" / "libExample.prx.guest.prx"
+            assert bytes.fromhex("0f 78 33 1e") * 8 in guest.read_bytes(), system
+            run_module(relinker, work, "sce-module-gap-data-then-syscall-" + system, sce_module(gap_data_then_syscall=True), flags, "Forbidden syscall instruction")
+            run_module(relinker, work, "sce-module-gap-decoded-padding-syscall-" + system, sce_module(gap_decoded_padding_syscall=True), flags, "Forbidden syscall instruction")
     print("SCE module code extent tests passed")
 
 
