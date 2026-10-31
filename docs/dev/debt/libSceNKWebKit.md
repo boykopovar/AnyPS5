@@ -8,6 +8,8 @@
 
 ### Functional
 
+- [Constant-return exports](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 137 exports answer with a constant in the PS5 11.00 module: 111 return 0 (`xor eax,eax; ret`), 13 return the immediate of a `mov eax,imm32; ret` and 13 return true with `mov al,1; ret` (addresses, sizes and bytes from the 11.00 `libSceNKWebKit.sprx`; each NID recomputed from the declared name). The exported functions ignore their arguments, but their declared prototypes stay the no-parameter `int` placeholders, so only the 32-bit return value is measured here; a caller that expects a wider value, a pointer or a floating-point return is not covered. Only 11.00 was measured.
+
 - [JavaScriptCore C API](../../../core/libs/prx/libSceNKWebKit/src/JscContext.cpp) (libSceNKWebKit) - `JS*` runs on QuickJS-NG (`3rdparty/quickjs`), not JavaScriptCore: there is no JIT and no conservative stack scan, and error messages, stack traces and property order come from QuickJS. An unprotected `JSObjectRef` held only in a native variable or heap structure across `JSGarbageCollect` is collected, where JavaScriptCore keeps it through its stack scan; `JSValueProtect`, a marking constraint, a JavaScript reference or an active callback frame keep it alive. `JSStringRef` values are `libSceJsc` strings.
 - [Dictionary key order](../../../core/libs/prx/libSceNKWebKit/src/Dictionary.cpp) (libSceNKWebKit) - `WKDictionaryCopyKeys` returns keys sorted by UTF-16 code unit, not in the `WTF::HashMap` iteration order of [WKDictionary.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKDictionary.cpp).
 - [Out-of-line colors](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColor.cpp) (libSceNKWebKit) - `WebCore::Color` operations on an out-of-line value (extended color spaces in [Color.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/Color.h)) throw; only inline 8-bit sRGBA values are handled.
@@ -15,7 +17,7 @@
 
 ### Known export names; ABI prototypes unverified
 
-- The 131 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
+- The 128 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
 
 ### Older callable exports
 
@@ -25,7 +27,7 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7574 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7437 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -45,7 +47,6 @@
 | `WKAXObjectFrame` | `huPnixU5dNc` |
 | `WKAXObjectPage` | `KrVXrd3WyfM` |
 | `WKAXObjectRole` | `pt0Eyg26hqw` |
-| `WKAccessibilityCanUseSecondaryAXThread` | `7bL9hbEC1w0` |
 | `WKAccessibilityEnableEnhancedAccessibility` | `SFLp7Zjq3n8` |
 | `WKAccessibilityEnhancedAccessibilityEnabled` | `b5bQfU9tUKo` |
 | `WKAccessibilityFocusedObject` | `WqnB6ITORdg` |
@@ -78,17 +79,6 @@
 | `WKBackForwardListItemCopyURL` | `LcWGak3Mp3c` |
 | `WKBundleAddOriginAccessAllowListEntry` | `Ec6dqG56Kog` |
 | `WKBundleBackForwardListClear` | `uDz2mwaGQxc` |
-| `WKBundleBackForwardListCopyItemAtIndex` | `w7TgSPl+20I` |
-| `WKBundleBackForwardListGetBackListCount` | `jbkqtarv--A` |
-| `WKBundleBackForwardListItemCopyChildren` | `FbPgeyqyKxw` |
-| `WKBundleBackForwardListItemCopyOriginalURL` | `A3HuqQOmdmA` |
-| `WKBundleBackForwardListItemCopyTarget` | `eNlDM--QehI` |
-| `WKBundleBackForwardListItemCopyTitle` | `oA7TAoIYksg` |
-| `WKBundleBackForwardListItemCopyURL` | `lW7Qtc4Q4bI` |
-| `WKBundleBackForwardListItemHasCachedPageExpired` | `AMLRfnzY1CU` |
-| `WKBundleBackForwardListItemIsInBackForwardCache` | `LKMVeWFdRNk` |
-| `WKBundleBackForwardListItemIsSame` | `Q7y-M7olJkc` |
-| `WKBundleBackForwardListItemIsTargetItem` | `6yQTKzljpcM` |
 | `WKBundleClearHistoryForTesting` | `4XbhuyqB6pA` |
 | `WKBundleClearResourceLoadStatistics` | `zm7AblpGSLk` |
 | `WKBundleCreateWKDataFromUInt8Array` | `IOaozfGUAFI` |
@@ -96,7 +86,6 @@
 | `WKBundleDOMWindowExtensionGetFrame` | `VN5TX+cUFf4` |
 | `WKBundleDOMWindowExtensionGetScriptWorld` | `CFtAcs7A434` |
 | `WKBundleExtendClassesForParameterCoder` | `11DvPWLfwtU` |
-| `WKBundleFileHandleCreateWithPath` | `wWExpSMGya0` |
 | `WKBundleFrameAllowsFollowingLink` | `pmZi4yM8pxM` |
 | `WKBundleFrameCallShouldCloseOnWebView` | `N+icA-jvTHs` |
 | `WKBundleFrameClearOpener` | `5XkPh73uOas` |
@@ -112,8 +101,6 @@
 | `WKBundleFrameCopySecurityOrigin` | `-s98d979pPQ` |
 | `WKBundleFrameCopySuggestedFilenameForResourceWithURL` | `kGAitTwtXq0` |
 | `WKBundleFrameCopyURL` | `xoaQMJQ9JFg` |
-| `WKBundleFrameCopyWebArchiveFilteringSubframes` | `gkYgrCQKKrk` |
-| `WKBundleFrameCopyWebArchive` | `kWLVY4iAwME` |
 | `WKBundleFrameCreateFrameHandle` | `URUBvWtDFRU` |
 | `WKBundleFrameCreateHitTestResult` | `OuVGXFusQvs` |
 | `WKBundleFrameFocus` | `kgGUjo9h2ao` |
@@ -123,7 +110,6 @@
 | `WKBundleFrameGetFrameLoadState` | `jB0PrHhQOZ8` |
 | `WKBundleFrameGetJavaScriptContextForWorld` | `dmRRBt+qPcs` |
 | `WKBundleFrameGetJavaScriptContext` | `eI2iByoOtYU` |
-| `WKBundleFrameGetJavaScriptWrapperForFileForWorld` | `ERgb4lPId44` |
 | `WKBundleFrameGetJavaScriptWrapperForNodeForWorld` | `uvtLlI3dT8o` |
 | `WKBundleFrameGetJavaScriptWrapperForRangeForWorld` | `b5yYFj7O3kk` |
 | `WKBundleFrameGetPage` | `P8y9OgqOGts` |
@@ -177,19 +163,12 @@
 | `WKBundleNavigationActionGetShouldTryAppLinks` | `x2Bw3o33jBY` |
 | `WKBundleNodeHandleCopyDocumentFrame` | `o1BJoFZNBYo` |
 | `WKBundleNodeHandleCopyDocument` | `H7cknGH2DVo` |
-| `WKBundleNodeHandleCopyHTMLFrameElementContentFrame` | `aHUVAX-1UOA` |
 | `WKBundleNodeHandleCopyHTMLIFrameElementContentFrame` | `tS9cMOapHWU` |
-| `WKBundleNodeHandleCopyHTMLTableCellElementCellAbove` | `kFXtge4WNeg` |
 | `WKBundleNodeHandleCopySnapshotWithOptions` | `splXjoRt+jY` |
-| `WKBundleNodeHandleCopyVisibleRange` | `WisAKbUAQO0` |
 | `WKBundleNodeHandleCreate` | `QJxnRATldPc` |
 | `WKBundleNodeHandleGetElementBounds` | `eQyyR4yPFKQ` |
-| `WKBundleNodeHandleGetHTMLInputElementAutoFillAvailable` | `wgIKemgsVmc` |
 | `WKBundleNodeHandleGetHTMLInputElementAutoFillButtonBounds` | `hjt6ZGKuEfo` |
-| `WKBundleNodeHandleGetHTMLInputElementAutoFillButtonEnabled` | `kuwpvpIwSXU` |
 | `WKBundleNodeHandleGetHTMLInputElementAutoFillButtonType` | `O9k0o6Iqejs` |
-| `WKBundleNodeHandleGetHTMLInputElementAutoFilled` | `2atcqaHtnO0` |
-| `WKBundleNodeHandleGetHTMLInputElementAutofilled` | `Q13L4R2-JYU` |
 | `WKBundleNodeHandleGetHTMLInputElementLastAutoFillButtonType` | `6Z7V+FlXSE8` |
 | `WKBundleNodeHandleGetHTMLInputElementLastChangeWasUserEdit` | `p3uXvmETGok` |
 | `WKBundleNodeHandleGetHTMLTextAreaElementLastChangeWasUserEdit` | `R+2FUI+qUB4` |
@@ -216,8 +195,6 @@
 | `WKBundlePageClose` | `Y9OWNvuSVJg` |
 | `WKBundlePageConfirmComposition` | `T4vOLGegdvQ` |
 | `WKBundlePageConfirmCompositionWithText` | `4eheJycBxI0` |
-| `WKBundlePageCopyContextMenuAtPointInWindow` | `MgyEz5SwXAI` |
-| `WKBundlePageCopyContextMenuItems` | `IKfdBNxQ0Nw` |
 | `WKBundlePageCopyGroupIdentifier` | `R9X0jHsH64E` |
 | `WKBundlePageCopyOriginsWithApplicationCache` | `cN8iJ612c0k` |
 | `WKBundlePageCopyRenderLayerTree` | `dCVd7TqyhYA` |
@@ -239,7 +216,6 @@
 | `WKBundlePageFlushPendingEditorStateUpdate` | `iG3Y7R3AFOM` |
 | `WKBundlePageForceRepaint` | `jaQ3h3J4zd4` |
 | `WKBundlePageGetAppCacheUsageForOrigin` | `qjrn0E95Tak` |
-| `WKBundlePageGetBackForwardList` | `myZvY137tks` |
 | `WKBundlePageGetBackingScaleFactor` | `PS5n3xxFDXQ` |
 | `WKBundlePageGetInspector` | `Gl9UFzi54FQ` |
 | `WKBundlePageGetMainFrame` | `78YSUMVcvLY` |
@@ -337,12 +313,10 @@
 | `WKContextClearCurrentModifierStateForTesting` | `Yk2qJg3VRBY` |
 | `WKContextClearSupportedPlugins` | `XIckVUXyJsE` |
 | `WKContextClearVisitedLinks` | `HiehcAiEDCc` |
-| `WKContextCopyPlugInAutoStartOriginHashes` | `G4+RWlGLEt0` |
 | `WKContextCreate` | `EnYKPlIQ0DA` |
 | `WKContextCreateWithConfiguration` | `XgehYXFKMDs` |
 | `WKContextCreateWithInjectedBundlePath` | `2lRXRLy4Pfc` |
 | `WKContextDisableProcessTermination` | `2jwy6+fFilk` |
-| `WKContextDownloadURLRequest` | `DDW8PFTS+1g` |
 | `WKContextEnableProcessTermination` | `FJB0fZbTUWY` |
 | `WKContextGarbageCollectJavaScriptObjects` | `MBIrQeS3ILw` |
 | `WKContextGetAccessibilityEnabled` | `YREfLD1wwT0` |
@@ -350,9 +324,7 @@
 | `WKContextGetCacheModel` | `vdM7J5Xjh2A` |
 | `WKContextGetGeolocationManager` | `GJsL9usTdig` |
 | `WKContextGetGlobalStatistics` | `cLN+-CVotuU` |
-| `WKContextGetIconDatabase` | `YQEg-76vfzE` |
 | `WKContextGetKeyValueStorageManager` | `XlTwFUI6oSI` |
-| `WKContextGetMaximumNumberOfProcesses` | `5sd-RroOg-w` |
 | `WKContextGetNotificationManager` | `ZGEEHCN2FvE` |
 | `WKContextGetResourceCacheManager` | `N3bGYLHZl48` |
 | `WKContextGetStatisticsWithOptions` | `lihFGjz1c-c` |
@@ -360,17 +332,6 @@
 | `WKContextGetUsesSingleWebProcess` | `qZDRsY7kQ0s` |
 | `WKContextGetWebsiteDataStore` | `dDc6-iayAyg` |
 | `WKContextJavaScriptConfigurationFileEnabled` | `efD5N1zaabU` |
-| `WKContextMenuCopySubmenuItems` | `PyySvnK-JGM` |
-| `WKContextMenuItemCopyTitle` | `r0bRjKqIBxE` |
-| `WKContextMenuItemCreateAsAction` | `FL+PbMcEVGI` |
-| `WKContextMenuItemCreateAsCheckableAction` | `k0495LPSWPU` |
-| `WKContextMenuItemCreateAsSubmenu` | `VpslPflOWdM` |
-| `WKContextMenuItemGetChecked` | `42HcmdjlDmc` |
-| `WKContextMenuItemGetEnabled` | `gEV0JIqdYdg` |
-| `WKContextMenuItemGetTag` | `I849n0yCszo` |
-| `WKContextMenuItemGetType` | `bIdRTPcRP7w` |
-| `WKContextMenuItemGetUserData` | `oRR5HoDuB7Y` |
-| `WKContextMenuItemSeparatorItem` | `yOyUp3CncVw` |
 | `WKContextMenuItemSetUserData` | `nsNNFzmax7s` |
 | `WKContextPostMessageToInjectedBundle` | `N93Nb5-YJsw` |
 | `WKContextPreconnectToServer` | `MQI+nL6CJkU` |
@@ -380,7 +341,6 @@
 | `WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest` | `rAU9SRsnG3E` |
 | `WKContextRegisterURLSchemeAsEmptyDocument` | `ad1-t6xKVtA` |
 | `WKContextRegisterURLSchemeAsSecure` | `6P04fQkPVec` |
-| `WKContextResumeDownload` | `bIU19RyXVUg` |
 | `WKContextSetAccessibilityEnabled` | `05HZtE0FPg0` |
 | `WKContextSetAdditionalPluginsDirectory` | `BFnY5ZzK7-Q` |
 | `WKContextSetAlwaysUsesComplexTextCodePath` | `Y3Z2695WJ8E` |
@@ -438,7 +398,6 @@
 | `WKFrameCopyURL` | `3PiMrWNwmgw` |
 | `WKFrameCopyUnreachableURL` | `U4g7RC9mWd8` |
 | `WKFrameCreateFrameHandle` | `3MUp7-9-xkg` |
-| `WKFrameCreateFrameInfo` | `iUg3lPaKd4E` |
 | `WKFrameGetCertificateInfo` | `L1HtA3ROv5k` |
 | `WKFrameGetFrameLoadState` | `82n4LwLnE3s` |
 | `WKFrameGetMainResourceData` | `wd3NsMeiyj4` |
@@ -449,7 +408,6 @@
 | `WKFrameInfoCreateFrameHandleRef` | `lQUbnRQ699M` |
 | `WKFrameIsDisplayingMarkupDocument` | `vwFaWsNoiQw` |
 | `WKFrameIsDisplayingStandaloneImageDocument` | `3HDn1r7lsGM` |
-| `WKFrameIsFrameSet` | `BTOv1017JlU` |
 | `WKFrameIsMainFrame` | `fo3MaNfUAUE` |
 | `WKFramePolicyListenerDownload` | `IT1HfKWFBQ0` |
 | `WKFramePolicyListenerIgnore` | `0ppk-ExuWJA` |
@@ -478,8 +436,6 @@
 | `WKHitTestResultIsContentEditable` | `iioP3xFfzJ8` |
 | `WKIconDatabaseCheckIntegrityBeforeOpening` | `Q6e57L2Vat8` |
 | `WKIconDatabaseClose` | `D6zZXKyK2XI` |
-| `WKIconDatabaseCopyIconDataForPageURL` | `ErWkFcqcBYE` |
-| `WKIconDatabaseCopyIconURLForPageURL` | `PEWusNk7cIM` |
 | `WKIconDatabaseEnableDatabaseCleanup` | `Fg2BRITDYDg` |
 | `WKIconDatabaseReleaseIconForURL` | `pKUEWyAWkeI` |
 | `WKIconDatabaseRemoveAllIcons` | `LMXftlH0v2Y` |
@@ -514,10 +470,7 @@
 | `WKInspectorTogglePageProfiling` | `rTTWU3xHaCE` |
 | `WKKeyValueStorageManagerDeleteAllEntries` | `l+EnasCRj9M` |
 | `WKKeyValueStorageManagerDeleteEntriesForOrigin` | `uUq1q3l2pD0` |
-| `WKKeyValueStorageManagerGetCreationTimeKey` | `peSbz8jaqpo` |
 | `WKKeyValueStorageManagerGetKeyValueStorageOrigins` | `oGlYuEguJWk` |
-| `WKKeyValueStorageManagerGetModificationTimeKey` | `luMlXp-022c` |
-| `WKKeyValueStorageManagerGetOriginKey` | `Bk3H5AlkwIM` |
 | `WKKeyValueStorageManagerGetStorageDetailsByOrigin` | `D2O5KU7KlMo` |
 | `WKKeyboardEventMake` | `UJXHm7AkPK8` |
 | `WKMessageListenerSendReply` | `9Rvb-lG-IYI` |
@@ -544,11 +497,9 @@
 | `WKOpenPanelParametersCopyAcceptedFileExtensions` | `13zq0KIVJJg` |
 | `WKOpenPanelParametersCopyAcceptedMIMETypes` | `FajrozYzGvw` |
 | `WKOpenPanelParametersCopyAllowedMIMETypes` | `YacE5rS1b3k` |
-| `WKOpenPanelParametersCopyCapture` | `9HzWfg82K2w` |
 | `WKOpenPanelParametersCopySelectedFileNames` | `Oa8DwUsT8yg` |
 | `WKOpenPanelParametersGetAllowsDirectories` | `yZ8MpxQizWM` |
 | `WKOpenPanelParametersGetAllowsMultipleFiles` | `6JUqQUan7cM` |
-| `WKOpenPanelParametersGetMediaCaptureType` | `UYD2jkWiCr0` |
 | `WKOpenPanelResultListenerCancel` | `O0YiYsUaleQ` |
 | `WKOpenPanelResultListenerChooseFiles` | `2ChSmFDC91I` |
 | `WKPageAreScrollbarAnimationsSuppressed` | `OQYQvowtC6I` |
@@ -597,7 +548,6 @@
 | `WKPageGetContext` | `fLfh+wZ12vQ` |
 | `WKPageGetEstimatedProgress` | `EEXgOrxJ1go` |
 | `WKPageGetFocusedFrame` | `a0SVtiDOBgM` |
-| `WKPageGetFrameSetLargestFrame` | `dKIIZYGCGhQ` |
 | `WKPageGetGapBetweenPages` | `F-vtAS2uuns` |
 | `WKPageGetImageForFindMatch` | `KPPJLasPz+o` |
 | `WKPageGetInspector` | `QUMw9Z2Ia1I` |
@@ -636,7 +586,6 @@
 | `WKPageHorizontalRubberBandingIsEnabled` | `2S-hLekYP7g` |
 | `WKPageIsClosed` | `ErgHdDWCpVc` |
 | `WKPageIsContentEditable` | `Jub+F7uGS58` |
-| `WKPageIsMockRealtimeMediaSourceCenterEnabled` | `AfexwR3oSR8` |
 | `WKPageIsPinnedToBottomSide` | `0Snx5Y8fnAk` |
 | `WKPageIsPinnedToLeftSide` | `KwQN78iZcJU` |
 | `WKPageIsPinnedToRightSide` | `NbMwXYcno7g` |
@@ -739,27 +688,10 @@
 | `WKPageValidateCommand` | `K82wly5zJoc` |
 | `WKPageVerticalRubberBandingIsEnabled` | `p-jMGxCpEF4` |
 | `WKPageWillHandleHorizontalScrollEvents` | `pYHt5lL67G8` |
-| `WKPlugInInformationReplacementObscuredKey` | `O2dvtjs5sWU` |
-| `WKPluginInformationBundleIdentifierKey` | `nBYJ4942-WQ` |
-| `WKPluginInformationBundleShortVersionKey` | `C-blDyZOIa8` |
-| `WKPluginInformationBundleVersionKey` | `w8rgJiyY10M` |
-| `WKPluginInformationDefaultLoadPolicyKey` | `gx130ttraj0` |
-| `WKPluginInformationDisplayNameKey` | `m2Sd6gEcz9o` |
-| `WKPluginInformationFrameURLKey` | `nSm+f63zez0` |
-| `WKPluginInformationHasSandboxProfileKey` | `h+E3nihI2mM` |
-| `WKPluginInformationMIMETypeKey` | `zN3TYAlQEsk` |
-| `WKPluginInformationPageURLKey` | `-+9ekha4fN0` |
-| `WKPluginInformationPathKey` | `xP6Sta4xjvs` |
-| `WKPluginInformationPluginURLKey` | `BgnV9ciabNs` |
-| `WKPluginInformationPluginspageAttributeURLKey` | `WKUanh-oVyc` |
-| `WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey` | `w5yd8587Xyo` |
 | `WKPopupMenuItemCopyText` | `xmQq6hB1vqE` |
 | `WKPopupMenuItemIsEnabled` | `DUF5lHKpf6o` |
 | `WKPopupMenuItemIsItem` | `w6uemFn00hc` |
 | `WKPopupMenuItemIsSeparator` | `cIEUZ-pzXZo` |
-| `WKPreferencesGetAccelerated2DCanvasEnabled` | `DrEP3qaThDE` |
-| `WKPreferencesGetQTKitEnabled` | `8N-4nYLwXak` |
-| `WKPreferencesGetTypeID` | `dyqLbVYkq3o` |
 | `WKPreferencesSetAccelerated2DCanvasEnabled` | `UEBk9iGqhPo` |
 | `WKPreferencesSetQTKitEnabled` | `6jkxaKVf01A` |
 | `WKProtectionSpaceCopyCertificateInfo` | `FdhooB4MqkE` |
@@ -837,7 +769,6 @@
 | `WKURLResponseHTTPStatusCode` | `V8sTDUESRVE` |
 | `WKURLResponseIsAttachment` | `73gjSG1YiTU` |
 | `WKUserContentExtensionStoreCompile` | `6g8aRptom6Y` |
-| `WKUserContentExtensionStoreCreate` | `qlWLlgf0DyY` |
 | `WKUserContentExtensionStoreLookup` | `l8gsEeVfp+s` |
 | `WKUserContentURLPatternMatchesURL` | `JfpZWg77-Zw` |
 | `WKUserMediaPermissionCheckSetUserMediaAccessInfo` | `MBwkZncofuk` |
@@ -1060,7 +991,6 @@
 | `_ZN3JSC12SymbolObjectC1ERNS_2VMEPNS_9StructureE` | `potS1HOUEe4` |
 | `_ZN3JSC12SymbolObjectC2ERNS_2VMEPNS_9StructureE` | `tvnxawGcaOU` |
 | `_ZN3JSC12addErrorInfoEPNS_14JSGlobalObjectEPNS_8JSObjectEb` | `IGFTSBRJiHk` |
-| `_ZN3JSC12isFromJSCodeEPv` | `Tb2NxhCO51o` |
 | `_ZN3JSC12iteratorStepEPNS_14JSGlobalObjectENS_15IterationRecordE` | `6LvU2UX265I` |
 | `_ZN3JSC12profiledCallEPNS_14JSGlobalObjectENS_15ProfilingReasonENS_7JSValueERKNS_8CallDataES3_RKNS_7ArgListERN3WTF8NakedPtrINS_9ExceptionEEE` | `Y2W62LZvRHA` |
 | `_ZN3JSC12profiledCallEPNS_14JSGlobalObjectENS_15ProfilingReasonENS_7JSValueERKNS_8CallDataES3_RKNS_7ArgListE` | `tmHQakReRvI` |
@@ -1316,8 +1246,6 @@
 | `_ZN3JSC22getInt32ArrayClassInfoEv` | `siYafTIfQdU` |
 | `_ZN3JSC22getUint8ArrayClassInfoEv` | `RMDMvfUBN9I` |
 | `_ZN3JSC22globalMemoryStatisticsEv` | `6+mBcQlHzNg` |
-| `_ZN3JSC22optimizeNextInvocationENS_7JSValueE` | `QtEl0Z5ogAE` |
-| `_ZN3JSC22optimizeNextInvocationEPNS_14JSGlobalObjectEPNS_9CallFrameE` | `9WSnQEt0mxM` |
 | `_ZN3JSC23AbstractSamplingCounter4dumpEv` | `NO8LGTKyCTk` |
 | `_ZN3JSC23JSModuleNamespaceObjectC1ERNS_2VMEPNS_9StructureE` | `fRcAtZp5MOQ` |
 | `_ZN3JSC23JSModuleNamespaceObjectC2ERNS_2VMEPNS_9StructureE` | `whnNR7vJo40` |
@@ -1378,7 +1306,6 @@
 | `_ZN3JSC32throwDOMAttributeGetterTypeErrorEPNS_14JSGlobalObjectERNS_10ThrowScopeEPKNS_9ClassInfoENS_12PropertyNameE` | `hcr91gUh9Mw` |
 | `_ZN3JSC33getHashMapBucketKeyValueClassInfoEv` | `FMhcXpjqzIc` |
 | `_ZN3JSC35getSomeBaselineCodeBlockForFunctionENS_7JSValueE` | `CYkcE1YQNeg` |
-| `_ZN3JSC3DFG18getNumCompilationsEv` | `36QNLZCsGZ8` |
 | `_ZN3JSC41constructFunctionSkippingEvalEnabledCheckEPNS_14JSGlobalObjectERKNS_7ArgListERKNS_10IdentifierERKNS_12SourceOriginERKN3WTF6StringERKNSB_12TextPositionEiNS_24FunctionConstructionModeENS_7JSValueE` | `1usDFC2WXJ4` |
 | `_ZN3JSC41constructObjectFromPropertyDescriptorSlowEPNS_14JSGlobalObjectERKNS_18PropertyDescriptorE` | `RoiTvhwOekc` |
 | `_ZN3JSC4Heap10collectNowENS_15SynchronousnessENS_9GCRequestE` | `IbuWiz2xOr0` |
@@ -1750,7 +1677,6 @@
 | `_ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE` | `sxavOcVMOFA` |
 | `_ZN3WTF14FileSystemImpl25createTemporaryZipArchiveERKNS_6StringE` | `9FdGIgYrVF4` |
 | `_ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE` | `k73D+1jaJZ0` |
-| `_ZN3WTF14FileSystemImpl27isSafeToUseMemoryMapForPathERKNS_6StringE` | `7++HyggGH44` |
 | `_ZN3WTF14FileSystemImpl29makeSafeToUseMemoryMapForPathERKNS_6StringE` | `GzaGT-nX+vk` |
 | `_ZN3WTF14FileSystemImpl30appendFileContentsToFileHandleERKNS_6StringERi` | `bFLwUoQqNHM` |
 | `_ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc` | `Q5IWykchiD8` |
@@ -1769,10 +1695,8 @@
 | `_ZN3WTF14dataLogFStringEPKc` | `xQQ4VSubx-k` |
 | `_ZN3WTF14dupCloseOnExecEi` | `wQ9-tXakN90` |
 | `_ZN3WTF14isVersion4UUIDENS_10StringViewE` | `XbR6JVGM+0U` |
-| `_ZN3WTF14setCloseOnExecEi` | `YebyCbJ7X7k` |
 | `_ZN3WTF15AtomStringTableD1Ev` | `YHjoCx7QaOs` |
 | `_ZN3WTF15AtomStringTableD2Ev` | `JxkGFAxlPa8` |
-| `_ZN3WTF15AutomaticThread11shouldSleepERKNS_14AbstractLockerE` | `IRiggzlySno` |
 | `_ZN3WTF15AutomaticThread14threadDidStartEv` | `WgCZ0HyfQ3I` |
 | `_ZN3WTF15AutomaticThread16threadIsStoppingERKNS_14AbstractLockerE` | `s-PEdREq5oE` |
 | `_ZN3WTF15AutomaticThread4joinEv` | `SJux-9UF6Qo` |
@@ -2122,9 +2046,7 @@
 | `_ZN7WebCore10Pasteboard11writeStringERKN3WTF6StringES4_` | `6zGNzBYG3-8` |
 | `_ZN7WebCore10Pasteboard14readAllStringsERKN3WTF6StringE` | `28y+c5-yi2c` |
 | `_ZN7WebCore10Pasteboard14writePlainTextERKN3WTF6StringENS0_18SmartReplaceOptionE` | `QH664gYg5n8` |
-| `_ZN7WebCore10Pasteboard15canSmartReplaceEv` | `VW8s48m0Ieo` |
 | `_ZN7WebCore10Pasteboard15writeCustomDataERKN3WTF6VectorINS_20PasteboardCustomDataELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE` | `DDmxBXZkpHo` |
-| `_ZN7WebCore10Pasteboard16fileContentStateEv` | `fx-H-TjSi0Y` |
 | `_ZN7WebCore10Pasteboard20typesSafeForBindingsERKN3WTF6StringE` | `LyRrwIE5yMA` |
 | `_ZN7WebCore10Pasteboard22readStringInCustomDataERKN3WTF6StringE` | `gygzdpUOeyI` |
 | `_ZN7WebCore10Pasteboard28typesForLegacyUnsafeBindingsEv` | `fEC20q42qRw` |
@@ -2428,7 +2350,6 @@
 | `_ZN7WebCore11prefetchDNSERKN3WTF6StringE` | `3h1io5JBDcA` |
 | `_ZN7WebCore11startOfLineERKNS_15VisiblePositionE` | `lVxn1IsZyGE` |
 | `_ZN7WebCore11startOfWordERKNS_15VisiblePositionENS_9EWordSideE` | `jwIZMWyLmuY` |
-| `_ZN7WebCore12BlobRegistry16blobRegistryImplEv` | `1sWmNDp+0To` |
 | `_ZN7WebCore12BlobRegistryC2ERKS0_` | `Dys3YgSazRQ` |
 | `_ZN7WebCore12BlobRegistryC2Ev` | `pmZ0xgBMeqo` |
 | `_ZN7WebCore12BlobRegistryD0Ev` | `GKDQvZF6sRk` |
@@ -2451,7 +2372,6 @@
 | `_ZN7WebCore12EventHandler14scrollOverflowENS_15ScrollDirectionENS_17ScrollGranularityEPNS_4NodeE` | `f0GV9zbaSgc` |
 | `_ZN7WebCore12EventHandler15handleAccessKeyERKNS_21PlatformKeyboardEventE` | `1uCdVAqt+YA` |
 | `_ZN7WebCore12EventHandler17scrollRecursivelyENS_15ScrollDirectionENS_17ScrollGranularityEPNS_4NodeE` | `GyVmPPMYRA4` |
-| `_ZN7WebCore12EventHandler18accessKeyModifiersEv` | `BZEcdytvUYM` |
 | `_ZN7WebCore12EventHandler20sendContextMenuEventERKNS_18PlatformMouseEventE` | `yv8JYywpwz8` |
 | `_ZN7WebCore12EventHandler21handleMousePressEventERKNS_18PlatformMouseEventE` | `P0mseHxZBwA` |
 | `_ZN7WebCore12EventHandler21handleMousePressEventERKNS_28MouseEventWithHitTestResultsE` | `Y0eI-b+mHIw` |
@@ -2637,9 +2557,7 @@
 | `_ZN7WebCore13MIMETypeCache13canDecodeTypeERKN3WTF6StringE` | `x-za71ceNzM` |
 | `_ZN7WebCore13MIMETypeCache14supportedTypesEv` | `ywU-pWrM-Vw` |
 | `_ZN7WebCore13MIMETypeCache17addSupportedTypesERKN3WTF6VectorINS1_6StringELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE` | `xA+rJXMHbqo` |
-| `_ZN7WebCore13MIMETypeCache21canDecodeExtendedTypeERKNS_11ContentTypeE` | `JqqHwIrj160` |
 | `_ZN7WebCore13MIMETypeCache21supportsContainerTypeERKN3WTF6StringE` | `TNpVhxCBHCA` |
-| `_ZN7WebCore13MIMETypeCache26isUnsupportedContainerTypeERKN3WTF6StringE` | `Ua86vx5IaDU` |
 | `_ZN7WebCore13MIMETypeCacheC1ERKS0_` | `d5vSl0NN8vg` |
 | `_ZN7WebCore13MIMETypeCacheC1Ev` | `XQ79w+11C78` |
 | `_ZN7WebCore13MIMETypeCacheC2ERKS0_` | `toO3YXHsAdg` |
@@ -2687,7 +2605,6 @@
 | `_ZN7WebCore13endOfDocumentEPKNS_4NodeE` | `N+vcSXzdOJY` |
 | `_ZN7WebCore13endOfDocumentERKNS_15VisiblePositionE` | `-rlG+vYrV58` |
 | `_ZN7WebCore13endOfSentenceERKNS_15VisiblePositionE` | `kvemsBD8L0I` |
-| `_ZN7WebCore13getLogChannelERKN3WTF6StringE` | `gRNu4fkK4tw` |
 | `_ZN7WebCore13internalErrorERKN3WTF3URLE` | `n+bQ6u1wxSk` |
 | `_ZN7WebCore13isStartOfLineERKNS_15VisiblePositionE` | `pu8CWYnACfE` |
 | `_ZN7WebCore13pointerCursorEv` | `clQC+AAy6pw` |
@@ -3139,7 +3056,6 @@
 | `_ZN7WebCore16HTMLVideoElement24webkitSupportsFullscreenEv` | `CNVHR5xfEqI` |
 | `_ZN7WebCore16HTMLVideoElement26webkitDisplayingFullscreenEv` | `SwVRb5Q7GCQ` |
 | `_ZN7WebCore16HTMLVideoElement6createERNS_8DocumentE` | `GLRtuC2tjQY` |
-| `_ZN7WebCore16ISOSchemeTypeBox11boxTypeNameEv` | `pH77OiapXx0` |
 | `_ZN7WebCore16ISOSchemeTypeBox5parseERN3JSC8DataViewERj` | `F963GLVx2ek` |
 | `_ZN7WebCore16ISOSchemeTypeBoxC1ERKS0_` | `sDW6WO4WMd4` |
 | `_ZN7WebCore16ISOSchemeTypeBoxC1Ev` | `E4-gy9tn-e4` |
@@ -3316,7 +3232,6 @@
 | `_ZN7WebCore17JSDOMGlobalObject14finishCreationERN3JSC2VME` | `ToTgULkheEM` |
 | `_ZN7WebCore17JSDOMGlobalObject15createStructureERN3JSC2VMENS1_7JSValueE` | `mFkAY973pGc` |
 | `_ZN7WebCore17JSDOMGlobalObject17addBuiltinGlobalsERN3JSC2VME` | `2Z89SocEqmo` |
-| `_ZN7WebCore17JSDOMGlobalObject21offsetOfWorldIsNormalEv` | `2ApsCsIuALw` |
 | `_ZN7WebCore17JSDOMGlobalObject24builtinInternalFunctionsEv` | `8of6l1u8E4U` |
 | `_ZN7WebCore17JSDOMGlobalObject4infoEv` | `Ry2Bjw-gItY` |
 | `_ZN7WebCore17JSDOMGlobalObject5worldEv` | `19bXLmSr5Pg` |
@@ -3472,8 +3387,6 @@
 | `_ZN7WebCore18PerformanceLogging21memoryUsageStatisticsENS_34ShouldIncludeExpensiveComputationsE` | `Twv2J+xbqTg` |
 | `_ZN7WebCore18PerformanceLogging22javaScriptObjectCountsEv` | `K0sTKrYVnmk` |
 | `_ZN7WebCore18PlatformPasteboard5writeERKN3WTF6StringES4_` | `smwyQcAh3tk` |
-| `_ZN7WebCore18PlatformPasteboard5writeERKN3WTF6VectorINS_20PasteboardCustomDataELm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE` | `C6lWET8ErOA` |
-| `_ZN7WebCore18PlatformPasteboard5writeERKNS_20PasteboardCustomDataE` | `x6LF3hMLGPA` |
 | `_ZN7WebCore18PlatformPasteboard5writeERKNS_20PasteboardWebContentE` | `aMH6eRoQoDA` |
 | `_ZN7WebCore18PlatformPasteboardC1ERKN3WTF6StringE` | `Khws8dt04Sk` |
 | `_ZN7WebCore18PlatformPasteboardC1Ev` | `knX2cGAmdW8` |
@@ -3716,7 +3629,6 @@
 | `_ZN7WebCore20HTMLTableCellElement10setColSpanEj` | `1eejHQ3QcE8` |
 | `_ZN7WebCore20HTMLTableCellElement21setRowSpanForBindingsEj` | `sFjcaILv9NQ` |
 | `_ZN7WebCore20HTMLTableCellElement8setScopeERKN3WTF10AtomStringE` | `2JXVTjOe-qM` |
-| `_ZN7WebCore20ISOOriginalFormatBox11boxTypeNameEv` | `ZI2IUkQLm0w` |
 | `_ZN7WebCore20ISOOriginalFormatBox5parseERN3JSC8DataViewERj` | `kGwtyyyhjyE` |
 | `_ZN7WebCore20ISOOriginalFormatBoxC1ERKS0_` | `IP1evjq7z2E` |
 | `_ZN7WebCore20ISOOriginalFormatBoxC1Ev` | `5xnIXBGQEV8` |
@@ -3922,7 +3834,6 @@
 | `_ZN7WebCore21HTMLOptionsCollection16setSelectedIndexEi` | `a2VWRSroXlY` |
 | `_ZN7WebCore21HTMLOptionsCollection6removeEi` | `1zovCBzwnbc` |
 | `_ZN7WebCore21HTMLOptionsCollection9setLengthEj` | `kR09Tm7VQbw` |
-| `_ZN7WebCore21ISOTrackEncryptionBox11boxTypeNameEv` | `QByiQ+otd5o` |
 | `_ZN7WebCore21ISOTrackEncryptionBox5parseERN3JSC8DataViewERj` | `eCjonvf5rso` |
 | `_ZN7WebCore21ISOTrackEncryptionBoxC1ERKS0_` | `gBcHNw5c3Ng` |
 | `_ZN7WebCore21ISOTrackEncryptionBoxC2ERKS0_` | `ILkZXXuyNWc` |
@@ -3998,7 +3909,6 @@
 | `_ZN7WebCore21PageOverlayController32copyAccessibilityAttributesNamesEb` | `eioBaGW46xA` |
 | `_ZN7WebCore21PageOverlayController43copyAccessibilityAttributeBoolValueForPointEN3WTF6StringENS_10FloatPointERb` | `2ZkjWav84Zs` |
 | `_ZN7WebCore21PageOverlayController45copyAccessibilityAttributeStringValueForPointEN3WTF6StringENS_10FloatPointERS2_` | `-Ih6ikmQLbE` |
-| `_ZN7WebCore21PlatformKeyboardEvent20currentCapsLockStateEv` | `4ufGsV2Qxvo` |
 | `_ZN7WebCore21PlatformKeyboardEvent23getCurrentModifierStateERbS1_S1_S1_` | `MqLM8CBC9FM` |
 | `_ZN7WebCore21RemoteCommandListener6createERNS_27RemoteCommandListenerClientE` | `x1AP-G3h75A` |
 | `_ZN7WebCore21SQLiteDatabaseTracker24hasTransactionInProgressEv` | `caM6qseCSfI` |
@@ -4051,7 +3961,6 @@
 | `_ZN7WebCore22EmptyFrameLoaderClient16restoreViewStateEv` | `tx5pKeUBkgE` |
 | `_ZN7WebCore22EmptyFrameLoaderClient17cancelPolicyCheckEv` | `4ySoP73IpDQ` |
 | `_ZN7WebCore22EmptyFrameLoaderClient17dispatchWillCloseEv` | `e8P9xcYmFp4` |
-| `_ZN7WebCore22EmptyFrameLoaderClient17objectContentTypeERKN3WTF3URLERKNS1_6StringE` | `Symql6+eiQk` |
 | `_ZN7WebCore22EmptyFrameLoaderClient17setCopiesOnScrollEv` | `SYuiZEPIJOg` |
 | `_ZN7WebCore22EmptyFrameLoaderClient18frameLoadCompletedEv` | `xaZIwYQG0rw` |
 | `_ZN7WebCore22EmptyFrameLoaderClient18makeRepresentationEPNS_14DocumentLoaderE` | `xCC2+A1QU2M` |
@@ -4078,7 +3987,6 @@
 | `_ZN7WebCore22EmptyFrameLoaderClient27willReplaceMultipartContentEv` | `cIcJ41juvWI` |
 | `_ZN7WebCore22EmptyFrameLoaderClient29dispatchDidFinishDocumentLoadEv` | `XlIysvPfuNQ` |
 | `_ZN7WebCore22EmptyFrameLoaderClient29dispatchDidPopStateWithinPageEv` | `5aXKyDH-FQs` |
-| `_ZN7WebCore22EmptyFrameLoaderClient29hasFrameSpecificStorageAccessEv` | `MrJUmRrcu5A` |
 | `_ZN7WebCore22EmptyFrameLoaderClient29savePlatformDataToCachedFrameEPNS_11CachedFrameE` | `DF2bDNLQbUM` |
 | `_ZN7WebCore22EmptyFrameLoaderClient30didRestoreFromBackForwardCacheEv` | `r4o4j3iaN64` |
 | `_ZN7WebCore22EmptyFrameLoaderClient30dispatchDidPushStateWithinPageEv` | `mYuf10s9APM` |
@@ -4095,7 +4003,6 @@
 | `_ZN7WebCore22EmptyFrameLoaderClient33dispatchWillPerformClientRedirectERKN3WTF3URLEdNS1_8WallTimeENS_19LockBackForwardListE` | `6q1eUV0OZoE` |
 | `_ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCachedFrameEPNS_11CachedFrameE` | `pHmVAreojKs` |
 | `_ZN7WebCore22EmptyFrameLoaderClient37dispatchDidReachVisuallyNonEmptyStateEv` | `8RJJo61fpeg` |
-| `_ZN7WebCore22EmptyFrameLoaderClient38dispatchDidLoadResourceFromMemoryCacheEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseEi` | `3ip78Y0ydtU` |
 | `_ZN7WebCore22EmptyFrameLoaderClient50dispatchDidReceiveServerRedirectForProvisionalLoadEv` | `Oy92GWEKFIQ` |
 | `_ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE` | `2oNey8Gkn4M` |
 | `_ZN7WebCore22EmptyFrameLoaderClientC1ERKS0_` | `E2pRXDTKB68` |
@@ -4140,7 +4047,6 @@
 | `_ZN7WebCore23HTMLTableSectionElement4rowsEv` | `vj1wM+GCC1g` |
 | `_ZN7WebCore23HTMLTableSectionElement9deleteRowEi` | `dAYfKRKR2QQ` |
 | `_ZN7WebCore23HTMLTableSectionElement9insertRowEi` | `7bTJr1njnSc` |
-| `_ZN7WebCore23ISOSchemeInformationBox11boxTypeNameEv` | `5++VaMgcCng` |
 | `_ZN7WebCore23ISOSchemeInformationBox5parseERN3JSC8DataViewERj` | `48WiSdjl-uQ` |
 | `_ZN7WebCore23ISOSchemeInformationBoxC1Ev` | `CFvmCVk6TfI` |
 | `_ZN7WebCore23ISOSchemeInformationBoxC2Ev` | `RfDI9yBTxRM` |
@@ -4304,7 +4210,6 @@
 | `_ZN7WebCore26HTMLTextFormControlElement21setCanShowPlaceholderEb` | `iSolxX558O0` |
 | `_ZN7WebCore26HTMLTextFormControlElement21setSelectionDirectionERKN3WTF6StringE` | `5lqFaOk9rQE` |
 | `_ZN7WebCore26HTMLTextFormControlElement6selectENS_19SelectionRevealModeERKNS_23AXTextStateChangeIntentE` | `2P789Qo27CQ` |
-| `_ZN7WebCore26ISOProtectionSchemeInfoBox11boxTypeNameEv` | `BgqMT+9JnBk` |
 | `_ZN7WebCore26ISOProtectionSchemeInfoBox5parseERN3JSC8DataViewERj` | `dpnSZ6bCdKs` |
 | `_ZN7WebCore26ISOProtectionSchemeInfoBoxC1Ev` | `4gLqVhLngro` |
 | `_ZN7WebCore26ISOProtectionSchemeInfoBoxC2Ev` | `O5XvFuIJg4Y` |
@@ -4368,7 +4273,6 @@
 | `_ZN7WebCore27PlatformMediaSessionManager32setIsPlayingToAutomotiveHeadUnitEb` | `kYgNNhsYnJA` |
 | `_ZN7WebCore27parseCacheControlDirectivesERKNS_13HTTPHeaderMapE` | `kB7iRn6G2NQ` |
 | `_ZN7WebCore27parseHTMLNonNegativeIntegerEN3WTF10StringViewE` | `V4T4zWxST6E` |
-| `_ZN7WebCore27screenSupportsExtendedColorEPNS_6WidgetE` | `V0+T-rQTbe0` |
 | `_ZN7WebCore27withinTextUnitOfGranularityERKNS_15VisiblePositionENS_15TextGranularityENS_18SelectionDirectionE` | `3M4Zu3TOlcI` |
 | `_ZN7WebCore28BackingStoreBackendCairoImplC1ERKNS_7IntSizeEf` | `h3up3fILBXA` |
 | `_ZN7WebCore28BackingStoreBackendCairoImplC2ERKNS_7IntSizeEf` | `SW7SgFwOmu4` |
@@ -4481,7 +4385,6 @@
 | `_ZN7WebCore35serializePreservingVisualAppearanceERKNS_11SimpleRangeEPN3WTF6VectorIPNS_4NodeELm0ENS3_15CrashOnOverflowELm16ENS3_10FastMallocEEENS_22AnnotateForInterchangeENS_22ConvertBlocksToInlinesENS_11ResolveURLsE` | `9rGzyu0ZL0w` |
 | `_ZN7WebCore36ContentSecurityPolicyResponseHeadersC1ERKNS_16ResourceResponseE` | `01beKkjIUv8` |
 | `_ZN7WebCore36ContentSecurityPolicyResponseHeadersC2ERKNS_16ResourceResponseE` | `2gPLknvqjzk` |
-| `_ZN7WebCore36ISOProtectionSystemSpecificHeaderBox11boxTypeNameEv` | `OvTLUSlWifE` |
 | `_ZN7WebCore36ISOProtectionSystemSpecificHeaderBox5parseERN3JSC8DataViewERj` | `PkKivtUQ5Mc` |
 | `_ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxC1ERKS0_` | `NqUcrCZ7+f4` |
 | `_ZN7WebCore36ISOProtectionSystemSpecificHeaderBoxC1Ev` | `Wt4UzkFSXI8` |
@@ -5370,8 +5273,6 @@
 | `_ZN9Inspector18InjectedScriptBaseD2Ev` | `AMhoOLgG9e8` |
 | `_ZN9Inspector18InjectedScriptBaseaSERKS0_` | `5pMktPrQ1pg` |
 | `_ZN9Inspector18InjectedScriptHost16clearAllWrappersEv` | `c+YCXKe0E34` |
-| `_ZN9Inspector18InjectedScriptHost19isHTMLAllCollectionERN3JSC2VMENS1_7JSValueE` | `x32zUERnINY` |
-| `_ZN9Inspector18InjectedScriptHost21getInternalPropertiesERN3JSC2VMEPNS1_14JSGlobalObjectENS1_7JSValueE` | `xKiOo15Kcn0` |
 | `_ZN9Inspector18InjectedScriptHost6createEv` | `2SMzgmzR-6Q` |
 | `_ZN9Inspector18InjectedScriptHost7wrapperEPN3JSC14JSGlobalObjectE` | `Cw74jJ7Cvzs` |
 | `_ZN9Inspector18InjectedScriptHostC1Ev` | `QFj6QQ4cxXU` |
@@ -6129,7 +6030,6 @@
 | `_ZNK3JSC9CallFrame10codeOriginEv` | `8W5b+PNZYwI` |
 | `_ZNK3JSC9CallFrame11callerFrameERPNS_10EntryFrameE` | `FQf7z9EVOYQ` |
 | `_ZNK3JSC9ClassInfo4dumpERN3WTF11PrintStreamE` | `L9Hmp6AYcQU` |
-| `_ZNK3JSC9CodeBlock26reoptimizationRetryCounterEv` | `8qygzLD+JkI` |
 | `_ZNK3JSC9CodeBlock4dumpERN3WTF11PrintStreamE` | `4f4k1BywICY` |
 | `_ZNK3JSC9JSPromise6resultERNS_2VME` | `Ctz7dKz3Da0` |
 | `_ZNK3JSC9JSPromise6statusERNS_2VME` | `u9H28omaVEc` |
@@ -6487,7 +6387,6 @@
 | `_ZNK7WebCore13JSHTMLElement7wrappedEv` | `gRyLWstYGXM` |
 | `_ZNK7WebCore13KeyboardEvent7keyCodeEv` | `bElrc3VqGXk` |
 | `_ZNK7WebCore13KeyboardEvent8charCodeEv` | `O4PQrbyLS7k` |
-| `_ZNK7WebCore13MIMETypeCache11isAvailableEv` | `XPpjBuVLPVA` |
 | `_ZNK7WebCore13MIMETypeCache7isEmptyEv` | `l+OspgT++TA` |
 | `_ZNK7WebCore13RenderElement16imageOrientationEv` | `ttg3VJv7+Wg` |
 | `_ZNK7WebCore13ScriptElement13scriptContentEv` | `rlTwz32Y4kY` |
@@ -6516,10 +6415,7 @@
 | `_ZNK7WebCore14HTMLCollection13namedItemSlowERKN3WTF10AtomStringE` | `XKZPrb4Pfqg` |
 | `_ZNK7WebCore14JSVoidCallback22scriptExecutionContextEv` | `hHkNFU67uNM` |
 | `_ZNK7WebCore14JSWebAnimation7wrappedEv` | `rlOCpNWBbhQ` |
-| `_ZNK7WebCore14LoaderStrategy11usePingLoadEv` | `FhapblPGTsQ` |
 | `_ZNK7WebCore14LoaderStrategy12ongoingLoadsEv` | `m8rqXLGqxH4` |
-| `_ZNK7WebCore14LoaderStrategy27havePerformedSecurityChecksERKNS_16ResourceResponseE` | `goURkCMz2mY` |
-| `_ZNK7WebCore14LoaderStrategy27shouldPerformSecurityChecksEv` | `768mKI7DmSk` |
 | `_ZNK7WebCore14LoggedInStatus10hasExpiredEv` | `mgNAFnYj41Q` |
 | `_ZNK7WebCore14LoggedInStatus6expiryEv` | `0uCtvJ7t7X8` |
 | `_ZNK7WebCore14ResourceHandle6clientEv` | `Cgh0i6SAWZo` |
@@ -6561,7 +6457,6 @@
 | `_ZNK7WebCore15ActiveDOMObject16isContextStoppedEv` | `x9nBgCbadYs` |
 | `_ZNK7WebCore15ActiveDOMObject18hasPendingActivityEv` | `H-gEkxHy3s8` |
 | `_ZNK7WebCore15ActiveDOMObject20isAllowedToRunScriptEv` | `6ot8v-aJp4w` |
-| `_ZNK7WebCore15ActiveDOMObject25virtualHasPendingActivityEv` | `iNX6kO6iSaM` |
 | `_ZNK7WebCore15ActiveDOMObject30assertSuspendIfNeededWasCalledEv` | `wRA9-Ih1MkU` |
 | `_ZNK7WebCore15AffineTransform9mapRegionERKNS_6RegionE` | `D-MYWruwiUQ` |
 | `_ZNK7WebCore15CSSGroupingRule8cssRulesEv` | `FfRPM8I9Wvw` |
@@ -6681,7 +6576,6 @@
 | `_ZNK7WebCore16JSStringCallback22scriptExecutionContextEv` | `CtqqsxZ-lpo` |
 | `_ZNK7WebCore16JSXMLHttpRequest7wrappedEv` | `kQEacF2vg-k` |
 | `_ZNK7WebCore16JSXMLHttpRequest8responseERN3JSC14JSGlobalObjectE` | `8oQrlcWx0fg` |
-| `_ZNK7WebCore16TrackPrivateBase10trackIndexEv` | `m99zKY4J6BQ` |
 | `_ZNK7WebCore16TrackPrivateBase17startTimeVarianceEv` | `AYaZ5CHXzNA` |
 | `_ZNK7WebCore16TrackPrivateBase2idEv` | `DaYfJlkP-0k` |
 | `_ZNK7WebCore16TrackPrivateBase5labelEv` | `W+KOtirSb7U` |
@@ -6781,9 +6675,7 @@
 | `_ZNK7WebCore18TextureMapperLayer9layerRectEv` | `og6IDmhKqO4` |
 | `_ZNK7WebCore18TextureMapperLayer9rootLayerEv` | `KUMJF3eI5qg` |
 | `_ZNK7WebCore18TextureMapperLayer9transformEv` | `gj02Pc41dZk` |
-| `_ZNK7WebCore19BlurFilterOperation11movesPixelsEv` | `i1KnWrxf1c0` |
 | `_ZNK7WebCore19BlurFilterOperation12stdDeviationEv` | `uqTupLakPfA` |
-| `_ZNK7WebCore19BlurFilterOperation14affectsOpacityEv` | `JcGel5E1+KU` |
 | `_ZNK7WebCore19BlurFilterOperation5cloneEv` | `UFwDzfdUExo` |
 | `_ZNK7WebCore19BlurFilterOperationeqERKNS_15FilterOperationE` | `H9RRA3+Ow28` |
 | `_ZNK7WebCore19DragCaretController23isContentRichlyEditableEv` | `8zj2LYparBk` |
@@ -6836,7 +6728,6 @@
 | `_ZNK7WebCore20HTMLTableCellElement9cellAboveEv` | `o+X-i3Y20j4` |
 | `_ZNK7WebCore20HTMLTableCellElement9cellIndexEv` | `yLtMsTWo9zs` |
 | `_ZNK7WebCore20ISOOriginalFormatBox10dataFormatEv` | `OzsnvV0TdHA` |
-| `_ZNK7WebCore20LowPowerModeNotifier21isLowPowerModeEnabledEv` | `mkMdmnmWONA` |
 | `_ZNK7WebCore20PasteboardCustomData18createSharedBufferEv` | `oNgcYv7sg2E` |
 | `_ZNK7WebCore20PasteboardWriterData7isEmptyEv` | `pCjXnlN6R4c` |
 | `_ZNK7WebCore20RenderBoxModelObject18inlineContinuationEv` | `nV9al8rbOKg` |
@@ -6863,7 +6754,6 @@
 | `_ZNK7WebCore20ResourceResponseBase8isHTTP09Ev` | `JjPx6bo9fbs` |
 | `_ZNK7WebCore20ResourceResponseBase8lazyInitENS0_9InitLevelE` | `o+TiqWzvS8s` |
 | `_ZNK7WebCore20ResourceResponseBase8mimeTypeEv` | `HDR9zkTEoJ4` |
-| `_ZNK7WebCore20ScrollingCoordinator25scrollableContainerNodeIDERKNS_12RenderObjectE` | `DVeoAh0xG6w` |
 | `_ZNK7WebCore20ScrollingCoordinator36coordinatesScrollingForOverflowLayerERKNS_11RenderLayerE` | `1nxJkpm8wLA` |
 | `_ZNK7WebCore21BackForwardController12forwardCountEv` | `wmkk8v-vEI0` |
 | `_ZNK7WebCore21BackForwardController18canGoBackOrForwardEi` | `No2407W5Jes` |
@@ -6895,20 +6785,12 @@
 | `_ZNK7WebCore22DefaultFilterOperation15representedTypeEv` | `ksB78CcT0mg` |
 | `_ZNK7WebCore22DefaultFilterOperation5cloneEv` | `mx1YlEp90mU` |
 | `_ZNK7WebCore22DefaultFilterOperationeqERKNS_15FilterOperationE` | `EWVFpBhoEGg` |
-| `_ZNK7WebCore22EmptyFrameLoaderClient10hasWebViewEv` | `gv8bC38U34E` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient12blockedErrorERKNS_15ResourceRequestE` | `X1bFhjwBxXU` |
-| `_ZNK7WebCore22EmptyFrameLoaderClient12canCachePageEv` | `1YFXTueqrU8` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient14cancelledErrorERKNS_15ResourceRequestE` | `BywqS3Q8szU` |
-| `_ZNK7WebCore22EmptyFrameLoaderClient14shouldFallBackERKNS_13ResourceErrorE` | `v0GvL1SMt8M` |
-| `_ZNK7WebCore22EmptyFrameLoaderClient15canShowMIMETypeERKN3WTF6StringE` | `JZQPxcMK+ZA` |
-| `_ZNK7WebCore22EmptyFrameLoaderClient16canHandleRequestERKNS_15ResourceRequestE` | `glKx1Zdz50w` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient17overrideMediaTypeEv` | `bh4bKfeivgQ` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient18cannotShowURLErrorERKNS_15ResourceRequestE` | `Hn+oQHUrE1M` |
-| `_ZNK7WebCore22EmptyFrameLoaderClient21canShowMIMETypeAsHTMLERKN3WTF6StringE` | `75fdGWpRw34` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient21fileDoesNotExistErrorERKNS_16ResourceResponseE` | `fajGVxixYQg` |
-| `_ZNK7WebCore22EmptyFrameLoaderClient21shouldGoToHistoryItemERNS_11HistoryItemE` | `s+Gety9ZDs4` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient23cannotShowMIMETypeErrorERKNS_16ResourceResponseE` | `ab+5Dimx0Kw` |
-| `_ZNK7WebCore22EmptyFrameLoaderClient24isEmptyFrameLoaderClientEv` | `VVzGt0RzJZc` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient25pluginWillHandleLoadErrorERKNS_16ResourceResponseE` | `mGriYqpliqc` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient28blockedByContentBlockerErrorERKNS_15ResourceRequestE` | `0d9jr6TzI-o` |
 | `_ZNK7WebCore22EmptyFrameLoaderClient31interruptedForPolicyChangeErrorERKNS_15ResourceRequestE` | `tRdCmMXTagg` |
@@ -6936,13 +6818,10 @@
 | `_ZNK7WebCore24CoordinatedGraphicsLayer17usesContentsLayerEv` | `pf2fwfamoG0` |
 | `_ZNK7WebCore24CoordinatedGraphicsLayer22filtersCanBeCompositedERKNS_16FilterOperationsE` | `deY8cQlIt9U` |
 | `_ZNK7WebCore24CoordinatedGraphicsLayer22shouldHaveBackingStoreEv` | `osZckBsVgRg` |
-| `_ZNK7WebCore24CoordinatedGraphicsLayer26isCoordinatedGraphicsLayerEv` | `Ex6z08qINEI` |
 | `_ZNK7WebCore24CoordinatedGraphicsLayer28shouldDirectlyCompositeImageEPNS_5ImageE` | `RUB6zNhQUJQ` |
 | `_ZNK7WebCore24CoordinatedGraphicsLayer2idEv` | `NQvgMXcGmjs` |
 | `_ZNK7WebCore24CoordinatedGraphicsLayer41selfOrAncestorHasActiveTransformAnimationEv` | `8reqGK4Jslw` |
-| `_ZNK7WebCore25DropShadowFilterOperation11movesPixelsEv` | `oDR18NZmOgg` |
 | `_ZNK7WebCore25DropShadowFilterOperation12stdDeviationEv` | `Zwz6pQRbIaI` |
-| `_ZNK7WebCore25DropShadowFilterOperation14affectsOpacityEv` | `y7uxQXIITME` |
 | `_ZNK7WebCore25DropShadowFilterOperation1xEv` | `ACFqSfIdK+4` |
 | `_ZNK7WebCore25DropShadowFilterOperation1yEv` | `dSXGljvWG7Q` |
 | `_ZNK7WebCore25DropShadowFilterOperation5cloneEv` | `lrKNEr+8Ilk` |
@@ -7017,7 +6896,6 @@
 | `_ZNK7WebCore4Page15forEachDocumentERKN3WTF8FunctionIFvRNS_8DocumentEEEE` | `7t3lPIaxzws` |
 | `_ZNK7WebCore4Page15visibilityStateEv` | `9QZluZ4dNDY` |
 | `_ZNK7WebCore4Page16hasSeenAnyPluginEv` | `5HR+YnAQc14` |
-| `_ZNK7WebCore4Page17useDarkAppearanceEv` | `K3n-MX0qBKg` |
 | `_ZNK7WebCore4Page17viewportArgumentsEv` | `5Q9eXxWwvAg` |
 | `_ZNK7WebCore4Page19disabledAdaptationsEv` | `ilM1cSlkdrg` |
 | `_ZNK7WebCore4Page20renderingUpdateCountEv` | `MjKAjGkB7Mk` |
@@ -7075,13 +6953,8 @@
 | `_ZNK7WebCore6Length3refEv` | `8OHZsn1lLv0` |
 | `_ZNK7WebCore6Length5derefEv` | `CKQm3LRNxFQ` |
 | `_ZNK7WebCore6Path2D4pathEv` | `Z-n9eCkcABY` |
-| `_ZNK7WebCore6Quirks25needsYouTubeMouseOutQuirkEv` | `SLSp+Z+-W9Y` |
-| `_ZNK7WebCore6Quirks29shouldAvoidUsingIOS13ForGmailEv` | `86JgtVBApTw` |
-| `_ZNK7WebCore6Quirks32isNeverRichlyEditableForTouchBarEv` | `ABPW-f1l6DA` |
 | `_ZNK7WebCore6Quirks44shouldAvoidResizingWhenInputViewBoundsChangeEv` | `zPWH7YflRh4` |
 | `_ZNK7WebCore6Quirks47shouldIgnoreContentObservationForSyntheticClickEb` | `7MeYabjRcQo` |
-| `_ZNK7WebCore6Quirks49isTouchBarUpdateSupressedForHiddenContentEditableEv` | `YFqTNZQwPwM` |
-| `_ZNK7WebCore6Quirks50shouldIgnoreAriaForFastPathContentObservationCheckEv` | `sJVPrwAjvos` |
 | `_ZNK7WebCore6Quirks56shouldDispatchSyntheticMouseEventsWhenModifyingSelectionEv` | `G3FORkp2ePs` |
 | `_ZNK7WebCore6Quirks61shouldUseLegacySelectPopoverDismissalBehaviorInDataActivationEv` | `M97BIVb8Vs8` |
 | `_ZNK7WebCore6Quirks62shouldLayOutAtMinimumWindowWidthWhenIgnoringScalingConstraintsEv` | `9tvPjSs-M-o` |
@@ -7141,7 +7014,6 @@
 | `_ZNK7WebCore8Document20isRunningUserScriptsEv` | `Z0bnBaoXk7w` |
 | `_ZNK7WebCore8Document20linkColorForBindingsEv` | `StXnL46JBH8` |
 | `_ZNK7WebCore8Document21haveStylesheetsLoadedEv` | `u39XzpncQzA` |
-| `_ZNK7WebCore8Document22touchEventHandlerCountEv` | `Amlk9ZNFJag` |
 | `_ZNK7WebCore8Document22wheelEventHandlerCountEv` | `csW7BKwFn60` |
 | `_ZNK7WebCore8Document28characterSetWithUTF8FallbackEv` | `NrKtvW0gC-Q` |
 | `_ZNK7WebCore8Document29originIdentifierForPasteboardEv` | `6QWMcGENlPE` |
@@ -7215,7 +7087,6 @@
 | `_ZNK7bmalloc11IsoTLSEntry4sizeEv` | `zkhfTgB1ABM` |
 | `_ZNK7bmalloc11IsoTLSEntry6extentEv` | `1UchwEvKOCY` |
 | `_ZNK7bmalloc11IsoTLSEntry6offsetEv` | `lRFFPidOgTg` |
-| `_ZNK7bmalloc11IsoTLSEntry9alignmentEv` | `75nTISHl6cY` |
 | `_ZNK9Inspector14ConsoleMessage12globalObjectEv` | `ijTy57nFYLw` |
 | `_ZNK9Inspector14ConsoleMessage13argumentCountEv` | `DR5-oCJNvBU` |
 | `_ZNK9Inspector14ConsoleMessage3urlEv` | `In5ugGO8zCE` |
@@ -7242,7 +7113,6 @@
 | `_ZNK9Inspector15AsyncStackTrace20buildInspectorObjectEv` | `XS8CSiOlDVI` |
 | `_ZNK9Inspector15AsyncStackTrace8isLockedEv` | `zXiD0GC9Vh8` |
 | `_ZNK9Inspector15AsyncStackTrace9isPendingEv` | `YPyYVEu-17g` |
-| `_ZNK9Inspector15InspectorTarget13isProvisionalEv` | `ZcQzzUTFsJU` |
 | `_ZNK9Inspector15InspectorTarget8isPausedEv` | `KrfpsXXdW-w` |
 | `_ZNK9Inspector15RemoteInspector16listingForTargetERKNS_24RemoteControllableTargetE` | `w+T7oawE1mg` |
 | `_ZNK9Inspector15RemoteInspector21hasActiveDebugSessionEv` | `P0V8cbW+Z-E` |
@@ -7290,10 +7160,8 @@
 | `_ZNK9Inspector22InspectorDebuggerAgent27pauseOnNextStatementEnabledEv` | `25lgQJ93JO4` |
 | `_ZNK9Inspector22InspectorDebuggerAgent7enabledEv` | `1DD+9cjt3hU` |
 | `_ZNK9Inspector22InspectorDebuggerAgent8isPausedEv` | `Jgg+mJLsHHs` |
-| `_ZNK9Inspector22RemoteAutomationTarget4typeEv` | `E9lS19wjNII` |
 | `_ZNK9Inspector22RemoteAutomationTarget8isPairedEv` | `ew8ebxoQMLo` |
 | `_ZNK9Inspector22RemoteInspectionTarget20remoteControlAllowedEv` | `QGapaf1-Pp0` |
-| `_ZNK9Inspector22RemoteInspectionTarget26automaticInspectionAllowedEv` | `OVQXcjKPf8M` |
 | `_ZNK9Inspector22RemoteInspectionTarget3urlEv` | `r20Y87D+ibY` |
 | `_ZNK9Inspector22RemoteInspectionTarget4nameEv` | `hep5VUibI2A` |
 | `_ZNK9Inspector24RemoteControllableTarget16targetIdentifierEv` | `untnO4d6OQs` |
