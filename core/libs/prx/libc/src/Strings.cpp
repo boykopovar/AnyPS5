@@ -691,13 +691,15 @@ int APS5_VABI memmove_s_nid_postfix(void* dest, size_t destsz, const void* src, 
 }
 
 int APS5_VABI memset_s_nid_postfix(void* dest, size_t destsz, int value, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    if (!dest || destsz > RsizeMax || count > RsizeMax) return GuestEinval;
-    const auto length = count > destsz ? destsz : count;
+    constexpr int GuestErange = 34;
+    constexpr size_t RsizeMax = SIZE_MAX >> 3;
+    if (!dest || destsz > RsizeMax || count > destsz) {
+        SonyInvokeConstraintHandler("memset_s: bad destination argument", nullptr, GuestErange);
+        return GuestErange;
+    }
     auto* bytes = static_cast<volatile unsigned char*>(dest);
-    for (size_t index = 0; index < length; ++index) bytes[index] = static_cast<unsigned char>(value);
-    return count > destsz ? GuestEinval : 0;
+    for (size_t index = 0; index < count; ++index) bytes[index] = static_cast<unsigned char>(value);
+    return 0;
 }
 
 char* APS5_VABI strnstr_nid_postfix(const char* haystack, const char* needle, size_t length) {

@@ -137,6 +137,26 @@ void CheckWcstok() {
     RequireViolation(before, "wcstok_s: bad argument", 22);
 }
 
+void CheckMemset() {
+    unsigned char bytes[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+    Require(memset_s_nid_postfix(bytes, sizeof(bytes), 9, 4) == 0 && bytes[0] == 9 && bytes[3] == 9 && bytes[4] == 5, "memset_s did not fill count bytes");
+    Require(memset_s_nid_postfix(bytes, 0, 7, 0) == 0 && bytes[0] == 9, "memset_s rejected an empty fill");
+    Require(memset_s_nid_postfix(bytes, tooLarge - 1, 6, 1) == 0 && bytes[0] == 6 && bytes[1] == 9, "memset_s rejected the largest size");
+    struct Violation {
+        bool null;
+        std::size_t size;
+        std::size_t count;
+    };
+    constexpr Violation violations[] = {{false, 4, 8}, {false, 0, 1}, {true, 8, 4}, {true, 0, 0}, {false, tooLarge, 4}, {false, 8, tooLarge}, {false, SIZE_MAX, 0}};
+    for (const auto& violation : violations) {
+        unsigned char sentinel[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+        const int before = constraintCalls;
+        Require(memset_s_nid_postfix(violation.null ? nullptr : sentinel, violation.size, 0, violation.count) == 34, "memset_s accepted a violation");
+        RequireViolation(before, "memset_s: bad destination argument", 34);
+        Require(sentinel[0] == 1 && sentinel[7] == 8, "memset_s wrote on a violation");
+    }
+}
+
 void CheckWideToMultibyte() {
     int status = 7;
     char bytes[4] = {'x', 'x', 'x', 'x'};
@@ -261,6 +281,7 @@ int main(int argc, char** argv) {
 
     CheckBsearch();
     CheckWcstok();
+    CheckMemset();
     CheckWideToMultibyte();
     CheckMultibyteToWide();
     CheckGets(argv[1]);
