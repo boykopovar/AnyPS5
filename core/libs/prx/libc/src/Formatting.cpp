@@ -105,6 +105,7 @@ std::string HostLength(const std::string& length, char conversion) {
     if (std::strchr("sc[", conversion) && length != "l") return {};
 #ifdef _WIN32
     if (length == "l" && std::strchr("diouxXn", conversion) != nullptr) return "ll";
+    if (length != "l" && std::strchr("sc[", conversion) != nullptr) return std::string();
 #else
     (void)conversion;
 #endif
@@ -271,7 +272,10 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
         unsigned long width = 0;
         while (std::isdigit(static_cast<unsigned char>(*cursor))) width = width * 10 + static_cast<unsigned long>(*cursor++ - '0');
         const char* lengthStart = cursor;
-        while (std::strchr("hljztL", *cursor) != nullptr && *cursor != '\0') ++cursor;
+        if (*cursor != '\0' && std::strchr("hljztL", *cursor)) {
+            const char first = *cursor++;
+            if ((first == 'h' || first == 'l') && *cursor == first) ++cursor;
+        }
         const std::string length(lengthStart, cursor);
         const char conversion = *cursor;
         if (conversion == '\0') return finish(assigned);
@@ -282,7 +286,12 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             if (*cursor == ']') ++cursor;
             while (*cursor != '\0' && *cursor != ']') ++cursor;
             if (*cursor != ']') return finish(assigned);
+#ifdef _WIN32
+            const bool negated = setStart[1] == '^';
+            specifier = LibcDetail::TitleScanset(setStart + 1 + negated, cursor, negated);
+#else
             specifier.assign(setStart, cursor + 1);
+#endif
         }
         ++cursor;
         if (conversion == 'n') {
@@ -353,6 +362,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             continue;
         }
 #endif
+        if (!std::strchr("diouxXaAeEfFgGcspn[SC", conversion)) return finish(assigned);
         if (conversion != 'c' && conversion != '[') {
             while (std::isspace(source.Peek())) source.Skip();
             if (source.Peek() == EOF) return finish(converted ? assigned : EOF);
