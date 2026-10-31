@@ -49,7 +49,23 @@ def first_function():
     return code + b"\xc3"
 
 
-def module(table):
+def callback_in_rbx(following):
+    return b"\x48\x8d\x1d" + struct.pack("<i", CALLBACK - (FIRST + 7)) + following
+
+
+def tested_table():
+    return b"\x48\x8d\x2d" + struct.pack("<i", TABLE - (FIRST + 7)) + bytes.fromhex("48 85 ed 74 03 8b 45 00 c3")
+
+
+CALLBACK_USES = (
+    ("callback-tested-before-call", callback_in_rbx(bytes.fromhex("48 85 db 74 02 ff d3 c3"))),
+    ("callback-called-on-taken-branch", callback_in_rbx(bytes.fromhex("85 ff 75 03 31 db c3 ff d3 c3"))),
+    ("callback-kept-across-call", callback_in_rbx(b"\xe8" + struct.pack("<i", SECOND - (FIRST + 12)) + bytes.fromhex("ff d3 c3"))),
+)
+
+
+def module(table, first=None):
+    first = first or first_function()
     image = guest_fixture(b"")
     image.extend(bytes(0x100))
     struct.pack_into("<H", image, 56, 5)
@@ -58,15 +74,14 @@ def module(table):
     struct.pack_into("<IIQQQQQQ", image, 64 + 4 * 56, PT_GNU_EH_FRAME, 4, UNWIND_OFFSET, UNWIND, UNWIND, header_size, header_size, 4)
     text = memoryview(image)[TEXT_OFFSET:TEXT_OFFSET + 0x100]
     text[:] = b"\xcc" * 0x100
-    code = first_function()
-    text[FIRST - TEXT:FIRST - TEXT + len(code)] = code
+    text[FIRST - TEXT:FIRST - TEXT + len(first)] = first
     text[TABLE - TEXT:TABLE - TEXT + len(table)] = table
     text[CALLBACK - TEXT:CALLBACK - TEXT + len(GS_CALLBACK)] = GS_CALLBACK
     text[SECOND - TEXT] = 0xC3
     return image
 
 
-def convert(relinker, work, name, image, flags):
+def convert(relinker, work, name, image, flags, first=None):
     case = work / name
     (case / "sce_module").mkdir(parents=True)
     (case / "input.elf").write_bytes(importing_executable([]))
@@ -76,7 +91,7 @@ def convert(relinker, work, name, image, flags):
     converted = case / "app0" / "sce_module" / "libExample.prx.guest.prx"
     assert result.returncode == 0 and converted.exists(), (name, result.stdout, result.stderr)
     output = converted.read_bytes()
-    start = output.find(first_function())
+    start = output.find(first or first_function())
     assert start >= 0, name
     return output[start:start + SECOND - FIRST]
 
@@ -91,6 +106,11 @@ def main():
             assert code[CALLBACK - FIRST:CALLBACK - FIRST + len(GS_TRAP)] == GS_TRAP, (system, code.hex())
             code = convert(relinker, work, "undecodable-table-" + system, module(UNDECODABLE), flags)
             assert code[TABLE - FIRST:TABLE - FIRST + len(UNDECODABLE)] == UNDECODABLE, (system, code.hex())
+            code = convert(relinker, work, "table-tested-before-read-" + system, module(GS_LOOKALIKE, tested_table()), flags, tested_table())
+            assert code[TABLE - FIRST:TABLE - FIRST + len(GS_LOOKALIKE)] == GS_LOOKALIKE, (system, code.hex())
+            for name, first in CALLBACK_USES:
+                code = convert(relinker, work, name + "-" + system, module(b"", first), flags, first)
+                assert code[CALLBACK - FIRST:CALLBACK - FIRST + len(GS_TRAP)] == GS_TRAP, (name, system, code.hex())
     print("Code analysis address data tests passed")
 
 
