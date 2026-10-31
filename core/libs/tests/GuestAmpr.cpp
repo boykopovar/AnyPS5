@@ -1012,6 +1012,15 @@ void TestAmmUsageStats() {
     Require(stats[0] == 0 && stats[1] == 0xdeadbeef);
 }
 
+void TestAmmOccupancyThresholdKeepsPoolIdle() {
+    Require(sceAmprAmmSetPageTablePoolOccupancyNotificationThreshold(512) == 0);
+    AmmUsageStatsData stats{};
+    stats.sizeInBytes = sizeof(stats);
+    Require(sceAmprAmmGetUsageStatsData(&stats) == 0);
+    Require(stats.numPageTablePoolEntries == 512u);
+    Require(stats.allocatedPageTablePoolEntries == 0u);
+}
+
 void TestAmm() {
     std::uint64_t start = 0;
     std::uint64_t end = 0;
@@ -1819,6 +1828,7 @@ int main() {
     TestGatherScatter();
     TestAmmRangesAboveHintedMaps();
     TestAmmUsageStats();
+    TestAmmOccupancyThresholdKeepsPoolIdle();
     TestAmmRemapKeepsPoolReferences();
     TestAmmMapFailureKeepsPoolOwnership();
     TestAmmMapsScatteredPoolPages();
