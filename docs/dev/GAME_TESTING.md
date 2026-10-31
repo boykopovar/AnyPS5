@@ -44,7 +44,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - `APS5_NO_PAD_INPUT=1` ignores keyboard and mouse, so a stray press doesn't move a measurement run.
 - `setarch x86_64 -R` (Linux only) turns off address randomisation so addresses match between runs.
 - On Windows, a `--windows-gui` build started without a console writes its output to `anyps5.log` beside the executable, replacing the previous run's file.
-- Some homebrew reopen stdout and stderr into their own storage before `main`, so `run.log` ends at `Transferring control to ELF entry point` while the title keeps running. Titles built on ps5-homebrew-ui, such as CD Player (PPSA98427), Afterglow (PPSA47770) and Surround Sound Studio (PPSA99051), write `download0/hui/dev/app.log` beside the executable and keep the previous run's log as `app.prev.log`. Read that file before reporting a hang or a silent exit.
+- Some homebrew reopen stdout and stderr into their own storage before `main`, so the title's own output, including the reason it exits, is not in `run.log`. Titles built on ps5-homebrew-ui, such as CD Player (PPSA98427), Afterglow (PPSA47770) and Surround Sound Studio (PPSA99051), write `download0/hui/dev/app.log` beside the executable and keep the previous run's log as `app.prev.log`. Read that file before reporting a hang or a silent exit.
 - On Windows the title needs a signed-in desktop. Started from an SSH session (session 0) it has no usable window. Start it inside the user's session instead, for example with a scheduled task that runs interactively. A newly created task does not start on battery power by default and fails silently; allow that in its settings.
 
 ## Check the GPU and the caches

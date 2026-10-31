@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <cstdint>
 #include <cstddef>
@@ -56,9 +57,8 @@ static constexpr const char* FOPEN_MSG_NULL_ARG = "null argument";
 static constexpr const char* FOPEN_MSG_NOT_FOUND = "file not found";
 static constexpr const char* FOPEN_MSG_OPEN_FAILED = "open failed";
 
-#ifndef _WIN32
 extern "C" int KeepHostStandardError_nid_no_patch();
-#endif
+extern "C" int KeepHostStandardOutput_nid_no_patch();
 
 class FileStream {
     // Only the macro-accessed FreeBSD prefix is exposed. The remaining guest
@@ -106,7 +106,11 @@ public:
 
     GuestFilePrefix& GuestState() { return _guest; }
     bool IsHostStandard() const {
+#ifdef _WIN32
+        return _handle == __acrt_iob_func(0) || _handle == __acrt_iob_func(1) || _handle == __acrt_iob_func(2);
+#else
         return _handle == stdin || _handle == stdout || _handle == stderr;
+#endif
     }
 
     void Detach() {
@@ -191,6 +195,8 @@ public:
         if (std::exchange(directory, false)) ForgetDirectoryStream_nid_no_patch(replaced);
         auto* const standard = HostStandardHandle_nid_no_patch(replaced);
         GuestFileLockForget_nid_no_patch(replaced);
+        if (IsHostStandard() && replaced == 1) KeepHostStandardOutput_nid_no_patch();
+        if (IsHostStandard() && replaced == 2) KeepHostStandardError_nid_no_patch();
         if (open && !filename.empty()) {
             if (!IsHostStandard()) {
                 _handle = nullptr;
@@ -233,7 +239,15 @@ public:
         }
         KeepStandardHandle_nid_no_patch(replaced, standard);
 #else
-        if (::fileno(previous) == 2) KeepHostStandardError_nid_no_patch();
+        const int error = errno;
+        try {
+#ifndef __EMSCRIPTEN__
+            if (::fileno(previous) == 1) KeepHostStandardOutput_nid_no_patch();
+#endif
+            if (::fileno(previous) == 2) KeepHostStandardError_nid_no_patch();
+        } catch (const std::system_error&) {
+            errno = error;
+        }
         const int kept = IsHostStandard() ? DuplicateHostDescriptor_nid_no_patch(::fileno(previous)) : -1;
         if (kept >= 0) ::flockfile(previous);
         _handle = std::freopen(filename.c_str(), mode, previous);
