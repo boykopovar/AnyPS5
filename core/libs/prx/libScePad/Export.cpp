@@ -138,13 +138,15 @@ int APS5_VABI scePadClose_nid_postfix(int handle) {
 }
 
 int APS5_VABI scePadVrControllerSetVibration(std::int32_t handle, std::uint8_t intensity) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)intensity;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadVrControllerSetVibrationMode(std::int32_t handle, std::uint32_t mode) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)mode;
+    if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
+    return PAD_OK;
 }
 
 int APS5_VABI scePadVrControllerReadCombinedState(std::int32_t leftHandle, std::int32_t rightHandle, PadVrControllerCombinedState* state) {
