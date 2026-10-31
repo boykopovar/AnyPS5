@@ -42,6 +42,7 @@ struct Surface {
     std::uint32_t slice = 0;
     std::uint8_t clearStencil = 0;
     std::uint32_t swizzle = 0;
+    std::optional<AgcDriver::Graphics::TextureTileMode> gcnTileMode;
 };
 
 struct DrawOptions {
@@ -52,6 +53,7 @@ struct DrawOptions {
     VkStencilOpState stencil{};
     float minDepth = 0.0f;
     float maxDepth = 1.0f;
+    std::optional<VkRect2D> scissor;
 };
 
 inline std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -123,6 +125,7 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     state.depth = AgcDriver::Graphics::DepthTarget{surface.depth, surface.stencil, extent, surface.format, 1.0f, surface.clearStencil, surface.htile, surface.htileStencil};
     state.depth->firstSlice = surface.slice;
     state.depth->depthSwizzle = surface.swizzle;
+    state.depth->gcnTileMode = surface.gcnTileMode;
     state.depthTest = options.depthTest;
     state.depthWrite = options.depthWrite;
     state.depthCompare = options.depthCompare;
@@ -133,7 +136,7 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     state.viewport = {0, static_cast<float>(extent.height), static_cast<float>(extent.width), -static_cast<float>(extent.height), options.minDepth, options.maxDepth};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, extent};
+    state.scissor = options.scissor.value_or(VkRect2D{{0, 0}, extent});
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blend.colorWriteMask = 15;

@@ -31,6 +31,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <limits>
 #include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
@@ -741,6 +742,55 @@ void hardwareScreenOffsetTests() {
     }
     queue.context.erase(0x8d);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "missing register");
+}
+
+void GcnDepthTileModeTests() {
+    using AgcDriver::Graphics::TextureTileMode;
+    auto queue = makeState();
+    queue.context[0x31c] = 0;
+    for (const auto offset : {0x31bu, 0x31du, 0x3b0u, 0x3b8u, 0x390u, 0x318u, 0x1e0u}) queue.context.erase(offset);
+    queue.shader[0x008] = 0;
+    queue.shader[0x009] = 0;
+    queue.context[0x200] = 0x36;
+    queue.context[0x000] = 0;
+    queue.context[0x002] = 0;
+    queue.context[0x00a] = 0;
+    queue.context[0x00b] = std::bit_cast<std::uint32_t>(1.0f);
+    queue.context[0x007] = 0x003f003f;
+    queue.context[0x011] = 0x20000180;
+    queue.context[0x012] = 0x100;
+    queue.context[0x014] = 0x100;
+    queue.context[0x016] = 255u | (143u << 11u);
+    const auto decode = [&](std::uint32_t zInfo) {
+        queue.context[0x010] = zInfo;
+        const auto state = AgcDriver::Graphics::DecodeState(queue);
+        Require(state.depth.has_value(), "a depth plane did not decode");
+        return *state.depth;
+    };
+    ShaderRecompiler::SetGcnGuestShaders(true);
+    const auto scene = decode(0xa0000003u);
+    const auto index2 = decode(0xa0000003u | (2u << 20u));
+    const auto index7 = decode(0xa0000003u | (7u << 20u));
+    const auto nextField = decode(0xa0000003u | (15u << 23u));
+    auto stencilQueue = queue;
+    stencilQueue.context[0x010] = 0xa0000000u | (2u << 20u);
+    stencilQueue.context[0x011] = 0x20000181;
+    stencilQueue.context[0x013] = 0x2000;
+    stencilQueue.context[0x015] = 0x2000;
+    stencilQueue.context[0x200] = 0x007007b3;
+    stencilQueue.context[0x10b] = 0;
+    stencilQueue.context[0x10c] = 0x01ffff00;
+    stencilQueue.context[0x10d] = 0x01ffff00;
+    const auto stencilOnly = AgcDriver::Graphics::DecodeState(stencilQueue);
+    ShaderRecompiler::SetGcnGuestShaders(false);
+    const auto ps5 = decode(0xa0000003u | (2u << 20u));
+    Require(scene.gcnTileMode == TextureTileMode::kGcnDepth2D64, "PS4 DB_Z_INFO 0xa0000003 did not decode as Depth2D64");
+    Require(scene.extent.width == 2048 && scene.extent.height == 1152, "PS4 DB_DEPTH_SIZE did not give the depth plane's pitch and height");
+    Require(index2.gcnTileMode == TextureTileMode::kGcnDepth2D256, "PS4 DB_Z_INFO TILE_MODE_INDEX 2 did not decode as Depth2D256");
+    Require(index7.gcnTileMode == TextureTileMode::kGcnDepthPrt1K, "PS4 DB_Z_INFO TILE_MODE_INDEX 7 did not decode as DepthPrt1K");
+    Require(nextField.gcnTileMode == TextureTileMode::kGcnDepth2D64, "PS4 DB_Z_INFO bits above TILE_MODE_INDEX changed the depth tiling");
+    Require(stencilOnly.depth && !stencilOnly.depth->gcnTileMode.has_value(), "a PS4 surface without a depth plane took a depth tiling");
+    Require(!ps5.gcnTileMode.has_value(), "a PS5 DB_Z_INFO took a GCN depth tiling");
 }
 
 void depthCopyFormatTests() {
@@ -13000,6 +13050,7 @@ int main(int argc, char** argv) {
         sampleOrderTests();
         UnwrittenDepthPlaneTests();
         depthCopyFormatTests();
+        GcnDepthTileModeTests();
         quadPixelMaskTests();
         ShaderStageTests();
         UnsupportedTessellationFieldTests();
