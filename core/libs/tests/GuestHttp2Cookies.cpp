@@ -1,6 +1,7 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -54,10 +55,52 @@ static int FillDomain(int box, int count) {
     return 0;
 }
 
+static void CheckDateTokens(int box) {
+    const std::string longDigits(256, '9');
+    const struct {
+        std::string date;
+        bool expired;
+    } cases[] = {
+        {"31 Dec 1999 23:59:59", true},
+        {"01 Jan 70 00:00:00", true},
+        {"01 Jan 1970 00:00:00; Expires=01 Jan 9999 00:00:00", false},
+        {"01suffix Jan 1970 00:00:00GMT", true},
+        {"001 Jan 1970 00:00:00", false},
+        {"01 Jan 01970 00:00:00", false},
+        {"01 Jan 1970 000:00:00", false},
+        {"01 Jan 1970 00:000:00", false},
+        {"01 Jan 1970 00:00:000", false},
+        {"4294967297 Jan 1970 00:00:00", false},
+        {"01 Jan 4294969266 00:00:00", false},
+        {"01 Jan 1970 4294967296:00:00", false},
+        {"01 Jan 1970 00:4294967296:00", false},
+        {"01 Jan 1970 00:00:4294967296", false},
+        {longDigits + " Jan 1970 00:00:00", false},
+        {"01 Jan " + longDigits + " 00:00:00", false},
+        {"01 Jan 1970 " + longDigits + ":00:00", false},
+        {"01 Jan 1970 00:" + longDigits + ":00", false},
+        {"01 Jan 1970 00:00:" + longDigits, false},
+        {longDigits + " 01 Jan 1970 00:00:00", true},
+    };
+    for (std::size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
+        const auto& entry = cases[index];
+        const std::string url = "http://date" + std::to_string(index) + ".test/";
+        Require(Add(box, url.c_str(), "value=1; Expires=" + entry.date) == 0);
+        const bool matched = !NoMatch(box, url.c_str());
+        if (matched == entry.expired) std::fprintf(stderr, "Unexpected cookie expiry for %s\n", entry.date.c_str());
+        Require(matched != entry.expired);
+        if (matched) Require(Get(box, url.c_str()) == "value=1");
+    }
+}
+
 int main() {
     static_assert(sizeof(Http2CookieStats) == 32);
     static_assert(offsetof(Http2CookieStats, currentInuseNum) == 8 && offsetof(Http2CookieStats, maxInuseSize) == 16);
     static_assert(offsetof(Http2CookieStats, maxInuseNum) == 24 && offsetof(Http2CookieStats, removedNum) == 28);
+    const int dates = sceHttp2CreateCookieBox(0x10000);
+    Require(dates > 0);
+    CheckDateTokens(dates);
+    Require(sceHttp2DeleteCookieBox(dates) == 0);
     constexpr std::size_t maxSize = static_cast<std::size_t>(-1);
     Require(sceHttp2CreateCookieBox(maxSize) < 0);
     Require(sceHttp2CreateCookieBox(maxSize - 0x3fff) < 0);
