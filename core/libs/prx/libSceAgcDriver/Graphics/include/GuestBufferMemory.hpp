@@ -56,6 +56,10 @@ inline VkDeviceSize HostImportOffset(const HostImport& import, std::uint64_t add
     return address - import.base + import.lead;
 }
 
+inline bool HostImportDeviceLocal(const Context& context, const HostImport& import) {
+    return import.memoryType < context.memory.memoryTypeCount && (context.memory.memoryHeaps[context.memory.memoryTypes[import.memoryType].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+}
+
 enum class ImportWatch : std::uint8_t { Watch, Unwatch };
 
 struct ImportProbe {

@@ -7202,6 +7202,7 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 image->MarkDirty();
                 const auto slabRetilesBefore = StorageTexture::SlabRetiles();
                 const auto paddingSeedsBefore = StorageTexture::PaddingSeedCopies();
+                const auto importRetilesBefore = StorageTexture::LinearImportRetiles();
                 image->WriteBack();
                 recorder.Submit();
                 device.WaitQueue();
@@ -7210,6 +7211,14 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 if (test.direct && watched && UnitShadowEnabled() && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && slabRetiled == 0) failures += what + ": no window was retiled straight into its unit-shadow slab\n";
                 const auto paddingSeeded = StorageTexture::PaddingSeedCopies() - paddingSeedsBefore;
                 if (test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes) && paddingSeeded != 0) failures += what + ": the write-back copied " + std::to_string(paddingSeeded) + " pieces of row padding from the import through its scratch\n";
+                const auto importRetiled = StorageTexture::LinearImportRetiles() - importRetilesBefore;
+                static const bool importRetile = std::getenv("APS5_NO_LINEAR_IMPORT_RETILE") == nullptr;
+                const auto* surfaceImport = watched ? HostImportFor(context, address, surfaceBytes) : nullptr;
+                const bool deviceLocalImport = surfaceImport != nullptr && HostImportDeviceLocal(context, *surfaceImport);
+                const bool expectImportRetile = importRetile && deviceLocalImport && test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes);
+                if (expectImportRetile && importRetiled == 0) failures += what + ": the linear write-back went through its scratch instead of retiling into the import\n";
+                if (!importRetile && importRetiled != 0) failures += what + ": the linear write-back retiled into the import with APS5_NO_LINEAR_IMPORT_RETILE set\n";
+                if (watched && !deviceLocalImport && importRetiled != 0) failures += what + ": the linear write-back retiled into an import outside a device-local heap\n";
                 std::vector<std::byte> read(bytes);
                 if (watched) AgcDriver::GuestMemory::Read(blockAddress, read);
                 else std::memcpy(read.data(), memory, bytes);
@@ -7224,6 +7233,22 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                     }
                     if (isTexel) ++texels;
                     else if (!isPattern) ++(inside ? garbage : outside);
+                }
+                if (test.tileMode == TextureTileMode::kLinear) {
+                    std::vector<bool> texelByte(surfaceBytes, false);
+                    for (const auto& mip : geometry.mips) {
+                        for (std::uint32_t y = 0; y < mip.height; ++y) {
+                            const auto row = static_cast<std::size_t>(mip.tiledOffset + static_cast<std::uint64_t>(y) * mip.pitchBytes);
+                            std::fill(texelByte.begin() + static_cast<std::ptrdiff_t>(row), texelByte.begin() + static_cast<std::ptrdiff_t>(row + mip.width * 4u), true);
+                        }
+                    }
+                    std::size_t misplaced = 0;
+                    for (std::size_t i = 0; i < surfaceBytes; ++i) {
+                        const auto at = static_cast<std::size_t>(test.offset) + i;
+                        const auto byte = std::to_integer<std::uint8_t>(read[at]);
+                        if (byte != (texelByte[i] ? colour[i % 4] : pattern(at))) ++misplaced;
+                    }
+                    if (misplaced != 0) failures += what + ", write-back " + std::to_string(pass + 1) + ": " + std::to_string(misplaced) + " bytes differ from the texels at their rows' places and the untouched pitch padding\n";
                 }
                 if (garbage != 0 || outside != 0 || texels != texelCount) {
                     failures += what + ", write-back " + std::to_string(pass + 1) + ": stored " + std::to_string(texels) + " texels of " + std::to_string(texelCount) + " and changed " + std::to_string(garbage) + " words no texel holds (" + std::to_string(outside) + " past the surface)\n";

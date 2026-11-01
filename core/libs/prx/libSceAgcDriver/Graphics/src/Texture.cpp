@@ -112,7 +112,7 @@ thread_local const char* uploadReason = "first";
 // selections widened to every pending unit (the hysteresis in writeBack), units dropped as dead
 // (DiscardPendingInside) and units an alias's own results superseded (markLayersPending); relaxed,
 // reported only.
-std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0}, paddingSeedCopies{0};
+std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0}, paddingSeedCopies{0}, linearImportRetiles{0};
 std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWriteBacks{0}, partialWriteBackBytes{0}, emptyWriteBacks{0}, coalescedWriteBacks{0}, unitsDropped{0}, unitsSuperseded{0}, clearHandOvers{0}, handedOverSuperseded{0};
 // FlushPending listings skipped because no pending unit of the image lay inside the range, images
 // whose selected pending units were dropped because their memory is no longer registered (see
@@ -2553,6 +2553,10 @@ std::uint64_t StorageTexture::SlabRetiles() {
 
 std::uint64_t StorageTexture::PaddingSeedCopies() {
     return paddingSeedCopies.load(std::memory_order_relaxed);
+}
+
+std::uint64_t StorageTexture::LinearImportRetiles() {
+    return linearImportRetiles.load(std::memory_order_relaxed);
 }
 
 bool StorageTexture::otherPendingOverlaps() const {
@@ -6405,19 +6409,32 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         // untouched blocks are copied into the imported bytes in place, recorded behind the work that
         // produced the image; nothing crosses to the CPU.
         auto linear = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(sliceLinearBytes * arrayLayers), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-        auto tiledScratch = std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
         std::vector<CopiedBytes> copied;
         for (const auto& [from, to] : keep) copied.push_back({from - descriptor.baseAddress, to - descriptor.baseAddress, from - descriptor.baseAddress});
         auto padding = paddingSeeds(segments, copied);
         std::vector<std::pair<std::uint64_t, std::uint64_t>> importStores(keep.begin(), keep.end());
         const bool linearRows = descriptor.tileMode == TextureTileMode::kLinear && !geometry.thick && std::none_of(mips.begin(), mips.end(), [](const TileMipLayout& mip) { return mip.tail; });
+        const HostImport* directImport = nullptr;
         if (linearRows && !padding.copies.empty() && padding.slabs.empty() && saveUnits.empty()) {
             std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
             for (const auto& range : copied) runs.emplace_back(range.begin, range.end);
             importStores.clear();
             for (const auto& [begin, end] : coveredBytes(runs)) importStores.emplace_back(descriptor.baseAddress + begin, descriptor.baseAddress + end);
             padding = {};
+            static const bool importRetile = std::getenv("APS5_NO_LINEAR_IMPORT_RETILE") == nullptr;
+            if (importRetile && elementBytes % 4 == 0 && segments.size() == 1 && segments.front().begin <= firstStored && lastStored <= segments.front().end) {
+                std::vector<std::pair<std::uint64_t, std::uint64_t>> wholeLayers;
+                for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
+                    if (!layers[layer]) continue;
+                    const auto begin = layerBegin(layer);
+                    const auto end = begin + layerBytes(layer);
+                    if (!wholeLayers.empty() && wholeLayers.back().second == begin) wholeLayers.back().second = end;
+                    else wholeLayers.emplace_back(begin, end);
+                }
+                if (wholeLayers == keep && HostImportDeviceLocal(context, *segments.front().import)) directImport = segments.front().import;
+            }
         }
+        const auto tiledScratch = directImport == nullptr ? std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : nullptr;
         detiler.BeginBatch();
         auto* recorder = Recorder::Active();
         std::unique_ptr<CommandBatch> batch;
@@ -6431,11 +6448,11 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             commands = recorder->Commands();
             timing = recorder->BeginGpuTiming(Recorder::CommandClass::StorageWriteBack);
             if (linear) recorder->Keep(linear, linear->Size());
-            recorder->Keep(tiledScratch, tiledScratch->Size());
+            if (tiledScratch) recorder->Keep(tiledScratch, tiledScratch->Size());
             for (const auto& slab : padding.slabs) recorder->Keep(slab);
             // The image itself must outlive the recorded retile: the cache may evict it right after.
             if (auto self = weak_from_this().lock()) keepStorageTexture(*recorder, std::move(self));
-            Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, padding.copies.empty() ? 4 : 5);
+            Recorder::CountBarriers(Recorder::CommandClass::StorageWriteBack, (padding.copies.empty() ? 4 : 5) - (directImport != nullptr ? 1 : 0));
             if (Recorder::BarrierValidate()) {
                 const std::pair<VkImage, bool> read{image, false};
                 recorder->NoteAccess(Recorder::CommandClass::StorageWriteBack, Recorder::Access{padding.importReads, importStores, std::span(&read, 1), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT});
@@ -6477,10 +6494,13 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             for (std::uint32_t level = 0; level < mips.size(); ++level) {
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
-                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiledScratch->Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                if (directImport != nullptr) detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, directImport->buffer, HostImportOffset(*directImport, descriptor.baseAddress + geometry.GuestLayerOffset(layer) + mip.tiledOffset), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                else detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiledScratch->Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
             }
         }
-        {
+        if (directImport != nullptr) {
+            linearImportRetiles.fetch_add(1, std::memory_order_relaxed);
+        } else {
             const auto scratchDone = WholeBufferBarrier(tiledScratch->Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
             context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 1, &scratchDone, 0, nullptr);
             for (const auto& segment : segments) {
