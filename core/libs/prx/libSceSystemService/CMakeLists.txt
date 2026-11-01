@@ -167,3 +167,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
+
+target_sources(libSceSystemService PRIVATE InventoryExports.cpp)
