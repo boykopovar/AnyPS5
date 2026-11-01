@@ -1,18 +1,20 @@
 #pragma once
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKitRequirements/include/GuestZStream.hpp"
+#include <cstdint>
 
 extern "C" {
 int APS5_VABI __ubsan_handle_cfi_check_fail_nid_disambig1_nid_postfix();
 int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix();
-int APS5_VABI deflate_nid_postfix();
-int APS5_VABI deflateBound_nid_postfix();
-int APS5_VABI deflateEnd_nid_postfix();
-int APS5_VABI deflateInit2__nid_postfix();
-int APS5_VABI deflateReset_nid_postfix();
-int APS5_VABI inflate_nid_postfix();
-int APS5_VABI inflateEnd_nid_postfix();
-int APS5_VABI inflateInit2__nid_postfix();
-int APS5_VABI inflateReset_nid_postfix();
+int APS5_VABI deflate_nid_postfix(NKWebKitRequirements::GuestZStream* stream, int flush);
+std::uint64_t APS5_VABI deflateBound_nid_postfix(NKWebKitRequirements::GuestZStream* stream, std::uint64_t sourceLength);
+int APS5_VABI deflateEnd_nid_postfix(NKWebKitRequirements::GuestZStream* stream);
+int APS5_VABI deflateInit2__nid_postfix(NKWebKitRequirements::GuestZStream* stream, int level, int method, int windowBits, int memLevel, int strategy, const char* version, int streamSize);
+int APS5_VABI deflateReset_nid_postfix(NKWebKitRequirements::GuestZStream* stream);
+int APS5_VABI inflate_nid_postfix(NKWebKitRequirements::GuestZStream* stream, int flush);
+int APS5_VABI inflateEnd_nid_postfix(NKWebKitRequirements::GuestZStream* stream);
+int APS5_VABI inflateInit2__nid_postfix(NKWebKitRequirements::GuestZStream* stream, int windowBits, const char* version, int streamSize);
+int APS5_VABI inflateReset_nid_postfix(NKWebKitRequirements::GuestZStream* stream);
 int APS5_VABI jpeg_CreateDecompress_nid_postfix();
 int APS5_VABI jpeg_calc_output_dimensions_nid_postfix();
 int APS5_VABI jpeg_consume_input_nid_postfix();
@@ -100,7 +102,7 @@ int APS5_VABI sqlite3_value_text16_nid_postfix();
 int APS5_VABI sqlite3_value_type_nid_postfix();
 int APS5_VABI sqlite3_wal_checkpoint_v2_nid_postfix();
 int APS5_VABI sqlite3_wal_hook_nid_postfix();
-int APS5_VABI uncompress_nid_postfix();
+int APS5_VABI uncompress_nid_postfix(std::uint8_t* destination, std::uint64_t* destinationLength, const std::uint8_t* source, std::uint64_t sourceLength);
 int APS5_VABI xmlByteConsumed_nid_postfix();
 int APS5_VABI xmlCreateMemoryParserCtxt_nid_postfix();
 int APS5_VABI xmlCreatePushParserCtxt_nid_postfix();
