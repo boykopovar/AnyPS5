@@ -2,7 +2,7 @@
 
 ### Silent stubs
 
-- [sceShareFeaturePermit, sceShareFeatureProhibit, sceShareInitialize, sceShareRegisterContentEventCallback, sceShareSetCaptureSource, sceShareSetContentParam, sceShareSetScreenshotOverlayImage, sceShareTerminate and sceShareUnregisterContentEventCallback](../../../core/libs/prx/libSceShare/Export.cpp) return success without interacting with share or capture services.
+- [sceShareFeaturePermit, sceShareFeatureProhibit, sceShareInitialize, sceShareRegisterContentEventCallback, sceShareSetCaptureSource, sceShareSetContentParam, sceShareSetScreenshotOverlayImage, sceShareTerminate and sceShareUnregisterContentEventCallback](../../../core/libs/prx/libSceShare/Export.cpp) return success without interacting with share or capture services. Eight of the ten local titles call `sceShareInitialize`: all nine calls pass a 0x20000-byte heap and thread priority 700, and seven pass affinity mask 0x1FFF (PPSA30839 and PPSA31162 pass a computed mask). The constant flags passed to `sceShareFeaturePermit` and `sceShareFeatureProhibit` are 1, 2 and 4 (PPSA36591 sets each bit on its own, PPSA03984 only 2) and 0xFFFFFFFF (PPSA25286); PPSA01494, PPSA30839 and PPSA31162 forward a caller's value.
 
 ### Unknown function info
 
@@ -13,3 +13,16 @@
 ### Functional
 
 - [sceShareCaptureVideoClipExtended, sceShareCaptureScreenshotExtended](../../../core/libs/prx/libSceShare/Export.cpp) - the 40-byte video and 24-byte screenshot parameters and request-ID write precedence are recovered. Video values at offsets 8 and 16 and screenshot mode semantics remain incomplete. Valid requests still return NOT_SUPPORTED without capture; screenshot mode 2 platform checks, throttling, initialization and the backend text limit are not modeled.
+
+### Additional callable exports
+
+- Six [callable exports](../../../core/libs/prx/libSceShare/Export.cpp) are throwing import-resolution declarations. Names for two entries, signatures and behavior are unverified. The module identity is `libSceShare`; the library identities are `libSceShareForAcf` and `libSceShareForSf`. The entries occur in two version-labelled images; these labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `sceShareFeatureExPermit` | `KVfMsyLNp5w` |
+| `sceShareFeatureExProhibit` | `x+EVsi+Qhrk` |
+| `sceShareRegisterUploadCallback` | `K0I-WwCewVU` |
+| `sceShareUnregisterUploadCallback` | `4WSYopUYUPI` |
+| `Unknown` | `YPIiGz4uKOU` |
+| `Unknown` | `txixe0fiPKM` |

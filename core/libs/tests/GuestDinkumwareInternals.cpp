@@ -9,6 +9,8 @@
 #include <cstring>
 #include <initializer_list>
 #include <limits>
+#include <string>
+#include <xmmintrin.h>
 
 namespace {
 
@@ -35,6 +37,132 @@ void CheckStod(const char* text, std::int64_t pten, double expected, long consum
     const double value = _Stod_nid_postfix(text, &end, pten);
     const bool same = std::isnan(expected) ? std::isnan(value) : value == expected && std::signbit(value) == std::signbit(expected);
     Require(same && end - text == consumed && *__error_nid_postfix() == error, message);
+}
+
+template<typename TFloat>
+void CheckHexRange(TFloat (APS5_VABI *parse)(const char*, char**, std::int64_t, int*), TFloat (APS5_VABI *simple)(const char*, char**, std::int64_t), const char* overflow, const char* underflow) {
+    for (const bool negative : {false, true}) for (const bool overflows : {false, true}) for (const int saved : {7, RangeError}) {
+        const std::string text = std::string(negative ? " \t-" : "+") + (overflows ? overflow : underflow) + "tail";
+        const auto matches = [&](TFloat value) {
+            return (overflows ? std::isinf(value) : value == 0) && std::signbit(value) == negative;
+        };
+        char* end = nullptr;
+        int error = 123;
+        *__error_nid_postfix() = saved;
+        const auto value = parse(text.c_str(), &end, 0, &error);
+        Require(matches(value) && end == text.c_str() + text.size() - 4 && error == 0 && *__error_nid_postfix() == saved, "unscaled hexadecimal range result preserves errno and clears error");
+        end = nullptr;
+        *__error_nid_postfix() = saved;
+        const auto plain = simple(text.c_str(), &end, 0);
+        Require(matches(plain) && end == text.c_str() + text.size() - 4 && *__error_nid_postfix() == saved, "unscaled hexadecimal range wrapper preserves errno");
+    }
+}
+
+void TestHexRange() {
+    std::fenv_t saved;
+    Require(std::fegetenv(&saved) == 0 && std::fesetround(FE_TONEAREST) == 0, "save hexadecimal range test environment");
+    CheckHexRange(_Stofx_nid_postfix, _Stof_nid_postfix, "0X1p128", "0X1p-150");
+    CheckHexRange(_Stodx_nid_postfix, _Stod_nid_postfix, "0x1p1024", "0x1p-1075");
+    CheckHexRange(_Stoldx_nid_postfix, _Stold_nid_postfix, "0x1p16384", "0x1p-16446");
+    Require(std::fesetenv(&saved) == 0, "restore hexadecimal range test environment");
+}
+
+template<typename TFloat>
+void CheckUnscaledHexadecimal(TFloat (APS5_VABI *parse)(const char*, char**, std::int64_t, int*), const char* text, TFloat expected, int expectedFlags) {
+    *__error_nid_postfix() = 7;
+    std::feclearexcept(FE_ALL_EXCEPT);
+    std::feraiseexcept(FE_DIVBYZERO);
+    const unsigned control = _mm_getcsr() & ~0x3fu;
+    unsigned short rounding;
+    asm volatile("fnstcw %0" : "=m"(rounding));
+    int error = 123;
+    char* end = nullptr;
+    const auto value = parse(text, &end, 0, &error);
+    const int flags = std::fetestexcept(FloatingExceptions);
+    unsigned short after;
+    asm volatile("fnstcw %0" : "=m"(after));
+    constexpr std::size_t Bytes = std::numeric_limits<TFloat>::digits == 64 ? 10 : sizeof(TFloat);
+    Require(std::memcmp(&value, &expected, Bytes) == 0, "unscaled hexadecimal value bits");
+    Require(end == text + std::strlen(text) - 4 && error == 0 && *__error_nid_postfix() == 7, "unscaled hexadecimal end and errors");
+    Require(flags == (FE_DIVBYZERO | expectedFlags), "unscaled hexadecimal floating flags");
+    Require((_mm_getcsr() & ~0x3fu) == control && after == rounding, "unscaled hexadecimal preserves floating controls");
+}
+
+void TestUnscaledHexadecimal() {
+    GuestFloatingPointEnvironment saved;
+    Require(fegetenv_nid_postfix(&saved) == 0, "save unscaled hexadecimal test environment");
+    for (const unsigned flushing : {0u, 0x40u, 0x8000u, 0x8040u}) {
+        for (unsigned rounding = 0; rounding < 4u; ++rounding) {
+            for (unsigned sse = 0; sse < 4u; ++sse) {
+                const auto x87 = static_cast<unsigned short>(0x37fu | (rounding << 10u));
+                asm volatile("fnclex\n\tfldcw %0" : : "m"(x87));
+                _mm_setcsr(0x1f80u | (sse << 13u) | flushing);
+                CheckUnscaledHexadecimal(_Stofx_nid_postfix, "0x1.0000011p0tail", sse == 2u ? 0x1.000002p0f : 1.0f, FE_INEXACT);
+                CheckUnscaledHexadecimal(_Stofx_nid_postfix, "0x1.0000018p0tail", 0x1.000002p0f, 0);
+                CheckUnscaledHexadecimal(_Stodx_nid_postfix, "0x1.00000000000008p0tail", 0x1.0000000000001p0, 0);
+                CheckUnscaledHexadecimal(_Stodx_nid_postfix, "0x1.00000000000007p0tail", 1.0, 0);
+                CheckUnscaledHexadecimal(_Stoldx_nid_postfix, "0x1.00000000000000011p0tail", rounding == 2u || rounding == 0u ? 0x1.0000000000000002p0L : 1.0L, FE_INEXACT);
+                CheckUnscaledHexadecimal(_Stoldx_nid_postfix, "0x1.000000000000000100001p0tail", rounding == 2u ? 0x1.0000000000000002p0L : 1.0L, FE_INEXACT);
+                const bool up = rounding == 2u;
+                CheckUnscaledHexadecimal(_Stofx_nid_postfix, "-0x1p-150tail", up ? -std::numeric_limits<float>::denorm_min() : -0.0f, 0);
+                CheckUnscaledHexadecimal(_Stodx_nid_postfix, "-0x1p-1075tail", up ? -std::numeric_limits<double>::denorm_min() : -0.0, 0);
+                CheckUnscaledHexadecimal(_Stoldx_nid_postfix, "-0x1p-16446tail", up ? -std::numeric_limits<long double>::denorm_min() : -0.0L, 0);
+                CheckUnscaledHexadecimal(_Stofx_nid_postfix, "0x1p128tail", std::numeric_limits<float>::infinity(), 0);
+                CheckUnscaledHexadecimal(_Stodx_nid_postfix, "0x1p1024tail", std::numeric_limits<double>::infinity(), 0);
+                CheckUnscaledHexadecimal(_Stoldx_nid_postfix, "0x1p16384tail", std::numeric_limits<long double>::infinity(), 0);
+                CheckUnscaledHexadecimal(_Stodx_nid_postfix, " \t-0X0001.800000p+2tail", -6.0, 0);
+                CheckUnscaledHexadecimal(_Stodx_nid_postfix, "0x100000000000000000000000000000000p-128tail", 1.0, 0);
+                CheckUnscaledHexadecimal(_Stodx_nid_postfix, "-0x0p999999999999999999999999999999tail", -0.0, 0);
+            }
+        }
+    }
+    asm volatile("fldenv %0" : : "m"(saved) : "st", "st(1)", "st(2)", "st(3)", "st(4)", "st(5)", "st(6)", "st(7)");
+    _mm_setcsr(saved.mxcsr);
+}
+
+void TestLongDoubleHexadecimalPrecision() {
+    constexpr long double Expected[3][4]{
+        {0x91a2b40000000000p+17L, 0x91a2b30000000000p+17L, 0x91a2b60000000000p+17L, 0x91a2b30000000000p+17L},
+        {0x91a2b3c4d5e6f800p+17L, 0x91a2b3c4d5e6f000p+17L, 0x91a2b3c4d5e6f800p+17L, 0x91a2b3c4d5e6f000p+17L},
+        {0x91a2b3c4d5e6f789p+17L, 0x91a2b3c4d5e6f789p+17L, 0x91a2b3c4d5e6f78ap+17L, 0x91a2b3c4d5e6f789p+17L}
+    };
+    const struct { const char* text; long double expected[3][4]; int flags[3]; } limbCases[]{
+        {"-0xea74e640d964730d42e210c725d6d1d20d18364f9a40.437efcca2p100tail", {
+            {-0xea74e60000000000p+212L, -0xea74e60000000000p+212L, -0xea74e80000000000p+212L, -0xea74e60000000000p+212L},
+            {-0xea74e640d9647000p+212L, -0xea74e640d9647000p+212L, -0xea74e640d9647800p+212L, -0xea74e640d9647000p+212L},
+            {-0xea74e640d964730dp+212L, -0xea74e640d964730dp+212L, -0xea74e640d964730ep+212L, -0xea74e640d964730dp+212L}
+        }, {FE_INEXACT, FE_INEXACT, FE_INEXACT}},
+        {"0x1fffffffffffffffffffffp0tail", {
+            {0x8000000000000000p+22L, 0xffffff0000000000p+21L, 0x8000020000000000p+22L, 0xffffff0000000000p+21L},
+            {0x8000000000000000p+22L, 0x8000000000000000p+22L, 0x8000000000000000p+22L, 0x8000000000000000p+22L},
+            {0x8000000000000000p+22L, 0x8000000000000000p+22L, 0x8000000000000000p+22L, 0x8000000000000000p+22L}
+        }, {FE_INEXACT, 0, 0}},
+        {"+0xe.926f9e67ffffffffffffff8p128tail", {
+            {0xe926fa0000000000p+68L, 0xe926f90000000000p+68L, 0xe926fc0000000000p+68L, 0xe926f90000000000p+68L},
+            {0xe926f9e680000000p+68L, 0xe926f9e67ffff800p+68L, 0xe926f9e680000800p+68L, 0xe926f9e67ffff800p+68L},
+            {0xe926f9e680000000p+68L, 0xe926f9e680000000p+68L, 0xe926f9e680000000p+68L, 0xe926f9e680000000p+68L}
+        }, {FE_INEXACT, FE_INEXACT, 0}},
+    };
+    GuestFloatingPointEnvironment saved;
+    Require(fegetenv_nid_postfix(&saved) == 0, "save hexadecimal precision environment");
+    unsigned index = 0;
+    for (const unsigned precision : {0u, 0x200u, 0x300u}) {
+        for (unsigned rounding = 0; rounding != 4; ++rounding) {
+            for (unsigned sse = 0; sse != 4; ++sse) {
+                for (const unsigned flushing : {0u, 0x40u, 0x8000u, 0x8040u}) {
+                    const auto control = static_cast<unsigned short>(0x7fu | precision | (rounding << 10u));
+                    asm volatile("fnclex\n\tfldcw %0" : : "m"(control));
+                    _mm_setcsr(0x1f80u | (sse << 13u) | flushing);
+                    CheckUnscaledHexadecimal(_Stoldx_nid_postfix, "0x1.000001p0tail", 0x1.000001p0L, 0);
+                    CheckUnscaledHexadecimal(_Stoldx_nid_postfix, "0x123456789abcdef123456p0tail", Expected[index][rounding], FE_INEXACT);
+                    for (const auto& item : limbCases) CheckUnscaledHexadecimal(_Stoldx_nid_postfix, item.text, item.expected[index][rounding], item.flags[index]);
+                }
+            }
+        }
+        ++index;
+    }
+    asm volatile("fldenv %0" : : "m"(saved) : "st", "st(1)", "st(2)", "st(3)", "st(4)", "st(5)", "st(6)", "st(7)");
+    _mm_setcsr(saved.mxcsr);
 }
 
 void CheckExp(double x, double y, short offset, double expected, short expectedKind, int expectedErrno, int expectedFlags, const char* message) {
@@ -181,6 +309,42 @@ void TestFloatErrors() {
     Require(_Stold_nid_postfix("1.5", &end, -1) == 0.15L, "_Stold");
     error = 99;
     Require(std::isnan(_Stodx_nid_postfix("nan", &end, 2, &error)) && error == 0 && end[0] == '\0', "_Stodx NaN");
+}
+
+void TestScaledNan() {
+    struct Case { const char* text; std::size_t consumed; };
+    const Case cases[] = {{"nan", 3}, {"  -NaNtail", 6}, {"-nan(0x123)", 11}, {"nan(a_b9)", 9}, {"nan()", 5}, {"nan(abc", 3}, {"nan(1.0)", 3}, {"nan(a b)", 3}, {"nan((a))", 3}, {"\t+NAN(Az_0)", 11}};
+    std::fenv_t saved;
+    Require(std::feholdexcept(&saved) == 0, "save scaled NaN environment");
+    const auto check = [&]<typename TFloat>(auto parse, auto alias) {
+        const TFloat expected = std::numeric_limits<TFloat>::quiet_NaN();
+        constexpr std::size_t bytes = sizeof(TFloat) == 16 ? 10 : sizeof(TFloat);
+        for (const auto& entry : cases) for (const auto power : {std::numeric_limits<std::int64_t>::min(), std::int64_t{-400}, std::int64_t{-1}, std::int64_t{0}, std::int64_t{1}, std::int64_t{400}, std::numeric_limits<std::int64_t>::max()}) {
+            for (const int rounding : {FE_TONEAREST, FE_DOWNWARD, FE_UPWARD, FE_TOWARDZERO}) for (const int sticky : {0, FE_DIVBYZERO | FE_INEXACT, FE_INVALID}) for (unsigned pointers = 0; pointers != 4; ++pointers) {
+                Require(std::fesetround(rounding) == 0, "select scaled NaN rounding");
+                std::feclearexcept(FE_ALL_EXCEPT);
+                if (sticky != 0) std::feraiseexcept(sticky);
+                *__error_nid_postfix() = 97;
+                int error = 123;
+                char* end = nullptr;
+                const TFloat value = parse(entry.text, (pointers & 1u) != 0 ? nullptr : &end, power, (pointers & 2u) != 0 ? nullptr : &error);
+                const int raised = std::fetestexcept(FloatingExceptions);
+                Require(std::memcmp(&value, &expected, bytes) == 0, "scaled NaN value bits");
+                Require((pointers & 1u) != 0 || end == entry.text + entry.consumed, "scaled NaN consumed subject");
+                Require((pointers & 2u) != 0 || error == 0, "scaled NaN error output");
+                Require(*__error_nid_postfix() == 97 && raised == sticky && std::fegetround() == rounding, "scaled NaN preserves errno and floating environment");
+                std::feclearexcept(FE_ALL_EXCEPT);
+                if (sticky != 0) std::feraiseexcept(sticky);
+                const TFloat other = alias(entry.text, &end, power);
+                const int aliasRaised = std::fetestexcept(FloatingExceptions);
+                Require(std::memcmp(&other, &expected, bytes) == 0 && end == entry.text + entry.consumed && *__error_nid_postfix() == 97 && aliasRaised == sticky, "scaled NaN alias");
+            }
+        }
+    };
+    check.operator()<float>(_Stofx_nid_postfix, _Stof_nid_postfix);
+    check.operator()<double>(_Stodx_nid_postfix, _Stod_nid_postfix);
+    check.operator()<long double>(_Stoldx_nid_postfix, _Stold_nid_postfix);
+    Require(std::fesetenv(&saved) == 0, "restore scaled NaN environment");
 }
 
 void TestIntegerErrors() {
@@ -530,10 +694,14 @@ void TestLongLogAt53Bits() {
 
 int main() {
     TestStod();
+    TestHexRange();
+    TestUnscaledHexadecimal();
+    TestLongDoubleHexadecimalPrecision();
     TestStoll();
     TestDoubleHelpers();
     TestFloatingRounds();
     TestFloatErrors();
+    TestScaledNan();
     TestIntegerErrors();
     TestArithmetic();
     TestDispatch();

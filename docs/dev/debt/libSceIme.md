@@ -1,5 +1,15 @@
 # libSceIme technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceIme/Export.cpp) - 2 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented.
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `NbbzN9GRg+c` |
+| `Unknown` | `aChMGUoc7QI` |
+
+
 ### Silent stubs
 
 - [sceImeOpen](../../../core/libs/prx/libSceIme/Export.cpp) (libSceIme) shows no panel: the text is typed on the host keyboard, which [ImeTextInput](../../../core/libs/prx/libSceVideoOut/src/ImeTextInput.cpp) forwards from the game window (SDL text input, Backspace, Delete, Left, Right, Home, End, Enter and Escape), and the controller cannot type. While a panel is open, key presses do not reach the keyboard-to-pad bindings of [PadInput](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp), as the console's panel takes the controller; key releases still do. Minecraft Preview (PPSA19639, #1277) opens it when entering a world. The external keyboard filter is accepted and never called because no keycode events are produced

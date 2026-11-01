@@ -35,4 +35,7 @@ int APS5_VABI sceLoginMgrServerSetUserStatus();
 int APS5_VABI sceLoginMgrServerTerminate();
 int APS5_VABI sceLoginMgrServerUpdateUserIdRalatedToPadUniqueId();
 
+int APS5_VABI sceLoginMgrServerNotifySafetyNoticeShownForGen2Vr();
+int APS5_VABI sceLoginMgrServerCheckSafetyNoticeShownForGen2Vr();
+
 }

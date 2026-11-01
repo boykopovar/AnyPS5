@@ -56,6 +56,7 @@ extern "C" int APS5_VABI FT_Outline_Decompose_nid_postfix(GuestOutline* outline,
         const std::int32_t first = previousEnd + 1;
         const std::int32_t last = outline->contours[contour];
         if (last < first) return FT_Err_Invalid_Outline;
+        if (last >= outline->n_points) throw std::invalid_argument("FT_Outline_Decompose: contour endpoint at or beyond n_points");
         previousEnd = last;
         auto* points = outline->points;
         auto* tags = outline->tags;

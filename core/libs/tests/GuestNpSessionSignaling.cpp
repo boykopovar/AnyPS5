@@ -160,4 +160,5 @@ int main() {
     Require(sceNpSessionSignalingInitialize(reinterpret_cast<const SessionSignalingInitParam*>(initializeParam)) == 0, "reinitialize");
     Require(sceNpSessionSignalingRequestPrepare(contextId, &requestId) == ContextNotFound, "reinitialize retained a context");
     Require(sceNpSessionSignalingTerminate() == 0, "final terminate");
+    Require(sceNpSessionSignalingCreateContext(reinterpret_cast<const SessionSignalingContextParam1*>(1), &contextId) == NotInitialized, "create context post-terminate");
 }

@@ -1,3 +1,4 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceRemoteplay/include/InventoryExports.hpp"
 #include "prx/libSceRemoteplay/include/Api.hpp"
 #include <cstdint>
@@ -262,5 +263,24 @@ int APS5_VABI sceRemoteplaySetRpMode(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+int APS5_VABI sceRemoteplayDisableInputDevice(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceRemoteplayEnableInputDevice(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceRemoteplayUnknown_HV7jZe1frbM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("HV7jZe1frbM", libSceRemoteplayUnknown_HV7jZe1frbM_nid_no_patch);
 
 }

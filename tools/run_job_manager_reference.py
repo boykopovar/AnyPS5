@@ -20,6 +20,28 @@ CASES = ("memory", "owned_state", "concurrent_wait", "validation", "dispatch", "
 PARITY_CASES = tuple(case for case in CASES if case not in ("node_pool", "worker_wait"))
 
 
+def resolve_cli_path(path):
+    path = Path(path)
+    try:
+        resolved = Path(os.path.realpath(path))
+    except OSError as error:
+        raise ValueError(str(error)) from error
+    if resolved.is_symlink():
+        try:
+            resolved.stat()
+        except OSError as error:
+            raise ValueError(f"{path}: path is a symbolic link loop: {error}") from error
+        raise ValueError(f"{path}: path is a symbolic link loop")
+    return resolved
+
+
+def resolve_existing_cli_path(path):
+    resolved = resolve_cli_path(path)
+    if not resolved.exists():
+        raise FileNotFoundError(2, "No such file or directory", str(resolved))
+    return resolved
+
+
 def stage_libraries(directory, build, toolchain, dependencies):
     providers = {path.name.lower(): path for path in (build / "core/libs/libs").glob("*.prx")}
     if toolchain is not None:
@@ -77,7 +99,7 @@ def run(args, directory):
         output.chmod(output.stat().st_mode | 0o111)
     dependencies = set(read_host_imports(helper)) | {"libc.prx"}
     for registry in directory.glob("*.registry.json"):
-        dependencies.update(entry["library"] for entry in json.loads(registry.read_text())
+        dependencies.update(entry["library"] for entry in json.loads(registry.read_text(encoding="utf-8"))
                             if entry.get("library") not in ("jobref.prx", "libSceJobManager.prx"))
     if args.host:
         dependencies.add("libSceJobManager.prx")
@@ -107,11 +129,14 @@ def run(args, directory):
     summary = {"provider": "host" if args.host else "guest", "module_sha256": module_hash,
                "selection": getattr(args, "suite", None) or "custom",
                "excluded_cases": [case for case in CASES if case not in args.cases], "cases": results}
-    (directory / "results.json").write_text(json.dumps(summary, indent=2) + "\n")
+    (directory / "results.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return 0 if all(result["status"] == "passed" for result in results) else 1
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run the CPU JobManager fixtures through native relinker startup using an owned module or the host fallback.")
     provider = parser.add_mutually_exclusive_group(required=True)
     provider.add_argument("--module", type=Path, help="Owned decrypted SELF or ELF libSceJobManager.prx")
@@ -138,13 +163,13 @@ def main():
         for name in ("build", "relinker", "toolchain", "module"):
             value = getattr(args, name)
             if value is not None:
-                setattr(args, name, value.resolve(strict=True))
-        directory = args.output.resolve() if args.output else Path(tempfile.mkdtemp(prefix="anyps5-jobmanager-"))
+                setattr(args, name, resolve_existing_cli_path(value))
+        directory = resolve_cli_path(args.output) if args.output else Path(tempfile.mkdtemp(prefix="anyps5-jobmanager-"))
         if args.output:
             directory.mkdir(parents=True, exist_ok=False)
         print(f"Artifacts: {directory}", flush=True)
         return run(args, directory)
-    except (AuditError, OSError, Refused, RuntimeError, subprocess.SubprocessError) as error:
+    except (AuditError, OSError, Refused, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         if isinstance(error, subprocess.CalledProcessError) and error.stderr:
             print(error.stderr.decode(errors="replace"), file=sys.stderr)

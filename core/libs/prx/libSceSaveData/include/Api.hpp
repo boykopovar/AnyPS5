@@ -79,5 +79,12 @@ int APS5_VABI sceSaveDataUmountSys(void);
 int APS5_VABI sceSaveDataUmountWithBackup(void);
 int APS5_VABI sceSaveDataUnregisterEventCallback();
 int APS5_VABI sceSaveDataUpload(void);
+int APS5_VABI sceSaveDataCheckPremiumMember();
+int APS5_VABI sceSaveDataCheckSyncStatus();
+int APS5_VABI sceSaveDataGetAllSizeProspero();
+int APS5_VABI sceSaveDataGetAutoSyncInfo();
+int APS5_VABI sceSaveDataGetCloudInfo();
+int APS5_VABI sceSaveDataNotifySaveDataDownload();
+int APS5_VABI sceSaveDataSetAutoSyncSettings();
 
 }
