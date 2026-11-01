@@ -5226,11 +5226,36 @@ void TwoSampleDitheredAlphaToCoverageTests() {
     singleSample.context[0x2f8] = 0;
     singleSample.context[0x292] = 2;
     singleSample.context[0x203] &= ~0x800u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(singleSample); }, "requires two matched raster/DB_EQAA samples");
-    Require(AgcDriver::Graphics::DrawRejection(singleSample, false).find("requires two matched raster/DB_EQAA samples") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0xe701 on a single-sample target");
-    singleSample.context[0x2dc] = 0x18701;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(singleSample); }, "requires eight matched raster/DB_EQAA samples");
-    Require(AgcDriver::Graphics::DrawRejection(singleSample, false).find("requires eight matched raster/DB_EQAA samples") != std::string::npos, "the precheck accepted DB_ALPHA_TO_MASK 0x18701 on a single-sample target");
+    singleSample.context[0x201] = 0;
+    for (const auto alpha : {0xe701u, 0x18701u}) {
+        singleSample.context[0x2dc] = alpha;
+        for (const auto format : {4u, 9u}) {
+            singleSample.context[0x1c5] = format;
+            const auto decoded = AgcDriver::Graphics::DecodeState(singleSample);
+            const auto pattern = alpha == 0xe701u ? ShaderRecompiler::SingleSampleDither::E701 : ShaderRecompiler::SingleSampleDither::Rounded18701;
+            Require(decoded.alphaToCoverage && decoded.ditheredAlphaToCoverage && decoded.ditheredAlphaSamples == 1u && decoded.singleSampleDither == pattern && decoded.samples == 1u, "a measured single-sample dither did not reach the shader state");
+            Require(AgcDriver::Graphics::DrawRejection(singleSample, false).empty(), "the precheck refused a measured single-sample dither");
+            Require(AgcDriver::Graphics::CanonicalPipelineState(decoded).singleSampleDither == ShaderRecompiler::SingleSampleDither::None, "shader-only alpha dither entered the pipeline journal state");
+        }
+        for (const auto eqaa : {0x100u, 0x1000u, 0x10u, 0x1u}) {
+            auto invalid = singleSample;
+            invalid.context[0x201] = eqaa;
+            expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "matched raster/DB_EQAA samples");
+            Require(!AgcDriver::Graphics::DrawRejection(invalid, false).empty(), "the precheck accepted unmeasured single-sample EQAA");
+        }
+        auto invalid = singleSample;
+        invalid.context[0x292] |= 1u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "matched raster/DB_EQAA samples");
+        Require(!AgcDriver::Graphics::DrawRejection(invalid, false).empty(), "the precheck accepted MSAA_ENABLE for the single-sample dither");
+        invalid = singleSample;
+        invalid.context[0x1c5] = 5u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(invalid); }, "FP16_ABGR or 32_ABGR");
+        Require(!AgcDriver::Graphics::DrawRejection(invalid, false).empty(), "the precheck accepted an unmeasured single-sample export packing");
+        invalid = singleSample;
+        invalid.context[0x203] |= 0x800u;
+        const auto disabled = AgcDriver::Graphics::DecodeState(invalid);
+        Require(!disabled.alphaToCoverage && disabled.singleSampleDither == ShaderRecompiler::SingleSampleDither::None, "the single-sample dither ignored the shader disable override");
+    }
 }
 
 void AlphaToCoverageTests() {

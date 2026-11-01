@@ -165,6 +165,7 @@ struct State {
     bool alphaToCoverage = false;
     bool ditheredAlphaToCoverage = false;
     std::uint8_t ditheredAlphaSamples = 8;
+    ShaderRecompiler::SingleSampleDither singleSampleDither = ShaderRecompiler::SingleSampleDither::None;
     bool perSampleShading = false;
     bool mergedCoverage = false;
     bool truncatedCoverage = false;

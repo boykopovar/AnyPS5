@@ -209,7 +209,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t 
     return color;
 }
 
-void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool alphaToCoverage, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, bool dithered = false, bool sampleMaskExport = false, std::uint8_t ditheredSamples = 8) {
+void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool alphaToCoverage, std::uint32_t exportFormat, std::span<const std::uint32_t> pixelCode, bool dithered = false, bool sampleMaskExport = false, std::uint8_t ditheredSamples = 8, ShaderRecompiler::SingleSampleDither singleSample = ShaderRecompiler::SingleSampleDither::None) {
     VkPipelineColorBlendAttachmentState blend{};
     blend.colorWriteMask = 0xf;
     const auto target = device.Target();
@@ -247,6 +247,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     state.alphaToCoverage = alphaToCoverage;
     state.ditheredAlphaToCoverage = dithered;
     state.ditheredAlphaSamples = ditheredSamples;
+    state.singleSampleDither = singleSample;
     state.samples = color.samples;
 
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(pixelCode.data());
@@ -256,6 +257,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     prepared.alphaToCoverage = alphaToCoverage;
     prepared.ditheredAlphaToCoverage = dithered;
     prepared.ditheredAlphaSamples = ditheredSamples;
+    prepared.singleSampleDither = singleSample;
     ShaderRecompiler::RecompileRequest fragment{
         {ShaderStage::Fragment, codeAddress, pixelCode, 0, {}},
         {waveSize, 0, {}, std::nullopt, prepared, std::nullopt, pixelMemory},
@@ -270,6 +272,7 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     fragment.context.pixel->alphaToCoverage = state.alphaToCoverage;
     fragment.context.pixel->ditheredAlphaToCoverage = state.ditheredAlphaToCoverage;
     fragment.context.pixel->ditheredAlphaSamples = state.ditheredAlphaSamples;
+    fragment.context.pixel->singleSampleDither = state.singleSampleDither;
     const ShaderRecompiler::SrtRuntime runtime{};
     const auto materialize = [&](const ShaderRecompiler::RecompileRequest& request) {
         const auto invocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request);
@@ -382,6 +385,134 @@ struct DitherCase {
     std::uint32_t format;
     std::array<std::uint32_t, 4> masks;
 };
+
+constexpr std::array<DitherCase, 44> SingleE701Cases{{
+    {0x00000000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003400u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003600u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003800u, Float16Export, {1u, 0u, 1u, 1u}},
+    {0x00003900u, Float16Export, {1u, 0u, 1u, 1u}},
+    {0x00003a00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00003b00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00003c00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x000033ffu, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003401u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x000037ffu, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003801u, Float16Export, {1u, 0u, 1u, 1u}},
+    {0x000039ffu, Float16Export, {1u, 0u, 1u, 1u}},
+    {0x00003a01u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00008000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x0000bc00u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00004000u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x0000fc00u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00007c00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e800000u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3ec00000u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f000000u, Float32Export, {1u, 0u, 1u, 1u}},
+    {0x3f200000u, Float32Export, {1u, 0u, 1u, 1u}},
+    {0x3f400000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3f600000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3f800000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3e7fffffu, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e800001u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3effffffu, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f000001u, Float32Export, {1u, 0u, 1u, 1u}},
+    {0x3f3fffffu, Float32Export, {1u, 0u, 1u, 1u}},
+    {0x3f400001u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x80000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xbf800000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x40000000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0xff800000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x7f800000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x7fc12345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xffc12345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x7f812345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xff812345u, Float32Export, {0u, 0u, 0u, 0u}},
+}};
+
+constexpr std::array<DitherCase, 48> SingleRoundedCases{{
+    {0x00000000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003000u, Float16Export, {1u, 0u, 0u, 0u}},
+    {0x00003400u, Float16Export, {1u, 0u, 0u, 0u}},
+    {0x00003600u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003800u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003900u, Float16Export, {1u, 1u, 0u, 1u}},
+    {0x00003a00u, Float16Export, {1u, 1u, 0u, 1u}},
+    {0x00003b00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00003c00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00002fffu, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00003001u, Float16Export, {1u, 0u, 0u, 0u}},
+    {0x000035ffu, Float16Export, {1u, 0u, 0u, 0u}},
+    {0x00003601u, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x000038ffu, Float16Export, {1u, 0u, 0u, 1u}},
+    {0x00003901u, Float16Export, {1u, 1u, 0u, 1u}},
+    {0x00003affu, Float16Export, {1u, 1u, 0u, 1u}},
+    {0x00003b01u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00008000u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x0000bc00u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00004000u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x0000fc00u, Float16Export, {0u, 0u, 0u, 0u}},
+    {0x00007c00u, Float16Export, {1u, 1u, 1u, 1u}},
+    {0x00000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e000000u, Float32Export, {1u, 0u, 0u, 0u}},
+    {0x3e800000u, Float32Export, {1u, 0u, 0u, 0u}},
+    {0x3ec00000u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f000000u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f200000u, Float32Export, {1u, 1u, 0u, 1u}},
+    {0x3f400000u, Float32Export, {1u, 1u, 0u, 1u}},
+    {0x3f600000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3f800000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x3dffffffu, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x3e000001u, Float32Export, {1u, 0u, 0u, 0u}},
+    {0x3ebfffffu, Float32Export, {1u, 0u, 0u, 0u}},
+    {0x3ec00001u, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f1fffffu, Float32Export, {1u, 0u, 0u, 1u}},
+    {0x3f200001u, Float32Export, {1u, 1u, 0u, 1u}},
+    {0x3f5fffffu, Float32Export, {1u, 1u, 0u, 1u}},
+    {0x3f600001u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x80000000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xbf800000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x40000000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0xff800000u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x7f800000u, Float32Export, {1u, 1u, 1u, 1u}},
+    {0x7fc12345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xffc12345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0x7f812345u, Float32Export, {0u, 0u, 0u, 0u}},
+    {0xff812345u, Float32Export, {0u, 0u, 0u, 0u}},
+}};
+
+void SingleSampleDitheredCoverage(AgcDriver::VulkanDevice& device, ShaderRecompiler::SingleSampleDither mode, std::uint32_t format) {
+    const auto cases = mode == ShaderRecompiler::SingleSampleDither::E701 ? std::span<const DitherCase>(SingleE701Cases) : std::span<const DitherCase>(SingleRoundedCases);
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    std::vector<std::unique_ptr<Block>> blocks;
+    for (const auto& test : cases) {
+        if (test.format != format) continue;
+        blocks.push_back(std::make_unique<Block>(layout.Bytes()));
+        auto& block = *blocks.back();
+        std::memset(block.data, 0, block.bytes);
+        const auto target = DecodeTarget(block);
+        Draw(device, target, false, Float32Export, Program(Color{1, 0, 0, 1}, Float32Export));
+        const auto alpha = format == Float32Export ? std::bit_cast<float>(test.bits) : 0.0f;
+        const auto half = format == Float16Export ? std::optional<std::uint16_t>(static_cast<std::uint16_t>(test.bits)) : std::nullopt;
+        Draw(device, target, true, format, Program(Color{0, 0, 0, alpha}, format, std::nullopt, half), true, false, 1u, mode);
+        const auto stored = ReadBack(device, block);
+        for (std::uint32_t y = 0; y < Height; ++y) {
+            for (std::uint32_t x = 0; x < Width; ++x) {
+                const auto covered = test.masks[(x & 1u) + 2u * (y & 1u)];
+                const auto expected = x < ScissorWidth ? 1.0f - static_cast<float>(covered) : 0.0f;
+                const auto actual = FromHalf(stored[layout.Offset(x, y) / 2u]);
+                if (actual == expected) continue;
+                char detail[192];
+                std::snprintf(detail, sizeof(detail), "single-sample dither %u export %u alpha0x%08x pixel(%u,%u): %.9g expected %.9g", static_cast<unsigned>(mode), format, test.bits, x, y, actual, expected);
+                throw std::runtime_error(detail);
+            }
+        }
+        programCount = 0;
+    }
+}
 
 void DitheredCoverage(AgcDriver::VulkanDevice& device, std::uint32_t samples, std::span<const DitherCase> cases) {
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
@@ -1255,6 +1386,18 @@ int main(int argc, char** argv) {
             std::cout << "Multisampled DCC compared host import tests passed\n";
             return 0;
 #endif
+        }
+        if (argc == 2) {
+            const std::string_view arg(argv[1]);
+            const bool first = arg == "--single-e701-f16" || arg == "--single-e701-f32";
+            const bool rounded = arg == "--single-rounded-f16" || arg == "--single-rounded-f32";
+            if (first || rounded) {
+                const auto format = arg.ends_with("f16") ? Float16Export : Float32Export;
+                const auto mode = first ? ShaderRecompiler::SingleSampleDither::E701 : ShaderRecompiler::SingleSampleDither::Rounded18701;
+                SingleSampleDitheredCoverage(*device, mode, format);
+                std::puts("single-sample dithered alpha-to-coverage tests passed");
+                return 0;
+            }
         }
         if (argc == 2 && std::string_view(argv[1]) == "--dithered8") {
             try {
