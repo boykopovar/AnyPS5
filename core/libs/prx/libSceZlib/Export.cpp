@@ -1,4 +1,5 @@
 #include "prx/libSceZlib/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "zlib.h"
@@ -10,8 +11,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
-
-extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes);
 
 namespace {
 
