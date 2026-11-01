@@ -521,9 +521,9 @@ DccKeys textureClearKeys(const GuestTextureResource& resource, std::uint64_t gue
     if (const auto known = WaitForKeyWriters(resource, guestBytes)) keys = *known;
     else keys = currentDccKeys(resource.dccAddress, DccKeyBytes(guestBytes), memoized);
     if (keys == DccKeys::Uncompressed || (keys == DccKeys::ClearSingle && SingleKeysReadable(resource))) return keys;
-    if (IsConvertedTextureFormat(resource.format) && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110)) throw std::runtime_error(std::string("AGC graphics: DCC clear code ") + DccKeysName(keys) + " of converted texture format " + std::to_string(resource.format) + " is not implemented");
+    if (DccClearTextureFormat(resource.format) == ResolveTextureFormat(resource.format) && IsConvertedTextureFormat(resource.format) && (keys == DccKeys::Clear0001 || keys == DccKeys::Clear1110)) throw std::runtime_error(std::string("AGC graphics: DCC clear code ") + DccKeysName(keys) + " of converted texture format " + std::to_string(resource.format) + " is not implemented");
     std::byte probe[16]{};
-    if (!IsDccClear(keys) || !FillDccClear(ResolveTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, std::span(probe, std::min<std::size_t>(sizeof(probe), BytesPerElement(resource.format))))) {
+    if (!IsDccClear(keys) || !FillDccClear(DccClearTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, std::span(probe, std::min<std::size_t>(sizeof(probe), BytesPerElement(resource.format))))) {
         static AgcDriver::Mutex reportedMutex;
         static std::set<std::pair<std::uint64_t, int>> reported;
         std::lock_guard lock(reportedMutex);
@@ -665,7 +665,10 @@ bool FillDccClear(VkFormat format, DccKeys keys, bool alphaOnMsb, std::span<std:
         return true;
     }
     Layout layout{};
-    if (!IsDccClear(keys) || keys == DccKeys::ClearRegister || !LayoutFor(format, layout)) return false;
+    if (!IsDccClear(keys) || keys == DccKeys::ClearRegister || !LayoutFor(format, layout)) {
+        std::fill(bytes.begin(), bytes.end(), std::byte{0});
+        return false;
+    }
     const bool color = keys == DccKeys::Clear1110 || keys == DccKeys::Clear1111;
     const bool alpha = keys == DccKeys::Clear0001 || keys == DccKeys::Clear1111;
     const int alphaChannel = layout.channels == 3 ? -1 : alphaOnMsb ? static_cast<int>(layout.channels) - 1 : 0;
@@ -680,7 +683,14 @@ bool FillDccClear(VkFormat format, DccKeys keys, bool alphaOnMsb, std::span<std:
             if (((value >> i) & 1u) != 0) element[bit / 8u] |= static_cast<std::byte>(1u << (bit % 8u));
         }
     }
-    for (std::size_t offset = 0; offset + element.size() <= bytes.size(); offset += element.size()) std::memcpy(bytes.data() + offset, element.data(), element.size());
+    const std::size_t whole = bytes.size() / element.size() * element.size();
+    if (whole != 0) std::memcpy(bytes.data(), element.data(), element.size());
+    for (std::size_t filled = element.size(); filled < whole;) {
+        const auto chunk = std::min(filled, whole - filled);
+        std::memcpy(bytes.data() + filled, bytes.data(), chunk);
+        filled += chunk;
+    }
+    std::fill(bytes.begin() + static_cast<std::ptrdiff_t>(whole), bytes.end(), std::byte{0});
     return true;
 }
 
@@ -771,7 +781,7 @@ void ReadTextureSurface(const GuestTextureResource& resource, DccKeys keys, std:
     // Named for the [hooksync] attribution: the read goes through the flush hook.
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::TextureRead);
     if (keys == DccKeys::Uncompressed || keys == DccKeys::ClearSingle) GuestMemory::ReadCommitted(resource.baseAddress, bytes);
-    else FillDccClear(ResolveTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, bytes);
+    else FillDccClear(DccClearTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, bytes);
     if (keys == DccKeys::ClearSingle) ExpandSingleBlocks(bytes, BytesPerElement(resource.format));
 }
 
@@ -818,7 +828,7 @@ namespace {
 DccKeys EncodedKeys(const GuestTextureResource& resource, DccKeys keys) {
     if (keys == DccKeys::ClearSingle && SingleKeysReadable(resource)) return keys;
     std::byte probe[16]{};
-    if (!IsDccClear(keys) || !FillDccClear(ResolveTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, std::span(probe, std::min<std::size_t>(sizeof(probe), BytesPerElement(resource.format))))) return DccKeys::Uncompressed;
+    if (!IsDccClear(keys) || !FillDccClear(DccClearTextureFormat(resource.format), keys, resource.dccAlphaOnMsb, std::span(probe, std::min<std::size_t>(sizeof(probe), BytesPerElement(resource.format))))) return DccKeys::Uncompressed;
     return keys;
 }
 

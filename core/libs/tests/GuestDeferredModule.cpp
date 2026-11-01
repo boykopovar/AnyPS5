@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #define WIN32_LEAN_AND_MEAN
 #include "GuestDeferredModule.hpp"
 #include <chrono>
@@ -5,15 +6,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <future>
-
-extern "C" {
-void* APS5_VABI dlopen_nid_postfix(const char*, int);
-void* APS5_VABI dlsym_nid_postfix(void*, const char*);
-int APS5_VABI dlclose_nid_postfix(void*);
-char* APS5_VABI dlerror_nid_postfix();
-int APS5_VABI sceKernelLoadStartModule(const char*, std::size_t, const void*, unsigned, const void*, int*);
-int APS5_VABI sceKernelStopUnloadModule(int, std::size_t, const void*, unsigned, const void*, int*);
-}
 
 static void Require(bool value, const char* what) {
     if (!value) {

@@ -1,25 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <thread>
-
-using Uint128 = unsigned __int128;
-
-extern "C" {
-void APS5_VABI __atomic_load_nid_postfix(std::size_t, void*, void*, int);
-void APS5_VABI __atomic_store_nid_postfix(std::size_t, void*, void*, int);
-void APS5_VABI __atomic_exchange_nid_postfix(std::size_t, void*, void*, void*, int);
-bool APS5_VABI __atomic_compare_exchange_nid_postfix(std::size_t, void*, void*, void*, int, int);
-bool APS5_VABI __atomic_is_lock_free_nid_postfix(std::size_t, const void*);
-Uint128 APS5_VABI __sync_fetch_and_add_16_nid_postfix(Uint128*, Uint128);
-Uint128 APS5_VABI __sync_fetch_and_sub_16_nid_postfix(Uint128*, Uint128);
-Uint128 APS5_VABI __sync_fetch_and_and_16_nid_postfix(Uint128*, Uint128);
-Uint128 APS5_VABI __sync_fetch_and_or_16_nid_postfix(Uint128*, Uint128);
-Uint128 APS5_VABI __sync_fetch_and_xor_16_nid_postfix(Uint128*, Uint128);
-Uint128 APS5_VABI __sync_lock_test_and_set_16_nid_postfix(Uint128*, Uint128);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

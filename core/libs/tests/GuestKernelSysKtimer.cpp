@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
@@ -10,33 +13,6 @@
 
 namespace {
 
-struct Sigevent {
-    int notify;
-    int signo;
-    std::int64_t value;
-    std::int64_t extra[6];
-};
-
-struct Timespec {
-    std::int64_t seconds;
-    std::int64_t nanoseconds;
-};
-
-struct Itimerspec {
-    Timespec interval;
-    Timespec value;
-};
-
-}
-
-extern "C" {
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI clock_gettime_nid_postfix(int clock, Timespec* time);
-int APS5_VABI ktimer_create_nid_postfix(int clock, const Sigevent* event, int* timerid);
-int APS5_VABI ktimer_delete_nid_postfix(int timerid);
-int APS5_VABI ktimer_settime_nid_postfix(int timerid, int flags, const Itimerspec* value, Itimerspec* oldValue);
-int APS5_VABI ktimer_gettime_nid_postfix(int timerid, Itimerspec* value);
-int APS5_VABI ktimer_getoverrun_nid_postfix(int timerid);
 }
 
 namespace {
@@ -51,7 +27,7 @@ constexpr int TimerAbstime = 1;
 constexpr std::int64_t Millisecond = 1000000;
 constexpr std::int64_t Second = 1000000000;
 
-const Sigevent None{0, 0, 0, {}};
+const GuestSigevent None{0, 0, 0, {}};
 
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -63,8 +39,8 @@ int Error() {
     return *__error_nid_postfix();
 }
 
-std::int64_t Nanoseconds(const Timespec& time) {
-    return time.seconds * Second + time.nanoseconds;
+std::int64_t Nanoseconds(const KernelTimespec& time) {
+    return time.tv_sec * Second + time.tv_nsec;
 }
 
 int Create(int clock = ClockMonotonic) {
@@ -73,8 +49,8 @@ int Create(int clock = ClockMonotonic) {
     return id;
 }
 
-Itimerspec Get(int id) {
-    Itimerspec value{{-1, -1}, {-1, -1}};
+GuestItimerspec Get(int id) {
+    GuestItimerspec value{{-1, -1}, {-1, -1}};
     Require(ktimer_gettime_nid_postfix(id, &value) == 0);
     return value;
 }
@@ -85,9 +61,9 @@ void Sleep(std::int64_t nanoseconds) {
 
 void Creation() {
     int id = -1;
-    const Sigevent badNotify{2, 0, 0, {}};
-    const Sigevent noSignal{1, 0, 0, {}};
-    const Sigevent badSignal{4, 129, 0, {}};
+    const GuestSigevent badNotify{2, 0, 0, {}};
+    const GuestSigevent noSignal{1, 0, 0, {}};
+    const GuestSigevent badSignal{4, 129, 0, {}};
     Require(ktimer_create_nid_postfix(ClockUptime, &None, &id) == -1 && Error() == Einval && id == -1);
     Require(ktimer_create_nid_postfix(-1, &None, &id) == -1 && Error() == Einval);
     Require(ktimer_create_nid_postfix(ClockMonotonic, &badNotify, &id) == -1 && Error() == Einval);
@@ -107,7 +83,7 @@ void Creation() {
 }
 
 void InvalidIds() {
-    Itimerspec value{};
+    GuestItimerspec value{};
     const int id = Create();
     Require(ktimer_delete_nid_postfix(id) == 0);
     for (const int bad : {-1, 0, 2, id, 32}) {
@@ -121,50 +97,50 @@ void InvalidIds() {
 
 void Values() {
     const int id = Create();
-    Itimerspec disarmed = Get(id);
-    Require(Nanoseconds(disarmed.value) == 0 && Nanoseconds(disarmed.interval) == 0);
-    for (const Itimerspec bad : {Itimerspec{{0, 0}, {-1, 0}}, Itimerspec{{0, 0}, {0, -1}}, Itimerspec{{0, 0}, {0, Second}},
-                                 Itimerspec{{-1, 0}, {1, 0}}, Itimerspec{{0, Second}, {1, 0}}})
+    GuestItimerspec disarmed = Get(id);
+    Require(Nanoseconds(disarmed.it_value) == 0 && Nanoseconds(disarmed.it_interval) == 0);
+    for (const GuestItimerspec bad : {GuestItimerspec{{0, 0}, {-1, 0}}, GuestItimerspec{{0, 0}, {0, -1}}, GuestItimerspec{{0, 0}, {0, Second}},
+                                 GuestItimerspec{{-1, 0}, {1, 0}}, GuestItimerspec{{0, Second}, {1, 0}}})
         Require(ktimer_settime_nid_postfix(id, 0, &bad, nullptr) == -1 && Error() == Einval);
 
-    const Itimerspec clear{{-1, 0}, {0, 0}};
+    const GuestItimerspec clear{{-1, 0}, {0, 0}};
     Require(ktimer_settime_nid_postfix(id, 0, &clear, nullptr) == 0);
     disarmed = Get(id);
-    Require(Nanoseconds(disarmed.value) == 0 && Nanoseconds(disarmed.interval) == 0);
+    Require(Nanoseconds(disarmed.it_value) == 0 && Nanoseconds(disarmed.it_interval) == 0);
 
-    const Itimerspec small{{0, 1}, {10, 0}};
+    const GuestItimerspec small{{0, 1}, {10, 0}};
     Require(ktimer_settime_nid_postfix(id, 0, &small, nullptr) == 0);
-    Itimerspec old{};
-    const Itimerspec later{{0, 0}, {20, 0}};
+    GuestItimerspec old{};
+    const GuestItimerspec later{{0, 0}, {20, 0}};
     Require(ktimer_settime_nid_postfix(id, 0, &later, &old) == 0);
-    Require(Nanoseconds(old.interval) == Millisecond);
-    Require(Nanoseconds(old.value) > 9 * Second && Nanoseconds(old.value) <= 10 * Second);
-    const Itimerspec tiny{{0, 0}, {0, 1}};
+    Require(Nanoseconds(old.it_interval) == Millisecond);
+    Require(Nanoseconds(old.it_value) > 9 * Second && Nanoseconds(old.it_value) <= 10 * Second);
+    const GuestItimerspec tiny{{0, 0}, {0, 1}};
     Require(ktimer_settime_nid_postfix(id, 0, &tiny, &old) == 0);
-    Require(Nanoseconds(old.value) > 19 * Second && Nanoseconds(old.value) <= 20 * Second);
-    const Itimerspec off{};
+    Require(Nanoseconds(old.it_value) > 19 * Second && Nanoseconds(old.it_value) <= 20 * Second);
+    const GuestItimerspec off{};
     Require(ktimer_settime_nid_postfix(id, 0, &off, &old) == 0);
-    Require(Nanoseconds(old.interval) == 0 && Nanoseconds(old.value) <= Millisecond);
+    Require(Nanoseconds(old.it_interval) == 0 && Nanoseconds(old.it_value) <= Millisecond);
     Require(ktimer_delete_nid_postfix(id) == 0);
 }
 
 void Expiry() {
     const int id = Create();
-    const Itimerspec once{{0, 0}, {0, 30 * Millisecond}};
+    const GuestItimerspec once{{0, 0}, {0, 30 * Millisecond}};
     Require(ktimer_settime_nid_postfix(id, 0, &once, nullptr) == 0);
     const auto running = Get(id);
-    Require(Nanoseconds(running.value) > 0 && Nanoseconds(running.value) <= 30 * Millisecond);
+    Require(Nanoseconds(running.it_value) > 0 && Nanoseconds(running.it_value) <= 30 * Millisecond);
     Sleep(60 * Millisecond);
     const auto expired = Get(id);
-    Require(Nanoseconds(expired.value) == 0 && Nanoseconds(expired.interval) == 0);
+    Require(Nanoseconds(expired.it_value) == 0 && Nanoseconds(expired.it_interval) == 0);
     Require(ktimer_getoverrun_nid_postfix(id) == 0);
 
-    const Itimerspec periodic{{0, 10 * Millisecond}, {0, 10 * Millisecond}};
+    const GuestItimerspec periodic{{0, 10 * Millisecond}, {0, 10 * Millisecond}};
     Require(ktimer_settime_nid_postfix(id, 0, &periodic, nullptr) == 0);
     Sleep(55 * Millisecond);
     const auto period = Get(id);
-    Require(Nanoseconds(period.interval) == 10 * Millisecond);
-    Require(Nanoseconds(period.value) > 0 && Nanoseconds(period.value) <= 10 * Millisecond);
+    Require(Nanoseconds(period.it_interval) == 10 * Millisecond);
+    Require(Nanoseconds(period.it_value) > 0 && Nanoseconds(period.it_value) <= 10 * Millisecond);
     Require(ktimer_getoverrun_nid_postfix(id) == 0);
     Require(ktimer_delete_nid_postfix(id) == 0);
 }
@@ -172,21 +148,21 @@ void Expiry() {
 void Absolute() {
     for (const int clock : {ClockRealtime, ClockMonotonic}) {
         const int id = Create(clock);
-        Timespec now{};
+        KernelTimespec now{};
         Require(clock_gettime_nid_postfix(clock, &now) == 0);
-        const Itimerspec future{{0, 0}, {now.seconds + 5, now.nanoseconds}};
+        const GuestItimerspec future{{0, 0}, {now.tv_sec + 5, now.tv_nsec}};
         Require(ktimer_settime_nid_postfix(id, TimerAbstime, &future, nullptr) == 0);
         const auto remaining = Get(id);
-        Require(Nanoseconds(remaining.value) > 4 * Second && Nanoseconds(remaining.value) <= 5 * Second);
+        Require(Nanoseconds(remaining.it_value) > 4 * Second && Nanoseconds(remaining.it_value) <= 5 * Second);
 
-        const Itimerspec past{{0, 0}, {now.seconds - 1, now.nanoseconds}};
+        const GuestItimerspec past{{0, 0}, {now.tv_sec - 1, now.tv_nsec}};
         Require(ktimer_settime_nid_postfix(id, TimerAbstime, &past, nullptr) == 0);
-        Require(Nanoseconds(Get(id).value) == 0);
-        const Itimerspec pastPeriodic{{1, 0}, {now.seconds - 10, now.nanoseconds}};
+        Require(Nanoseconds(Get(id).it_value) == 0);
+        const GuestItimerspec pastPeriodic{{1, 0}, {now.tv_sec - 10, now.tv_nsec}};
         Require(ktimer_settime_nid_postfix(id, TimerAbstime, &pastPeriodic, nullptr) == 0);
         const auto moved = Get(id);
-        Require(Nanoseconds(moved.value) > 0 && Nanoseconds(moved.value) <= Second);
-        Require(Nanoseconds(moved.interval) == Second);
+        Require(Nanoseconds(moved.it_value) > 0 && Nanoseconds(moved.it_value) <= Second);
+        Require(Nanoseconds(moved.it_interval) == Second);
         Require(ktimer_delete_nid_postfix(id) == 0);
     }
 }

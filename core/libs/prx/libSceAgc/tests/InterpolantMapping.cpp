@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/Shader/include/InterpolantMapping.hpp"
 #include "SceShaders.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -10,12 +11,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <span>
-
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Shader* gs, const Shader* ps);
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps);
-extern "C" int APS5_VABI sceAgcUpdateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps);
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_nid_postfix(ShaderRegister* regs, const Shader* gs, const Shader* ps);
-extern "C" int APS5_VABI sceAgcUpdateInterpolantMapping_nid_postfix(ShaderRegister* regs, const Shader* gs, const Shader* ps);
 
 namespace {
 

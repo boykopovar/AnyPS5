@@ -27,6 +27,7 @@ struct DecodedInstruction {
     [[nodiscard]] bool IsRdpid() const;
     [[nodiscard]] bool IsRdtscp() const;
     [[nodiscard]] bool IsClwb() const;
+    [[nodiscard]] bool IsXsaveopt() const;
 
 private:
     [[nodiscard]] std::size_t _skipPrefixesAndRex(bool* outHasOperandSizePrefix, bool* outHasRepnePrefix, bool* outHasRepPrefix) const;

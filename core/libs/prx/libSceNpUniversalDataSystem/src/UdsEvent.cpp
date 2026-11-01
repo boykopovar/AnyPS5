@@ -91,6 +91,126 @@ void appendValue(std::string& out, const Value& value) {
     }, value);
 }
 
+std::size_t lengthPrefixed(std::size_t length, std::size_t smallLimit) {
+    if (length < smallLimit) return (smallLimit == 32 ? 1 : 2) + length;
+    if (length < 0x100) return 2 + length;
+    if (length < 0x10000) return 3 + length;
+    return 5 + length;
+}
+
+std::size_t containerHeader(std::size_t count) {
+    if (count < 16) return 1;
+    if (count < 0x10000) return 3;
+    return 5;
+}
+
+std::size_t packedSize(const Value& value);
+
+std::size_t packedSize(const NpUniversalDataSystemEventPropertyObject& object) {
+    std::size_t size = containerHeader(object.properties.size());
+    for (const auto& [key, value] : object.properties) size += lengthPrefixed(key.size(), 32) + packedSize(value);
+    return size;
+}
+
+std::size_t packedSize(const Value& value) {
+    return std::visit([](const auto& held) -> std::size_t {
+        using Held = std::decay_t<decltype(held)>;
+        if constexpr (std::is_same_v<Held, bool>) {
+            return 1;
+        } else if constexpr (std::is_same_v<Held, std::int32_t> || std::is_same_v<Held, std::uint32_t> || std::is_same_v<Held, float>) {
+            return 5;
+        } else if constexpr (std::is_same_v<Held, std::int64_t> || std::is_same_v<Held, std::uint64_t> || std::is_same_v<Held, double>) {
+            return 9;
+        } else if constexpr (std::is_same_v<Held, std::string>) {
+            return lengthPrefixed(held.size(), 32);
+        } else if constexpr (std::is_same_v<Held, Binary>) {
+            return lengthPrefixed(held.size(), 0x100);
+        } else if constexpr (std::is_same_v<Held, std::shared_ptr<NpUniversalDataSystemEventPropertyObject>>) {
+            return packedSize(*held);
+        } else {
+            std::size_t size = containerHeader(held->values.size());
+            for (const auto& element : held->values) size += packedSize(element);
+            return size;
+        }
+    }, value);
+}
+
+template <typename T>
+void appendTagged(std::string& out, T value, const char* tag) {
+    char number[40];
+    const auto result = std::to_chars(number, number + sizeof(number), value);
+    if (result.ec != std::errc{}) throw std::runtime_error("event property number formatting failed");
+    out.append(number, static_cast<std::string::size_type>(result.ptr - number));
+    out += tag;
+}
+
+void appendTaggedReal(std::string& out, double value, const char* tag) {
+    char number[40];
+    const auto result = std::to_chars(number, number + sizeof(number), value, std::chars_format::general, 6);
+    if (result.ec != std::errc{}) throw std::runtime_error("event property number formatting failed");
+    out.append(number, static_cast<std::string::size_type>(result.ptr - number));
+    out += tag;
+}
+
+void appendDebug(std::string& out, const Value& value, std::size_t indent);
+
+void appendDebug(std::string& out, const NpUniversalDataSystemEventPropertyObject& object, std::size_t indent) {
+    out += "{\n";
+    for (const auto& [key, value] : object.properties) {
+        out.append(indent + 4, ' ');
+        out += '"';
+        out += key;
+        out += "\": ";
+        appendDebug(out, value, indent + 4);
+        out += ",\n";
+    }
+    out.append(indent, ' ');
+    out += '}';
+}
+
+void appendDebug(std::string& out, const Value& value, std::size_t indent) {
+    std::visit([&](const auto& held) {
+        using Held = std::decay_t<decltype(held)>;
+        if constexpr (std::is_same_v<Held, bool>) {
+            out += held ? "true" : "false";
+        } else if constexpr (std::is_same_v<Held, std::int32_t>) {
+            appendTagged(out, held, " (Int32)");
+        } else if constexpr (std::is_same_v<Held, std::uint32_t>) {
+            appendTagged(out, held, " (UInt32)");
+        } else if constexpr (std::is_same_v<Held, std::int64_t>) {
+            appendTagged(out, held, " (Int64)");
+        } else if constexpr (std::is_same_v<Held, std::uint64_t>) {
+            appendTagged(out, held, " (UInt64)");
+        } else if constexpr (std::is_same_v<Held, float>) {
+            appendTaggedReal(out, held, " (Float32)");
+        } else if constexpr (std::is_same_v<Held, double>) {
+            appendTaggedReal(out, held, " (Float64)");
+        } else if constexpr (std::is_same_v<Held, std::string>) {
+            out += '"';
+            out += held;
+            out += '"';
+        } else if constexpr (std::is_same_v<Held, Binary>) {
+            static constexpr char Digits[] = "0123456789ABCDEF";
+            for (const std::uint8_t byte : held) {
+                out += Digits[byte >> 4];
+                out += Digits[byte & 0xF];
+            }
+            out += " (Binary)";
+        } else if constexpr (std::is_same_v<Held, std::shared_ptr<NpUniversalDataSystemEventPropertyObject>>) {
+            appendDebug(out, *held, indent);
+        } else {
+            out += "[\n";
+            for (const auto& element : held->values) {
+                out.append(indent + 4, ' ');
+                appendDebug(out, element, indent + 4);
+                out += ",\n";
+            }
+            out.append(indent, ' ');
+            out += ']';
+        }
+    }, value);
+}
+
 std::optional<std::uint64_t> unsignedValue(const Value& value) {
     return std::visit([](const auto& held) -> std::optional<std::uint64_t> {
         using Held = std::decay_t<decltype(held)>;
@@ -148,6 +268,20 @@ std::string Describe(const NpUniversalDataSystemEventPropertyObject& object) {
 
 std::string Describe(const NpUniversalDataSystemEvent& event) {
     return event.name + " " + Describe(event.properties);
+}
+
+std::size_t MessagePackSize(const NpUniversalDataSystemEvent& event) {
+    return containerHeader(2) + lengthPrefixed(EventNameKey.size(), 32) + lengthPrefixed(event.name.size(), 32) +
+           lengthPrefixed(PropertiesKey.size(), 32) + packedSize(event.properties);
+}
+
+std::string DebugString(const NpUniversalDataSystemEvent& event) {
+    NpUniversalDataSystemEventPropertyObject root;
+    root.Set(EventNameKey, event.name);
+    root.Set(PropertiesKey, std::make_shared<NpUniversalDataSystemEventPropertyObject>(event.properties));
+    std::string out;
+    appendDebug(out, root, 0);
+    return out;
 }
 
 NpTrophy2Event StatEvent(const NpUniversalDataSystemEvent& event) {

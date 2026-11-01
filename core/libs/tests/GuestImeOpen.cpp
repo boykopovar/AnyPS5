@@ -1,3 +1,4 @@
+#include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
@@ -9,16 +10,6 @@
 #include <exception>
 #include <string>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceImeOpen_nid_postfix(const Param* param, const ExtendedParam* extended);
-int APS5_VABI sceImeClose_nid_postfix(void);
-int APS5_VABI sceImeUpdate(EventHandler handler);
-int APS5_VABI sceImeSetText(const char16_t* text, uint32_t length);
-int APS5_VABI sceImeSetCaret(const Caret* caret);
-int APS5_VABI sceImeGetPanelPositionAndForm(PositionAndForm* form);
-void APS5_VABI sceImeParamInit(Param* param);
-}
 
 namespace {
 
@@ -181,6 +172,7 @@ struct Buffers {
 Param MakeParam(Buffers& buffers, uint32_t maxLength) {
     Param param;
     sceImeParamInit(&param);
+
     param.user_id = 1;
     param.max_text_length = maxLength;
     param.input_text_buffer = buffers.text;
@@ -225,6 +217,7 @@ void RequireCaretSteps(const std::vector<Recorded>& events, uint32_t direction, 
 void CheckValidation() {
     Buffers buffers;
     Require(sceImeOpen_nid_postfix(nullptr, nullptr) == InvalidAddress, "null param");
+    Require(sceImeUpdate(nullptr) == InvalidHandler, "null handler");
     auto expect = [&](auto change, int error, const char* message) {
         Param param = MakeParam(buffers, 16);
         change(param);

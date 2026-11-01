@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -96,7 +97,8 @@ int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr) {
     (*attr)->_detachstate = thread->_detached ? DETACH_DETACHED : DETACH_JOINABLE;
     (*attr)->_schedpriority = thread->priority.load(std::memory_order_relaxed);
     (*attr)->_schedpolicy = thread->schedPolicy.load(std::memory_order_relaxed);
-    (*attr)->_inheritsched = 4;
+    (*attr)->_inheritsched = thread->inheritSched;
+    (*attr)->_createSuspended = thread->createdSuspended;
     (*attr)->_affinity = thread->affinity.load(std::memory_order_relaxed);
     (*attr)->_affinityExplicit = true;
     (*attr)->_scope = thread->scope;
@@ -123,8 +125,7 @@ int APS5_VABI scePthreadAttrGetguardsize(const PthreadAttr* attr, size_t* guard_
 }
 
 int APS5_VABI scePthreadAttrGetinheritsched(const PthreadAttr* attr, int* inheritSched) {
-    if (!attr || !*attr) return SCE_KERNEL_ERROR_EINVAL;
-    if (!inheritSched) throw std::runtime_error(std::string(__func__) + ": null output");
+    if (!attr || !*attr || !inheritSched) return SCE_KERNEL_ERROR_EINVAL;
     *inheritSched = (*attr)->_inheritsched;
     return SCE_OK;
 }
