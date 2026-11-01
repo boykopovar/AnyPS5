@@ -96,7 +96,7 @@ int main() try {
         }, "Incomplete DT_RELR metadata");
     }
     Reject([](auto& input) { input.Tags[2].Value = 4; }, "DT_RELRENT");
-    Reject([](auto& input) { input.Tags[1].Value = 9; }, "DT_RELRSZ");
+    Reject([](auto& input) { input.Tags[1].Value = 9; }, "Invalid DT_RELRSZ");
     for (std::size_t index = 0; index < 3; ++index) {
         Reject([&](auto& input) { auto tag = input.Tags[index]; ++tag.Value; input.Tags.push_back(tag); }, "Conflicting duplicate");
     }
