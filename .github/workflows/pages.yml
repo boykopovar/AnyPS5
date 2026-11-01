@@ -1,0 +1,56 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/pages.yml
+      - CMakeLists.txt
+      - core/relinker/**
+      - demo/web/**
+      - tools/build_web.py
+      - tools/package_release.py
+      - tools/nid_names.py
+      - tools/progress.py
+      - tools/progress_history.py
+      - tools/rdna_isa.txt
+      - tools/test_web.py
+  workflow_dispatch:
+  release:
+    types: [published]
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  pages:
+    if: ${{ !github.event.repository.fork && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Download matching release converter and libraries
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/build_web.py --build build-wasm --release
+      - run: python3 tools/progress.py build-wasm/web
+      - run: python3 tools/progress_history.py build-wasm/web
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: build-wasm/web
+      - id: deployment
+        uses: actions/deploy-pages@v5

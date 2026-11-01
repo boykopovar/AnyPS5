@@ -1,8 +1,13 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 
 extern "C" {
 
 int APS5_VABI sceKernelIsAddressSanitizerEnabled(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelIsThreadSanitizerEnabled(void) {
     return 0;
 }
 

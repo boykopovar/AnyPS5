@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <exception>
@@ -23,9 +24,9 @@ PoolState& Pool() {
 
 bool PageAligned(uint64_t v) { return (v & (PS5_PAGE_SIZE - 1)) == 0; }
 
-int PoolCommit(void* addr, uint64_t len, int prot) {
+int PoolCommit(void* addr, uint64_t len, int type, int prot) {
     if (!addr || len == 0 || !PageAligned(reinterpret_cast<uintptr_t>(addr)) || !PageAligned(len)) return SCE_KERNEL_ERROR_EINVAL;
-    const int ret = DoMprotect(addr, static_cast<size_t>(len), prot);
+    const int ret = DoMtypeprotect(addr, static_cast<size_t>(len), type, prot);
     if (ret == 0) {
         PoolState& pool = Pool();
         std::lock_guard<std::mutex> lock(pool.mutex);
@@ -67,10 +68,10 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
   const KernelMemoryPoolBatchEntry& e = entries[done];
   ret = Guarded([&] {
    switch (e.op) {
-    case 1: return PoolCommit(e.commit.addr, e.commit.len, e.commit.prot);
+    case 1: return PoolCommit(e.commit.addr, e.commit.len, e.commit.type, e.commit.prot);
     case 2: return PoolDecommit(e.decommit.addr, e.decommit.len);
     case 3: return DoMprotect(e.protect.addr, static_cast<size_t>(e.protect.len), e.protect.prot);
-    case 4: return DoMprotect(e.type_protect.addr, static_cast<size_t>(e.type_protect.len), e.type_protect.prot);
+    case 4: return DoMtypeprotect(e.type_protect.addr, static_cast<size_t>(e.type_protect.len), e.type_protect.type, e.type_protect.prot);
     default: return SCE_KERNEL_ERROR_EINVAL;
    }
   });
@@ -81,9 +82,8 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
 }
 
 int APS5_VABI sceKernelMemoryPoolCommit(void* addr, size_t len, int type, int prot, int flags) {
- (void)type;
  (void)flags;
- return Guarded([&] { return PoolCommit(addr, len, prot); });
+ return Guarded([&] { return PoolCommit(addr, len, type, prot); });
 }
 
 int APS5_VABI sceKernelMemoryPoolDecommit(void* addr, size_t len, int flags) {

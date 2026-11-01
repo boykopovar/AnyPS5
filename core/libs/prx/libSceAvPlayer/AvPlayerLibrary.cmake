@@ -4,6 +4,7 @@ function(add_sce_avplayer_library target)
             ${avPlayerDir}/Export.cpp
             ${avPlayerDir}/src/Player.cpp
             ${avPlayerDir}/src/Source.cpp
+            ${avPlayerDir}/../libkernel/Time/TimedWait.cpp
     )
     target_include_directories(${target} PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(${target} PRIVATE ffmpeg libc)

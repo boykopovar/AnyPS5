@@ -24,6 +24,7 @@ struct StubRelocation {
     std::size_t DisplacementOffset;
     std::size_t InstructionEnd;
     std::int64_t SiteTarget;
+    bool AddressSize32 = false;
 };
 
 struct Amd64OnlyMatch {
@@ -35,6 +36,7 @@ struct Amd64OnlyMatch {
     std::size_t ReturnBranchOffset;
     bool Optional = false;
     std::vector<StubRelocation> Relocations = {};
+    bool RelocatableWindow = false;
 };
 
 struct Amd64OnlySubstitutionReport {

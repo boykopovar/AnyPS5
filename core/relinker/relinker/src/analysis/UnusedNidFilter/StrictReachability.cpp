@@ -43,6 +43,8 @@ public:
         for (const auto& [slot, target] : input.Pointers) addAddressTaken(target);
         collectDataPointers();
         collectRelativeTables();
+        std::sort(addressTaken.begin(), addressTaken.end());
+        addressTaken.erase(std::unique(addressTaken.begin(), addressTaken.end()), addressTaken.end());
         std::deque<VirtualAddress> pending;
         std::set<VirtualAddress> live;
         const auto enqueue = [&](VirtualAddress target) {
@@ -75,19 +77,22 @@ private:
     const StrictReachabilityInput& input;
     Codegen::X64InstructionDecoder decoder;
     std::map<VirtualAddress, Region> regions;
-    std::set<VirtualAddress> addressTaken;
+    std::vector<VirtualAddress> addressTaken;
     std::set<VirtualAddress> tableBases;
     StrictReachabilityResult result;
+    Region* lastOwner = nullptr;
 
     bool isCode(VirtualAddress address) const {
         return address >= input.TextVaddr && address - input.TextVaddr < input.Text.size();
     }
 
     Region& owner(VirtualAddress address) {
+        if (lastOwner != nullptr && address >= lastOwner->Begin && address < lastOwner->End) return *lastOwner;
         auto position = regions.upper_bound(address);
         if (position == regions.begin() || std::prev(position)->second.End <= address)
             throw RelinkerException("Strict filter: code address has no region", address);
-        return std::prev(position)->second;
+        lastOwner = &std::prev(position)->second;
+        return *lastOwner;
     }
 
     Instruction decode(VirtualAddress address, VirtualAddress end) const {
@@ -141,7 +146,7 @@ private:
     }
 
     void addAddressTaken(VirtualAddress target) {
-        if (isCode(target) || input.ImportSlots.contains(target)) addressTaken.insert(target);
+        if (isCode(target) || input.ImportSlots.contains(target)) addressTaken.push_back(target);
     }
 
     void buildEdges() {
@@ -163,7 +168,8 @@ private:
                 if (info.HasRipRelativeDisp) {
                     std::int32_t displacement;
                     std::memcpy(&displacement, input.Text.data() + offset + info.RipRelativeDispOffset, sizeof(displacement));
-                    const auto target = next + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
+                    auto target = next + static_cast<VirtualAddress>(static_cast<std::int64_t>(displacement));
+                    if (info.AddressSize32) target = static_cast<std::uint32_t>(target);
                     if (input.ImportSlots.contains(target)) region.Imports.insert(target);
                     if (!info.IsTwoByteOpcode && info.Opcode == 0x8D) {
                         addAddressTaken(target);
@@ -201,6 +207,7 @@ private:
 
     void collectRelativeTables() {
         for (const auto base : tableBases) {
+            for (auto slot = base; input.ImportSlots.contains(slot) || input.Pointers.contains(slot); slot += sizeof(std::uint64_t)) addAddressTaken(slot);
             for (const auto target : ReadRelativeTableTargets(input.Data, base, input.TextVaddr, input.Text.size())) addAddressTaken(target);
         }
     }
@@ -214,6 +221,9 @@ StrictReachabilityResult AnalyzeStrictReachability(const StrictReachabilityInput
 
 std::vector<VirtualAddress> ReadRelativeTableTargets(const std::vector<StrictDataRegion>& data, VirtualAddress base, VirtualAddress textVaddr, std::size_t textSize) {
     std::vector<VirtualAddress> targets;
+    if (textSize == 0 || textSize > std::numeric_limits<VirtualAddress>::max() - textVaddr) {
+        throw RelinkerException("Strict filter: invalid text range");
+    }
     for (const auto& region : data) {
         if (base < region.Address || base - region.Address >= region.Bytes.size()) continue;
         for (auto offset = static_cast<std::size_t>(base - region.Address); offset + 4 <= region.Bytes.size(); offset += 4) {

@@ -24,6 +24,7 @@ void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
     if (instruction.op == RdnaOpcode::Unsupported) {
         throw std::runtime_error(instruction.unsupportedReason.empty() ? "unsupported decoded instruction at pc " + std::to_string(instruction.programCounter) : std::string(instruction.unsupportedReason));
     }
+    checkRoundingUse(instruction);
     f32DenormalFlush = f32DenormalFlushFor(instruction);
     bool translated = false;
     switch (instruction.family) {
@@ -99,6 +100,14 @@ bool RayTracingMiss() {
         return text != nullptr && std::strcmp(text, "miss") == 0;
     }();
     return miss;
+}
+
+bool ExactF32Arithmetic() {
+    static const bool exact = [] {
+        const char* text = std::getenv("APS5_FAST_F32");
+        return text == nullptr || *text == '\0' || std::strcmp(text, "0") == 0;
+    }();
+    return exact;
 }
 
 DebugProbe DebugProbeConfig() {

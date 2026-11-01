@@ -10,19 +10,26 @@
 namespace ShaderRecompiler {
 
 struct PreparedControlFlow;
+struct SourceEntry;
 class ShaderPreparationContext {
 public:
     [[nodiscard]] std::shared_ptr<const PreparedControlFlow> AcquireFrontend(const RecompileRequest& request);
+    [[nodiscard]] std::uint32_t ResourcePrograms() const;
 
 private:
+    friend IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparationContext* preparation);
+    friend struct PreparedInterface;
     std::shared_ptr<const PreparedControlFlow> frontend;
+    std::shared_ptr<SourceEntry> interfaceSource;
+    std::unique_ptr<IrProgram> interfaceProgram;
+    std::uint32_t resourcePrograms = 0;
 };
 
 [[nodiscard]] IrProgram PrepareResourceProgram(const RecompileRequest& request);
 [[nodiscard]] IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparationContext* preparation);
+[[nodiscard]] std::uint64_t FrontEndBuilds();
 [[nodiscard]] std::shared_ptr<const IrResourcePlan> GetResourcePlan(const RecompileRequest& request);
 
-struct SourceEntry;
 struct ResourceCapture {
     std::shared_ptr<const IrResourcePlan> plan;
     ResourceSnapshot snapshot;
@@ -31,6 +38,7 @@ struct ResourceCapture {
     // The walk's read addresses when the plan has pure flat slots (the leaf of each pure slot,
     // and every other read sorted and deduplicated); empty otherwise.
     SrtReadTrace readTrace;
+    SrtUserDataUse userDataUse;
     // APS5_PROFILE_DRAW: what CaptureResources spent resolving the source (the stage inputs, the
     // key over the code, the plan) before the walk.
     std::uint64_t sourceNanoseconds = 0;
@@ -70,8 +78,10 @@ private:
 void BuildPreparedShaderKey(const RecompileRequest& request, std::vector<std::uint64_t>& key);
 [[nodiscard]] bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& handle, std::span<const std::uint64_t> key);
 [[nodiscard]] const CompiledShaderArtifact& GetPreparedArtifact(const SourceHandle& handle);
+[[nodiscard]] std::shared_ptr<const RecompileResult> RegistrationResult(const RecompileRequest& request, const SourceHandle& handle);
 [[nodiscard]] std::shared_ptr<const RecompileResult> MaterializeShader(const RecompileRequest& request, const ResourceCapture& capture, const SourceHandle& handle);
 [[nodiscard]] std::shared_ptr<const SourceHandle> ResolveSource(const RecompileRequest& request);
+void ReleaseUndrawnResourcePlan(const SourceHandle& handle);
 [[nodiscard]] std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& request, const SrtRuntime& runtime, const SourceHandle& handle);
 
 }

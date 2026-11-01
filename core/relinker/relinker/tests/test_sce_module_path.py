@@ -61,7 +61,7 @@ def main():
         (nested / "needed.prx").write_bytes(bytes.fromhex("4f153d1d") + bytes(128))
         run("no-recursion", ["--sce-module-path", str(parent)])
         (modules / "needed.prx").write_bytes(bytes.fromhex("4f153d1d") + bytes(128))
-        run("self", ["--sce-module-path", str(parent)], error="SELF container")
+        run("self", ["--sce-module-path", str(parent)])
         print("sce-module-path: 18 cases passed")
 
 

@@ -65,14 +65,18 @@ struct DecodedInstructionInfo {
     std::uint8_t RexPrefix;
     ControlFlowKind FlowKind;
     bool HasRipRelativeDisp;
+    bool AddressSize32;
     std::size_t RipRelativeDispOffset;
     bool HasModRm;
+    bool HasMemoryOperand;
     std::uint8_t ModRmByte;
     bool HasBranchTarget;
     std::int64_t BranchDisp;
+    bool TruncatesBranchTarget;
     bool IsTwoByteOpcode;
     std::uint8_t Opcode;
     std::uint8_t ModRmRegField;
+    std::size_t ModRmOffset = 0;
 };
 
 }

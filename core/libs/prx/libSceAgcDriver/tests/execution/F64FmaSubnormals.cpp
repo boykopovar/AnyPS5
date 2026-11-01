@@ -2,12 +2,15 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -94,6 +97,64 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
+std::vector<std::uint32_t> Recompile(bool float64DenormPreserve) {
+    constexpr std::array<std::uint32_t, 9> capabilities{
+        spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot,
+        spv::CapabilityInt64, spv::CapabilityFloat64, spv::CapabilityPhysicalStorageBufferAddresses,
+        spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityDenormPreserve, spv::CapabilitySignedZeroInfNanPreserve,
+    };
+    constexpr std::array<std::string_view, 4> extensions{
+        "SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage", "SPV_KHR_float_controls",
+        "SPV_KHR_storage_buffer_storage_class",
+    };
+    std::array<std::uint32_t, Threads * Inputs> input{};
+    std::array<std::uint32_t, Threads * Results> output{};
+    std::array<std::uint32_t, 8> userData{};
+    const auto inputDescriptor = BufferDescriptor(input.data(), static_cast<std::uint32_t>(input.size() * sizeof(input[0])));
+    const auto outputDescriptor = BufferDescriptor(output.data(), static_cast<std::uint32_t>(output.size() * sizeof(output[0])));
+    std::copy(inputDescriptor.begin(), inputDescriptor.end(), userData.begin());
+    std::copy(outputDescriptor.begin(), outputDescriptor.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(Code);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    ShaderRecompiler::RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderRecompiler::ShaderComputeStageInfo{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    request.context.memory = memory;
+    request.target.vulkanVersion = 0x00403000u;
+    request.target.spirvVersion = 0x00010600u;
+    request.target.subgroupSize = 32;
+    request.target.bdaAbiVersion = 1;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.maxWorkgroupSize = {1024, 1024, 64};
+    request.target.maxWorkgroupInvocations = 1024;
+    request.target.maxWorkgroupSharedMemoryBytes = 49152;
+    request.target.float64DenormPreserve = float64DenormPreserve;
+    request.layout = {0, 0, 0, 128};
+    request.useCache = false;
+    return ShaderRecompiler::Recompile(request).spirv.Copy();
+}
+
+bool HasDenormPreserve64(std::span<const std::uint32_t> words) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        Require(count != 0 && cursor + count <= words.size(), "malformed SPIR-V while scanning denorm modes");
+        if ((words[cursor] & 0xffffu) == spv::OpExecutionMode && count == 4 && words[cursor + 2] == spv::ExecutionModeDenormPreserve && words[cursor + 3] == 64u) return true;
+        cursor += count;
+    }
+    return false;
+}
+
+void VerifySpirvDenormMode() {
+    const auto enabled = Recompile(true);
+    const auto disabled = Recompile(false);
+    Require(HasDenormPreserve64(enabled), "float64DenormPreserve=true did not emit DenormPreserve 64");
+    Require(!HasDenormPreserve64(disabled), "float64DenormPreserve=false emitted DenormPreserve 64");
+}
+
 std::string Hex(std::uint64_t value) {
     char text[24];
     std::snprintf(text, sizeof(text), "0x%016llx", static_cast<unsigned long long>(value));
@@ -131,23 +192,49 @@ void Run(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, Words>
 }
 
 template <std::size_t Count>
-void Check(const char* name, const std::uint64_t (&rows)[Count][4]) {
+bool Check(const char* name, const std::uint64_t (&rows)[Count][4]) {
     for (std::uint32_t tid = 0; tid < Count; ++tid) {
         const std::uint64_t actual = Output[tid * Results] | (static_cast<std::uint64_t>(Output[tid * Results + 1]) << 32u);
-        Require(actual == rows[tid][3], std::string(name) + ": lane " + std::to_string(tid) + " (" + Hex(rows[tid][0]) + ", " + Hex(rows[tid][1]) + ", " + Hex(rows[tid][2]) + ") is " + Hex(actual) + ", expected " + Hex(rows[tid][3]));
+        if (actual != rows[tid][3]) {
+            std::cerr << name << ": lane " << tid << " (" << Hex(rows[tid][0]) << ", " << Hex(rows[tid][1]) << ", " << Hex(rows[tid][2]) << ") is " << Hex(actual) << ", expected " << Hex(rows[tid][3]) << '\n';
+            return false;
+        }
     }
+    return true;
 }
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--verify-spv-denorm-mode") {
+            VerifySpirvDenormMode();
+            std::puts("f64 DenormPreserve execution mode follows the target capability");
+            return 0;
+        }
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
+            std::puts("skipped, the device has no shaderFloat64");
+            return VulkanTestSkipped;
+        }
+        const bool canPreserveDenormals = device->Target().float64DenormPreserve;
         Run(*device, Code, Rows);
-        Check("v_fma_f64", Rows);
+        if (!Check("v_fma_f64", Rows)) {
+            if (!canPreserveDenormals) {
+                std::puts("skipped, the device flushes f64 subnormals without DenormPreserve support");
+                return VulkanTestSkipped;
+            }
+            return 1;
+        }
         Run(*device, FmasCode, FmasRows);
-        Check("v_div_fmas_f64 with VCC set", FmasRows);
+        if (!Check("v_div_fmas_f64 with VCC set", FmasRows)) {
+            if (!canPreserveDenormals) {
+                std::puts("skipped, the device flushes f64 subnormals without DenormPreserve support");
+                return VulkanTestSkipped;
+            }
+            return 1;
+        }
         std::puts("v_fma_f64 subnormal tests passed");
         return 0;
     } catch (const std::exception& error) {

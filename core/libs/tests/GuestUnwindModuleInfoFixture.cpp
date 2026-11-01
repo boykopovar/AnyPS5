@@ -21,3 +21,5 @@ extern "C" UnwindFixture* GetUnwindFixture() {
     UnwindFixtureMeta = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(&fixture.header) - base);
     return &fixture;
 }
+
+extern "C" UnwindFixture* GetUnwindFixture_nid_no_patch() { return GetUnwindFixture(); }

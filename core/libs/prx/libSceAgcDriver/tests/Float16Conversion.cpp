@@ -42,7 +42,7 @@ std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> capabilities
     request.useCache = false;
     auto result = Recompile(request);
     require(!result.spirv.empty(), "v_cvt_f16_f32 did not recompile");
-    return std::move(result.spirv);
+    return result.spirv.Copy();
 }
 
 struct Usage {

@@ -88,6 +88,7 @@ public:
     }
 
 private:
+    IrValue* vectorWindowIndex(VectorReg reg);
     IrProgram& program;
     IrBlock* insertionPoint;
 };

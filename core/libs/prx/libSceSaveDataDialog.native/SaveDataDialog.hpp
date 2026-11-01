@@ -7,7 +7,9 @@
 constexpr int SAVE_DATA_DIALOG_OK = 0;
 constexpr int SAVE_DATA_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003);
 constexpr int SAVE_DATA_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80004);
+constexpr int SAVE_DATA_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005);
 constexpr int SAVE_DATA_DIALOG_ERROR_INVALID_STATE = static_cast<int>(0x80B80006);
+constexpr int SAVE_DATA_DIALOG_ERROR_NOT_RUNNING = static_cast<int>(0x80B8000B);
 constexpr int SAVE_DATA_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000D);
 
 constexpr int SAVE_DATA_DIALOG_STATUS_NONE = 0;

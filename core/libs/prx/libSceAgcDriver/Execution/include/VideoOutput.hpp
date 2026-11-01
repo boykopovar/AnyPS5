@@ -10,6 +10,9 @@ namespace AgcDriver {
 
 class FrameTiming;
 
+inline constexpr std::uint32_t EopFlipTokenBase = 0x04000000u;
+inline constexpr std::uint32_t EopFlipTokenLimit = 0x07ffffffu;
+
 inline constexpr std::uint32_t FlipPacketHeader = 0xc004105cu;
 inline constexpr std::uint32_t FlipPacketWords = 6;
 // AnyPS5's internal encoding for the driver-generated rendering wait.
@@ -40,6 +43,7 @@ class IVideoOutput {
 public:
     virtual ~IVideoOutput() = default;
     virtual std::shared_ptr<IFlipRequest> Reserve(const FlipInfo& info) = 0;
+    virtual std::shared_ptr<IFlipRequest> TryReserve(const FlipInfo& info) { return Reserve(info); }
     virtual void WaitForFlipRoom() {}
     virtual std::shared_ptr<IRenderingWait> CaptureRenderingWait(std::uint32_t index) {
         throw std::runtime_error("VideoOut: rendering waits are unsupported by this output");
@@ -48,6 +52,10 @@ public:
 };
 
 }
+
+extern "C" std::uint32_t AgcDriverReserveEopFlip_nid_postfix(const AgcDriver::FlipInfo& info);
+extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info);
+extern "C" std::uint32_t AgcDriverReserveEopFlipAt_nid_postfix(const AgcDriver::FlipInfo& info, std::uint32_t token);
 
 extern "C" void AgcDriverRegisterVideoOutput_nid_postfix(std::uint32_t handle, const std::shared_ptr<AgcDriver::IVideoOutput>& output);
 extern "C" void AgcDriverUnregisterVideoOutput_nid_postfix(std::uint32_t handle, const std::shared_ptr<AgcDriver::IVideoOutput>& output);

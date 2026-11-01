@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-file(STRINGS "${LIST_FILE}" entries)
+file(STRINGS "${LIST_FILE}" entries ENCODING UTF-8)
 set(sources)
 set(guard)
 set(submodules)
@@ -36,43 +36,48 @@ endforeach()
 set(failures)
 set(manifest "${EXTRA}\n")
 set(switches)
-foreach(source IN LISTS sources)
+foreach(source sourceReal IN ZIP_LISTS sources sourcesReal)
     if(NOT EXISTS "${source}")
         continue()
     endif()
-    file(SHA256 "${source}" digest)
-    file(RELATIVE_PATH relative "${ROOT}" "${source}")
+    file(READ "${source}" text)
+    string(REPLACE "\r\n" "\n" text "${text}")
+    string(SHA256 digest "${text}")
+    file(RELATIVE_PATH relative "${rootReal}" "${sourceReal}")
     string(APPEND manifest "${relative} ${digest}\n")
     if(NOT source MATCHES "\\.(cpp|hpp|h)$")
         continue()
     endif()
-    file(STRINGS "${source}" lines REGEX "\"APS5_[A-Z0-9_]+\"")
+    file(STRINGS "${source}" lines ENCODING UTF-8 REGEX "\"APS5_[A-Z0-9_]+\"")
     foreach(line IN LISTS lines)
         string(REGEX MATCHALL "\"APS5_[A-Z0-9_]+\"" names "${line}")
         list(APPEND switches ${names})
     endforeach()
-    string(FIND "${source}" "${RECOMPILER_DIR}/" inRecompiler)
+    string(FIND "${sourceReal}" "${recompilerReal}/" inRecompiler)
     if(NOT inRecompiler EQUAL 0)
         continue()
     endif()
-    get_filename_component(sourceDirectory "${source}" DIRECTORY)
-    file(STRINGS "${source}" lines REGEX "^[ \t]*#[ \t]*include[ \t]*\"[^\"]+\"")
+    get_filename_component(sourceDirectory "${sourceReal}" DIRECTORY)
+    file(STRINGS "${source}" lines ENCODING UTF-8 REGEX "^[ \t]*#[ \t]*include[ \t]*\"[^\"]+\"")
     foreach(line IN LISTS lines)
         string(REGEX REPLACE "^[ \t]*#[ \t]*include[ \t]*\"([^\"]+)\".*$" "\\1" included "${line}")
         set(resolved)
         foreach(directory IN ITEMS "${sourceDirectory}" ${includeDirectories})
             if(EXISTS "${directory}/${included}" AND NOT IS_DIRECTORY "${directory}/${included}")
-                get_filename_component(resolved "${directory}/${included}" REALPATH)
+                string(SHA1 includedKey "${directory}/${included}")
+                if(NOT DEFINED includedReal_${includedKey})
+                    get_filename_component(includedReal_${includedKey} "${directory}/${included}" REALPATH)
+                endif()
+                set(resolved "${includedReal_${includedKey}}")
                 break()
             endif()
         endforeach()
-        file(RELATIVE_PATH relativeSource "${ROOT}" "${source}")
+        file(RELATIVE_PATH relativeSource "${rootReal}" "${sourceReal}")
         if(NOT resolved)
             continue()
         endif()
-        string(FIND "${resolved}" "${recompilerReal}/" resolvedInRecompiler)
         string(FIND "${resolved}" "${rootReal}/3rdparty/" resolvedInThirdParty)
-        if(resolvedInRecompiler EQUAL 0 OR resolvedInThirdParty EQUAL 0 OR resolved IN_LIST sourcesReal)
+        if(resolvedInThirdParty EQUAL 0 OR resolved IN_LIST sourcesReal)
             continue()
         endif()
         file(RELATIVE_PATH relativeResolved "${rootReal}" "${resolved}")
@@ -109,7 +114,7 @@ foreach(source IN LISTS guard)
         continue()
     endif()
     file(RELATIVE_PATH relative "${ROOT}" "${source}")
-    file(STRINGS "${source}" lines REGEX "ShaderRecompiler|setenv|putenv")
+    file(STRINGS "${source}" lines ENCODING UTF-8 REGEX "ShaderRecompiler|setenv|putenv")
     foreach(line IN LISTS lines)
         if(line MATCHES "using[ \t]+namespace[ \t]+ShaderRecompiler" OR line MATCHES "namespace[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*(::)?ShaderRecompiler[ \t]*;")
             list(APPEND failures "${relative} brings the ShaderRecompiler namespace in whole, which hides its calls from the shader disk cache key review: qualify them")
@@ -140,23 +145,22 @@ list(REMOVE_DUPLICATES switches)
 list(SORT switches)
 list(JOIN switches ",\n    " switchList)
 
-set(content "#ifndef CORE_SHADER_RECOMPILER_SHADERCACHEVERSION_HPP
-#define CORE_SHADER_RECOMPILER_SHADERCACHEVERSION_HPP
-
-#include <cstdint>
-#include <string_view>
-
+set(content "#include \"ShaderCacheSourceVersion.hpp\"\n")
+string(APPEND content "
 namespace ShaderRecompiler::ShaderDiskCache::Generated {
 
-inline constexpr std::uint64_t SourceVersion = 0x${version}ull;
+namespace {
 
-inline constexpr std::string_view RecompilerSwitches[] = {
+constexpr std::string_view recompilerSwitches[] = {
     ${switchList}
 };
 
 }
 
-#endif
+constinit const std::uint64_t SourceVersion = 0x${version}ull;
+constinit const std::span<const std::string_view> RecompilerSwitches = recompilerSwitches;
+
+}
 ")
 
 if(EXISTS "${OUTPUT}")

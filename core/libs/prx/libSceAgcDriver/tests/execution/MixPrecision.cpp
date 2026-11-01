@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -17,7 +18,6 @@ namespace {
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Float64Capability = 10;
 constexpr std::uint32_t Threads = 64;
 constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 16;
@@ -115,6 +115,30 @@ constexpr std::array<RoundingRow, Threads> RoundingRows{{
     {0x00003c01u, 0x00004200u, 0x00800000u, 3u, 0x4202u},
 }};
 
+struct DirectedRow {
+    std::uint32_t a, b, c;
+    std::array<std::uint32_t, 4> expected;
+};
+
+constexpr std::array<DirectedRow, 16> DirectedRows{{
+    {0xbfc00000u, 0x33800000u, 0x00800000u, {0x8001u, 0x8001u, 0x8002u, 0x8001u}},
+    {0x3fc00000u, 0x33800000u, 0x00800000u, {0x0002u, 0x0002u, 0x0001u, 0x0001u}},
+    {0x3f800000u, 0x3f801400u, 0x00000000u, {0x3c01u, 0x3c01u, 0x3c00u, 0x3c00u}},
+    {0xbf800000u, 0x3f801400u, 0x00000000u, {0xbc01u, 0xbc00u, 0xbc01u, 0xbc00u}},
+    {0x477ff000u, 0x3f800000u, 0x00000000u, {0x7c00u, 0x7c00u, 0x7bffu, 0x7bffu}},
+    {0xc77ff000u, 0x3f800000u, 0x00000000u, {0xfc00u, 0xfbffu, 0xfc00u, 0xfbffu}},
+    {0x49742400u, 0x3f800000u, 0x00000000u, {0x7c00u, 0x7c00u, 0x7bffu, 0x7bffu}},
+    {0x3fc00000u, 0x40000000u, 0x3e800000u, {0x4280u, 0x4280u, 0x4280u, 0x4280u}},
+    {0x3f800000u, 0x3f800000u, 0xbf7fffffu, {0x0001u, 0x0001u, 0x0001u, 0x0001u}},
+    {0xbf800000u, 0x3f800000u, 0x3f7fffffu, {0x8001u, 0x8001u, 0x8001u, 0x8001u}},
+    {0x3f800000u, 0x3f800000u, 0xbf800000u, {0x0000u, 0x0000u, 0x8000u, 0x0000u}},
+    {0x40000000u, 0x3f800000u, 0xc0000000u, {0x0000u, 0x0000u, 0x8000u, 0x0000u}},
+    {0x00000000u, 0x3f800000u, 0x80000000u, {0x0000u, 0x0000u, 0x8000u, 0x0000u}},
+    {0x80000000u, 0x3f800000u, 0x80000000u, {0x8000u, 0x8000u, 0x8000u, 0x8000u}},
+    {0x33000000u, 0x3f000000u, 0x00000000u, {0x0000u, 0x0001u, 0x0000u, 0x0000u}},
+    {0xb3000000u, 0x3f000000u, 0x00000000u, {0x8000u, 0x8000u, 0x8001u, 0x8000u}},
+}};
+
 float Quarter(std::uint32_t index) {
     return static_cast<float>(static_cast<int>(index % 17u) - 8) / 4.0f;
 }
@@ -176,7 +200,7 @@ void FillRoundingInput() {
     }
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode = std::nullopt) {
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
@@ -192,6 +216,7 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = floatMode;
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -235,23 +260,42 @@ void CheckRounding() {
     }
 }
 
+void FillDirectedInput() {
+    Input.fill(0u);
+    for (std::uint32_t tid = 0; tid < DirectedRows.size(); ++tid) {
+        const auto& row = DirectedRows[tid];
+        std::copy_n(std::array<std::uint32_t, 3>{row.a, row.b, row.c}.begin(), 3, Input.begin() + tid * Inputs);
+    }
+}
+
+void CheckDirected(std::uint32_t rounding) {
+    for (std::uint32_t tid = 0; tid < DirectedRows.size(); ++tid) {
+        const auto& row = DirectedRows[tid];
+        const auto* out = &Output[tid * Results];
+        const std::uint32_t expected = row.expected[rounding];
+        const auto where = "mix f16 rounding " + std::to_string(rounding) + ": thread " + std::to_string(tid) + " (" + Hex(row.a) + ", " + Hex(row.b) + ", " + Hex(row.c) + ")";
+        Require(out[0] == (0xabcd0000u | expected), where + " v_fma_mixlo_f16 is " + Hex(out[0]) + ", expected " + Hex(0xabcd0000u | expected));
+        Require(out[1] == ((expected << 16u) | 0xabcdu), where + " v_fma_mixhi_f16 is " + Hex(out[1]) + ", expected " + Hex((expected << 16u) | 0xabcdu));
+    }
+}
+
 }
 
 int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        const auto capabilities = device->Target().supportedCapabilities;
-        if (std::find(capabilities.begin(), capabilities.end(), Float64Capability) == capabilities.end()) {
-            std::puts("skipped, v_fma_mixlo_f16 and v_fma_mixhi_f16 are computed in f64 and the device has no shaderFloat64");
-            return VulkanTestSkipped;
-        }
         FillInput();
         Run(*device, MixCode);
         Check();
         FillRoundingInput();
         Run(*device, RoundingCode);
         CheckRounding();
+        for (std::uint32_t rounding = 0; rounding < 4u; ++rounding) {
+            FillDirectedInput();
+            Run(*device, RoundingCode, ShaderRecompiler::ShaderFloatMode{0xc0u | (rounding << 2u), true, false, false});
+            CheckDirected(rounding);
+        }
         std::puts("mix precision tests passed");
         return 0;
     } catch (const std::exception& error) {

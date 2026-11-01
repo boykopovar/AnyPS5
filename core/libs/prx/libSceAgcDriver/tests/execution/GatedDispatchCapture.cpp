@@ -23,6 +23,7 @@ alignas(256) std::array<std::uint32_t, 12> ReaderCode{0xf4040100u, 0xfa000000u, 
 
 constexpr std::uint32_t StaleValue = 0x57a1e000u;
 constexpr std::uint32_t FreshValue = 0xf7e54000u;
+constexpr std::uint32_t SpinIterationsPerDispatch = 1u << 20u;
 
 struct Slot {
     alignas(256) std::array<std::uint32_t, 4> stale{};
@@ -81,14 +82,14 @@ void Submit(std::uint32_t queue, std::vector<std::uint32_t>& words) {
 
 enum class Outcome { Fresh, Stale, Inconclusive };
 
-Outcome Run(Slot& slot, std::uint32_t iterations) {
+Outcome Run(Slot& slot, std::uint32_t spinDispatches) {
     slot.stale[0] = StaleValue;
     slot.fresh[0] = FreshValue;
     slot.table = {Low(slot.stale.data()), High(slot.stale.data())};
     slot.outputDescriptor = Descriptor(slot.output.data(), sizeof(slot.output));
     slot.spinDescriptor = Descriptor(slot.spinOutput.data(), sizeof(slot.spinOutput));
     std::vector<std::uint32_t> producer;
-    Dispatch(producer, SpinCode.data(), {Low(slot.spinDescriptor.data()), High(slot.spinDescriptor.data()), iterations});
+    for (std::uint32_t index = 0; index < spinDispatches; ++index) Dispatch(producer, SpinCode.data(), {Low(slot.spinDescriptor.data()), High(slot.spinDescriptor.data()), SpinIterationsPerDispatch});
     WriteData(producer, &slot.label, 1);
     std::vector<std::uint32_t> consumer;
     WaitEqual(consumer, &slot.label, 1);
@@ -118,16 +119,16 @@ int main() {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         device.reset();
-        std::uint32_t iterations = 1u << 26u;
+        std::uint32_t spinDispatches = (1u << 26u) / SpinIterationsPerDispatch;
         for (auto& slot : Slots) {
-            const auto outcome = Run(slot, iterations);
+            const auto outcome = Run(slot, spinDispatches);
             Require(outcome != Outcome::Stale, "a dispatch behind a cross-queue WAIT_REG_MEM read its table before the producer's label reached memory, so it missed the table the CPU filled after submitting");
             if (outcome == Outcome::Fresh) {
-                std::cout << "gated dispatch capture test passed (" << iterations << " producer iterations)\n";
+                std::cout << "gated dispatch capture test passed (" << spinDispatches << " producer dispatches of " << SpinIterationsPerDispatch << " iterations)\n";
                 AgcDriverShutdown_nid_postfix();
                 return 0;
             }
-            iterations *= 2u;
+            spinDispatches *= 2u;
         }
         std::cout << "the producer's label always reached memory before the table was filled: gated dispatch capture not tested\n";
         AgcDriverShutdown_nid_postfix();

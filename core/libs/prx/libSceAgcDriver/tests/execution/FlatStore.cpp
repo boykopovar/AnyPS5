@@ -1,6 +1,8 @@
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
@@ -8,6 +10,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 #include <array>
 #include <cstdio>
@@ -27,6 +31,11 @@ constexpr std::uint32_t MaskedThreads = 16;
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::uint32_t CheckedBytes = 0x2000;
 constexpr std::uint8_t Fill = 0xcd;
+#if defined(__linux__) && defined(ANYPS5_ENABLE_ASAN)
+constexpr std::array<std::uintptr_t, 2> GuestWindowAddresses{0x60000000, 0x200000000000};
+#elif defined(__linux__)
+constexpr std::array<std::uintptr_t, 2> GuestWindowAddresses{0x80000000000, 0x200000000000};
+#endif
 
 alignas(256) constexpr std::array<std::uint32_t, 45> FlatStoreCode{
     0x34020082, 0x34040084, 0x340c0081, 0x340e0083, 0x4a060200, 0x7e080201, 0x4a1806ff, 0x00000204,
@@ -39,28 +48,54 @@ alignas(256) constexpr std::array<std::uint32_t, 45> FlatStoreCode{
 
 class GuestBlock {
 public:
-    explicit GuestBlock(bool writable) {
+    explicit GuestBlock(bool writable, bool watched = false, std::uintptr_t at = 0) : bytes(watched ? 2 * BlockBytes : BlockBytes), watched(watched) {
 #ifdef _WIN32
-        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(!watched, "flat store: watched guest blocks are mapped only on Linux");
+        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-        block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
+        if (watched) {
+#ifdef __linux__
+            void* raw = mmap(reinterpret_cast<void*>(at), bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+            Require(raw == reinterpret_cast<void*>(at), "flat store: cannot map the watched guest block at its address");
+            block = static_cast<std::uint8_t*>(raw);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
+#else
+            Require(false, "flat store: watched guest blocks are mapped only on Linux");
+#endif
+        } else {
+            block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, bytes));
+        }
 #endif
         Require(block != nullptr, "flat store: cannot allocate the guest block");
+        Require(!watched || AgcDriver::GuestMemory::Watched(Address(), bytes), "flat store: the guest block is not write-watched");
         Clear();
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, writable, true);
+        GuestAllocations::Mutation().Add(block, bytes, true, writable, true);
     }
 
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(block);
+#ifdef _WIN32
+        VirtualFree(block, 0, MEM_RELEASE);
+#else
+        if (watched) {
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, bytes);
+            munmap(block, bytes);
+        } else {
+            std::free(block);
+        }
+#endif
     }
 
     GuestBlock(const GuestBlock&) = delete;
     GuestBlock& operator=(const GuestBlock&) = delete;
 
-    void Clear() { std::memset(block, Fill, BlockBytes); }
+    void Clear() { std::memset(block, Fill, bytes); }
     const std::uint8_t* Data() const { return block; }
+    std::uint64_t Address() const { return reinterpret_cast<std::uintptr_t>(block); }
 
 private:
+    std::size_t bytes;
+    bool watched;
     std::uint8_t* block = nullptr;
 };
 
@@ -116,6 +151,27 @@ void RunStores(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t
     }
 }
 
+#ifdef __linux__
+void RunStampedBlocks(AgcDriver::VulkanDevice& device, GuestBlock& guest) {
+    namespace GuestMemory = AgcDriver::GuestMemory;
+    const auto base = guest.Address();
+    Dispatch(device, 32, guest.Data());
+    if (!GuestMemory::Watched(base, 2 * BlockBytes)) {
+        std::printf("host imports are compared, not watched: stamped blocks at 0x%llx not tested\n", static_cast<unsigned long long>(base));
+        return;
+    }
+    for (int use = 0; use < 2; ++use) {
+        guest.Clear();
+        const auto collected = GuestMemory::CollectWrites(base, 2 * BlockBytes);
+        Require(collected != 0, "flat store: the watched guest blocks are not collected");
+        Require(GuestMemory::UnchangedSince(base, 2 * BlockBytes, collected), "flat store: the guest blocks changed before the store");
+        Dispatch(device, 32, guest.Data());
+        Require(!GuestMemory::UnchangedSince(base, BlockBytes, collected), "flat store: the stored block is not stamped as written");
+        Require(GuestMemory::UnchangedSince(base + BlockBytes, BlockBytes, collected), "flat store: a block no store reached is stamped as written");
+    }
+}
+#endif
+
 void RunReadOnly(AgcDriver::VulkanDevice& device, const GuestBlock& guest) {
     Dispatch(device, 32, guest.Data());
     for (std::uint32_t offset = 0; offset < CheckedBytes; ++offset) {
@@ -134,6 +190,14 @@ int main() {
         RunStores(*device, writable, 32);
         RunStores(*device, writable, 64);
         RunReadOnly(*device, readOnly);
+#ifdef __linux__
+        if (AgcDriver::GuestMemory::WriteWatched()) {
+            for (const auto at : GuestWindowAddresses) {
+                GuestBlock watched(true, true, at);
+                RunStampedBlocks(*device, watched);
+            }
+        }
+#endif
         std::puts("flat store tests passed");
         return 0;
     } catch (const std::exception& error) {

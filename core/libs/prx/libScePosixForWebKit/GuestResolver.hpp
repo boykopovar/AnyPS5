@@ -28,4 +28,15 @@ struct AddressInfo {
 static_assert(sizeof(AddressInfo) == 48);
 static_assert(offsetof(AddressInfo, canonicalName) == 24);
 static_assert(offsetof(AddressInfo, address) == 32);
+
+struct ServiceEntry {
+    char* name;
+    char** aliases;
+    std::int32_t port;
+    char* protocol;
+};
+static_assert(sizeof(ServiceEntry) == 32);
+static_assert(offsetof(ServiceEntry, aliases) == 8);
+static_assert(offsetof(ServiceEntry, port) == 16);
+static_assert(offsetof(ServiceEntry, protocol) == 24);
 }

@@ -1,9 +1,7 @@
 #include "prx/libkernel/File/include/RandomDevice.hpp"
+#include "prx/libc/include/HostEntropy.hpp"
 
-#include <cstdint>
-#include <cstring>
 #include <mutex>
-#include <random>
 #include <set>
 
 #ifdef _WIN32
@@ -47,12 +45,7 @@ bool IsRandomDevice(int fd) {
 bool ReadRandomDevice(int fd, void* buf, std::size_t nbytes) {
     std::lock_guard lock(g_mutex);
     if (!g_descriptors.contains(fd)) return false;
-    static std::random_device device;
-    auto* bytes = static_cast<std::uint8_t*>(buf);
-    for (std::size_t offset = 0; offset < nbytes; offset += sizeof(std::uint32_t)) {
-        const std::uint32_t value = device();
-        std::memcpy(bytes + offset, &value, nbytes - offset < sizeof(value) ? nbytes - offset : sizeof(value));
-    }
+    HostEntropy_nid_no_patch(buf, nbytes);
     return true;
 }
 

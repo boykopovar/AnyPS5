@@ -24,10 +24,13 @@ jobs:
           force_label() { gh label create "$1" --color "$2" --description "$3" --force; }
 
           force_label 'needs rebase' b60205 'Conflicts with main, rebase needed'
-          force_label 'intake paused' d93f0b 'Closed while PR intake is limited to authors with at least 10 PRs merged into main'
+          force_label 'open PR limit' d93f0b 'Closed over the open PR limit: 1 without merged PRs, 20 with at least 1, none from 20'
           force_label ci            5319e7 '.github'
           force_label agc           1d76db 'libSceAgc*'
           force_label shader        1d76db 'core/shader'
+          force_label 'unblocks title' 0e8a16 'Names a title ID on the Unblocks line'
+          force_label perf          fef2c0 'Performance change'
+          force_label 'perf numbers missing' e99695 'perf pull request without a before and after summary line'
 
           label relinker  5319e7 'core/relinker'
           label libc      fbca04 'libc'
@@ -35,3 +38,5 @@ jobs:
           label prx       c5def5 'Other PRX libraries'
           label build     bfd4f2 'CMake, submodules, 3rdparty'
           label docs      0075ca 'Documentation'
+          label 'fix error' d73a4a 'Closes an issue (Fixes #N)'
+          label stale     ededed 'Conflicting with main and no activity for 7 days'

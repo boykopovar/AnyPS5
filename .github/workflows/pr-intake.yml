@@ -3,7 +3,7 @@ name: PR intake
 on:
   pull_request_target:
     branches: [main]
-    types: [opened]
+    types: [opened, reopened]
 
 permissions: {}
 
@@ -27,7 +27,27 @@ jobs:
             if (pr.state !== 'open' || pr.base.ref !== 'main') {
               return;
             }
-            const minimumMergedPRs = 10;
+            if (context.payload.action === 'reopened') {
+              let maintainer = false;
+              try {
+                const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner, repo, username: context.payload.sender.login
+                });
+                maintainer = ['admin', 'maintain', 'write'].includes(access.role_name ?? access.permission);
+              } catch (error) {
+                core.warning(`Could not check the permission of ${context.payload.sender.login}, so the open PR limit applies: ${error.message}`);
+              }
+              if (maintainer) {
+                try {
+                  await github.rest.issues.removeLabel({ owner, repo, issue_number: pull_number, name: 'open PR limit' });
+                } catch (error) {
+                  if (error.status !== 404) {
+                    core.warning(`Could not remove the open PR limit label: ${error.message}`);
+                  }
+                }
+                return;
+              }
+            }
             const { data: mergedPRs } = await github.rest.search.issuesAndPullRequests({
               q: `repo:${owner}/${repo} is:pr is:merged base:main author:${pr.user.login}`,
               per_page: 1
@@ -35,10 +55,23 @@ jobs:
             if (mergedPRs.incomplete_results || !Number.isSafeInteger(mergedPRs.total_count) || mergedPRs.total_count < 0) {
               throw new Error('Could not reliably count merged pull requests');
             }
-            if (mergedPRs.total_count >= minimumMergedPRs) {
+            const merged = mergedPRs.total_count;
+            if (merged >= 20) {
               return;
             }
-            const name = 'intake paused';
+            const allowedOpen = merged >= 1 ? 20 : 1;
+            const openPRs = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: 'open', base: 'main', per_page: 100
+            });
+            const reopened = context.payload.action === 'reopened';
+            const open = new Set(openPRs
+              .filter((p) => p.user.login === pr.user.login && (reopened || p.number < pull_number))
+              .map((p) => p.number));
+            open.add(pull_number);
+            if (open.size <= allowedOpen) {
+              return;
+            }
+            const name = 'open PR limit';
             try {
               await github.rest.issues.getLabel({ owner, repo, name });
             } catch (error) {
@@ -48,7 +81,7 @@ jobs:
               try {
                 await github.rest.issues.createLabel({
                   owner, repo, name, color: 'd93f0b',
-                  description: 'Closed while PR intake is limited to authors with at least 10 PRs merged into main'
+                  description: 'Closed over the open PR limit: 1 without merged PRs, 20 with at least 1, none from 20'
                 });
               } catch (createError) {
                 if (createError.status !== 422) {
@@ -58,7 +91,7 @@ jobs:
               }
             }
             await github.rest.issues.addLabels({ owner, repo, issue_number: pull_number, labels: [name] });
-            const body = 'Thank you for your interest in the project! We are sorry, but we cannot accept more PRs while we work through the existing backlog. This PR has been automatically closed and labeled "intake paused". This is not a judgment of the quality of your changes.';
+            const body = 'Thank you for your contribution! Authors with no pull requests merged into `main` can have 1 open pull request at a time, authors with at least 1 merged can have 20, and from 20 merged there is no limit. This PR has been automatically closed and labeled "open PR limit" because that limit was reached. This is not a judgment of the quality of your changes: reopen it once one of your open pull requests is merged or closed.';
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner, repo, issue_number: pull_number, per_page: 100
             });

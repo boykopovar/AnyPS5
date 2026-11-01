@@ -292,6 +292,203 @@ constexpr Vector Vectors[] = {
     {0x498f4a8bu, 0x6749af47u, 0xc69e8021u, {0xabcd7c00u, 0xabcdaf47u, 0xabcd0004u}},
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 42> DirectedCode{
+    0x34020084u, 0x34040086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u, 0x7e140280u, 0x7e160280u, 0x7e180280u,
+    0x7e1a0280u, 0x7e1c0280u, 0x7e1e0280u, 0x7e200280u, 0x7e220280u, 0x7e240280u, 0x7e260280u, 0x7e280280u,
+    0x7e2a0280u, 0x7e2c0280u, 0x7e2e0280u, 0x7e300280u, 0x7e320280u, 0x7e1402ffu, 0x5a5a5a5au, 0x7e1602ffu,
+    0x5a5a5a5au, 0x7e1802ffu, 0x5a5a5a5au, 0x7e1a02ffu, 0x5a5a5a5au, 0x7e141504u, 0x7e16a305u, 0x7e18a105u,
+    0x761a0f06u, 0xe0781000u, 0x80010a02u, 0xe0781010u, 0x80010e02u, 0xe0781020u, 0x80011202u, 0xe0781030u,
+    0x80011602u, 0xbf810000u,
+};
+
+struct DirectedVector {
+    std::array<std::uint32_t, 4> inputs;
+    std::array<std::array<std::array<std::uint32_t, 4>, 2>, 3> expected;
+};
+
+constexpr DirectedVector DirectedVectors[] = {
+    {{0x00000000u, 0x5a5a0000u, 0xa5a50000u, 0x00000000u}, {{
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}}},
+    }}},
+    {{0x80000000u, 0x5a5a0001u, 0xa5a58000u, 0x00000001u}, {{
+        {{{0x5a5a8000u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}, {0x5a5a8000u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}}},
+        {{{0x5a5a8000u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}, {0x5a5a8000u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}}},
+        {{{0x5a5a8000u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}, {0x5a5a8000u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}}},
+    }}},
+    {{0x3f800000u, 0x5a5a8001u, 0xa5a53c00u, 0xffffffe8u}, {{
+        {{{0x5a5a3c00u, 0x5a5af7ffu, 0x5a5a7801u, 0x5a5a0001u}, {0x5a5a3c00u, 0x5a5af7ffu, 0x5a5a7801u, 0x5a5a0001u}}},
+        {{{0x5a5a3c00u, 0x5a5af800u, 0x5a5a7800u, 0x5a5a0001u}, {0x5a5a3c00u, 0x5a5af800u, 0x5a5a7800u, 0x5a5a0001u}}},
+        {{{0x5a5a3c00u, 0x5a5af7ffu, 0x5a5a7800u, 0x5a5a0001u}, {0x5a5a3c00u, 0x5a5af7ffu, 0x5a5a7800u, 0x5a5a0001u}}},
+    }}},
+    {{0xbf800000u, 0x5a5affffu, 0xa5a5bc00u, 0x00000040u}, {{
+        {{{0x5a5abc00u, 0x5a5abc00u, 0x5a5a7c00u, 0x5a5afbffu}, {0x5a5abc00u, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5afbffu}}},
+        {{{0x5a5abc00u, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5afc00u}, {0x5a5abc00u, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5afbffu}}},
+        {{{0x5a5abc00u, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5afbffu}, {0x5a5abc00u, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5afbffu}}},
+    }}},
+    {{0x3f800001u, 0x5a5a0000u, 0xa5a53c01u, 0xffffffc0u}, {{
+        {{{0x5a5a3c01u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0001u}, {0x5a5a3c01u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0001u}}},
+        {{{0x5a5a3c00u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}, {0x5a5a3c00u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}}},
+        {{{0x5a5a3c00u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}, {0x5a5a3c00u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}}},
+    }}},
+    {{0xbf800001u, 0x5a5a0001u, 0xa5a5bc01u, 0x00000041u}, {{
+        {{{0x5a5abc00u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5afbffu}, {0x5a5abc00u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5afbffu}}},
+        {{{0x5a5abc01u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5afc00u}, {0x5a5abc01u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5afbffu}}},
+        {{{0x5a5abc00u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5afbffu}, {0x5a5abc00u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5afbffu}}},
+    }}},
+    {{0x3f801000u, 0x5a5a07ffu, 0xa5a57bffu, 0xffffffbfu}, {{
+        {{{0x5a5a3c01u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0001u}, {0x5a5a3c01u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0001u}}},
+        {{{0x5a5a3c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0000u}, {0x5a5a3c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0000u}}},
+        {{{0x5a5a3c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0000u}, {0x5a5a3c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0000u}}},
+    }}},
+    {{0xbf801000u, 0x5a5a0800u, 0xa5a5fbffu, 0x00007fffu}, {{
+        {{{0x5a5abc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}, {0x5a5abc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}}},
+        {{{0x5a5abc01u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afc00u}, {0x5a5abc01u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}}},
+        {{{0x5a5abc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}, {0x5a5abc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}}},
+    }}},
+    {{0x3f801fffu, 0x5a5a0801u, 0xa5a57c00u, 0xffff8000u}, {{
+        {{{0x5a5a3c01u, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a7c00u}, {0x5a5a3c01u, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a7c00u}}},
+        {{{0x5a5a3c00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7c00u}, {0x5a5a3c00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7c00u}}},
+        {{{0x5a5a3c00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7c00u}, {0x5a5a3c00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7c00u}}},
+    }}},
+    {{0xb3000000u, 0x5a5a7fffu, 0xa5a57e55u, 0x00000001u}, {{
+        {{{0x5a5a8000u, 0x5a5a7800u, 0x5a5a7800u, 0x5a5a7e55u}, {0x5a5a8000u, 0x5a5a7800u, 0x5a5a7800u, 0x5a5a7e55u}}},
+        {{{0x5a5a8001u, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7e55u}, {0x5a5a8001u, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7e55u}}},
+        {{{0x5a5a8000u, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7e55u}, {0x5a5a8000u, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7e55u}}},
+    }}},
+    {{0x33000001u, 0x5a5a8000u, 0xa5a5fe55u, 0xffffffffu}, {{
+        {{{0x5a5a0001u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}, {0x5a5a0001u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}}},
+        {{{0x5a5a0000u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}, {0x5a5a0000u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}}},
+        {{{0x5a5a0000u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}, {0x5a5a0000u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}}},
+    }}},
+    {{0x33800000u, 0x5a5a8001u, 0xa5a57c01u, 0x0000000au}, {{
+        {{{0x5a5a0001u, 0x5a5af7ffu, 0x5a5a7801u, 0x5a5a7e01u}, {0x5a5a0001u, 0x5a5af7ffu, 0x5a5a7801u, 0x5a5a7e01u}}},
+        {{{0x5a5a0001u, 0x5a5af800u, 0x5a5a7800u, 0x5a5a7e01u}, {0x5a5a0001u, 0x5a5af800u, 0x5a5a7800u, 0x5a5a7e01u}}},
+        {{{0x5a5a0001u, 0x5a5af7ffu, 0x5a5a7800u, 0x5a5a7e01u}, {0x5a5a0001u, 0x5a5af7ffu, 0x5a5a7800u, 0x5a5a7e01u}}},
+    }}},
+    {{0xb37fffffu, 0x5a5a0000u, 0xa5a50000u, 0x00000010u}, {{
+        {{{0x5a5a8000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}, {0x5a5a8000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}}},
+        {{{0x5a5a8001u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}, {0x5a5a8001u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}}},
+        {{{0x5a5a8000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}, {0x5a5a8000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u}}},
+    }}},
+    {{0x387fffffu, 0x5a5a0001u, 0xa5a58000u, 0xfffffff0u}, {{
+        {{{0x5a5a0400u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}, {0x5a5a0400u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}}},
+        {{{0x5a5a03ffu, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}, {0x5a5a03ffu, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}}},
+        {{{0x5a5a03ffu, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}, {0x5a5a03ffu, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5a8000u}}},
+    }}},
+    {{0x477fe000u, 0x5a5a0801u, 0xa5a503ffu, 0x00000040u}, {{
+        {{{0x5a5a7bffu, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a7c00u}, {0x5a5a7bffu, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a7bffu}}},
+        {{{0x5a5a7bffu, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7bffu}, {0x5a5a7bffu, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7bffu}}},
+        {{{0x5a5a7bffu, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7bffu}, {0x5a5a7bffu, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7bffu}}},
+    }}},
+    {{0x477fe001u, 0x5a5a0803u, 0xa5a583ffu, 0xffffffc0u}, {{
+        {{{0x5a5a7c00u, 0x5a5a6802u, 0x5a5a6802u, 0x5a5a8000u}, {0x5a5a7bffu, 0x5a5a6802u, 0x5a5a6802u, 0x5a5a8000u}}},
+        {{{0x5a5a7bffu, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a8001u}, {0x5a5a7bffu, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a8001u}}},
+        {{{0x5a5a7bffu, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a8000u}, {0x5a5a7bffu, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a8000u}}},
+    }}},
+    {{0xc77fe001u, 0x5a5a7fffu, 0xa5a50400u, 0x00000041u}, {{
+        {{{0x5a5afbffu, 0x5a5a7800u, 0x5a5a7800u, 0x5a5a7c00u}, {0x5a5afbffu, 0x5a5a7800u, 0x5a5a7800u, 0x5a5a7bffu}}},
+        {{{0x5a5afc00u, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7bffu}, {0x5a5afbffu, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7bffu}}},
+        {{{0x5a5afbffu, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7bffu}, {0x5a5afbffu, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7bffu}}},
+    }}},
+    {{0x477ff000u, 0x5a5a8000u, 0xa5a58400u, 0xffffffbfu}, {{
+        {{{0x5a5a7c00u, 0x5a5af800u, 0x5a5a7800u, 0x5a5a8000u}, {0x5a5a7bffu, 0x5a5af800u, 0x5a5a7800u, 0x5a5a8000u}}},
+        {{{0x5a5a7bffu, 0x5a5af800u, 0x5a5a7800u, 0x5a5a8001u}, {0x5a5a7bffu, 0x5a5af800u, 0x5a5a7800u, 0x5a5a8001u}}},
+        {{{0x5a5a7bffu, 0x5a5af800u, 0x5a5a7800u, 0x5a5a8000u}, {0x5a5a7bffu, 0x5a5af800u, 0x5a5a7800u, 0x5a5a8000u}}},
+    }}},
+    {{0x47800000u, 0x5a5a8001u, 0xa5a53c00u, 0x00007fffu}, {{
+        {{{0x5a5a7c00u, 0x5a5af7ffu, 0x5a5a7801u, 0x5a5a7c00u}, {0x5a5a7bffu, 0x5a5af7ffu, 0x5a5a7801u, 0x5a5a7bffu}}},
+        {{{0x5a5a7bffu, 0x5a5af800u, 0x5a5a7800u, 0x5a5a7bffu}, {0x5a5a7bffu, 0x5a5af800u, 0x5a5a7800u, 0x5a5a7bffu}}},
+        {{{0x5a5a7bffu, 0x5a5af7ffu, 0x5a5a7800u, 0x5a5a7bffu}, {0x5a5a7bffu, 0x5a5af7ffu, 0x5a5a7800u, 0x5a5a7bffu}}},
+    }}},
+    {{0xc7800000u, 0x5a5affffu, 0xa5a5bc00u, 0xffff8000u}, {{
+        {{{0x5a5afbffu, 0x5a5abc00u, 0x5a5a7c00u, 0x5a5a8000u}, {0x5a5afbffu, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5a8000u}}},
+        {{{0x5a5afc00u, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5a8001u}, {0x5a5afbffu, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5a8001u}}},
+        {{{0x5a5afbffu, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5a8000u}, {0x5a5afbffu, 0x5a5abc00u, 0x5a5a7bffu, 0x5a5a8000u}}},
+    }}},
+    {{0x7f7fffffu, 0x5a5a0000u, 0xa5a53c01u, 0x00000000u}, {{
+        {{{0x5a5a7c00u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a3c01u}, {0x5a5a7bffu, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a3c01u}}},
+        {{{0x5a5a7bffu, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a3c01u}, {0x5a5a7bffu, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a3c01u}}},
+        {{{0x5a5a7bffu, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a3c01u}, {0x5a5a7bffu, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a3c01u}}},
+    }}},
+    {{0xff7fffffu, 0x5a5a0001u, 0xa5a5bc01u, 0x00000001u}, {{
+        {{{0x5a5afbffu, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5ac001u}, {0x5a5afbffu, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5ac001u}}},
+        {{{0x5a5afc00u, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5ac001u}, {0x5a5afbffu, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5ac001u}}},
+        {{{0x5a5afbffu, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5ac001u}, {0x5a5afbffu, 0x5a5a3c00u, 0x5a5a3c00u, 0x5a5ac001u}}},
+    }}},
+    {{0x7f800000u, 0x5a5a07ffu, 0xa5a57bffu, 0xffffffffu}, {{
+        {{{0x5a5a7c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a77ffu}, {0x5a5a7c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a77ffu}}},
+        {{{0x5a5a7c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a77ffu}, {0x5a5a7c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a77ffu}}},
+        {{{0x5a5a7c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a77ffu}, {0x5a5a7c00u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a77ffu}}},
+    }}},
+    {{0xff800000u, 0x5a5a0800u, 0xa5a5fbffu, 0x0000000au}, {{
+        {{{0x5a5afc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}, {0x5a5afc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}}},
+        {{{0x5a5afc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afc00u}, {0x5a5afc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}}},
+        {{{0x5a5afc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}, {0x5a5afc00u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5afbffu}}},
+    }}},
+    {{0x7fc12345u, 0x5a5a0801u, 0xa5a57c00u, 0xfffffff6u}, {{
+        {{{0x5a5a7e09u, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a7c00u}, {0x5a5a7e09u, 0x5a5a6801u, 0x5a5a6801u, 0x5a5a7c00u}}},
+        {{{0x5a5a7e09u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7c00u}, {0x5a5a7e09u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7c00u}}},
+        {{{0x5a5a7e09u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7c00u}, {0x5a5a7e09u, 0x5a5a6800u, 0x5a5a6800u, 0x5a5a7c00u}}},
+    }}},
+    {{0xffc12345u, 0x5a5a0803u, 0xa5a5fc00u, 0x00000010u}, {{
+        {{{0x5a5afe09u, 0x5a5a6802u, 0x5a5a6802u, 0x5a5afc00u}, {0x5a5afe09u, 0x5a5a6802u, 0x5a5a6802u, 0x5a5afc00u}}},
+        {{{0x5a5afe09u, 0x5a5a6801u, 0x5a5a6801u, 0x5a5afc00u}, {0x5a5afe09u, 0x5a5a6801u, 0x5a5a6801u, 0x5a5afc00u}}},
+        {{{0x5a5afe09u, 0x5a5a6801u, 0x5a5a6801u, 0x5a5afc00u}, {0x5a5afe09u, 0x5a5a6801u, 0x5a5a6801u, 0x5a5afc00u}}},
+    }}},
+    {{0x7f812345u, 0x5a5a7fffu, 0xa5a57e55u, 0xfffffff0u}, {{
+        {{{0x5a5a7e09u, 0x5a5a7800u, 0x5a5a7800u, 0x5a5a7e55u}, {0x5a5a7e09u, 0x5a5a7800u, 0x5a5a7800u, 0x5a5a7e55u}}},
+        {{{0x5a5a7e09u, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7e55u}, {0x5a5a7e09u, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7e55u}}},
+        {{{0x5a5a7e09u, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7e55u}, {0x5a5a7e09u, 0x5a5a77ffu, 0x5a5a77ffu, 0x5a5a7e55u}}},
+    }}},
+    {{0xff812345u, 0x5a5a8000u, 0xa5a5fe55u, 0x00000018u}, {{
+        {{{0x5a5afe09u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}, {0x5a5afe09u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}}},
+        {{{0x5a5afe09u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}, {0x5a5afe09u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}}},
+        {{{0x5a5afe09u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}, {0x5a5afe09u, 0x5a5af800u, 0x5a5a7800u, 0x5a5afe55u}}},
+    }}},
+    {{0x00000000u, 0x00000000u, 0xa5a53c01u, 0x00000010u}, {{
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7c00u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}}},
+    }}},
+    {{0x00000000u, 0x00000000u, 0xa5a5bc01u, 0x00000010u}, {{
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5afbffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5afbffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5afc00u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5afbffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5afbffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5afbffu}}},
+    }}},
+    {{0x00000001u, 0x5a5a07ffu, 0xa5a50001u, 0xffffffffu}, {{
+        {{{0x5a5a0001u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0001u}, {0x5a5a0001u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0001u}}},
+        {{{0x5a5a0000u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0000u}, {0x5a5a0000u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0000u}}},
+        {{{0x5a5a0000u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0000u}, {0x5a5a0000u, 0x5a5a67ffu, 0x5a5a67ffu, 0x5a5a0000u}}},
+    }}},
+    {{0x00000000u, 0x00000000u, 0xa5a58001u, 0xffffffffu}, {{
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8000u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8000u}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8001u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8001u}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8000u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8000u}}},
+    }}},
+    {{0x00000000u, 0x00000000u, 0xa5a503ffu, 0x00000000u}, {{
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a03ffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a03ffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a03ffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a03ffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a03ffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a03ffu}}},
+    }}},
+    {{0x00000000u, 0x00000000u, 0xa5a583ffu, 0x00000000u}, {{
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a83ffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a83ffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a83ffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a83ffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a83ffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a83ffu}}},
+    }}},
+    {{0x00000000u, 0x00000000u, 0xa5a57bffu, 0x00007fffu}, {{
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7c00u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a7bffu}}},
+    }}},
+    {{0x00000000u, 0x00000000u, 0xa5a5fbffu, 0xffff8000u}, {{
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8000u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8000u}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8001u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8001u}}},
+        {{{0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8000u}, {0x5a5a0000u, 0x5a5a0000u, 0x5a5a0000u, 0x5a5a8000u}}},
+    }}},
+};
+
 constexpr Vector DenormalVectors[4][32] = {
     {
         {0u, 0x00000401u, 0x000003ffu, {0u, 0xabcd0401u, 0xabcd0000u}},
@@ -482,6 +679,41 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t first, std::uint32_t cou
     device.WaitIdle();
 }
 
+void RunDirected(AgcDriver::VulkanDevice& device, std::uint32_t rounding, std::uint32_t overflow, std::uint32_t round32) {
+    Input.fill(0u);
+    for (std::uint32_t lane = 0; lane < std::size(DirectedVectors); ++lane) {
+        std::copy(DirectedVectors[lane].inputs.begin(), DirectedVectors[lane].inputs.end(), Input.begin() + lane * Inputs);
+    }
+    Output.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(DirectedCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xf0u | (rounding << 2u) | round32, true, true, overflow != 0u};
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    for (std::uint32_t lane = 0; lane < std::size(DirectedVectors); ++lane) {
+        for (std::uint32_t column = 0; column < 4u; ++column) {
+            const auto expected = DirectedVectors[lane].expected[rounding - 1u][overflow][column];
+            const auto actual = Output[lane * Results + column];
+            const bool matches = column == 0u ? Matches(actual, expected) : actual == expected;
+            Require(matches, "directed f16 rounding: mode " + std::to_string(rounding) + " overflow " + std::to_string(overflow) + " lane " + std::to_string(lane) + " column " + std::to_string(column) + " is " + Hex(actual) + ", expected " + Hex(expected));
+        }
+    }
+}
+
 void Check(std::uint32_t first, std::uint32_t count, std::span<const Vector> vectors = Vectors, std::uint32_t firstColumn = 0u) {
     for (std::uint32_t lane = 0; lane < count; ++lane) {
         const auto& vector = vectors[first + lane];
@@ -490,6 +722,75 @@ void Check(std::uint32_t first, std::uint32_t count, std::span<const Vector> vec
             const auto actual = Output[lane * Results + column];
             Require(Matches(actual, expected), std::string("f16 rounding: vector ") + std::to_string(first + lane) + " (" + Hex(vector.a) + ", " + Hex(vector.b) + ", " + Hex(vector.c) + ") " + Names[column] + " is " + Hex(actual) + ", expected " + Hex(expected));
         }
+    }
+}
+
+alignas(256) constexpr std::array<std::uint32_t, 13> LdexpDenormalCode{
+    0x34020082u, 0x34060084u, 0xe0302000u, 0x80000401u, 0xe0302004u, 0x80000501u, 0x7e1402ffu, 0xabcdabcdu,
+    0xbf8c3f70u, 0x76140b04u, 0xe0702000u, 0x80010a03u, 0xbf810000u,
+};
+
+struct LdexpDenormalVector {
+    std::uint32_t half;
+    std::uint32_t exponent;
+    std::array<std::uint32_t, 4> expected;
+};
+
+constexpr LdexpDenormalVector LdexpDenormalVectors[] = {
+    {0x00000401u, 0xffffffffu, {0xabcd0000u, 0xabcd0000u, 0xabcd0200u, 0xabcd0200u}},
+    {0x000003ffu, 0x00000000u, {0xabcd0000u, 0xabcd0000u, 0xabcd0000u, 0xabcd03ffu}},
+    {0x000003ffu, 0x00000001u, {0xabcd0000u, 0xabcd07feu, 0xabcd0000u, 0xabcd07feu}},
+    {0x00000400u, 0xffffffffu, {0xabcd0000u, 0xabcd0000u, 0xabcd0200u, 0xabcd0200u}},
+    {0x00008400u, 0xffffffffu, {0xabcd8000u, 0xabcd8000u, 0xabcd8200u, 0xabcd8200u}},
+    {0x000007ffu, 0xffffffffu, {0xabcd0000u, 0xabcd0000u, 0xabcd0400u, 0xabcd0400u}},
+    {0x000087ffu, 0xffffffffu, {0xabcd8000u, 0xabcd8000u, 0xabcd8400u, 0xabcd8400u}},
+    {0x00000001u, 0x00000000u, {0xabcd0000u, 0xabcd0000u, 0xabcd0000u, 0xabcd0001u}},
+    {0x00000001u, 0x00000001u, {0xabcd0000u, 0xabcd0000u, 0xabcd0000u, 0xabcd0002u}},
+    {0x00008001u, 0x00000000u, {0xabcd8000u, 0xabcd8000u, 0xabcd8000u, 0xabcd8001u}},
+    {0x00000200u, 0x00000000u, {0xabcd0000u, 0xabcd0000u, 0xabcd0000u, 0xabcd0200u}},
+    {0x00000200u, 0x00000001u, {0xabcd0000u, 0xabcd0400u, 0xabcd0000u, 0xabcd0400u}},
+    {0x00003c01u, 0x00000000u, {0xabcd3c01u, 0xabcd3c01u, 0xabcd3c01u, 0xabcd3c01u}},
+    {0x00003c01u, 0xffffffffu, {0xabcd3801u, 0xabcd3801u, 0xabcd3801u, 0xabcd3801u}},
+    {0x00007c00u, 0x00000001u, {0xabcd7c00u, 0xabcd7c00u, 0xabcd7c00u, 0xabcd7c00u}},
+    {0x00007e55u, 0x00000000u, {0xabcd7e55u, 0xabcd7e55u, 0xabcd7e55u, 0xabcd7e55u}},
+    {0x00000000u, 0x00000040u, {0xabcd0000u, 0xabcd0000u, 0xabcd0000u, 0xabcd0000u}},
+    {0x00008000u, 0xffffffffu, {0xabcd8000u, 0xabcd8000u, 0xabcd8000u, 0xabcd8000u}},
+};
+
+void RunLdexpDenormal(AgcDriver::VulkanDevice& device, std::uint32_t denorm16) {
+    Input.fill(0u);
+    for (std::uint32_t lane = 0; lane < std::size(LdexpDenormalVectors); ++lane) {
+        Input[lane * Inputs] = LdexpDenormalVectors[lane].half;
+        Input[lane * Inputs + 1] = LdexpDenormalVectors[lane].exponent;
+    }
+    Output.fill(0xdeadbeefu);
+    std::vector<std::uint32_t> userData(8, 0u);
+    const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size()));
+    const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
+    std::copy(input.begin(), input.end(), userData.begin());
+    std::copy(output.begin(), output.end(), userData.begin() + 4);
+    const std::span<const std::uint32_t> code(LdexpDenormalCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.context.floatMode = ShaderRecompiler::ShaderFloatMode{denorm16 << 6u, true, true, false};
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+void CheckLdexpDenormal(std::uint32_t denorm16) {
+    for (std::uint32_t lane = 0; lane < std::size(LdexpDenormalVectors); ++lane) {
+        const auto& vector = LdexpDenormalVectors[lane];
+        const auto expected = vector.expected[denorm16];
+        const auto actual = Output[lane * Results];
+        Require(Matches(actual, expected), std::string("f16 ldexp denormal: denorm16 ") + std::to_string(denorm16) + " vector " + std::to_string(lane) + " (" + Hex(vector.half) + ", " + Hex(vector.exponent) + ") is " + Hex(actual) + ", expected " + Hex(expected));
     }
 }
 
@@ -505,6 +806,12 @@ int main() {
             Run(*device, first, count);
             Check(first, count);
         }
+        for (std::uint32_t rounding = 1u; rounding < 4u; ++rounding) {
+            for (std::uint32_t overflow = 0u; overflow < 2u; ++overflow) {
+                RunDirected(*device, rounding, overflow, 0u);
+                RunDirected(*device, rounding, overflow, 3u);
+            }
+        }
         for (bool ieee : {false, true}) {
             for (bool overflow : {false, true}) {
                 for (std::uint32_t denorm16 = 0u; denorm16 < 4u; ++denorm16) {
@@ -514,6 +821,10 @@ int main() {
                     Check(0u, 32u, vectors, 1u);
                 }
             }
+        }
+        for (std::uint32_t denorm16 = 0u; denorm16 < 4u; ++denorm16) {
+            RunLdexpDenormal(*device, denorm16);
+            CheckLdexpDenormal(denorm16);
         }
         std::puts("f16 rounding tests passed");
         return 0;

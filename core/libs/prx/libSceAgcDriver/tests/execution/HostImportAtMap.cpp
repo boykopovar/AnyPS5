@@ -25,16 +25,18 @@ using AgcDriver::Graphics::Require;
 
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t AllocationBytes = BlockBytes * 4;
+constexpr std::size_t ReservationBytes = AllocationBytes + BlockBytes * 2;
 
 class GuestAllocation {
 public:
     GuestAllocation() {
 #ifdef _WIN32
-        memory = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, AllocationBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        allocation = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, ReservationBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
-        memory = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, AllocationBytes));
+        allocation = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, ReservationBytes));
 #endif
-        Require(memory != nullptr, "host import at map: cannot allocate the guest memory");
+        Require(allocation != nullptr, "host import at map: cannot allocate the guest memory");
+        memory = allocation + BlockBytes;
         std::memset(memory, 0, AllocationBytes);
         Register();
     }
@@ -42,9 +44,9 @@ public:
     ~GuestAllocation() {
         if (registered) Unregister();
 #ifdef _WIN32
-        VirtualFree(memory, 0, MEM_RELEASE);
+        VirtualFree(allocation, 0, MEM_RELEASE);
 #else
-        std::free(memory);
+        std::free(allocation);
 #endif
     }
 
@@ -73,6 +75,7 @@ public:
     }
 
 private:
+    std::uint8_t* allocation = nullptr;
     std::uint8_t* memory = nullptr;
     bool registered = false;
 };
@@ -144,7 +147,13 @@ int main() {
         remapped.Unregister();
         remapped.Register();
         Import(*device, remapped.Ranges());
-        Require(Imported(handle, remapped.Address(), AllocationBytes), "host import at map: a range mapped again was not imported");
+        Require(!Imported(handle, remapped.Address(), AllocationBytes), "host import at map: a range mapped again was imported at map instead of on first use");
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const std::array<std::uint32_t, 4> pattern{9u, 10u, 11u, 12u};
+            Require(device->FillBuffer(remapped.Address(), BlockBytes, pattern), "host import at map: the first use of a range mapped again was not imported");
+            device->WaitIdle();
+        }
         GuestAllocation gone;
         const auto goneRanges = gone.Ranges();
         gone.Unregister();

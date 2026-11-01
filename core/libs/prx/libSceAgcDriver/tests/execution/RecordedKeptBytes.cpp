@@ -24,6 +24,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -156,6 +158,7 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::uint8_t* target) {
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
 }
 
@@ -197,13 +200,13 @@ void Draw(AgcDriver::VulkanDevice& device, GuestBuffer& pixels, GuestBuffer& ver
         {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
         {64, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
-        {0, 0, vertexPush, 128 - vertexPush}
+        PixelPushLayout(vertexPush, target)
     };
     fragment.useCache = false;
     const auto pixelResult = ShaderRecompiler::Recompile(fragment);
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
-        {ShaderStage::Fragment, &pixelResult, vertexPush}
+        {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
     }};
 
     AgcDriver::Graphics::State state{};
@@ -233,6 +236,22 @@ void CopiedDispatch(AgcDriver::VulkanDevice& device) {
     Require(recorder.Recording(), "recorded kept bytes: the dispatch was not left in the open batch");
     const auto kept = recorder.OpenKeptBytes();
     Require(kept >= BufferBytes, "a dispatch writing a copied " + Bytes(BufferBytes) + " buffer left " + Bytes(kept) + " in its batch's kept bytes");
+    device.WaitIdle();
+}
+
+void BufferOnlyDispatchBounds(AgcDriver::VulkanDevice& device) {
+    GuestBuffer first(false);
+    GuestBuffer second(false);
+    device.WaitIdle();
+    Dispatch(device, first.Data());
+    auto& recorder = ActiveRecorder();
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        recorder.Keep(std::make_shared<int>(0), Recorder::KeptBytesBudget);
+    }
+    const auto submitted = recorder.Submissions();
+    Dispatch(device, second.Data());
+    Require(recorder.Submissions() > submitted, "a buffer-only dispatch did not submit the preceding batch at its kept-byte budget");
     device.WaitIdle();
 }
 
@@ -284,6 +303,7 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         CopiedDispatch(*device);
+        BufferOnlyDispatchBounds(*device);
         GuestBuffer pixels(true, TargetLayout.Bytes());
         ResidentTarget(*device, pixels);
         CopiedDraw(*device, pixels);

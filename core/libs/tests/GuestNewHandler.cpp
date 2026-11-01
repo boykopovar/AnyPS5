@@ -1,28 +1,29 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <limits>
 #include <new>
+#include <stdexcept>
 
 extern "C" {
 using Handler = void (APS5_VABI*)();
-Handler APS5_VABI _ZSt15set_new_handlerPFvvE_nid_postfix(Handler);
-Handler APS5_VABI _ZSt15get_new_handlerv_nid_postfix();
-void* APS5_VABI _Znwm_nid_postfix(std::size_t);
-void* APS5_VABI _Znam_nid_postfix(std::size_t);
-void* APS5_VABI _ZnwmRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
-void* APS5_VABI _ZnamRKSt9nothrow_t_nid_postfix(std::size_t, const void*) noexcept;
+
 }
 
 namespace {
 
-alignas(16) std::array<std::byte, 64> storage{};
+alignas(256) std::array<std::byte, 64> storage{};
 unsigned failuresLeft = 0;
 unsigned allocations = 0;
+unsigned releases = 0;
 unsigned handlerCalls = 0;
 std::size_t lastSize = 0;
+std::size_t lastAlignment = 0;
 
 void Require(bool condition, int line) {
     if (!condition) {
@@ -43,10 +44,13 @@ void* APS5_VABI allocate(std::size_t bytes) {
     return storage.data();
 }
 
-void APS5_VABI release(void*) {}
+void APS5_VABI release(void*) { ++releases; }
 void* APS5_VABI allocateZeroed(std::size_t count, std::size_t bytes) { return allocate(count * bytes); }
 void* APS5_VABI reallocate(void*, std::size_t bytes) { return allocate(bytes); }
-void* APS5_VABI align(std::size_t, std::size_t bytes) { return allocate(bytes); }
+void* APS5_VABI align(std::size_t alignment, std::size_t bytes) {
+    lastAlignment = alignment;
+    return allocate(bytes);
+}
 void* APS5_VABI realign(void*, std::size_t bytes, std::size_t) { return allocate(bytes); }
 int APS5_VABI posixAlign(void** pointer, std::size_t, std::size_t bytes) {
     *pointer = allocate(bytes);
@@ -70,6 +74,7 @@ void APS5_VABI allocatingHandler() {
 void Reset(unsigned failures) {
     failuresLeft = failures;
     allocations = 0;
+    releases = 0;
     handlerCalls = 0;
 }
 
@@ -85,7 +90,40 @@ bool Throws(TAction action) {
 
 }
 
-int main() {
+int RunDefaultHeap() {
+    std::array<void*, 10> none{};
+    ApplicationHeapRegister_nid_no_patch(none.data());
+    constexpr std::size_t huge = std::numeric_limits<std::size_t>::max();
+
+    REQUIRE(Throws([] { _Znwm_nid_postfix(huge); }));
+    REQUIRE(Throws([] { _Znam_nid_postfix(huge); }));
+    REQUIRE(_ZnwmRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr);
+    REQUIRE(_ZnamRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr);
+    REQUIRE(Throws([] { _ZnamSt11align_val_t_nid_postfix(huge, 64); }));
+    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(huge, 64, nullptr) == nullptr);
+    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(huge, 64, nullptr) == nullptr);
+
+    handlerCalls = 0;
+    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(&uninstallingHandler) == nullptr);
+    REQUIRE(Throws([] { _Znwm_nid_postfix(huge); }));
+    REQUIRE(handlerCalls == 3 && _ZSt15get_new_handlerv_nid_postfix() == nullptr);
+
+    handlerCalls = 0;
+    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(&throwingHandler) == nullptr);
+    REQUIRE(_ZnwmRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr && handlerCalls == 1);
+    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(nullptr) == &throwingHandler);
+
+    void* small = _Znwm_nid_postfix(24);
+    REQUIRE(small != nullptr);
+    std::memset(small, 0x5a, 24);
+    _ZdlPv_nid_postfix(small);
+
+    std::puts("Guest new handler default heap checks passed");
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc > 1 && std::strcmp(argv[1], "default") == 0) return RunDefaultHeap();
     std::array<void*, 10> api{};
     api[0] = reinterpret_cast<void*>(&allocate);
     api[1] = reinterpret_cast<void*>(&release);
@@ -97,6 +135,17 @@ int main() {
     ApplicationHeapRegister_nid_no_patch(api.data());
 
     REQUIRE(_ZSt15get_new_handlerv_nid_postfix() == nullptr);
+
+    Reset(0);
+    void* nothrowPointer = _Znwm_nid_postfix(8);
+    const int nothrowTag = 0;
+    REQUIRE(nothrowPointer == storage.data() && releases == 0);
+    _ZdlPvRKSt9nothrow_t_nid_postfix(nothrowPointer, &nothrowTag);
+
+    REQUIRE(releases == 1);
+    _ZdlPvRKSt9nothrow_t_nid_postfix(nullptr, &nothrowTag);
+
+    REQUIRE(releases == 1);
 
     Reset(1);
     REQUIRE(Throws([] { _Znwm_nid_postfix(8); }) && handlerCalls == 0 && allocations == 1);
@@ -141,6 +190,68 @@ int main() {
 
     REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(nullptr) == &allocatingHandler);
     REQUIRE(_ZSt15get_new_handlerv_nid_postfix() == nullptr);
+
+    Reset(0);
+    void* aligned = _ZnwmSt11align_val_t_nid_postfix(24, 16);
+    REQUIRE(aligned == storage.data() && lastSize == 24 && lastAlignment == 16 && allocations == 1);
+    _ZdlPvSt11align_val_t_nid_postfix(aligned, 16);
+
+    Reset(1);
+    REQUIRE(Throws([] { _ZnwmSt11align_val_t_nid_postfix(8, 32); }) && handlerCalls == 0 && allocations == 1);
+
+    Reset(0);
+    REQUIRE(_ZnwmSt11align_val_t_nid_postfix(0, 16) == storage.data() && lastSize == 1 && lastAlignment == 16);
+    Reset(2);
+    _ZSt15set_new_handlerPFvvE_nid_postfix(&countingHandler);
+
+    REQUIRE(_ZnwmSt11align_val_t_nid_postfix(8, 16) == storage.data() && handlerCalls == 2 && allocations == 3);
+    _ZSt15set_new_handlerPFvvE_nid_postfix(nullptr);
+
+    Reset(0);
+    void* array = _ZnamSt11align_val_t_nid_postfix(40, 64);
+    REQUIRE(array == storage.data() && lastSize == 40 && lastAlignment == 64 && allocations == 1);
+    _ZdaPvSt11align_val_t_nid_postfix(array, 64);
+    REQUIRE(releases == 1);
+    Reset(0);
+    REQUIRE(_ZnamSt11align_val_t_nid_postfix(0, 32) == storage.data() && lastSize == 1 && lastAlignment == 32);
+    Reset(1);
+    REQUIRE(Throws([] { _ZnamSt11align_val_t_nid_postfix(8, 32); }) && handlerCalls == 0 && allocations == 1);
+
+    Reset(0);
+    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(24, 128, &nothrowTag) == storage.data() && lastSize == 24 && lastAlignment == 128);
+    Reset(1);
+    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(24, 128, &nothrowTag) == nullptr && allocations == 1);
+    Reset(0);
+    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(56, 256, &nothrowTag) == storage.data() && lastSize == 56 && lastAlignment == 256);
+    Reset(1);
+    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(56, 256, &nothrowTag) == nullptr && allocations == 1);
+
+    _ZSt15set_new_handlerPFvvE_nid_postfix(&countingHandler);
+    Reset(2);
+    REQUIRE(_ZnamSt11align_val_t_nid_postfix(8, 64) == storage.data() && handlerCalls == 2 && allocations == 3);
+    Reset(1);
+    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == storage.data() && handlerCalls == 1 && allocations == 2);
+    Reset(1);
+    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == storage.data() && handlerCalls == 1 && allocations == 2);
+    _ZSt15set_new_handlerPFvvE_nid_postfix(&throwingHandler);
+    Reset(1);
+    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == nullptr && handlerCalls == 1 && allocations == 1);
+    Reset(1);
+    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == nullptr && handlerCalls == 1 && allocations == 1);
+    _ZSt15set_new_handlerPFvvE_nid_postfix(nullptr);
+
+    Reset(0);
+    _ZdaPvRKSt9nothrow_t_nid_postfix(storage.data(), &nothrowTag);
+    _ZdlPvSt11align_val_tRKSt9nothrow_t_nid_postfix(storage.data(), 64, &nothrowTag);
+    _ZdaPvmSt11align_val_t_nid_postfix(storage.data(), 40, 64);
+    _ZdaPvSt11align_val_tRKSt9nothrow_t_nid_postfix(storage.data(), 64, &nothrowTag);
+    REQUIRE(releases == 4);
+    _ZdaPvRKSt9nothrow_t_nid_postfix(nullptr, &nothrowTag);
+    _ZdlPvSt11align_val_tRKSt9nothrow_t_nid_postfix(nullptr, 64, &nothrowTag);
+    _ZdaPvSt11align_val_t_nid_postfix(nullptr, 64);
+    _ZdaPvmSt11align_val_t_nid_postfix(nullptr, 0, 64);
+    _ZdaPvSt11align_val_tRKSt9nothrow_t_nid_postfix(nullptr, 64, &nothrowTag);
+    REQUIRE(releases == 4);
 
     std::puts("Guest new handler checks passed");
     return 0;

@@ -1,20 +1,14 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
 
-extern "C" {
-int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp);
-int APS5_VABI _nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp);
-int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp);
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
-int* APS5_VABI __error_nid_postfix();
-}
-
 using Nanosleep = int (APS5_VABI *)(const KernelTimespec*, KernelTimespec*);
 
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000E);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 
 static constexpr int GUEST_EACCES = 13;
 static constexpr int GUEST_EFAULT = 14;
@@ -85,6 +79,22 @@ static void SleepsForTheRequest(Nanosleep sleep) {
     Require(MonotonicNanos() - start >= SLEEP_NANOS - EARLY_WAKE_MARGIN_NANOS);
 }
 
+static void CompletedSleepLeavesTheRemainingTimeAlone(Nanosleep sleep) {
+    const KernelTimespec request{0, NANOS_PER_MILLISECOND};
+    KernelTimespec remaining{7, 9};
+    Require(sleep(&request, &remaining) == SCE_OK);
+    Require(remaining.tv_sec == 7 && remaining.tv_nsec == 9);
+    KernelTimespec shared = request;
+    for (int i = 0; i < 3; ++i) {
+        Require(sleep(&shared, &shared) == SCE_OK);
+        Require(shared.tv_sec == request.tv_sec && shared.tv_nsec == request.tv_nsec);
+    }
+    const KernelTimespec invalid{0, NANOS_PER_SECOND};
+    remaining = {7, 9};
+    Require(sleep(&invalid, &remaining) != SCE_OK);
+    Require(remaining.tv_sec == 7 && remaining.tv_nsec == 9);
+}
+
 int main() {
     PosixRejectsInvalidRequests(nanosleep_nid_postfix);
     PosixRejectsInvalidRequests(_nanosleep_nid_postfix);
@@ -97,4 +107,8 @@ int main() {
     SleepsForTheRequest(nanosleep_nid_postfix);
     SleepsForTheRequest(_nanosleep_nid_postfix);
     SleepsForTheRequest(sceKernelNanosleep);
+
+    CompletedSleepLeavesTheRemainingTimeAlone(nanosleep_nid_postfix);
+    CompletedSleepLeavesTheRemainingTimeAlone(_nanosleep_nid_postfix);
+    CompletedSleepLeavesTheRemainingTimeAlone(sceKernelNanosleep);
 }

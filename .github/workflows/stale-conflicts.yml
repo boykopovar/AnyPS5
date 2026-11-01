@@ -1,0 +1,36 @@
+name: Stale conflicts
+
+on:
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  warn:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr list -R "$GITHUB_REPOSITORY" --label stale -L 1000 --json number,labels \
+            --jq '.[] | select(all(.labels[]; .name != "needs rebase")) | .number' |
+            while read -r number; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$number/labels/stale" --silent
+            done
+      - uses: actions/stale@v11
+        with:
+          only-pr-labels: needs rebase
+          days-before-issue-stale: -1
+          days-before-issue-close: -1
+          days-before-pr-stale: 7
+          days-before-pr-close: -1
+          stale-pr-label: stale
+          stale-pr-message: 'This pull request has conflicted with `main` and had no activity for 7 days. Rebase it on current `main` so it can be reviewed and merged. It will not be closed automatically.'
+          remove-pr-stale-when-updated: true
+          exempt-draft-pr: true
+          operations-per-run: 200

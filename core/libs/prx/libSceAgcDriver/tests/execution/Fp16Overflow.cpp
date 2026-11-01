@@ -226,6 +226,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
+            std::puts("skipped, the device has no shaderFloat64");
+            return VulkanTestSkipped;
+        }
         Run(*device, std::nullopt);
         Check(ExpectedInfinity, "no float mode");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});

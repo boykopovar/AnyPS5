@@ -14,7 +14,7 @@ def fixture():
     image = bytearray(0x8000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16,
-                     3, 62, 1, 0x4000, 64, 0, 0, 64, 56, 6, 64, 0, 0)
+                     3, 62, 1, 0, 64, 0, 0, 64, 56, 6, 64, 0, 0)
     image[0x4000:0x4006] = b"\xb8\x2a\x00\x00\x00\xc3"
     tags = [(5, 0x600), (10, 1), (6, 0x620), (11, 24), (7, 0x700), (8, 0), (9, 24), (0, 0)]
     struct.pack_into("<IIQQQQQQ", image, 64,
@@ -53,12 +53,36 @@ def main():
         alignment = max(segment[7] for segment in segments)
         if alignment != 0x4000 or first[3] % alignment != 0 or first[7] != alignment:
             raise AssertionError(("first PT_LOAD is not aligned to the largest segment alignment", segments))
-        assert "output.elf\nlibs/\n    *.prx\napp0/" in result.stdout, result.stdout
+        assert "  |-- output.elf\n  |-- libs/\n        |-- *.prx (system libraries)\n  |-- app0/" in result.stdout, result.stdout
+
+        malformed = fixture()
+        struct.pack_into("<Q", malformed, 64 + 40, 0x0fff)
+        source.write_bytes(malformed)
+        output.unlink()
+        result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 2 and "PT_LOAD file size exceeds memory size" in result.stderr and not output.exists(), result
+
+        source.write_bytes(fixture())
         named_exe = Path(directory) / "linux.EXE"
         warning = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(named_exe)], capture_output=True, text=True, timeout=20)
         assert warning.returncode == 0, (warning.stdout, warning.stderr)
         assert "--windows was not specified" in warning.stderr, warning.stderr
         assert named_exe.read_bytes().startswith(b"\x7fELF"), "The filename must not select the output format"
+
+        padded = fixture()
+        padded[9:16] = bytes(range(1, 8))
+        source.write_bytes(padded)
+        idents = {}
+        for index, mode in enumerate(([], ["--linux-fixed-base", "0x800000"], ["--lazy-binding"])):
+            target = Path(directory) / f"padded{index}.elf"
+            result = subprocess.run([str(relinker), "--skip-sce-module", *mode, str(source), str(target)],
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == 0, (mode, result.stdout, result.stderr)
+            ident = target.read_bytes()[:16]
+            if ident[7:] != bytes(9):
+                idents[" ".join(mode) or "default"] = ident.hex()
+        assert not idents, idents
     print("Linux load alignment test passed")
 
 

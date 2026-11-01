@@ -39,10 +39,12 @@ struct IrDescriptorBinding {
 
 struct IrBindingLayout {
     std::uint32_t pushDataStartDword = PushData::NoStart;
+    std::uint32_t stencilReferenceDword = PushData::NoStart;
     std::uint32_t memoryOffsetDword = 0;
     std::uint32_t memoryOffsetCount = 0;
     bool dispatchThreadLimit = false;
     std::uint32_t runtimeImageCount = 0;
+    std::uint32_t runtimeStateDwords = 0;
     std::vector<std::uint32_t> userDataRegisters;
     std::vector<IrDescriptorBinding> descriptors;
 
@@ -52,8 +54,11 @@ struct IrBindingLayout {
     [[nodiscard]] std::uint32_t ImageMetadataDword() const {
         return DispatchThreadLimitDword() + (dispatchThreadLimit ? 3u : 0u);
     }
-    [[nodiscard]] std::uint32_t ShaderDataDwords() const {
+    [[nodiscard]] std::uint32_t RuntimeStateDword() const {
         return ImageMetadataDword() + runtimeImageCount * (sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t));
+    }
+    [[nodiscard]] std::uint32_t ShaderDataDwords() const {
+        return RuntimeStateDword() + runtimeStateDwords;
     }
     [[nodiscard]] bool UsesPushData() const {
         return pushDataStartDword != PushData::NoStart;

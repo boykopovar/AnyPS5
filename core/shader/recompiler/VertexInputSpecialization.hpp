@@ -16,7 +16,7 @@ namespace ShaderRecompiler {
 
 inline SharedSpirv SpecializeVertexInputTypes(const CompiledShaderArtifact& artifact, std::span<const std::uint32_t> classes) {
     if (artifact.vertexInputPatches.empty()) return artifact.spirv;
-    auto words = artifact.spirv.Words();
+    auto words = artifact.spirv.Copy();
     for (const auto& patch : artifact.vertexInputPatches) {
         if (patch.location >= classes.size() || classes[patch.location] >= patch.values.size() || patch.word >= words.size()) throw std::runtime_error("invalid prepared vertex type patch");
         words[patch.word] = patch.values[classes[patch.location]];

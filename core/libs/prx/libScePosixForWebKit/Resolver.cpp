@@ -1,3 +1,5 @@
+#include "prx/libScePosixForWebKit/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -8,17 +10,18 @@
 #include <netinet/in.h>
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstdint>
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <cstdlib>
 #include <cerrno>
 #include <new>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include "GuestResolver.hpp"
-
-extern "C" int* APS5_VABI sceNetErrnoLoc();
 
 namespace {
 struct HostLookup {
@@ -29,6 +32,66 @@ struct HostLookup {
     std::vector<std::string> addressBytes;
     std::vector<char*> addresses;
 };
+
+struct ServiceRecord {
+    const char* name;
+    std::uint16_t port;
+    const char* protocol;
+    std::array<const char*, 2> aliases;
+};
+
+constexpr ServiceRecord Services[]{
+    {"ftp-data", 20, "tcp", {}}, {"ftp-data", 20, "udp", {}}, {"ftp-data", 20, "sctp", {}},
+    {"ftp", 21, "tcp", {}}, {"ftp", 21, "udp", {}}, {"ftp", 21, "sctp", {}},
+    {"ssh", 22, "tcp", {}}, {"ssh", 22, "udp", {}}, {"ssh", 22, "sctp", {}},
+    {"telnet", 23, "tcp", {}}, {"telnet", 23, "udp", {}},
+    {"smtp", 25, "tcp", {"mail"}}, {"smtp", 25, "udp", {"mail"}},
+    {"domain", 53, "tcp", {}}, {"domain", 53, "udp", {}},
+    {"tftp", 69, "tcp", {}}, {"tftp", 69, "udp", {}},
+    {"http", 80, "tcp", {"www", "www-http"}}, {"http", 80, "udp", {"www", "www-http"}},
+    {"http", 80, "sctp", {"www", "www-http"}},
+    {"pop3", 110, "tcp", {}}, {"pop3", 110, "udp", {}},
+    {"ntp", 123, "tcp", {}}, {"ntp", 123, "udp", {}},
+    {"imap", 143, "tcp", {"imap2", "imap4"}}, {"imap", 143, "udp", {"imap2", "imap4"}},
+    {"https", 443, "tcp", {}}, {"https", 443, "udp", {}}, {"https", 443, "sctp", {}},
+    {"rtsp", 554, "tcp", {}}, {"rtsp", 554, "udp", {}},
+    {"submission", 587, "tcp", {}}, {"submission", 587, "udp", {}},
+    {"imaps", 993, "tcp", {}}, {"imaps", 993, "udp", {}},
+    {"pop3s", 995, "tcp", {"spop3"}}, {"pop3s", 995, "udp", {"spop3"}},
+};
+
+constexpr std::size_t ServiceNameSize = 11;
+constexpr std::size_t ServiceAliasSize = 9;
+constexpr std::size_t ServiceProtocolSize = 5;
+constexpr std::size_t ServiceAliasCount = std::tuple_size_v<decltype(ServiceRecord::aliases)>;
+
+template<typename TSelect>
+constexpr std::size_t LongestServiceText(TSelect select) {
+    std::size_t longest = 0;
+    for (const auto& service : Services)
+        for (const char* text : select(service))
+            if (text) longest = std::max(longest, std::char_traits<char>::length(text));
+    return longest;
+}
+
+static_assert(ServiceNameSize == LongestServiceText([](const ServiceRecord& record) { return std::array{record.name}; }) + 1);
+static_assert(ServiceAliasSize == LongestServiceText([](const ServiceRecord& record) { return record.aliases; }) + 1);
+static_assert(ServiceProtocolSize == LongestServiceText([](const ServiceRecord& record) { return std::array{record.protocol}; }) + 1);
+
+struct ServiceLookup {
+    GuestResolver::ServiceEntry entry;
+    std::array<char, ServiceNameSize> name;
+    std::array<char, ServiceProtocolSize> protocol;
+    std::array<std::array<char, ServiceAliasSize>, ServiceAliasCount> aliasNames;
+    std::array<char*, ServiceAliasCount + 1> aliases;
+};
+static_assert(std::is_trivially_destructible_v<ServiceLookup>);
+
+template<std::size_t Size>
+char* CopyServiceText(std::array<char, Size>& target, const char* text) {
+    std::memcpy(target.data(), text, std::strlen(text) + 1);
+    return target.data();
+}
 
 bool NumericAddress(const char* name, std::array<unsigned char, 4>& address) {
     std::array<unsigned char, 3> parts{};
@@ -119,9 +182,17 @@ GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) 
         int hostError = 0;
         int error = 0;
         if (!numeric) {
+#ifdef __APPLE__
+            native = ::gethostbyname(name);
+            if (native == nullptr) {
+                hostError = h_errno;
+                error = hostError == TRY_AGAIN ? EAGAIN : 0;
+            }
+#else
             buffer.resize(1024);
             while ((error = ::gethostbyname_r(name, &nativeEntry, buffer.data(), buffer.size(), &native, &hostError)) == ERANGE)
                 buffer.resize(buffer.size() * 2);
+#endif
         }
         if (error != 0 || !native) {
             *sceNetErrnoLoc() = hostError != 0 ? hostError : 3;
@@ -129,7 +200,8 @@ GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) 
             return nullptr;
         }
 #endif
-        static thread_local HostLookup lookup;
+        struct LookupTag {};
+        auto& lookup = HostThreadLocal<HostLookup, LookupTag>();
         lookup.name = native->h_name;
         lookup.aliasNames.clear();
         lookup.aliases.clear();
@@ -153,6 +225,27 @@ GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) 
     }
 }
 
+GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol) {
+    for (const auto& service : Services) {
+        bool named = std::strcmp(name, service.name) == 0;
+        for (const char* alias : service.aliases)
+            named = named || (alias && std::strcmp(name, alias) == 0);
+        if (!named || (protocol && std::strcmp(protocol, service.protocol) != 0)) continue;
+        static thread_local ServiceLookup lookup;
+        std::size_t count = 0;
+        for (const char* alias : service.aliases) {
+            if (!alias) continue;
+            lookup.aliases[count] = CopyServiceText(lookup.aliasNames[count], alias);
+            ++count;
+        }
+        lookup.aliases[count] = nullptr;
+        lookup.entry = {CopyServiceText(lookup.name, service.name), lookup.aliases.data(), htons(service.port),
+            CopyServiceText(lookup.protocol, service.protocol)};
+        return &lookup.entry;
+    }
+    return nullptr;
+}
+
 void APS5_VABI freeaddrinfo_nid_postfix(GuestResolver::AddressInfo* first) {
     while (first) {
         auto* next = first->next;
@@ -167,15 +260,17 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
     const GuestResolver::AddressInfo* hints, GuestResolver::AddressInfo** output) {
     if (!output) return 4;
     *output = nullptr;
+    if (!node && !service) return 8;
     addrinfo nativeHints{};
+    const bool rawQuery = hints && hints->socketType == 3;
     if (hints) {
         if (hints->addressLength || hints->address || hints->canonicalName || hints->next) return 12;
         if ((hints->flags & ~0xd0f) != 0) return 3;
         if (hints->family != 0 && hints->family != 2 && hints->family != 28) return 5;
-        if (hints->socketType != 0 && hints->socketType != 1 && hints->socketType != 2) return 10;
+        if (hints->socketType != 0 && hints->socketType != 1 && hints->socketType != 2 && hints->socketType != 3) return 10;
         nativeHints.ai_family = hints->family == 28 ? AF_INET6 : hints->family == 2 ? AF_INET : AF_UNSPEC;
-        nativeHints.ai_socktype = hints->socketType == 1 ? SOCK_STREAM : hints->socketType == 2 ? SOCK_DGRAM : 0;
-        nativeHints.ai_protocol = hints->protocol;
+        nativeHints.ai_socktype = hints->socketType == 1 ? SOCK_STREAM : (hints->socketType == 2 || rawQuery) ? SOCK_DGRAM : 0;
+        nativeHints.ai_protocol = rawQuery ? IPPROTO_UDP : hints->protocol;
         if (hints->flags & 1) nativeHints.ai_flags |= AI_PASSIVE;
         if (hints->flags & 2) nativeHints.ai_flags |= AI_CANONNAME;
         if (hints->flags & 4) nativeHints.ai_flags |= AI_NUMERICHOST;
@@ -184,6 +279,7 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
         if (hints->flags & 0x400) nativeHints.ai_flags |= AI_ADDRCONFIG;
         if (hints->flags & 0x800) nativeHints.ai_flags |= AI_V4MAPPED;
     }
+    if (rawQuery && service) return 9;
     if (!Ready()) return 4;
     addrinfo* native = nullptr;
     const auto error = ::getaddrinfo(node, service, &nativeHints, &native);
@@ -199,8 +295,8 @@ int APS5_VABI getaddrinfo_nid_postfix(const char* node, const char* service,
         tail = &converted->next;
         converted->flags = hints ? hints->flags : 0;
         converted->family = item->ai_family == AF_INET ? 2 : 28;
-        converted->socketType = item->ai_socktype == SOCK_STREAM ? 1 : item->ai_socktype == SOCK_DGRAM ? 2 : 0;
-        converted->protocol = item->ai_protocol;
+        converted->socketType = rawQuery ? 3 : item->ai_socktype == SOCK_STREAM ? 1 : item->ai_socktype == SOCK_DGRAM ? 2 : 0;
+        converted->protocol = rawQuery ? hints->protocol : item->ai_protocol;
         converted->addressLength = item->ai_family == AF_INET ? 16 : 28;
         auto* bytes = static_cast<unsigned char*>(std::calloc(1, converted->addressLength));
         converted->address = bytes;
@@ -284,13 +380,13 @@ int APS5_VABI getnameinfo_nid_postfix(const void* address, std::uint32_t length,
 const char* APS5_VABI gai_strerror_nid_postfix(int error) {
     static const char* messages[] = {
         "Success", "Address family for hostname not supported", "Temporary failure in name resolution",
-        "Invalid flags", "Name resolution failed", "Address family not supported",
-        "Memory allocation failed", "No address for hostname", "Name or service not known",
-        "Service not supported for socket type", "Socket type not supported", "System error",
-        "Invalid hints", "Unknown protocol", "Buffer too small"
+        "Invalid value for ai_flags", "Non-recoverable failure in name resolution", "ai_family not supported",
+        "Memory allocation failure", "No address associated with hostname", "hostname nor servname provided, or not known",
+        "servname not supported for ai_socktype", "ai_socktype not supported", "System error returned in errno",
+        "Invalid value for hints", "Resolved protocol is unknown", "Argument buffer overflow"
     };
     if (error < 0 || error >= static_cast<int>(sizeof(messages) / sizeof(messages[0])))
-        return "Unknown address resolution error";
+        return "Unknown error";
     return messages[error];
 }
 }

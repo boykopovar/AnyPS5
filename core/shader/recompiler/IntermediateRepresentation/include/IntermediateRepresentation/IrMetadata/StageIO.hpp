@@ -13,7 +13,19 @@ enum class TessellationAttribute {
     ControlOutput,
     EvaluationInput,
     PatchOutput,
-    Factor
+    Factor,
+    PatchInput,
+    InstanceOutput,
+    InstanceInput,
+    ControlShared,
+    GeometryOutput
+};
+
+enum class TessellationBaseKind {
+    OffChip,
+    Factor,
+    RelativeIndex,
+    PassthroughPrimitive
 };
 
 enum class StageInputKind {
@@ -36,7 +48,33 @@ enum class StageInputKind {
     DispatchThreadLimit,
     Parameter,
     HelperInvocation,
+    RasterPrimitive,
+    LayerExported,
+    BaseInstance,
+    BaryCoordSmoothCenter,
+    BaryCoordNoPerspectiveCenter,
+    BaryCoordSmoothSample,
+    BaryCoordNoPerspectiveSample,
+    SampleMask,
 };
+
+constexpr StageInputKind BarycentricInputOf(StageInputKind kind) {
+    switch (kind) {
+    case StageInputKind::BaryCoordSmoothCenter:
+    case StageInputKind::BaryCoordSmoothSample:
+        return StageInputKind::BaryCoordSmooth;
+    case StageInputKind::BaryCoordNoPerspectiveCenter:
+    case StageInputKind::BaryCoordNoPerspectiveSample:
+        return StageInputKind::BaryCoordNoPerspective;
+    default:
+        return kind;
+    }
+}
+
+constexpr bool IsBarycentricInput(StageInputKind kind) {
+    const auto input = BarycentricInputOf(kind);
+    return input == StageInputKind::BaryCoordSmooth || input == StageInputKind::BaryCoordNoPerspective;
+}
 
 enum class StageOutputKind {
     Position,
@@ -44,6 +82,7 @@ enum class StageOutputKind {
     Mrt,
     Depth,
     SampleMask,
+    StencilRef,
     PointSize,
     ClipDistance,
     CullDistance,

@@ -1,3 +1,4 @@
+#include "prx/libSceSaveData/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
@@ -11,12 +12,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" {
-int APS5_VABI sceSaveDataInitialize3(const void*);
-int APS5_VABI sceSaveDataTerminate();
-int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2*, SaveDataMemorySetupResult*);
-}
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -82,10 +77,10 @@ int main(int argc, char**) {
             std::fprintf(stderr, "Read denial unavailable for this user\n");
             exitCode = 77;
         } else {
-            Require(Read(path) == original);
             Require(status == static_cast<int>(0x809F000Bu));
+            Require(Read(path) == original);
             Require(result.existed_memory_size == 123);
-            Require(!std::filesystem::exists("_sd_mem/u7531/slot0.param"));
+            Require(std::filesystem::is_regular_file("_sd_mem/u7531/slot0.param"));
             Require(!std::filesystem::exists(path.string() + ".tmp"));
         }
     } else {

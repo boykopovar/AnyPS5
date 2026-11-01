@@ -1,5 +1,9 @@
 add_library(libSceUsbd SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceUsbd PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceUsbd PRIVATE usb-1.0)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(libSceUsbd PRIVATE LINKER:--exclude-libs,ALL)
+endif()
 configure_windows_unwind(libSceUsbd)
 
 if(BUILD_TESTING)

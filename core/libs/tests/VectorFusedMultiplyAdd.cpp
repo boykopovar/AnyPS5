@@ -105,7 +105,10 @@ void CheckMixHalf(const std::string& name, const std::array<std::uint32_t, 2>& w
     std::uint32_t exact = 0u;
     for (const auto* value : block.Instructions()) {
         Require(value->Opcode() != IrOpcode::FPFma32 && value->Opcode() != IrOpcode::FPMad32, name + " rounds to f32 before rounding to f16");
-        if (value->Opcode() == IrOpcode::FPInterpolateF16) ++exact;
+        if (value->Opcode() != IrOpcode::FPInterpolateF16) continue;
+        ++exact;
+        const std::uint32_t rounding = (value->Argument(3)->ImmediateU32() >> InterpolationRound16Shift) & 3u;
+        Require(rounding == ((floatMode >> 2u) & 3u), name + " rounds in f16 mode " + std::to_string(rounding));
     }
     Require(exact == 1u, name + " emits " + std::to_string(exact) + " product-sums rounded once to f16");
 }
@@ -146,7 +149,8 @@ int main() {
         CheckMixHalf("v_fma_mixlo_f16 op_sel_hi:[1,1,1]", {0xcc214005u, 0x1c220f06u}, RdnaOpcode::VMadMixloF16, 0xc0u);
         CheckMixHalf("v_fma_mixlo_f16 with f32 round toward zero", {0xcc210005u, 0x04220f06u}, RdnaOpcode::VMadMixloF16, 0xf3u);
         RejectMixHalf("v_fma_mixlo_f16 with f16 denormals flushed", {0xcc210005u, 0x04220f06u}, 0x30u);
-        RejectMixHalf("v_fma_mixhi_f16 with f16 round toward -inf", {0xcc220005u, 0x04220f06u}, 0xf8u);
+        CheckMixHalf("v_fma_mixhi_f16 with f16 round toward -inf", {0xcc220005u, 0x04220f06u}, RdnaOpcode::VMadMixhiF16, 0xf8u);
+        CheckMixHalf("v_fma_mixlo_f16 with f16 round toward zero", {0xcc210005u, 0x04220f06u}, RdnaOpcode::VMadMixloF16, 0xccu);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

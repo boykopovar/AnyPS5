@@ -53,26 +53,35 @@ std::uint32_t CreateInterpolantValueSplitF16(std::uint32_t psWord, const ShaderS
         : CreateInterpolantValue(psWord, gsSemantic);
 }
 
-int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader* gs, const Shader* ps, CreateInterpolantValueFn createValue) {
+std::uint32_t CreateInterpolantValueFlatDefault(std::uint32_t psWord, const ShaderSemantic* gsSemantic) {
+    const std::uint32_t value = CreateInterpolantValue(psWord, gsSemantic);
+    return ((psWord & 0x00700000u) == 0x00400000u) ? (value | 0x00000020u) : value;
+}
+
+int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader* gs, const Shader* ps, CreateInterpolantValueFn createValue, bool fillIdentityTail) {
     if (regs == nullptr) {
         throw std::runtime_error(std::string(fn) + ": regs is null");
+    }
+    if (ps == nullptr && !fillIdentityTail) {
+        throw std::runtime_error(std::string(fn) + ": ps is null");
     }
     if (ps != nullptr && ps->num_input_semantics > 32) {
         throw std::runtime_error(std::string(fn) + ": input semantic count exceeds 32");
     }
 
-    AgcDriver::ShaderPreparationScope transaction;
+    AgcDriver::ShaderPreparationScope transaction({ps != nullptr ? gs : nullptr, ps});
     std::array<ShaderRegister, 32> values{};
     auto* output = regs;
     regs = values.data();
     if (ps == nullptr || ps->num_input_semantics == 0) {
-        FillIdentityInterpolants(regs, 0);
+        const std::uint32_t count = fillIdentityTail ? InterpolantRegisterCount : 0;
+        if (fillIdentityTail) FillIdentityInterpolants(regs, 0);
         if (ps != nullptr) {
-            AgcDriverResolveShaderAbi_nid_postfix(ps, {regs, 32}, {});
+            AgcDriverResolveShaderAbi_nid_postfix(ps, {regs, count}, {});
             if (gs != nullptr) AgcDriverResolveGraphicsAbi_nid_postfix(gs, ps, 0);
         }
         transaction.Commit();
-        std::copy(values.begin(), values.end(), output);
+        std::copy_n(values.begin(), count, output);
         return 0;
     }
 
@@ -98,11 +107,12 @@ int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader*
         SetInterpolantRegister(regs, i, createValue(ShaderSemanticWord(psSemantic), gsSemantic));
     }
 
-    FillIdentityInterpolants(regs, ps->num_input_semantics);
-    AgcDriverResolveShaderAbi_nid_postfix(ps, {regs, 32}, {});
+    const std::uint32_t count = fillIdentityTail ? InterpolantRegisterCount : ps->num_input_semantics;
+    if (fillIdentityTail) FillIdentityInterpolants(regs, ps->num_input_semantics);
+    AgcDriverResolveShaderAbi_nid_postfix(ps, {regs, count}, {});
     AgcDriverResolveGraphicsAbi_nid_postfix(gs, ps, 0);
     transaction.Commit();
-    std::copy(values.begin(), values.end(), output);
+    std::copy_n(values.begin(), count, output);
     return 0;
 }
 
@@ -111,12 +121,23 @@ int CreateInterpolantMapping(const char* fn, ShaderRegister* regs, const Shader*
 extern "C" {
 
 int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
-    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValue);
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValue, true);
 }
 
-APS5_EXPORT("dbOlWdppb4o", sceAgcUnknownCreateInterpolantMapping);
-int APS5_VABI sceAgcUnknownCreateInterpolantMapping(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
-    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueSplitF16);
+int APS5_VABI sceAgcCreateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueSplitF16, true);
+}
+
+int APS5_VABI sceAgcUpdateInterpolantMapping_10000(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueSplitF16, false);
+}
+
+int APS5_VABI sceAgcCreateInterpolantMapping_nid_postfix(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueFlatDefault, true);
+}
+
+int APS5_VABI sceAgcUpdateInterpolantMapping_nid_postfix(ShaderRegister* regs, const Shader* gs, const Shader* ps) {
+    return CreateInterpolantMapping(__func__, regs, gs, ps, CreateInterpolantValueFlatDefault, false);
 }
 
 }

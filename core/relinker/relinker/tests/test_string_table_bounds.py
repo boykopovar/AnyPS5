@@ -23,20 +23,22 @@ DT_OS_RELASZ = 0x61000031
 DT_OS_RELAENT = 0x61000033
 
 
-def fixture(os_tags=False, str_size=16, needed_offset=1, symbol_offset=8, table_bytes=None, outside_bytes=b""):
+def fixture(os_tags=False, str_size=16, needed_offset=1, symbol_offset=8, table_bytes=None, outside_bytes=b"",
+            block_offset=0, strtab_value=None, duplicate_sce_dynlibdata=False):
     image = bytearray(0x1000)
+    table_base = block_offset if os_tags else 0
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16,
-                     3, 62, 1, 0x200, 64, 0, 0, 64, 56, 3, 64, 0, 0)
+                     3, 62, 1, 0x200, 64, 0, 0, 64, 56, 4 if duplicate_sce_dynlibdata else 3, 64, 0, 0)
     image[0x200:0x206] = b"\xff\x25\xfa\x00\x00\x00"
     tags = [
         (DT_NEEDED, needed_offset),
-        (DT_OS_STRTAB if os_tags else DT_STRTAB, 0x600),
+        (DT_OS_STRTAB if os_tags else DT_STRTAB, 0x600 - table_base if strtab_value is None else strtab_value),
         (DT_OS_STRSZ if os_tags else DT_STRSZ, str_size),
-        (DT_OS_SYMTAB if os_tags else DT_SYMTAB, 0x620),
+        (DT_OS_SYMTAB if os_tags else DT_SYMTAB, 0x620 - table_base),
         (DT_OS_SYMENT if os_tags else DT_SYMENT, 24),
         (DT_OS_SYMTABSZ, 48),
-        (DT_OS_RELA if os_tags else DT_RELA, 0x700),
+        (DT_OS_RELA if os_tags else DT_RELA, 0x700 - table_base),
         (DT_OS_RELASZ if os_tags else DT_RELASZ, 24),
         (DT_OS_RELAENT if os_tags else DT_RELAENT, 24),
         (0, 0),
@@ -46,7 +48,12 @@ def fixture(os_tags=False, str_size=16, needed_offset=1, symbol_offset=8, table_
     struct.pack_into("<IIQQQQQQ", image, 120,
                      2, 6, 0x400, 0x400, 0x400, len(tags) * 16, len(tags) * 16, 8)
     struct.pack_into("<IIQQQQQQ", image, 176,
-                     0x61000000, 0, 0, 0, 0, len(image), len(image), 1)
+                     0x61000000, 0, block_offset, 0, 0, len(image) - block_offset, len(image) - block_offset, 1)
+    if duplicate_sce_dynlibdata:
+        struct.pack_into("<IIQQQQQQ", image, 232,
+                         0x61000000, 0, 0x500, 0, 0, len(image) - 0x500, len(image) - 0x500, 1)
+    if table_base:
+        image[0x100:0x200] = b"\xff" * 0x100
     for index, tag in enumerate(tags):
         struct.pack_into("<qQ", image, 0x400 + index * 16, *tag)
     struct.pack_into("<QQq", image, 0x700, 0x300, (1 << 32) | 6, 0)
@@ -77,6 +84,15 @@ def main():
         work = Path(directory)
         run(relinker, work, "sysv-valid", fixture())
         run(relinker, work, "os-valid", fixture(os_tags=True))
+        run(relinker, work, "os-tables-in-sce-block", fixture(os_tags=True, block_offset=0x500))
+        run(relinker, work, "os-table-addition-overflow", fixture(os_tags=True, block_offset=0x500,
+                                                                     strtab_value=0xffffffffffffffff),
+            "Adding PT_SCE_DYNLIBDATA base to DT_STRTAB overflows")
+        run(relinker, work, "os-table-out-of-bounds", fixture(os_tags=True, block_offset=0x500,
+                                                                strtab_value=0xb00),
+            "Dynamic string table is out of bounds")
+        run(relinker, work, "duplicate-sce-dynlibdata", fixture(os_tags=True, duplicate_sce_dynlibdata=True),
+            "Multiple PT_SCE_DYNLIBDATA segments")
         run(relinker, work, "needed-offset", fixture(needed_offset=16, outside_bytes=b"lib.so\x00"),
             "Dynamic string offset is outside DT_STRSZ")
         run(relinker, work, "needed-offset-max", fixture(needed_offset=0xffffffffffffffff,

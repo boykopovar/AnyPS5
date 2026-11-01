@@ -22,20 +22,36 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+      - uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/overlap-state.json
+          key: pr-overlap-${{ github.run_id }}
+          restore-keys: pr-overlap-
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           out=$RUNNER_TEMP/overlap
+          state=$RUNNER_TEMP/overlap-state.json
           python3 tools/pr_overlap.py --base "${{ github.event.repository.default_branch }}" --out "$out"
+          [ -s "$state" ] || echo '{}' > "$state"
+          record() { jq --arg pr "$1" --arg h "$2" '.[$pr] = $h' "$state" > "$state.new" && mv "$state.new" "$state"; }
+          shopt -s nullglob
           marker='<!-- pr-overlap -->'
+          unpinned() { sed -E 's#/blob/[0-9a-f]{40}/#/blob/main/#g'; }
+          prev=
           for file in "$out"/*.md; do
+            [ -z "$prev" ] || record "$prev" "$hash"
             pr=$(basename "$file" .md)
+            hash=$(unpinned < "$file" | sha256sum | cut -d' ' -f1)
+            prev=
+            [ "$(jq -r --arg pr "$pr" '.[$pr] // empty' "$state")" = "$hash" ] && continue
+            prev=$pr
             comment=$(gh api "repos/$GH_REPO/issues/$pr/comments" --paginate \
               --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | [.id, .body] | @json" | head -n1)
             id=$(jq -r '.[0] // empty' <<< "${comment:-null}")
             if [ -s "$file" ]; then
-              [ "$(jq -r '.[1]' <<< "${comment:-null}")" = "$(cat "$file")" ] && continue
+              [ "$(jq -r '.[1]' <<< "${comment:-null}" | unpinned)" = "$(unpinned < "$file")" ] && continue
               if [ -n "$id" ]; then
                 gh api -X PATCH "repos/$GH_REPO/issues/comments/$id" -F body=@"$file" > /dev/null
               else
@@ -45,3 +61,11 @@ jobs:
               gh api -X DELETE "repos/$GH_REPO/issues/comments/$id"
             fi
           done
+          [ -z "$prev" ] || record "$prev" "$hash"
+          reports=$(for file in "$out"/*.md; do basename "$file" .md; done | jq -R . | jq -sc .)
+          jq -c --argjson keep "$reports" 'with_entries(select(.key | IN($keep[])))' "$state" > "$state.new" && mv "$state.new" "$state"
+      - if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/overlap-state.json
+          key: pr-overlap-${{ github.run_id }}

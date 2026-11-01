@@ -18,6 +18,37 @@ static void Check(std::uint32_t encoding, RdnaOpcode opcode, bool exec) {
     TranslationContext context(program, block, 256);
     context.TranslateInstruction(instruction);
 }
+
+static void CheckUnorderedInfinity(RdnaOpcode opcode, std::uint32_t constant, bool constantIsLhs) {
+    RdnaInstruction instruction{};
+    instruction.op = opcode;
+    instruction.family = RdnaInstructionFamily::VOPC;
+    instruction.sourceCount = 2u;
+    instruction.destination.kind = RdnaOperandKind::VccLo;
+    RdnaOperand& variable = constantIsLhs ? instruction.source1 : instruction.source0;
+    variable.kind = RdnaOperandKind::VectorRegister;
+    variable.reg = 1u;
+    RdnaOperand& infinity = constantIsLhs ? instruction.source0 : instruction.source1;
+    infinity.kind = RdnaOperandKind::FloatInlineConstant;
+    infinity.value = constant;
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256u);
+    context.TranslateInstruction(instruction);
+    const IrValue* vccValue = nullptr;
+    bool comparedFloats = false;
+    for (const auto* value : block.Instructions()) {
+        if (value->Opcode() == IrOpcode::SetVcc) vccValue = value->Argument(0u);
+        comparedFloats = comparedFloats || value->Opcode() == IrOpcode::FPUnordLessThanEqual32 ||
+            value->Opcode() == IrOpcode::FPUnordGreaterThanEqual32;
+    }
+    Require(vccValue != nullptr && !comparedFloats);
+    Require(vccValue->Opcode() == IrOpcode::LogicalAnd);
+    const IrValue* result = vccValue->Argument(1u)->Resolve();
+    Require(result->HasImmediate() && result->ImmediateU32() == 1u);
+}
+
 int main() {
     Check(0xa0u, RdnaOpcode::VCmpFI64, false);
     Check(0xa7u, RdnaOpcode::VCmpTI64, false);
@@ -43,4 +74,8 @@ int main() {
     Check(0xffu, RdnaOpcode::VCmpxTruF16, true);
     Check(0xdfu, RdnaOpcode::VCmpxOF16, true);
     Check(0xf8u, RdnaOpcode::VCmpxUF16, true);
+    CheckUnorderedInfinity(RdnaOpcode::VCmpNgtF32, 0x7f800000u, false);
+    CheckUnorderedInfinity(RdnaOpcode::VCmpNltF32, 0xff800000u, false);
+    CheckUnorderedInfinity(RdnaOpcode::VCmpNltF32, 0x7f800000u, true);
+    CheckUnorderedInfinity(RdnaOpcode::VCmpNgtF32, 0xff800000u, true);
 }

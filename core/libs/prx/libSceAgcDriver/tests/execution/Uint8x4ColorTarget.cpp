@@ -51,7 +51,7 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 16>, 4> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 16>, 6> Programs{};
 std::size_t programCount = 0;
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -133,17 +133,18 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t info) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::uint32_t info, AgcDriver::Graphics::ColorTileMode mode, std::uint32_t pipeBankXor) {
     AgcDriver::Registers cx;
-    cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
+    const auto address = block.Address() + pipeBankXor;
+    cx[0x318] = static_cast<std::uint32_t>(address >> 8u);
     cx[0x31b] = 0;
     cx[0x31c] = info;
     cx[0x31d] = 0;
     cx[0x323] = 0;
     cx[0x324] = 0;
     cx[0x3b0] = ((Width - 1u) << 14u) | (Height - 1u);
-    cx[0x3b8] = LinearAttrib3;
-    cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
+    cx[0x3b8] = LinearAttrib3 | (static_cast<std::uint32_t>(mode) << 14u);
+    cx[0x390] = static_cast<std::uint32_t>(address >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
     color.exportIndex = 0;
     color.uintExport = true;
@@ -218,15 +219,17 @@ std::vector<std::uint8_t> ReadBack(AgcDriver::VulkanDevice& device, std::uint64_
     return stored;
 }
 
-void Expect(AgcDriver::VulkanDevice& device, std::uint32_t info, VkFormat format, std::uint32_t elementBytes, std::array<std::uint16_t, 4> exported, const std::string& what) {
+void Expect(AgcDriver::VulkanDevice& device, std::uint32_t info, VkFormat format, std::uint32_t elementBytes, std::array<std::uint16_t, 4> exported, const std::string& what, AgcDriver::Graphics::ColorTileMode mode = AgcDriver::Graphics::ColorTileMode::Linear, std::uint32_t pipeBankXor = 0) {
     const auto bytes = static_cast<std::size_t>(Width) * Height * elementBytes;
-    Require(AgcDriver::Graphics::ColorTargetLayout(Width, Height, AgcDriver::Graphics::ColorTileMode::Linear, elementBytes).Bytes() == bytes, what + ": the linear target is padded");
-    Block block(bytes);
-    std::memset(block.data, Kept, bytes);
-    const auto color = DecodeTarget(block, info);
-    Require(color.format == format && color.elementBytes == elementBytes && color.bytes == bytes, what + ": the target decoded to the wrong format");
+    const AgcDriver::Graphics::ColorTargetLayout layout(Width, Height, mode, elementBytes, pipeBankXor);
+    Block block(layout.Bytes());
+    std::memset(block.data, Kept, block.bytes);
+    const auto color = DecodeTarget(block, info, mode, pipeBankXor);
+    Require(color.format == format && color.elementBytes == elementBytes && color.bytes == layout.Bytes() && color.tileMode == mode && color.pipeBankXor == pipeBankXor, what + ": the target decoded to the wrong format, mode or XOR");
     Draw(device, color, Program(exported));
-    const auto stored = ReadBack(device, block.Address(), bytes);
+    const auto tiled = ReadBack(device, block.Address(), block.bytes);
+    std::vector<std::uint8_t> stored(bytes);
+    layout.Detile(std::as_bytes(std::span(tiled)), std::as_writable_bytes(std::span(stored)));
     for (std::size_t offset = 0; offset < bytes; ++offset) {
         const bool inside = (offset / elementBytes) % Width < ScissorWidth;
         const auto expected = inside ? static_cast<std::uint8_t>(exported[offset % elementBytes]) : Kept;
@@ -241,6 +244,10 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Expect(*device, Rgba8UintInfo, VK_FORMAT_R8G8B8A8_UINT, 4, {0x12u, 0xbeu, 0x42u, 0x7fu}, "a UINT16_ABGR export into an 8_8_8_8_UINT target");
+        Expect(*device, Rgba8UintInfo, VK_FORMAT_R8G8B8A8_UINT, 4, {0x23u, 0x9au, 0x65u, 0x81u}, "a UINT16_ABGR export into a SW_64KB_D_X target", AgcDriver::Graphics::ColorTileMode::D64KBX);
+        Expect(*device, Rgba8UintInfo, VK_FORMAT_R8G8B8A8_UINT, 4, {0x31u, 0x7cu, 0x42u, 0x96u}, "a UINT16_ABGR export into a SW_64KB_D_X target with XOR", AgcDriver::Graphics::ColorTileMode::D64KBX, 0x4600);
+        Expect(*device, Rgba8UintInfo, VK_FORMAT_R8G8B8A8_UINT, 4, {0x47u, 0x2bu, 0xd1u, 0x6eu}, "a UINT16_ABGR export into a SW_64KB_Z_X target", AgcDriver::Graphics::ColorTileMode::Z64KBX);
+        Expect(*device, Rgba8UintInfo, VK_FORMAT_R8G8B8A8_UINT, 4, {0x5cu, 0x83u, 0x19u, 0xa4u}, "a UINT16_ABGR export into a SW_64KB_Z_X target with XOR", AgcDriver::Graphics::ColorTileMode::Z64KBX, 0x4600);
         std::puts("8_8_8_8_UINT color target tests passed");
         return 0;
     } catch (const std::exception& error) {

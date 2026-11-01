@@ -6,14 +6,16 @@
 #include <elfpatcher/windows/WindowsRelocationBuilder.hpp>
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
 #include <io/BufferUtils.hpp>
+#include <io/NativePath.hpp>
 #include <algorithm>
 #include <map>
 #include <iterator>
 
 namespace Elfpatcher {
 
-std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestImage& guest, Domain::GuestRuntime& runtime) const {
+std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestImage& guest, Domain::GuestRuntime& runtime, const std::function<void(std::string_view)>& message) const {
     using namespace Windows;
+    if (guest.Symbolic) throw Domain::RelinkerException("DF_SYMBOLIC guest modules are not supported by the Windows writer");
     WindowsLoadImage image(guest.Bytes, guest.Headers, false);
     std::vector<std::uint32_t> relocations;
     std::vector<std::pair<std::uint64_t, std::uint32_t>> tlsModules;
@@ -58,8 +60,8 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
             } else if (type == 18) {
                 const auto tls = std::find_if(guest.Headers.begin(), guest.Headers.end(), [](const auto& header) { return header.Type == 7; });
                 if (tls == guest.Headers.end() || (symbolIndex != 0 && (symbol.Section == 0 || (symbol.Info & 15) != 6))) throw Domain::RelinkerException("Unsupported external static TLS relocation", target);
-                const auto size = Io::AlignUp64(tls->MemorySize, std::max<std::uint64_t>(tls->Alignment, 16));
-                image.WritePointer(target, symbol.Value + addend - size);
+                const auto threadPointerOffset = Io::AlignUp64(tls->MemorySize, std::max<std::uint64_t>(tls->Alignment, 1));
+                image.WritePointer(target, symbol.Value + addend - threadPointerOffset);
             } else if (type == 1 || type == 6 || type == 7) {
                 if (symbolIndex == 0 || (type != 1 && addend != 0) || (symbol.Info & 15) == 6) throw Domain::RelinkerException("Invalid guest symbol relocation", target);
                 if (symbol.Section == Relinker::AbsoluteSection) image.WritePointer(target, symbol.Value + addend);
@@ -70,7 +72,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
                 } else {
                     if (symbol.Name.empty()) throw Domain::RelinkerException("Empty guest import", target);
                     image.WritePointer(target, 0);
-                    runtime.Imports.push_back({symbol.Name, rva, addend, 1, symbol.Library});
+                    runtime.Imports.push_back({symbol.Name, rva, addend, 1, symbol.Library, type == 7 || (type == 6 && (symbol.Info & 15) == 2), (symbol.Info >> 4) == 2});
                 }
             } else throw Domain::RelinkerException("Unsupported Windows guest relocation " + std::to_string(type), target);
         }
@@ -82,9 +84,9 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     std::array<PeDirectory, 16> directories{};
     std::uint32_t tlsIndex = 0;
     try {
-        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex);
+        directories[9] = WindowsTlsBuilder().Build(guest.Bytes, guest.Headers, image, sections, relocations, nextRva, &tlsIndex, {}, message);
     } catch (Domain::RelinkerException& error) {
-        error.InputPath = guest.SourcePath.string();
+        if (error.InputPath.empty()) error.InputPath = Io::Utf8Path(guest.SourcePath);
         throw;
     }
     WindowsTrampolineBuilder().Build(guest.Trampolines, image, sections, nextRva);
@@ -92,7 +94,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         if (tlsIndex == 0) throw Domain::RelinkerException("Guest TLS relocation has no TLS block", target);
         bool written = false;
         for (auto& section : sections) {
-            if (rva < section.Rva || rva - section.Rva > section.Data.size() || section.Data.size() - (rva - section.Rva) < 8) continue;
+            if (!section.Writable(rva, 8)) continue;
             Io::WriteU64(section.Data, rva - section.Rva, ImageBase + tlsIndex);
             written = true;
             break;
@@ -107,10 +109,29 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
         sections.push_back({".ehmeta", nextRva, SectionRead | 0x40u, std::move(metadata)});
         nextRva = AlignRva(nextRva + sections.back().Data.size());
     }
+    const auto returnsZero = [&](const std::uint64_t address) {
+        for (const auto& header : guest.Headers) {
+            if (header.Type != 1 || (header.Flags & 1) == 0 || address < header.MappedAddress || address - header.MappedAddress >= header.FileSize) continue;
+            const auto start = guest.Bytes.begin() + static_cast<std::ptrdiff_t>(header.Offset + (address - header.MappedAddress));
+            const auto available = header.FileSize - (address - header.MappedAddress);
+            const auto matches = [&](const std::vector<std::uint8_t>& code) {
+                return code.size() <= available && std::equal(code.begin(), code.end(), start);
+            };
+            return matches({0x31, 0xc0, 0xc3}) || matches({0x66, 0x0f, 0xef, 0xc0, 0x31, 0xc0, 0xc3});
+        }
+        return false;
+    };
     std::map<std::string, std::uint32_t> exports;
+    std::map<std::string, const Relinker::GuestSymbol*> exportSymbols;
     PeSection tlsExports{".tlsrefs", nextRva, SectionRead | 0x40u, {}};
     for (const auto& symbol : guest.Symbols) {
-        if (symbol.Section == 0 || symbol.Section == Relinker::AbsoluteSection || (symbol.Info >> 4) == 0 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
+        if (symbol.Section == 0 || (symbol.Info >> 4) == 0 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
+        const auto [previous, inserted] = exportSymbols.emplace(symbol.Name, &symbol);
+        if (!inserted) {
+            if (!Relinker::IdenticalOrdinaryFunctionExport(*previous->second, symbol)) throw Domain::RelinkerException("Duplicate guest export: " + symbol.Name);
+            continue;
+        }
+        if (symbol.Section == Relinker::AbsoluteSection) continue;
         if (symbol.Section >= 0xff00) throw Domain::RelinkerException("Unsupported guest export section: " + symbol.Name);
         std::uint32_t rva = 0;
         if ((symbol.Info & 15) == 6) {
@@ -121,10 +142,20 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
             relocations.push_back(rva);
         } else rva = image.GetRva(symbol.Value, std::max<std::uint64_t>(symbol.Size, 1));
         if (!exports.emplace(symbol.Name, rva).second) throw Domain::RelinkerException("Duplicate guest export: " + symbol.Name);
+        if ((symbol.Info & 15) == 2 && returnsZero(symbol.Value)) runtime.ZeroReturnExports.insert(symbol.Name);
     }
     if (!tlsExports.Data.empty()) {
         nextRva = AlignRva(nextRva + tlsExports.Data.size());
         sections.push_back(std::move(tlsExports));
+    }
+    if (runtime.DeferInitialization) {
+        PeSection lifecycle{".ginit", nextRva, SectionRead | 0x40u, {}};
+        Io::AppendU32(lifecycle.Data, guest.HasInit ? image.GetRva(guest.Init) : 0);
+        Io::AppendU32(lifecycle.Data, CheckedRva(guest.InitArray.size()));
+        for (const auto slot : guest.InitArray) Io::AppendU32(lifecycle.Data, image.GetRva(slot, 8));
+        if (!exports.emplace(Relinker::GuestInitializeExport, nextRva).second) throw Domain::RelinkerException("Duplicate guest export: " + std::string(Relinker::GuestInitializeExport));
+        nextRva = AlignRva(nextRva + lifecycle.Data.size());
+        sections.push_back(std::move(lifecycle));
     }
     if (exports.size() > 65535) throw Domain::RelinkerException("Too many guest PE exports");
     PeSection exportSection{".edata", nextRva, SectionRead | 0x40u, std::vector<std::uint8_t>(40)};
@@ -172,8 +203,9 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     sections.push_back({".dllmain", entry, SectionRead | SectionExecute | 0x20u, {0xb8, 1, 0, 0, 0, 0xc3}});
     for (const auto slot : guest.InitArray) runtime.InitArrayRvas.push_back(image.GetRva(slot, 8));
     for (const auto slot : guest.FiniArray) runtime.FiniArrayRvas.push_back(image.GetRva(slot, 8));
-    runtime.InitRva = guest.Init == 0 ? 0 : image.GetRva(guest.Init);
-    runtime.FiniRva = guest.Fini == 0 ? 0 : image.GetRva(guest.Fini);
+    runtime.InitRva = guest.HasInit ? image.GetRva(guest.Init) : 0;
+    runtime.UnmatchedImportModules.assign(guest.Dynamic.UnmatchedImportModules.begin(), guest.Dynamic.UnmatchedImportModules.end());
+    runtime.FiniRva = guest.HasFini ? image.GetRva(guest.Fini) : 0;
     auto result = WindowsPeWriter().Write(sections, entry, directories);
     const auto characteristics = Io::ReadU16(result, 0x80 + 22);
     Io::WriteU16(result, 0x80 + 22, static_cast<std::uint16_t>((characteristics | 0x2000) & ~1u));

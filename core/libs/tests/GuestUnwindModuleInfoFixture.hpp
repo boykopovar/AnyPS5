@@ -16,6 +16,8 @@ struct alignas(4) UnwindFixtureFrames {
     std::uint32_t cieId = 0;
     std::uint8_t cie[8] = {1, 0, 1, 0x78, 16, 0, 0, 0};
     std::uint32_t terminator = 0;
+    std::uint32_t spare[3] = {};
+    std::uint32_t spareTerminator = 0;
 };
 
 struct UnwindFixture {

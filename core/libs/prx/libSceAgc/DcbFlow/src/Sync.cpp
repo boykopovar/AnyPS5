@@ -22,11 +22,11 @@ uint32_t APS5_VABI sceAgcDcbCondExecGetSize(void) {
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbWaitRegMem(CommandBuffer* buf, std::uint8_t size, std::uint8_t compareFunction, std::uint8_t operation, std::uint8_t cachePolicy, const volatile void* address, std::uint64_t reference, std::uint64_t mask, std::uint32_t pollCycles) {
-    return Agc::Command::WriteWait(buf, size, compareFunction, operation, cachePolicy, address, reference, mask, pollCycles, __func__);
+    return Agc::Command::WriteWait(buf, false, size, compareFunction, operation, cachePolicy, address, reference, mask, pollCycles, __func__);
 }
 
 uint32_t APS5_VABI sceAgcDcbWaitOnAddressGetSize(uint32_t size) {
-    return size == 0 ? 56 : 64;
+    return size == 0 ? 56 : size == 1 ? 64 : 0;
 }
 
 std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t eventType, const volatile void* address) {
@@ -36,7 +36,6 @@ std::uint32_t* APS5_VABI sceAgcDcbEventWrite(CommandBuffer* buf, std::uint8_t ev
         Agc::Command::CheckAddress(guestAddress, 8, __func__);
         return Agc::Command::Emit(buf, 0x46u, {0x100u | eventType, static_cast<std::uint32_t>(guestAddress), static_cast<std::uint32_t>(guestAddress >> 32u)}, __func__);
     }
-    Agc::Command::Require(address == nullptr, __func__, "this event does not use an address");
     const auto eventIndex = eventType == 7 || eventType == 15 || eventType == 16 ? 0x400u : 0u;
     return Agc::Command::Emit(buf, 0x46u, {eventIndex | eventType}, __func__);
 }
@@ -53,10 +52,7 @@ std::uint32_t APS5_VABI sceAgcDcbStallCommandBufferParserGetSize() {
     return 8;
 }
 
-std::uint32_t* APS5_VABI sceAgcDcbMemSemaphore(CommandBuffer* buf, std::uint8_t action, std::uint8_t clientCode, const volatile void* address) {
-    const std::uint8_t operation = action != 0 ? 7u : 6u;
-    const std::uint8_t signalType = clientCode & 1u;
-    const std::uint8_t waitForMailbox = (clientCode >> 1u) & 1u;
+std::uint32_t* APS5_VABI sceAgcDcbMemSemaphore(CommandBuffer* buf, const volatile void* address, std::uint8_t waitForMailbox, std::uint8_t signalType, std::uint8_t operation) {
     return Agc::Command::WriteMemSemaphore(buf, address, waitForMailbox, signalType, operation, __func__);
 }
 

@@ -264,6 +264,14 @@ int main() {
     ExpectPixels(buffer, DccKeys::ClearRegister, {0, 0, 255, 255}, "A2B10G10R10 register clear");
     buffer.pixelFormat = bgra | tenBit;
     ExpectPixels(buffer, DccKeys::ClearRegister, {255, 0, 0, 255}, "A2R10G10B10 register clear");
+    buffer.pixelFormat = 0x8100070422000000ull;
+    ExpectPixels(buffer, DccKeys::Clear0000, {0, 0, 0, 255}, "R10G10B10A2 PQ 0000");
+    ExpectPixels(buffer, DccKeys::Clear1111, {255, 255, 255, 255}, "R10G10B10A2 PQ 1111");
+    buffer.dccClearColor = 600u | (500u << 10u) | (300u << 20u) | (3u << 30u);
+    ExpectPixels(buffer, DccKeys::ClearRegister, {0, 213, 255, 255}, "R10G10B10A2 PQ register clear");
+    buffer.pixelFormat = 0x8100070400000000ull;
+    buffer.dccClearColor = 300u | (500u << 10u) | (600u << 20u) | (3u << 30u);
+    ExpectPixels(buffer, DccKeys::ClearRegister, {0, 213, 255, 255}, "B10G10R10A2 PQ register clear");
     for (const auto keys : {DccKeys::Uncompressed, DccKeys::Mixed, DccKeys::Unreadable}) {
         const auto message = Rejection([&] { AgcDriver::DisplayBufferClearPixel(buffer, keys); });
         Expect(message.find(AgcDriver::Graphics::DccKeysName(keys)) != std::string::npos && message.find("0x7f0000") != std::string::npos, std::string("keys without a clear value were presented as one: ") + AgcDriver::Graphics::DccKeysName(keys));

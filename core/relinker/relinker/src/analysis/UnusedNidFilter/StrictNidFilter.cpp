@@ -3,7 +3,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <cstring>
-#include <iostream>
+#include <sstream>
 #include <limits>
 #include <optional>
 
@@ -25,13 +25,17 @@ public:
             requireRange(segment.Offset, segment.FileSize);
             if (segment.MemorySize > std::numeric_limits<VirtualAddress>::max() - segment.MappedAddress)
                 throw RelinkerException("Strict filter: segment address overflow", segment.MappedAddress);
+            if (segment.Type == 0x61000000) {
+                if (hasSceDynlibData) throw RelinkerException("Strict filter: multiple PT_SCE_DYNLIBDATA segments", segment.Offset);
+                hasSceDynlibData = true;
+                sceTableBase = segment.Offset;
+            }
             if (segment.Type == 1 && segment.FileSize > segment.MemorySize)
                 throw RelinkerException("Strict filter: invalid load segment size", segment.Offset);
             if (segment.Type != 2) continue;
             if (!tags.empty()) throw RelinkerException("Strict filter: multiple dynamic segments");
-            if (segment.FileSize % 16 != 0) throw RelinkerException("Strict filter: truncated dynamic segment", segment.Offset);
             bool terminated = false;
-            for (std::uint64_t offset = 0; offset < segment.FileSize; offset += 16) {
+            for (std::uint64_t offset = 0; segment.FileSize - offset >= 16; offset += 16) {
                 const auto tag = read<std::int64_t>(segment.Offset + offset);
                 if (tag == 0) {
                     terminated = true;
@@ -74,9 +78,17 @@ public:
                 const auto slot = read<std::uint64_t>(*rela + offset);
                 const auto info = read<std::uint64_t>(*rela + offset + 8);
                 if (static_cast<std::uint32_t>(info) != 8) continue;
-                if (info >> 32) throw RelinkerException("Strict filter: relative relocation has a symbol", slot);
+                if (const auto symbol = info >> 32; symbol != 0) {
+                    const auto symbols = table(6, 0x61000039);
+                    const auto size = tags.find(0x6100003F);
+                    if (!symbols || size == tags.end() || symbol >= size->second / 24 || (read<std::uint8_t>(*symbols + symbol * 24 + 4) & 15) != 3 || read<std::uint64_t>(*symbols + symbol * 24 + 8) != 0)
+                        throw RelinkerException("Strict filter: relative relocation has a symbol", slot);
+                }
                 const auto target = read<std::uint64_t>(*rela + offset + 16);
-                if (input.ImportSlots.contains(slot) || !input.Pointers.emplace(slot, target).second)
+                if (target > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                    throw RelinkerException("Strict filter: relative relocation target address is negative", slot);
+                const auto [recorded, inserted] = input.Pointers.emplace(slot, target);
+                if (input.ImportSlots.contains(slot) || (!inserted && recorded->second != target))
                     throw RelinkerException("Strict filter: overlapping pointer relocations", slot);
 
             }
@@ -88,9 +100,11 @@ public:
         for (const auto& [addressTag, sizeTag] : {std::pair{25, 27}, std::pair{26, 28}, std::pair{32, 33}}) {
             const auto array = value(addressTag, 0x60000000 + addressTag);
             const auto size = value(sizeTag, 0x60000000 + sizeTag);
-            if (array.has_value() != size.has_value()) throw RelinkerException("Strict filter: incomplete constructor array metadata");
-            if (!array) continue;
+            if (size && !array) throw RelinkerException("Strict filter: incomplete constructor array metadata");
+            if (!size || *size == 0) continue;
             if (*size % 8 != 0) throw RelinkerException("Strict filter: invalid constructor array size", *array);
+            if (*size > std::numeric_limits<VirtualAddress>::max() - *array)
+                throw RelinkerException("Strict filter: constructor array address overflow", *array);
             for (std::uint64_t offset = 0; offset < *size; offset += 8) {
                 const auto slot = *array + offset;
                 const auto position = input.Pointers.find(slot);
@@ -136,6 +150,8 @@ private:
     ElfReader reader;
     std::vector<ProgramHeader> headers;
     std::map<std::int64_t, std::uint64_t> tags;
+    std::uint64_t sceTableBase = 0;
+    bool hasSceDynlibData = false;
 
     void requireRange(std::uint64_t offset, std::uint64_t size) const {
         if (offset > bytes.size() || size > bytes.size() - offset) throw RelinkerException("Strict filter: file range out of bounds", offset);
@@ -168,13 +184,19 @@ private:
     std::optional<std::uint64_t> table(std::int64_t standardTag, std::int64_t osTag) const {
         const auto address = value(standardTag, osTag);
         if (!address) return std::nullopt;
-        return tags.contains(osTag) ? *address : fileOffset(*address, 0);
+        if (!tags.contains(osTag)) return fileOffset(*address, 0);
+        if (*address > std::numeric_limits<std::uint64_t>::max() - sceTableBase)
+            throw RelinkerException("Strict filter: SCE table file offset overflow", *address);
+        return sceTableBase + *address;
     }
 };
 
 class StrictNidFilter : public IUnusedNidFilter {
+    Domain::IProgress& progress;
+
 public:
-    std::vector<NidReference> Filter(const std::vector<NidReference>& nidRefs, const std::vector<std::uint8_t>& elfBytes, const std::vector<std::uint8_t>& textSection, VirtualAddress textVAddr) override {
+    explicit StrictNidFilter(Domain::IProgress& progress) : progress(progress) {}
+    std::vector<NidReference> Filter(const std::vector<NidReference>& nidRefs, const std::vector<std::uint8_t>& elfBytes, const std::vector<std::uint8_t>& textSection, VirtualAddress textVAddr, const std::vector<VirtualAddress>&) override {
         const StrictImage image(elfBytes);
         const auto input = image.Build(nidRefs, textSection, textVAddr);
         const auto analysis = UnusedNidFilter::AnalyzeStrictReachability(input);
@@ -182,16 +204,16 @@ public:
         for (const auto& reference : nidRefs) {
             if (analysis.ImportSlots.contains(reference.RelocationAddress)) result.push_back(reference);
         }
-        std::cout << "Strict reachability: " << analysis.Instructions.size() << " instructions; conservative indirect transfers=" << analysis.IndirectTransfers << "\n";
-        std::cout << "Function graph: " << analysis.LiveRegions << "/" << analysis.TotalRegions << " live regions; address-taken roots=" << analysis.AddressTakenRoots << "; unwind functions=" << input.Functions.size() << "\n";
+        { std::ostringstream message; message << "Strict reachability: " << analysis.Instructions.size() << " instructions; conservative indirect transfers=" << analysis.IndirectTransfers << "\n"; progress.Message(message.str()); }
+        { std::ostringstream message; message << "Function graph: " << analysis.LiveRegions << "/" << analysis.TotalRegions << " live regions; address-taken roots=" << analysis.AddressTakenRoots << "; unwind functions=" << input.Functions.size() << "\n"; progress.Message(message.str()); }
         return result;
     }
 };
 
 }
 
-std::shared_ptr<IUnusedNidFilter> MakeStrictUnusedNidFilter() {
-    return std::make_shared<StrictNidFilter>();
+std::shared_ptr<IUnusedNidFilter> MakeStrictUnusedNidFilter(Domain::IProgress& progress) {
+    return std::make_shared<StrictNidFilter>(progress);
 }
 
 }

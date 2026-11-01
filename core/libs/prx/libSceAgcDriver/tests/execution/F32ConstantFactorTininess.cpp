@@ -76,6 +76,8 @@ constexpr std::array<Pinned, 6> TinyProducts{{
     {31u, 6u, 0x00000000u},
 }};
 
+constexpr Pinned TinyOnlyBeforeRounding{2u, 2u, 0x00800000u};
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
@@ -139,6 +141,12 @@ void CheckTinyProducts(const char* mode) {
     }
 }
 
+void CheckTininessAfterRounding(const char* mode) {
+    const Pinned& pinned = TinyOnlyBeforeRounding;
+    const std::uint32_t actual = Output[pinned.tid * Results + pinned.pair * 2u];
+    Require(actual == pinned.value, std::string("f32 tininess after rounding: lane ") + std::to_string(pinned.tid) + " " + mode + " " + Names[pinned.pair] + " is " + Hex(actual) + ", expected " + Hex(pinned.value) + ": the exact product 0x3f7ffffe * 0x00800001 is below 2^-126 and rounds to it, and RDNA2 (gfx1036) keeps it (#2682), where a check before rounding flushes it");
+}
+
 }
 
 int main() {
@@ -148,12 +156,15 @@ int main() {
         Run(*device, std::nullopt);
         Check("no float mode");
         CheckTinyProducts("no float mode");
+        CheckTininessAfterRounding("no float mode");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
         Check("IEEE=0 f32 denormals flushed");
         CheckTinyProducts("IEEE=0 f32 denormals flushed");
+        CheckTininessAfterRounding("IEEE=0 f32 denormals flushed");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false});
         Check("IEEE=1 all denormals flushed");
         CheckTinyProducts("IEEE=1 all denormals flushed");
+        CheckTininessAfterRounding("IEEE=1 all denormals flushed");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, false, false});
         Check("f32 denormals kept");
         std::puts("f32 constant factor tests passed");

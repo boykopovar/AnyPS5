@@ -36,6 +36,8 @@ void requireInvariantPositions(const ShaderRecompiler::RecompileResult& result, 
 
 constexpr std::array<std::uint32_t, 3> PositionExport{0xf80008cfu, 0u, 0xbf810000u};
 
+constexpr std::array<std::uint32_t, 1> VertexCapabilities{spv::CapabilityClipDistance};
+
 ShaderRecompiler::RecompileRequest baseRequest(ShaderRecompiler::ShaderStage stage) {
     using namespace ShaderRecompiler;
     RecompileRequest request{};
@@ -45,6 +47,7 @@ ShaderRecompiler::RecompileRequest baseRequest(ShaderRecompiler::ShaderStage sta
     request.target.vulkanVersion = 0x00401000u;
     request.target.spirvVersion = 0x00010300u;
     request.target.subgroupSize = 64;
+    request.target.supportedCapabilities = VertexCapabilities;
     request.layout.pushConstantSizeBytes = 128;
     request.useCache = false;
     return request;
@@ -53,6 +56,45 @@ ShaderRecompiler::RecompileRequest baseRequest(ShaderRecompiler::ShaderStage sta
 void verifyVertex() {
     using namespace ShaderRecompiler;
     requireInvariantPositions(Recompile(baseRequest(ShaderStage::Vertex)), "vertex shader");
+}
+
+std::uint32_t clipDistanceLength(const ShaderRecompiler::RecompileResult& result) {
+    const auto& words = result.spirv.Words();
+    std::uint32_t variable = 0;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        const auto count = words[at] >> 16u;
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpDecorate && count == 4 && words[at + 2] == spv::DecorationBuiltIn && words[at + 3] == spv::BuiltInClipDistance) variable = words[at + 1];
+    }
+    if (variable == 0) return 0;
+    std::uint32_t pointer = 0;
+    std::uint32_t array = 0;
+    std::uint32_t length = 0;
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpVariable && words[at + 2] == variable) pointer = words[at + 1];
+    }
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpTypePointer && words[at + 1] == pointer) array = words[at + 3];
+    }
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpTypeArray && words[at + 1] == array) length = words[at + 3];
+    }
+    for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+        if (static_cast<spv::Op>(words[at] & 0xffffu) == spv::OpConstant && words[at + 2] == length) return words[at + 3];
+    }
+    throw std::runtime_error("the clip distance array has no constant length");
+}
+
+constexpr std::array<std::uint32_t, 7> DistanceExports{0xf80000dfu, 0u, 0xf80000efu, 0u, 0xf80008cfu, 0u, 0xbf810000u};
+
+void verifyGuestClipDistances() {
+    using namespace ShaderRecompiler;
+    for (const auto [enabled, expected] : {std::pair{0x007fu, 8u}, std::pair{0x00ffu, 8u}, std::pair{0xf007u, 4u}, std::pair{0xf00fu, 4u}}) {
+        auto request = baseRequest(ShaderStage::Vertex);
+        request.shader.code = DistanceExports;
+        request.context.vertex->paClVsOutCntl = 0x00c00000u | enabled;
+        const auto length = clipDistanceLength(Recompile(request));
+        if (length != expected) throw std::runtime_error("clip and cull distance enables " + std::to_string(enabled) + " gave a clip distance array of " + std::to_string(length));
+    }
 }
 
 void verifyMesh() {
@@ -78,6 +120,7 @@ void verifyMesh() {
 int main() {
     try {
         verifyVertex();
+        verifyGuestClipDistances();
         verifyMesh();
         std::cout << "Vertex and mesh position outputs are Invariant\n";
         return 0;

@@ -1,9 +1,19 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include <array>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
 #include <span>
 #include <string>
@@ -124,6 +134,142 @@ void Check(bool frontDrawn, bool backDrawn, std::string_view what) {
     }
 }
 
+class GuestBlock {
+public:
+    static constexpr std::size_t BlockBytes = 65536;
+
+    GuestBlock() {
+#ifdef _WIN32
+        block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+        block = static_cast<std::uint8_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
+#endif
+        Require(block != nullptr, "cannot allocate a guest block");
+        std::memset(block, 0, BlockBytes);
+        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+    }
+
+    ~GuestBlock() {
+        GuestAllocations::Mutation().Remove(block);
+#ifdef _WIN32
+        VirtualFree(block, 0, MEM_RELEASE);
+#else
+        std::free(block);
+#endif
+    }
+
+    GuestBlock(const GuestBlock&) = delete;
+    GuestBlock& operator=(const GuestBlock&) = delete;
+
+    std::uint8_t* Data() const { return block; }
+    std::uint64_t Address() const { return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(block)); }
+
+private:
+    std::uint8_t* block = nullptr;
+};
+
+void DepthDrawRecipe(AgcDriver::VulkanDevice& device) {
+    constexpr std::uint32_t TargetWidth = 128;
+    constexpr std::uint32_t TargetHeight = 128;
+    const AgcDriver::Graphics::ColorTargetLayout colorLayout(TargetWidth, TargetHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4);
+
+    const GuestBlock guestVertices;
+    const GuestBlock guestTarget;
+    alignas(256) static std::array<float, TargetWidth * TargetHeight> RecipeDepthMemory{};
+    alignas(256) static std::array<float, TargetWidth * TargetHeight> RecipeAlternateDepthMemory{};
+
+    std::memset(guestTarget.Data(), static_cast<int>(Kept), GuestBlock::BlockBytes);
+    RecipeDepthMemory.fill(1.0f);
+    RecipeAlternateDepthMemory.fill(1.0f);
+
+    auto* targetVertices = reinterpret_cast<std::array<float, 4>*>(guestVertices.Data());
+    for (std::size_t index = 0; index < Corners.size(); ++index) {
+        targetVertices[index] = {Corners[index][0] * 2.0f / TargetWidth - 1.0f, 1.0f - Corners[index][1] * 2.0f / TargetHeight, SurfaceDepth, 1.0f};
+    }
+    const auto target = device.Target();
+
+    std::vector<std::uint32_t> vertexUserData(4, 0u);
+    const auto vertexBuffer = BufferDescriptor(targetVertices, 16u, static_cast<std::uint32_t>(Corners.size()));
+    std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
+    const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
+    ShaderRecompiler::RecompileRequest vertex{
+        {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(VertexCode.data()), VertexCode, 0, {}},
+        {WaveSize, 0, vertexUserData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, vertexMemory},
+        target,
+        {0, 0, 0, 64}
+    };
+    vertex.useCache = false;
+    const auto vertexResult = ShaderRecompiler::Recompile(vertex);
+    const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
+
+    ShaderRecompiler::ShaderPixelStageInfo pixel{};
+    pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
+    pixel.posX = true;
+    pixel.posY = true;
+    pixel.targetOutputMode[0] = 9;
+    pixel.targetExportMapping.fill(0xe4u);
+    const std::vector<std::uint32_t> pixelUserData(8, 0u);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
+    ShaderRecompiler::RecompileRequest fragment{
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
+        {WaveSize, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
+        target,
+        PixelPushLayout(vertexPush, target)
+    };
+    fragment.useCache = false;
+    const auto pixelResult = ShaderRecompiler::Recompile(fragment);
+    const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
+        {ShaderStage::Vertex, &vertexResult, 0},
+        {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
+    }};
+
+    AgcDriver::Graphics::State state{};
+    state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, WaveSize, WaveSize, std::nullopt, std::nullopt};
+    state.color = {guestTarget.Address(), {TargetWidth, TargetHeight}, VK_FORMAT_R8G8B8A8_UNORM, colorLayout.Bytes(), 0xe4u, AgcDriver::Graphics::ColorTileMode::RenderTarget};
+    state.colors = {state.color};
+    state.hasColorTarget = true;
+    state.depth = AgcDriver::Graphics::DepthTarget{reinterpret_cast<std::uintptr_t>(RecipeDepthMemory.data()), 0, {TargetWidth, TargetHeight}, VK_FORMAT_D32_SFLOAT, SurfaceDepth, 0};
+    state.depthTest = true;
+    state.depthWrite = false;
+    state.depthCompare = VK_COMPARE_OP_LESS;
+    state.depthBias = true;
+    state.depthBiasConstant = -Bias;
+    state.depthBiasPerFace = false;
+    state.backDepthBiasConstant = -Bias;
+    state.renderExtent = {TargetWidth, TargetHeight};
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    state.viewport = {0, static_cast<float>(TargetHeight), static_cast<float>(TargetWidth), -static_cast<float>(TargetHeight), 0, 1};
+    state.negativeOneToOne = false;
+    state.scissor = {{0, 0}, {TargetWidth, TargetHeight}};
+    state.cullMode = VK_CULL_MODE_NONE;
+    state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    state.blend.colorWriteMask = 15;
+    state.blends = {state.blend};
+    state.blendConstants = {};
+    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Corners.size()), 0, 1, 0, false};
+
+    std::shared_ptr<const AgcDriver::DrawRecipe> recipe;
+    device.Draw(state, draw, shaders, {}, &recipe);
+    device.WaitIdle();
+    Require(recipe != nullptr, "a direct draw with depth target must produce a recipe");
+    Require(recipe->hasDepth, "the recipe must record depth target presence");
+    Require(recipe->targetViews.size() == 2, "the recipe must record color and depth views");
+
+    const auto outcome = device.DrawFromRecipe(state, draw, shaders, {}, recipe);
+    device.WaitIdle();
+    Require(outcome == AgcDriver::RecipeOutcome::Recorded, "drawing with depth from recipe must record successfully");
+
+    auto mutatedAddressState = state;
+    mutatedAddressState.depth = AgcDriver::Graphics::DepthTarget{reinterpret_cast<std::uintptr_t>(RecipeAlternateDepthMemory.data()), 0, {TargetWidth, TargetHeight}, VK_FORMAT_D32_SFLOAT, SurfaceDepth, 0};
+    const auto rejectedAddressOutcome = device.DrawFromRecipe(mutatedAddressState, draw, shaders, {}, recipe);
+    Require(rejectedAddressOutcome == AgcDriver::RecipeOutcome::Rebuild, "a recipe with depth must be rejected when depth target address changes");
+
+    auto removedDepthState = state;
+    removedDepthState.depth.reset();
+    const auto rejectedDepthOutcome = device.DrawFromRecipe(removedDepthState, draw, shaders, {}, recipe);
+    Require(rejectedDepthOutcome == AgcDriver::RecipeOutcome::Rebuild, "a recipe with depth must be rejected when depth target is removed");
+}
+
 }
 
 int main() {
@@ -138,6 +284,7 @@ int main() {
         Check(true, true, "both faces pulled closer");
         Draw(*device, -Bias, 0.0f);
         Check(true, false, "only front faces biased");
+        DepthDrawRecipe(*device);
         std::puts("per-face depth bias tests passed");
         return 0;
     } catch (const std::exception& error) {

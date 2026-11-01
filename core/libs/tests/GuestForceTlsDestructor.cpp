@@ -1,18 +1,16 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceLibcInternal/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdlib>
-#include <dlfcn.h>
 #include <stdexcept>
 #include <vector>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info);
-int APS5_VABI _sceLibcInternalThreadAtexit_nid_postfix(void (APS5_VABI* destructor)(void*), void* object, void* dsoSymbol);
-void APS5_VABI _sceLibcInternalThreadDtors_nid_postfix();
-int APS5_VABI _sceLibcInternalForceTlsDestructor_nid_postfix(KernelModule handle);
-}
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 namespace {
 
@@ -52,13 +50,14 @@ void* APS5_VABI Worker(void*) {
 KernelModule ModuleOf(const void* address) {
     ModuleInfoEx info{};
     info.st_size = sizeof(ModuleInfoEx);
-    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(address), 2, &info) == 0);
+    Require(sceKernelGetModuleInfoFromAddr(reinterpret_cast<std::uintptr_t>(address), 1, &info) == 0);
     return info.id;
 }
 
 bool ForceThrows(KernelModule handle) {
     try {
         _sceLibcInternalForceTlsDestructor_nid_postfix(handle);
+
     } catch (const std::runtime_error&) {
         return true;
     }
@@ -69,7 +68,11 @@ bool ForceThrows(KernelModule handle) {
 
 int main() {
     self = ModuleOf(&dsoHandle);
+#ifdef _WIN32
+    void* otherDso = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceLibcInternal.prx"), "_sceLibcInternalThreadDtors_nid_postfix"));
+#else
     void* otherDso = dlsym(RTLD_NEXT, "_sceLibcInternalThreadDtors_nid_postfix");
+#endif
     Require(otherDso != nullptr);
     const KernelModule other = ModuleOf(otherDso);
     Require(other != self && other != 0);
@@ -92,6 +95,7 @@ int main() {
     Require(_sceLibcInternalForceTlsDestructor_nid_postfix(0) == 0);
     Require(calls.size() == 2);
     _sceLibcInternalThreadDtors_nid_postfix();
+
     Require(calls == std::vector<std::intptr_t>{3, 1, 2});
 
     calls.clear();
@@ -99,6 +103,7 @@ int main() {
     Require(_sceLibcInternalForceTlsDestructor_nid_postfix(other) == 0);
     Require(calls.empty());
     _sceLibcInternalThreadDtors_nid_postfix();
+
     Require(calls.empty());
 
     Require(Register(RecordAndRegister, 10) == 0);

@@ -17,7 +17,10 @@ def main():
         checked = 0
         for index, module_directory in enumerate(("sce_module", "prx")):
             for label, run_path in (("default", None), ("origin", "$ORIGIN"),
-                                    ("custom", "$ORIGIN/host libs"), ("absolute", str(work / "absolute libs"))):
+                                    ("custom", "$ORIGIN/host libs"), ("absolute", "/opt/absolute libs"),
+                                    ("absolute-root", "/"), ("absolute-list", "/opt/libs:/usr/local/lib"),
+                                    ("list", "$ORIGIN/first:$ORIGIN/second"),
+                                    ("list-bare", "$ORIGIN:$ORIGIN/libs:$ORIGIN")):
                 case = work / f"{index}-{label}"
                 source = case / "input" / "input.elf"
                 source.parent.mkdir(parents=True)
@@ -41,11 +44,27 @@ def main():
                     assert 0 <= offset < len(strings) and end >= 0, (tags, strings)
                     actual = strings[offset:end].decode()
                     configured = run_path if run_path is not None else "$ORIGIN/libs"
-                    expected = Path(configured.replace("$ORIGIN", str(output.parent))).resolve()
-                    resolved = Path(actual.replace("$ORIGIN", str(artifact.parent))).resolve()
-                    if resolved != expected or (label == "absolute" and actual != run_path):
+                    path_list = label.startswith("list") or label == "absolute-list"
+                    configured_paths = configured.split(":") if path_list else [configured]
+                    actual_paths = actual.split(":") if path_list else [actual]
+                    expected = [Path(path.replace("$ORIGIN", str(output.parent))).resolve() for path in configured_paths]
+                    resolved = [Path(path.replace("$ORIGIN", str(artifact.parent))).resolve() for path in actual_paths]
+                    if resolved != expected or (label.startswith("absolute") and actual != run_path):
                         failures.append((str(relative), label, actual, str(resolved), str(expected)))
                     checked += 1
+        for index, run_path in enumerate(("relative/libs", "C:/host/libs", "C:\\host\\libs", "\\\\server\\share",
+                                          "$ORIGIN/libs:", "$ORIGIN::/opt/libs", "$ORIGIN:relative/libs", "/opt/libs:")):
+            output = work / f"invalid-{index}.elf"
+            result = subprocess.run([str(relinker), "--rpath", run_path, str(source), str(output)],
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == 2 and "run path must be absolute or begin with $ORIGIN" in result.stderr, (
+                run_path, result.returncode, result.stdout, result.stderr)
+            assert not output.exists()
+        output = work / "repeated.elf"
+        result = subprocess.run([str(relinker), "--rpath", "$ORIGIN/a", "--rpath", "$ORIGIN/b", str(source), str(output)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode != 0 and "--rpath cannot be repeated" in result.stdout + result.stderr and not output.exists(), (
+            result.returncode, result.stdout, result.stderr)
         assert not failures, failures
         print(f"Guest run path tests passed: {checked} module/path combinations")
 

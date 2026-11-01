@@ -1,5 +1,7 @@
 from contextlib import contextmanager
+import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -16,6 +18,23 @@ TREE = "a" * 40
 
 
 @contextmanager
+def simulated_cp1252():
+    if hasattr(subprocess, "_text_encoding"):
+        with patch.object(subprocess, "_text_encoding", return_value="cp1252"):
+            yield
+    else:
+        wrapper = io.TextIOWrapper
+
+        def fake_wrapper(buffer, encoding=None, *args, **kwargs):
+            if encoding in (None, "locale"):
+                encoding = "cp1252"
+            return wrapper(buffer, encoding=encoding, *args, **kwargs)
+
+        with patch.object(io, "TextIOWrapper", new=fake_wrapper):
+            yield
+
+
+@contextmanager
 def command_output(stdout, stderr="", returncode=0):
     code = ("import os, sys\n"
             f"os.write(1, {stdout.encode('utf-8')!r})\n"
@@ -23,9 +42,13 @@ def command_output(stdout, stderr="", returncode=0):
             f"sys.exit({returncode})\n")
 
     def run(command, **kwargs):
+        if command[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            root = (str(Path.cwd()) + "\n").encode("utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout=root, stderr=b"")
         return RUN([sys.executable, "-c", code], **kwargs)
 
-    with patch.object(subprocess, "_text_encoding", return_value="cp1252"), \
+    with simulated_cp1252(), \
+            patch.dict(pr_overlap._REPO_ROOTS, clear=True), \
             patch.object(subprocess, "run", side_effect=run):
         yield
 
@@ -62,17 +85,44 @@ class EncodingTests(unittest.TestCase):
 
     def test_merge_conflict_preserves_unicode_paths(self):
         path = UNICODE + ".txt"
-        with command_output(TREE + "\n" + path + "\n", returncode=1):
+        with command_output(TREE + "\0" + path + "\0", returncode=1):
             self.assertEqual(pr_overlap.merge("main", "topic"), (TREE, {path}))
 
     def test_merge_success(self):
-        with command_output(TREE + "\n"):
+        with command_output(TREE + "\0"):
             self.assertEqual(pr_overlap.merge("main", "topic"), (TREE, set()))
 
     def test_merge_error_preserves_unicode(self):
         with command_output("", UNICODE, 128):
             with self.assertRaisesRegex(RuntimeError, UNICODE):
                 pr_overlap.merge("main", "topic")
+
+    def test_default_encoding_uses_simulated_cp1252(self):
+        code = "import os;os.write(1," + repr(UNICODE.encode("utf-8")) + ")"
+        with simulated_cp1252():
+            default = RUN([sys.executable, "-c", code], capture_output=True, text=True, errors="replace")
+            self.assertEqual(default.stdout, UNICODE.encode("utf-8").decode("cp1252", errors="replace"))
+            explicit = RUN([sys.executable, "-c", code], capture_output=True, text=True, encoding="utf-8")
+            self.assertEqual(explicit.stdout, UNICODE)
+
+    def test_git_diff_survives_invalid_utf8(self):
+        with TemporaryDirectory() as directory:
+            repo = Path(directory)
+            source = repo / "core" / "libs" / "prx" / "x" / "a.cpp"
+            source.parent.mkdir(parents=True)
+            ident = ["-c", "user.name=t", "-c", "user.email=t@example.test"]
+            for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "base"]):
+                subprocess.run(["git", *ident, *args], cwd=repo, check=True, capture_output=True)
+            source.write_bytes(b"int APS5_VABI f() {} // caf\xe9\n")
+            for args in (["add", "."], ["commit", "-q", "-m", "add"]):
+                subprocess.run(["git", *ident, *args], cwd=repo, check=True, capture_output=True)
+            old = os.getcwd()
+            os.chdir(repo)
+            try:
+                diff = pr_overlap.git("diff", "-U0", "--no-color", "HEAD~1", "HEAD", "--", "core/libs/prx/*.cpp")
+            finally:
+                os.chdir(old)
+            self.assertEqual(pr_overlap.exports(diff), {"f"})
 
     def test_report_is_written_as_utf8(self):
         with TemporaryDirectory() as directory:

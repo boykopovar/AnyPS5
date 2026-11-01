@@ -3,12 +3,18 @@
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include <array>
+#include <algorithm>
 #include <atomic>
 #include <barrier>
 #include <chrono>
 #include <future>
 #include <cstring>
 #include <iostream>
+#include <latch>
+#include <map>
+#include <optional>
+#include <semaphore>
 #include <thread>
 
 namespace {
@@ -147,6 +153,121 @@ void HeaderSelection() {
     Reject([&] { static_cast<void>(RegisteredProgram(*registry, 0x10000, {2, 4})); });
 }
 
+void RegistryVersions() {
+    using Expected = std::map<std::uint64_t, std::shared_ptr<const ShaderSnapshot>>;
+    const auto matches = [](const ShaderRegistry& current, const Expected& expected) {
+        const auto same = [](const auto& entry, const auto& wanted) { return entry.first == wanted.first && entry.second.size() == 1u && entry.second.front() == wanted.second; };
+        if (current.size() != expected.size() || !std::equal(current.begin(), current.end(), expected.begin(), expected.end(), same)) return false;
+        auto backward = current.end();
+        for (auto wanted = expected.rbegin(); wanted != expected.rend(); ++wanted) {
+            if (backward == current.begin() || !same(*--backward, *wanted)) return false;
+        }
+        if (backward != current.begin()) return false;
+        for (const auto& entry : expected) {
+            for (const auto probe : {std::uint64_t{0}, entry.first - 1u, entry.first, entry.first + 4u, ~std::uint64_t{0}}) {
+                const auto found = current.upper_bound(probe);
+                const auto wanted = expected.upper_bound(probe);
+                if ((found == current.end()) != (wanted == expected.end()) || (found != current.end() && found->first != wanted->first)) return false;
+                if (current.contains(probe) != expected.contains(probe) || (current.find(probe) == current.end()) == expected.contains(probe)) return false;
+            }
+        }
+        return true;
+    };
+    const auto makeSnapshot = [](std::uint64_t codeAddress) {
+        auto snapshot = std::make_shared<ShaderSnapshot>();
+        snapshot->codeAddress = codeAddress;
+        snapshot->headerAddress = codeAddress + 0x80u;
+        snapshot->code = {0xbf810000u};
+        return snapshot;
+    };
+    std::vector<std::shared_ptr<const ShaderSnapshot>> snapshots;
+    Expected expected;
+    std::shared_ptr<ShaderRegistry> registry;
+    std::uint64_t state = 1;
+    while (snapshots.size() < 4096u) {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        const auto address = 0x100000u + ((state >> 33u) % 0x100000u) * 0x100u;
+        if (expected.contains(address)) continue;
+        const auto snapshot = makeSnapshot(address);
+        expected.emplace(address, snapshot);
+        snapshots.push_back(snapshot);
+        PublishRegisteredShader(registry, snapshot);
+    }
+    Require(matches(*registry, expected), "the shader registry did not keep its code addresses in order");
+    std::shared_ptr<const ShaderRegistry> earlier = registry;
+    const auto previous = expected;
+    const auto added = makeSnapshot(0x100040u);
+    expected.emplace(added->codeAddress, added);
+    std::vector<long> uses;
+    for (const auto& snapshot : snapshots) uses.push_back(snapshot.use_count());
+    PublishRegisteredShader(registry, added);
+    std::size_t copied = 0;
+    for (std::size_t index = 0; index < snapshots.size(); ++index) copied += snapshots[index].use_count() != uses[index] ? 1u : 0u;
+    Require(copied <= 128u, "publishing a shader copied the registry's entries for other code addresses");
+    Require(matches(*registry, expected) && matches(*earlier, previous), "publishing a shader changed an earlier registry or lost an entry");
+    ShaderRegistry edited = *registry;
+    auto remaining = expected;
+    std::size_t index = 0;
+    for (const auto& entry : expected) {
+        if (index++ % 3u != 0u) continue;
+        Require(edited.erase(entry.first) == 1u && edited.erase(entry.first) == 0u, "the shader registry did not erase a code address once");
+        remaining.erase(entry.first);
+    }
+    Require(matches(edited, remaining) && matches(*registry, expected), "erasing from a copy of the registry changed the original or lost an entry");
+    for (const auto& entry : remaining) edited.erase(entry.first);
+    Require(edited.empty() && edited.begin() == edited.end() && edited.upper_bound(0) == edited.end(), "an emptied shader registry kept entries");
+    Require(edited.emplace(added->codeAddress, ShaderRegistry::mapped_type{added}).second && !edited.emplace(added->codeAddress, ShaderRegistry::mapped_type{}).second, "an emptied shader registry did not take a new entry once");
+    Require(edited.size() == 1u && edited.at(added->codeAddress).size() == 1u && edited.at(added->codeAddress).front() == added, "an emptied shader registry lost its new entry");
+}
+
+void FusedHullHeaderSelection() {
+    struct Hull {
+        Shader shader{};
+        std::array<ShaderRegister, 7> registers{{{0x100, 0x11}, {0x108, 0x100}, {0x109, 0}, {0x10a, 0x2}, {0x10b, 0x10}, {0x148, 0}, {0x149, 0}}};
+        ShaderSpecialRegs specials{};
+    } back;
+    back.shader.file_header = 0x34333231u;
+    back.shader.version = 0x18;
+    back.shader.header_size = sizeof(Hull);
+    back.shader.shader_size = 4;
+    back.shader.code = reinterpret_cast<const void*>(std::uintptr_t{0x50000});
+    back.shader.type = 7;
+    back.shader.sh_registers = back.registers.data();
+    back.shader.num_sh_registers = back.registers.size();
+    back.shader.specials = &back.specials;
+    auto snapshot = std::make_shared<ShaderSnapshot>();
+    snapshot->codeAddress = 0x50000;
+    snapshot->headerAddress = reinterpret_cast<std::uintptr_t>(&back);
+    snapshot->type = 7;
+    snapshot->code = {0xbf810000u};
+    snapshot->header.resize(sizeof(Hull));
+    std::memcpy(snapshot->header.data(), &back, sizeof(Hull));
+    std::shared_ptr<ShaderRegistry> registry;
+    PublishRegisteredShader(registry, snapshot);
+    auto registers = back.registers;
+    registers[0].value = 0x22;
+    registers[3].value = 0x3;
+    registers[4].value = 0x1e;
+    registers[5].value = 0x600;
+    registers[6].value = 0x1;
+    Shader fused = back.shader;
+    fused.type = 3;
+    fused.sh_registers = registers.data();
+    fused.user_data = nullptr;
+    Require(RegisteredHeader(*registry, &fused) == snapshot, "a fused hull header did not select its registered back half");
+    registers[1].value = 0x200;
+    Require(RegisteredHeader(*registry, &fused) == nullptr, "a fused hull header with another hull program selected the back half");
+    registers[1].value = 0x100;
+    registers[2].offset = 0x10c;
+    Require(RegisteredHeader(*registry, &fused) == nullptr, "a fused hull header with other registers selected the back half");
+    registers[2].offset = 0x109;
+    fused.target ^= 1u;
+    Require(RegisteredHeader(*registry, &fused) == nullptr, "a fused hull header with another target selected the back half");
+    fused.target ^= 1u;
+    fused.type = 2;
+    Require(RegisteredHeader(*registry, &fused) == nullptr, "a vertex header selected a registered hull back half");
+}
+
 void Registration(AgcDriver::VulkanDevice& device) {
     const std::array<std::uint32_t, 1> code{0xbf810000u};
     RecompileRequest request{{ShaderStage::Compute, 0x10000, code, 0, {}}, {32, 0, {}, ShaderComputeStageInfo{{1, 1, 1}, 0, {false, false, false}, false, 0, {}}, {}, {}, {}}, device.ComputeTarget(32), {0, 0, 0, 128}};
@@ -228,12 +349,103 @@ void Registration(AgcDriver::VulkanDevice& device) {
     Require(registry->at(0x10000).back() == metadata, "changed shader metadata was treated as identical");
 }
 
+void TransactionLock() {
+    ShaderSnapshot shader{};
+    const auto publish = [&] {
+        ShaderPreparationTransaction other;
+        other.Edit(shader).rectangleRequested = true;
+        other.Commit();
+    };
+    std::optional<ShaderPreparationTransaction> open(std::in_place);
+    auto unread = std::async(std::launch::async, publish);
+    const bool unblocked = unread.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    if (!unblocked) open.reset();
+    unread.get();
+    Require(unblocked, "an open transaction that read nothing blocked another one");
+    static_cast<void>(open->Read(shader));
+    auto waiting = std::async(std::launch::async, publish);
+    const bool excluded = waiting.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
+    open->Commit();
+    open.reset();
+    waiting.get();
+    Require(excluded, "a transaction ran beside one that had read prepared state");
+}
+
+void CommittedLinks() {
+    ShaderSnapshot front{};
+    auto pixel = std::make_shared<ShaderSnapshot>();
+    ResolvePreparedGraphics(front, pixel, 0, {});
+    Require(front.prepared->fragments.size() == 1 && front.prepared->fragments.front().lock() == pixel, "a resolved link was not published");
+    ShaderSnapshot unrelated{};
+    auto other = std::make_shared<ShaderSnapshot>();
+    std::optional<ShaderPreparationTransaction> open(std::in_place);
+    static_cast<void>(open->Read(unrelated));
+    auto repeated = std::async(std::launch::async, [&] { ResolvePreparedGraphics(front, pixel, 0, {}); });
+    const bool unblocked = repeated.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    auto linking = std::async(std::launch::async, [&] { ResolvePreparedGraphics(front, other, 0, {}); });
+    const bool excluded = linking.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout;
+    open->Commit();
+    open.reset();
+    repeated.get();
+    linking.get();
+    Require(unblocked, "resolving a link the shader already had waited for another thread's transaction");
+    Require(excluded && front.prepared->fragments.size() == 2, "a new link was published beside a transaction that had read prepared state");
+    {
+        ShaderPreparationTransaction transaction;
+        transaction.Edit(front).fragments.clear();
+        ResolvePreparedGraphics(front, pixel, 0, {});
+        transaction.Commit();
+    }
+    Require(front.prepared->fragments.size() == 1 && front.prepared->fragments.front().lock() == pixel, "a link resolved in a transaction that had changed the shader was checked against the published links");
+}
+
+void PreparationPriority(bool beforeSubmit) {
+    const auto workers = std::max(2u, std::thread::hardware_concurrency() / 2u);
+    std::barrier started(static_cast<std::ptrdiff_t>(workers + 1u));
+    std::counting_semaphore<> release(0);
+    std::latch finished(static_cast<std::ptrdiff_t>(workers));
+    for (unsigned index = 0; index < workers; ++index) {
+        SubmitRegistrationPreparation([&] {
+            started.arrive_and_wait();
+            release.acquire();
+            finished.count_down();
+        });
+    }
+    started.arrive_and_wait();
+    PreparedShaders prepared;
+    std::atomic<unsigned> order{0};
+    std::promise<unsigned> background;
+    std::promise<unsigned> demanded;
+    auto backgroundDone = background.get_future();
+    auto demandedDone = demanded.get_future();
+    SubmitRegistrationPreparation([&] { background.set_value(order.fetch_add(1u)); });
+    if (beforeSubmit) PrioritizeRegistrationPreparation(prepared);
+    SubmitRegistrationPreparation([&] { demanded.set_value(order.fetch_add(1u)); }, &prepared);
+    if (!beforeSubmit) {
+        PrioritizeRegistrationPreparation(prepared);
+        PrioritizeRegistrationPreparation(prepared);
+    }
+    release.release();
+    const bool settled = demandedDone.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+    const bool backgroundSettled = backgroundDone.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+    release.release(static_cast<std::ptrdiff_t>(workers - 1u));
+    finished.wait();
+    Require(settled && backgroundSettled, "preparation queue did not complete its work");
+    Require(demandedDone.get() == 0u && backgroundDone.get() == 1u && order.load() == 2u, "demanded preparation waited behind background work or ran twice");
+}
+
 }
 
 int main() {
     try {
         Transactions();
         HeaderSelection();
+        RegistryVersions();
+        FusedHullHeaderSelection();
+        TransactionLock();
+        CommittedLinks();
+        PreparationPriority(false);
+        PreparationPriority(true);
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Registration(*device);

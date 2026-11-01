@@ -17,14 +17,15 @@ namespace {
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
-constexpr std::uint32_t Threads = 32;
+constexpr std::uint32_t MaxThreads = 64;
 constexpr std::uint32_t Inputs = 4;
-constexpr std::uint32_t Results = 16;
-alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
-alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
+constexpr std::uint32_t Results = 32;
+constexpr std::uint32_t Checked = 19;
+alignas(256) std::array<std::uint32_t, MaxThreads * Inputs> Input{};
+alignas(256) std::array<std::uint32_t, MaxThreads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 81> Code{
-    0x34020084, 0x34060086, 0xe0301000, 0x80000401, 0x7e140280, 0x7e160280, 0x7e180280, 0x7e1a0280,
+alignas(256) constexpr std::array<std::uint32_t, 108> Code{
+    0x34020084, 0x34060087, 0xe0301000, 0x80000401, 0x7e140280, 0x7e160280, 0x7e180280, 0x7e1a0280,
     0x7e1c0280, 0x7e1e0280, 0x7e200280, 0x7e220280, 0x7e240280, 0x7e260280, 0x7e280280, 0xbf8c3f70,
     0x7e3c0304, 0xd525001f, 0x00010304, 0xd5250020, 0x00010504, 0xd5250021, 0x00010704, 0xd5250022,
     0x00010904, 0xd5250023, 0x00010b04, 0xd5250024, 0x00010d04, 0xd5250025, 0x00010f04, 0xbefc0382,
@@ -34,44 +35,21 @@ alignas(256) constexpr std::array<std::uint32_t, 81> Code{
     0x0000011f, 0x7e280323, 0xe0701000, 0x80010a03, 0xe0701004, 0x80010b03, 0xe0701008, 0x80010c03,
     0xe070100c, 0x80010d03, 0xe0701010, 0x80010e03, 0xe0701014, 0x80010f03, 0xe0701018, 0x80011003,
     0xe070101c, 0x80011103, 0xe0701020, 0x80011203, 0xe0701024, 0x80011303, 0xe0701028, 0x80011403,
-    0xbf810000,
+    0xbefc03c1, 0x7e2a8720, 0xe070102c, 0x80011503, 0x7e428504, 0xe0701030, 0x80012003, 0x7e468922,
+    0xe0701034, 0x80012203, 0xe0701038, 0x80012103, 0xbefc03ff, 0x000103ff, 0x7e3ed120, 0xe070103c,
+    0x80012003, 0x7e48911e, 0xe0701040, 0x80012503, 0x7e2c0327, 0xe0701044, 0x80011603, 0xbefc0388,
+    0x7e2e871e, 0xe0701048, 0x80011703, 0xbf810000,
 };
 
-constexpr std::uint32_t Expected[32][11] = {
-    {0x00001002u, 0x00001002u, 0x00001001u, 0x00001030u, 0x00001020u, 0x00001000u, 0x00001007u, 0x00001006u, 0x00001007u, 0x00001005u, 0x00001005u},
-    {0x00002002u, 0x00002002u, 0x00002001u, 0x00002030u, 0x00002020u, 0x00002000u, 0x00002007u, 0x00002006u, 0x00002007u, 0x00002005u, 0x00002005u},
-    {0x00003002u, 0x00003002u, 0x00003001u, 0x00003030u, 0x00003020u, 0x00003000u, 0x00003007u, 0x00003006u, 0x00003007u, 0x00003005u, 0x00003005u},
-    {0x00004002u, 0x00004002u, 0x00004001u, 0x00004030u, 0x00004020u, 0x00004000u, 0x00004007u, 0x00004006u, 0x00004007u, 0x00004005u, 0x00004005u},
-    {0x00005002u, 0x00005002u, 0x00005001u, 0x00005030u, 0x00005020u, 0x00005000u, 0x00005007u, 0x00005006u, 0x00005007u, 0x00005005u, 0x00005005u},
-    {0x00006002u, 0x00006002u, 0x00006001u, 0x00006030u, 0x00006020u, 0x00006000u, 0x00006007u, 0x00006006u, 0x00006007u, 0x00006005u, 0x00006005u},
-    {0x00007002u, 0x00007002u, 0x00007001u, 0x00007030u, 0x00007020u, 0x00007000u, 0x00007007u, 0x00007006u, 0x00007007u, 0x00007005u, 0x00007005u},
-    {0x00008002u, 0x00008002u, 0x00008001u, 0x00008030u, 0x00008020u, 0x00008000u, 0x00008007u, 0x00008006u, 0x00008007u, 0x00008005u, 0x00008005u},
-    {0x00009002u, 0x00009002u, 0x00009001u, 0x00009030u, 0x00009020u, 0x00009000u, 0x00009007u, 0x00009006u, 0x00009007u, 0x00009005u, 0x00009005u},
-    {0x0000a002u, 0x0000a002u, 0x0000a001u, 0x0000a030u, 0x0000a020u, 0x0000a000u, 0x0000a007u, 0x0000a006u, 0x0000a007u, 0x0000a005u, 0x0000a005u},
-    {0x0000b002u, 0x0000b002u, 0x0000b001u, 0x0000b030u, 0x0000b020u, 0x0000b000u, 0x0000b007u, 0x0000b006u, 0x0000b007u, 0x0000b005u, 0x0000b005u},
-    {0x0000c002u, 0x0000c002u, 0x0000c001u, 0x0000c030u, 0x0000c020u, 0x0000c000u, 0x0000c007u, 0x0000c006u, 0x0000c007u, 0x0000c005u, 0x0000c005u},
-    {0x0000d002u, 0x0000d002u, 0x0000d001u, 0x0000d030u, 0x0000d020u, 0x0000d000u, 0x0000d007u, 0x0000d006u, 0x0000d007u, 0x0000d005u, 0x0000d005u},
-    {0x0000e002u, 0x0000e002u, 0x0000e001u, 0x0000e030u, 0x0000e020u, 0x0000e000u, 0x0000e007u, 0x0000e006u, 0x0000e007u, 0x0000e005u, 0x0000e005u},
-    {0x0000f002u, 0x0000f002u, 0x0000f001u, 0x0000f030u, 0x0000f020u, 0x0000f000u, 0x0000f007u, 0x0000f006u, 0x0000f007u, 0x0000f005u, 0x0000f005u},
-    {0x00010002u, 0x00010002u, 0x00010001u, 0x00010030u, 0x00010020u, 0x00010000u, 0x00010007u, 0x00010006u, 0x00010007u, 0x00010005u, 0x00010005u},
-    {0x00011002u, 0x00011002u, 0x00011001u, 0x00011030u, 0x00011020u, 0x00011000u, 0x00011007u, 0x00011006u, 0x00011007u, 0x00011005u, 0x00011005u},
-    {0x00012002u, 0x00012002u, 0x00012001u, 0x00012030u, 0x00012020u, 0x00012000u, 0x00012007u, 0x00012006u, 0x00012007u, 0x00012005u, 0x00012005u},
-    {0x00013002u, 0x00013002u, 0x00013001u, 0x00013030u, 0x00013020u, 0x00013000u, 0x00013007u, 0x00013006u, 0x00013007u, 0x00013005u, 0x00013005u},
-    {0x00014002u, 0x00014002u, 0x00014001u, 0x00014030u, 0x00014020u, 0x00014000u, 0x00014007u, 0x00014006u, 0x00014007u, 0x00014005u, 0x00014005u},
-    {0x00015002u, 0x00015002u, 0x00015001u, 0x00015030u, 0x00015020u, 0x00015000u, 0x00015007u, 0x00015006u, 0x00015007u, 0x00015005u, 0x00015005u},
-    {0x00016002u, 0x00016002u, 0x00016001u, 0x00016030u, 0x00016020u, 0x00016000u, 0x00016007u, 0x00016006u, 0x00016007u, 0x00016005u, 0x00016005u},
-    {0x00017002u, 0x00017002u, 0x00017001u, 0x00017030u, 0x00017020u, 0x00017000u, 0x00017007u, 0x00017006u, 0x00017007u, 0x00017005u, 0x00017005u},
-    {0x00018002u, 0x00018002u, 0x00018001u, 0x00018030u, 0x00018020u, 0x00018000u, 0x00018007u, 0x00018006u, 0x00018007u, 0x00018005u, 0x00018005u},
-    {0x00019002u, 0x00019002u, 0x00019001u, 0x00019030u, 0x00019020u, 0x00019000u, 0x00019007u, 0x00019006u, 0x00019007u, 0x00019005u, 0x00019005u},
-    {0x0001a002u, 0x0001a002u, 0x0001a001u, 0x0001a030u, 0x0001a020u, 0x0001a000u, 0x0001a007u, 0x0001a006u, 0x0001a007u, 0x0001a005u, 0x0001a005u},
-    {0x0001b002u, 0x0001b002u, 0x0001b001u, 0x0001b030u, 0x0001b020u, 0x0001b000u, 0x0001b007u, 0x0001b006u, 0x0001b007u, 0x0001b005u, 0x0001b005u},
-    {0x0001c002u, 0x0001c002u, 0x0001c001u, 0x0001c030u, 0x0001c020u, 0x0001c000u, 0x0001c007u, 0x0001c006u, 0x0001c007u, 0x0001c005u, 0x0001c005u},
-    {0x0001d002u, 0x0001d002u, 0x0001d001u, 0x0001d030u, 0x0001d020u, 0x0001d000u, 0x0001d007u, 0x0001d006u, 0x0001d007u, 0x0001d005u, 0x0001d005u},
-    {0x0001e002u, 0x0001e002u, 0x0001e001u, 0x0001e030u, 0x0001e020u, 0x0001e000u, 0x0001e007u, 0x0001e006u, 0x0001e007u, 0x0001e005u, 0x0001e005u},
-    {0x0001f002u, 0x0001f002u, 0x0001f001u, 0x0001f030u, 0x0001f020u, 0x0001f000u, 0x0001f007u, 0x0001f006u, 0x0001f007u, 0x0001f005u, 0x0001f005u},
-    {0x00020002u, 0x00020002u, 0x00020001u, 0x00020030u, 0x00020020u, 0x00020000u, 0x00020007u, 0x00020006u, 0x00020007u, 0x00020005u, 0x00020005u},
-};
-constexpr const char* Names[11] = {"movrelsd", "swapped_2", "sd2_untouched", "swaprel_dst", "swaprel_src", "swaprel_other", "swap_dst", "swap_src", "swaprel_same", "swaprel_same_other", "movrelsd_e64_out_of_range"};
+constexpr const char* Names[Checked] = {"movrelsd", "swapped_2", "sd2_untouched", "swaprel_dst", "swaprel_src", "swaprel_other", "swap_dst", "swap_src", "swaprel_same", "swaprel_same_other", "movrelsd_e64_dst",
+    "movrels_out_of_range", "movreld_out_of_range_neighbour", "movrelsd_out_of_range_source", "movrelsd_out_of_range_other", "swaprel_one_side_out_of_range", "movrelsd_2_source_out_of_range",
+    "unwritten_direct", "unwritten_relative"};
+
+std::array<std::uint32_t, Checked> ExpectedFor(std::uint32_t tid) {
+    const std::uint32_t x = 0x1000u * (tid + 1u);
+    return {x + 2u, x + 2u, x + 1u, x + 0x30u, x + 0x20u, x, x + 7u, x + 6u, x + 7u, x + 5u, x + 5u,
+        tid, x + 0x30u, x + 2u, x + 0x20u, x + 0x30u, tid, 0u, 0u};
+}
 
 void Fill(std::uint32_t tid, std::uint32_t* words) {
     words[0] = 0x1000u * (tid + 1u);
@@ -88,12 +66,12 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("relative indexing: lane ") + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
+void Expect(std::uint32_t waveSize, std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
+    Require(actual == expected, std::string("relative indexing: wave") + std::to_string(waveSize) + " lane " + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
+void Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t threads) {
+    for (std::uint32_t tid = 0; tid < threads; ++tid) Fill(tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -102,10 +80,10 @@ void Run(AgcDriver::VulkanDevice& device) {
     std::copy(output.begin(), output.end(), userData.begin() + 4);
     const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
-        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        {waveSize, 0, userData, compute, std::nullopt, std::nullopt, memory},
         device.Target(),
         {0, 0, 0, 128}
     };
@@ -115,11 +93,11 @@ void Run(AgcDriver::VulkanDevice& device) {
     device.WaitIdle();
 }
 
-void Check() {
-    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        const std::uint32_t* in = &Input[tid * Inputs];
+void Check(std::uint32_t waveSize, std::uint32_t threads) {
+    for (std::uint32_t tid = 0; tid < threads; ++tid) {
         const std::uint32_t* out = &Output[tid * Results];
-        for (std::uint32_t index = 0; index < 11; ++index) Expect(tid, out[index], Expected[tid][index], Names[index]);
+        const auto expected = ExpectedFor(tid);
+        for (std::uint32_t index = 0; index < Checked; ++index) Expect(waveSize, tid, out[index], expected[index], Names[index]);
     }
 }
 
@@ -129,8 +107,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
-        Check();
+        Run(*device, 32, 32);
+        Check(32, 32);
+        Run(*device, 64, 64);
+        Check(64, 64);
         std::puts("relative indexing tests passed");
         return 0;
     } catch (const std::exception& error) {

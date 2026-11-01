@@ -1,5 +1,7 @@
+#include "prx/libSceVideoOut/include/Output.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "tests/VideoOutTestEnvironment.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -7,25 +9,20 @@
 #include <cstring>
 #include <stdexcept>
 
-extern "C" {
-int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param);
-int APS5_VABI sceVideoOutClose(int handle);
-int APS5_VABI sceVideoOutInitializeOutputOptions(VideoOutOutputOptions* options);
-int APS5_VABI sceVideoOutIsOutputSupported(int handle, std::uint64_t mode, const VideoOutOutputOptions* options, void* reservedPtr, std::uint64_t reserved);
-int APS5_VABI sceVideoOutConfigureOutput(int handle, std::uint64_t mode, const VideoOutOutputOptions* options, void* reservedPtr, std::uint64_t reserved);
-}
-
 static constexpr int SYSTEM_USER = 255;
 static constexpr int MAIN_BUS = 0;
+static constexpr int HMD2_MAIN_BUS = 0x20;
 static constexpr int INVALID_VALUE = static_cast<int>(0x80290001);
 static constexpr int INVALID_ADDRESS = static_cast<int>(0x80290002);
 static constexpr int INVALID_HANDLE = static_cast<int>(0x8029000B);
+static constexpr int RESOURCE_BUSY = static_cast<int>(0x80290009);
 static constexpr int UNSUPPORTED_OUTPUT_MODE = static_cast<int>(0x80290016);
 static constexpr int UNKNOWN_OUTPUT_MODE = static_cast<int>(0x8029001E);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
+    VideoOutTestEnvironment environment;
     std::array<std::uint8_t, sizeof(VideoOutOutputOptions)> raw{};
     raw.fill(0xAA);
     VideoOutOutputOptions options{};
@@ -34,6 +31,11 @@ int main() {
     std::memcpy(raw.data(), &options, raw.size());
     for (std::size_t index = 0; index < raw.size(); ++index) Require(raw[index] == (index == 2 ? 0xFF : 0));
     Require(sceVideoOutInitializeOutputOptions(nullptr) == INVALID_ADDRESS);
+
+    std::array<std::uint8_t, 64> zeroedOpenParam{};
+    Require(sceVideoOutOpen(SYSTEM_USER, HMD2_MAIN_BUS, 0, nullptr) == INVALID_VALUE);
+    Require(sceVideoOutOpen(SYSTEM_USER, HMD2_MAIN_BUS, 0, zeroedOpenParam.data()) == INVALID_VALUE);
+    Require(sceVideoOutOpen(0, HMD2_MAIN_BUS, 0, nullptr) == INVALID_VALUE);
 
     int handle = 0;
     try {
@@ -48,14 +50,22 @@ int main() {
         return 77;
     }
     Require(handle > 0);
+    Require(sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr) == RESOURCE_BUSY);
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 0) == 1);
     Require(sceVideoOutIsOutputSupported(handle, 1, nullptr, nullptr, 0) == 1);
-    for (std::uint64_t mode : {0x4ull, 0x7ull, 0x8ull, 0xCull, 0xDull, 0xEull, 0xFull, 0x10ull, 0x11ull, 0x13ull}) {
+    const int highFrameRate = sceVideoOutIsOutputSupported(handle, 15, &options, nullptr, 0);
+    Require(highFrameRate == 1 || highFrameRate == 0);
+    Require(sceVideoOutConfigureOutput(handle, 15, &options, nullptr, 0) == UNSUPPORTED_OUTPUT_MODE);
+    for (std::uint64_t mode : {0x4ull, 0x7ull, 0x8ull, 0xCull, 0xDull, 0xEull, 0x10ull, 0x11ull, 0x13ull}) {
         Require(sceVideoOutIsOutputSupported(handle, mode, &options, nullptr, 0) == UNSUPPORTED_OUTPUT_MODE);
         Require(sceVideoOutConfigureOutput(handle, mode, &options, nullptr, 0) == UNSUPPORTED_OUTPUT_MODE);
     }
     for (std::uint64_t mode : {0x0ull, 0x2ull, 0x3ull, 0x5ull, 0x6ull, 0x9ull, 0xAull, 0xBull, 0x14ull, 0x20ull, 0x3Full, 0x100ull, 0xD000000Aull, 0x8000000000000001ull, ~0ull}) {
         Require(sceVideoOutIsOutputSupported(handle, mode, &options, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
+    }
+    for (std::uint64_t mode : {0x20001ull, 0x2000Cull, 0x2000Dull, 0x2000Eull, 0x2000Full, 0x20010ull}) {
+        Require(sceVideoOutIsOutputSupported(handle, mode, nullptr, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
+        Require(sceVideoOutConfigureOutput(handle, mode, nullptr, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
     }
     bool thrown = false;
     try {

@@ -9,25 +9,27 @@
 #include <relinker/domain/ISysVDynamicSectionBuilder.hpp>
 #include <relinker/domain/IUnusedNidFilter.hpp>
 #include <memory>
+#include <domain/IProgress.hpp>
 
 namespace Relinker {
 
 class RelinkerPipeline : public IRelinkerPipeline {
 public:
-    RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel);
+    RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress);
 
-    RelinkResult Relink(const std::vector<std::uint8_t>& sourceElf) override;
+    RelinkResult Relink() override;
 
 private:
-    std::shared_ptr<IElfReader> _elfReader;
-    std::shared_ptr<ISyscallScanner> _syscallScanner;
-    std::shared_ptr<ICallSiteResolver> _callSiteResolver;
-    std::shared_ptr<IValidationPolicy> _validationPolicy;
-    std::shared_ptr<ISysVDynamicSectionBuilder> _dynamicSectionBuilder;
-    std::shared_ptr<IUnusedNidFilter> _unusedNidFilter;
+    std::shared_ptr<IElfReader> elfReader;
+    std::shared_ptr<ISyscallScanner> syscallScanner;
+    std::shared_ptr<ICallSiteResolver> callSiteResolver;
+    std::shared_ptr<IValidationPolicy> validationPolicy;
+    std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder;
+    std::shared_ptr<IUnusedNidFilter> unusedNidFilter;
     std::uint32_t unusedFilterLevel;
+    Domain::IProgress& progress;
 
-    static std::string _relocationTypeName(std::uint32_t type);
+    static std::string relocationTypeName(std::uint32_t type);
 };
 
 }

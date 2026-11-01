@@ -3,7 +3,7 @@
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <array>
-#include <fstream>
+
 #include <utility>
 
 namespace Elfpatcher::Windows {
@@ -16,7 +16,10 @@ std::uint32_t readBigEndian(const std::vector<std::uint8_t>& bytes, const std::s
 }
 
 void validatePng(const std::vector<std::uint8_t>& bytes, const std::filesystem::path& path) {
-    const auto fail = [&path](const std::string& reason) { throw Domain::RelinkerException("Invalid Windows icon PNG '" + path.string() + "': " + reason); };
+    const auto fail = [&path](const std::string& reason) {
+        const auto utf8 = path.u8string();
+        throw Domain::RelinkerException("Invalid Windows icon PNG '" + std::string(utf8.begin(), utf8.end()) + "': " + reason);
+    };
     constexpr std::array<std::uint8_t, 8> signature{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a};
     if (bytes.size() < 33 || !std::equal(signature.begin(), signature.end(), bytes.begin())) fail("missing PNG signature or IHDR");
     if (readBigEndian(bytes, 8) != 13 || readBigEndian(bytes, 12) != 0x49484452) fail("invalid IHDR size or type");
@@ -30,11 +33,17 @@ void validatePng(const std::vector<std::uint8_t>& bytes, const std::filesystem::
                             ((color == 2 || color == 4 || color == 6) && (depth == 8 || depth == 16));
     if (!validDepth || bytes[26] != 0 || bytes[27] != 0 || bytes[28] > 1) fail("invalid IHDR encoding");
     bool hasData = false;
+    bool dataStarted = false;
+    bool dataEnded = false;
+    bool hasPalette = false;
     for (std::size_t offset = 8; offset < bytes.size();) {
         if (bytes.size() - offset < 12) fail("truncated chunk");
         const auto length = readBigEndian(bytes, offset);
         if (length > bytes.size() - offset - 12) fail("truncated chunk data");
         const auto type = readBigEndian(bytes, offset + 4);
+        for (std::size_t index = offset + 4; index < offset + 8; ++index)
+            if (!((bytes[index] >= 'A' && bytes[index] <= 'Z') || (bytes[index] >= 'a' && bytes[index] <= 'z')))
+                fail("invalid chunk type");
         std::uint32_t crc = 0xffffffffu;
         for (std::size_t index = offset + 4; index < offset + 8 + length; ++index) {
             crc ^= bytes[index];
@@ -42,7 +51,20 @@ void validatePng(const std::vector<std::uint8_t>& bytes, const std::filesystem::
         }
         if ((crc ^ 0xffffffffu) != readBigEndian(bytes, offset + 8 + length)) fail("invalid chunk CRC");
         if (type == 0x49484452 && offset != 8) fail("duplicate IHDR");
-        if (type == 0x49444154 && length != 0) hasData = true;
+        if (type == 0x504c5445) {
+            if (hasPalette || dataStarted || !length || length % 3 || length > 768 || color == 0 || color == 4 ||
+                (color == 3 && length / 3 > (1u << depth))) fail("invalid PLTE");
+            hasPalette = true;
+        }
+        if (type == 0x49444154) {
+            if (dataEnded || (color == 3 && !hasPalette)) fail("invalid IDAT order or missing PLTE");
+            dataStarted = true;
+            if (length != 0) hasData = true;
+        } else {
+            if (dataStarted) dataEnded = true;
+            if (!(type & 0x20000000u) && type != 0x49484452 && type != 0x504c5445 && type != 0x49454e44)
+                fail("unknown critical chunk");
+        }
         offset += length + 12;
         if (type == 0x49454e44) {
             if (length != 0 || offset != bytes.size() || !hasData) fail("invalid IEND or missing IDAT");
@@ -54,19 +76,14 @@ void validatePng(const std::vector<std::uint8_t>& bytes, const std::filesystem::
 
 }
 
-PeDirectory WindowsIconResourceBuilder::Build(const std::filesystem::path& iconPath, std::vector<PeSection>& sections, const std::uint32_t nextRva) const {
-    if (iconPath.empty()) return {};
-    std::error_code error;
-    const bool exists = std::filesystem::exists(iconPath, error);
-    if (error) throw Domain::RelinkerException("Cannot inspect Windows icon '" + iconPath.string() + "': " + error.message());
-    if (!exists) return {};
-    std::ifstream stream(iconPath, std::ios::binary | std::ios::ate);
-    if (!stream) throw Domain::RelinkerException("Cannot open Windows icon '" + iconPath.string() + "'");
-    const auto size = stream.tellg();
-    if (size < 0 || static_cast<std::uint64_t>(size) > 0x7fffffffu - 184) throw Domain::RelinkerException("Invalid Windows icon file size: " + iconPath.string());
-    std::vector<std::uint8_t> png(static_cast<std::size_t>(size));
-    stream.seekg(0);
-    if (!stream.read(reinterpret_cast<char*>(png.data()), size)) throw Domain::RelinkerException("Cannot read Windows icon '" + iconPath.string() + "'");
+PeDirectory WindowsIconResourceBuilder::Build(const std::vector<std::uint8_t>& png, const std::filesystem::path& iconPath, std::vector<PeSection>& sections, const std::uint32_t nextRva) const {
+    if (nextRva < LoadRva || nextRva % SectionAlignment != 0)
+        throw Domain::RelinkerException("Invalid Windows resource section RVA", nextRva);
+    if (std::any_of(sections.begin(), sections.end(), [](const auto& section) { return section.Name == ".rsrc"; }))
+        throw Domain::RelinkerException("Duplicate Windows resource section");
+    if (!sections.empty() && nextRva < AlignRva(static_cast<std::uint64_t>(sections.back().Rva) + sections.back().Data.size()))
+        throw Domain::RelinkerException("Windows resource section overlaps preceding section", nextRva);
+    if (png.size() > 0x7fffffffu - 184) throw Domain::RelinkerException("Invalid Windows icon size");
     validatePng(png, iconPath);
     std::vector<std::uint8_t> data(184 + png.size());
     CheckedRva(static_cast<std::uint64_t>(nextRva) + data.size());

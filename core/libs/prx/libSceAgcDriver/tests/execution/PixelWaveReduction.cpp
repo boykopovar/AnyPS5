@@ -194,13 +194,16 @@ int main() {
         }};
         for (const auto& layout : layouts) {
             for (const auto& reduction : reductions) {
-                const auto code = PixelCode(reduction);
-                std::uint32_t partial = 0;
-                for (std::uint32_t pass = 0; pass < 4; ++pass) {
-                    Draw(*device, code, layout);
-                    partial += Check(reduction, target.subgroupSize);
+                for (const bool windowed : {false, true}) {
+                    auto code = PixelCode(reduction);
+                    if (windowed) code.insert(std::find(code.begin(), code.end(), 0x7e0e02f2u), 0x7e008514u);
+                    std::uint32_t partial = 0;
+                    for (std::uint32_t pass = 0; pass < 4; ++pass) {
+                        Draw(*device, code, layout);
+                        partial += Check(reduction, target.subgroupSize);
+                    }
+                    std::printf("%s%s, laid out for %u lanes on %u-lane subgroups: %u partial waves over 4 draws\n", reduction.name, windowed ? " in a v_movreld_b32 window" : "", layout.subgroupSize, target.subgroupSize, partial);
                 }
-                std::printf("%s, laid out for %u lanes on %u-lane subgroups: %u partial waves over 4 draws\n", reduction.name, layout.subgroupSize, target.subgroupSize, partial);
             }
         }
         std::puts("pixel wave reduction tests passed");

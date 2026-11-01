@@ -7,7 +7,8 @@ namespace Elfpatcher::Windows {
 
 class WindowsRelocationBuilder {
 public:
-    PeRelocations Apply(WindowsLoadImage& image, const Domain::SysVDynamicSection& dynamicSection) const;
+    PeRelocations Apply(WindowsLoadImage& image, const Domain::SysVDynamicSection& dynamicSection,
+                        const std::vector<Domain::ProgramHeader>& headers) const;
     std::vector<std::uint8_t> BuildBaseRelocations(const std::vector<std::uint32_t>& targets) const;
 };
 

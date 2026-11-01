@@ -46,6 +46,7 @@ struct DrawParameters {
         std::uint32_t drawIndexLocation;
         bool drawIndexEnabled;
         std::uint32_t indxOffset;
+        bool indexLimitKnown = true;
         enum class Rule : std::uint8_t { InPlace, Constant };
         Rule vertexRule = Rule::Constant;
         Rule instanceRule = Rule::Constant;
@@ -78,6 +79,7 @@ std::uint32_t ReadDrawCount(const DrawParameters::IndirectDraw& indirect);
 inline bool IndirectDrawOpcode(std::uint32_t opcode) { return opcode == 0x24 || opcode == 0x25 || opcode == 0x2c || opcode == 0x38; }
 inline bool DrawOpcode(std::uint32_t opcode) { return opcode == 0x27 || opcode == 0x2d || opcode == 0x35 || IndirectDrawOpcode(opcode); }
 
+std::string_view KnownName(std::uint32_t header);
 std::string Name(std::uint32_t header);
 // A PM4 type-2 packet is a one-dword filler (command-buffer padding); type 3 and type 0 carry a
 // dword count in bits 29:16. Type 1 is undefined.
@@ -88,7 +90,8 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue);
 void Execute(std::span<const std::uint32_t> packet, QueueState& queue);
 inline bool IndirectRegisterOpcode(std::uint32_t opcode) { return opcode == 0x63 || opcode == 0x64 || opcode == 0x9f; }
 std::vector<std::uint32_t> ReadIndirectRegisters(std::span<const std::uint32_t> packet);
-void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> pairs, QueueState& queue);
+bool IndirectRegistersValid(std::span<const std::uint32_t> pairs);
+void ExecuteIndirectRegisters(std::span<const std::uint32_t> packet, std::span<const std::uint32_t> pairs, QueueState& queue, bool skipInvalid = false);
 bool AccessesMemory(std::uint32_t header);
 // Whether an ACQUIRE_MEM packet asks only for GPU cache actions (no CPU-visible memory
 // synchronization): such a packet needs a pipeline barrier, not a device drain.
@@ -140,12 +143,64 @@ struct MemoryCopy {
     std::size_t bytes;
 };
 std::optional<MemoryCopy> DecodeMemoryCopy(std::span<const std::uint32_t> packet);
+std::uint32_t DmaSource(std::span<const std::uint32_t> packet);
+std::uint32_t DmaDestination(std::span<const std::uint32_t> packet);
+inline constexpr std::uint32_t DmaSelectGds = 1;
+inline constexpr std::uint32_t DmaSourceData = 2;
+inline constexpr std::uint32_t DmaDestinationNowhere = 2;
+inline std::size_t DmaBytes(std::span<const std::uint32_t> packet) { return packet[6] & 0x3ffffffu; }
+inline constexpr std::uint32_t CopyDataGpuClockSource = 18;
+inline std::uint32_t CopyDataSource(std::span<const std::uint32_t> packet) { return ((packet[1] & 0xfu) << 1u) | ((packet[1] >> 30u) & 1u); }
+inline bool CopyDataImmediate(std::uint32_t source) { return source >= 10 && source != CopyDataGpuClockSource; }
+inline bool CopyDataToRegister(std::span<const std::uint32_t> packet) { return ((packet[1] >> 8u) & 0xfu) == 0; }
+inline std::size_t CopyDataBytes(std::span<const std::uint32_t> packet) { return (packet[1] & 0x10000u) != 0 ? 8 : 4; }
+inline constexpr std::uint32_t RewindValid = 0x80000000u;
+inline constexpr std::uint32_t RewindOffloadEnable = 0x01000000u;
+struct WaitFields {
+    std::uint32_t function;
+    std::uint64_t address;
+    std::uint64_t reference;
+    std::uint64_t mask;
+    std::uint32_t poll;
+    std::size_t bytes;
+};
+WaitFields DecodeWait(std::span<const std::uint32_t> packet);
+struct ConditionalWrite {
+    std::uint64_t compared;
+    std::uint64_t destination;
+    std::uint32_t value;
+};
+ConditionalWrite DecodeConditionalWrite(std::span<const std::uint32_t> packet);
+struct ConstantRamDump {
+    std::uint32_t offset;
+    std::uint32_t words;
+    std::uint64_t destination;
+};
+ConstantRamDump DecodeConstantRamDump(std::span<const std::uint32_t> packet);
+inline constexpr std::uint32_t SampleDumpEvent = 0x39;
+inline constexpr std::uint64_t SampleDumpBlocks = 16;
+inline constexpr std::uint64_t SampleDumpStride = 16;
+inline constexpr std::uint64_t SampleDumpBlockBytes = 8;
+inline constexpr std::uint64_t SampleDumpBytes = (SampleDumpBlocks - 1) * SampleDumpStride + SampleDumpBlockBytes;
+inline bool SampleDump(std::span<const std::uint32_t> packet) { return ((packet[0] >> 8u) & 0xffu) == 0x46u && packet.size() >= 2 && (packet[1] & 0x3fu) == SampleDumpEvent; }
+inline std::uint64_t SampleDumpAddress(std::span<const std::uint32_t> packet) { return packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u); }
+struct PacketStore {
+    enum class Value : std::uint8_t { Bytes, Pattern, RunTime };
+    std::uint64_t address = 0;
+    std::uint64_t bytes = 0;
+    Value value = Value::RunTime;
+    std::vector<std::byte> data;
+    bool conditional = false;
+};
+std::vector<PacketStore> DecodeStores(std::span<const std::uint32_t> packet);
 // A DISPATCH_INDIRECT's arguments: the guest address of its three group-count dwords (no memory
 // access, so the GPU can read them in place: VulkanDevice::DispatchIndirect), the DISPATCH_DIRECT
 // packet made by reading them there (through the checked guest memory path, which waits for
 // recorded GPU work that writes them), and both steps in one for the packet.
 std::uint64_t DispatchArgumentAddress(std::span<const std::uint32_t> packet, const QueueState& queue);
+void NoteDispatchRegisters(std::span<const std::uint32_t> packet, QueueState& queue);
 std::array<std::uint32_t, 5> ReadDispatchArguments(std::uint64_t arguments, std::uint32_t initiator);
+std::array<std::uint32_t, 3> PartialGroupThreads(const std::array<std::uint32_t, 3>& groups, const std::array<std::uint32_t, 3>& numThreads);
 std::array<std::uint32_t, 5> ResolveDispatch(std::span<const std::uint32_t> packet, const QueueState& queue);
 DrawParameters ResolveDraw(std::span<const std::uint32_t> packet, const QueueState& queue);
 

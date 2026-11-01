@@ -54,7 +54,7 @@ float toSignedLodBias(std::uint32_t raw) {
 
 }
 
-GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven, bool forceDegammaPaired) {
+GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words, bool unnormalizedProven, bool forceDegammaPaired, bool integerBorder) {
     Require(words.size() == 4, "guest sampler descriptor must contain 4 dwords");
 
     const auto clampX = (words[0] >> 0u) & 0x7u;
@@ -90,26 +90,22 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
 
     Require(!forceUnormCoords || unnormalizedProven, "guest sampler descriptor uses unnormalized coordinates which are not implemented");
     if (forceUnormCoords) {
-        Require(xyMagFilter == xyMinFilter, "guest sampler descriptor uses unnormalized coordinates with different minification and magnification filters, which is not implemented");
-        Require(!isAnisoFilter(xyMagFilter), "guest sampler descriptor uses unnormalized coordinates with anisotropic filtering, which is not implemented");
-        Require(clampX == 2u || clampX == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only clamp-to-last-texel and clamp-to-border are implemented");
-        Require(clampY == 2u || clampY == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only clamp-to-last-texel and clamp-to-border are implemented");
-        Require(!truncCoord, "guest sampler descriptor uses unnormalized coordinates with TRUNC_COORD, which is not implemented");
+        Require(!isAnisoFilter(xyMagFilter) && !isAnisoFilter(xyMinFilter), "guest sampler descriptor uses unnormalized coordinates with anisotropic filtering, which is not implemented");
+        Require(clampX == 0u || clampX == 2u || clampX == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampX) + " on X; only clamp-to-last-texel and clamp-to-border are implemented");
+        Require(clampY == 0u || clampY == 2u || clampY == 6u, "guest sampler descriptor uses unnormalized coordinates with clamp mode " + std::to_string(clampY) + " on Y; only clamp-to-last-texel and clamp-to-border are implemented");
         Require(!mcCoordTrunc, "guest sampler descriptor uses unnormalized coordinates with MC_COORD_TRUNC, which is not implemented");
     } else {
         Require(!unnormalizedProven, "guest sampler descriptor is bound as unnormalized without FORCE_UNNORMALIZED");
     }
     Require(!forceSrgb || forceDegammaPaired, "guest sampler descriptor forces sRGB decoding which is not implemented");
-    // TRUNC_COORD picks point-sampled texels by truncation instead of rounding, and the perf fields
-    // trade mip/depth precision for speed; Vulkan's nearest filtering already floors, so these only
-    // move texel selection by half a texel at most and are accepted as is. ANISO_THRESHOLD and
+    // The perf fields trade mip/depth precision for speed and are accepted as is. ANISO_THRESHOLD and
     // ANISO_BIAS only tune how many anisotropic taps the hardware takes; the host filter picks its own.
     static_cast<void>(truncCoord);
     static_cast<void>(anisoThreshold);
     static_cast<void>(anisoBias);
     const auto reductionMode = toVkReductionMode(filterMode);
     Require(!disableDegamma, "guest sampler descriptor disables degamma which is not implemented");
-    Require(lodBiasSec == 0, "guest sampler descriptor uses a secondary LOD bias which is not implemented");
+    static_cast<void>(lodBiasSec);
     Require(!pointPreclamp, "guest sampler descriptor uses point preclamping which is not implemented");
     static_cast<void>(anisoOverride);
     Require(!blendZeroPrt, "guest sampler descriptor uses PRT blend-zero which is not implemented");
@@ -117,7 +113,6 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     Require(mipFilter != 2u || reductionMode == VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT, "guest sampler descriptor combines a min or max reduction with a linear mip filter, which is not implemented");
 
     const auto aniso = isAnisoFilter(xyMagFilter) || isAnisoFilter(xyMinFilter);
-    Require(!aniso || reductionMode == VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT, "guest sampler descriptor combines a min or max reduction with anisotropic filtering, which is not implemented");
     auto anisoRatio = 1.0f;
     if (aniso) {
         if (maxAnisoRatio > 4u) Require(false, "guest sampler descriptor uses an unknown anisotropy ratio " + std::to_string(maxAnisoRatio));
@@ -135,12 +130,12 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
 
     VkBorderColor border;
     switch (borderColorType) {
-        case 0: border = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK; break;
-        case 1: border = VK_BORDER_COLOR_INT_OPAQUE_BLACK; break;
-        case 2: border = VK_BORDER_COLOR_INT_OPAQUE_WHITE; break;
+        case 0: border = integerBorder ? VK_BORDER_COLOR_INT_TRANSPARENT_BLACK : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK; break;
+        case 1: border = integerBorder ? VK_BORDER_COLOR_INT_OPAQUE_BLACK : VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK; break;
+        case 2: border = integerBorder ? VK_BORDER_COLOR_INT_OPAQUE_WHITE : VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE; break;
         default:
             if (readsBorderColor(clampX) || readsBorderColor(clampY) || readsBorderColor(clampZ)) throw std::runtime_error("AGC graphics: guest sampler descriptor uses a border color table which is not implemented");
-            border = VK_BORDER_COLOR_INT_TRANSPARENT_BLACK;
+            border = integerBorder ? VK_BORDER_COLOR_INT_TRANSPARENT_BLACK : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
             break;
     }
 
@@ -164,7 +159,10 @@ GuestSamplerResource DecodeSamplerResource(std::span<const std::uint32_t> words,
     result.nonSeamlessCube = disableCubeWrap;
     if (forceUnormCoords) {
         result.unnormalizedCoordinates = true;
+        result.minFilter = result.magFilter;
         result.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        result.addressModeU = clampX == 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        result.addressModeV = clampY == 6u ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         result.minLod = 0.0f;
         result.maxLod = 0.0f;
         result.lodBias = 0.0f;

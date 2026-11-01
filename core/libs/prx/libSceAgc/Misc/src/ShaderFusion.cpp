@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <map>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <cstdint>
@@ -19,7 +21,6 @@ namespace {
 using namespace ShaderRegs;
 
 constexpr int GRAPHICS5_ERROR_INVALID_SHADER_HALVES = static_cast<int>(0x8a6c0008u);
-constexpr std::uint32_t SPI_SHADER_PGM_CHKSUM_GS = 0x080u;
 constexpr std::uint32_t SPI_SHADER_PGM_RSRC1_GS = 0x08Au;
 constexpr std::uint32_t SPI_SHADER_PGM_RSRC2_GS = 0x08Bu;
 constexpr std::uint32_t SPI_SHADER_PGM_CHKSUM_HS = 0x100u;
@@ -29,12 +30,11 @@ constexpr std::uint32_t SCodeEnd = 0xbf9f0000u;
 constexpr std::uint32_t SNop = 0xbf800000u;
 constexpr std::uint32_t SSetpcS6 = 0xbe802006u;
 constexpr std::uint32_t SSwappcNullS6 = 0xbefd2106u;
-constexpr std::uint8_t FusedCodeAlignmentLog2 = 8;
-constexpr std::size_t FusedCodeAlignment = std::size_t{1} << FusedCodeAlignmentLog2;
+constexpr std::size_t FusedCodeAlignment = 256;
 constexpr char TrailerMagic[8] = {'b', 'a', 'r', 'e', 'f', 'o', 'o', 't'};
 constexpr std::size_t TrailerCodeBytesOffset = sizeof(TrailerMagic) + 3 * sizeof(std::uint32_t);
 constexpr std::uint32_t Rsrc1VgprMask = 0x3fu;
-constexpr std::uint32_t Rsrc1SgprMask = 0xfu << 6u;
+constexpr std::uint32_t Rsrc2OffchipLdsEnable = 1u << 18u;
 constexpr std::uint32_t Rsrc2UserSgprMask = (0x1fu << 1u) | (1u << 27u);
 
 bool ValidHalves(const Shader* front, const Shader* back) {
@@ -119,15 +119,19 @@ std::uint32_t FrontProgramBytes(const char* function, const Shader* front) {
     return static_cast<std::uint32_t>((end - 1) * 4);
 }
 
-std::uint32_t MergeRsrc1(std::uint32_t back, std::uint32_t front) {
-    const auto vgprs = std::max(back & Rsrc1VgprMask, front & Rsrc1VgprMask);
-    const auto sgprs = std::max(back & Rsrc1SgprMask, front & Rsrc1SgprMask);
-    return (back & ~(Rsrc1VgprMask | Rsrc1SgprMask)) | vgprs | sgprs;
-}
-
-std::uint32_t MergeRsrc2(const char* function, std::uint32_t back, std::uint32_t front) {
-    if ((front & ~Rsrc2UserSgprMask & ~back) != 0) Fail(function, "front half requires hardware state the back half does not enable");
-    return (back & ~Rsrc2UserSgprMask) | (front & Rsrc2UserSgprMask);
+std::array<std::uint32_t, 2> mergeGeometryResources(std::uint32_t frontRsrc1, std::uint32_t frontRsrc2, std::uint32_t backRsrc1, std::uint32_t backRsrc2) {
+    const auto frontVgprs = ((frontRsrc1 & Rsrc1VgprMask) + 1u) * 4u;
+    const auto backVgprs = ((backRsrc1 & Rsrc1VgprMask) + 1u) * 4u;
+    const auto frontTotal = frontVgprs + (frontRsrc2 >> 28u) * 8u;
+    const auto backTotal = backVgprs + (backRsrc2 >> 28u) * 8u;
+    const auto maxTotal = std::max(frontTotal, backTotal);
+    const auto shared = std::max(frontVgprs, backVgprs) >= maxTotal ? 0u : (maxTotal - std::min(frontTotal, backTotal) + 7u) / 64u;
+    const auto vgprs = std::max(frontRsrc1 & Rsrc1VgprMask, backRsrc1 & Rsrc1VgprMask);
+    const auto rsrc1Field = std::max((frontRsrc1 >> 29u) & 3u, (backRsrc1 >> 29u) & 3u);
+    const auto rsrc2Field = std::max((frontRsrc2 >> 16u) & 3u, (backRsrc2 >> 16u) & 3u);
+    const auto rsrc1 = (backRsrc1 & ~(Rsrc1VgprMask | (3u << 29u))) | vgprs | (rsrc1Field << 29u);
+    const auto rsrc2 = (backRsrc2 & ~(0xf0000000u | (3u << 16u) | Rsrc2UserSgprMask | Rsrc2OffchipLdsEnable)) | ((shared & 15u) << 28u) | (rsrc2Field << 16u) | (frontRsrc2 & (Rsrc2UserSgprMask | Rsrc2OffchipLdsEnable));
+    return {rsrc1, rsrc2};
 }
 
 const ShaderRegister* FindHalfRegister(const Shader* shader, std::uint32_t offset) {
@@ -147,21 +151,16 @@ GeometryLayout ComputeGeometryLayout(const char* function, const Shader* front, 
     const auto* frontRsrc1 = FindHalfRegister(front, SPI_SHADER_PGM_RSRC1_GS);
     const auto* frontRsrc2 = FindHalfRegister(front, SPI_SHADER_PGM_RSRC2_GS);
     if (frontRsrc1 == nullptr || frontRsrc2 == nullptr) Fail(function, "front half has no GS resource registers");
+    const auto* backRsrc1 = FindHalfRegister(back, SPI_SHADER_PGM_RSRC1_GS);
+    const auto* backRsrc2 = FindHalfRegister(back, SPI_SHADER_PGM_RSRC2_GS);
+    if (backRsrc1 == nullptr || backRsrc2 == nullptr) Fail(function, "back half has no GS resource registers");
+    const auto resources = mergeGeometryResources(frontRsrc1->value, frontRsrc2->value, backRsrc1->value, backRsrc2->value);
     layout.sh.assign(back->sh_registers, back->sh_registers + back->num_sh_registers);
     for (auto& reg : layout.sh) {
-        if (reg.offset == SPI_SHADER_PGM_RSRC1_GS) reg.value = MergeRsrc1(reg.value, frontRsrc1->value);
-        else if (reg.offset == SPI_SHADER_PGM_RSRC2_GS) reg.value = MergeRsrc2(function, reg.value, frontRsrc2->value);
-    }
-    for (std::uint32_t i = 0; i < front->num_sh_registers; ++i) {
-        const auto& reg = front->sh_registers[i];
-        if (reg.offset == SPI_SHADER_PGM_CHKSUM_GS || FindHalfRegister(back, reg.offset) != nullptr) continue;
-        layout.sh.push_back(reg);
+        if (reg.offset == SPI_SHADER_PGM_RSRC1_GS) reg.value = resources[0];
+        else if (reg.offset == SPI_SHADER_PGM_RSRC2_GS) reg.value = resources[1];
     }
     layout.cx.assign(back->cx_registers, back->cx_registers + back->num_cx_registers);
-    for (std::uint32_t i = 0; i < front->num_cx_registers; ++i) {
-        const auto& reg = front->cx_registers[i];
-        if (std::none_of(layout.cx.begin(), layout.cx.end(), [&](const ShaderRegister& other) { return other.offset == reg.offset; })) layout.cx.push_back(reg);
-    }
     if (layout.sh.size() > 0xff || layout.cx.size() > 0xff) Fail(function, "fused register count exceeds the shader header");
     layout.headerOffset = AlignUp(layout.codeBytes, alignof(Shader));
     layout.shOffset = AlignUp(layout.headerOffset + sizeof(Shader), alignof(ShaderRegister));
@@ -191,14 +190,45 @@ void SetProgramAddress(std::vector<ShaderRegister>& regs, std::uint32_t loOffset
     throw std::runtime_error("sceAgcFuseShaderHalves_0200: back half has no program address register pair");
 }
 
-int FuseGeometryHalves(Shader* fused_result, const Shader* front, const Shader* back, void* scratch_mem) {
-    constexpr auto fn = "sceAgcFuseShaderHalves_0200";
-    if (scratch_mem == nullptr) Fail(fn, "geometry halves need fused shader memory");
-    auto layout = ComputeGeometryLayout(fn, front, back);
-    const auto scratch = reinterpret_cast<std::uintptr_t>(scratch_mem);
-    const auto base = AlignUp(scratch, FusedCodeAlignment);
+struct FusedProgram {
+    std::vector<std::uint8_t> storage;
+    Shader* header;
+};
+
+std::mutex FusedProgramsMutex;
+std::map<std::vector<std::uint8_t>, FusedProgram> FusedPrograms;
+
+void AppendBytes(std::vector<std::uint8_t>& bytes, const void* data, std::size_t size) {
+    if (size == 0) return;
+    const auto* begin = static_cast<const std::uint8_t*>(data);
+    bytes.insert(bytes.end(), begin, begin + size);
+}
+
+std::vector<std::uint8_t> FusionKey(const Shader* front, const Shader* back, const GeometryLayout& layout) {
+    std::vector<std::uint8_t> key;
+    constexpr auto headerBytes = offsetof(Shader, num_sh_registers) + sizeof(Shader::num_sh_registers);
+    AppendBytes(key, front, headerBytes);
+    AppendBytes(key, back, headerBytes);
+    AppendBytes(key, const_cast<const void*>(front->code), layout.frontBytes);
+    AppendBytes(key, const_cast<const void*>(back->code), back->shader_size);
+    AppendBytes(key, layout.sh.data(), layout.sh.size() * sizeof(ShaderRegister));
+    AppendBytes(key, layout.cx.data(), layout.cx.size() * sizeof(ShaderRegister));
+    AppendBytes(key, back->specials, back->special_sizes_bytes);
+    AppendBytes(key, front->input_semantics, front->num_input_semantics * sizeof(ShaderSemantic));
+    AppendBytes(key, back->output_semantics, back->num_output_semantics * sizeof(ShaderSemantic));
+    if (back->user_data == nullptr) return key;
+    AppendBytes(key, back->user_data, offsetof(ShaderUserData, sharp_resource_count) + sizeof(ShaderUserData::sharp_resource_count));
+    AppendBytes(key, back->user_data->direct_resource_offset, back->user_data->direct_resource_count * sizeof(std::uint16_t));
+    for (std::size_t i = 0; i < layout.sharpOffsets.size(); ++i) AppendBytes(key, back->user_data->sharp_resource_offset[i], back->user_data->sharp_resource_count[i] * sizeof(ShaderSharp));
+    return key;
+}
+
+FusedProgram BuildFusedProgram(const char* fn, const Shader* front, const Shader* back, GeometryLayout& layout) {
+    FusedProgram program{std::vector<std::uint8_t>(layout.totalBytes + FusedCodeAlignment - 1), nullptr};
+    const auto storage = reinterpret_cast<std::uintptr_t>(program.storage.data());
+    const auto base = AlignUp(storage, FusedCodeAlignment);
     if ((base & SHADER_BASE_ALIGN_MASK) != 0) Fail(fn, "fused shader memory is not a valid program address");
-    auto* memory = static_cast<std::uint8_t*>(scratch_mem) + (base - scratch);
+    auto* memory = program.storage.data() + (base - storage);
     std::memcpy(memory, const_cast<const void*>(front->code), layout.frontBytes);
     for (std::size_t offset = layout.frontBytes; offset < layout.backOffset; offset += sizeof(SNop)) std::memcpy(memory + offset, &SNop, sizeof(SNop));
     std::memcpy(memory + layout.backOffset, const_cast<const void*>(back->code), back->shader_size);
@@ -241,10 +271,24 @@ int FuseGeometryHalves(Shader* fused_result, const Shader* front, const Shader* 
     fused.type = static_cast<std::uint8_t>(ShaderBinaryType::Gs);
     fused.num_sh_registers = static_cast<std::uint8_t>(layout.sh.size());
     fused.num_cx_registers = static_cast<std::uint8_t>(layout.cx.size());
-    auto* header = reinterpret_cast<Shader*>(memory + layout.headerOffset);
-    *header = fused;
+    program.header = reinterpret_cast<Shader*>(memory + layout.headerOffset);
+    *program.header = fused;
+    AgcDriverRegisterShader_nid_postfix(program.header);
+    return program;
+}
+
+int FuseGeometryHalves(Shader* fused_result, const Shader* front, const Shader* back, void* scratch_mem) {
+    constexpr auto fn = "sceAgcFuseShaderHalves_0200";
+    if (scratch_mem == nullptr) Fail(fn, "geometry halves need fused shader memory");
+    auto layout = ComputeGeometryLayout(fn, front, back);
+    auto key = FusionKey(front, back, layout);
+    std::lock_guard lock(FusedProgramsMutex);
+    auto found = FusedPrograms.find(key);
+    if (found == FusedPrograms.end()) found = FusedPrograms.emplace(std::move(key), BuildFusedProgram(fn, front, back, layout)).first;
+    Shader fused = *found->second.header;
+    std::memcpy(scratch_mem, fused.sh_registers, std::size_t{fused.num_sh_registers} * sizeof(ShaderRegister));
+    fused.sh_registers = static_cast<ShaderRegister*>(scratch_mem);
     *fused_result = fused;
-    AgcDriverRegisterShader_nid_postfix(header);
     return 0;
 }
 
@@ -304,12 +348,7 @@ int APS5_VABI sceAgcFuseShaderHalves_nid_postfix(Shader* fused_result, const Sha
 int APS5_VABI sceAgcGetFusedShaderSize_0080(SizeAlign* dst, const Shader* front, const Shader* back) {
     if (dst == nullptr || front == nullptr || back == nullptr) APS5_INVALID_ARG_EX;
     if (!ValidHalves(front, back)) return GRAPHICS5_ERROR_INVALID_SHADER_HALVES;
-    if (GeometryHalves(front)) {
-        const auto layout = ComputeGeometryLayout("sceAgcGetFusedShaderSize_0080", front, back);
-        dst->m_size = layout.totalBytes + FusedCodeAlignment - 1;
-        dst->m_align = FusedCodeAlignmentLog2;
-        return 0;
-    }
+    if (GeometryHalves(front)) ComputeGeometryLayout("sceAgcGetFusedShaderSize_0080", front, back);
     dst->m_size = std::uint64_t{back->num_sh_registers} * sizeof(ShaderRegister);
     dst->m_align = 4;
     return 0;

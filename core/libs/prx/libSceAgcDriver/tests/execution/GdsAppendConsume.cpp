@@ -25,7 +25,14 @@ constexpr std::uint32_t CounterOffset = 0x10;
 constexpr std::array<std::uint32_t, Counters> Starts{1000, 2000, 3000, 4000};
 constexpr std::uint32_t UntouchedAppend = 0x5eed0001u;
 constexpr std::uint32_t UntouchedConsume = 0x5eed0002u;
+constexpr std::uint32_t UntouchedOrdered = 0x5eed0003u;
 constexpr std::size_t ActiveLanesLiteral = 12;
+constexpr std::size_t OrderedWaveMaskLiteral = 5;
+constexpr std::size_t OrderedM0Literal = 7;
+constexpr std::size_t OrderedFirstLaneLiteral = 9;
+constexpr std::size_t OrderedOperationLiteral = 10;
+constexpr std::uint32_t OrderedAdd = 0xd8fe0310u;
+constexpr std::uint32_t OrderedSwap = 0xd8fe1310u;
 alignas(256) std::array<std::uint32_t, MaxThreads * Results> Output{};
 alignas(16) std::array<std::uint32_t, Counters> CounterReadback{};
 
@@ -43,6 +50,27 @@ alignas(256) auto Code = std::to_array<std::uint32_t>({
     0xe0702000, 0x80000403, 0xe0702004, 0x80000503, 0xe0702008, 0x80000603, 0xe070200c, 0x80000703,
     0xbf810000,
 });
+
+alignas(256) auto OrderedCode = std::to_array<std::uint32_t>({
+    0x34060082,
+    0x4a020083,
+    0x7e0a02ff, UntouchedOrdered,
+    0x360400ff, 0x0000003f,
+    0xbefc03ff, 0x0000ffff,
+    0x7da604ff, 0x00000000,
+    OrderedAdd, 0x05000001,
+    0xbefe04c1,
+    0xbf8cc07f,
+    0xe0702000, 0x80000503,
+    0xbf810000,
+});
+
+struct OrderedRun {
+    std::uint32_t m0;
+    std::uint32_t firstLaneEighths;
+};
+
+constexpr std::array<OrderedRun, 4> OrderedRuns{{{0, 0}, {7, 0}, {7, 2}, {7, 5}}};
 
 struct Workgroup {
     std::uint32_t threads;
@@ -83,13 +111,11 @@ std::array<std::uint32_t, Counters> ReadCounters(AgcDriver::QueueState& queue) {
     return CounterReadback;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup) {
+void Run(AgcDriver::VulkanDevice& device, const Workgroup& workgroup, std::span<const std::uint32_t> code) {
     Output.fill(0xdeadbeefu);
-    Code[ActiveLanesLiteral] = workgroup.activeLanes;
     std::vector<std::uint32_t> userData(4, 0u);
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size()));
     std::copy(output.begin(), output.end(), userData.begin());
-    const std::span<const std::uint32_t> code(Code);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{workgroup.threads, 1, 1}, 0, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
@@ -134,6 +160,56 @@ void CheckWaves(const Workgroup& workgroup, std::uint32_t result, std::uint32_t 
     }
 }
 
+void CheckOrdered(const Workgroup& workgroup, std::uint32_t m0, std::uint32_t firstLane, const std::array<std::uint32_t, Counters>& counters) {
+    const auto waves = workgroup.threads / workgroup.waveSize;
+    const auto what = workgroup.Name() + " ds_ordered_count with M0 " + std::to_string(m0) + " from lane " + std::to_string(firstLane) + " of each wave";
+    std::vector<std::uint32_t> values(waves);
+    std::vector<std::uint32_t> order(waves);
+    for (std::uint32_t wave = 0; wave < waves; ++wave) {
+        order[wave] = wave;
+        const auto first = wave * workgroup.waveSize + firstLane;
+        values[wave] = Output[first * Results];
+        for (std::uint32_t lane = wave * workgroup.waveSize; lane < (wave + 1u) * workgroup.waveSize; ++lane) {
+            const auto actual = Output[lane * Results];
+            if (lane < first) {
+                Require(actual == UntouchedOrdered, what + ": inactive lane " + std::to_string(lane) + " was written " + std::to_string(actual));
+                continue;
+            }
+            Require(actual == values[wave], what + ": lane " + std::to_string(lane) + " returned " + std::to_string(actual) + ", its wave's first active lane " + std::to_string(values[wave]));
+        }
+    }
+    std::sort(order.begin(), order.end(), [&](std::uint32_t left, std::uint32_t right) { return values[left] < values[right]; });
+    auto expected = Starts[0];
+    for (const auto wave : order) {
+        Require(values[wave] == expected, what + ": wave " + std::to_string(wave) + " returned " + std::to_string(values[wave]) + ", expected " + std::to_string(expected));
+        expected += wave * workgroup.waveSize + firstLane + 3u;
+    }
+    Require(counters[0] == expected, what + ": GDS counter 0 is " + std::to_string(counters[0]) + ", expected " + std::to_string(expected));
+}
+
+void CheckOrderedSwap(const Workgroup& workgroup, std::uint32_t m0, std::uint32_t firstLane, const std::array<std::uint32_t, Counters>& counters) {
+    const auto waves = workgroup.threads / workgroup.waveSize;
+    const auto what = workgroup.Name() + " ds_ordered_count swap with M0 " + std::to_string(m0) + " from lane " + std::to_string(firstLane) + " of each wave";
+    std::vector<std::uint32_t> seen{counters[0]};
+    std::vector<std::uint32_t> expected{Starts[0]};
+    for (std::uint32_t wave = 0; wave < waves; ++wave) {
+        const auto first = wave * workgroup.waveSize + firstLane;
+        for (std::uint32_t lane = wave * workgroup.waveSize; lane < (wave + 1u) * workgroup.waveSize; ++lane) {
+            const auto actual = Output[lane * Results];
+            if (lane < first) {
+                Require(actual == UntouchedOrdered, what + ": inactive lane " + std::to_string(lane) + " was written " + std::to_string(actual));
+                continue;
+            }
+            Require(actual == Output[first * Results], what + ": lane " + std::to_string(lane) + " returned " + std::to_string(actual) + ", its wave's first active lane " + std::to_string(Output[first * Results]));
+        }
+        seen.push_back(Output[first * Results]);
+        expected.push_back(first + 3u);
+    }
+    std::sort(seen.begin(), seen.end());
+    std::sort(expected.begin(), expected.end());
+    Require(seen == expected, what + ": the returned values and GDS counter 0 (" + std::to_string(counters[0]) + ") are not the start value and each wave's first active lane value");
+}
+
 void Check(const Workgroup& workgroup, std::uint32_t pass, const std::array<std::uint32_t, Counters>& counters) {
     const auto active = std::min(workgroup.activeLanes, workgroup.threads);
     const std::array<std::uint32_t, Counters> steps{workgroup.threads, workgroup.threads, active, active};
@@ -164,9 +240,24 @@ int main() {
         for (const auto& workgroup : Workgroups) {
             SetCounters(queue);
             Require(ReadCounters(queue) == Starts, workgroup.Name() + ": the GDS counters did not read back as set");
+            Code[ActiveLanesLiteral] = workgroup.activeLanes;
             for (std::uint32_t pass = 0; pass < 2; ++pass) {
-                Run(*device, workgroup);
+                Run(*device, workgroup, Code);
                 Check(workgroup, pass, ReadCounters(queue));
+            }
+            for (const auto& run : OrderedRuns) {
+                const auto firstLane = workgroup.waveSize * run.firstLaneEighths / 8u;
+                SetCounters(queue);
+                OrderedCode[OrderedWaveMaskLiteral] = workgroup.waveSize - 1u;
+                OrderedCode[OrderedM0Literal] = run.m0;
+                OrderedCode[OrderedFirstLaneLiteral] = firstLane;
+                OrderedCode[OrderedOperationLiteral] = OrderedAdd;
+                Run(*device, workgroup, OrderedCode);
+                CheckOrdered(workgroup, run.m0, firstLane, ReadCounters(queue));
+                SetCounters(queue);
+                OrderedCode[OrderedOperationLiteral] = OrderedSwap;
+                Run(*device, workgroup, OrderedCode);
+                CheckOrderedSwap(workgroup, run.m0, firstLane, ReadCounters(queue));
             }
         }
         std::puts("gds append consume tests passed");

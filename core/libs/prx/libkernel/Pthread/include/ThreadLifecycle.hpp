@@ -8,6 +8,7 @@ public:
     static void SetThreadDtors(thread_dtors_func_t callback);
     static void SetThreadAtexitCount(get_thread_atexit_count_func_t callback);
     static void SetThreadAtexitReport(thread_atexit_report_func_t callback);
+    static void RunKeyDtors();
 };
 
 extern "C" void APS5_VABI scePthreadExit(void* retval);

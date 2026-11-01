@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -10,6 +11,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Module/EhFrame.hpp"
 #ifdef _WIN32
@@ -22,7 +24,9 @@
 #else
 #include <dlfcn.h>
 #include <link.h>
+#include <mutex>
 #include <unistd.h>
+#include <unordered_map>
 #endif
 
 extern "C" std::int32_t ModuleIdForImage_nid_no_patch(const void* native);
@@ -63,6 +67,11 @@ struct GuestImage {
     std::uintptr_t address;
 };
 
+std::uint64_t PageSpan(std::uint64_t address, std::uint64_t size) {
+    constexpr std::uint64_t pageMask = PS5_PAGE_SIZE - 1;
+    return ((address + size + pageMask) & ~pageMask) - (address & ~pageMask);
+}
+
 #ifndef _WIN32
 template<typename TInfo>
 struct ImageSearch {
@@ -79,6 +88,24 @@ bool Contains(const dl_phdr_info& image, std::uintptr_t begin, std::uint64_t siz
         if (begin >= start && begin - start <= header.p_memsz && size <= header.p_memsz - (begin - start)) return true;
     }
     return false;
+}
+
+struct FrameTableCache {
+    std::mutex mutex;
+    unsigned long long unloads = 0;
+    std::unordered_map<std::uintptr_t, EhFrame::Tables> tables;
+};
+
+EhFrame::Tables FrameTables(const dl_phdr_info& image, std::uintptr_t header) {
+    static auto& cache = *new FrameTableCache();
+    std::lock_guard lock(cache.mutex);
+    if (cache.unloads != image.dlpi_subs) {
+        cache.tables.clear();
+        cache.unloads = image.dlpi_subs;
+    }
+    if (const auto found = cache.tables.find(header); found != cache.tables.end()) return found->second;
+    const auto contains = [&](std::uintptr_t begin, std::uint64_t size) { return Contains(image, begin, size); };
+    return cache.tables.emplace(header, EhFrame::ReadTables(contains, header, Caller)).first->second;
 }
 
 std::string ImageName(const dl_phdr_info& image) {
@@ -111,8 +138,7 @@ void Fill(const dl_phdr_info& image, TInfo& info) {
                 info.tls_size = ToU32(header.p_memsz, "TLS size");
                 info.tls_align = ToU32(header.p_align, "TLS alignment");
             } else if (header.p_type == PT_GNU_EH_FRAME) {
-                const auto contains = [&](std::uintptr_t begin, std::uint64_t size) { return Contains(image, begin, size); };
-                const auto tables = EhFrame::ReadTables(contains, address, Caller);
+                const auto tables = FrameTables(image, address);
                 info.eh_frame_hdr_addr = address;
                 info.eh_frame_hdr_size = ToU32(header.p_memsz, "eh_frame_hdr size");
                 info.eh_frame_addr = tables.frames;
@@ -161,6 +187,30 @@ std::vector<GuestImage> GuestImages() {
         images.push_back({native, address});
     }
     return images;
+}
+
+int AddGuestSegmentBytes(dl_phdr_info* image, std::size_t, void* data) {
+    const std::string_view name = image->dlpi_name ? image->dlpi_name : "";
+    if (!name.empty() && !name.ends_with(GuestModuleSuffix)) return 0;
+    constexpr auto allAccess = PF_R | PF_W | PF_X;
+    for (std::uint16_t i = 0; i < image->dlpi_phnum; ++i) {
+        const auto& header = image->dlpi_phdr[i];
+        if (header.p_type != PT_LOAD || header.p_offset == 0 || (header.p_flags & allAccess) == allAccess) continue;
+        *static_cast<std::uint64_t*>(data) += PageSpan(header.p_vaddr, header.p_memsz);
+    }
+    return 0;
+}
+
+std::uint64_t GuestSegmentBytes() {
+    std::uint64_t bytes = 0;
+    dl_iterate_phdr(AddGuestSegmentBytes, &bytes);
+    return bytes;
+}
+
+bool SystemImage(const GuestImage& image) {
+    const auto* name = static_cast<const link_map*>(image.native)->l_name;
+    const std::string_view path = name ? name : "";
+    return !path.empty() && !path.ends_with(GuestModuleSuffix);
 }
 #else
 bool SectionNamed(const IMAGE_SECTION_HEADER& section, const char* name) {
@@ -267,62 +317,172 @@ std::vector<GuestImage> GuestImages() {
     }
     return images;
 }
+
+std::uint64_t ImageSegmentBytes(std::uintptr_t base) {
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + static_cast<std::uintptr_t>(dos->e_lfanew));
+    const auto* sections = IMAGE_FIRST_SECTION(nt);
+    const auto sectionCount = nt->FileHeader.NumberOfSections;
+    bool relinked = false;
+    for (unsigned i = 0; i < sectionCount; ++i) relinked = relinked || SectionNamed(sections[i], ".elf0");
+    std::uint64_t bytes = 0;
+    for (unsigned i = 0; i < sectionCount; ++i) {
+        const auto& section = sections[i];
+        if (SectionProtection(section) == 0 || (relinked && std::strncmp(reinterpret_cast<const char*>(section.Name), ".elf", 4) != 0)) continue;
+        bytes += PageSpan(section.VirtualAddress, section.Misc.VirtualSize);
+    }
+    return bytes;
+}
+
+std::uint64_t GuestSegmentBytes() {
+    const auto executable = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    constexpr std::wstring_view suffix = L".guest.prx";
+    std::uint64_t bytes = 0;
+    for (const auto& image : GuestImages()) {
+        if (image.address != executable) {
+            const auto path = ModulePath(reinterpret_cast<HMODULE>(image.address));
+            if (path.size() < suffix.size() || CompareStringOrdinal(path.data() + path.size() - suffix.size(), static_cast<int>(suffix.size()), suffix.data(), static_cast<int>(suffix.size()), TRUE) != CSTR_EQUAL)
+                continue;
+        }
+        bytes += ImageSegmentBytes(image.address);
+    }
+    return bytes;
+}
+
+bool SystemImage(const GuestImage& image) {
+    if (image.address == reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr))) return false;
+    constexpr std::wstring_view suffix = L".guest.prx";
+    const auto path = ModulePath(reinterpret_cast<HMODULE>(image.address));
+    return path.size() < suffix.size() || CompareStringOrdinal(path.data() + path.size() - suffix.size(), static_cast<int>(suffix.size()), suffix.data(), static_cast<int>(suffix.size()), TRUE) != CSTR_EQUAL;
+}
 #endif
+
+template<typename TInfo>
+int FillModuleInfo(KernelModule handle, TInfo* info, bool titleOnly) {
+    if (!info) return SCE_KERNEL_ERROR_EFAULT;
+    if (info->st_size != sizeof(TInfo)) return SCE_KERNEL_ERROR_EINVAL;
+    for (const auto& image : GuestImages()) {
+        if (ModuleIdForImage_nid_no_patch(image.native) != handle) continue;
+        if (titleOnly && SystemImage(image)) return SCE_KERNEL_ERROR_EPERM;
+        TInfo result{};
+        result.st_size = sizeof(TInfo);
+#ifdef _WIN32
+        if (!Fill(image.address, result)) return SCE_KERNEL_ERROR_ESRCH;
+#else
+        ImageSearch<TInfo> search{image.address, &result, false};
+        dl_iterate_phdr(FindImage<TInfo>, &search);
+        if (!search.found) return SCE_KERNEL_ERROR_ESRCH;
+        if constexpr (std::is_same_v<TInfo, ModuleInfoEx>) result.id = handle;
+#endif
+        *info = result;
+        return 0;
+    }
+    return SCE_KERNEL_ERROR_ESRCH;
+}
+
+int FillModuleList(KernelModule* handles, std::size_t count, std::size_t* actual, bool titleOnly) {
+    if (!handles) return SCE_KERNEL_ERROR_EFAULT;
+    auto images = GuestImages();
+    if (titleOnly) std::erase_if(images, SystemImage);
+    for (std::size_t i = 0; i < images.size() && i < count; ++i) handles[i] = ModuleIdForImage_nid_no_patch(images[i].native);
+    if (images.size() > count) return SCE_KERNEL_ERROR_ENOMEM;
+    if (!actual) return SCE_KERNEL_ERROR_EFAULT;
+    *actual = images.size();
+    return 0;
+}
 
 }
 
 extern "C" {
 
 int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info) {
+    if (flags != 1 && flags != 2) {
+        if (!info) throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: null info with flags " + std::to_string(flags));
+        *info = {};
+        return SCE_KERNEL_ERROR_EINVAL;
+    }
     if (!info) return SCE_KERNEL_ERROR_EFAULT;
-    if (flags != 2) throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: unsupported flags " + std::to_string(flags));
-    if (info->st_size != sizeof(ModuleInfoEx))
-        throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: unsupported st_size " + std::to_string(info->st_size));
     ModuleInfoEx result{};
-    result.st_size = sizeof(ModuleInfoEx);
 #ifdef _WIN32
-    if (!Fill(static_cast<std::uintptr_t>(address), result)) return SCE_KERNEL_ERROR_ESRCH;
+    MEMORY_BASIC_INFORMATION memory{};
+    const bool found = Fill(static_cast<std::uintptr_t>(address), result) &&
+        VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) == sizeof(memory);
+    const GuestImage image{nullptr, found ? reinterpret_cast<std::uintptr_t>(memory.AllocationBase) : 0};
 #else
     Dl_info symbol{};
     link_map* native = nullptr;
-    if (!dladdr1(reinterpret_cast<const void*>(address), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP) || !native)
-        return SCE_KERNEL_ERROR_ESRCH;
     ImageSearch<ModuleInfoEx> search{static_cast<std::uintptr_t>(address), &result, false};
-    dl_iterate_phdr(FindImage<ModuleInfoEx>, &search);
-    if (!search.found) return SCE_KERNEL_ERROR_ESRCH;
-    result.id = ModuleIdForImage_nid_no_patch(native);
+    if (dladdr1(reinterpret_cast<const void*>(address), &symbol, reinterpret_cast<void**>(&native), RTLD_DL_LINKMAP) && native)
+        dl_iterate_phdr(FindImage<ModuleInfoEx>, &search);
+    const bool found = search.found;
+    if (found) result.id = ModuleIdForImage_nid_no_patch(native);
+    const GuestImage image{native, 0};
 #endif
+    if (!found || (flags == 2 && SystemImage(image))) {
+        *info = {};
+        return SCE_KERNEL_ERROR_ESRCH;
+    }
     *info = result;
     return 0;
 }
 
 int APS5_VABI sceKernelGetModuleList(KernelModule* handles, std::size_t count, std::size_t* actual) {
-    if (!handles || !actual) return SCE_KERNEL_ERROR_EFAULT;
-    const auto images = GuestImages();
-    for (std::size_t i = 0; i < images.size() && i < count; ++i) handles[i] = ModuleIdForImage_nid_no_patch(images[i].native);
-    if (images.size() > count) return SCE_KERNEL_ERROR_ENOMEM;
-    *actual = images.size();
-    return 0;
+    return FillModuleList(handles, count, actual, false);
+}
+
+int APS5_VABI sceKernelGetModuleList2(KernelModule* handles, std::size_t count, std::size_t* actual) {
+    return FillModuleList(handles, count, actual, true);
 }
 
 int APS5_VABI sceKernelGetModuleInfo(KernelModule handle, ModuleInfo* info) {
-    if (!info) return SCE_KERNEL_ERROR_EFAULT;
-    if (info->st_size != sizeof(ModuleInfo)) return SCE_KERNEL_ERROR_EINVAL;
-    for (const auto& image : GuestImages()) {
-        if (ModuleIdForImage_nid_no_patch(image.native) != handle) continue;
-        ModuleInfo result{};
-        result.st_size = sizeof(ModuleInfo);
+    return FillModuleInfo(handle, info, false);
+}
+
+int APS5_VABI sceKernelGetModuleInfo2(KernelModule handle, ModuleInfo* info) {
+    return FillModuleInfo(handle, info, true);
+}
+
+KernelModule APS5_VABI sceKernelGetExecutableModuleHandle() {
+    const auto images = GuestImages();
+    if (images.empty()) throw std::runtime_error("sceKernelGetExecutableModuleHandle: the main program is not loaded");
+    return ModuleIdForImage_nid_no_patch(images.front().native);
+}
+
+int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info) {
+    return FillModuleInfo(handle, info, false);
+}
+
+std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void** address, std::size_t* size) {
+    if (!address || !size) throw std::invalid_argument("sceKernelGetLibkernelTextLocation: null argument");
+    const auto images = GuestImages();
+    if (images.empty()) throw std::runtime_error("sceKernelGetLibkernelTextLocation: the main program is not loaded");
+    ModuleInfo info{};
 #ifdef _WIN32
-        if (!Fill(image.address, result)) return SCE_KERNEL_ERROR_ESRCH;
+    const bool found = Fill(images.front().address, info);
 #else
-        ImageSearch<ModuleInfo> search{image.address, &result, false};
-        dl_iterate_phdr(FindImage<ModuleInfo>, &search);
-        if (!search.found) return SCE_KERNEL_ERROR_ESRCH;
+    ImageSearch<ModuleInfo> search{images.front().address, &info, false};
+    dl_iterate_phdr(FindImage<ModuleInfo>, &search);
+    const bool found = search.found;
 #endif
-        *info = result;
-        return 0;
-    }
-    return SCE_KERNEL_ERROR_ESRCH;
+    if (!found || info.segment_count == 0)
+        throw std::runtime_error("sceKernelGetLibkernelTextLocation: the main program has no segments");
+    *address = reinterpret_cast<void*>(static_cast<std::uintptr_t>(info.segments[0].address));
+    *size = info.segments[0].size;
+    return 0;
+}
+
+std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(InternalSegmentInfo* result) {
+    if (!result) throw std::invalid_argument("sceKernelInternalMemoryGetModuleSegmentInfo: result is null");
+    void* address = nullptr;
+    std::size_t size = 0;
+    const auto status = sceKernelGetLibkernelTextLocation_nid_postfix(&address, &size);
+    if (status != 0) return status;
+    *result = {reinterpret_cast<std::uintptr_t>(address), size};
+    return 0;
+}
+
+std::uint64_t GuestImageSegmentBytes_nid_no_patch() {
+    return GuestSegmentBytes();
 }
 
 }

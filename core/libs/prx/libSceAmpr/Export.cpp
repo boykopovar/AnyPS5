@@ -1,25 +1,137 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <ctime>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/GuestHeap.hpp"
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <cstring>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <string>
 #include <thread>
+#include <unordered_map>
 
-static constexpr int SCE_AMPR_ERROR_BUFFER_FULL = 0x8002001C;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = 0x80020016;
 static constexpr int SCE_KERNEL_ERROR_EPERM = 0x80020001;
 static constexpr int SCE_KERNEL_ERROR_ESRCH = 0x80020003;
 static constexpr int SCE_KERNEL_ERROR_EBUSY = 0x80020010;
+static constexpr int SCE_KERNEL_ERROR_ENOMEM = 0x8002000C;
+
+static std::uint32_t RemainingCommandBytes(const Apr::CommandBufferObject& buffer) {
+    if (buffer.offset > buffer.size) throw std::invalid_argument("AMPR: command buffer offset exceeds bound memory");
+    return buffer.size - buffer.offset;
+}
+
+struct ExpandedCommandBuffer {
+    std::uint8_t* originalBase;
+    std::uint32_t originalSize;
+    std::uint8_t* allocation;
+};
+
+static std::mutex g_expandedCommandBuffersMutex;
+static std::unordered_map<Apr::CommandBufferObject*, ExpandedCommandBuffer> g_expandedCommandBuffers;
+static constexpr std::uint32_t MAX_EXPANDED_BUFFER_CAPACITY = 32u * 1024u * 1024u;
+
+static int EnsureCommandCapacity(Apr::CommandBufferObject* buffer, std::uint32_t bytes) {
+    RemainingCommandBytes(*buffer);
+    const std::uint64_t required = static_cast<std::uint64_t>(buffer->offset) + bytes;
+    if (required <= buffer->size) return 0;
+    if (required > MAX_EXPANDED_BUFFER_CAPACITY) return SCE_KERNEL_ERROR_EBUSY;
+    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    const std::uint64_t capacity = std::min<std::uint64_t>(
+        MAX_EXPANDED_BUFFER_CAPACITY,
+        std::max(static_cast<std::uint64_t>(buffer->size) * 2u, required + 256u));
+    if (required > capacity) return SCE_KERNEL_ERROR_EBUSY;
+    const auto newSize = static_cast<std::uint32_t>(capacity);
+    const std::lock_guard lock(g_expandedCommandBuffersMutex);
+    auto expanded = g_expandedCommandBuffers.find(buffer);
+    if (expanded == g_expandedCommandBuffers.end()) {
+        void* raw = nullptr;
+        try {
+            raw = GuestHeap::GuestHeapAllocate_nid_postfix(newSize);
+        } catch (const std::bad_alloc&) {
+            return SCE_KERNEL_ERROR_ENOMEM;
+        }
+        if (!raw) return SCE_KERNEL_ERROR_ENOMEM;
+        std::unique_ptr<std::uint8_t, decltype(&GuestHeap::GuestHeapFree_nid_postfix)> allocation(
+            static_cast<std::uint8_t*>(raw),
+            GuestHeap::GuestHeapFree_nid_postfix);
+        std::memcpy(allocation.get(), buffer->base, buffer->offset);
+        const auto [inserted, created] = g_expandedCommandBuffers.emplace(
+            buffer, ExpandedCommandBuffer{buffer->base, buffer->size, allocation.get()});
+        if (!created) throw std::logic_error("AMPR: command buffer expansion state already exists");
+        buffer->base = inserted->second.allocation;
+        buffer->size = newSize;
+        allocation.release();
+        return 0;
+    }
+    void* raw = nullptr;
+    try {
+        raw = GuestHeap::GuestHeapReallocate_nid_postfix(expanded->second.allocation, newSize);
+    } catch (const std::bad_alloc&) {
+        return SCE_KERNEL_ERROR_ENOMEM;
+    }
+    if (!raw) return SCE_KERNEL_ERROR_ENOMEM;
+    auto* allocation = static_cast<std::uint8_t*>(raw);
+    expanded->second.allocation = allocation;
+    buffer->base = allocation;
+    buffer->size = newSize;
+    return 0;
+}
+
+static bool ReleaseExpandedCommandBuffer(Apr::CommandBufferObject* buffer) {
+    const std::lock_guard lock(g_expandedCommandBuffersMutex);
+    const auto expanded = g_expandedCommandBuffers.find(buffer);
+    if (expanded == g_expandedCommandBuffers.end()) return false;
+    GuestHeap::GuestHeapFree_nid_postfix(expanded->second.allocation);
+    buffer->base = expanded->second.originalBase;
+    buffer->size = expanded->second.originalSize;
+    buffer->offset = 0;
+    buffer->numCommands = 0;
+    g_expandedCommandBuffers.erase(expanded);
+    return true;
+}
+
+static bool ReleaseExpandedCommandBufferByOriginalBase(const void* base) {
+    if (!base) return false;
+    const std::lock_guard lock(g_expandedCommandBuffersMutex);
+    for (auto it = g_expandedCommandBuffers.begin(); it != g_expandedCommandBuffers.end(); ++it) {
+        if (it->second.originalBase == base) {
+            GuestHeap::GuestHeapFree_nid_postfix(it->second.allocation);
+            auto* oldBuffer = it->first;
+            oldBuffer->base = it->second.originalBase;
+            oldBuffer->size = it->second.originalSize;
+            oldBuffer->offset = 0;
+            oldBuffer->numCommands = 0;
+            g_expandedCommandBuffers.erase(it);
+            return true;
+        }
+    }
+    return false;
+}
+
+static void* ResolveBufferBase(void* base) {
+    if (!base) return nullptr;
+    const std::lock_guard lock(g_expandedCommandBuffersMutex);
+    for (const auto& [buffer, expanded] : g_expandedCommandBuffers) {
+        if (expanded.originalBase == base) return expanded.allocation;
+    }
+    return base;
+}
 
 static int Append(Apr::CommandBufferObject* buffer, const void* command, uint32_t bytes) {
-    if (!buffer->base || bytes > buffer->size - buffer->offset) return SCE_AMPR_ERROR_BUFFER_FULL;
+    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    const int capacity = EnsureCommandCapacity(buffer, bytes);
+    if (capacity != 0) return capacity;
     std::memcpy(buffer->base + buffer->offset, command, bytes);
     buffer->offset += bytes;
     ++buffer->numCommands;
@@ -79,20 +191,20 @@ static int AppendRead(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std:
 }
 
 static std::uint64_t NopBytes(std::uint32_t dwords) {
-    return sizeof(Apr::CommandHeader) + std::uint64_t{dwords} * 4u;
+    return std::uint64_t{dwords} * 4u;
 }
 
-static int AppendNop(Apr::CommandBufferObject* buffer, std::uint32_t dwords, const std::uint32_t* data) {
-    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    const std::uint64_t bytes = NopBytes(dwords);
-    if (!buffer->base || bytes > buffer->size - buffer->offset) return SCE_AMPR_ERROR_BUFFER_FULL;
-    const Apr::CommandHeader header{Apr::Opcode::Nop, static_cast<std::uint32_t>(bytes)};
-    std::uint8_t* destination = buffer->base + buffer->offset;
-    std::memset(destination, 0, bytes);
+static int AppendNop(Apr::CommandBufferObject& buffer, std::uint32_t header, const std::uint32_t* data) {
+    const std::uint64_t bytes = NopBytes(Apr::NopDwords(header));
+    if (!buffer.base) return SCE_KERNEL_ERROR_EPERM;
+    if (bytes > std::numeric_limits<std::uint32_t>::max()) return SCE_KERNEL_ERROR_EBUSY;
+    const int capacity = EnsureCommandCapacity(&buffer, static_cast<std::uint32_t>(bytes));
+    if (capacity != 0) return capacity;
+    std::uint8_t* destination = buffer.base + buffer.offset;
     std::memcpy(destination, &header, sizeof(header));
-    if (data) std::memcpy(destination + sizeof(header), data, std::uint64_t{dwords} * 4u);
-    buffer->offset += static_cast<std::uint32_t>(bytes);
-    ++buffer->numCommands;
+    if (data) std::memcpy(destination + sizeof(header), data, bytes - sizeof(header));
+    buffer.offset += static_cast<std::uint32_t>(bytes);
+    ++buffer.numCommands;
     return 0;
 }
 
@@ -108,7 +220,10 @@ static std::uint64_t MeasureMarker(const char* text) {
 static int AppendMarker(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, const char* text) {
     if (!buffer || !text) return SCE_KERNEL_ERROR_EINVAL;
     const std::uint64_t bytes = MarkerBytes(text);
-    if (!buffer->base || bytes > buffer->size - buffer->offset) return SCE_AMPR_ERROR_BUFFER_FULL;
+    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
+    if (bytes > std::numeric_limits<std::uint32_t>::max()) return SCE_KERNEL_ERROR_EBUSY;
+    const int capacity = EnsureCommandCapacity(buffer, static_cast<std::uint32_t>(bytes));
+    if (capacity != 0) return capacity;
     const Apr::MarkerCommand command{{opcode, static_cast<std::uint32_t>(bytes)}};
     std::uint8_t* destination = buffer->base + buffer->offset;
     std::memset(destination, 0, bytes);
@@ -123,63 +238,47 @@ static bool InMap(const Apr::CommandBufferObject* buffer) {
     return buffer && (buffer->recording & Apr::MapActive) != 0u;
 }
 
-static bool ValidMapRange(std::uint64_t address, std::uint64_t size) {
-    constexpr std::uint64_t pageMask = 0x3FFFu;
-    return address != 0u && size != 0u && ((address | size) & pageMask) == 0u && address + size > address;
-}
-
-static bool ValidMap(std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::int32_t protection) {
-    return ValidMapRange(address, size) && (directOffset & 0x3FFFu) == 0u && (static_cast<std::uint32_t>(protection) & 0xFFFFFC0Cu) == 0u;
-}
+using Apr::ValidMapRange;
+using Apr::ValidMap;
+using Apr::ValidAmmProtection;
+using Apr::ValidRemap;
+using Apr::ValidProtect;
 
 static constexpr std::int64_t AmmMeasureInvalid = SCE_KERNEL_ERROR_EINVAL;
 
 static int AppendAmm(Apr::CommandBufferObject* buffer, const void* command, std::uint32_t bytes) {
-    if (bytes > buffer->size - buffer->offset) return SCE_KERNEL_ERROR_EBUSY;
     return Append(buffer, command, bytes);
 }
 
 static int RecordAmmMap(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::int32_t type, std::int32_t protection) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidMap(address, directOffset, size, protection)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmMapCommand command{{opcode, sizeof(command)}, address, directOffset, size, type, protection};
-    return AppendAmm(buffer, &command, sizeof(command));
-}
-
-static bool ValidAmmProtection(std::int32_t protection) {
-    return (static_cast<std::uint32_t>(protection) & 0xFFFFFC0Cu) == 0u;
-}
-
-static bool ValidRemap(std::uint64_t address, std::uint64_t source, std::uint64_t size, std::int32_t protection) {
-    return ValidMapRange(address, size) && ValidMapRange(source, size) && ValidAmmProtection(protection);
-}
-
-static bool ValidProtect(std::uint64_t address, std::uint64_t size, std::int32_t protection, std::int32_t mask) {
-    return ValidMapRange(address, size) && ValidAmmProtection(protection) && ValidAmmProtection(mask);
+    const auto command = Apr::EncodeAmmMap(opcode, address, directOffset, size, type, protection);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 static int RecordAmmRemap(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::int32_t protection) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidRemap(address, source, size, protection)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmRemapCommand command{{opcode, sizeof(command)}, address, source, size, protection, 0};
-    return AppendAmm(buffer, &command, sizeof(command));
+    const auto command = Apr::EncodeAmmRemap(opcode, address, source, size, protection);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 static int RecordAmmProtect(Apr::CommandBufferObject* buffer, Apr::Opcode opcode, std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection, std::int32_t mask) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidProtect(address, size, protection, mask)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmProtectCommand command{{opcode, sizeof(command)}, address, size, type, protection, mask, 0};
-    return AppendAmm(buffer, &command, sizeof(command));
+    const auto command = Apr::EncodeAmmProtect(opcode, address, size, type, protection, mask);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 static constexpr std::int32_t PrtAllocationMask = 1019;
 
 static int RecordPrt(Apr::CommandBufferObject* buffer, const void* command, std::uint32_t bytes) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
-    if (bytes > buffer->size - buffer->offset) return SCE_KERNEL_ERROR_EBUSY;
+    if (bytes > RemainingCommandBytes(*buffer) && !buffer->base) return SCE_KERNEL_ERROR_EBUSY;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
     return Append(buffer, command, bytes);
 }
@@ -216,39 +315,11 @@ static int RecordWriteAddressFromCounterPair(Apr::CommandBufferObject* buffer, v
     return AppendCommand(buffer, Apr::Opcode::WriteAddressFromCounterPair, Apr::WriteAddressFromCounterCommand{{}, reinterpret_cast<std::uint64_t>(address), counter, counter + 1u});
 }
 
-struct Xtime {
-    std::int64_t sec;
-    std::int64_t nsec;
-};
-
-static constexpr int ThrdSuccess = 0;
-static constexpr int ThrdError = 4;
-static constexpr int GuestClockRealtime = 0;
-static constexpr std::int64_t NanosPerSecond = 1000000000;
-static constexpr std::int64_t LongestSleepSeconds = 86400;
-
 static std::atomic_flag sharedPtrSpinLock;
 
-extern "C" {
-int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** value);
-int APS5_VABI wcsrtombs_s_nid_postfix(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t** source, std::size_t limit, void* state);
-}
-
-static KernelTimespec XtimeDeadline(const Xtime& time) {
-    constexpr auto largest = std::numeric_limits<std::int64_t>::max();
-    constexpr auto smallest = std::numeric_limits<std::int64_t>::min();
-    const auto carry = time.nsec / NanosPerSecond;
-    auto nanos = time.nsec % NanosPerSecond;
-    auto seconds = time.sec;
-    if ((carry > 0 && seconds > largest - carry) || (carry < 0 && seconds < smallest - carry)) throw std::overflow_error("_Thrd_sleep: xtime seconds overflow");
-    seconds += carry;
-    if (nanos < 0) {
-        if (seconds == smallest) throw std::overflow_error("_Thrd_sleep: xtime seconds overflow");
-        nanos += NanosPerSecond;
-        --seconds;
-    }
-    return {seconds, nanos};
-}
+static_assert(sizeof(AmmUsageStatsData) == 0x18);
+static constexpr std::uint16_t AmmPageTablePoolEntries = 512;
+static constexpr std::uint32_t AmmRingIdleFlags = 0x7;
 
 extern "C" {
 
@@ -292,11 +363,29 @@ int APS5_VABI sceAmprCommandBufferWriteAddressFromCounterPairOnCompletion(Apr::C
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressOnCompletion() { return sizeof(Apr::WriteAddressCommand); }
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteCounterOnCompletion() { return sizeof(Apr::WriteCounterCommand); }
+
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromTimeCounterOnCompletion(volatile std::uint64_t* address) {
+    if (!ValidWriteAddress(address)) return MeasureInvalid;
+    return sizeof(Apr::WriteAddressFromCounterCommand);
+}
+
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounterOnCompletion(volatile std::uint64_t* address, std::uint8_t counter) {
+    (void)counter;
+    if (!ValidWriteAddress(address)) return MeasureInvalid;
+    return sizeof(Apr::WriteAddressFromCounterCommand);
+}
+
+std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteAddressFromCounterPairOnCompletion(volatile std::uint64_t* address, std::uint8_t counter) {
+    if (!ValidWriteAddress(address) || (counter & 1u) != 0u) return MeasureInvalid;
+    return sizeof(Apr::WriteAddressFromCounterCommand);
+}
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWaitOnAddress() { return sizeof(Apr::WaitCommand); }
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWaitOnCounter() { return sizeof(Apr::WaitCommand); }
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueueOnCompletion() { return sizeof(Apr::WriteKernelEventQueueCommand); }
 
 int APS5_VABI sceAmprAprCommandBufferConstructor(Apr::CommandBufferObject* buffer, uint64_t* gatherState, uint64_t* scatterState) {
+    if (!buffer || !gatherState || !scatterState) return SCE_KERNEL_ERROR_EINVAL;
+    ReleaseExpandedCommandBuffer(buffer);
     buffer->type = Apr::BufferType::Apr;
     *gatherState = 0;
     *scatterState = 0;
@@ -304,7 +393,7 @@ int APS5_VABI sceAmprAprCommandBufferConstructor(Apr::CommandBufferObject* buffe
 }
 
 int APS5_VABI sceAmprAprCommandBufferDestructor(Apr::CommandBufferObject* buffer, uint64_t* gatherState, uint64_t* scatterState) {
-    (void)buffer;
+    if (buffer) ReleaseExpandedCommandBuffer(buffer);
     (void)gatherState;
     (void)scatterState;
     return 0;
@@ -337,7 +426,11 @@ int APS5_VABI sceAmprAprCommandBufferReadFileGather(Apr::CommandBufferObject* bu
     (void)mapState;
     (void)scatterGatherState;
     if (!ValidReadLength(size) || !ValidReadOffset(offset)) return SCE_KERNEL_ERROR_EINVAL;
-    return AppendRead(buffer, Apr::Opcode::ReadFileGather, 0, nullptr, size, offset);
+    if (!buffer || (buffer->recording & Apr::ScatterGatherValid) == 0u) return SCE_KERNEL_ERROR_EINVAL;
+    const Apr::CompactReadFileGatherCommand command{
+        static_cast<std::uint32_t>(Apr::Opcode::CompactReadFileGather) | static_cast<std::uint32_t>(offset >> 32u) << 8u,
+        static_cast<std::uint32_t>(size - 1u), static_cast<std::uint32_t>(offset)};
+    return Append(buffer, &command, sizeof(command));
 }
 
 int APS5_VABI sceAmprAprCommandBufferReadFileGatherScatter(Apr::CommandBufferObject* buffer, std::uint64_t* mapState, std::uint64_t* scatterGatherState, void* destination, std::uint64_t size, std::uint64_t offset) {
@@ -362,6 +455,7 @@ int APS5_VABI sceAmprAprCommandBufferResetGatherScatterState(Apr::CommandBufferO
 
 void* APS5_VABI sceAmprCommandBufferClearBuffer(Apr::CommandBufferObject* buffer) {
     void* memory = buffer->base;
+    if (ReleaseExpandedCommandBuffer(buffer)) memory = buffer->base;
     buffer->base = nullptr;
     buffer->size = 0;
     buffer->offset = 0;
@@ -381,29 +475,33 @@ int APS5_VABI sceAmprCommandBufferConstructMarker(Apr::CommandBufferObject* buff
 }
 
 int APS5_VABI sceAmprCommandBufferConstructNop(Apr::CommandBufferObject* buffer, std::int16_t type, const void* payload, std::uint32_t payloadBytes, const std::uint32_t* word) {
-    (void)type;
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
     if (payloadBytes > (word ? 56u : 60u)) return SCE_KERNEL_ERROR_EINVAL;
     if (payloadBytes != 0u && !payload) throw std::invalid_argument("sceAmprCommandBufferConstructNop: null payload");
     const std::uint32_t dwords = (payloadBytes + 3u) / 4u + (word ? 1u : 0u);
-    const std::uint32_t offset = buffer ? buffer->offset : 0u;
-    const int result = AppendNop(buffer, dwords, nullptr);
+    const std::uint32_t offset = buffer->offset;
+    const int result = AppendNop(*buffer, Apr::NopHeader(dwords, static_cast<std::uint32_t>(type)), nullptr);
     if (result != 0) return result;
-    std::uint8_t* data = buffer->base + offset + sizeof(Apr::CommandHeader);
+    std::uint8_t* data = buffer->base + offset + Apr::NopHeaderBytes;
     if (word) {
         std::memcpy(data, word, sizeof(*word));
         data += sizeof(*word);
     }
     if (payloadBytes != 0u) std::memcpy(data, payload, payloadBytes);
+    std::memset(data + payloadBytes, 0, (4u - payloadBytes % 4u) % 4u);
     return 0;
 }
 
 int APS5_VABI sceAmprCommandBufferConstructor(Apr::CommandBufferObject* buffer) {
-    *buffer = {nullptr, 0, 0, 0, Apr::BufferType::Generic};
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    ReleaseExpandedCommandBuffer(buffer);
+    *buffer = {Apr::BufferType::Generic, 0, 0, 0, 0, nullptr};
     return 0;
 }
 
 int APS5_VABI sceAmprCommandBufferDestructor(Apr::CommandBufferObject* buffer) {
-    (void)buffer;
+    if (buffer) ReleaseExpandedCommandBuffer(buffer);
     return 0;
 }
 
@@ -420,7 +518,7 @@ uint32_t APS5_VABI sceAmprCommandBufferGetNumCommands(const Apr::CommandBufferOb
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetSize(const Apr::CommandBufferObject* buffer) {
-    return buffer->size;
+    return buffer != nullptr ? buffer->size : 0;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetType(const Apr::CommandBufferObject* buffer) {
@@ -428,14 +526,17 @@ uint32_t APS5_VABI sceAmprCommandBufferGetType(const Apr::CommandBufferObject* b
 }
 
 int APS5_VABI sceAmprCommandBufferNop(Apr::CommandBufferObject* buffer, std::uint32_t dwords) {
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
     if (dwords == 0u || dwords > 16u) return SCE_KERNEL_ERROR_EINVAL;
-    return AppendNop(buffer, dwords, nullptr);
+    return AppendNop(*buffer, Apr::NopHeader(dwords - 1u), nullptr);
 }
 
 int APS5_VABI sceAmprCommandBufferNopWithData(Apr::CommandBufferObject* buffer, std::uint32_t dwords, const std::uint32_t* data) {
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
     if (dwords > 15u) return SCE_KERNEL_ERROR_EINVAL;
-    if (dwords != 0u && !data) throw std::invalid_argument("sceAmprCommandBufferNopWithData: null data");
-    return AppendNop(buffer, dwords, data);
+    return AppendNop(*buffer, Apr::NopHeader(dwords), data);
 }
 
 int APS5_VABI sceAmprCommandBufferPopMarker(Apr::CommandBufferObject* buffer) {
@@ -452,12 +553,16 @@ int APS5_VABI sceAmprCommandBufferPushMarkerWithColor(Apr::CommandBufferObject* 
 }
 
 int APS5_VABI sceAmprCommandBufferReset(Apr::CommandBufferObject* buffer) {
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     buffer->offset = 0;
     buffer->numCommands = 0;
     return 0;
 }
 
 int APS5_VABI sceAmprCommandBufferSetBuffer(Apr::CommandBufferObject* buffer, void* memory, uint32_t size) {
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    ReleaseExpandedCommandBuffer(buffer);
+    ReleaseExpandedCommandBufferByOriginalBase(memory);
     buffer->base = static_cast<uint8_t*>(memory);
     buffer->size = size;
     buffer->offset = 0;
@@ -539,7 +644,7 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeNop(std::uint32_t dwords) {
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeNopWithData(std::uint32_t dwords) {
     if (dwords == 0u || dwords > 16u) return MeasureInvalid;
-    return NopBytes(dwords - 1u);
+    return NopBytes(dwords);
 }
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizePopMarker() {
@@ -561,7 +666,7 @@ uint32_t APS5_VABI sceAmprMeasureCommandSizeReadFile(void) {
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileGather(std::uint64_t size, std::uint64_t offset) {
     if (!ValidReadLength(size) || !ValidReadOffset(offset)) return MeasureInvalid;
-    return sizeof(Apr::ReadFileCommand);
+    return sizeof(Apr::CompactReadFileGatherCommand);
 }
 
 std::uint64_t APS5_VABI sceAmprMeasureCommandSizeReadFileGatherScatter(void* destination, std::uint64_t size, std::uint64_t offset) {
@@ -626,18 +731,14 @@ std::uint64_t APS5_VABI sceAmprMeasureCommandSizeWriteKernelEventQueue_04_00(std
     return sizeof(Apr::WriteKernelEventQueueCommand);
 }
 
-struct AmmSubmitResult {
-    std::int32_t result;
-    std::uint32_t errorOffset;
-};
-
 int APS5_VABI sceAmprAmmCommandBufferConstructor(Apr::CommandBufferObject* buffer) {
-    (void)buffer;
+    if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
+    ReleaseExpandedCommandBuffer(buffer);
     return 0;
 }
 
 int APS5_VABI sceAmprAmmCommandBufferDestructor(Apr::CommandBufferObject* buffer) {
-    (void)buffer;
+    if (buffer) ReleaseExpandedCommandBuffer(buffer);
     return 0;
 }
 
@@ -662,9 +763,9 @@ int APS5_VABI sceAmprAmmCommandBufferMapDirectWithGpuMaskId(Apr::CommandBufferOb
 int APS5_VABI sceAmprAmmCommandBufferUnmap(Apr::CommandBufferObject* buffer, std::uint64_t address, std::uint64_t size) {
     if (!buffer) return SCE_KERNEL_ERROR_EINVAL;
     if (!buffer->base) return SCE_KERNEL_ERROR_EPERM;
-    if (!ValidMapRange(address, size)) return SCE_KERNEL_ERROR_EINVAL;
-    const Apr::AmmUnmapCommand command{{Apr::Opcode::AmmUnmap, sizeof(command)}, address, size};
-    return AppendAmm(buffer, &command, sizeof(command));
+    const auto command = Apr::EncodeAmmUnmap(address, size);
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    return AppendAmm(buffer, &*command, sizeof(*command));
 }
 
 std::int64_t APS5_VABI sceAmprAmmMeasureAmmCommandSizeMap(std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection) {
@@ -814,17 +915,22 @@ int APS5_VABI sceAmprAmmGetVirtualAddressRanges(std::uint64_t* start, std::uint6
     return 0;
 }
 
+int APS5_VABI sceAmprAmmSetPageTablePoolOccupancyNotificationThreshold(int threshold) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 int APS5_VABI sceAmprAmmSubmitCommandBuffer(void* base, std::uint32_t offset, std::uint32_t priority) {
     if (priority > 2u) return SCE_KERNEL_ERROR_EINVAL;
     if (!base) return SCE_KERNEL_ERROR_EPERM;
-    AmmSubmit_nid_no_patch(base, offset);
+    AmmSubmit_nid_no_patch(ResolveBufferBase(base), offset);
     return 0;
 }
 
 int APS5_VABI sceAmprAmmSubmitCommandBuffer2(void* base, std::uint32_t offset, std::uint32_t priority, AmmSubmitResult* result, std::uint32_t* id) {
     if (priority > 2u) return SCE_KERNEL_ERROR_EINVAL;
     if (!base) return SCE_KERNEL_ERROR_EPERM;
-    const auto submitted = AmmSubmit_nid_no_patch(base, offset);
+    const auto submitted = AmmSubmit_nid_no_patch(ResolveBufferBase(base), offset);
     if (result) *result = {0, 0};
     if (id) *id = submitted;
     return 0;
@@ -833,7 +939,7 @@ int APS5_VABI sceAmprAmmSubmitCommandBuffer2(void* base, std::uint32_t offset, s
 int APS5_VABI sceAmprAmmSubmitCommandBuffer3(void* base, std::uint32_t offset, std::uint32_t priority, std::uint32_t* id) {
     if (priority > 2u) return SCE_KERNEL_ERROR_EINVAL;
     if (!base) return SCE_KERNEL_ERROR_EPERM;
-    const auto submitted = AmmSubmit_nid_no_patch(base, offset);
+    const auto submitted = AmmSubmit_nid_no_patch(ResolveBufferBase(base), offset);
     if (id) *id = submitted;
     return 0;
 }
@@ -842,88 +948,15 @@ int APS5_VABI sceAmprAmmWaitCommandBufferCompletion(std::uint32_t id) {
     return AmmSubmitted_nid_no_patch(id) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 }
 
-int APS5_VABI _ZNSt8ios_base7_AddstdEPS__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZSt16_Throw_Cpp_errori_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Thrd_join_nid_postfix(Pthread thread, int* code) {
-    void* result = nullptr;
-    if (pthread_join_nid_postfix(thread, &result) != 0) return ThrdError;
-    if (code) *code = static_cast<int>(reinterpret_cast<std::intptr_t>(result));
-    return ThrdSuccess;
-}
-
-int APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Thrd_id_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Cnd_signal_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix(void) {
     sharedPtrSpinLock.clear(std::memory_order_release);
 }
 
-int APS5_VABI _Cnd_init_with_name_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZTVN10__cxxabiv120__function_type_infoE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char*) {
+    return _Cnd_init_nid_postfix(handle);
 }
 
 int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKcSE__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZTVN10__cxxabiv119__pointer_type_infoE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -937,30 +970,83 @@ void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void) {
     while (sharedPtrSpinLock.test_and_set(std::memory_order_acquire)) std::this_thread::yield();
 }
 
-int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
-    if (!target) APS5_INVALID_ARG_EX;
-    const auto deadline = XtimeDeadline(*target);
-    for (;;) {
-        KernelTimespec now{};
-        if (clock_gettime_nid_postfix(GuestClockRealtime, &now) != 0) throw std::runtime_error("_Thrd_sleep: reading the realtime clock failed");
-        if (now.tv_sec > deadline.tv_sec || (now.tv_sec == deadline.tv_sec && now.tv_nsec >= deadline.tv_nsec)) return 0;
-        KernelTimespec remaining{deadline.tv_sec - now.tv_sec, deadline.tv_nsec - now.tv_nsec};
-        if (remaining.tv_nsec < 0) {
-            remaining.tv_nsec += NanosPerSecond;
-            --remaining.tv_sec;
-        }
-        remaining.tv_sec = std::min(remaining.tv_sec, LongestSleepSeconds);
-        if (nanosleep_nid_postfix(&remaining, nullptr) != 0) throw std::runtime_error("_Thrd_sleep: nanosleep failed");
-    }
+[[noreturn]] void APS5_VABI __cxa_call_unexpected_nid_postfix(void* unwindException) {
+
+    __cxa_call_terminate_nid_postfix(unwindException);
 }
 
-int APS5_VABI wcstombs_s_nid_postfix(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit) {
-    std::array<std::uint64_t, 16> state{};
-    return wcsrtombs_s_nid_postfix(result, destination, capacity, &source, limit, state.data());
+APS5_EXPORT("0hlfW1O4Aa4", sceAmprLocaleconv);
+SonyLconv* APS5_VABI sceAmprLocaleconv(void) {
+    return SonyLocaleconv();
 }
 
-int APS5_VABI __cxa_call_unexpected_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+APS5_EXPORT("802pFCwC9w0", sceAmprUdivti3);
+unsigned __int128 APS5_VABI sceAmprUdivti3(unsigned __int128 dividend, unsigned __int128 divisor) {
+    return SonyUdivti3(dividend, divisor);
+}
+
+APS5_EXPORT("MU25eqxSDTw", sceAmprSinh);
+double APS5_VABI sceAmprSinh(double x, double y) {
+    return SonySinh(x, y);
+}
+
+APS5_EXPORT("-vXEQdRADLI", sceAmprStrtokS);
+char* APS5_VABI sceAmprStrtokS(char* str, const char* delim, char** context) {
+    return SonyStrtokS(str, delim, context);
+}
+
+APS5_EXPORT("2UFh+YKfuzk", sceAmprCtimeS);
+int APS5_VABI sceAmprCtimeS(char* buffer, std::size_t size, const std::int64_t* time) {
+    return SonyCtimeS(buffer, size, time);
+}
+
+APS5_EXPORT("6f5f-qx4ucA", sceAmprWcscpyS);
+int APS5_VABI sceAmprWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {
+    return SonyWcscpyS(dest, size, src);
+}
+
+APS5_EXPORT("ENLfKJEZTjE", sceAmprSetConstraintHandlerS);
+void* APS5_VABI sceAmprSetConstraintHandlerS(void* handler) {
+    return SonySetConstraintHandlerS(handler);
+}
+
+APS5_EXPORT("Jo9ON-AX9eU", sceAmprFltrounds);
+int APS5_VABI sceAmprFltrounds(void) {
+    return SonyFltrounds();
+}
+
+APS5_EXPORT("ODGONXcSmz4", sceAmprIgnoreHandlerS);
+void APS5_VABI sceAmprIgnoreHandlerS(const char* message, void* pointer, int error) {
+    SonyIgnoreHandlerS(message, pointer, error);
+}
+
+APS5_EXPORT("sZLrjx-yEx4", sceAmprWcstombsS);
+int APS5_VABI sceAmprWcstombsS(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit) {
+    return wcstombs_s_nid_postfix(result, destination, capacity, source, limit);
+}
+
+APS5_EXPORT("VUzjXknPPBs", sceAmprMbstowcs);
+std::size_t APS5_VABI sceAmprMbstowcs(std::uint16_t* dest, const char* src, std::size_t size) {
+    return SonyMbstowcs(dest, src, size);
+}
+
+APS5_EXPORT("qPe7-h5Jnuc", sceAmprAsctimeS);
+int APS5_VABI sceAmprAsctimeS(char* buffer, std::size_t size, const GuestTm* time) {
+    return SonyAsctimeS(buffer, size, time);
+}
+
+APS5_EXPORT("qlWiRfOJx1A", sceAmprFpclassifyd);
+int APS5_VABI sceAmprFpclassifyd(double value) {
+    return SonyFpclassifyd(value);
+}
+
+int APS5_VABI sceAmprAmmGetUsageStatsData(AmmUsageStatsData* stats) {
+    if (!stats || stats->sizeInBytes > sizeof(AmmUsageStatsData)) return SCE_KERNEL_ERROR_EINVAL;
+    AmmUsageStatsData out{};
+    out.sizeInBytes = stats->sizeInBytes;
+    out.numPageTablePoolEntries = AmmPageTablePoolEntries;
+    out.ringIdleFlags = AmmRingIdleFlags;
+    std::memcpy(stats, &out, static_cast<std::size_t>(stats->sizeInBytes));
     return 0;
 }
 }

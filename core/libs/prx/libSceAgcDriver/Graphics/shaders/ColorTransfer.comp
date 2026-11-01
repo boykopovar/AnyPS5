@@ -1,14 +1,29 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "PqToSdr.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, std430) buffer TiledPixels { uint tiled[]; };
 layout(set = 0, binding = 1, std430) buffer LinearPixels { uint linear[]; };
+layout(set = 0, binding = 2, std430) readonly buffer ScanoutThresholds { uint thresholds[]; };
+layout(set = 0, binding = 3, std430) readonly buffer PqLuminance { float pqNits[]; };
 layout(push_constant) uniform Parameters {
     uint width;
     uint height;
     uint blocksPerRow;
     uint mode;
+    float whiteNits;
 } parameters;
+
+uint scanoutCode(uint bits, uint base) {
+    if (bits > 0x7c00u) return 0u;
+    uint code = 0u;
+    for (uint step = 128u; step != 0u; step >>= 1u) {
+        if (code + step <= 255u && thresholds[base + code + step - 1u] <= bits) code += step;
+    }
+    return code;
+}
 
 void main() {
     uint x = gl_GlobalInvocationID.x;
@@ -21,7 +36,27 @@ void main() {
             ^ ((x << 2u) & 0x000cu) ^ ((x << 5u) & 0x0380u) ^ ((x << 4u) & 0x0400u) ^ ((x << 6u) & 0x0800u) ^ ((x << 9u) & 0xa000u);
         tiledIndex = ((y / 128u) * parameters.blocksPerRow + x / 128u) * 16384u + offset / 4u;
     }
-    uint pixel = (parameters.mode & 1u) != 0u ? linear[linearIndex] : tiled[tiledIndex];
+    uint pixel;
+    if ((parameters.mode & 16u) != 0u) {
+        uint texel = linearIndex * 2u;
+        if ((parameters.mode & 4u) != 0u) {
+            uint offset = ((x << 3u) & 0x0008u) ^ ((x << 4u) & 0x0460u) ^ ((x << 5u) & 0x0300u) ^ ((x << 6u) & 0x0800u) ^ ((x << 9u) & 0x8000u) ^ ((x << 10u) & 0x2000u)
+                ^ ((y << 4u) & 0x0010u) ^ ((y << 6u) & 0x0080u) ^ ((y << 5u) & 0x0f00u) ^ ((y << 10u) & 0x5000u);
+            texel = (((y / 64u) * parameters.blocksPerRow + x / 128u) * 65536u + offset) / 4u;
+        }
+        uint first = tiled[texel];
+        uint second = tiled[texel + 1u];
+        pixel = scanoutCode(first & 0xffffu, 0u) | (scanoutCode(first >> 16u, 0u) << 8u) | (scanoutCode(second & 0xffffu, 0u) << 16u) | (scanoutCode(second >> 16u, 255u) << 24u);
+    } else {
+        pixel = (parameters.mode & 1u) != 0u ? linear[linearIndex] : tiled[tiledIndex];
+    }
+    if ((parameters.mode & 32u) != 0u) {
+        vec3 nits = vec3(pqNits[pixel & 0x3ffu], pqNits[(pixel >> 10u) & 0x3ffu], pqNits[(pixel >> 20u) & 0x3ffu]);
+        vec3 encoded = srgbEncode(pqToSdrLinear((parameters.mode & 2u) != 0u ? nits : nits.zyx, parameters.whiteNits));
+        uvec3 codes = uvec3(floor(encoded * 255.0 + 0.5));
+        linear[linearIndex] = codes.b | (codes.g << 8u) | (codes.r << 16u) | 0xff000000u;
+        return;
+    }
     // Mode 8: A2B10G10R10 source (red in the low bits) presented as 8-bit RGBA.
     if ((parameters.mode & 8u) != 0u) pixel = ((pixel >> 2u) & 0xffu) | (((pixel >> 12u) & 0xffu) << 8u) | (((pixel >> 22u) & 0xffu) << 16u) | 0xff000000u;
     if ((parameters.mode & 2u) != 0u) pixel = (pixel & 0xff00ff00u) | ((pixel & 0xffu) << 16u) | ((pixel >> 16u) & 0xffu);
