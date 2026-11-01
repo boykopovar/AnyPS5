@@ -14,14 +14,14 @@ int main() {
     Require(sceAppMessagingSetEventFlag(0x7142, 1) == missingFlag);
     Require(sceAppMessagingClearEventFlag(0x7142, 1) == missingFlag);
     KernelEventFlag eventFlag = nullptr;
-    Require(sceKernelCreateEventFlag(&eventFlag, "SceAppMessagingffffffff", 0, 0, nullptr) == 0);
+    Require(sceKernelCreateEventFlag(&eventFlag, "SceAppMessagingffffffff", 0x100, 0, nullptr) == 0);
     Require(sceAppMessagingSetEventFlag(-1, high | 1) == 0);
     std::uint64_t pattern{};
     Require(sceKernelPollEventFlag(eventFlag, high | 1, 1, &pattern) == 0);
     Require(pattern == (high | 1));
     Require(sceAppMessagingClearEventFlag(-1, high) == 0);
     Require(sceKernelPollEventFlag(eventFlag, 1, 1, &pattern) == 0 && pattern == 1);
-    Require(sceKernelPollEventFlag(eventFlag, high, 1, &pattern) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelPollEventFlag(eventFlag, high, 1, &pattern) == SCE_KERNEL_ERROR_EBUSY);
     Require(sceAppMessagingSetEventFlag(-1, 0) == 0);
     Require(sceAppMessagingClearEventFlag(-1, 0) == 0);
     Require(sceKernelPollEventFlag(eventFlag, 1, 1, &pattern) == 0 && pattern == 1);
