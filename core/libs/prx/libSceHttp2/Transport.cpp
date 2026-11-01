@@ -322,6 +322,8 @@ struct Request::State {
     bool inflatedGzip = false;
     std::vector<std::pair<std::string, std::string>> blockHeaders;
     std::string allHeaders;
+    std::string trailerHeaders;
+    bool trailerBlock = false;
     int blockStatus = 0;
     std::string location;
     bool hasLocation = false;
@@ -805,7 +807,11 @@ struct Request::State {
         auto& state = *static_cast<State*>(data);
         return Callback(state, [&] {
             if (frame->hd.stream_id == state.stream) {
-                Require(!state.ready, "sceHttp2: response trailers are not implemented");
+                if (state.ready) {
+                    state.trailerBlock = true;
+                    state.blockHeaders.clear();
+                    return;
+                }
                 state.blockStatus = 0;
                 state.blockHeaders.clear();
                 state.hasLength = false;
@@ -826,6 +832,10 @@ struct Request::State {
             state.headerBytes += nameSize + valueSize;
             const std::string_view key(reinterpret_cast<const char*>(name), nameSize);
             const std::string_view text(reinterpret_cast<const char*>(value), valueSize);
+            if (state.trailerBlock) {
+                state.blockHeaders.emplace_back(std::string(key), std::string(text));
+                return;
+            }
             if (key == ":status") state.blockStatus = static_cast<int>(Number(text));
             if (key == "location") {
                 Require(!state.hasLocation, "sceHttp2: duplicate redirect location; console error mapping is unknown");
@@ -849,7 +859,12 @@ struct Request::State {
                 Require(frame->goaway.error_code == NGHTTP2_NO_ERROR && frame->goaway.last_stream_id >= state.stream,
                     "sceHttp2: GOAWAY rejected request");
             if (frame->hd.stream_id != state.stream) return;
-            if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
+            if (frame->hd.type == NGHTTP2_HEADERS && state.trailerBlock) {
+                state.trailerHeaders.clear();
+                for (const auto& [key, value] : state.blockHeaders) state.trailerHeaders += key + ": " + value + "\r\n";
+                state.trailerHeaders += "\r\n";
+                state.trailerBlock = false;
+            } else if (frame->hd.type == NGHTTP2_HEADERS && state.blockStatus >= 200) {
                 state.status = state.blockStatus;
                 Require(!state.settings.auth || (state.status != 401 && state.status != 407), "sceHttp2: authentication is not implemented");
                 state.ready = true;
@@ -1146,6 +1161,16 @@ int Request::Headers(char** header, std::size_t* size) {
         *header = state->allHeaders.data();
         *size = state->allHeaders.size();
     }
+    return 0;
+}
+
+int Request::TrailingHeaders(char** header, std::size_t* size) {
+    auto lock = state->Lock();
+    if (state->networkResult) return state->networkResult;
+    Require(header && size && state->ready && state->ended, "sceHttp2GetAllTrailingHeaders: null output or response unavailable");
+    Require(!state->trailerHeaders.empty(), "sceHttp2GetAllTrailingHeaders: response has no trailers");
+    *header = state->trailerHeaders.data();
+    *size = state->trailerHeaders.size();
     return 0;
 }
 

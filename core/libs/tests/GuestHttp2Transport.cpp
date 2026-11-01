@@ -56,7 +56,7 @@ bool Throws(TCall call) {
     return false;
 }
 
-enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
+enum class Mode { Normal, Large, NoLength, Head, NotFound, Redirect, Auth, Reset, Truncate, Gzip, GzipSplit, GzipTruncated, GzipChecksum, GzipConcat, GzipLarge, GzipEmpty, GzipEmptyMembers, GzipLargeMembers, GzipHeaders, GzipHeaderChecksum, GzipSecondHeaderChecksum, GzipSecondChecksum, GzipSecondSize, GzipTrailingJunk, StallHandshake, StallHeaders, StallBody, NoAlpn, Informational, Trailers, StallUpload, Cookie, CookieFlood, RedirectOnce, GzipRedirectEmpty, GzipRedirectBody, CloseHandshake, AlertHandshake, Expired, Http10, Http11, Http11Chunked, Http11Close, Http11Early, Http11Info, Http11Redirect, Http11StallHeaders, Http11StallBody, Http11BadLength, Http11Ambiguous, Http11Truncated, Http11BadChunk, Http11Gzip, Http1Plain, EarlyFinal, EarlyReset, EarlyEmpty, EarlyLarge, EarlyResetIncomplete };
 const char* Protocols[] = {"h2", nullptr};
 const char* Http1Protocols[] = {"http/1.1", nullptr};
 
@@ -239,7 +239,7 @@ private:
         static_cast<Server*>(data)->ended = true;
         return 0;
     }
-    static nghttp2_ssize Body(nghttp2_session*, std::int32_t, std::uint8_t* bytes, std::size_t size,
+    static nghttp2_ssize Body(nghttp2_session* session, std::int32_t streamId, std::uint8_t* bytes, std::size_t size,
         std::uint32_t* flags, nghttp2_data_source*, void* data) {
         auto& server = *static_cast<Server*>(data);
         if (server.mode == Mode::StallBody || server.mode == Mode::EarlyResetIncomplete) return NGHTTP2_ERR_DEFERRED;
@@ -251,7 +251,17 @@ private:
         }
         if (size) std::memcpy(bytes, server.body.data() + server.offset, size);
         server.offset += size;
-        if (server.offset == server.body.size()) *flags |= NGHTTP2_DATA_FLAG_EOF;
+        if (server.offset == server.body.size()) {
+            *flags |= NGHTTP2_DATA_FLAG_EOF;
+            if (server.mode == Mode::Trailers) {
+                *flags |= NGHTTP2_DATA_FLAG_NO_END_STREAM;
+                nghttp2_nv trailers[] = {
+                    {reinterpret_cast<std::uint8_t*>(const_cast<char*>("x-trailer")), reinterpret_cast<std::uint8_t*>(const_cast<char*>("yes")), 9, 3, 0},
+                    {reinterpret_cast<std::uint8_t*>(const_cast<char*>("x-trailer-two")), reinterpret_cast<std::uint8_t*>(const_cast<char*>("2")), 13, 1, 0},
+                };
+                if (nghttp2_submit_trailer(session, streamId, trailers, 2) != 0) return NGHTTP2_ERR_CALLBACK_FAILURE;
+            }
+        }
         return static_cast<nghttp2_ssize>(size);
     }
 
@@ -1201,6 +1211,12 @@ void Success(int ssl, Mode mode, bool disableCa = false) {
     std::size_t valueLength = 0;
     Require(sceHttpParseResponseHeader(blob.data(), blob.size(), "x-loopback", &value, &valueLength) > 0 &&
         std::string(value, valueLength) == "yes", "response header parses");
+    if (mode == Mode::Trailers) {
+        char* rawTrailers = nullptr;
+        std::size_t rawTrailerSize = 0;
+        Require(sceHttp2GetAllTrailingHeaders(client.request, &rawTrailers, &rawTrailerSize) == 0, "trailing header serialization");
+        Require(std::string(rawTrailers, rawTrailerSize) == "x-trailer: yes\r\nx-trailer-two: 2\r\n\r\n", "trailing header block");
+    }
     Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "unsupported reuse throws");
 }
 
@@ -1635,7 +1651,7 @@ int main(int argc, char** argv) {
         RedirectFailures(ssl);
     } else {
         Require(argc == 1, "test arguments");
-        for (const auto mode : {Mode::Normal, Mode::Large, Mode::NoLength, Mode::Head, Mode::NotFound, Mode::Redirect, Mode::Auth, Mode::Informational}) Success(ssl, mode);
+        for (const auto mode : {Mode::Normal, Mode::Large, Mode::NoLength, Mode::Head, Mode::NotFound, Mode::Redirect, Mode::Auth, Mode::Informational, Mode::Trailers}) Success(ssl, mode);
         Gzip(ssl);
         GzipSplit(ssl);
         GzipLarge(ssl);
