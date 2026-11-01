@@ -5,6 +5,8 @@ import re
 import subprocess
 import sys
 
+BUILD_WIDE_PREFIXES = ("3rdparty/", "cmake/", "core/CMakeLists.txt", ".gitmodules")
+
 
 def object_document(value, path, name):
     if not isinstance(value, dict):
@@ -152,6 +154,7 @@ def host_only_test_targets(source_root, targets, changed_paths=None):
     changed = {Path(path).as_posix() for path in changed_paths if path}
     broad_change = any(
         path in {"CMakeLists.txt", ".github/workflows/build.yml", "tools/build_mingw_host_only_tests.py"}
+        or path.startswith(BUILD_WIDE_PREFIXES)
         or path.startswith("core/libs/") and (
             path.endswith((".h", ".hpp", ".hh", ".inl")) or Path(path).name == "CMakeLists.txt"
         )
