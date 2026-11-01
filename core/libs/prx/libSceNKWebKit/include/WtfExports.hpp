@@ -148,6 +148,13 @@ void APS5_VABI _ZN3WTF7CStringC2EPKc(NKWebKit::WtfAbi::CString* self, const char
 void APS5_VABI _ZN3WTF7CStringC2EPKcm(NKWebKit::WtfAbi::CString* self, const char* data, std::size_t length);
 unsigned int APS5_VABI _ZN3WTF7Unicode51calculateStringHashAndLengthFromUTF8MaskingTop8BitsEPKcS2_RjS3_( const char* data, const char* dataEnd, unsigned int& dataLength, unsigned int& utf16Length);
 std::uint64_t APS5_VABI _ZN3WTF7ramSizeEv();
+bool APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE(WTF::MappedFileData* self, int handle, int openMode, int mapMode);
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb(WTF::MappedFileData* self, const NKWebKit::WtfAbi::String& path, int mapMode, bool& success);
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb(WTF::MappedFileData* self, int handle, int openMode, int mapMode, bool& success);
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_14MappedFileModeERb(WTF::MappedFileData* self, int handle, int mapMode, bool& success);
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14MappedFileModeERb(WTF::MappedFileData* self, const NKWebKit::WtfAbi::String& path, int mapMode, bool& success);
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev(WTF::MappedFileData* self);
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD2Ev(WTF::MappedFileData* self);
 int APS5_VABI _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(const NKWebKit::WtfAbi::String& path, int mode, bool permission, bool failIfFileExists);
 void APS5_VABI _ZN3WTF14FileSystemImpl9closeFileERi(int& handle);
 long long APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(int handle, long long offset, int origin);

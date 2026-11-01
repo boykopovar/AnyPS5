@@ -9,6 +9,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <thread>
 
 #ifdef _WIN32
@@ -65,6 +66,53 @@ int APS5_VABI _ZN3WTF18constantTimeMemcmpEPKvS1_m(const void* voidA, const void*
         result |= static_cast<std::uint8_t>(a[i] ^ b[i]);
     }
     return result;
+}
+
+}
+
+extern "C" {
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE(WTF::MappedFileData* self, int handle, int openMode, int mapMode) {
+    if (handle == -1) return false;
+    FileStat status{};
+    if (_fstat_nid_postfix(handle, &status) != 0 || status.st_size < 0 ||
+        static_cast<std::uint64_t>(status.st_size) > std::numeric_limits<unsigned>::max()) return false;
+    const auto size = static_cast<unsigned>(status.st_size);
+    if (!size) return true;
+    const int protection = openMode == 1 ? 2 : openMode == 2 ? 3 : 1;
+    void* data = mmap_nid_postfix(nullptr, size, protection, mapMode == 0 ? 1 : 2, handle, 0);
+    if (data == reinterpret_cast<void*>(std::uintptr_t(-1))) return false;
+    self->data = data;
+    self->size = size;
+    return true;
+}
+
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb(WTF::MappedFileData* self, const NKWebKit::WtfAbi::String& path, int mapMode, bool& success) {
+    *self = {};
+    int handle = _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(path, 0, true, false);
+    success = _ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE(self, handle, 0, mapMode);
+    _ZN3WTF14FileSystemImpl9closeFileERi(handle);
+}
+
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb(WTF::MappedFileData* self, int handle, int openMode, int mapMode, bool& success) {
+    *self = {};
+    success = _ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE(self, handle, openMode, mapMode);
+}
+
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_14MappedFileModeERb(WTF::MappedFileData* self, int handle, int mapMode, bool& success) {
+    _ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb(self, handle, 0, mapMode, success);
+}
+
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14MappedFileModeERb(WTF::MappedFileData* self, const NKWebKit::WtfAbi::String& path, int mapMode, bool& success) {
+    _ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb(self, path, mapMode, success);
+}
+
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev(WTF::MappedFileData* self) {
+    if (self->data) munmap_nid_postfix(self->data, self->size);
+}
+
+void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD2Ev(WTF::MappedFileData* self) {
+    _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev(self);
 }
 
 }
