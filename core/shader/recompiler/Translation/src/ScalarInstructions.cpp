@@ -1,14 +1,9 @@
-#include "Translation/ScalarInstructions.hpp"
 #include "Translation/RoundingMode.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
 #include <string>
 
 namespace ShaderRecompiler {
-
-void TranslateScalarInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateScalarInstruction not implemented");
-}
 
 template <typename TWord>
 bool TranslationContext::sU32Mask(const RdnaInstruction& inst, IrOpcode logicalOpcode, bool binary, bool negateRhs, bool negateResult, TWord&& word) {
@@ -495,10 +490,6 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     default:
         return false;
     }
-}
-
-void TranslateScalarInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateScalarInstruction not implemented");
 }
 
 }

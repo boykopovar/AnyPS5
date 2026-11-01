@@ -1,4 +1,3 @@
-#include "Translation/DispatchInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
 #include <atomic>
@@ -8,10 +7,6 @@
 #include <string>
 
 namespace ShaderRecompiler {
-
-void DispatchInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg, const TranslateOptions& options) {
-    throw std::runtime_error("DispatchInstruction not implemented");
-}
 
 void TranslationContext::TranslateInstruction(const RdnaInstruction& decoded) {
     RdnaInstruction instruction = decoded;
@@ -126,10 +121,6 @@ DebugProbe DebugProbeConfig() {
     DebugProbe probe = parsed;
     probe.enabled = parsed.enabled && DebugProbeActive();
     return probe;
-}
-
-void DispatchInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("DispatchInstruction not implemented");
 }
 
 }
