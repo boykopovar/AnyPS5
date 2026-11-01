@@ -1322,6 +1322,27 @@ bool Recorder::wideLabelInLocked(std::uint64_t address, std::size_t bytes) const
     return false;
 }
 
+Recorder::OwnLabel Recorder::UnlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue) {
+    std::lock_guard tableLock(labelTableMutex);
+    if (labelTableOwner == nullptr) return {};
+    return labelTableOwner->unlandedOwnLabel(address, bytes, queue);
+}
+
+Recorder::OwnLabel Recorder::unlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue) const {
+    OwnLabel own;
+    if ((labels.empty() && queuedLabels.empty()) || (bytes != 4 && bytes != 8) || address % 4 != 0) return own;
+    for (std::size_t offset = 0; offset < bytes; offset += 4) {
+        const auto dword = address + offset;
+        const LabelEntry* entry = nullptr;
+        if (const auto found = labels.find(dword); found != labels.end()) entry = &found->second;
+        if (const auto queued = queuedLabels.find(dword); queued != queuedLabels.end() && (entry == nullptr || queued->second.stamp > entry->stamp)) entry = &queued->second;
+        if (entry == nullptr || entry->queue != queue || entry->overwritten) continue;
+        own.value |= static_cast<std::uint64_t>(entry->value) << (offset * 8u);
+        own.mask |= 0xffffffffull << (offset * 8u);
+    }
+    return own;
+}
+
 std::optional<std::uint64_t> Recorder::LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp) {
     const auto hit = LookupLabel(address, bytes, afterStamp);
     if (!hit.has_value()) return std::nullopt;
