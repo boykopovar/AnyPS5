@@ -4,10 +4,12 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Ksem.hpp"
-#include <chrono>
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
+#include <algorithm>
 #include <climits>
-#include <condition_variable>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -33,7 +35,7 @@ constexpr std::size_t SemMax = 30;
 
 struct Ksem {
     std::mutex lock;
-    std::condition_variable available;
+    TimedWait::Condition available;
     unsigned count = 0;
     unsigned waiters = 0;
 };
@@ -80,11 +82,25 @@ int Wait(std::intptr_t id, bool once, const KernelTimespec* abstime) {
         ++ksem->waiters;
         bool ready = true;
         if (abstime == nullptr) {
-            ksem->available.wait(lock, [&] { return ksem->count > 0; });
+            ksem->available.Wait(lock, [&] { return ksem->count > 0; });
         } else {
-            const auto deadline = std::chrono::system_clock::time_point(std::chrono::duration_cast<std::chrono::system_clock::duration>(
-                std::chrono::seconds(abstime->tv_sec) + std::chrono::nanoseconds(abstime->tv_nsec)));
-            ready = ksem->available.wait_until(lock, deadline, [&] { return ksem->count > 0; });
+            const auto deadline = *abstime;
+            while (ksem->count == 0) {
+                KernelTimespec now{};
+                clock_gettime_nid_postfix(0, &now);
+                if (deadline.tv_sec < now.tv_sec || (deadline.tv_sec == now.tv_sec && deadline.tv_nsec <= now.tv_nsec)) {
+                    ready = false;
+                    break;
+                }
+                const auto seconds = static_cast<std::uint64_t>(deadline.tv_sec) - static_cast<std::uint64_t>(now.tv_sec);
+                constexpr KernelUseconds maximum = std::numeric_limits<KernelUseconds>::max();
+                KernelUseconds usec = maximum;
+                if (seconds <= maximum / 1000000ULL + 1) {
+                    const auto nanos = static_cast<std::int64_t>(seconds) * 1000000000 + deadline.tv_nsec - now.tv_nsec;
+                    usec = static_cast<KernelUseconds>(std::min<std::int64_t>((nanos + 999) / 1000, maximum));
+                }
+                ksem->available.WaitUntil(lock, TimedWait::DeadlineNanos(usec));
+            }
         }
         --ksem->waiters;
         if (!ready) return Fail(GuestEtimedout);
@@ -130,7 +146,7 @@ int APS5_VABI ksem_post_nid_postfix(std::intptr_t id) {
     std::lock_guard lock(ksem->lock);
     if (ksem->count == SemValueMax) return Fail(GuestEoverflow);
     ++ksem->count;
-    ksem->available.notify_one();
+    ksem->available.NotifyOne();
     return 0;
 }
 
