@@ -598,8 +598,5 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
-
-
-
 if __name__ == "__main__":
     unittest.main()
