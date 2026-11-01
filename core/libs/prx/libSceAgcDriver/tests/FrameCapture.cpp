@@ -5,7 +5,9 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -211,6 +213,40 @@ void testWriter(const std::filesystem::path& directory) {
     checkThrows([&] { other.WriteCall(unknown); }, "an unknown call kind is written");
 }
 
+std::vector<std::byte> guest(64);
+std::vector<std::pair<std::uint64_t, std::uint64_t>> reads;
+constexpr std::uint64_t GuestBase = 0x10000;
+
+void readFake(std::uint64_t address, std::span<std::byte> destination) {
+    reads.emplace_back(address, destination.size());
+    std::memcpy(destination.data(), guest.data() + (address - GuestBase), destination.size());
+}
+
+void checkReadAround(std::vector<std::pair<std::uint64_t, std::uint64_t>> skipped, std::uint64_t zeroBegin, std::uint64_t zeroEnd, const std::string& what) {
+    reads.clear();
+    std::vector<std::byte> bytes(48, std::byte{0xcc});
+    const auto zeroed = AgcDriver::ReadAroundRanges(GuestBase + 8, bytes, skipped, readFake);
+    check(zeroed == zeroEnd - zeroBegin, what + ": the zeroed byte count is wrong");
+    for (std::size_t at = 0; at < bytes.size(); ++at) {
+        const auto address = GuestBase + 8 + at;
+        const bool zero = address >= GuestBase + zeroBegin && address < GuestBase + zeroEnd;
+        check(bytes[at] == (zero ? std::byte{0} : guest[address - GuestBase]), what + ": byte " + std::to_string(at) + " is wrong");
+    }
+    for (const auto& [address, size] : reads) {
+        for (const auto& [begin, length] : skipped) check(size == 0 || address + size <= begin || address >= begin + length, what + ": a skipped range was read");
+    }
+}
+
+void testReadAroundRanges() {
+    for (std::size_t at = 0; at < guest.size(); ++at) guest[at] = static_cast<std::byte>(at + 1);
+    checkReadAround({{GuestBase + 20, 8}}, 20, 28, "a range in the middle");
+    checkReadAround({{GuestBase + 4, 10}}, 8, 14, "a range over the start");
+    checkReadAround({{GuestBase + 50, 20}}, 50, 56, "a range over the end");
+    checkReadAround({{GuestBase + 16, 8}, {GuestBase + 20, 8}}, 16, 28, "overlapping ranges");
+    checkReadAround({{GuestBase, 4}, {GuestBase + 60, 4}}, 0, 0, "ranges outside the block");
+    checkReadAround({{GuestBase, 64}}, 8, 56, "a range over the whole block");
+}
+
 void testAllZero() {
     std::vector<std::byte> bytes(37);
     check(AgcDriver::AllZero(bytes), "zero bytes are not all zero");
@@ -228,6 +264,7 @@ int main() {
     const auto root = std::filesystem::temp_directory_path() / ("aps5-frame-capture-test-" + std::to_string(getpid()));
     std::filesystem::remove_all(root);
     testAllZero();
+    testReadAroundRanges();
     testRoundTrip(root / "capture");
     testTruncated(root / "capture", root / "truncated");
     testCorrupt(root / "capture", root / "corrupt");

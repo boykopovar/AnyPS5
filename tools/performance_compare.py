@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -33,6 +34,17 @@ def validate(summary):
             raise ValueError(f"{key} must be a non-negative integer")
     if type(summary.get("trace_dropped")) is not bool:
         raise ValueError("trace_dropped must be a boolean")
+    if "trace_dropped_threads" in summary:
+        threads = summary["trace_dropped_threads"]
+        if not isinstance(threads, dict):
+            raise ValueError("trace_dropped_threads must be an object")
+        for name, thread in threads.items():
+            if not isinstance(thread, dict):
+                raise ValueError(f"trace_dropped_threads.{name} must be an object")
+            if "totals_full" in thread and type(thread["totals_full"]) is not bool:
+                raise ValueError(f"trace_dropped_threads.{name}.totals_full must be a boolean")
+            if "events_lost" in thread and (type(thread["events_lost"]) is not int or thread["events_lost"] < 0):
+                raise ValueError(f"trace_dropped_threads.{name}.events_lost must be a non-negative integer")
     if "dirty" not in summary or (summary["dirty"] is not None and type(summary["dirty"]) is not bool):
         raise ValueError("dirty must be a boolean or null")
     env = summary.get("env")
@@ -55,6 +67,11 @@ def validate(summary):
     if values != sorted(values):
         raise ValueError("frame_ms must satisfy p50 <= p90 <= p99 <= max")
     number(summary.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
+    workers = summary.get("worker_busy_pct")
+    if not isinstance(workers, dict):
+        raise ValueError("worker_busy_pct must be an object")
+    for name, value in workers.items():
+        number(value, f"worker_busy_pct.{name}")
     phases = summary.get("top_phases_ms_per_frame")
     if not isinstance(phases, dict):
         raise ValueError("top_phases_ms_per_frame must be an object")
@@ -63,26 +80,38 @@ def validate(summary):
     return summary
 
 
+def unique_json_object(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError(f"duplicate JSON field: {name!r}")
+        result[name] = value
+    return result
+
+
 def load_summary(path, trace=None):
-    records = []
+    selected = None
+    count = 0
     with Path(path).open(encoding="utf-8-sig") as source:
         for line_number, line in enumerate(source, 1):
             if not line.strip():
                 continue
             try:
-                record = json.loads(line)
+                record = json.loads(line, object_pairs_hook=unique_json_object)
                 if not isinstance(record, dict):
                     raise ValueError("summary must be an object")
             except (ValueError, RecursionError) as error:
                 raise ValueError(f"{path}:{line_number}: {error}") from error
             if trace is None or record.get("trace") == trace:
-                records.append((line_number, record))
-    if len(records) != 1:
+                count += 1
+                if count == 1:
+                    selected = (line_number, record)
+    if count != 1:
         selection = f" matching trace {trace!r}" if trace is not None else ""
-        raise ValueError(f"{path}: expected one summary{selection}, found {len(records)}; "
+        raise ValueError(f"{path}: expected one summary{selection}, found {count}; "
                          "select a unique trace with --baseline-trace/--candidate-trace "
                          "or provide a file containing one summary line")
-    line_number, record = records[0]
+    line_number, record = selected
     try:
         return validate(record)
     except ValueError as error:
@@ -109,11 +138,16 @@ def compare(baseline, candidate):
     after_phases = candidate["top_phases_ms_per_frame"]
     phases = {name: delta(before_phases.get(name), after_phases.get(name))
               for name in sorted(before_phases.keys() | after_phases.keys())}
+    before_workers, after_workers = baseline["worker_busy_pct"], candidate["worker_busy_pct"]
+    workers = {name: delta(before_workers.get(name), after_workers.get(name))
+               for name in sorted(before_workers.keys() | after_workers.keys())}
     contexts = []
     for summary in (baseline, candidate):
         context = {key: summary[key] for key in CONTEXT}
         context.update({key: summary[key] for key in (*OPTIONAL_STRINGS, *OPTIONAL_INTEGERS) if key in summary})
-        context.update({f"window.{key}": summary["window"][key] for key in ("spec", "first_present")})
+        context["window.spec"] = summary["window"]["spec"]
+        if re.fullmatch(r"seconds [0-9]+:[0-9]+", summary["window"]["spec"]) is None:
+            context["window.first_present"] = summary["window"]["first_present"]
         context.update({f"env.{key}": value for key, value in summary["env"].items()})
         contexts.append(context)
     differences = {key: {"baseline": contexts[0].get(key), "candidate": contexts[1].get(key)}
@@ -121,19 +155,28 @@ def compare(baseline, candidate):
                    if contexts[0].get(key) != contexts[1].get(key)}
     notes = ["Compare captures from the same machine, title, content version and scene; matching recorded metadata cannot verify the physical machine or scene.",
              "Changes are candidate minus baseline. A negative frame-time change means a shorter frame interval.",
-             "A missing top phase is unreported, not zero; its change is unavailable."]
+             "A missing top phase is unreported, not zero; its change is unavailable.",
+             "Worker busy changes are percentage points; change (%) is relative to the baseline. "
+             "Workers are matched by their recorded names; a missing worker is unreported, not idle."]
     if differences:
         notes.append("Recorded configuration differs; these measurements do not isolate the code change.")
     for label, summary in (("baseline", baseline), ("candidate", candidate)):
-        if summary["trace_dropped"]:
-            notes.append(f"{label}: trace events were dropped; the event trace omits some of the work included in phase totals.")
+        threads = summary.get("trace_dropped_threads", {})
+        totals_full = any(thread.get("totals_full", False) for thread in threads.values())
+        if totals_full:
+            notes.append(f"{label}: phase totals are incomplete because a thread's totals table overflowed.")
+        if summary["trace_dropped"] and (not threads or any(thread.get("events_lost", 0) for thread in threads.values())):
+            if totals_full:
+                notes.append(f"{label}: trace events were dropped; the event trace is incomplete.")
+            else:
+                notes.append(f"{label}: trace events were dropped; the event trace omits some of the work included in phase totals.")
         if summary["dirty"] is not False:
             notes.append(f"{label}: source tree is dirty or its state is unknown; the commit alone does not identify the build.")
         missing = [key for key in (*CONTEXT, *OPTIONAL_STRINGS, *OPTIONAL_INTEGERS) if not summary.get(key)]
         if missing:
             notes.append(f"{label}: missing configuration: {', '.join(missing)}.")
     return {"baseline": baseline, "candidate": candidate, "configuration_differences": differences,
-            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "notes": notes}
+            "metrics_ms": metrics, "top_phases_ms_per_frame": phases, "worker_busy_pct": workers, "notes": notes}
 
 
 def cell(value):
@@ -153,8 +196,10 @@ def markdown(report):
         lines.extend(["", "## Configuration differences", "", "| Setting | Baseline | Candidate |", "| --- | --- | --- |"])
         for key, values in report["configuration_differences"].items():
             lines.append(f"| {cell(key)} | {cell(values['baseline'])} | {cell(values['candidate'])} |")
-    for title, key in (("Frame and GPU times (ms)", "metrics_ms"), ("Top phases (ms per frame)", "top_phases_ms_per_frame")):
-        lines.extend(["", f"## {title}", "", "| Metric | Baseline | Candidate | Change | Change (%) |",
+    for title, key, change in (("Frame and GPU times (ms)", "metrics_ms", "Change"),
+                               ("Top phases (ms per frame)", "top_phases_ms_per_frame", "Change"),
+                               ("Worker busy time (%)", "worker_busy_pct", "Change (pp)")):
+        lines.extend(["", f"## {title}", "", f"| Metric | Baseline | Candidate | {change} | Change (%) |",
                       "| --- | ---: | ---: | ---: | ---: |"])
         for name, values in report[key].items():
             columns = ["n/a" if values[field] is None else format(values[field], "+.3f" if field.startswith("change") else ".3f")

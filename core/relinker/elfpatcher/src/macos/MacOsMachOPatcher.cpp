@@ -82,11 +82,7 @@ std::vector<std::uint8_t> MacOsMachOPatcher::Patch(std::vector<std::uint8_t> sou
         const auto info = symbols[offset + 4];
         const auto visibility = symbols[offset + 5] & 3;
         if (section == SHN_UNDEF || (info >> 4) == 0 || visibility == 1 || visibility == 2) continue;
-        if (((info >> 4) != STB_GLOBAL && (info >> 4) != STB_WEAK) ||
-            ((info & 15) != STT_NOTYPE && (info & 15) != 1 && (info & 15) != STT_FUNC && (info & 15) != STT_TLS))
-            throw Domain::RelinkerException("Unsupported macOS executable export attributes");
         const auto name = "_" + Windows::ReadString(dynamicSection.DynStrData, Io::ReadU32(symbols, offset));
-        if (name.size() == 1) throw Domain::RelinkerException("Empty macOS executable export");
         const auto value = Io::ReadU64(symbols, offset + 8);
         const auto flags = (info >> 4) == STB_WEAK ? ExportWeakDefinition : std::uint64_t{0};
         if ((info & 15) == STT_TLS) {

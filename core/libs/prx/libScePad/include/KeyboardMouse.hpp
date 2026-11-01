@@ -55,6 +55,10 @@ struct InputRequests {
     bool toggleFullscreen = false;
     bool togglePerformanceOverlay = false;
     bool screenshot = false;
+    bool showPadStatus = false;
+    bool volumeUp = false;
+    bool volumeDown = false;
+    bool toggleMute = false;
     bool toggleMouse = false;
     bool releaseMouse = false;
 };

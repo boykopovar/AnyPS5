@@ -99,6 +99,17 @@ def artifact_hashes(build, tests, runtime):
     return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(paths)}
 
 
+def check_timeouts(tests, limit):
+    for test in tests:
+        for prop in test.get("properties", []):
+            if prop["name"] == "TIMEOUT_AFTER_MATCH":
+                raise GateError(f"{test['name']}: TIMEOUT_AFTER_MATCH can restart the requested test timeout")
+            if prop["name"] == "TIMEOUT":
+                value = prop["value"]
+                if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= limit:
+                    raise GateError(f"{test['name']}: TIMEOUT must be positive and at most {limit} seconds")
+
+
 def parse_report(path, expected):
     root = ET.parse(path).getroot()
     if root.tag not in ("testsuite", "testsuites"):
@@ -168,13 +179,15 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.repeat <= 0:
         parser.error("--repeat must be positive")
+    if args.test_timeout > 30:
+        parser.error("--test-timeout must be at most 30 seconds")
     if any(not re.fullmatch(r"-D[A-Za-z_][A-Za-z0-9_]*(?::[A-Z]+)?=.*", value) for value in args.cmake_arg):
         parser.error("--cmake-arg accepts only -D cache definitions")
     report = {"status": "incomplete", "iterations": [], "builds": {},
               "limits": "GPU selection is requested, not independently verified. Only selected command files and explicit --runtime paths are hashed; other dynamic dependencies are not inventoried."}
-    output = args.output.resolve()
     created = False
     try:
+        output = args.output.resolve()
         sources = {side: (Path(values[0]).resolve(), values[1])
                    for side, values in (("baseline", args.baseline), ("candidate", args.candidate))}
         for source, expected in sources.values():
@@ -221,6 +234,7 @@ def main(argv=None):
             names = [test["name"] for test in tests]
             if not names or len(names) != len(set(names)):
                 raise GateError(f"{side}: expected nonempty unique test names")
+            check_timeouts(tests, args.test_timeout)
             for test in tests:
                 for prop in test.get("properties", []):
                     if prop["name"] in ("ENVIRONMENT", "ENVIRONMENT_MODIFICATION"):
@@ -259,7 +273,7 @@ def main(argv=None):
         save(output, report)
         print(f"{len(names)} tests, {args.repeat} iterations per build; report: {output / 'report.json'}")
         return report["exit_code"]
-    except (GateError, OSError, ValueError, KeyError, ET.ParseError, subprocess.SubprocessError) as error:
+    except (GateError, OSError, RuntimeError, ValueError, KeyError, ET.ParseError, subprocess.SubprocessError) as error:
         report["error"] = str(error)
         report["exit_code"] = 2
         if created:

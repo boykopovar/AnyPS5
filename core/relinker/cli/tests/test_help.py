@@ -45,6 +45,11 @@ def main():
             assert result.returncode == 1 and "unknown option" in result.stderr
         result = run("--help", "--windows-gui")
         assert result.returncode == 1 and "requires --windows" in result.stderr
+        for name in ("--help", "--version", "--windows", "unused-filter=2", "--"):
+            result = run("--skip-sce-module", "--", name, str(output))
+            assert result.returncode == 2 and "Cannot open file" in result.stderr, result.stderr
+            assert result.stdout == "", result.stdout
+            assert output.read_bytes() == b"preserve this output"
         for flag in ["--rpath", "--exclude-sce-module"]:
             result = run(flag, "--help", str(source), str(output))
             assert result.returncode == 2 and "Cannot open file" in result.stderr
