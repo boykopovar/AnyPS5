@@ -1,0 +1,9 @@
+add_test_executable(agc_goto_junction_descriptor_tests EXCLUDE_FROM_ALL tests/GotoJunctionDescriptor.cpp)
+target_include_directories(agc_goto_junction_descriptor_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_goto_junction_descriptor_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_goto_junction_descriptor_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_goto_junction_descriptor_tests)
+
+if(BUILD_TESTING)
+    agc_add_default_test(agc_goto_junction_descriptor_tests)
+endif()
