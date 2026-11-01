@@ -17,11 +17,11 @@ static const PthreadMutex DestroyedMutex = reinterpret_cast<PthreadMutex>(std::u
 
 static void Require(bool value) { if (!value) std::abort(); }
 
-template <typename Call>
+template <typename Exception = std::exception, typename Call>
 static bool Throws(Call call) {
     try {
         call();
-    } catch (const std::exception&) {
+    } catch (const Exception&) {
         return true;
     }
     return false;
@@ -141,5 +141,11 @@ int main() {
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
     CheckLoops(&attr);
     CheckOwnershipAndRelativeLock();
+    {
+        KernelTimespec ts{0, 0};
+        Require(Throws<std::invalid_argument>([] { scePthreadMutexTimedlock(nullptr, 0); }));
+        Require(Throws([] { pthread_mutex_timedlock_nid_postfix(nullptr, &ts); }));
+        Require(Throws([] { pthread_mutex_timedlock_nid_postfix(nullptr, nullptr); }));
+    }
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
 }
