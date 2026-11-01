@@ -51,6 +51,7 @@ constexpr int KQ_STACK_EVENTS = 64;
 constexpr int KQ_MAX_SCAN = 1024;
 constexpr std::int16_t EVFILT_AIO = -3;
 constexpr std::int16_t EVFILT_PROCDESC = -8;
+constexpr std::int16_t EVFILT_FS = -9;
 constexpr std::int16_t EVFILT_LIO = -10;
 constexpr std::int16_t EVFILT_SENDFILE = -12;
 constexpr std::uint32_t NOTE_FFCTRLMASK = 0xc0000000;
@@ -364,6 +365,17 @@ int AddTimerKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16
     return GuestErrno(queue->AddEvent(event));
 }
 
+int AddFsKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
+    KernelEqueueEvent event{};
+    event.event = change;
+    event.event.flags = static_cast<std::uint16_t>(flags | EV_CLEAR);
+    event.event.fflags = 0;
+    event.event.data = 0;
+    change.fflags = 0;
+    change.data = 0;
+    return GuestErrno(queue->AddEvent(event));
+}
+
 int AddUserKnote(const KernelEqueueRef& queue, KernelEvent& change, std::uint16_t flags) {
     KernelEqueueEvent event{};
     event.event = change;
@@ -502,7 +514,7 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
         change.data = 0;
         return GUEST_EINVAL;
     }
-    if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER) {
+    if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER && change.filter != EVFILT_FS) {
         NotImplemented_nid_no_patch(("kevent: filter " + std::to_string(change.filter)).c_str());
     }
     if (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE || change.filter == EVFILT_VNODE) {
@@ -520,6 +532,8 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
             error = AddTimerKnote(queue, change, flags);
         } else if (change.filter == EVFILT_USER) {
             error = AddUserKnote(queue, change, flags);
+        } else if (change.filter == EVFILT_FS) {
+            error = AddFsKnote(queue, change, flags);
         } else if (change.filter == EVFILT_VNODE) {
             const std::uint32_t notes = change.fflags;
             change.fflags = 0;
