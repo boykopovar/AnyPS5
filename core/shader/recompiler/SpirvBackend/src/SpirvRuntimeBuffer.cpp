@@ -1016,7 +1016,12 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     const auto noCarry = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), address, context.Arg(instruction, 1u));
     const auto byte = EmitAndConstant(state, address, ~3u);
     const auto offset = Unary(state, spv::OpUConvert, u64, byte);
-    const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThanEqual, TypeBool(state), Binary(state, spv::OpIAdd, u64, offset, BdaConstant(state, 4u)), size)));
+    const auto u32 = TypeU32(state);
+    const auto words = Binary(state, spv::OpShiftRightLogical, u32, Unary(state, spv::OpUConvert, u32, size), ConstantU32(state, 2u));
+    const auto large = Binary(state, spv::OpUGreaterThanEqual, TypeBool(state), size, BdaConstant(state, std::uint64_t{1u} << 32u));
+    const auto limit = Select(state, u32, large, ConstantU32(state, 1u << 30u), words);
+    const auto word = Binary(state, spv::OpShiftRightLogical, u32, byte, ConstantU32(state, 2u));
+    const auto inBounds = both(state, noCarry, both(state, resource.valid, Binary(state, spv::OpULessThan, TypeBool(state), word, limit)));
     if (!context.Memory(instruction).gpuDescriptor) return readBuffer(context, instruction, byte, 32u, inBounds);
     return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, AddBdaAddress(context, instruction, resource.base, offset, false), 32u); });
 }
