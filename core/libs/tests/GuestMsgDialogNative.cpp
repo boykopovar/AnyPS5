@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <chrono>
 #include <cstring>
@@ -58,6 +59,9 @@ void CancelAndFallbacks() {
     Require(sceMsgDialogOpen(&param) == 0);
     ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Cancel);
     Require(sceMsgDialogGetStatus() == kStatusFinished);
+    errno = 71;
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceMsgDialogGetResult(&result) == 0 && result.button_id == kButtonIdNo);
 
     UserMessage okOnly{MsgDialog::ButtonTypeOk, 0, "Saved"};

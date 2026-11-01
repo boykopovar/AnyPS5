@@ -1,6 +1,7 @@
 #include "prx/libSceMsgDialog.native/libSceMsgDialog.native.hpp"
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include <cerrno>
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -55,9 +56,13 @@ int APS5_VABI sceMsgDialogGetResult(MsgDialogResult* result) {
     if (status == 0) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    *result = MsgDialogResult{};
-    result->result = COMMON_DIALOG_RESULT_OK;
-    result->button_id = g_buttonId.load();
+    MsgDialogResult out{};
+    out.result = COMMON_DIALOG_RESULT_OK;
+    out.button_id = g_buttonId.load();
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &out, sizeof(out));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
 
