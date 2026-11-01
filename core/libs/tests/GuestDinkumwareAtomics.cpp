@@ -90,8 +90,7 @@ static void CheckFlagsAndFences() {
 
     Require(flag == 0);
     _Atomic_thread_fence_nid_postfix(SeqCst);
-    _Atomic_signal_fence_nid_postfix(SeqCst);
-
+    for (int order = Relaxed; order <= SeqCst; ++order) _Atomic_signal_fence_nid_postfix(order);
 }
 
 struct Wide {
