@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 
 namespace AgcDriver {
@@ -24,7 +25,7 @@ bool SameDisplay(const HostDisplayHdr& a, const HostDisplayHdr& b) {
 
 void Publish(HostHdrStatus& status, const HostDisplayHdr& display, bool surfaceHdr10) {
     const bool displayChanged = !SameDisplay(status.display, display);
-    const bool available = display.hdr && surfaceHdr10;
+    const bool available = display.hdr && surfaceHdr10 && std::getenv("APS5_FORCE_SDR") == nullptr;
     const bool availabilityChanged = available != status.available;
     status.display = display;
     status.surfaceHdr10 = surfaceHdr10;

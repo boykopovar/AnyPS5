@@ -94,7 +94,7 @@ struct SpirvEmitterState {
     SpirvModule module;
     const IrProgram& program;
     ShaderStageInputInfo inputInfo;
-    std::array<std::uint32_t, 10> tessVariables {};
+    std::array<std::uint32_t, 11> tessVariables {};
     std::uint32_t tessInnerVariable = 0;
 
     SpirvRequirements requirements;
@@ -111,7 +111,10 @@ struct SpirvEmitterState {
     bool fragmentDescriptorSet = false;
     bool float16DenormPreserve = false;
     bool robustBufferAccess2 = false;
+    bool exactRobustLoads = false;
     bool float32FlushToZero = false;
+    bool float32DenormPreserve = false;
+    bool fusedExactArithmetic = false;
     bool meshBarycentricPixel = false;
     bool meshBarycentricVertex = false;
     std::uint32_t barycentricSmoothLocation = 0xffffffffu;
@@ -126,6 +129,9 @@ struct SpirvEmitterState {
     std::uint32_t meshFlatPositions = 0;
     std::uint32_t pixelFlatPositions = 0;
     std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> solvedBarycentrics;
+    bool waveLdsMemoryBarriers = false;
+    bool deviceScopeLdsMemoryBarriers = false;
+    bool ldsLockFences = false;
     std::unordered_set<const IrValue*> sharedLaneValues;
     std::uint32_t laneHalf = 0;
     std::uint32_t spirvVersion = 0x00010300u;
@@ -140,6 +146,14 @@ struct SpirvEmitterState {
     std::vector<std::uint32_t> memoryByteOffsets;
     std::map<std::array<std::uint32_t, 6>, std::uint32_t> formattedBufferFunctions;
     std::map<std::array<std::uint32_t, 6>, std::uint32_t> formattedGpuBufferFunctions;
+    struct BufferLengthCacheEntry {
+        std::array<const IrValue*, 4> descriptor{};
+        std::uint32_t variable = 0;
+        std::uint32_t element = 0;
+        std::uint32_t label = 0;
+        std::uint32_t length = 0;
+    };
+    std::vector<BufferLengthCacheEntry> bufferLengths;
     std::uint32_t bufferFormatTable = 0;
     std::uint32_t bdaPagetableVariable = 0;
     std::uint32_t faultBufferVariable = 0;
@@ -156,8 +170,16 @@ struct SpirvEmitterState {
     bool nativeF16ModesEmitted = false;
     bool f16DenormPreserveEmitted = false;
     std::uint32_t dot2F32F16Function = 0;
+    std::uint32_t reciprocalCorrectionFunction = 0;
+    std::array<std::uint32_t, 3> reciprocalTables {};
     std::map<std::pair<bool, std::uint32_t>, std::uint32_t> interpolateFunctions;
+    std::map<std::pair<bool, std::uint32_t>, std::uint32_t> fastInterpolateFunctions;
     bool integerInterpolation = false;
+    bool integerFloat64 = false;
+    std::uint32_t integerAddF64Function = 0;
+    std::uint32_t integerMulF64Function = 0;
+    std::uint32_t integerF64FromF32Function = 0;
+    std::uint32_t integerF32FromF64Function = 0;
     std::array<std::array<std::uint32_t, 2>, 2> bdaDwordReadFunctions {};
     std::array<std::array<std::uint32_t, 2>, 2> bdaSpanReadFunctions {};
     std::unordered_map<const IrValue*, std::pair<std::uint32_t, std::uint32_t>> bdaGroupedLoads;
@@ -185,6 +207,7 @@ struct SpirvEmitterState {
     std::uint32_t loopGuardVisits = 0;
     std::uint32_t loopGuardPc = 0;
     std::uint32_t srgbTableVariable = 0;
+    std::uint32_t gcnBufferFormatFunction = 0;
     std::uint32_t gdsVariable = 0;
     std::uint32_t gdsLength = 0;
     std::uint32_t pushConstantVariable = 0;
@@ -194,11 +217,19 @@ struct SpirvEmitterState {
     std::uint32_t ldsBufferVariable = 0;
     std::uint32_t ldsBufferU64Variable = 0;
     std::uint32_t ldsBufferBase = 0;
+    bool pixelFunctionLdsBuffer = false;
     std::uint32_t numWorkgroupsVariable = 0;
     std::array<std::uint32_t, 2> scratchVariable {};
     std::array<std::uint32_t, 2> vectorWindowVariable {};
     std::uint32_t vectorWindowIndexed = 0;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
+    bool meshWindowBuffer = false;
+    std::uint32_t meshWindowBufferVariable = 0;
+    std::uint32_t meshWindowSlotVariable = 0;
+    std::uint32_t meshWindowBaseVariable = 0;
+    std::unordered_set<const IrValue*> meshWindowBufferStores;
+    std::unordered_set<const IrValue*> meshWindowBufferLoads;
+    std::vector<bool> meshWindowEntryLive;
     std::array<std::uint32_t, ImageBindingCount> imageVariables {};
     std::uint32_t samplerVariable = 0;
     std::vector<SpirvTableImageVariable> tableImageVariables;
@@ -217,12 +248,16 @@ struct SpirvEmitterState {
     std::uint32_t currentLabel = 0;
     const IrBlock* currentBlock = nullptr;
     std::uint32_t pixelValidMaskVariable = 0;
+    std::vector<std::uint32_t> mergeValueVariables;
+    std::vector<std::uint32_t> mergePendingVariables;
     std::uint32_t quadPixelUncovered = 0;
     std::uint32_t sampleMaskInputVariable = 0;
     std::uint32_t quadSampleCoverage = 0;
+    std::uint32_t sampleOrderWord = 0;
     std::uint32_t subgroupLocalInvocationIdVariable = 0;
     std::uint32_t subgroupIdVariable = 0;
     std::uint32_t perVertexVariable = 0;
+    std::uint32_t barycentricReciprocalWVariable = 0;
     std::uint32_t pointSizeVariable = 0;
     std::uint32_t clipDistanceVariable = 0;
     std::optional<std::uint32_t> zeroPositionClipIndex;

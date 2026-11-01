@@ -47,14 +47,16 @@ void checkRuntimeDependencies() {
             throw std::runtime_error("Incorrect Windows runtime dependency visibility");
     };
     check({}, {});
-    check({"libkernel.prx"}, {"libkernel.prx", "libc.prx"});
-    check({"libkernel.prx", "libc.prx"}, {"libkernel.prx", "libc.prx"});
+    check({"libkernel.prx"}, {"libkernel.prx", "libkernel_sys.prx", "libkernel_web.prx", "libc.prx"});
+    check({"libkernel.prx", "libc.prx"}, {"libkernel.prx", "libc.prx", "libkernel_sys.prx", "libkernel_web.prx"});
     check({"libSceLibcInternal.prx", "libkernel.prx"},
-          {"libSceLibcInternal.prx", "libkernel.prx", "libc.prx"});
+          {"libSceLibcInternal.prx", "libkernel.prx", "libkernel_sys.prx", "libkernel_web.prx", "libc.prx"});
     check({"libc.prx", "libSceLibcInternal.prx"},
           {"libc.prx", "libSceLibcInternal.prx"});
     check({"libSceVideoOut.prx", "libkernel.prx", "libSceVideoOut.prx"},
-          {"libSceVideoOut.prx", "libkernel.prx", "libc.prx"});
+          {"libSceVideoOut.prx", "libkernel.prx", "libkernel_sys.prx", "libkernel_web.prx", "libc.prx"});
+    check({"libkernel_sys.prx"}, {"libkernel_sys.prx", "libkernel.prx", "libkernel_web.prx", "libc.prx"});
+    check({"libkernel_web.prx"}, {"libkernel_web.prx", "libkernel.prx", "libkernel_sys.prx", "libc.prx"});
     check({"libSceVideoOut.prx", "libSceVideoOut.prx"}, {"libSceVideoOut.prx"});
 }
 
@@ -240,8 +242,8 @@ void expectDiagnostic(const Fs::path& runner, const std::vector<std::string>& ex
 int main() {
     try {
         checkRuntimeDependencies();
-        std::vector<char> filename(32768);
-        const auto size = GetModuleFileNameA(nullptr, filename.data(), static_cast<DWORD>(filename.size()));
+        std::vector<wchar_t> filename(32768);
+        const auto size = GetModuleFileNameW(nullptr, filename.data(), static_cast<DWORD>(filename.size()));
         if (size == 0 || size >= filename.size())
             throw std::runtime_error("Cannot locate diagnostic tests");
         const auto directory = createFixtureDirectory(Fs::path(filename.data()).parent_path());

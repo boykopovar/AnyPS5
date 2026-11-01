@@ -6,6 +6,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <condition_variable>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -42,6 +43,7 @@ static constexpr uint16_t EV_EOF = 0x8000;
 static constexpr int EQUEUE_OK = 0;
 
 struct KernelEqueueEvent;
+class KernelEqueuePrivate;
 
 using EqueueTriggerFunc = void (*)(KernelEqueueEvent* event, void* triggerData);
 using EqueueResetFunc = void (*)(KernelEqueueEvent* event);
@@ -56,6 +58,8 @@ struct KernelFilter {
     EqueueDeleteFunc deleteEventFunc = nullptr;
     EqueuePollFunc pollFunc = nullptr;
     int waitDescriptor = -1;
+    bool repoll = false;
+    std::shared_ptr<KernelEqueuePrivate> watched;
 };
 
 struct KernelEqueueEvent {
@@ -87,35 +91,54 @@ public:
     int EditEvent(uintptr_t ident, int16_t filter, const std::function<void(KernelEqueueEvent&)>& edit);
     int GetTriggeredEvents(KernelEvent* ev, int num);
     bool HasTriggeredEvents();
+    std::size_t CountTriggeredEvents();
+    struct TriggeredSnapshot {
+        std::size_t count = 0;
+        std::uint64_t activations = 0;
+    };
+    TriggeredSnapshot SnapshotTriggered();
+    std::vector<std::shared_ptr<KernelEqueuePrivate>> WatchedQueues();
     int WaitForEvents(KernelEvent* ev, int num, uint32_t micros);
     int WaitForEventsUntil(KernelEvent* ev, int num, std::uint64_t deadlineNanos);
     void RemoveDescriptorEvents(uintptr_t ident);
+    void WakeReadWaiters(uintptr_t ident);
     void Close();
     static uint64_t MonotonicNs();
 
 private:
+    struct WaitSet;
     void TriggerExpiredTimers(uint64_t nowNs);
     bool NextTimerWaitMicros(uint64_t nowNs, uint32_t* out) const;
     int CollectTriggered(KernelEvent* ev, int num);
     int CollectOncePerWait(KernelEvent* ev, int num);
     bool PollEvents();
+    void MeasureFiles(std::unique_lock<std::mutex>& lock);
     void WakePollers();
     void WaitForDescriptors(std::unique_lock<std::mutex>& lock, std::uint64_t deadlineNanos);
+    void GatherInterests(WaitSet& wait, std::uintptr_t waker, bool nested);
+    static void GatherWatched(WaitSet& wait, const std::shared_ptr<KernelEqueuePrivate>& queue, std::uintptr_t waker);
+    static void ReleaseWatched(WaitSet& wait, std::uintptr_t waker);
 
     std::list<KernelEqueueEvent> m_events;
     std::vector<std::uintptr_t> m_pollers;
+    std::vector<int> m_measuring;
     std::mutex m_mutex;
+    std::condition_variable m_measured;
     TimedWait::Condition m_cond;
     std::string m_name;
     KernelEqueue m_handle;
     bool m_reportOncePerWait;
     bool m_closed = false;
+    std::uint64_t m_activations = 0;
 };
 
 using KernelEqueueRef = std::shared_ptr<KernelEqueuePrivate>;
 void EqueueDescriptorClosed(int descriptor);
 void KqueueDescriptorClosed(int descriptor);
-bool IsKqueueDescriptor(int descriptor);
+void EqueueDescriptorReadShut(int descriptor);
+void KqueueDescriptorReadShut(int descriptor);
+extern "C" bool IsKqueueDescriptor_nid_no_patch(int descriptor);
+extern "C" void RegisterDescriptorCloseObserver_nid_no_patch(void (*observer)(int descriptor));
 std::optional<bool> KqueueReadable(int descriptor);
 KernelEqueueEvent EqueueDescriptorEvent(int descriptor, int16_t filter, uint16_t flags, void* udata);
 void RequireVnodeNotes(uint32_t fflags);

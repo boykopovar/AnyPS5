@@ -8,6 +8,7 @@ namespace ShaderRecompiler {
 
 struct ReadLaneEliminationStats {
     std::uint32_t rewrittenReads = 0;
+    std::uint32_t guardedStores = 0;
 };
 
 class ReadLaneEliminator {

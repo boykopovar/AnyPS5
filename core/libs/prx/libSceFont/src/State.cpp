@@ -13,6 +13,7 @@
 #include <unordered_set>
 
 #include "prx/libc/include/PreciseWait.hpp"
+#include "prx/libSceFont/include/FontFreeType.hpp"
 #include "prx/libSceFont/include/FontInternal.hpp"
 
 namespace {
@@ -54,10 +55,9 @@ void ReleaseWord(std::uint32_t& word, std::uint32_t previous) {
 }
 
 Font::FontState::~FontState() {
-    if (face) {
-        std::lock_guard lock(faceMutex);
-        FT_Done_Face(face);
-    }
+    std::lock_guard lock(faceMutex);
+    if (face) FT_Done_Face(face);
+    for (const FallbackFace& fallback : fallbacks) FT_Done_Face(fallback.face);
 }
 
 void Font::Backoff() {
@@ -265,6 +265,36 @@ void Font::LoadStateFace(FontState& state, std::shared_ptr<const std::vector<uns
     if (FT_New_Memory_Face(library, state.faceData->data(), static_cast<FT_Long>(state.faceData->size()), static_cast<FT_Long>(subFontIndex), &face) != 0) return;
     FT_Select_Charmap(face, FT_ENCODING_UNICODE);
     state.face = face;
+}
+
+void Font::AddStateFallbackFace(FontState& state, std::shared_ptr<const std::vector<unsigned char>> bytes, std::uint32_t subFontIndex) {
+    std::lock_guard lock(faceMutex);
+    const FT_Library library = HostFreeTypeLibrary();
+    if (!library || !bytes || bytes->empty()) return;
+    FT_Face face = nullptr;
+    if (FT_New_Memory_Face(library, bytes->data(), static_cast<FT_Long>(bytes->size()), static_cast<FT_Long>(subFontIndex), &face) != 0) return;
+    FT_Select_Charmap(face, FT_ENCODING_UNICODE);
+    state.fallbacks.push_back({std::move(bytes), face, subFontIndex});
+}
+
+FT_Face Font::FallbackFaceForCode(const FontState& state, std::uint32_t code, FT_UInt* glyphIndex) {
+    for (const FallbackFace& fallback : state.fallbacks) {
+        const FT_UInt index = ResolveGlyphIndexWithFallback(fallback.face, code);
+        if (index == 0) continue;
+        *glyphIndex = index;
+        return fallback.face;
+    }
+    *glyphIndex = 0;
+    return nullptr;
+}
+
+FT_Face Font::FaceForCode(const FontState& state, std::uint32_t code, FT_UInt* glyphIndex) {
+    const FT_UInt index = ResolveGlyphIndexWithFallback(state.face, code);
+    if (index != 0) {
+        *glyphIndex = index;
+        return state.face;
+    }
+    return FallbackFaceForCode(state, code, glyphIndex);
 }
 
 void Font::TrackGeneratedGlyph(FontGlyph glyph) {

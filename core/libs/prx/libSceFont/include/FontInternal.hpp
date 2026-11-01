@@ -24,13 +24,17 @@ constexpr std::uint8_t STYLE_FRAME_FLAG_SLANT = 0x02;
 constexpr std::uint8_t STYLE_FRAME_FLAG_WEIGHT = 0x04;
 constexpr float POINTS_PER_INCH = 72.0f;
 
+struct FallbackFace {
+    std::shared_ptr<const std::vector<unsigned char>> data;
+    FT_Face face = nullptr;
+    std::uint32_t subFontIndex = 0;
+};
+
 struct FontState {
     std::shared_ptr<const std::vector<unsigned char>> faceData;
     FT_Face face = nullptr;
-    float scaleW = 16.0f;
-    float scaleH = 16.0f;
+    std::vector<FallbackFace> fallbacks;
     std::map<int, int> scriptLanguages;
-    std::map<int, int> typographicFeatures;
     int attribute = 0;
 
     FontState() = default;
@@ -90,11 +94,15 @@ FontState* TryGetState(FontHandle handle);
 FontState& ResetState(FontHandle handle);
 void RemoveState(FontHandle handle);
 void LoadStateFace(FontState& state, std::shared_ptr<const std::vector<unsigned char>> bytes, std::uint32_t subFontIndex);
+void AddStateFallbackFace(FontState& state, std::shared_ptr<const std::vector<unsigned char>> bytes, std::uint32_t subFontIndex);
+FT_Face FallbackFaceForCode(const FontState& state, std::uint32_t code, FT_UInt* glyphIndex);
+FT_Face FaceForCode(const FontState& state, std::uint32_t code, FT_UInt* glyphIndex);
 
 bool IsSystemFontSet(std::uint32_t fontSetType);
 std::vector<SystemFontFile> SystemFontCandidates(std::uint32_t fontSetType);
 std::filesystem::path SystemFontDirectory();
 std::optional<SystemFontFile> FindSystemFontFile(std::uint32_t fontSetType);
+std::vector<SystemFontFile> FindSystemFontFallbackFiles(std::uint32_t fontSetType);
 
 void TrackGeneratedGlyph(FontGlyph glyph);
 bool ForgetGeneratedGlyph(FontGlyph glyph);
@@ -113,6 +121,9 @@ int StyleStateGetSlantRatio(const StyleStateBlock* style, float* slantRatio);
 int StyleStateSetWeightScale(StyleStateBlock* style, float weightXScale, float weightYScale);
 int StyleStateGetWeightScale(const StyleStateBlock* style, float* weightXScale, float* weightYScale, std::uint32_t* mode);
 bool ValidStyleFrame(const FontStyleFrame* frame);
+const FontStyleFrame* SurfaceStyleFrame(const FontRenderSurface* surface);
+const StyleStateBlock* ApplyStyleFrame(const StyleStateBlock* base, const FontStyleFrame* frame, StyleStateBlock& temporary);
+int RenderCodeWithStyle(FontHandle handle, std::uint32_t code, const StyleStateBlock* style, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result);
 
 std::uint8_t CachedStyleCacheFlags(const CachedStyle& style);
 void CachedStyleSetCacheFlags(CachedStyle& style, std::uint8_t flags);
@@ -123,8 +134,11 @@ void CachedStyleSetScalar(CachedStyle& style, float value);
 void ClearRenderOutputs(FontGlyphMetrics* metrics, FontRenderOutput* result);
 int ComputeHorizontalLayout(FontHandle handle, const StyleStateBlock* style, std::uint8_t* outWords);
 int ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style, std::uint8_t* outWords);
-int GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle);
+int GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle, float* usedScaleW = nullptr, float* usedScaleH = nullptr);
 int RenderCharGlyphImageCore(FontHandle handle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result);
+int ComputeFontMetrics(FontHandle handle, std::uint32_t form, FontMetrics* metrics);
+int ComputeFontStyleInformation(FontHandle handle, FontStyleInformation* information);
+int ComputeFontGlyphsOutlineProfile(FontHandle handle, FontOutlineProfile* profile);
 
 }
 

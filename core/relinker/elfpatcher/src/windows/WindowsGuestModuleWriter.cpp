@@ -150,7 +150,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     }
     if (runtime.DeferInitialization) {
         PeSection lifecycle{".ginit", nextRva, SectionRead | 0x40u, {}};
-        Io::AppendU32(lifecycle.Data, guest.Init == 0 ? 0 : image.GetRva(guest.Init));
+        Io::AppendU32(lifecycle.Data, guest.HasInit ? image.GetRva(guest.Init) : 0);
         Io::AppendU32(lifecycle.Data, CheckedRva(guest.InitArray.size()));
         for (const auto slot : guest.InitArray) Io::AppendU32(lifecycle.Data, image.GetRva(slot, 8));
         if (!exports.emplace(Relinker::GuestInitializeExport, nextRva).second) throw Domain::RelinkerException("Duplicate guest export: " + std::string(Relinker::GuestInitializeExport));
@@ -203,9 +203,9 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteWindows(const Relinker::GuestI
     sections.push_back({".dllmain", entry, SectionRead | SectionExecute | 0x20u, {0xb8, 1, 0, 0, 0, 0xc3}});
     for (const auto slot : guest.InitArray) runtime.InitArrayRvas.push_back(image.GetRva(slot, 8));
     for (const auto slot : guest.FiniArray) runtime.FiniArrayRvas.push_back(image.GetRva(slot, 8));
-    runtime.InitRva = guest.Init == 0 ? 0 : image.GetRva(guest.Init);
+    runtime.InitRva = guest.HasInit ? image.GetRva(guest.Init) : 0;
     runtime.UnmatchedImportModules.assign(guest.Dynamic.UnmatchedImportModules.begin(), guest.Dynamic.UnmatchedImportModules.end());
-    runtime.FiniRva = guest.Fini == 0 ? 0 : image.GetRva(guest.Fini);
+    runtime.FiniRva = guest.HasFini ? image.GetRva(guest.Fini) : 0;
     auto result = WindowsPeWriter().Write(sections, entry, directories);
     const auto characteristics = Io::ReadU16(result, 0x80 + 22);
     Io::WriteU16(result, 0x80 + 22, static_cast<std::uint16_t>((characteristics | 0x2000) & ~1u));

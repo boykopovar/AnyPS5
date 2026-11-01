@@ -46,10 +46,8 @@ VkPipeline TextureDetiler::multisampleReadbackPipeline(std::uint32_t elementByte
     }
     auto& module = readbackModules[depth ? 1u : 0u];
     if (module == VK_NULL_HANDLE) {
-        VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        info.codeSize = depth ? sizeof(MULTISAMPLE_READBACK_DEPTH_SPV) : sizeof(MULTISAMPLE_READBACK_UINT_SPV);
-        info.pCode = depth ? MULTISAMPLE_READBACK_DEPTH_SPV : MULTISAMPLE_READBACK_UINT_SPV;
-        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &info, nullptr, &module), "vkCreateShaderModule multisample readback");
+        module = depth ? CreateShaderModule(context, MULTISAMPLE_READBACK_DEPTH_SPV, sizeof(MULTISAMPLE_READBACK_DEPTH_SPV), "vkCreateShaderModule multisample readback")
+                       : CreateShaderModule(context, MULTISAMPLE_READBACK_UINT_SPV, sizeof(MULTISAMPLE_READBACK_UINT_SPV), "vkCreateShaderModule multisample readback");
     }
     const VkSpecializationMapEntry entry{0u, 0u, sizeof(elementBytes)};
     const VkSpecializationInfo specialization{1u, &entry, sizeof(elementBytes), &elementBytes};

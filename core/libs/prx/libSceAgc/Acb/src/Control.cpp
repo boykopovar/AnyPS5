@@ -8,15 +8,24 @@
 #include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
 
-std::uint32_t* RejectUnregisteredWorkloadStream(CommandBuffer* buf, std::uint32_t streamId, const char* function) {
-    if (buf == nullptr || !AgcDriverWorkloadStreamRegistered_nid_postfix(streamId)) return nullptr;
-    NotImplemented_nid_no_patch(function);
-    return nullptr;
+constexpr std::uint32_t OpcodeNop = 0x10;
+constexpr std::uint32_t ActivePacketWords = 18;
+constexpr std::uint32_t CompletePacketWords = 12;
+constexpr std::uint32_t InactivePacketWords = 9;
+constexpr std::uint32_t MaxWorkloadId = 63;
+constexpr std::uint32_t MaxActiveCount = 63;
+
+std::uint32_t* NewWorkloadPacket(CommandBuffer* buf, std::uint32_t words, const char* function) {
+    auto* packet = Agc::Command::Allocate(buf, words, function);
+    std::memset(packet, 0, words * sizeof(std::uint32_t));
+    packet[0] = Agc::Command::Header(OpcodeNop, words, 0);
+    return packet;
 }
 
 }
@@ -83,23 +92,55 @@ std::uint32_t* APS5_VABI sceAgcAcbSetFlip(CommandBuffer* buf, std::uint32_t vide
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadsActive(CommandBuffer* buf, std::uint32_t streamId, const std::uint32_t* workloadIds, std::uint32_t workloadCount) {
-    (void)workloadIds;
-    (void)workloadCount;
-    return RejectUnregisteredWorkloadStream(buf, streamId, __func__);
+    if (buf == nullptr || workloadIds == nullptr || workloadCount == 0 || workloadCount > MaxActiveCount || !AgcDriverWorkloadStreamRegistered_nid_postfix(streamId)) return nullptr;
+    std::uint64_t mask = 0;
+    for (std::uint32_t index = 0; index < workloadCount; ++index) {
+        const auto id = workloadIds[index];
+        if (id > MaxWorkloadId) return nullptr;
+        const std::uint64_t bit = std::uint64_t{1} << id;
+        if ((mask & bit) != 0) return nullptr;
+        mask |= bit;
+    }
+    auto* packet = NewWorkloadPacket(buf, ActivePacketWords, __func__);
+    packet[1] = streamId;
+    packet[2] = static_cast<std::uint32_t>(mask);
+    packet[3] = static_cast<std::uint32_t>(mask >> 32u);
+    return packet;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadComplete(CommandBuffer* buf, std::uint32_t streamId, std::uint32_t workloadId) {
-    (void)workloadId;
-    return RejectUnregisteredWorkloadStream(buf, streamId, __func__);
+    if (buf == nullptr || workloadId > MaxWorkloadId || !AgcDriverWorkloadStreamRegistered_nid_postfix(streamId)) return nullptr;
+    const std::uint64_t clearMask = ~(std::uint64_t{1} << workloadId);
+    auto* packet = NewWorkloadPacket(buf, CompletePacketWords, __func__);
+    packet[1] = streamId;
+    packet[2] = workloadId;
+    packet[3] = static_cast<std::uint32_t>(clearMask);
+    packet[4] = static_cast<std::uint32_t>(clearMask >> 32u);
+    return packet;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbSetWorkloadStreamInactive(CommandBuffer* buf, std::uint32_t streamId) {
-    return RejectUnregisteredWorkloadStream(buf, streamId, __func__);
+    if (buf == nullptr || !AgcDriverWorkloadStreamRegistered_nid_postfix(streamId)) return nullptr;
+    auto* packet = NewWorkloadPacket(buf, InactivePacketWords, __func__);
+    packet[1] = streamId;
+    return packet;
 }
 
 uint32_t* APS5_VABI sceAgcAcbPushMarker(CommandBuffer* buf, const char* str, uint32_t color) {
     (void)color;
     return Agc::Marker::Push(buf, str, __func__);
+}
+
+uint32_t* APS5_VABI sceAgcAcbPushMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    (void)color;
+    return Agc::Marker::PushSpan(buf, str, length, __func__);
+}
+
+uint32_t* APS5_VABI sceAgcAcbSetMarkerSpan(CommandBuffer* buf, const char* str, uint32_t length, uint32_t color) {
+    (void)color;
+    auto* packet = Agc::Marker::PushSpan(buf, str, length, __func__);
+    Agc::Marker::Pop(buf, __func__);
+    return packet;
 }
 
 uint32_t* APS5_VABI sceAgcAcbPopMarker(CommandBuffer* buf) {

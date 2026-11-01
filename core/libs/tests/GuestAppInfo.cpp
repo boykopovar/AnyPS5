@@ -1,4 +1,7 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -7,15 +10,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceKernelGetAppInfo(int pid, void* info);
-int APS5_VABI getpid_nid_postfix(void);
-int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid);
-}
-
-static constexpr int SCE_KERNEL_ERROR_EPERM = static_cast<int>(0x80020001);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -85,10 +79,32 @@ int main(int argc, char** argv) {
     Require(sceKernelGetAppInfo(self, &info) == 0);
     Require(info.appId == 1);
     Require(std::strcmp(info.titleId, "PPSA97358") == 0);
-    Require(info.unknown1 == 0x5a5a5a5a5a5a5a5aull);
-    Require(info.unknown2[0] == 0x5a);
-    Require(sceKernelGetAppInfo(self + 1, &info) == SCE_KERNEL_ERROR_EPERM);
+    Require(info.unknown1 == 0);
+    Require(static_cast<std::uint8_t>(info.unknown2[0x3a]) == 0x5a);
+    std::uint8_t wide[0x100];
+    std::memset(wide, 0xff, sizeof(wide));
+    Require(sceKernelGetAppInfo(self, wide) == 0);
+    std::uint8_t expected[0x100];
+    std::memset(expected, 0xff, sizeof(expected));
+    std::memset(expected, 0, 0x58);
+    const std::uint32_t appId = 1;
+    std::memcpy(expected, &appId, sizeof(appId));
+    std::memcpy(expected + 0x10, "PPSA97358", 10);
+    std::memset(expected + 0x50, 0xff, 4);
+    Require(std::memcmp(wide, expected, sizeof(wide)) == 0);
+    std::memset(wide, 0xff, sizeof(wide));
+    Require(sceKernelGetAppInfo(0, wide) == 0);
+    std::memset(expected, 0xff, sizeof(expected));
+    std::memset(expected, 0, 0x58);
+    std::memset(expected + 0x50, 0xff, 4);
+    Require(std::memcmp(wide, expected, sizeof(wide)) == 0);
     Require(sceKernelGetAppInfo(self, nullptr) == 0);
+    errno = 71;
+    Require(sceKernelGetAppInfo(self, reinterpret_cast<void*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceKernelGetAppInfo(0, reinterpret_cast<void*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     const auto empty = std::filesystem::temp_directory_path() / ("guest_app_info_empty_" + std::to_string(self));
@@ -104,9 +120,18 @@ int main(int argc, char** argv) {
     std::filesystem::remove_all(sfo);
 
     Require(sceKernelUuidCreate(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelUuidCreate(reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::uint32_t first[4]{};
     std::uint32_t second[4]{};
     Require(sceKernelUuidCreate(first) == 0 && sceKernelUuidCreate(second) == 0);
     for (const std::uint32_t* uuid : {first, second}) Require((uuid[1] >> 28) == 4u && (uuid[2] & 0xc0u) == 0x80u);
     Require(std::memcmp(first, second, sizeof(first)) != 0);
+
+    Require(sceKernelCreateUuidV4(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateUuidV4(reinterpret_cast<std::uint8_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    std::uint8_t third[16]{};
+    std::uint8_t fourth[16]{};
+    Require(sceKernelCreateUuidV4(third) == 0 && sceKernelCreateUuidV4(fourth) == 0);
+    for (const std::uint8_t* uuid : {third, fourth}) Require((uuid[6] >> 4) == 4u && (uuid[8] & 0xc0u) == 0x80u);
+    Require(std::memcmp(third, fourth, sizeof(third)) != 0);
 }

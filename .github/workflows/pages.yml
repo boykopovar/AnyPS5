@@ -12,6 +12,8 @@ on:
       - tools/package_release.py
       - tools/nid_names.py
       - tools/progress.py
+      - tools/shader_scan.py
+      - tools/rdna2_isa_forms.txt
       - tools/progress_history.py
       - tools/rdna_isa.txt
       - tools/test_web.py
@@ -33,7 +35,7 @@ concurrency:
 
 jobs:
   pages:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: ${{ !github.event.repository.fork && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -47,7 +49,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 tools/build_web.py --build build-wasm --release
-      - run: python3 tools/progress.py build-wasm/web
+      - run: python3 tools/progress.py --require-shader-source build-wasm/web
       - run: python3 tools/progress_history.py build-wasm/web
       - uses: actions/upload-pages-artifact@v5
         with:

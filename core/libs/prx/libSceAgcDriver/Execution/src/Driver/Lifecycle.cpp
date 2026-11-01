@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -14,6 +15,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "ShaderDiskCache.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -30,6 +32,9 @@
 #else
 #include <pthread.h>
 #include <sys/mman.h>
+#endif
+#ifdef __APPLE__
+#include "prx/libSceAgcDriver/Execution/include/Driver/DriverMemory.hpp"
 #endif
 
 namespace AgcDriver::DriverDetail {
@@ -52,9 +57,15 @@ void PrintFailure(std::exception_ptr error) {
     std::fflush(stderr);
 }
 
+#ifdef __APPLE__
+constexpr std::uint64_t DriverMemoryAddress = MacOsDriverMemoryBase;
+constexpr std::size_t DriverMemoryBytes = DriverMemorySpan;
+constexpr std::uint64_t FsTableAddress = RetargetPs5DriverMemory(0xfe0040000ull);
+#else
 constexpr std::uint64_t DriverMemoryAddress = 0xfe0000000ull + GuestArena::GuestAddressOffset;
 constexpr std::size_t DriverMemoryBytes = 2u << 20u;
 constexpr std::uint64_t FsTableAddress = DriverMemoryAddress + 0x40000ull;
+#endif
 constexpr std::uint64_t FsTableSlotBytes = 16u;
 constexpr std::uint64_t FsTableSlots = 6u;
 constexpr std::uint64_t FsRoutineRecords = 8u;
@@ -71,6 +82,10 @@ void MapDriverMemory() {
 #ifdef _WIN32
     mapped = reinterpret_cast<void*>(DriverMemoryAddress);
     GuestArena::GuestArenaCommit_nid_postfix(mapped, DriverMemoryBytes, PAGE_READWRITE, DriverMemoryBytes);
+#elif defined(__APPLE__)
+    mapped = mmap(reinterpret_cast<void*>(DriverMemoryAddress), DriverMemoryBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mapped == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map the AGC driver memory");
+    if (reinterpret_cast<std::uint64_t>(mapped) != DriverMemoryAddress) munmap(mapped, DriverMemoryBytes);
 #else
     mapped = mmap(reinterpret_cast<void*>(DriverMemoryAddress), DriverMemoryBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
     if (mapped == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map the AGC driver memory");
@@ -87,6 +102,9 @@ void MapDriverMemory() {
     auto* slot = reinterpret_cast<std::uint64_t*>(FsTableAddress);
     slot[0] = (FsRoutineTableAddress & 0xffffffffffffull) | 16ull << 48u;
     slot[1] = FsTableDword3 << 32u | FsRoutineRecords;
+#ifndef _WIN32
+    GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, DriverMemoryBytes);
+#endif
     GuestAllocations::Mutation mutation;
     mutation.Add(mapped, DriverMemoryBytes, true, true, true);
 }
@@ -101,6 +119,11 @@ bool StackHoldsImport() {
         std::uintptr_t low = 0;
         std::uintptr_t high = 0;
         Bounds() {
+#ifdef __APPLE__
+            const auto self = pthread_self();
+            high = reinterpret_cast<std::uintptr_t>(pthread_get_stackaddr_np(self));
+            low = high - pthread_get_stacksize_np(self);
+#else
             pthread_attr_t attributes;
             if (pthread_getattr_np(pthread_self(), &attributes) != 0) return;
             void* base = nullptr;
@@ -110,6 +133,7 @@ bool StackHoldsImport() {
                 high = low + size;
             }
             pthread_attr_destroy(&attributes);
+#endif
         }
     };
     thread_local const Bounds bounds;
@@ -161,7 +185,13 @@ void Driver::stop() {
     for (auto& [queue, worker] : workers) {
         if (worker.thread.joinable()) worker.thread.join();
     }
+    try {
+        DrawFinisher::Get().Drain();
+    } catch (...) {
+    }
     DrawPipeline::Queue0().Stop();
+    DrawPipeline::Queue0().ReleaseRetired();
+    DrawFinisher::Get().ReleaseRan();
     StopWorkerSampler();
     CloseRegistrationPreparation();
     Graphics::StopPipelineLibraryWorker();
@@ -183,6 +213,10 @@ Driver::Driver() {
     InstallAsyncLog_nid_no_patch();
     static const bool driverMemory = (MapDriverMemory(), true);
     static_cast<void>(driverMemory);
+    LibcSetExitDrain_nid_no_patch([] {
+        const auto current = Driver::Get().device.Load();
+        if (current) current->SavePipelineCache();
+    });
     static_cast<void>(GuestMemory::TrackerGeneration());
     ShaderMemory::SetWaitedMsProvider(&Graphics::Recorder::ThreadWaitedMs);
     try {
@@ -216,17 +250,56 @@ Driver::Driver() {
         gpuMapImportThreads.fetch_add(1, std::memory_order_relaxed);
         host.join();
     });
+    PerformanceOverlay::SetDriverCounters([] { return Driver::Get().OverlayCounters(); });
 }
 
 void Driver::WaitIdle() {
     require(!onWorkerThread(), "worker cannot wait for itself");
+    {
+        std::unique_lock lock(mutex);
+        const auto target = accepted;
+        ++idleWaiters;
+        changed.wait(lock, [&] { return failure != nullptr || stopping || completed >= target; });
+        --idleWaiters;
+        rethrowFailure();
+        checkStopping();
+    }
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
+bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
     std::unique_lock lock(mutex);
     const auto target = accepted;
     ++idleWaiters;
-    changed.wait(lock, [&] { return failure != nullptr || stopping || completed >= target; });
+    const bool idle = changed.wait_for(lock, timeout, [&] { return failure != nullptr || stopping || completed >= target; });
     --idleWaiters;
     rethrowFailure();
     checkStopping();
+    return idle;
+}
+
+std::vector<AwaitedWait> Driver::AwaitedWaits() {
+    std::vector<AwaitedWait> result;
+    for (const auto& slot : awaitedSlots) {
+        const auto address = slot.address.load(std::memory_order_acquire);
+        if (address == 0) continue;
+        AwaitedWait wait;
+        wait.address = address;
+        wait.reference = slot.reference.load(std::memory_order_relaxed);
+        wait.mask = slot.mask.load(std::memory_order_relaxed);
+        const auto shape = slot.shape.load(std::memory_order_relaxed);
+        wait.function = static_cast<std::uint32_t>(shape);
+        wait.bytes = static_cast<std::uint32_t>(shape >> 32u);
+        if (slot.address.load(std::memory_order_acquire) == address) result.push_back(wait);
+    }
+    return result;
+}
+
+std::pair<std::uint64_t, std::uint64_t> Driver::SerialProgress() {
+    std::lock_guard lock(mutex);
+    return {accepted, completed};
 }
 
 void Driver::CheckFailure() {
@@ -286,4 +359,9 @@ std::unique_lock<std::mutex> HoldAsyncLog() {
     return AsyncLog::Get().Hold();
 }
 
+}
+
+extern "C" void* AgcDriverStaticTable_nid_postfix() {
+    static_cast<void>(AgcDriver::DriverDetail::Driver::Get());
+    return reinterpret_cast<void*>(AgcDriver::DriverDetail::FsTableAddress);
 }

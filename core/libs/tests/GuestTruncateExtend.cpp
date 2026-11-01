@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdio>
@@ -7,18 +9,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #endif
-
-extern "C" {
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::uint64_t);
-std::int64_t APS5_VABI pread_nid_postfix(int, void*, std::uint64_t, std::int64_t);
-std::int64_t APS5_VABI lseek_nid_postfix(int, std::int64_t, int);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-int APS5_VABI truncate_nid_postfix(const char*, std::int64_t);
-int APS5_VABI unlink_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
@@ -30,6 +20,7 @@ constexpr char FileName[] = "anyps5_truncate_extend_file";
 
 void Cleanup() {
     unlink_nid_postfix(FileName);
+
 }
 
 void Require(bool condition, const char* what) {
@@ -85,6 +76,8 @@ int main() {
     const int check = open_nid_postfix(FileName, ReadOnly, 0);
     Require(check >= 0 && lseek_nid_postfix(check, 0, 2) == Length, "truncate by path left the wrong size");
     Require(close_nid_postfix(check) == 0, "close failed");
+    Require(truncate_nid_postfix(FileName, -1) == -1 && *__error_nid_postfix() == 22, "truncate by path with negative length must fail with EINVAL (22)");
+    Require(truncate_nid_postfix(FileName, -100) == -1 && *__error_nid_postfix() == 22, "truncate by path with negative length must fail with EINVAL (22)");
     Cleanup();
     return 0;
 }

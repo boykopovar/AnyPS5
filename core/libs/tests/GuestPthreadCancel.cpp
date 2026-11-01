@@ -1,3 +1,10 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
@@ -5,40 +12,7 @@
 #include <cstdlib>
 #include <thread>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf();
-void APS5_VABI scePthreadExit(void* retval);
-int APS5_VABI scePthreadCancel(Pthread thread);
-int APS5_VABI scePthreadSetcancelstate(int state, int* old_state);
-int APS5_VABI scePthreadSetcanceltype(int type, int* old_type);
-void APS5_VABI scePthreadTestcancel();
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
-int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
-int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
-int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, const char* name);
-int APS5_VABI scePthreadSemDestroy(PthreadSem* sem);
-int APS5_VABI scePthreadSemWait(PthreadSem* sem);
-int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
-int APS5_VABI pthread_cancel_nid_postfix(Pthread thread);
-int APS5_VABI pthread_setcanceltype_nid_postfix(int type, int* old_type);
-int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value);
-int APS5_VABI sem_destroy_nid_postfix(void* sem);
-int APS5_VABI sem_wait_nid_postfix(void* sem);
-int APS5_VABI sem_timedwait_nid_postfix(void* sem, const KernelTimespec* abstime);
-int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value);
-void APS5_VABI __pthread_cleanup_push_imp_nid_postfix(void (APS5_VABI* routine)(void*), void* argument, void* info);
-void APS5_VABI __pthread_cleanup_pop_imp_nid_postfix(int execute);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int CANCEL_ENABLE = 0;
@@ -60,7 +34,7 @@ struct Shared {
     std::atomic<bool> returned{false};
     std::atomic<bool> survived{false};
     std::atomic<int> cleanups{0};
-    int order[2] = {0, 0};
+    int order[3] = {0, 0, 0};
 };
 
 static Shared shared;
@@ -78,6 +52,7 @@ static void* APS5_VABI CondWaiter(void*) {
     std::uintptr_t info[8];
     Require(scePthreadMutexLock(&shared.mutex) == SCE_OK);
     __pthread_cleanup_push_imp_nid_postfix(UnlockMutex, nullptr, info);
+
     shared.ready.store(true);
     for (;;) Require(scePthreadCondWait(&shared.cond, &shared.mutex) == SCE_OK);
 }
@@ -85,6 +60,7 @@ static void* APS5_VABI CondWaiter(void*) {
 static void* APS5_VABI SemWaiter(void*) {
     shared.ready.store(true);
     scePthreadSemWait(&shared.sem);
+
     shared.returned.store(true);
     return nullptr;
 }
@@ -92,6 +68,7 @@ static void* APS5_VABI SemWaiter(void*) {
 static void* APS5_VABI PosixSemWaiter(void*) {
     shared.ready.store(true);
     sem_wait_nid_postfix(&shared.posixSem);
+
     shared.returned.store(true);
     return nullptr;
 }
@@ -142,6 +119,7 @@ static void* APS5_VABI Idler(void*) {
 static void* APS5_VABI Joiner(void*) {
     shared.ready.store(true);
     scePthreadJoin(shared.target, nullptr);
+
     shared.returned.store(true);
     return nullptr;
 }
@@ -158,10 +136,12 @@ static void* APS5_VABI Disabled(void*) {
     while (!shared.release.load()) {
         sceKernelUsleep_nid_postfix(1000);
         scePthreadTestcancel();
+
     }
     shared.survived.store(true);
     Require(scePthreadSetcancelstate(CANCEL_ENABLE, &old) == SCE_OK && old == CANCEL_DISABLE);
     scePthreadTestcancel();
+
     shared.returned.store(true);
     return nullptr;
 }
@@ -173,6 +153,7 @@ static void* APS5_VABI Asynchronous(void*) {
     shared.ready.store(true);
     while (!shared.release.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
     scePthreadSetcancelstate(CANCEL_ENABLE, nullptr);
+
     shared.returned.store(true);
     return nullptr;
 }
@@ -183,9 +164,25 @@ static void* APS5_VABI Handlers(void*) {
     __pthread_cleanup_push_imp_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{1}), first);
     __pthread_cleanup_push_imp_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{2}), second);
     __pthread_cleanup_pop_imp_nid_postfix(0);
+
     __pthread_cleanup_push_imp_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{3}), second);
     __pthread_cleanup_pop_imp_nid_postfix(1);
+
     scePthreadExit(reinterpret_cast<void*>(std::intptr_t{7}));
+    return nullptr;
+}
+
+static void* APS5_VABI HeapHandlers(void*) {
+    std::uintptr_t first[8];
+    __pthread_cleanup_push_imp_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{1}), first);
+    pthread_cleanup_push_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{2}));
+    pthread_cleanup_pop_nid_postfix(0);
+
+    pthread_cleanup_push_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{3}));
+    __pthread_cleanup_pop_imp_nid_postfix(1);
+
+    pthread_cleanup_push_nid_postfix(RecordOrder, reinterpret_cast<void*>(std::intptr_t{4}));
+    scePthreadExit(reinterpret_cast<void*>(std::intptr_t{8}));
     return nullptr;
 }
 
@@ -274,6 +271,12 @@ int main() {
     Require(scePthreadJoin(thread, &result) == SCE_OK);
     Require(reinterpret_cast<std::intptr_t>(result) == 7);
     Require(shared.cleanups.load() == 2 && shared.order[0] == 3 && shared.order[1] == 1);
+
+    shared.cleanups.store(0);
+    Require(scePthreadCreate(&thread, nullptr, HeapHandlers, nullptr, nullptr) == SCE_OK);
+    Require(scePthreadJoin(thread, &result) == SCE_OK);
+    Require(reinterpret_cast<std::intptr_t>(result) == 8);
+    Require(shared.cleanups.load() == 3 && shared.order[0] == 3 && shared.order[1] == 4 && shared.order[2] == 1);
 
     Require(sem_destroy_nid_postfix(&shared.posixSem) == 0);
     Require(scePthreadSemDestroy(&shared.sem) == SCE_OK);
