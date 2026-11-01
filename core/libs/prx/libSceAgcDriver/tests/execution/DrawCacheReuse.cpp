@@ -3,14 +3,23 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "VulkanTestDevice.hpp"
+#include "ControlFlow/RequestSerializer.hpp"
+#include "Recompiler.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <random>
+#include <sstream>
+#include <string_view>
 #include <initializer_list>
 #include <iostream>
 #include <string>
@@ -304,6 +313,58 @@ void RecordsKeepThePacketsFragmentWord(bool libraries) {
     }
 }
 
+void GraphicsRequestDumps(std::string_view mode) {
+    const auto directory = std::filesystem::temp_directory_path() / ("agc_graphics_dump-" + std::to_string(std::random_device{}()));
+    const auto previous = std::filesystem::current_path();
+    std::filesystem::create_directories(directory);
+    std::filesystem::current_path(directory);
+    try {
+        const auto name = [](const void* code) {
+            std::ostringstream address;
+            address << std::hex << reinterpret_cast<std::uintptr_t>(code);
+            return "shader_" + address.str() + ".req";
+        };
+        if (mode == "--dump-filtered") {
+            std::ostringstream address;
+            address << std::hex << reinterpret_cast<std::uintptr_t>(PixelCode.data());
+#ifdef _WIN32
+            Require(_putenv_s("APS5_DUMP_SHADERS", address.str().c_str()) == 0, "cannot select the pixel shader");
+#else
+            Require(setenv("APS5_DUMP_SHADERS", address.str().c_str(), 1) == 0, "cannot select the pixel shader");
+#endif
+        }
+        Registered(TriangleVertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
+        Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
+        const auto draw = [&] { return Submit(Draws(32.0f, TriangleVertexCode.data(), 0, PixelCode.data(), 1, {{std::bit_cast<std::uint32_t>(1.0f)}})); };
+        for (int repeat = 0; repeat < 3; ++repeat) draw();
+        Require(BrightestColorByte() > 0, "shader dumping prevented the draw from writing its target");
+        const auto vertex = directory / name(TriangleVertexCode.data());
+        const auto pixel = directory / name(PixelCode.data());
+        Require(std::filesystem::exists(vertex) == (mode == "--dump-graphics"), "the vertex request dump did not respect the graphics switch or address filter");
+        Require(std::filesystem::exists(pixel) == (mode != "--dump-disabled"), "the pixel request dump did not respect the graphics switch");
+        for (const auto& path : {vertex, pixel}) {
+            if (!std::filesystem::exists(path)) continue;
+            std::ifstream file(path, std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+            const auto replay = ShaderRecompiler::RequestSerializer{}.Deserialize(text);
+            const auto expected = path == vertex ? ShaderRecompiler::ShaderStage::Vertex : ShaderRecompiler::ShaderStage::Fragment;
+            Require(replay.request.shader.stage == expected, "a graphics request lost its shader stage");
+            static_cast<void>(ShaderRecompiler::Recompile(replay.request));
+            file.close();
+            const auto stamp = std::filesystem::file_time_type::clock::now() - std::chrono::seconds(60);
+            std::filesystem::last_write_time(path, stamp);
+            draw();
+            Require(std::filesystem::last_write_time(path) == stamp, "a repeated draw rewrote a captured request");
+        }
+        AgcDriverShutdown_nid_postfix();
+        std::filesystem::current_path(previous);
+        std::filesystem::remove_all(directory);
+    } catch (...) {
+        std::filesystem::current_path(previous);
+        throw;
+    }
+}
+
 void SightingsKeepCollidingKeys() {
     DrawKeySightings sightings(DrawKeySightings::Ways);
     Require(!sightings.SeenBefore(0) && sightings.SeenBefore(0), "draw key 0 was not admitted at its second sight");
@@ -316,7 +377,7 @@ void SightingsKeepCollidingKeys() {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         SightingsKeepCollidingKeys();
         bool libraries = false;
@@ -324,6 +385,11 @@ int main() {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
             libraries = device->GraphicsPipelineLibraries();
+        }
+        if (argc == 2 && std::string_view(argv[1]).starts_with("--dump-")) {
+            GraphicsRequestDumps(argv[1]);
+            std::cout << "graphics shader request dumps passed\n";
+            return 0;
         }
         if (!libraries && std::getenv("APS5_NO_GPL") == nullptr) return VulkanTestSkipped;
         if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
