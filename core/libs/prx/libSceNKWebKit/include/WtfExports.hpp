@@ -7,6 +7,21 @@
 #include <cstddef>
 #include <cstdint>
 
+namespace NKWebKit::WtfAbi {
+
+struct Mutex {
+    void* impl{nullptr};
+};
+
+struct ThreadCondition {
+    void* impl{nullptr};
+};
+
+static_assert(sizeof(Mutex) == 8 && alignof(Mutex) == 8);
+static_assert(sizeof(ThreadCondition) == 8 && alignof(ThreadCondition) == 8);
+
+}  // namespace NKWebKit::WtfAbi
+
 extern "C" {
 
 [[noreturn]] void APS5_VABI WTFCrash();
@@ -75,6 +90,19 @@ WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastMallocEm(WTF::TryMallocRetu
 std::size_t APS5_VABI _ZN3WTF14fastMallocSizeEPKv(const void* ptr);
 void* APS5_VABI _ZN3WTF14jsValueReallocEPvm(void* ptr, std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF14tryFastReallocEPvm(WTF::TryMallocReturnValue* result, void* ptr, std::size_t size);
+void APS5_VABI _ZN3WTF15ThreadCondition4waitERNS_5MutexE(NKWebKit::WtfAbi::ThreadCondition* self, NKWebKit::WtfAbi::Mutex& mutex);
+void APS5_VABI _ZN3WTF15ThreadCondition6signalEv(NKWebKit::WtfAbi::ThreadCondition* self);
+void APS5_VABI _ZN3WTF15ThreadCondition9broadcastEv(NKWebKit::WtfAbi::ThreadCondition* self);
+bool APS5_VABI _ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE(NKWebKit::WtfAbi::ThreadCondition* self, NKWebKit::WtfAbi::Mutex& mutex, WTF::WallTime deadline);
+void APS5_VABI _ZN3WTF15ThreadConditionD1Ev(NKWebKit::WtfAbi::ThreadCondition* self);
+void APS5_VABI _ZN3WTF15ThreadConditionD2Ev(NKWebKit::WtfAbi::ThreadCondition* self);
+void APS5_VABI _ZN3WTF5Mutex4lockEv(NKWebKit::WtfAbi::Mutex* self);
+void APS5_VABI _ZN3WTF5Mutex6unlockEv(NKWebKit::WtfAbi::Mutex* self);
+bool APS5_VABI _ZN3WTF5Mutex7tryLockEv(NKWebKit::WtfAbi::Mutex* self);
+void APS5_VABI _ZN3WTF5MutexC1Ev(NKWebKit::WtfAbi::Mutex* self);
+void APS5_VABI _ZN3WTF5MutexC2Ev(NKWebKit::WtfAbi::Mutex* self);
+void APS5_VABI _ZN3WTF5MutexD1Ev(NKWebKit::WtfAbi::Mutex* self);
+void APS5_VABI _ZN3WTF5MutexD2Ev(NKWebKit::WtfAbi::Mutex* self);
 void APS5_VABI _ZN3WTF15fastAlignedFreeEPv(void* ptr);
 void* APS5_VABI _ZN3WTF16fastZeroedMallocEm(std::size_t size);
 void* APS5_VABI _ZN3WTF16tryJSValueMallocEm(std::size_t size);

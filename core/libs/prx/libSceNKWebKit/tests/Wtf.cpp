@@ -2,6 +2,11 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <cmath>
+#include <array>
+#include <barrier>
+#include <chrono>
+#include <future>
+#include <thread>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -375,7 +380,10 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 
+void TestThreadingPrimitives();
+
 int main() {
+    TestThreadingPrimitives();
     TestAdditionalWtf();
     TestMemoryAllocations();
     TestAllocationBoundaries();
@@ -970,3 +978,160 @@ void TestURLsAndReallocation() {
 }
 
 }  // namespace Wtf2Tests
+
+namespace {
+
+using NKWebKit::WtfAbi::Mutex;
+using NKWebKit::WtfAbi::ThreadCondition;
+constexpr auto MutexLock = _ZN3WTF5Mutex4lockEv;
+constexpr auto MutexTryLock = _ZN3WTF5Mutex7tryLockEv;
+constexpr auto MutexUnlock = _ZN3WTF5Mutex6unlockEv;
+constexpr auto MutexDestroy = _ZN3WTF5MutexD1Ev;
+constexpr auto ConditionWait = _ZN3WTF15ThreadCondition4waitERNS_5MutexE;
+constexpr auto ConditionTimedWait = _ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE;
+constexpr auto ConditionSignal = _ZN3WTF15ThreadCondition6signalEv;
+constexpr auto ConditionBroadcast = _ZN3WTF15ThreadCondition9broadcastEv;
+constexpr auto ConditionDestroy = _ZN3WTF15ThreadConditionD1Ev;
+
+WallTime WallDeadline(double seconds) {
+    return {_ZN3WTF8WallTime3nowEv().m_value + seconds};
+}
+
+void AwaitReady(std::future<void>& future) {
+    Require(future.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    future.get();
+}
+
+void TestMutex() {
+    Mutex mutex;
+    Require(MutexTryLock(&mutex));
+    Require(!MutexTryLock(&mutex));
+    std::thread contender([&] { Require(!MutexTryLock(&mutex)); });
+    contender.join();
+    MutexUnlock(&mutex);
+    std::thread next([&] {
+        Require(MutexTryLock(&mutex));
+        MutexUnlock(&mutex);
+    });
+    next.join();
+    MutexDestroy(&mutex);
+
+    Mutex counted;
+    unsigned count = 0;
+    std::barrier start(5);
+    std::array<std::thread, 4> threads;
+    for (auto& thread : threads) {
+        thread = std::thread([&] {
+            start.arrive_and_wait();
+            for (unsigned i = 0; i < 1000; ++i) {
+                MutexLock(&counted);
+                ++count;
+                MutexUnlock(&counted);
+            }
+        });
+    }
+    start.arrive_and_wait();
+    for (auto& thread : threads) thread.join();
+    Require(count == 4000);
+    MutexDestroy(&counted);
+    Mutex explicitMutex;
+    _ZN3WTF5MutexC1Ev(&explicitMutex);
+    MutexLock(&explicitMutex);
+    Require(!MutexTryLock(&explicitMutex));
+    MutexUnlock(&explicitMutex);
+    _ZN3WTF5MutexD1Ev(&explicitMutex);
+    _ZN3WTF5MutexC2Ev(&explicitMutex);
+    Require(MutexTryLock(&explicitMutex));
+    MutexUnlock(&explicitMutex);
+    _ZN3WTF5MutexD2Ev(&explicitMutex);
+    Mutex unused;
+    MutexDestroy(&unused);
+}
+
+void TestCondition() {
+    Mutex mutex;
+    ThreadCondition condition;
+    unsigned permits = 0;
+    unsigned awakened = 0;
+    std::array<std::promise<void>, 3> ready;
+    std::promise<void> firstWake;
+    auto firstDone = firstWake.get_future();
+    std::array<std::thread, 3> threads;
+    for (unsigned i = 0; i < threads.size(); ++i) {
+        auto queued = ready[i].get_future();
+        threads[i] = std::thread([&, i] {
+            MutexLock(&mutex);
+            ready[i].set_value();
+            while (!permits) ConditionWait(&condition, mutex);
+            --permits;
+            if (++awakened == 1) firstWake.set_value();
+            MutexUnlock(&mutex);
+        });
+        AwaitReady(queued);
+    }
+    MutexLock(&mutex);
+    Require(awakened == 0);
+    permits = 1;
+    ConditionSignal(&condition);
+    MutexUnlock(&mutex);
+    AwaitReady(firstDone);
+    MutexLock(&mutex);
+    Require(awakened == 1 && permits == 0);
+    permits = 2;
+    ConditionBroadcast(&condition);
+    MutexUnlock(&mutex);
+    for (auto& thread : threads) thread.join();
+    Require(awakened == 3 && permits == 0);
+    ConditionDestroy(&condition);
+    MutexDestroy(&mutex);
+
+    ThreadCondition unused;
+    _ZN3WTF15ThreadConditionD2Ev(&unused);
+    ThreadCondition notified;
+    std::array<std::thread, 4> notifiers;
+    for (auto& thread : notifiers) thread = std::thread([&] { ConditionSignal(&notified); ConditionBroadcast(&notified); });
+    for (auto& thread : notifiers) thread.join();
+    _ZN3WTF15ThreadConditionD2Ev(&notified);
+}
+
+void TestConditionDeadlines() {
+    Mutex mutex;
+    ThreadCondition condition;
+    MutexLock(&mutex);
+    Require(!ConditionTimedWait(&condition, mutex, WallDeadline(-1)));
+    Require(!MutexTryLock(&mutex));
+    Require(!ConditionTimedWait(&condition, mutex, {-std::numeric_limits<double>::infinity()}));
+    const auto deadline = WallDeadline(0.01);
+    while (ConditionTimedWait(&condition, mutex, deadline)) Require(!MutexTryLock(&mutex));
+    Require(_ZN3WTF8WallTime3nowEv().m_value >= deadline.m_value);
+    Require(!MutexTryLock(&mutex));
+    MutexUnlock(&mutex);
+    for (double value : {WallDeadline(5).m_value, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::max()}) {
+        std::promise<void> ready;
+        auto queued = ready.get_future();
+        bool signalled = false;
+        std::thread waiter([&] {
+            MutexLock(&mutex);
+            ready.set_value();
+            while (!signalled) Require(ConditionTimedWait(&condition, mutex, {value}));
+            Require(!MutexTryLock(&mutex));
+            MutexUnlock(&mutex);
+        });
+        AwaitReady(queued);
+        MutexLock(&mutex);
+        signalled = true;
+        ConditionSignal(&condition);
+        MutexUnlock(&mutex);
+        waiter.join();
+    }
+    ConditionDestroy(&condition);
+    MutexDestroy(&mutex);
+}
+
+}  // namespace
+
+void TestThreadingPrimitives() {
+    TestMutex();
+    TestCondition();
+    TestConditionDeadlines();
+}
