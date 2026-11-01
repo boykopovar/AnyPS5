@@ -756,7 +756,12 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
             char separator = 0;
             std::string permissions;
             if (!(fields >> std::hex >> first >> separator >> last >> permissions) || separator != '-' || first >= last || permissions.size() < 2) return false;
-            if (last <= cursor) continue;
+            const bool readable = permissions[0] == 'r';
+            const bool writable = readable && permissions[1] == 'w';
+            if (last <= cursor) {
+                if (readable) pages.record(first, last, true, writable, generation, access);
+                continue;
+            }
             if (first > cursor) {
                 const auto gapEnd = std::min(end, first);
                 recordRun(gapEnd, false, false);
@@ -765,8 +770,6 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
                 found = true;
                 break;
             }
-            const bool readable = permissions[0] == 'r';
-            const bool writable = readable && permissions[1] == 'w';
             const auto next = std::min(end, last);
             recordRun(next, readable, writable);
             if (!emit(PageRun{cursor, next, readable, writable})) return true;
