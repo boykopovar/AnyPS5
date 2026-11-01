@@ -67,12 +67,26 @@ def validate(summary):
     if values != sorted(values):
         raise ValueError("frame_ms must satisfy p50 <= p90 <= p99 <= max")
     number(summary.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
+    workers = summary.get("worker_busy_pct")
+    if not isinstance(workers, dict):
+        raise ValueError("worker_busy_pct must be an object")
+    for name, value in workers.items():
+        number(value, f"worker_busy_pct.{name}")
     phases = summary.get("top_phases_ms_per_frame")
     if not isinstance(phases, dict):
         raise ValueError("top_phases_ms_per_frame must be an object")
     for name, value in phases.items():
         number(value, f"top_phases_ms_per_frame.{name}")
     return summary
+
+
+def unique_json_object(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError(f"duplicate JSON field: {name!r}")
+        result[name] = value
+    return result
 
 
 def load_summary(path, trace=None):
@@ -82,7 +96,7 @@ def load_summary(path, trace=None):
             if not line.strip():
                 continue
             try:
-                record = json.loads(line)
+                record = json.loads(line, object_pairs_hook=unique_json_object)
                 if not isinstance(record, dict):
                     raise ValueError("summary must be an object")
             except (ValueError, RecursionError) as error:

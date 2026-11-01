@@ -11,6 +11,7 @@
 - [sceAvControlSetDefaultVideoOutMode, sceAvControlSetDispclk, sceAvControlSetGamutMetadata, sceAvControlSetHdcpEncryption, sceAvControlSetHdcpStatus](../../../core/libs/prx/libSceAvSetting/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAvSetting.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
 - [sceAvControlSetHdmiGamutMetadata, sceAvControlSetHdrMetadata, sceAvControlSetVideoOutSource, sceAvControlSimulateProcessOutputModeArbitration, sceAvSettingAddCallbacks](../../../core/libs/prx/libSceAvSetting/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAvSetting.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
 - [sceAvSettingAddCallbacksForLnc, sceAvSettingAddCallbacksForSocialScreen, sceAvSettingCallbackFuncsInit, sceAvSettingCallbackFuncsInitForLnc, sceAvSettingCallbackFuncsInitForLnc_](../../../core/libs/prx/libSceAvSetting/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAvSetting.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
+- [sceAvControlInit2](../../../core/libs/prx/libSceAvSetting/Export.cpp) throws on every call. Its name and NID `Jhcj4HDIw04` are confirmed in the pinned [PS5 13.60 inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libsceavsetting-620714af3c.jsonl); signature and behavior remain unknown. The parameterless `int` declaration is an import placeholder, not a verified prototype or working implementation.
 - [sceAvSettingCallbackFuncsInit_, sceAvSettingChangeOutputMode, sceAvSettingChangeOutputMode2, sceAvSettingChangeOutputMode3, sceAvSettingChangeOutputModeForDiag](../../../core/libs/prx/libSceAvSetting/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAvSetting.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
 - [sceAvSettingChangeProcessAttribute, sceAvSettingCheckCallback, sceAvSettingControlHdcpEncryption, sceAvSettingDebugAddCallbacks, sceAvSettingDebugClearDiagCommand](../../../core/libs/prx/libSceAvSetting/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAvSetting.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
 - [sceAvSettingDebugSetDiagState, sceAvSettingDebugSetHdmiMonitorInfo, sceAvSettingDebugSetProcessAttribute, sceAvSettingDriverChangeConnectionStatus, sceAvSettingDriverUpdateStatus](../../../core/libs/prx/libSceAvSetting/Export.cpp) - names and NIDs match the [PS5 3.20 inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceAvSetting.c); signatures and behavior are unverified. No-parameter declarations resolve imports and throw through `NotImplemented_nid_no_patch` when called.
@@ -31,6 +32,43 @@
 - [sceAvControlSetMonitorFakeMode](../../../core/libs/prx/libSceAvSetting/Export.cpp) (libSceAvSetting) - unknown signature
 - [sceAvControlGetCurrentOutputSysMode](../../../core/libs/prx/libSceAvSetting/Export.cpp) (libSceAvSetting) - unknown signature
 - [sceAvControlGetNativeHdmiMonitorInfo](../../../core/libs/prx/libSceAvSetting/Export.cpp) (libSceAvSetting) - unknown signature
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceAvSetting/Export.cpp) - 28 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `+QkxEV+rZws` |
+| `Unknown` | `0BKuKlQG8zE` |
+| `Unknown` | `0mMgouCMXQ4` |
+| `Unknown` | `0vwiTglFTz4` |
+| `Unknown` | `7kywfNahIbw` |
+| `Unknown` | `A143jTEYkNw` |
+| `Unknown` | `DtJ45BO7LtY` |
+| `Unknown` | `Dxe4ybR-NaM` |
+| `Unknown` | `GYAho0we28c` |
+| `Unknown` | `Iv3zoMND6xU` |
+| `Unknown` | `JUxonNYB9xk` |
+| `Unknown` | `JlZQqZOsTMQ` |
+| `Unknown` | `MNZaRdvvdU4` |
+| `Unknown` | `V-IcK9eokeE` |
+| `Unknown` | `bM9VthphLmg` |
+| `Unknown` | `bXmd6MGBaNI` |
+| `Unknown` | `cANt7oF1VsA` |
+| `Unknown` | `cK+dKi9GYYA` |
+| `Unknown` | `ftQASJeHi6M` |
+| `Unknown` | `kvYuLJa0CyU` |
+| `Unknown` | `m1Wi0Yp38v0` |
+| `Unknown` | `mp2s52Yr4pc` |
+| `Unknown` | `nWFSNYt07Cw` |
+| `Unknown` | `nhvN5B5bvyc` |
+| `Unknown` | `osJaW+pc9kw` |
+| `Unknown` | `s-Egk+i6sAY` |
+| `Unknown` | `tIR02KtiDXw` |
+| `Unknown` | `xVRs9kzSP7I` |
+
+### Unknown function info (continued)
+
 - [sceAvControlGetRawMonitorInfo](../../../core/libs/prx/libSceAvSetting/Export.cpp) (libSceAvSetting) - unknown signature
 - [sceAvControlGetKsvList](../../../core/libs/prx/libSceAvSetting/Export.cpp) (libSceAvSetting) - unknown signature
 - [sceAvControlGetRawEdid](../../../core/libs/prx/libSceAvSetting/Export.cpp) (libSceAvSetting) - unknown signature
