@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
+#include <limits>
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (value) return;
@@ -153,6 +154,14 @@ static void CheckRoundingModes() {
         Require(rintf_nid_postfix(-1.5f) == static_cast<float>(test.negative) && rintf_nid_postfix(1.5f) == static_cast<float>(test.positive));
         Require(rintl_nid_postfix(-1.5L) == test.negative && rintl_nid_postfix(1.5L) == test.positive);
         Require(lrint_nid_postfix(-1.5) == static_cast<std::int64_t>(test.negative) && llrint_nid_postfix(1.5) == static_cast<long long>(test.positive));
+        for (const double small : {0.0, 0.1, 0.5, 0x1.8p-1030}) {
+            Require(floor_nid_postfix(small) == 0.0 && !std::signbit(floor_nid_postfix(small)));
+            Require(floorf_nid_postfix(static_cast<float>(small)) == 0.0f && !std::signbit(floorf_nid_postfix(static_cast<float>(small))));
+        }
+        for (const float small : {std::numeric_limits<float>::denorm_min(), 0x1p-130f, std::numeric_limits<float>::min()})
+            Require(floorf_nid_postfix(small) == 0.0f && !std::signbit(floorf_nid_postfix(small)));
+        Require(floor_nid_postfix(-0.5) == -1.0 && floorf_nid_postfix(-0.5f) == -1.0f);
+        Require(std::signbit(floor_nid_postfix(-0.0)) && std::signbit(floorf_nid_postfix(-0.0f)));
         Require(std::fegetround() == test.mode);
     }
     Require(std::fesetround(saved) == 0);
