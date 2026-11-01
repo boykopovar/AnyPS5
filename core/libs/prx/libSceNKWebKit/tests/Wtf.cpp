@@ -190,6 +190,82 @@ static void TestMemoryAllocations() {
     _ZN8Gigacage4freeENS_4KindEPv(0, cross2);
 }
 
+static void TestGregorianDateTime() {
+    static_assert(sizeof(GregorianDateTime) == 10 * sizeof(int));
+    struct Case {
+        double ms;
+        GregorianDateTime expected;
+    };
+    const Case cases[] = {
+        {0.0, {1970, 0, 0, 1, 4, 0, 0, 0}},
+        {-0.5, {1969, 11, 364, 31, 3, 23, 59, 59}},
+        {-1000.5, {1969, 11, 364, 31, 3, 23, 59, 58}},
+        {999.5, {1970, 0, 0, 1, 4, 0, 0, 0}},
+        {1000.5, {1970, 0, 0, 1, 4, 0, 0, 1}},
+        {-2203891201000.0, {1900, 1, 58, 28, 3, 23, 59, 59}},
+        {-2203891200000.0, {1900, 2, 59, 1, 4, 0, 0, 0}},
+        {946684799000.0, {1999, 11, 364, 31, 5, 23, 59, 59}},
+        {946684800000.0, {2000, 0, 0, 1, 6, 0, 0, 0}},
+        {951782399000.0, {2000, 1, 58, 28, 1, 23, 59, 59}},
+        {951782400000.0, {2000, 1, 59, 29, 2, 0, 0, 0}},
+        {951868800000.0, {2000, 2, 60, 1, 3, 0, 0, 0}},
+        {983404799000.0, {2001, 1, 58, 28, 3, 23, 59, 59}},
+        {983404800000.0, {2001, 2, 59, 1, 4, 0, 0, 0}},
+        {4107542399000.0, {2100, 1, 58, 28, 0, 23, 59, 59}},
+        {4107542400000.0, {2100, 2, 59, 1, 1, 0, 0, 0}},
+        {13574608496000.0, {2400, 1, 59, 29, 2, 12, 34, 56}},
+        {-58015504000.0, {1968, 1, 59, 29, 4, 12, 34, 56}},
+        {-8640000000000000.0, {-271821, 3, 109, 20, 2, 0, 0, 0}},
+        {8640000000000000.0, {275760, 8, 256, 13, 6, 0, 0, 0}},
+    };
+    const LocalTimeOffset offsets[] = {
+        {false, 0}, {true, 19800000}, {false, -12600000},
+        {true, 59999}, {false, -59999}, {false, 60001}, {true, -60001},
+        {true, std::numeric_limits<int>::max()}, {false, std::numeric_limits<int>::min()},
+    };
+    for (const auto& test : cases) {
+        for (auto offset : offsets) {
+            GregorianDateTime first{};
+            GregorianDateTime second{};
+            auto expected = test.expected;
+            expected.m_utcOffsetInMinute = offset.offset / 60000;
+            expected.m_isDST = offset.isDST;
+            _ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE(&first, test.ms, offset);
+            _ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE(&second, test.ms, offset);
+            Require(std::memcmp(&first, &expected, sizeof(first)) == 0);
+            Require(std::memcmp(&second, &first, sizeof(first)) == 0);
+        }
+    }
+    const double unsupported[] = {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::infinity(),
+        -std::numeric_limits<double>::infinity(),
+        std::numeric_limits<double>::max(),
+        -std::numeric_limits<double>::max(),
+        std::nextafter(8640000000000000.0, std::numeric_limits<double>::infinity()),
+        std::nextafter(-8640000000000000.0, -std::numeric_limits<double>::infinity()),
+    };
+    const auto constructors = {
+        &_ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE,
+        &_ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE,
+    };
+    for (auto constructor : constructors) {
+        for (double ms : unsupported) {
+            GregorianDateTime result{2000, 1, 59, 29, 2, 12, 34, 56, 330, 1};
+            const auto original = result;
+            bool threw = false;
+            try {
+                constructor(&result, ms, {false, 0});
+            } catch (const std::runtime_error& error) {
+                threw = std::strstr(error.what(), "GregorianDateTimeC") != nullptr
+                    && std::strstr(error.what(), "not implemented") != nullptr;
+            }
+            Require(threw);
+            Require(std::memcmp(&result, &original, sizeof(result)) == 0);
+        }
+    }
+}
+
 static void TestTime() {
     MonotonicTime mNow = _ZN3WTF13MonotonicTime3nowEv();
     Require(mNow.m_value > 0.0);

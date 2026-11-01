@@ -79,6 +79,8 @@ void APS5_VABI _ZN3WTF15fastAlignedFreeEPv(void* ptr);
 void* APS5_VABI _ZN3WTF16fastZeroedMallocEm(std::size_t size);
 void* APS5_VABI _ZN3WTF16tryJSValueMallocEm(std::size_t size);
 void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::GregorianDateTime* self);
+void APS5_VABI _ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE(WTF::GregorianDateTime* self, double ms, WTF::LocalTimeOffset localTime);
+void APS5_VABI _ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE(WTF::GregorianDateTime* self, double ms, WTF::LocalTimeOffset localTime);
 void* APS5_VABI _ZN3WTF17fastAlignedMallocEmm(std::size_t alignment, std::size_t size);
 int APS5_VABI _ZN3WTF18constantTimeMemcmpEPKvS1_m(const void* voidA, const void* voidB, std::size_t length);
 void APS5_VABI _ZN3WTF18fastEnableMiniModeEv();

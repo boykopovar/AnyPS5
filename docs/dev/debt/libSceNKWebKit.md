@@ -7473,6 +7473,8 @@
 
 ### Functional
 
+- [WTF::GregorianDateTime constructors](../../../core/libs/prx/libSceNKWebKit/src/WtfTime.cpp) - the PS5 module's WebKit revision is unverified. C1/C2 follow pinned public WebKit [GregorianDateTime.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/GregorianDateTime.cpp#L38-L85) and [DateMath.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/DateMath.h#L124-L138), not console measurements; non-finite milliseconds and values outside ±8.64e15 still throw.
+
 - [WTF::Thread::yield](../../../core/libs/prx/libSceNKWebKit/Export.cpp) is source-guided, not console-measured; the PS5 build may differ from pinned upstream WebKit [Threading.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/Threading.h#L182) and [ThreadingPOSIX.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/posix/ThreadingPOSIX.cpp#L572-L580). It returns void and requests a yield through libc's existing `_Thrd_yield` helper.
 
 - [parseDateFromNullTerminatedCharacters(const char*)](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - still throws: it subtracts [calculateLocalTimeOffset](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/DateMath.cpp#L318-L361), whose code path follows `HAVE_LOCALTIME_R`, `HAVE_TIMEGM` and `HAVE_TM_GMTOFF` from [configure checks](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/cmake/OptionsCommon.cmake#L131-L148) against the port's sysroot, and the device time zone.

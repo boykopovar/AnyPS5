@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 
@@ -54,6 +55,42 @@ static double daysFrom1970ToYear(int year) {
     const double by100 = std::floor(yMinus1 / 100.0) - (1970 / 100);
     const double by400 = std::floor(yMinus1 / 400.0) - (1970 / 400);
     return 365.0 * (year - 1970.0) + by4 - by100 + by400;
+}
+
+static bool initializeGregorianDateTime(GregorianDateTime* self, double ms, LocalTimeOffset localTime) {
+    if (!std::isfinite(ms) || std::abs(ms) > 8640000000000000.0) {
+        return false;
+    }
+    int year = static_cast<int>(std::floor(ms / (86400000.0 * 365.2425)) + 1970);
+    double yearStart = 86400000.0 * daysFrom1970ToYear(year);
+    if (yearStart > ms) {
+        --year;
+    } else if (yearStart + 86400000.0 * (365 + isLeapYear(year)) <= ms) {
+        ++year;
+    }
+    double days = std::floor(ms / 86400000.0);
+    int yearDay = static_cast<int>(days - daysFrom1970ToYear(year));
+    int month = 0;
+    while (month < 11 && yearDay >= dayInYear(year, month + 1, 1)) {
+        ++month;
+    }
+    int weekDay = (static_cast<int>(days) + 4) % 7;
+    if (weekDay < 0) {
+        weekDay += 7;
+    }
+    auto component = [ms](double unit, int modulus) {
+        double result = std::fmod(std::floor(ms / unit), modulus);
+        if (result < 0) {
+            result += modulus;
+        }
+        return static_cast<int>(result);
+    };
+    *self = GregorianDateTime{
+        year, month, yearDay, yearDay - dayInYear(year, month, 1) + 1, weekDay,
+        component(3600000.0, 24), component(60000.0, 60), component(1000.0, 60),
+        localTime.offset / 60000, localTime.isDST,
+    };
+    return true;
 }
 
 static double ymdhmsToMilliseconds(int year, long mon, long day, long hour, long minute, long second, double milliseconds) {
@@ -348,6 +385,18 @@ double APS5_VABI _ZNK3WTF7CPUTime23percentageCPUUsageSinceERKS0_(const WTF::CPUT
         return 0.0;
     }
     return cpuUsageDelta * 100.0 / cpuTimeDelta;
+}
+
+void APS5_VABI _ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE(WTF::GregorianDateTime* self, double ms, WTF::LocalTimeOffset localTime) {
+    if (!WTF::initializeGregorianDateTime(self, ms, localTime)) {
+        NotImplemented_nid_no_patch(__func__);
+    }
+}
+
+void APS5_VABI _ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE(WTF::GregorianDateTime* self, double ms, WTF::LocalTimeOffset localTime) {
+    if (!WTF::initializeGregorianDateTime(self, ms, localTime)) {
+        NotImplemented_nid_no_patch(__func__);
+    }
 }
 
 void APS5_VABI _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(WTF::GregorianDateTime* self) {
