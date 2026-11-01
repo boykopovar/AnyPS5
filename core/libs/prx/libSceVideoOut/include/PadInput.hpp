@@ -7,6 +7,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libSceVideoOut/include/PadOutputPacing.hpp"
+#include "prx/libSceVideoOut/include/Port0Presence.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PadStatus.hpp"
 #include <array>
 #include <chrono>
@@ -57,11 +58,15 @@ private:
     void enableSensors(int slot);
     AgcDriver::PadStatusSnapshot statusSnapshot() const;
     void reportStatus();
+    void updatePort0();
+    void applyPort0(bool connected);
 
     Pad::KeyboardMouse keyboardMouse;
     std::array<ControllerSlot, PAD_MAX_CONTROLLERS> slots{};
     VideoOutTelemetry::PadChangeFilter telemetryFilter;
     AgcDriver::PadStatusProvider statusProvider;
+    Port0Presence::Mode port0Mode;
+    Port0Presence::Presence port0;
     bool padCaptured = false;
     bool hostFocusSynced = false;
 };

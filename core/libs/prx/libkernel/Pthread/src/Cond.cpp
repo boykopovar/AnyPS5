@@ -106,7 +106,10 @@ template <class TNative>
 struct WakingLock {
     PthreadMutex mutex;
     TNative& native;
-    void lock() { native.lock(); }
+    void lock() {
+        if (!MutexOperations::SpinAcquire(mutex, native))
+            native.lock();
+    }
     void unlock() {
         native.unlock();
 #ifdef _WIN32

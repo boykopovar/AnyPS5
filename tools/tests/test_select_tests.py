@@ -383,6 +383,38 @@ class NonAsciiDirectoryTests(unittest.TestCase):
         self.assertIn("input: alpha/alpha.h", reasons["alpha"])
         self.assertIn("input: alpha/alpha.h", reasons["alpha_data"])
 
+    @unittest.skipUnless(os.name == "nt", "the ANSI code page exists only on Windows")
+    def test_dependency_written_by_an_ansi_compiler_is_decoded(self):
+        path = r"C:\ação\source\alpha\alpha.h"
+        try:
+            ansi = path.encode("mbcs", "strict")
+        except UnicodeEncodeError:
+            self.skipTest("the ANSI code page cannot represent the fixture directory")
+        self.assertEqual(select_tests.dependency_path(ansi, "."), path)
+        self.assertEqual(select_tests.dependency_path(path.encode("utf-8"), "."), path)
+
+    @unittest.skipUnless(os.name == "nt", "the ANSI code page exists only on Windows")
+    def test_ansi_dependency_that_is_also_valid_utf8_is_decoded_as_the_file_on_disk(self):
+        name = "Ã©"
+        try:
+            ansi = name.encode("mbcs", "strict")
+            utf8 = ansi.decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            self.skipTest("the ANSI code page does not make the fixture directory valid UTF-8")
+        with tempfile.TemporaryDirectory() as directory:
+            header = Path(directory, name, "alpha.h")
+            try:
+                recorded = str(header).encode("mbcs", "strict")
+            except UnicodeEncodeError:
+                self.skipTest("the ANSI code page cannot represent the temporary directory")
+            self.assertEqual(select_tests.dependency_path(recorded, directory), str(Path(directory, utf8, "alpha.h")))
+            header.parent.mkdir()
+            header.write_text("", encoding="utf-8")
+            self.assertEqual(select_tests.dependency_path(recorded, directory), str(header))
+            relative = os.path.join("..", name, "alpha.h")
+            self.assertEqual(select_tests.dependency_path(relative.encode("mbcs"), os.path.join(directory, "build")),
+                             relative)
+
 
 class BuildErrorTests(unittest.TestCase):
     def run_tool(self, *args):

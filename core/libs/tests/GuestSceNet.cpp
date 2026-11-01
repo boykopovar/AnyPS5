@@ -20,6 +20,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceNet/src/ResolverTestHooks.hpp"
 #include "SceTypes.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -91,7 +92,7 @@ static bool Failed(std::int64_t result, int error) {
 template<typename TBody>
 static std::string CaptureStdout(TBody body) {
     std::fflush(stdout);
-    std::FILE* capture = std::tmpfile();
+    std::FILE* capture = TemporaryFile::Open();
     Require(capture != nullptr);
 #ifdef _WIN32
     const int saved = _dup(_fileno(stdout));
@@ -189,7 +190,7 @@ static void CheckStreamSender(int family) {
 
 template <typename Diagnostic>
 static std::string CaptureDiagnostic(Diagnostic diagnostic) {
-    auto* file = std::tmpfile();
+    auto* file = TemporaryFile::Open();
     Require(file != nullptr);
     Require(std::fflush(stdout) == 0);
 #ifdef _WIN32

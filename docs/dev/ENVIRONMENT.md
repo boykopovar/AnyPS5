@@ -6,6 +6,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_GUEST_ENV_TEST_4C27` | string | `core/libs/tests/GuestEnvironment.cpp` |  | test variable that the guest environment test sets, copies and removes; not a product setting |
 | `ANYPS5_JOB_MANAGER_CASE` | string | `core/libs/tests/JobManagerReference.cpp` |  | selects the CPU fixture run by `tools/run_job_manager_reference.py` |
 | `ANYPS5_JOB_MANAGER_HOST` | presence | `core/libs/tests/JobManagerReference.cpp` |  | runs the reference adapter against the host fallback instead of the loaded guest module |
 | `ANYPS5_LOADEXEC_PARENT` | string | `core/libs/tests/GuestLoadExecHost.cpp` |  | variable the Windows entry stub reads; its wide name is built in `core/relinker/elfpatcher/src/windows/WindowsEntryStubBuilder.cpp` |
@@ -13,6 +14,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_POSIX_SPAWN_ROLE` | string | `core/libs/tests/GuestPosixSpawn.cpp` |  | role of the test's own copy spawned as a `posix_spawn` child, which exits or sleeps on it and otherwise fails |
 | `ANYPS5_TEST_QUOTED_ARGV0` | presence | `core/libs/tests/GuestLoadExecHost.cpp` |  | makes the load-exec test's first argument one with quotes, a backslash and non-ASCII text |
 | `APS5_EBOOT` | string | `core/libs/prx/libSceSystemService/Export.cpp` |  | host path of the executable launched for /app0/eboot.bin; unset or empty means the running executable |
+| `APS5_LOAD_EXEC_STANDARD_ERROR` | string | `core/libs/tests/GuestSystemServiceLoadExecStandardError.cpp` |  | marker that the standard-error load-exec test sets in its child process to choose a mode, `list` or `none`; not a product setting |
 | `APS5_SKIP_TIMING_TESTS` | string | `core/libs/tests/PreciseWait.cpp` |  | treats the timing tests' runner as preempted, so they skip without probing the clock; an empty value or one starting with 0 leaves the probe on |
 | `APS5_USBD_DEVICE` | string | `core/libs/tests/GuestUsbd.cpp` |  | selects the USB device a test drives, as vendor:product in hex |
 
@@ -173,6 +175,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_FRAME_CAPTURE` | string | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` |  | directory in which the driver records a few frames of the title's driver calls and guest memory for `agc_frame_replay` |
 | `APS5_FRAME_CAPTURE_AT_FLIP` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` | 0 | frame boundary (CPU flip or submission that flips) at which the frame capture starts when no trigger file is set; 0 and 1 both start at the first boundary; a value that is not a number fails |
 | `APS5_FRAME_CAPTURE_FRAMES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` | 10 | number of frame boundaries the frame capture records |
+| `APS5_FRAME_CAPTURE_MIN_FREE_BYTES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` | 4294967296 | free bytes the capture volume must keep or the frame capture stops with a warning; the tests set 0 so a nearly full runner disk cannot fail them |
 | `APS5_FRAME_CAPTURE_TRIGGER` | string | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` |  | file whose appearance starts the frame capture at the next frame boundary; a number in it replaces the frame count |
 | `APS5_FULL_BARRIERS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | records every barrier instead of merging redundant ones |
 | `APS5_GPU_CHECKPOINTS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | attaches device diagnostic checkpoints through VK_NV_device_diagnostic_checkpoints, or buffer markers through VK_AMD_buffer_marker on a device without it |
@@ -527,6 +530,12 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 |------|------|--------|---------|-------------|
 | `ANYPS5_SYSTEM_FONTS` | string | `core/libs/prx/libSceFont/src/SystemFont.cpp` |  | directory holding the system fonts, defaulting to anyps5-fonts beside the executable |
 
+### libSceIme
+
+| Name | Kind | Source | Default | Description |
+|------|------|--------|---------|-------------|
+| `ANYPS5_PSN_DIALOGS` | string | `core/libs/prx/libSceIme/src/PsnDialogNotice.cpp` | silent | when a dialog that needs PlayStation Network opens (profile, friend list, store, invitations, Facebook link, authorized apps), `show` displays a host notice that the feature is not available; `silent`, unset or empty shows nothing, as before; any other value stops the title at its first such dialog with an error naming the variable |
+
 ### libSceNpEntitlementAccess
 
 | Name | Kind | Source | Default | Description |
@@ -578,6 +587,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `ANYPS5_DISPLAY_INDEX` | integer | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` | 0 | SDL display index used for the initial window size and centered position; invalid or unavailable indices fail window creation; selection does not guarantee the window will not activate |
 | `ANYPS5_FULLSCREEN` | presence | `core/libs/prx/libSceVideoOut/src/DisplayWindow.cpp` |  | opens the display window fullscreen at the desktop resolution when set to a non-empty value other than 0; F11 still switches back |
 | `ANYPS5_INPUT_CONFIG` | string | `core/libs/prx/libSceVideoOut/src/InputMapping.cpp` |  | path of the input mapping file that binds host keys and mouse to guest pad actions |
+| `ANYPS5_PAD_PORT0_STATE` | string | `core/libs/prx/libSceVideoOut/include/Port0Presence.hpp` | default | `default` keeps port 0 connected and user 0 logged in as before; `controller` makes port 0 and user 0 follow the controller bound to slot 0, a change committed after 500 ms, and a withdrawn port 0 reads zeroed and disconnected; any other value, including an empty one, stops the game when video output starts with an error naming the variable |
 | `ANYPS5_REQUIRE_DISPLAY` | presence | `core/libs/prx/libSceVideoOut/tests/Flip.cpp` |  | makes video-out tests fail instead of skipping when no display or Vulkan device is available |
 | `APS5_NO_PAD_INPUT` | presence | `core/libs/prx/libSceVideoOut/src/PadInput.cpp` |  | ignores keyboard and mouse input so a measurement run is not advanced by a stray press |
 | `APS5_NO_WGI` | presence | `core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp` |  | turns off SDL's Windows.Gaming.Input joystick backend at default hint priority, on Windows hosts where it faults a few seconds into every run |

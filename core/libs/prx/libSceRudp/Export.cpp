@@ -38,6 +38,7 @@ constexpr int RUDP_POOL_MIN_SIZE = 0xC58;
 constexpr std::uintptr_t RUDP_POOL_ALIGNMENT = 8;
 constexpr std::size_t RUDP_STATUS_SIZE = 0xF8;
 constexpr std::size_t RUDP_STATUS_CURRENT_CONTEXTS = 0x64;
+constexpr std::size_t RUDP_CONTEXT_BUFFER_STATUS_SIZE = 16;
 constexpr uint16_t RUDP_MAX_SEGMENT_SIZE = 1410;
 
 enum RudpOption {
@@ -313,8 +314,20 @@ int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, uint32_t size) {
 }
 
 int APS5_VABI sceRudpGetRemoteInfo(int contextId, void* address, std::uint32_t* addressSize, std::uint16_t* virtualPort) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)address;
+    (void)addressSize;
+    (void)virtualPort;
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (contextId < 0) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
+    if (!valid_ctx(contextId)) {
+        return RUDP_ERROR_INVALID_CONTEXT_ID;
+    }
+    return RUDP_ERROR_NOT_ACCEPTABLE;
 }
 
 int APS5_VABI sceRudpGetNumberOfPacketsToRead(int ctx_id) {
@@ -525,9 +538,18 @@ int APS5_VABI sceRudpAccept() {
     return 0;
 }
 
-int APS5_VABI sceRudpFlush() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceRudpFlush(int ctxId) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (ctxId < 0) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
+    if (!valid_ctx(ctxId)) {
+        return RUDP_ERROR_INVALID_CONTEXT_ID;
+    }
+    return RUDP_ERROR_NOT_ACCEPTABLE;
 }
 
 int APS5_VABI sceRudpGetLocalInfo() {
@@ -582,8 +604,19 @@ int APS5_VABI sceRudpSetMaxSegmentSize(uint16_t mss) {
     return 0;
 }
 
-int APS5_VABI sceRudpGetContextBufferStatus() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceRudpGetContextBufferStatus(int ctxId, void* status, std::size_t size) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (ctxId < 0 || status == nullptr || size == 0 || size > RUDP_CONTEXT_BUFFER_STATUS_SIZE) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
+    if (!valid_ctx(ctxId)) {
+        return RUDP_ERROR_INVALID_CONTEXT_ID;
+    }
+    std::memset(status, 0, size);
+    return 0;
 }
 
 }

@@ -2642,13 +2642,26 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
             const SrtForceSyncScope forceSync(runtime, attempt == 2u);
             const auto beforeSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
             activeSources.clear();
-            materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
-            const auto afterSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
-            TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
-            const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
-            if (runtime.descriptorScope == nullptr || (afterTables == afterSnapshot && (plan.uniformFill.fill.kind == UniformFillKind::None || afterSnapshot == beforeSnapshot))) {
+            try {
+                materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
+                const auto afterSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+                TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
+                const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+                if (runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) {
+                    continue;
+                }
+                const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                materializeForcedDegamma(plan, nextSnapshot);
+                materializeTables(plan, nextSnapshot);
+                materializeSrtGuards(plan, nextSnapshot);
+                if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
                 completed = true;
                 break;
+            } catch (const ConvertedSampleRequired&) {
+                throw;
+            } catch (const std::runtime_error&) {
+                if (runtime.descriptorScope == nullptr || attempt == 2u) throw;
+                if (runtime.descriptorScope(runtime.userContext, 0u) == beforeSnapshot) attempt = 1u;
             }
         }
         if (!completed) throw std::runtime_error("runtime resource snapshot did not stabilize");
@@ -2656,11 +2669,6 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
         reportTables();
         throw;
     }
-    const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    materializeForcedDegamma(plan, nextSnapshot);
-    materializeTables(plan, nextSnapshot);
-    materializeSrtGuards(plan, nextSnapshot);
-    if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     snapshot = std::move(nextSnapshot);
     reportTables();
     if (MaterializeProfiled()) materializeNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - materializeStarted).count()), std::memory_order_relaxed);

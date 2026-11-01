@@ -35,11 +35,11 @@ int APS5_VABI sceRudpPollControl(int pollId, int op, int ctxId, uint16_t events)
 int APS5_VABI sceRudpPollWait(int pollId, RudpPollEvent* events, std::size_t eventLen, uint64_t timeout);
 int APS5_VABI sceRudpPollDestroy(int pollId);
 int APS5_VABI sceRudpAccept();
-int APS5_VABI sceRudpFlush();
+int APS5_VABI sceRudpFlush(int ctxId);
 int APS5_VABI sceRudpGetLocalInfo();
 int APS5_VABI sceRudpListen();
 int APS5_VABI sceRudpPollCancel(int pollId);
 int APS5_VABI sceRudpSetMaxSegmentSize(uint16_t mss);
-int APS5_VABI sceRudpGetContextBufferStatus();
+int APS5_VABI sceRudpGetContextBufferStatus(int ctxId, void* status, std::size_t size);
 
 }

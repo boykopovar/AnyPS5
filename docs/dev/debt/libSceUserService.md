@@ -45,6 +45,7 @@
 
 ### Unknown function info
 
+- [sceUserServiceGetLoginUserIdList and sceUserServiceGetEvent for user 0](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - under ANYPS5_PAD_PORT0_STATE=controller user 0 logs out when its controller is removed and logs in when it returns, after a hold of 500 ms that AnyPS5 chooses. Whether the console logs the initial user out on controller removal, how long it takes and which event it sends are not measured. The default mode keeps user 0 logged in as before.
 - [sceUserServiceGetNpAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the account id for a logged-in user with no linked PSN account is assumed to be 0 with success; libSceNpManager's `sceNpGetAccountIdA` answers the same question with `SCE_NP_ERROR_SIGNED_OUT`. Console measurement on PS4 Pro firmware 10.71 confirms a user that is not logged in returns `0x80960105` (`USER_SERVICE_ERROR_UNKNOWN_USER`) and leaves the output untouched, differing from `sceUserServiceGetUserName`.
 - [Older settings exports](../../../core/libs/prx/libSceUserService/LegacyExports.cpp) - Forty callable NIDs are declared as throwing placeholders for older software. Their signatures and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. The corresponding NIDs are absent from the later version-labelled inventory. Representative later settings functions use a related dispatch pattern, which does not establish compatibility for these settings. No functionality is implemented.
 
