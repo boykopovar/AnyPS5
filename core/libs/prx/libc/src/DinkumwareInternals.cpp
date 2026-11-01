@@ -1,12 +1,15 @@
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <cerrno>
 #include <cfenv>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -16,7 +19,13 @@ namespace {
 
 constexpr long long ExponentLimit = 1000000000;
 constexpr int InvalidArgument = 22;
+constexpr int DomainError = 33;
 constexpr int RangeError = 34;
+
+constexpr long double LogPolynomial[] = {
+    0x87f45b3375e0c9edp-66L, 0x87a58c55129af2f8p-66L, 0x9d90cfd7547e4ed2p-66L, 0xba2e6ba9488d3d0cp-66L,
+    0xe38e393a60e2888bp-66L, 0x924924920646cc89p-65L, 0xcccccccccd00c2ebp-65L, 0xaaaaaaaaaaaaa334p-64L,
+};
 
 bool Hexadecimal(const char* text) {
     while (std::isspace(static_cast<unsigned char>(*text))) ++text;
@@ -24,15 +33,193 @@ bool Hexadecimal(const char* text) {
     return text[0] == '0' && (text[1] == 'x' || text[1] == 'X');
 }
 
+int HexadecimalDigit(char value) {
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
+}
+
+template<typename TFloat>
+TFloat ScaleHexadecimal(TFloat value, std::int64_t power) {
+    constexpr unsigned Precision = std::numeric_limits<TFloat>::digits;
+    static_assert(Precision == 24 || Precision == 53 || Precision == 64);
+    constexpr auto Hidden = std::uint64_t{1} << (Precision - 1);
+    constexpr int MaximumExponent = 2 * std::numeric_limits<TFloat>::max_exponent - 1;
+    std::uint64_t mantissa;
+    int exponent;
+    if constexpr (sizeof(TFloat) == 4) {
+        const auto bits = std::bit_cast<std::uint32_t>(value);
+        mantissa = (bits & (Hidden - 1)) | Hidden;
+        exponent = (bits >> (Precision - 1)) & MaximumExponent;
+    } else if constexpr (sizeof(TFloat) == 8) {
+        const auto bits = std::bit_cast<std::uint64_t>(value);
+        mantissa = (bits & (Hidden - 1)) | Hidden;
+        exponent = (bits >> (Precision - 1)) & MaximumExponent;
+    } else {
+        static_assert(Precision == 64 && sizeof(TFloat) >= 10 && std::endian::native == std::endian::little);
+        std::uint16_t encoded;
+        std::memcpy(&mantissa, &value, sizeof(mantissa));
+        std::memcpy(&encoded, reinterpret_cast<const unsigned char*>(&value) + 8, sizeof(encoded));
+        exponent = encoded & MaximumExponent;
+    }
+    auto adjusted = exponent + power;
+    if (adjusted >= MaximumExponent) return std::numeric_limits<TFloat>::infinity();
+    if (adjusted <= 0) {
+        const auto shift = 1 - adjusted;
+        if (shift > Precision) return static_cast<TFloat>(0);
+        const auto remainder = shift == 64 ? mantissa : mantissa & ((std::uint64_t{1} << shift) - 1);
+        mantissa = shift == 64 ? 0 : mantissa >> shift;
+        if (remainder != 0) {
+            GuestFloatingPointEnvironment environment;
+            if (fegetenv_nid_postfix(&environment) != 0) throw std::runtime_error("cannot read hexadecimal binary rounding");
+            const auto rounding = (environment.control >> 10u) & 3u;
+            const auto half = std::uint64_t{1} << (shift - 1);
+            if (rounding == 2u || (rounding == 0u && (remainder > half || (remainder == half && (mantissa & 1u) != 0)))) ++mantissa;
+        }
+        adjusted = (mantissa & Hidden) != 0 ? 1 : 0;
+    }
+    if constexpr (sizeof(TFloat) == 4) {
+        return std::bit_cast<TFloat>(static_cast<std::uint32_t>((static_cast<std::uint64_t>(adjusted) << (Precision - 1)) | (mantissa & (Hidden - 1))));
+    } else if constexpr (sizeof(TFloat) == 8) {
+        return std::bit_cast<TFloat>((static_cast<std::uint64_t>(adjusted) << (Precision - 1)) | (mantissa & (Hidden - 1)));
+    } else {
+        const auto encoded = static_cast<std::uint16_t>(adjusted);
+        std::memcpy(&value, &mantissa, sizeof(mantissa));
+        std::memcpy(reinterpret_cast<unsigned char*>(&value) + 8, &encoded, sizeof(encoded));
+        return value;
+    }
+}
+
+template<typename TFloat>
+std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
+    const char* cursor = text;
+    while (std::isspace(static_cast<unsigned char>(*cursor))) ++cursor;
+    const bool negative = *cursor == '-';
+    if (*cursor == '+' || *cursor == '-') ++cursor;
+    cursor += 2;
+    constexpr std::size_t Capacity = 7 * ((std::numeric_limits<TFloat>::digits + 27) / 28);
+    static_assert(Capacity * 4 < std::numeric_limits<TFloat>::max_exponent);
+    constexpr auto CountLimit = std::numeric_limits<std::int64_t>::max() / 16;
+    std::string digits;
+    bool point = false;
+    bool any = false;
+    bool significant = false;
+    std::int64_t fractional = 0;
+    std::int64_t discarded = 0;
+    int carry = 0;
+    for (;;) {
+        const int digit = HexadecimalDigit(*cursor);
+        if (digit < 0) {
+            if (*cursor == '.' && !point) { point = true; ++cursor; continue; }
+            break;
+        }
+        any = true;
+        if (point) {
+            if (fractional == CountLimit) throw std::length_error("hexadecimal floating input is too long");
+            ++fractional;
+        }
+        significant |= digit != 0;
+        if (significant) {
+            if (digits.size() < Capacity) digits += "0123456789abcdef"[digit];
+            else {
+                if (discarded == 0) carry = digit >= 8;
+                if (discarded == CountLimit) throw std::length_error("hexadecimal floating input is too long");
+                ++discarded;
+            }
+        }
+        ++cursor;
+    }
+    if (!any) return std::nullopt;
+    const auto adjustment = 4 * (discarded - fractional);
+    const auto bound = std::abs(adjustment) + 2 * std::numeric_limits<TFloat>::max_exponent + static_cast<std::int64_t>(Capacity * 4 + 1);
+    std::int64_t exponent = 0;
+    if (*cursor == 'p' || *cursor == 'P') {
+        const char* first = cursor + 1;
+        const bool minus = *first == '-';
+        if (*first == '+' || *first == '-') ++first;
+        if (std::isdigit(static_cast<unsigned char>(*first))) {
+            do {
+                const int digit = *first++ - '0';
+                exponent = exponent > (bound - digit) / 10 ? bound : exponent * 10 + digit;
+            } while (std::isdigit(static_cast<unsigned char>(*first)));
+            if (minus) exponent = -exponent;
+            cursor = first;
+        }
+    }
+    if (end != nullptr) *end = const_cast<char*>(cursor);
+    if (digits.empty()) return std::copysign(static_cast<TFloat>(0), negative ? static_cast<TFloat>(-1) : static_cast<TFloat>(1));
+    exponent += adjustment;
+    if (carry == 0) while (digits.back() == '0') { digits.pop_back(); exponent += 4; }
+    std::uint64_t high = 0;
+    std::uint64_t low = 0;
+    for (const char digit : digits) {
+        high = (high << 4u) | (low >> 60u);
+        low = (low << 4u) | static_cast<unsigned>(HexadecimalDigit(digit));
+    }
+    TFloat value;
+    if constexpr (std::numeric_limits<TFloat>::digits <= 53) value = static_cast<TFloat>(low + carry);
+    else {
+        const auto top = static_cast<unsigned>((high << 8u) | (low >> 56u));
+        const auto middle = static_cast<unsigned>((low >> 28u) & 0xfffffffu);
+        const auto bottom = static_cast<unsigned>(low & 0xfffffffu) + carry;
+        constexpr TFloat Radix = static_cast<TFloat>(0x1p28L);
+        constexpr unsigned LimbBits = std::numeric_limits<TFloat>::digits / 2;
+        TFloat limbs[3]{};
+        const auto add = [&](TFloat word) {
+            for (auto& part : limbs) {
+                if (word == 0) return;
+                if (part == 0) { part = word; return; }
+                std::uint16_t partExponent, wordExponent;
+                std::memcpy(&partExponent, reinterpret_cast<const unsigned char*>(&part) + 8, sizeof(partExponent));
+                std::memcpy(&wordExponent, reinterpret_cast<const unsigned char*>(&word) + 8, sizeof(wordExponent));
+                if (static_cast<int>(partExponent) - static_cast<int>(wordExponent) >= static_cast<int>(LimbBits)) continue;
+                const TFloat sum = part + word;
+                std::uint64_t mantissa;
+                std::memcpy(&mantissa, &sum, sizeof(mantissa));
+                mantissa &= ~((std::uint64_t{1} << LimbBits) - 1);
+                TFloat upper = sum;
+                std::memcpy(&upper, &mantissa, sizeof(mantissa));
+                part = upper;
+                word = sum - upper;
+            }
+            if (word != 0) throw std::runtime_error("coefficient expansion exceeded capacity");
+        };
+        add(static_cast<TFloat>(top));
+        for (auto& part : limbs) part *= Radix;
+        add(static_cast<TFloat>(middle));
+        for (auto& part : limbs) part *= Radix;
+        add(static_cast<TFloat>(bottom));
+        value = 0;
+        for (int index = 2; index >= 0; --index) if (limbs[index] != 0) { if (value == 0) value = limbs[index]; else value += limbs[index]; }
+    }
+    if (exponent != 0) value = ScaleHexadecimal(value, exponent);
+    return std::copysign(value, negative ? static_cast<TFloat>(-1) : static_cast<TFloat>(1));
+}
+
 template<typename TFloat>
 TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, TFloat (APS5_VABI *parse)(const char*, char**), const char* function) {
     int& guestErrno = *__error_nid_postfix();
     const int saved = guestErrno;
     if (error != nullptr) *error = 0;
+    if (const char* stop = NanSubjectEnd_nid_no_patch(text)) {
+        if (end != nullptr) *end = const_cast<char*>(stop);
+        return std::numeric_limits<TFloat>::quiet_NaN();
+    }
     guestErrno = 0;
+    if (pten == 0 && text != nullptr && Hexadecimal(text)) {
+        if (const auto value = UnscaledHexadecimal<TFloat>(text, end)) {
+            guestErrno = saved;
+            return *value;
+        }
+    }
     char* stop = nullptr;
     TFloat value = parse(text, &stop);
     if (end != nullptr) *end = stop;
+    if (pten == 0 && Hexadecimal(text)) {
+        guestErrno = saved;
+        return value;
+    }
     const bool overflowed = std::isinf(value) && guestErrno == RangeError;
     if (pten != 0 && stop != text && (std::isfinite(value) || overflowed)) {
         if (Hexadecimal(text)) NotImplemented_nid_no_patch(function);
@@ -426,8 +613,46 @@ float APS5_VABI _FLog_nid_postfix(float x, int base) {
 }
 
 long double APS5_VABI _LLog_nid_postfix(long double x, int base) {
-    if (base > 0) return log10l_nid_postfix(x);
-    return base == 0 ? logl_nid_postfix(x) : log2l_nid_postfix(x);
+    static_assert(sizeof(long double) == 16 && std::numeric_limits<long double>::digits == 64);
+    std::uint64_t mantissa;
+    std::uint16_t signExponent;
+    std::memcpy(&mantissa, &x, sizeof(mantissa));
+    std::memcpy(&signExponent, reinterpret_cast<const unsigned char*>(&x) + sizeof(mantissa), sizeof(signExponent));
+    const int exponent = signExponent & 0x7fff;
+    const bool negative = (signExponent & 0x8000) != 0;
+    if (exponent == 0x7fff) {
+        if ((mantissa & 0x7fffffffffffffffull) != 0 || !negative) return x;
+    } else if (mantissa == 0) {
+        std::feraiseexcept(FE_DIVBYZERO);
+        *__error_nid_postfix() = RangeError;
+        return -std::numeric_limits<long double>::infinity();
+    }
+    if (negative) {
+        std::feraiseexcept(FE_INVALID);
+        *__error_nid_postfix() = DomainError;
+        return std::numeric_limits<long double>::quiet_NaN();
+    }
+    const int shift = std::countl_zero(mantissa);
+    int scale = std::max(exponent, 1) - shift - 0x3ffe;
+    const std::uint64_t normalized = mantissa << shift;
+    const std::uint16_t halfExponent = 0x3ffe;
+    long double fraction = 0;
+    std::memcpy(&fraction, &normalized, sizeof(normalized));
+    std::memcpy(reinterpret_cast<unsigned char*>(&fraction) + sizeof(normalized), &halfExponent, sizeof(halfExponent));
+    if (fraction < 0xb504f333f9de6484p-64L) {
+        fraction = fraction + fraction;
+        --scale;
+    }
+    const long double y = fraction - 1.0L;
+    const long double z = y / (fraction + 1.0L);
+    const long double w = z * z;
+    long double p = LogPolynomial[0];
+    for (std::size_t index = 1; index < std::size(LogPolynomial); ++index) p = p * w + LogPolynomial[index];
+    const long double q = z * (y - p * w);
+    const long double e = scale;
+    if (base == 0) return (y - (q + -0xfbe8e7bcd5e4f1dap-87L * e)) + e * 0x1.62e42cp-1f;
+    if (base > 0) return ((0xa937287195355babp-89L * y - (q * 0xde5bd8a937287195p-65L + -0xa13ef3fde623e256p-87L * e)) + y * 0x1.bcb7bp-2f) + e * 0x1.34413p-2f;
+    return ((q * -0xb8aa3b295c17f0bcp-63L + 0xa5705fc2eefa1ffbp-89L * y) + y * 0x1.715476p+0f) + e;
 }
 
 long double APS5_VABI _LDivide_nid_postfix(long double x, long double y) {
