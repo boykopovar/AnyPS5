@@ -2,6 +2,7 @@
 
 ### Silent stubs
 
+- [sceDeviceServiceQueryDeviceInfo_](../../../core/libs/prx/libSceMbus/Export.cpp): returning `0x809B0080` for an unwritable count pointer is a host-safety fallback with console behavior unmeasured.
 - [libSceMbus](../../../core/libs/prx/libSceMbus/Export.cpp) implements only the no-device path: initialization and termination succeed, no device events are reported, device queries return no entries and `sceDeviceServiceGetGeneration` always returns 0, as the device set never changes. The generation a console starts at is unmeasured; [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Device/DeviceService.cs#L63-L65) documents `int sceDeviceServiceGetGeneration()` as a counter that advances when the device set changes
 
 ### Unknown function info
