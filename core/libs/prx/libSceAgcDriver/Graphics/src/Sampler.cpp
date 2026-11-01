@@ -3,6 +3,7 @@
 #include "PipelineSpecialization.hpp"
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdlib>
 #include <string>
 
@@ -12,13 +13,44 @@ namespace AgcDriver::Graphics {
         return descriptor.lodBias < -ShaderRecompiler::PipelineSpecialization::SamplerLodBiasShaderThreshold || descriptor.lodBias > ShaderRecompiler::PipelineSpecialization::SamplerLodBiasShaderThreshold;
     }
 
+    namespace {
+
+    bool IsValidAddressMode(VkSamplerAddressMode mode) {
+        switch (mode) {
+            case VK_SAMPLER_ADDRESS_MODE_REPEAT:
+            case VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT:
+            case VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE:
+            case VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER:
+            case VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    }
+
     void Sampler::Validate(const Context& context, const GuestSamplerResource& descriptor) {
-        Require(!descriptor.anisotropyEnable || context.samplerAnisotropy, "guest sampler descriptor requests anisotropic filtering which the device does not support");
-        Require(descriptor.maxAnisotropy <= context.limits.maxSamplerAnisotropy, "guest sampler descriptor requests an anisotropy ratio beyond the device limit");
-        Require(ShaderAppliesLodBias(descriptor) || (descriptor.lodBias >= -context.limits.maxSamplerLodBias && descriptor.lodBias <= context.limits.maxSamplerLodBias), "guest sampler descriptor requests a LOD bias beyond the device limit");
+        Require(IsValidAddressMode(descriptor.addressModeU) && IsValidAddressMode(descriptor.addressModeV) && IsValidAddressMode(descriptor.addressModeW), "guest sampler descriptor uses an invalid address mode");
         const auto mirrorsOnce = [](VkSamplerAddressMode mode) { return mode == VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE; };
         Require(context.samplerMirrorClampToEdge || !(mirrorsOnce(descriptor.addressModeU) || mirrorsOnce(descriptor.addressModeV) || mirrorsOnce(descriptor.addressModeW)), "guest sampler descriptor uses a mirror-once clamp mode which the device does not support");
+        Require(descriptor.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST || descriptor.mipmapMode == VK_SAMPLER_MIPMAP_MODE_LINEAR, "guest sampler descriptor uses an invalid mipmap mode");
+        Require(descriptor.magFilter == VK_FILTER_NEAREST || descriptor.magFilter == VK_FILTER_LINEAR, "guest sampler descriptor uses an invalid mag filter");
+        Require(descriptor.minFilter == VK_FILTER_NEAREST || descriptor.minFilter == VK_FILTER_LINEAR, "guest sampler descriptor uses an invalid min filter");
+        Require(!descriptor.anisotropyEnable || context.samplerAnisotropy, "guest sampler descriptor requests anisotropic filtering which the device does not support");
+        Require(!descriptor.anisotropyEnable || descriptor.maxAnisotropy <= context.limits.maxSamplerAnisotropy, "guest sampler descriptor requests an anisotropy ratio beyond the device limit");
+        Require(!descriptor.anisotropyEnable || descriptor.maxAnisotropy >= 1.0f, "guest sampler descriptor requests an anisotropy ratio below 1.0");
+        Require(!std::isnan(descriptor.lodBias) && (ShaderAppliesLodBias(descriptor) || (descriptor.lodBias >= -context.limits.maxSamplerLodBias && descriptor.lodBias <= context.limits.maxSamplerLodBias)), "guest sampler descriptor requests a LOD bias beyond the device limit");
+        Require(!std::isnan(descriptor.minLod) && !std::isnan(descriptor.maxLod) && descriptor.minLod >= 0.0f && descriptor.minLod <= descriptor.maxLod, "guest sampler descriptor has a minimum LOD past its maximum LOD");
         Require(!(descriptor.unnormalizedCoordinates && descriptor.compareEnable), "guest sampler descriptor with unnormalized coordinates enables depth comparison, which is not implemented");
+        if (descriptor.unnormalizedCoordinates) {
+            Require(!descriptor.anisotropyEnable, "guest sampler descriptor with unnormalized coordinates enables anisotropic filtering, which is not implemented");
+            Require(descriptor.minFilter == descriptor.magFilter, "guest sampler descriptor with unnormalized coordinates requires matching min and mag filters");
+            Require(descriptor.mipmapMode == VK_SAMPLER_MIPMAP_MODE_NEAREST, "guest sampler descriptor with unnormalized coordinates uses linear mipmap mode, which is not implemented");
+            Require(descriptor.minLod == 0.0f && descriptor.maxLod == 0.0f, "guest sampler descriptor with unnormalized coordinates requires zero min and max LOD");
+            Require(descriptor.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE || descriptor.addressModeU == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, "guest sampler descriptor with unnormalized coordinates uses an unsupported address mode on U");
+            Require(descriptor.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE || descriptor.addressModeV == VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, "guest sampler descriptor with unnormalized coordinates uses an unsupported address mode on V");
+        }
         if (descriptor.reductionMode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT) {
             Require(context.samplerFilterMinmax, "guest sampler descriptor uses a min or max reduction which the device does not support");
             Require(!descriptor.compareEnable, "guest sampler descriptor combines a min or max reduction with depth comparison, which is not implemented");
@@ -44,7 +76,7 @@ namespace AgcDriver::Graphics {
         info.addressModeW = descriptor.addressModeW;
         info.mipLodBias = ShaderAppliesLodBias(descriptor) ? 0.0f : descriptor.lodBias;
         info.anisotropyEnable = descriptor.anisotropyEnable ? VK_TRUE : VK_FALSE;
-        info.maxAnisotropy = descriptor.maxAnisotropy;
+        info.maxAnisotropy = descriptor.anisotropyEnable ? descriptor.maxAnisotropy : 1.0f;
         info.compareEnable = descriptor.compareEnable ? VK_TRUE : VK_FALSE;
         info.compareOp = descriptor.compareOp;
         info.minLod = descriptor.minLod;

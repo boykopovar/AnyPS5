@@ -268,6 +268,7 @@ struct Context {
     bool samplerFilterMinmax = false;
     bool samplerMirrorClampToEdge = false;
     bool nonSeamlessCubeMap = false;
+    bool samplerMirrorClampToEdge = false;
     VkSampleCountFlags mergedCoverageSampleCounts = 0;
     VkSampleCountFlags truncatedCoverageSampleCounts = 0;
     bool mixedAttachmentSamples = false;
