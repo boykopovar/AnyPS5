@@ -69,14 +69,18 @@ private:
 };
 
 template<typename TScan>
+auto ScanIndexed(const char16_t* units, TScan scan) {
+    WideSetTable table;
+    if (table.Build(units)) return scan([&table](char16_t character) { return table.Has(character); });
+    return scan([units](char16_t character) { return Contains(units, character); });
+}
+
+template<typename TScan>
 auto ScanWideSet(const char16_t* units, TScan scan) {
     constexpr size_t LinearLimit = 16;
     size_t length = 0;
     while (units[length] != 0 && length < LinearLimit) ++length;
-    if (units[length] != 0) {
-        WideSetTable table;
-        if (table.Build(units)) return scan([&table](char16_t character) { return table.Has(character); });
-    }
+    if (units[length] != 0) return ScanIndexed(units, scan);
     return scan([units](char16_t character) { return Contains(units, character); });
 }
 
