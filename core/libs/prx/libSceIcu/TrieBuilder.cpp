@@ -22,7 +22,7 @@ const void* RequirePointer(const void* pointer) {
     return pointer;
 }
 
-void APS5_VABI Abstract() { throw std::invalid_argument("TrieBuilder: abstract method"); }
+void APS5_VABI Abstract_nid_no_patch() { throw std::invalid_argument("TrieBuilder: abstract method"); }
 
 enum class NodeKind : std::uint8_t {
     FinalValue,
@@ -366,15 +366,15 @@ struct BranchHeadNode : public ValueNode {
     }
 };
 
-void APS5_VABI DeleteNodeCallback(void* ptr) {
+void APS5_VABI DeleteNodeCallback_nid_no_patch(void* ptr) {
     delete static_cast<Node*>(ptr);
 }
 
-std::int32_t APS5_VABI HashNodeCallback(UHashTok key) {
+std::int32_t APS5_VABI HashNodeCallback_nid_no_patch(UHashTok key) {
     return _ZN6icu_6817StringTrieBuilder8hashNodeEPKv_nid_postfix(key.pointer);
 }
 
-std::int8_t APS5_VABI EqualNodeCallback(UHashTok a, UHashTok b) {
+std::int8_t APS5_VABI EqualNodeCallback_nid_no_patch(UHashTok a, UHashTok b) {
     return _ZN6icu_6817StringTrieBuilder10equalNodesEPKvS2__nid_postfix(a.pointer, b.pointer);
 }
 
@@ -397,7 +397,7 @@ const DerivedTypeInfo& UCharsTrieBuilderType() {
 const StringTrieBuilderFunctions* StringTrieBuilderTable() {
     static const TrieBuilderTableData table = [] {
         TrieBuilderTableData result{0, &StringTrieBuilderType().type, {}};
-        result.slots.fill(Abstract);
+        result.slots.fill(Abstract_nid_no_patch);
         result.slots[0] = reinterpret_cast<GuestFunction>(_ZN6icu_6817StringTrieBuilderD1Ev_nid_postfix);
         result.slots[1] = reinterpret_cast<GuestFunction>(_ZN6icu_6817StringTrieBuilderD0Ev_nid_postfix);
         return result;
@@ -408,7 +408,7 @@ const StringTrieBuilderFunctions* StringTrieBuilderTable() {
 const StringTrieBuilderFunctions* UCharsTrieBuilderTable() {
     static const TrieBuilderTableData table = [] {
         TrieBuilderTableData result{0, &UCharsTrieBuilderType().type, {}};
-        result.slots.fill(Abstract);
+        result.slots.fill(Abstract_nid_no_patch);
         result.slots[0] = reinterpret_cast<GuestFunction>(_ZN6icu_6817UCharsTrieBuilderD1Ev_nid_postfix);
         result.slots[1] = reinterpret_cast<GuestFunction>(_ZN6icu_6817UCharsTrieBuilderD0Ev_nid_postfix);
         result.slots[3] = reinterpret_cast<GuestFunction>(_ZNK6icu_6817UCharsTrieBuilder22getElementStringLengthEi_nid_postfix);
@@ -460,12 +460,12 @@ void APS5_VABI _ZN6icu_6817StringTrieBuilder20createCompactBuilderEiR10UErrorCod
     auto& b = Require(self);
     auto& code = Require(errorCode);
     if (code > 0) return;
-    b.nodes = uhash_openSize_nid_postfix(HashNodeCallback, EqualNodeCallback, nullptr, sizeGuess, &code);
+    b.nodes = uhash_openSize_nid_postfix(HashNodeCallback_nid_no_patch, EqualNodeCallback_nid_no_patch, nullptr, sizeGuess, &code);
     if (code <= 0) {
         if (!b.nodes) {
             code = 7;
         } else {
-            uhash_setKeyDeleter_nid_postfix(b.nodes, DeleteNodeCallback);
+            uhash_setKeyDeleter_nid_postfix(b.nodes, DeleteNodeCallback_nid_no_patch);
         }
     }
 }
