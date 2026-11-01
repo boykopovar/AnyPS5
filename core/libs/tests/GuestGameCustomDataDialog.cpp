@@ -23,8 +23,10 @@ int main() {
     std::int32_t result[2] = {-1, -1};
 
     Require(sceGameCustomDataDialogTerminate() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(nullptr) == kErrNotInitialized);
     Require(sceGameCustomDataDialogOpenA(&param) == kErrNotInitialized);
     Require(sceGameCustomDataDialogClose() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetResultA(result) == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetStatus() == kStatusNone);
     Require(sceGameCustomDataDialogUpdateStatus() == kStatusNone);
@@ -35,6 +37,7 @@ int main() {
     Require(sceGameCustomDataDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceGameCustomDataDialogOpenA(nullptr) == kErrArgNull);
+    Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrArgNull);
     Require(sceGameCustomDataDialogGetResultA(result) == kErrNotFinished);
 
     Require(sceGameCustomDataDialogOpenA(&param) == 0);
@@ -49,6 +52,8 @@ int main() {
     Require(sceGameCustomDataDialogClose() == 0);
     Require(sceGameCustomDataDialogTerminate() == 0);
     Require(sceGameCustomDataDialogTerminate() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrNotInitialized);
     Require(sceGameCustomDataDialogGetStatus() == kStatusNone);
     Require(sceGameCustomDataDialogUpdateStatus() == kStatusNone);
 
@@ -60,4 +65,12 @@ int main() {
     Require(sceGameCustomDataDialogGetResultA(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceGameCustomDataDialogTerminate() == 0);
+    Require(sceGameCustomDataDialogTerminate() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(nullptr) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogOpenA(&param) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogClose() == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(nullptr) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetResultA(result) == kErrNotInitialized);
+    Require(sceGameCustomDataDialogGetStatus() == kStatusNone);
+    Require(sceGameCustomDataDialogUpdateStatus() == kStatusNone);
 }

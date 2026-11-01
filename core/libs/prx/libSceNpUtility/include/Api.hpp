@@ -60,7 +60,7 @@ int APS5_VABI sceNpAppLaunchLinkIntGetCompatibleTitleIdList();
 int APS5_VABI sceNpAppLaunchLinkIntGetCompatibleTitleIdNum();
 int APS5_VABI sceNpAppLaunchLinkIntInitialize();
 int APS5_VABI sceNpBandwidthTestShutdownWithDetailedInfo();
-int APS5_VABI sceNpLookupCreateTitleCtxA();
+int APS5_VABI sceNpLookupCreateTitleCtxA(int userId);
 int APS5_VABI sceNpLookupNetAbortRequest();
 int APS5_VABI sceNpLookupNetCensorComment();
 int APS5_VABI sceNpLookupNetConvertJidToNpId();
@@ -100,6 +100,6 @@ int APS5_VABI sceNpTitleMetadataIntGetInfo();
 int APS5_VABI sceNpTitleMetadataIntGetNpTitleId();
 int APS5_VABI sceNpUtilityInit();
 int APS5_VABI sceNpUtilityTerm();
-int APS5_VABI sceNpWordFilterCreateTitleCtxA();
+int APS5_VABI sceNpWordFilterCreateTitleCtxA(int userId);
 
 }

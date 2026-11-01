@@ -121,6 +121,9 @@ int StyleStateGetSlantRatio(const StyleStateBlock* style, float* slantRatio);
 int StyleStateSetWeightScale(StyleStateBlock* style, float weightXScale, float weightYScale);
 int StyleStateGetWeightScale(const StyleStateBlock* style, float* weightXScale, float* weightYScale, std::uint32_t* mode);
 bool ValidStyleFrame(const FontStyleFrame* frame);
+const FontStyleFrame* SurfaceStyleFrame(const FontRenderSurface* surface);
+const StyleStateBlock* ApplyStyleFrame(const StyleStateBlock* base, const FontStyleFrame* frame, StyleStateBlock& temporary);
+int RenderCodeWithStyle(FontHandle handle, std::uint32_t code, const StyleStateBlock* style, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result);
 
 std::uint8_t CachedStyleCacheFlags(const CachedStyle& style);
 void CachedStyleSetCacheFlags(CachedStyle& style, std::uint8_t flags);

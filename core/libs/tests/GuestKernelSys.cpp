@@ -1,5 +1,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -11,18 +13,24 @@
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <xmmintrin.h>
 #include <filesystem>
 #include <fstream>
 #include <source_location>
 #include <stdexcept>
 #include <set>
 #include <string>
+#include <thread>
+#include <tuple>
+#include <vector>
 #ifdef _WIN32
 #include <windows.h>
 #include <winioctl.h>
@@ -33,6 +41,7 @@
 #ifndef _WIN32
 #include <cerrno>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -67,6 +76,32 @@ bool ThrowsNaming(Call call, const char* text) {
     return false;
 }
 
+#ifdef _WIN32
+unsigned long LinkCount(const std::string& path) {
+    const HANDLE link = CreateFileW(std::filesystem::path(path).c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(link != INVALID_HANDLE_VALUE);
+    BY_HANDLE_FILE_INFORMATION information{};
+    const bool read = GetFileInformationByHandle(link, &information) != 0;
+    CloseHandle(link);
+    Require(read);
+    return information.nNumberOfLinks;
+}
+#else
+nlink_t LinkCount(const std::string& path) {
+    struct stat status {};
+    Require(::lstat(path.c_str(), &status) == 0);
+    return status.st_nlink;
+}
+#endif
+
+std::string LinkTarget(const std::string& path) {
+    char buffer[256]{};
+    const std::int64_t length = readlink_nid_postfix(path.c_str(), buffer, sizeof(buffer));
+    Require(length > 0);
+    return std::string(buffer, static_cast<std::size_t>(length));
+}
+
 void OwnershipAndLinkTests(const std::filesystem::path& root) {
     constexpr std::uint32_t Unchanged = 0xFFFFFFFFu;
     const auto file = (root / "owned.txt").string();
@@ -94,13 +129,11 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
     Require(fchownat_nid_postfix(-100, missing.c_str(), 1000, 0, 0) == -1 && Error() == 2);
     Require(fchownat_nid_postfix(4321, "owned.txt", 1000, 0, 0) == -1 && Error() == 9);
     Require(fchownat_nid_postfix(-100, file.c_str(), 1000, 0, 0x400) == -1 && Error() == 22);
-    Require(ThrowsNaming([&] { chown_nid_postfix(file.c_str(), 1000, 0); }, "chown: an owner"));
-    Require(ThrowsNaming([&] { lchown_nid_postfix(file.c_str(), 0, 1000); }, "lchown: a group"));
-    Require(ThrowsNaming([&] { fchownat_nid_postfix(-100, file.c_str(), 5, Unchanged, 0); }, "fchownat: an owner"));
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     Require(fchownat_nid_postfix(directory, "owned.txt", 0, 0, 0) == 0);
     Require(fchownat_nid_postfix(directory, "missing.txt", 0, 0, 0) == -1 && Error() == 2);
+    Require(fchownat_nid_postfix(directory, "missing.txt", 1000, 0, 0) == -1 && Error() == 2);
     Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0) == 0);
     Require(std::filesystem::hard_link_count(file) == 2);
     Require(linkat_nid_postfix(-100, file.c_str(), -100, linked.c_str(), 0x400) == -1 && Error() == 17);
@@ -137,7 +170,33 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
         Require(lchown_nid_postfix(dangling.c_str(), 0, 0) == 0);
         Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0) == -1 && Error() == 2);
         Require(fchownat_nid_postfix(-100, dangling.c_str(), 0, 0, 0x200) == 0);
-        Require(ThrowsNaming([&] { linkat_nid_postfix(-100, symbolic.c_str(), -100, other.c_str(), 0); }, "symbolic link itself"));
+        const auto symbolicCopy = (root / "copy.link").string();
+        const auto danglingCopy = (root / "dangling.copy").string();
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, symbolicCopy.c_str(), 0) == 0);
+        Require(LinkTarget(symbolicCopy) == "owned.txt" && LinkCount(symbolic) == 2);
+        Require(std::filesystem::hard_link_count(file) == 2);
+        Require(linkat_nid_postfix(directory, "dangling.link", directory, "dangling.copy", 0) == 0);
+        Require(LinkTarget(danglingCopy) == "missing.txt" && LinkCount(dangling) == 2);
+        Require(linkat_nid_postfix(-100, dangling.c_str(), -100, other.c_str(), 0x400) == -1 && Error() == 2);
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, linked.c_str(), 0) == -1 && Error() == 17);
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, (missing + "/inner").c_str(), 0) == -1 && Error() == 2);
+        Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, (throughFile + "/inner").c_str(), 0) == -1 && Error() == 20);
+        Require(LinkCount(symbolic) == 2 && !std::filesystem::exists(std::filesystem::symlink_status(other)));
+        Require(unlink_nid_postfix(symbolicCopy.c_str()) == 0 && unlink_nid_postfix(danglingCopy.c_str()) == 0);
+        Require(LinkCount(symbolic) == 1 && LinkCount(dangling) == 1 && std::filesystem::hard_link_count(file) == 2);
+        const auto folder = root / "folder";
+        const auto folderLink = (root / "folder.link").string();
+        Require(std::filesystem::create_directory(folder) && symlink_nid_postfix("folder", folderLink.c_str()) == 0);
+        Require(linkat_nid_postfix(-100, folderLink.c_str(), -100, other.c_str(), 0x400) == -1 && Error() == 1);
+#ifdef _WIN32
+        Require(RemoveDirectoryW(std::filesystem::path(folderLink).c_str()) != 0 && std::filesystem::remove(folder));
+#else
+        const auto folderCopy = (root / "folder.copy").string();
+        Require(linkat_nid_postfix(-100, folderLink.c_str(), -100, folderCopy.c_str(), 0) == 0);
+        Require(LinkTarget(folderCopy) == "folder" && LinkCount(folderLink) == 2);
+        Require(std::filesystem::remove(folderCopy));
+        Require(std::filesystem::remove(folderLink) && std::filesystem::remove(folder));
+#endif
         Require(linkat_nid_postfix(-100, symbolic.c_str(), -100, other.c_str(), 0x400) == 0);
 #ifdef _WIN32
         Require((GetFileAttributesW(std::filesystem::path(other).c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) == 0);
@@ -145,7 +204,7 @@ void OwnershipAndLinkTests(const std::filesystem::path& root) {
         Require(!std::filesystem::is_symlink(std::filesystem::symlink_status(other)));
 #endif
         Require(std::filesystem::hard_link_count(file) == 3);
-        Require(std::filesystem::remove(other) && std::filesystem::remove(symbolic) && std::filesystem::remove(dangling));
+        Require(std::filesystem::remove(other) && unlink_nid_postfix(symbolic.c_str()) == 0 && unlink_nid_postfix(dangling.c_str()) == 0);
     }
     Require(sceKernelClose(directory) == 0);
     Require(std::filesystem::remove(linked) && std::filesystem::remove(file));
@@ -273,6 +332,13 @@ void CheckUnreadablePaths(const std::string& renameSource, int directory) {
     Require(link_nid_postfix("missing", paths.Unreadable()) == -1 && Error() == 2);
     posixFault([&] { return shm_open_nid_postfix(paths.Unreadable(), SCE_KERNEL_O_RDWR, 0600); });
     posixFault([&] { return shm_unlink_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return kldfind_nid_postfix(paths.Unreadable()); });
+    posixFault([&] { return kldstat_nid_postfix(1, paths.Unreadable()); });
+    posixFault([&] { return kldstat_nid_postfix(1, paths.Boundary()); });
+    const std::int32_t statVersion = 1056;
+    std::memcpy(paths.Unreadable() - sizeof(statVersion), &statVersion, sizeof(statVersion));
+    *__error_nid_postfix() = 0;
+    Require(kldstat_nid_postfix(1, paths.Unreadable() - sizeof(statVersion)) == -1 && Error() == 2);
     Require(sceKernelOpen(paths.Unreadable(), SCE_KERNEL_O_RDONLY, 0) == KernelFault);
     Require(sceKernelStat(paths.Unreadable(), &status) == KernelFault);
     Require(sceKernelMkdir(paths.Unreadable(), 0755) == KernelFault);
@@ -316,6 +382,104 @@ void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
     }
 }
 
+UserUcontext sigreturnContext{};
+UserUcontext sigreturnResume{};
+volatile int sigreturnPasses = 0;
+volatile std::uint32_t sigreturnMxcsr = 0;
+
+std::uint32_t RoundingAndMasks(std::uint32_t mxcsr) {
+    return mxcsr & ~0x3fu;
+}
+
+void SetContextMxcsr(UserUcontext& context, std::uint32_t mxcsr) {
+    std::memcpy(reinterpret_cast<std::uint8_t*>(context.mcontext.fpstate) + 24, &mxcsr, sizeof(mxcsr));
+}
+
+void CheckSigreturnRefusals(const UserUcontext& valid) {
+    UserUcontext bad = valid;
+    bad.mcontext.flags = 0x8;
+    Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    for (const std::uint64_t privileged : {0x200ull, 0x3000ull, 0x20000ull, 0x80000ull}) {
+        bad = valid;
+        bad.mcontext.rflags ^= privileged;
+        Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    }
+    bad = valid;
+    bad.mcontext.fpformat = 0x10001;
+    Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    bad = valid;
+    bad.mcontext.ownedfp = 0x20003;
+    Require(sigreturn_nid_postfix(&bad) == -1 && Error() == 22);
+    bad = valid;
+    bad.mcontext.cs &= ~std::uint64_t{3};
+    Require(ThrowsNaming([&] { sigreturn_nid_postfix(&bad); }, "not a user selector"));
+}
+
+void CheckSigreturn() {
+    Require(sigreturn_nid_postfix(nullptr) == -1 && Error() == 14);
+    const std::uint32_t savedMxcsr = _mm_getcsr();
+    sigreturnPasses = 0;
+    Require(getcontext_nid_postfix(&sigreturnContext) == 0);
+    sigreturnMxcsr = _mm_getcsr();
+    sigreturnPasses = sigreturnPasses + 1;
+    std::uint32_t mask[4] = {};
+    Require(sigprocmask_nid_postfix(1, nullptr, mask) == 0);
+    const bool blocked = (mask[0] & (1u << 29)) != 0;
+    if (sigreturnPasses == 1) {
+        CheckSigreturnRefusals(sigreturnContext);
+        sigreturnResume = sigreturnContext;
+        sigreturnResume.mcontext.len = 0;
+        sigreturnResume.sigmask[0] |= 1u << 29;
+        SetContextMxcsr(sigreturnResume, 0x7f80);
+        Require(setcontext_nid_postfix(&sigreturnResume) == -1 && Error() == 22);
+        sigreturn_nid_postfix(&sigreturnResume);
+        Require(false);
+    }
+    if (sigreturnPasses == 2) {
+        Require(RoundingAndMasks(sigreturnMxcsr) == 0x7f80 && blocked);
+        sigreturnResume = sigreturnContext;
+        sigreturnResume.mcontext.fpformat = 0x10000;
+        SetContextMxcsr(sigreturnResume, 0x5f80);
+        _mm_setcsr(0x3f80);
+        sigreturn_nid_postfix(&sigreturnResume);
+        Require(false);
+    }
+    if (sigreturnPasses == 3) {
+        Require(RoundingAndMasks(sigreturnMxcsr) == 0x3f80 && !blocked);
+        sigreturnResume = sigreturnContext;
+        sigreturnResume.mcontext.ownedfp = 0x20000;
+        SetContextMxcsr(sigreturnResume, 0x5f80);
+        sigreturn_nid_postfix(&sigreturnResume);
+        Require(false);
+    }
+    Require(sigreturnPasses == 4 && RoundingAndMasks(sigreturnMxcsr) == 0x1f80 && !blocked);
+    _mm_setcsr(savedMxcsr);
+}
+
+void CheckSchedSetscheduler() {
+    const Pthread self = scePthreadSelf();
+    int savedPolicy = 0;
+    KernelSchedParam saved{};
+    Require(scePthreadGetschedparam(self, &savedPolicy, &saved) == 0);
+    KernelSchedParam param{700};
+    Require(sched_setscheduler_nid_postfix(0, 1, nullptr) == -1 && Error() == 14);
+    Require(sched_setscheduler_nid_postfix(getpid_nid_postfix() + 1, 1, &param) == -1 && Error() == 3);
+    Require(sched_setscheduler_nid_postfix(-1, 1, &param) == -1 && Error() == 3);
+    Require(sched_setscheduler_nid_postfix(0, 1, reinterpret_cast<const KernelSchedParam*>(std::uintptr_t{0x10})) == -1 && Error() == 14);
+    Require(sched_setscheduler_nid_postfix(getpid_nid_postfix() + 1, 1, reinterpret_cast<const KernelSchedParam*>(std::uintptr_t{0x10})) == -1 && Error() == 14);
+    for (const int pid : {0, getpid_nid_postfix()}) {
+        for (const int policy : {-1, 0, 1, 2, 3, 4, 7}) {
+            Require(sched_setscheduler_nid_postfix(pid, policy, &param) == -1 && Error() == 1);
+            param.sched_priority = 300;
+            Require(sched_setscheduler_nid_postfix(pid, policy, &param) == -1 && Error() == 1);
+            param.sched_priority = 700;
+        }
+    }
+    int policy = 0;
+    KernelSchedParam current{};
+    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == savedPolicy && current.sched_priority == saved.sched_priority);
+}
+
 void CheckCondattrClock() {
     constexpr KernelClockid Realtime = 0;
     constexpr KernelClockid Monotonic = 4;
@@ -334,6 +498,306 @@ void CheckCondattrClock() {
     Require(scePthreadCondattrDestroy(&attr) == 0 && attr == nullptr);
     clock = -1;
     Require(scePthreadCondattrGetclock(&attr, &clock) == SCE_KERNEL_ERROR_EINVAL && clock == -1);
+}
+
+template<class TRecord, class TWrite>
+void CheckAmmWriter(TRecord record, TWrite write, int expected) {
+    std::array<std::uint8_t, 64> recorded{};
+    Apr::CommandBufferObject buffer{Apr::BufferType::Generic, 0, 0, 0, static_cast<std::uint32_t>(recorded.size()), recorded.data()};
+    Require(record(&buffer) == expected);
+    std::uint64_t measured = ~std::uint64_t{0};
+    Require(write(nullptr, &measured) == expected);
+    std::array<std::uint8_t, 64> written{};
+    written.fill(0xCC);
+    std::uint64_t reported = ~std::uint64_t{0};
+    Require(write(written.data(), &reported) == expected);
+    if (expected != 0) {
+        Require(buffer.offset == 0 && measured == ~std::uint64_t{0} && reported == ~std::uint64_t{0});
+        Require(std::all_of(written.begin(), written.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+        return;
+    }
+    Require(buffer.offset != 0 && measured == buffer.offset && reported == buffer.offset);
+    Require(std::memcmp(written.data(), recorded.data(), buffer.offset) == 0 && written[buffer.offset] == 0xCC);
+    written.fill(0xCC);
+    Require(write(written.data(), nullptr) == 0 && std::memcmp(written.data(), recorded.data(), buffer.offset) == 0);
+}
+
+void CheckAmmWriteCommands() {
+    constexpr std::uint64_t page = 0x4000;
+    constexpr std::uint64_t address = 0x10000000;
+    constexpr std::uint64_t source = 0x20000000;
+    constexpr std::uint64_t directOffset = 0x300000;
+    constexpr std::uint64_t size = 2 * page;
+    constexpr std::int32_t type = 3;
+    constexpr std::int32_t protection = 0x33;
+    constexpr std::int32_t mask = 0x13;
+    constexpr std::uint8_t gpuMaskId = 5;
+    constexpr std::int32_t badProtection = 0x04;
+    for (const auto [mapped, offset, protect, expected] : {std::tuple{address, directOffset, protection, 0}, std::tuple{address + 8, directOffset, protection, SCE_KERNEL_ERROR_EINVAL}, std::tuple{address, directOffset + 8, protection, SCE_KERNEL_ERROR_EINVAL}, std::tuple{address, directOffset, badProtection, SCE_KERNEL_ERROR_EINVAL}}) {
+        const bool alignedOffset = offset == directOffset;
+        if (alignedOffset) {
+            CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMap(buffer, mapped, size, type, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapCommand(dst, mapped, size, type, static_cast<std::uint32_t>(protect), outSize); }, expected);
+            CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapWithGpuMaskId(buffer, mapped, size, type, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapWithGpuMaskIdCommand(dst, mapped, size, type, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+        }
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirect(buffer, mapped, offset, size, type, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectCommand(dst, mapped, offset, size, type, static_cast<std::uint32_t>(protect), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirectWithGpuMaskId(buffer, mapped, offset, size, type, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectWithGpuMaskIdCommand(dst, mapped, offset, size, type, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+    }
+    for (const auto [mapped, length, expected] : {std::tuple{address, size, 0}, std::tuple{address + 8, size, SCE_KERNEL_ERROR_EINVAL}, std::tuple{address, std::uint64_t{0}, SCE_KERNEL_ERROR_EINVAL}}) {
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferUnmap(buffer, mapped, length); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteUnmapCommand(dst, mapped, length, outSize); }, expected);
+    }
+    for (const auto [from, protect, expected] : {std::tuple{source, protection, 0}, std::tuple{source + 8, protection, SCE_KERNEL_ERROR_EINVAL}, std::tuple{source, badProtection, SCE_KERNEL_ERROR_EINVAL}}) {
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferRemap(buffer, address, from, size, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteRemapCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferRemapWithGpuMaskId(buffer, address, from, size, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteRemapWithGpuMaskIdCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMultiMap(buffer, address, from, size, protect); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMultiMapCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMultiMapWithGpuMaskId(buffer, address, from, size, protect, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMultiMapWithGpuMaskIdCommand(dst, address, from, size, static_cast<std::uint32_t>(protect), gpuMaskId, outSize); }, expected);
+    }
+    for (const auto [protect, masked, expected] : {std::tuple{protection, mask, 0}, std::tuple{badProtection, mask, SCE_KERNEL_ERROR_EINVAL}, std::tuple{protection, badProtection, SCE_KERNEL_ERROR_EINVAL}}) {
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyProtect(buffer, address, size, protect, masked); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyProtectCommand(dst, address, size, static_cast<std::uint32_t>(protect), static_cast<std::uint32_t>(masked), outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyProtectWithGpuMaskId(buffer, address, size, protect, masked, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyProtectWithGpuMaskIdCommand(dst, address, size, static_cast<std::uint32_t>(protect), static_cast<std::uint32_t>(masked), gpuMaskId, outSize); }, expected);
+        CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyMtypeProtectWithGpuMaskId(buffer, address, size, type, protect, masked, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(dst, address, size, type, static_cast<std::uint32_t>(protect), static_cast<std::uint32_t>(masked), gpuMaskId, outSize); }, expected);
+    }
+    std::uint64_t untouched = ~std::uint64_t{0};
+    constexpr std::uint64_t wide = std::uint64_t{1} << 32 | 0x33;
+    Require(sceKernelWriteMapCommand(nullptr, address, size, type, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWriteRemapCommand(nullptr, address, source, size, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWriteModifyProtectCommand(nullptr, address, size, protection, wide, &untouched) == SCE_KERNEL_ERROR_EINVAL);
+    Require(untouched == ~std::uint64_t{0});
+    constexpr std::uint64_t wideType = std::uint64_t{1} << 32 | static_cast<std::uint64_t>(type);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMap(buffer, address, size, type, protection); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapWithGpuMaskId(buffer, address, size, type, protection, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapWithGpuMaskIdCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), gpuMaskId, outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirect(buffer, address, directOffset, size, type, protection); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectCommand(dst, address, directOffset, size, wideType, static_cast<std::uint32_t>(protection), outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferMapDirectWithGpuMaskId(buffer, address, directOffset, size, type, protection, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapDirectWithGpuMaskIdCommand(dst, address, directOffset, size, wideType, static_cast<std::uint32_t>(protection), gpuMaskId, outSize); }, 0);
+    CheckAmmWriter([&](Apr::CommandBufferObject* buffer) { return sceAmprAmmCommandBufferModifyMtypeProtectWithGpuMaskId(buffer, address, size, type, protection, mask, gpuMaskId); }, [&](void* dst, std::uint64_t* outSize) { return sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(dst, address, size, wideType, static_cast<std::uint32_t>(protection), static_cast<std::uint32_t>(mask), gpuMaskId, outSize); }, 0);
+}
+
+void CheckAmmWaitCompletion() {
+    constexpr std::uint64_t page = 0x4000;
+    constexpr std::int32_t cpuReadWrite = 0x03;
+    std::uint64_t start = 0;
+    std::uint64_t end = 0;
+    std::uint64_t multimapStart = 0;
+    std::uint64_t multimapEnd = 0;
+    Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+    std::int64_t pool = -1;
+    Require(sceAmprAmmGiveDirectMemory(0, static_cast<std::int64_t>(sceKernelGetDirectMemorySize()), 2 * page, page, 1, &pool) == 0);
+    const std::uint64_t target = start + 0x400000;
+    std::array<std::uint8_t, 64> commands{};
+    std::uint64_t bytes = 0;
+    Require(sceKernelWriteMapCommand(commands.data(), target, page, 0, cpuReadWrite, &bytes) == 0);
+    std::uint32_t id = 0;
+    Require(sceAmprAmmSubmitCommandBuffer3(commands.data(), static_cast<std::uint32_t>(bytes), 0, &id) == 0 && id != 0);
+    Require(sceKernelWaitCommandBufferCompletion(id) == 0);
+    auto* mapped = reinterpret_cast<volatile std::uint8_t*>(target);
+    *mapped = 0x5A;
+    Require(*mapped == 0x5A);
+    Require(sceKernelWaitCommandBufferCompletion(id) == 0);
+    Require(sceKernelWaitCommandBufferCompletion(0) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelWaitCommandBufferCompletion(id + 1) == SCE_KERNEL_ERROR_ESRCH && sceAmprAmmWaitCommandBufferCompletion(id + 1) == SCE_KERNEL_ERROR_ESRCH);
+}
+
+template<class TCommand, class TWrite>
+void CheckRecordedCommand(TWrite write, const TCommand& expected) {
+    std::uint64_t measured = ~std::uint64_t{0};
+    Require(write(nullptr, &measured) == 0 && measured == sizeof(TCommand));
+    std::array<std::uint8_t, 64> written{};
+    written.fill(0xCC);
+    std::uint64_t reported = ~std::uint64_t{0};
+    Require(write(written.data(), &reported) == 0 && reported == sizeof(TCommand));
+    Require(std::memcmp(written.data(), &expected, sizeof(TCommand)) == 0 && written[sizeof(TCommand)] == 0xCC);
+    written.fill(0xCC);
+    Require(write(written.data(), nullptr) == 0 && std::memcmp(written.data(), &expected, sizeof(TCommand)) == 0);
+}
+
+template<class TWrite>
+void CheckRejectedCommand(TWrite write) {
+    std::array<std::uint8_t, 64> written{};
+    written.fill(0xCC);
+    std::uint64_t reported = ~std::uint64_t{0};
+    Require(write(written.data(), &reported) == SCE_KERNEL_ERROR_EINVAL && reported == ~std::uint64_t{0});
+    Require(std::all_of(written.begin(), written.end(), [](std::uint8_t byte) { return byte == 0xCC; }));
+}
+
+template<class TWrite>
+bool CommandThrows(TWrite write) {
+    std::array<std::uint8_t, 64> written{};
+    std::uint64_t reported = 0;
+    try {
+        write(written.data(), &reported);
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckAmmCommandWriters() {
+    using Apr::Opcode;
+    constexpr std::uint64_t page = 0x4000;
+    std::uint64_t start = 0;
+    std::uint64_t end = 0;
+    std::uint64_t multimapStart = 0;
+    std::uint64_t multimapEnd = 0;
+    Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+    const std::uint64_t prt = start + 0x400000;
+
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteUnmapToPrtCommand(dst, prt, 2 * page, size); }, Apr::AmmUnmapCommand{{Opcode::AmmUnmapToPrt, sizeof(Apr::AmmUnmapCommand)}, prt, 2 * page});
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteMapCommand2(dst, prt, page, 0, 0, 1, size); }, Apr::AmmUnmapCommand{{Opcode::AmmMapAsPrt, sizeof(Apr::AmmUnmapCommand)}, prt, page});
+    constexpr std::uint64_t top = std::uint64_t{0} - page;
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteUnmapToPrtCommand(dst, top, page, size); }, Apr::AmmUnmapCommand{{Opcode::AmmUnmapToPrt, sizeof(Apr::AmmUnmapCommand)}, top & 0xFFFFFFFFFFFFull, page});
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteMapCommand2(dst, top, page, 0, 0, 1, size); }, Apr::AmmUnmapCommand{{Opcode::AmmMapAsPrt, sizeof(Apr::AmmUnmapCommand)}, top & 0xFFFFFFFFFFFFull, page});
+    CheckRejectedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteUnmapToPrtCommand(dst, top - page, page, size); });
+    CheckRejectedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteMapCommand2(dst, top - page, page, 0, 0, 1, size); });
+    for (const std::uint64_t wrapped : {std::uint64_t{0} - page, std::uint64_t{0} - 0x800000}) {
+        CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteUnmapToPrtCommand(dst, prt, wrapped, size); }, Apr::AmmUnmapCommand{{Opcode::AmmUnmapToPrt, sizeof(Apr::AmmUnmapCommand)}, prt, wrapped & 0x1FFFFFFC000ull});
+        CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteMapCommand2(dst, prt, wrapped, 0, 0, 1, size); }, Apr::AmmUnmapCommand{{Opcode::AmmMapAsPrt, sizeof(Apr::AmmUnmapCommand)}, prt, wrapped & 0x1FFFFFFC000ull});
+    }
+    for (const auto [address, size] : {std::pair{prt, std::uint64_t{0}}, std::pair{prt + 8, page}, std::pair{end - page, 2 * page}, std::pair{start - page, page}}) {
+        CheckRejectedCommand([&](void* dst, std::uint64_t* outSize) { return sceKernelWriteUnmapToPrtCommand(dst, address, size, outSize); });
+        CheckRejectedCommand([&](void* dst, std::uint64_t* outSize) { return sceKernelWriteMapCommand2(dst, address, size, 0, 0, 1, outSize); });
+    }
+    Require(CommandThrows([&](void* dst, std::uint64_t* size) { return sceKernelWriteMapCommand2(dst, prt, page, 3, 0, 1, size); }));
+    Require(CommandThrows([&](void* dst, std::uint64_t* size) { return sceKernelWriteMapCommand2(dst, prt, page, 0, 0x03, 1, size); }));
+    std::array<std::uint8_t, 64> map{};
+    std::array<std::uint8_t, 64> map2{};
+    std::uint64_t mapBytes = 0;
+    std::uint64_t map2Bytes = 0;
+    Require(sceKernelWriteMapCommand(map.data(), prt, page, 0, 0x03, &mapBytes) == 0);
+    Require(sceKernelWriteMapCommand2(map2.data(), prt, page, 0, 0x03, 0, &map2Bytes) == 0 && map2Bytes == mapBytes && map2 == map);
+    CheckRejectedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteMapCommand2(dst, prt + 8, page, 0, 0x03, 0, size); });
+
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteWriteAddressCommand(dst, 0xFFFF123456789AB7ull, 0x1122334455667788ull, size); }, Apr::WriteAddressCommand{{Opcode::WriteAddress, sizeof(Apr::WriteAddressCommand)}, 0x123456789AB0ull, 0x1122334455667788ull, 0, 0});
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteWriteCounterCommand(dst, 7, 0xDEADBEEFu, size); }, Apr::WriteCounterCommand{{Opcode::WriteCounter, sizeof(Apr::WriteCounterCommand)}, 7, Apr::CounterAccess::Size4, Apr::CounterOperation::Store, 0, 0xDEADBEEFu});
+
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteWaitOnAddressCommand(dst, 0xFFFF000000001000ull, 42, 2, 1, size); }, Apr::WaitCommand{{Opcode::WaitOnAddress, sizeof(Apr::WaitCommand)}, 0x1000, 42, ~std::uint64_t{0}, 0, 2, Apr::CounterAccess::Size8, 0});
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteWaitOnAddressCommand(dst, 0x1000, 42, -1, 0, size); }, Apr::WaitCommand{{Opcode::WaitOnAddress, sizeof(Apr::WaitCommand)}, 0x1000, 42, ~std::uint64_t{0}, 0, 7, Apr::CounterAccess::Size8, 0});
+    CheckRejectedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteWaitOnAddressCommand(dst, 0x1000, 42, 4, 0, size); });
+    Require(CommandThrows([&](void* dst, std::uint64_t* size) { return sceKernelWriteWaitOnAddressCommand(dst, 0x1004, 42, 2, 0, size); }));
+    std::uint64_t unalignedSize = 0;
+    Require(sceKernelWriteWaitOnAddressCommand(nullptr, 0x1004, 42, 2, 0, &unalignedSize) == 0 && unalignedSize == sizeof(Apr::WaitCommand));
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteWaitOnCounterCommand(dst, 9, 100, 3, 1, size); }, Apr::WaitCommand{{Opcode::WaitOnCounter, sizeof(Apr::WaitCommand)}, 0, 100, ~std::uint64_t{0}, 9, 3, Apr::CounterAccess::Size4, 0});
+    CheckRejectedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteWaitOnCounterCommand(dst, 9, 100, 4, 0, size); });
+
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteEventQueueOnCompletionCommand(dst, 0x1234, -2, 0xABCD, size); }, Apr::WriteKernelEventQueueCommand{{Opcode::WriteKernelEventQueue, sizeof(Apr::WriteKernelEventQueueCommand)}, 0x1234, 0xFFFFFFFFFFFFFFFEull, 0xABCD, 0});
+    CheckRecordedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteEventQueueOnCompletionCommand(dst, std::uint64_t{1} << 48u, 1, 2, size); }, Apr::WriteKernelEventQueueCommand{{Opcode::WriteKernelEventQueue, sizeof(Apr::WriteKernelEventQueueCommand)}, 0, 1, 2, 0});
+    CheckRejectedCommand([&](void* dst, std::uint64_t* size) { return sceKernelWriteEventQueueOnCompletionCommand(dst, (std::uint64_t{1} << 48u) + 1, 1, 2, size); });
+}
+
+void CheckAmmWrittenWaitsRun() {
+    alignas(8) static std::uint64_t ready = 5;
+    alignas(8) static std::uint64_t done = 0;
+    std::array<std::uint8_t, 256> commands{};
+    std::uint64_t used = 0;
+    const auto append = [&](auto write) {
+        std::uint64_t bytes = 0;
+        Require(write(commands.data() + used, &bytes) == 0);
+        used += bytes;
+    };
+    append([&](void* dst, std::uint64_t* size) { return sceKernelWriteWriteCounterCommand(dst, 3, 9, size); });
+    append([&](void* dst, std::uint64_t* size) { return sceKernelWriteWaitOnCounterCommand(dst, 3, 9, 0, 0, size); });
+    append([&](void* dst, std::uint64_t* size) { return sceKernelWriteWaitOnAddressCommand(dst, reinterpret_cast<std::uint64_t>(&ready), 5, 0, 0, size); });
+    append([&](void* dst, std::uint64_t* size) { return sceKernelWriteWaitOnAddressCommand(dst, reinterpret_cast<std::uint64_t>(&ready), 5, -4, 0, size); });
+    append([&](void* dst, std::uint64_t* size) { return sceKernelWriteWriteAddressCommand(dst, reinterpret_cast<std::uint64_t>(&done), 0x1234, size); });
+    Require(used <= commands.size());
+    std::uint32_t id = 0;
+    Require(sceAmprAmmSubmitCommandBuffer3(commands.data(), static_cast<std::uint32_t>(used), 0, &id) == 0 && id != 0);
+    Require(sceKernelWaitCommandBufferCompletion(id) == 0);
+    Require(std::atomic_ref<std::uint64_t>(done).load(std::memory_order_acquire) == 0x1234);
+}
+
+template<class TCall>
+bool MapperCallThrows(TCall call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckAmmMapperCalls() {
+    constexpr std::uint64_t page = 0x4000;
+    constexpr std::uint64_t granule = 0x200000;
+    constexpr std::int32_t cpuReadWrite = 0x03;
+    std::uint64_t start = 0;
+    std::uint64_t end = 0;
+    std::uint64_t multimapStart = 0;
+    std::uint64_t multimapEnd = 0;
+    Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+
+    const std::int64_t memoryEnd = static_cast<std::int64_t>(sceKernelGetDirectMemorySize());
+    std::int64_t offset = -1;
+    Require(sceKernelGiveDirectMemoryToMapper(0, memoryEnd, 0, granule, 1, &offset) == SCE_KERNEL_ERROR_EINVAL && offset == -1);
+    Require(sceKernelGiveDirectMemoryToMapper(0, memoryEnd, page, granule, 1, &offset) == SCE_KERNEL_ERROR_EINVAL && offset == -1);
+    Require(sceKernelGiveDirectMemoryToMapper(0, memoryEnd, granule, page, 1, &offset) == SCE_KERNEL_ERROR_EINVAL && offset == -1);
+    Require(sceKernelGiveDirectMemoryToMapper(0, memoryEnd, granule, granule, 1, &offset) == 0 && offset >= 0);
+
+    std::array<std::uint64_t, 8> param{};
+    param.fill(0xAAAAAAAAAAAAAAAAull);
+    Require(sceKernelMapperGetParam(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    param[0] = 0x39;
+    Require(sceKernelMapperGetParam(param.data()) == SCE_KERNEL_ERROR_EINVAL && param[0] == 0x39 && param[1] == 0xAAAAAAAAAAAAAAAAull);
+    param[0] = 0x28;
+    Require(sceKernelMapperGetParam(param.data()) == 0 && param[0] == 0x38 && param[1] == start && param[2] == end && param[3] == multimapStart && param[4] == multimapEnd
+            && param[5] == 0xAAAAAAAAAAAAAAAAull);
+    param.fill(0xAAAAAAAAAAAAAAAAull);
+    param[0] = 0x10;
+    Require(sceKernelMapperGetParam(param.data()) == 0 && param[0] == 0x38 && param[1] == start && param[2] == 0xAAAAAAAAAAAAAAAAull);
+    param[0] = 0x30;
+    Require(MapperCallThrows([&] { sceKernelMapperGetParam(param.data()); }));
+
+    std::array<std::uint8_t, 64> commands{};
+    std::uint64_t bytes = 0;
+    const std::uint64_t first = start + 0x800000;
+    Require(sceKernelWriteMapDirectCommand(commands.data(), first, static_cast<std::uint64_t>(offset), page, 0, cpuReadWrite, &bytes) == 0);
+    Require(sceKernelCallIndirectBuffer(0, commands.data(), bytes) == 0);
+    const std::uint64_t second = first + page;
+    Require(sceKernelWriteMapDirectCommand(commands.data(), second, static_cast<std::uint64_t>(offset) + page, page, 0, cpuReadWrite, &bytes) == 0);
+    KernelMapperSubmitResult result{7, 7};
+    std::uint32_t id = 0;
+    Require(sceKernelCallIndirectBuffer2(1, commands.data(), bytes, &result, &id) == 0 && result.result == 0 && result.errorOffset == 0 && id != 0);
+    Require(sceKernelWaitCommandBufferCompletion(id) == 0);
+    const std::uint64_t third = second + page;
+    Require(sceKernelWriteMapDirectCommand(commands.data(), third, static_cast<std::uint64_t>(offset) + 2 * page, page, 0, cpuReadWrite, &bytes) == 0);
+    std::uint32_t thirdId = 0;
+    Require(sceKernelCallIndirectBuffer3(2, commands.data(), bytes, &thirdId) == 0 && thirdId > id);
+    Require(sceKernelWaitCommandBufferCompletion(thirdId) == 0);
+    for (const std::uint64_t mapped : {first, second, third}) {
+        auto* byte = reinterpret_cast<volatile std::uint8_t*>(mapped);
+        *byte = 0x5A;
+        Require(*byte == 0x5A);
+    }
+    Require(MapperCallThrows([&] { sceKernelCallIndirectBuffer(3, commands.data(), bytes); }));
+    Require(MapperCallThrows([&] { sceKernelCallIndirectBuffer3(0, nullptr, bytes, &thirdId); }));
+}
+
+void CheckAmmWaitConcurrentSubmits() {
+    constexpr int submitters = 4;
+    constexpr int submissions = 4000;
+    std::array<std::uint8_t, 16> empty{};
+    std::atomic<std::uint32_t> newest{0};
+    std::atomic<int> running{submitters};
+    std::atomic<int> rejected{0};
+    std::vector<std::thread> threads;
+    for (int thread = 0; thread < submitters; ++thread) {
+        threads.emplace_back([&] {
+            for (int index = 0; index < submissions; ++index) {
+                std::uint32_t id = 0;
+                if (sceAmprAmmSubmitCommandBuffer3(empty.data(), 0, 0, &id) != 0 || id == 0) ++rejected;
+                auto seen = newest.load();
+                while (seen < id && !newest.compare_exchange_weak(seen, id)) {}
+            }
+            --running;
+        });
+    }
+    std::thread waiter([&] {
+        while (running.load() != 0) {
+            const auto id = newest.load();
+            if (id != 0 && (sceKernelWaitCommandBufferCompletion(id) != 0 || sceAmprAmmWaitCommandBufferCompletion(id) != 0)) ++rejected;
+        }
+    });
+    for (auto& thread : threads) thread.join();
+    waiter.join();
+    Require(rejected.load() == 0);
+    Require(sceKernelWaitCommandBufferCompletion(newest.load()) == 0);
 }
 
 void CheckPathconf(const std::filesystem::path& root, const std::string& file) {
@@ -376,10 +840,18 @@ void CheckSettimeofday() {
     Require(settimeofday_nid_postfix(nullptr, nullptr) == 0);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
     const KernelTimezone west{60, 1};
-    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
+    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
+    Require(settimeofday_nid_postfix(unreadableTime, &west) == -1 && Error() == 14);
+    Require(settimeofday_nid_postfix(unreadableTime, unreadableZone) == -1 && Error() == 14);
+    Require(settimeofday_nid_postfix(nullptr, unreadableZone) == -1 && Error() == 14);
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}}) {
         Require(settimeofday_nid_postfix(&invalid, &west) == -1 && Error() == 22);
+        Require(settimeofday_nid_postfix(&invalid, unreadableZone) == -1 && Error() == 14);
+    }
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
     const KernelTimeval valid{1000000000, 0};
+    Require(settimeofday_nid_postfix(&valid, unreadableZone) == -1 && Error() == 14);
     bool rejected = false;
     try {
         settimeofday_nid_postfix(&valid, &west);
@@ -393,6 +865,26 @@ void CheckSettimeofday() {
     Require(gettimeofday_nid_postfix(&now, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1 && now.tv_sec > 0);
     const KernelTimezone zero{0, 0};
     Require(settimeofday_nid_postfix(nullptr, &zero) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+}
+
+void CheckSceKernelSettimeofday() {
+    constexpr int KernelFault = static_cast<int>(0x8002000Eu);
+    constexpr int KernelInvalid = static_cast<int>(0x80020016u);
+    KernelTimezone zone{-1, -1};
+    Require(sceKernelSettimeofday(nullptr, nullptr) == 0);
+    const KernelTimezone west{60, 1};
+    const auto unreadableTime = reinterpret_cast<const KernelTimeval*>(1);
+    const auto unreadableZone = reinterpret_cast<const KernelTimezone*>(1);
+    Require(sceKernelSettimeofday(unreadableTime, &west) == KernelFault);
+    Require(sceKernelSettimeofday(nullptr, unreadableZone) == KernelFault);
+    for (const KernelTimeval invalid : {KernelTimeval{0, 1000000}, KernelTimeval{0, -1}, KernelTimeval{-1, 0}})
+        Require(sceKernelSettimeofday(&invalid, &west) == KernelInvalid);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
+    Require(sceKernelSettimeofday(nullptr, &west) == 0);
+    Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 60 && zone.tz_dsttime == 1);
+    const KernelTimezone zero{0, 0};
+    Require(sceKernelSettimeofday(nullptr, &zero) == 0);
     Require(gettimeofday_nid_postfix(nullptr, &zone) == 0 && zone.tz_minuteswest == 0 && zone.tz_dsttime == 0);
 }
 
@@ -478,17 +970,26 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
 }
 
 static void CheckProcessQueries() {
-    KernelTitleWorkaround workaround{1, 0, {(1ull << 3) | (1ull << 0x39), ~0ull}};
-    std::int32_t enabled = -1;
-    Require(sceKernelTitleWorkaroundIsEnabled(nullptr, 3, &enabled) == static_cast<int>(0x8002000E));
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 3, nullptr) == static_cast<int>(0x8002000E));
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x3A, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, -1, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 3, &enabled) == 0 && enabled == 1);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 4, &enabled) == 0 && enabled == 0);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 63, &enabled) == static_cast<int>(0x80020016));
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x39, &enabled) == 0 && enabled == 1);
-    Require(sceKernelTitleWorkaroundIsEnabled(&workaround, 0x38, &enabled) == 0 && enabled == 0);
+    KernelTitleWorkaround workaround{1, 0, {(1ull << 3) | (1ull << 0x39) | (1ull << 63), (1ull << 0) | (1ull << 0x3F)}};
+    for (auto query : {sceKernelTitleWorkaroundIsEnabled, sceKernelTitleWorkdaroundIsEnabled}) {
+        std::int32_t enabled = -1;
+        Require(query(nullptr, 3, &enabled) == static_cast<int>(0x8002000E));
+        Require(query(&workaround, 3, nullptr) == static_cast<int>(0x8002000E));
+        Require(query(reinterpret_cast<const KernelTitleWorkaround*>(0x10), 3, &enabled) == static_cast<int>(0x8002000E));
+        Require(query(&workaround, 3, reinterpret_cast<std::int32_t*>(0x10)) == static_cast<int>(0x8002000E));
+        Require(query(nullptr, 0x80, &enabled) == static_cast<int>(0x8002000E));
+        Require(query(&workaround, 0x80, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(query(&workaround, -1, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
+        Require(query(&workaround, 3, &enabled) == 0 && enabled == 1);
+        Require(query(&workaround, 4, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 0x39, &enabled) == 0 && enabled == 1);
+        Require(query(&workaround, 0x3A, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 63, &enabled) == 0 && enabled == 1);
+        Require(query(&workaround, 64, &enabled) == 0 && enabled == 1);
+        Require(query(&workaround, 65, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 0x7E, &enabled) == 0 && enabled == 0);
+        Require(query(&workaround, 0x7F, &enabled) == 0 && enabled == 1);
+    }
     Require(sceKernelGetProcessType(getpid_nid_postfix()) == 0);
     Require(sceKernelGetProcessType(-1) == 0 && sceKernelGetProcessType(0) == 0);
     Require(sceKernelGetProcessType(getpid_nid_postfix() + 1) == static_cast<int>(0x80020003));
@@ -532,6 +1033,107 @@ void CheckPipePathconf(F fn) {
     Require(close_nid_postfix(ends[0]) == 0 && close_nid_postfix(ends[1]) == 0);
 }
 
+int Kenv(int what, const char* name, const char* value, int len) {
+    return kenv_nid_postfix(what, name, const_cast<char*>(value), len);
+}
+
+void CheckKernelEnvironment() {
+    constexpr int get = 0, set = 1, unset = 2, dump = 3;
+    char buffer[300];
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(Kenv(dump, nullptr, nullptr, 0) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(unset, "anyps5.alpha", nullptr, 0) == -1 && Error() == 2);
+    Require(Kenv(4, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
+    Require(Kenv(-1, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
+    Require(Kenv(set, "anyps5.alpha", "one", 0) == -1 && Error() == 22);
+    Require(Kenv(set, "anyps5.alpha", "one", 3) == -1 && Error() == 63);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(set, "anyps5.negative", "one", -1) == 0);
+    Require(Kenv(get, "anyps5.negative", buffer, sizeof(buffer)) == 4 && std::strcmp(buffer, "one") == 0);
+    Require(Kenv(set, "anyps5.negative", std::string(128, 'v').c_str(), -1) == 0);
+    Require(Kenv(set, "anyps5.negative", std::string(129, 'v').c_str(), -1) == -1 && Error() == 63);
+    Require(Kenv(unset, "anyps5.negative", nullptr, 0) == 0);
+
+    Require(Kenv(set, "anyps5.alpha", "one", 4) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == 4 && std::strcmp(buffer, "one") == 0);
+    Require(Kenv(get, "anyps5", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(get, "anyps5.alph", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(get, "anyps5.alphaa", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(Kenv(get, "anyps5.alpha", buffer, 2) == 2 && buffer[0] == 'o' && buffer[1] == 'n' && buffer[2] == 0x5a);
+    Require(Kenv(get, "anyps5.alpha", buffer, 0) == 0 && buffer[2] == 0x5a);
+    Require(Kenv(get, "anyps5.alpha", nullptr, 0) == 0);
+    Require(Kenv(get, "anyps5.alpha", nullptr, 4) == -1 && Error() == 14);
+    Require(Kenv(get, "anyps5.alpha", reinterpret_cast<char*>(0x10), 4) == -1 && Error() == 14);
+    Require(Kenv(set, "anyps5.alpha", "", 1) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == 1 && buffer[0] == '\0');
+    Require(Kenv(set, "anyps5.alpha", "one", 129) == 0);
+    Require(Kenv(set, "anyps5.beta", "two", 1000) == 0);
+    Require(Kenv(set, "anyps5.alpha", "uno", 4) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == 4 && std::strcmp(buffer, "uno") == 0);
+
+    constexpr char expected[] = "anyps5.alpha=uno\0anyps5.beta=two";
+    constexpr int needed = sizeof(expected);
+    Require(Kenv(dump, nullptr, nullptr, 0) == needed);
+    Require(Kenv(dump, nullptr, buffer, 0) == needed);
+    Require(Kenv(dump, nullptr, nullptr, sizeof(buffer)) == needed);
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(Kenv(dump, nullptr, buffer, sizeof(buffer)) == 0 && std::memcmp(buffer, expected, needed) == 0 && buffer[needed] == 0x5a);
+    Require(Kenv(dump, nullptr, buffer, needed) == 0);
+    std::memset(buffer, 0x5a, sizeof(buffer));
+    Require(Kenv(dump, nullptr, buffer, 20) == needed && std::memcmp(buffer, expected, 20) == 0 && buffer[20] == 0x5a);
+    Require(Kenv(dump, nullptr, reinterpret_cast<char*>(0x10), sizeof(buffer)) == -1 && Error() == 14);
+    Require(Kenv(dump, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer)) == 0);
+
+    Require(Kenv(get, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
+    Require(Kenv(get, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer)) == -1 && Error() == 14);
+    Require(Kenv(4, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
+    Require(Kenv(set, "anyps5.gamma", nullptr, 4) == -1 && Error() == 14);
+    Require(Kenv(set, "anyps5.gamma", reinterpret_cast<const char*>(0x10), 4) == -1 && Error() == 14);
+    Require(Kenv(get, "anyps5.gamma", buffer, sizeof(buffer)) == -1 && Error() == 2);
+
+    const std::string longest(128, 'n');
+    const std::string longestValue(128, 'v');
+    Require(Kenv(set, (longest + "x").c_str(), "v", 2) == -1 && Error() == 63);
+    Require(Kenv(get, (longest + "x").c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
+    Require(Kenv(set, longest.c_str(), longestValue.c_str(), 129) == 0);
+    Require(Kenv(get, longest.c_str(), buffer, sizeof(buffer)) == 129 && std::strcmp(buffer, longestValue.c_str()) == 0);
+    Require(Kenv(set, "anyps5.gamma", (longestValue + "v").c_str(), 1000) == -1 && Error() == 63);
+    Require(Kenv(set, "anyps5.gamma", longestValue.c_str(), 128) == -1 && Error() == 63);
+    Require(Kenv(unset, longest.c_str(), nullptr, 0) == 0);
+    Require(Kenv(get, longest.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 2);
+
+    Require(Kenv(set, "anyps5.eq=name", "tail", 5) == 0);
+    Require(Kenv(get, "anyps5.eq", buffer, sizeof(buffer)) == 10 && std::strcmp(buffer, "name=tail") == 0);
+    Require(Kenv(unset, "anyps5.eq", nullptr, 0) == 0);
+    Require(Kenv(unset, "anyps5.eq", nullptr, 0) == -1 && Error() == 2);
+    Require(Kenv(unset, "anyps5.alpha", nullptr, 0) == 0);
+    Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(dump, nullptr, nullptr, 0) == static_cast<int>(sizeof("anyps5.beta=two")));
+    Require(Kenv(unset, "anyps5.beta", nullptr, 0) == 0);
+    Require(Kenv(dump, nullptr, nullptr, 0) == 0);
+
+    for (int i = 0; i < 512; ++i) Require(Kenv(set, ("anyps5.fill" + std::to_string(i)).c_str(), "x", 2) == 0);
+    Require(Kenv(set, "anyps5.overflow", "x", 2) == 0);
+    Require(Kenv(get, "anyps5.overflow", buffer, sizeof(buffer)) == -1 && Error() == 2);
+    Require(Kenv(set, "anyps5.fill0", "y", 2) == 0);
+    Require(Kenv(get, "anyps5.fill0", buffer, sizeof(buffer)) == 2 && buffer[0] == 'y');
+    Require(Kenv(unset, "anyps5.fill511", nullptr, 0) == 0);
+    Require(Kenv(set, "anyps5.overflow", "x", 2) == 0);
+    Require(Kenv(get, "anyps5.overflow", buffer, sizeof(buffer)) == 2);
+    for (int i = 0; i < 511; ++i) Require(Kenv(unset, ("anyps5.fill" + std::to_string(i)).c_str(), nullptr, 0) == 0);
+    Require(Kenv(unset, "anyps5.overflow", nullptr, 0) == 0);
+    Require(Kenv(dump, nullptr, nullptr, 0) == 0);
+}
+
+template <typename F>
+void CheckUnsupportedPathconf(F fn, int descriptor) {
+    Require(fn(descriptor, 53) == 200112);
+    for (const int name : {0, 1, 4, 5, 6, 7, 8, 12, 18, 54, 55, 61, -1})
+        Require(fn(descriptor, name) == -1 && Error() == 45);
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -540,10 +1142,23 @@ int main() {
 #endif
     CheckProcessQueries();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
+    Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
+    Require(profil_nid_postfix(nullptr, 0, 0, 0xFFFFFFFFu) == -1 && Error() == 22);
+    Require(profil_nid_postfix(reinterpret_cast<void*>(0x10), 4096, 0, 0) == 0);
+    Require(profil_nid_postfix(nullptr, 0, 0, 0) == 0);
     Require(umask_nid_postfix(0) == 022);
     Require(umask_nid_postfix(07777) == 0);
     Require(umask_nid_postfix(022) == 07777);
     CheckCondattrClock();
+    CheckAmmWriteCommands();
+    CheckAmmWaitCompletion();
+    CheckAmmCommandWriters();
+    CheckAmmWrittenWaitsRun();
+    CheckAmmMapperCalls();
+    CheckAmmWaitConcurrentSubmits();
+    CheckSchedSetscheduler();
+    CheckSigreturn();
+    CheckKernelEnvironment();
     const auto root = std::filesystem::path("anyps5-kernel-sys-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
@@ -571,6 +1186,24 @@ int main() {
     CheckDescriptorPathconf(_fpathconf_nid_postfix, descriptor);
     CheckPipePathconf(fpathconf_nid_postfix);
     CheckPipePathconf(_fpathconf_nid_postfix);
+    const int kqueueDescriptor = kqueue_nid_postfix();
+    Require(kqueueDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, kqueueDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, kqueueDescriptor);
+    Require(close_nid_postfix(kqueueDescriptor) == 0);
+    const std::string namedSharedMemory = "/anyps5-kernel-sys-pathconf-" +
+        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const int sharedMemoryDescriptor = shm_open_nid_postfix(namedSharedMemory.c_str(), SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0600);
+    Require(sharedMemoryDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, sharedMemoryDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, sharedMemoryDescriptor);
+    Require(close_nid_postfix(sharedMemoryDescriptor) == 0);
+    Require(shm_unlink_nid_postfix(namedSharedMemory.c_str()) == 0);
+    const int anonymousSharedMemoryDescriptor = shm_open_nid_postfix(reinterpret_cast<const char*>(1), SCE_KERNEL_O_RDWR, 0600);
+    Require(anonymousSharedMemoryDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, anonymousSharedMemoryDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, anonymousSharedMemoryDescriptor);
+    Require(close_nid_postfix(anonymousSharedMemoryDescriptor) == 0);
     Require(close_nid_postfix(descriptor) == 0);
     Require(fstatfs_nid_postfix(-1, reinterpret_cast<KernelStatfs*>(viaPublic)) == -1 && Error() == 9);
     Require(fstat_nid_postfix(descriptor, &viaFstat) == -1 && Error() == 9);
@@ -728,6 +1361,7 @@ int main() {
     Require(link_nid_postfix(original.c_str(), "") == -1 && Error() == 2);
     Require(std::filesystem::remove(linked) && std::filesystem::hard_link_count(original) == 1);
     CheckSettimeofday();
+    CheckSceKernelSettimeofday();
     const int directory = sceKernelOpen(root.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);
     const int fileDescriptor = sceKernelOpen(file.c_str(), SCE_KERNEL_O_RDONLY, 0);
@@ -778,6 +1412,71 @@ int main() {
     Require(chroot_nid_postfix((root / "file.txt" / "..").string().c_str()) == -1 && Error() == 20);
     Require(chroot_nid_postfix((root / std::string(256, 'n')).string().c_str()) == -1 && Error() == 63);
     Require(chroot_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    Require(kldfind_nid_postfix(nullptr) == -1 && Error() == 14);
+    Require(kldfind_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
+    Require(kldfind_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    Require(kldfind_nid_postfix("") == -1 && Error() == 2);
+    Require(kldfind_nid_postfix("kernel") == -1 && Error() == 2);
+    Require(kldfind_nid_postfix("missing.ko") == -1 && Error() == 2);
+    Require(kldnext_nid_postfix(-1) == -1 && Error() == 2);
+    Require(kldnext_nid_postfix(0) == 0);
+    Require(kldnext_nid_postfix(1) == -1 && Error() == 2);
+    Require(kldfirstmod_nid_postfix(-1) == -1 && Error() == 2);
+    Require(kldfirstmod_nid_postfix(0) == -1 && Error() == 2);
+    Require(kldfirstmod_nid_postfix(1) == -1 && Error() == 2);
+    Require(kldunload_nid_postfix(-1) == -1 && Error() == 1);
+    Require(kldunload_nid_postfix(0) == -1 && Error() == 1);
+    Require(kldunload_nid_postfix(1) == -1 && Error() == 1);
+    std::array<unsigned char, 2080> fileStatus{};
+    const auto kldstatFails = [&](int fileid, std::int32_t version, int error) {
+        fileStatus.fill(0xA5);
+        std::memcpy(fileStatus.data(), &version, sizeof(version));
+        const auto before = fileStatus;
+        *__error_nid_postfix() = 0;
+        return kldstat_nid_postfix(fileid, fileStatus.data()) == -1 && Error() == error && fileStatus == before;
+    };
+    Require(kldstat_nid_postfix(1, nullptr) == -1 && Error() == 14);
+    Require(kldstat_nid_postfix(1, reinterpret_cast<void*>(0x10)) == -1 && Error() == 14);
+    for (const std::int32_t version : {0, 1, 1040, 1055, 1057, 2079, 2081, -1}) {
+        Require(kldstatFails(1, version, 22) && kldstatFails(-1, version, 22));
+    }
+    for (const std::int32_t version : {1056, 2080}) {
+        for (const int fileid : {-2147483647 - 1, -1, 0, 1, 2, 2147483647}) Require(kldstatFails(fileid, version, 2));
+    }
+    struct SymbolLookup {
+        std::int32_t version;
+        const char* name;
+        std::uint64_t value;
+        std::uint64_t size;
+    };
+    const std::string longSymbol(1024, 's');
+    SymbolLookup lookup{32, "symbol", 7, 9};
+    Require(kldsym_nid_postfix(-1, 1, nullptr) == -1 && Error() == 14);
+    Require(kldsym_nid_postfix(-1, 1, reinterpret_cast<void*>(0x10)) == -1 && Error() == 14);
+    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 2);
+    Require(lookup.value == 7 && lookup.size == 9);
+    for (const std::int32_t version : {0, 24, 31, 33}) {
+        lookup = {version, "symbol", 0, 0};
+        Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 22);
+        lookup.name = nullptr;
+        Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 22);
+    }
+    for (const int command : {0, 2, -1}) {
+        lookup = {32, nullptr, 0, 0};
+        Require(kldsym_nid_postfix(-1, command, &lookup) == -1 && Error() == 22);
+    }
+    lookup = {32, nullptr, 0, 0};
+    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 14);
+    lookup.name = reinterpret_cast<const char*>(0x10);
+    Require(kldsym_nid_postfix(0, 1, &lookup) == -1 && Error() == 14);
+    lookup.name = longSymbol.c_str();
+    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 63);
+    lookup.name = "";
+    Require(kldsym_nid_postfix(-1, 1, &lookup) == -1 && Error() == 2);
+    lookup.name = "symbol";
+    for (const int missing : {-2147483647 - 1, 1, 2, 3, 100, 2147483647}) {
+        Require(kldsym_nid_postfix(missing, 1, &lookup) == -1 && Error() == 2);
+    }
     const std::string throughFile = (root / "file.txt" / "child").string();
     Require(pathconf_nid_postfix(throughFile.c_str(), 4) == -1 && Error() == 20);
     Require(fchmodat_nid_postfix(-100, throughFile.c_str(), 0600, 0) == -1 && Error() == 20);
@@ -808,6 +1507,13 @@ int main() {
     Require(chdir_nid_postfix("/") == 0);
     Require(getcwd_nid_postfix(directoryPath, sizeof(directoryPath)) == directoryPath && std::strcmp(directoryPath, "/") == 0);
     Require(readlink_nid_postfix(file.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 22);
+    Require(lchflags_nid_postfix(file.c_str(), 0) == 0);
+    Require(lchflags_nid_postfix(nullptr, 0) == -1 && Error() == 14);
+    Require(lchflags_nid_postfix("", 0) == -1 && Error() == 2);
+    Require(lchflags_nid_postfix((root / "missing.bin").string().c_str(), 0) == -1 && Error() == 2);
+    Require(lchflags_nid_postfix((file + "/child").c_str(), 0) == -1 && Error() == 20);
+    Require(lchflags_nid_postfix(file.c_str(), 0x20) == -1 && Error() == 45);
+    Require(lchflags_nid_postfix(file.c_str(), 0x200000) == -1 && Error() == 1);
     const auto symbolic = (root / "symbolic").string();
     const int created = symlink_nid_postfix("original.bin", symbolic.c_str());
     if (created == 0) {
@@ -859,6 +1565,10 @@ int main() {
         Require(readlink_nid_postfix(dangling.c_str(), buffer, sizeof(buffer)) == 11 && !std::filesystem::exists(dangling));
         Require(symlink_nid_postfix("missing.bin", dangling.c_str()) == -1 && Error() == 17);
 #endif
+        Require(lchflags_nid_postfix(dangling.c_str(), 0) == 0);
+        Require(lchflags_nid_postfix(symbolic.c_str(), 0) == 0);
+        Require(lchflags_nid_postfix(dangling.c_str(), 0x20) == -1 && Error() == 45);
+        Require(lchflags_nid_postfix(dangling.c_str(), 0x200000) == -1 && Error() == 1);
     } else {
         Require(created == -1 && Error() == 1);
         std::fprintf(stderr, "symbolic links unavailable: the symlink success cases not tested\n");
@@ -972,6 +1682,29 @@ int main() {
     std::filesystem::create_directory(root / "nonempty");
     { std::ofstream out(root / "nonempty" / "f.bin"); out << 'x'; }
     Require(unlinkat_nid_postfix(base, "nonempty", 0x800) == -1 && Error() == 66);
+#ifdef _WIN32
+    const auto fullJunctionTarget = root / "junction-full-target";
+    Require(std::filesystem::create_directory(fullJunctionTarget));
+    { std::ofstream out(fullJunctionTarget / "inside.txt"); out << 'x'; }
+    const auto fullJunctionCommand = L"cmd /c mklink /J \"" + (root / "junction-full").wstring() + L"\" \"" + std::filesystem::absolute(fullJunctionTarget).wstring() + L"\"";
+    Require(_wsystem(fullJunctionCommand.c_str()) == 0);
+    Require(unlinkat_nid_postfix(base, "junction-full", 0x800) == -1 && Error() == 20);
+    Require(std::filesystem::is_regular_file(fullJunctionTarget / "inside.txt"));
+    Require(unlinkat_nid_postfix(base, "junction-full", 0) == 0);
+    Require(!std::filesystem::exists(std::filesystem::symlink_status(root / "junction-full")));
+    Require(std::filesystem::is_regular_file(fullJunctionTarget / "inside.txt"));
+    Require(std::filesystem::remove(fullJunctionTarget / "inside.txt") && std::filesystem::remove(fullJunctionTarget));
+    { std::ofstream out(root / "symlink-target.bin"); out << 'x'; }
+    const int madeLink = symlink_nid_postfix("symlink-target.bin", (root / "symlink-file").string().c_str());
+    if (madeLink == 0) {
+        Require(unlinkat_nid_postfix(base, "symlink-file", 0) == 0);
+        Require(!std::filesystem::exists(std::filesystem::symlink_status(root / "symlink-file")));
+        Require(std::filesystem::is_regular_file(root / "symlink-target.bin"));
+        Require(std::filesystem::remove(root / "symlink-target.bin"));
+    } else {
+        Require(std::filesystem::remove(root / "symlink-target.bin"));
+    }
+#endif
     Require(unlinkat_nid_postfix(base, "nonempty/f.bin", 0) == 0 && !std::filesystem::exists(root / "nonempty" / "f.bin"));
     Require(unlinkat_nid_postfix(base, "nonempty", 0x800) == 0 && !std::filesystem::exists(root / "nonempty"));
     { std::ofstream out(root / "to_unlink.bin"); out << 'x'; }
@@ -1089,6 +1822,29 @@ int main() {
     Require((std::filesystem::status(modeFile).permissions() & std::filesystem::perms::all) == readable);
     Require(RemoveSymlink(modeLink));
 #endif
+    const auto chmodTarget = (root / "chmod-target.txt").string();
+    { std::ofstream file(chmodTarget); file << "x"; }
+    const auto chmodLink = (root / "chmod-link.txt").string();
+    const auto chmodDangling = (root / "chmod-dangling.txt").string();
+    const auto chmodLoopA = (root / "chmod-loop-a").string();
+    const auto chmodLoopB = (root / "chmod-loop-b").string();
+    if (symlink_nid_postfix("chmod-target.txt", chmodLink.c_str()) == 0) {
+        Require(symlink_nid_postfix("chmod-missing.txt", chmodDangling.c_str()) == 0);
+        Require(symlink_nid_postfix("chmod-loop-b", chmodLoopA.c_str()) == 0 && symlink_nid_postfix("chmod-loop-a", chmodLoopB.c_str()) == 0);
+        const auto writable = [&] {
+            FileStat linked{};
+            Require(stat_nid_postfix(chmodTarget.c_str(), &linked) == 0);
+            return (linked.st_mode & 0222) != 0;
+        };
+        Require(writable());
+        Require(fchmodat_nid_postfix(base, "chmod-link.txt", 0400, 0) == 0 && !writable());
+        Require(fchmodat_nid_postfix(-100, chmodLink.c_str(), 0600, 0) == 0 && writable());
+        Require(fchmodat_nid_postfix(base, "chmod-dangling.txt", 0600, 0) == -1 && Error() == 2);
+        Require(fchmodat_nid_postfix(-100, chmodDangling.c_str(), 0600, 0) == -1 && Error() == 2);
+        Require(fchmodat_nid_postfix(base, "chmod-loop-a", 0600, 0) == -1 && Error() == 62);
+        Require(fchmodat_nid_postfix(base, "chmod-link.txt/child", 0600, 0) == -1 && Error() == 20);
+        Require(RemoveSymlink(chmodLink) && RemoveSymlink(chmodDangling) && RemoveSymlink(chmodLoopA) && RemoveSymlink(chmodLoopB));
+    }
     Require(fchown_nid_postfix(base, 0, 0) == 0);
     Require(fchown_nid_postfix(base, 0xFFFFFFFFu, 0xFFFFFFFFu) == 0);
     Require(fchown_nid_postfix(base, 0, 0xFFFFFFFFu) == 0);
