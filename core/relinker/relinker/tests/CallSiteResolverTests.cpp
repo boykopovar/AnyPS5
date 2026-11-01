@@ -1,6 +1,5 @@
 #include <relinker/analysis/CallSiteResolver.hpp>
 #include <cstdint>
-#include <initializer_list>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -12,12 +11,20 @@ void require(bool condition, const std::string& name) {
     if (!condition) throw std::runtime_error(name);
 }
 
-void check(const std::string& name, std::initializer_list<std::uint8_t> instruction, bool expected) {
+void check(const std::string& name, const std::vector<std::uint8_t>& text, bool expected) {
     auto resolver = Relinker::MakeCallSiteResolver();
-    const std::vector<std::uint8_t> text(instruction);
     const auto sites = resolver->ResolveCallSites(text, 0x1000, 0x1100, 8);
     require(sites == (expected ? std::vector<Relinker::FileByteOffset>{0x1000} : std::vector<Relinker::FileByteOffset>{}), name);
     require(resolver->ResolveCallSites(text, 0x1000, 0x1200, 8).empty(), name + " unexpected address");
+}
+
+std::vector<std::uint8_t> ripInstruction(std::vector<std::uint8_t> prefixes, std::uint8_t opcode, std::uint8_t modrm) {
+    prefixes.push_back(opcode);
+    prefixes.push_back(modrm);
+    const auto displacement = static_cast<std::uint32_t>(0x100 - (prefixes.size() + 4));
+    for (unsigned shift = 0; shift < 32; shift += 8)
+        prefixes.push_back(static_cast<std::uint8_t>(displacement >> shift));
+    return prefixes;
 }
 
 }
@@ -48,6 +55,17 @@ int main() {
         check("final REX.W after DS widens a load", {0x48, 0x3e, 0x48, 0x8b, 0x05, 0xf7, 0, 0, 0}, true);
         check("final REX.W after REPNE widens a load", {0x48, 0xf2, 0x48, 0x8b, 0x05, 0xf7, 0, 0, 0}, true);
         check("NOTRACK preserves final narrow REX", {0x3e, 0x48, 0x40, 0x8b, 0x05, 0xf7, 0, 0, 0}, false);
+        check("REP-prefixed indirect call", {0xf3, 0xff, 0x15, 0xf9, 0, 0, 0}, true);
+        check("REP-prefixed indirect tail jump", {0xf3, 0xff, 0x25, 0xf9, 0, 0, 0}, true);
+        check("operand-size indirect call", {0x66, 0xff, 0x15, 0xf9, 0, 0, 0}, true);
+        check("operand-size push memory", {0x66, 0xff, 0x35, 0xf9, 0, 0, 0}, true);
+        check("REX.W overrides operand size on a pointer load", {0x66, 0x48, 0x8b, 0x05, 0xf8, 0, 0, 0}, true);
+        check("operand-size load without REX.W", {0x66, 0x8b, 0x05, 0xf9, 0, 0, 0}, false);
+        check("operand-size after REX.W leaves a narrow load", {0x48, 0x66, 0x8b, 0x05, 0xf8, 0, 0, 0}, false);
+        check("REP after REX.W leaves a narrow load", {0x48, 0xf3, 0x8b, 0x05, 0xf8, 0, 0, 0}, false);
+        check("operand-size increment is not an import access", {0x66, 0xff, 0x05, 0xf9, 0, 0, 0}, false);
+        check("LOCK-prefixed call is not an import access", {0xf0, 0xff, 0x15, 0xf9, 0, 0, 0}, false);
+        check("FS after operand size is not a flat GOT reference", {0x66, 0x64, 0xff, 0x15, 0xf8, 0, 0, 0}, false);
         check("FS call is not a flat GOT reference", {0x64, 0xf2, 0xff, 0x15, 0xf8, 0, 0, 0}, false);
         check("GS jump is not a flat GOT reference", {0x3e, 0x65, 0xff, 0x25, 0xf8, 0, 0, 0}, false);
         check("address-size override is not a RIP64 reference", {0x3e, 0x67, 0xff, 0x15, 0xf8, 0, 0, 0}, false);
@@ -60,6 +78,30 @@ int main() {
         check("increment memory", {0xff, 0x05, 0xfa, 0, 0, 0}, false);
         check("decrement memory", {0xff, 0x0d, 0xfa, 0, 0, 0}, false);
         check("push memory", {0xff, 0x35, 0xfa, 0, 0, 0}, true);
+        for (const std::uint8_t segment : {0x2e, 0x26, 0x36, 0x3e}) {
+            const auto name = "segment " + std::to_string(segment);
+            for (const std::uint8_t modrm : {0x15, 0x1d, 0x25, 0x2d, 0x35})
+                check(name + " indirect access " + std::to_string(modrm), ripInstruction({segment}, 0xff, modrm), true);
+            check(name + " pointer load", ripInstruction({segment, 0x48}, 0x8b, 0x05), true);
+            check(name + " before BND call", ripInstruction({segment, 0xf2}, 0xff, 0x15), true);
+            check(name + " after BND jump", ripInstruction({0xf2, segment}, 0xff, 0x25), true);
+            check(name + " after REX.W leaves a narrow load", ripInstruction({0x48, segment}, 0x8b, 0x05), false);
+            check(name + " final REX.W restores pointer width", ripInstruction({0x48, segment, 0x48}, 0x8b, 0x05), true);
+            check(name + " final narrow REX", ripInstruction({segment, 0x48, 0x40}, 0x8b, 0x05), false);
+            check(name + " increment", ripInstruction({segment}, 0xff, 0x05), false);
+            check(name + " decrement", ripInstruction({segment}, 0xff, 0x0d), false);
+            check(name + " narrow load", ripInstruction({segment}, 0x8b, 0x05), false);
+            for (const std::uint8_t flat : {0x66, 0xf3}) {
+                const auto suffix = " flat prefix " + std::to_string(flat);
+                check(name + " before" + suffix, ripInstruction({segment, flat}, 0xff, 0x15), true);
+                check(name + " after" + suffix, ripInstruction({flat, segment}, 0xff, 0x15), true);
+            }
+            for (const std::uint8_t unsupported : {0x64, 0x65, 0x67, 0xf0}) {
+                const auto suffix = " unsupported prefix " + std::to_string(unsupported);
+                check(name + " before" + suffix, ripInstruction({segment, unsupported}, 0xff, 0x15), false);
+                check(name + " after" + suffix, ripInstruction({unsupported, segment}, 0xff, 0x15), false);
+            }
+        }
         std::cout << "Call-site resolver tests passed\n";
         return 0;
     } catch (const std::exception& error) {
