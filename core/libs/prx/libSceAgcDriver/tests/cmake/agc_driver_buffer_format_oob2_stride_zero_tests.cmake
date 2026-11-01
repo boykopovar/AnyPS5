@@ -1,0 +1,4 @@
+if(TARGET agc_driver_buffer_format_oob2_stride_zero_tests)
+    target_include_directories(agc_driver_buffer_format_oob2_stride_zero_tests PRIVATE $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>)
+    set_tests_properties(agc_driver_buffer_format_oob2_stride_zero PROPERTIES TIMEOUT 30)
+endif()
