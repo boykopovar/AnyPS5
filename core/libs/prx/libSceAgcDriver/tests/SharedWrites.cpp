@@ -14,7 +14,7 @@
 #include <string_view>
 #include <thread>
 #include <vector>
-#ifndef _WIN32
+#ifdef __linux__
 #include <sys/resource.h>
 #endif
 
@@ -57,7 +57,7 @@ void benchmark(bool labels = false, bool backing = true) {
         std::vector<double> times;
         std::uint64_t faults = 0;
         for (unsigned pass = 0; pass < 10; ++pass) {
-#ifndef _WIN32
+#ifdef __linux__
             rusage before{}, after{};
             getrusage(RUSAGE_THREAD, &before);
 #endif
@@ -71,7 +71,7 @@ void benchmark(bool labels = false, bool backing = true) {
                 } else Write(mapping.Address(), std::span(source).first(bytes), 1);
             }
             const auto us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count() / 256;
-#ifndef _WIN32
+#ifdef __linux__
             getrusage(RUSAGE_THREAD, &after);
             if (pass != 0) faults += after.ru_minflt - before.ru_minflt;
 #endif
@@ -185,7 +185,7 @@ template<class TAction> void fails(TAction&& fn) {
     require(failed, "invalid write was accepted");
 }
 
-#ifndef _WIN32
+#ifdef __linux__
 std::size_t directMappings() {
     std::ifstream maps("/proc/self/maps");
     require(maps.is_open(), "cannot inspect mapping lifetimes");
@@ -213,7 +213,7 @@ void run() {
         bytes[part + 456] = std::byte{91};
         CollectWritesUncached(mapping.Address(), mapping.size);
         require(!UnchangedSince(mapping.Address(), mapping.size, after), "subsequent guest write was lost");
-#ifndef _WIN32
+#ifdef __linux__
         std::size_t dirty = 0;
         const auto collect = [&] {
             return GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(mapping.Address(), mapping.size,
@@ -281,12 +281,12 @@ int main(int argc, char** argv) {
         else if (argc == 2 && std::string_view(argv[1]) == "--benchmark-fallback") benchmark(false, false);
         else if (argc == 2 && std::string_view(argv[1]) == "--benchmark-labels-fallback") benchmark(true, false);
         else {
-#ifndef _WIN32
+#ifdef __linux__
             const auto before = directMappings();
 #endif
             run();
             smallStores();
-#ifndef _WIN32
+#ifdef __linux__
             require(directMappings() == before, "physical backing write views leaked");
 #endif
             std::cout << "Shared backing write tests passed\n";
