@@ -1037,69 +1037,6 @@ void CoverageOffTest() {
     Require(Contains(text, "\"milestones\": false,\n    \"missing\": false,\n    \"shaders\": false") && !Contains(text, "cacheHits"), "a section the build does not collect is marked as covered: " + text);
 }
 
-#ifndef _WIN32
-int RunChild(const fs::path& executable, const fs::path& directory, const std::string& mode, const std::string& arguments = "", const std::string& environment = "APS5_REPORT=1") {
-    const auto command = "cd '" + directory.string() + "' && " + environment + " exec '" + executable.string() + "' --child " + mode + " " + arguments + " 2>/dev/null";
-    return std::system(command.c_str());
-}
-
-fs::path Self;
-
-fs::path CopySelf(const Directory& directory) {
-    const auto copy = directory.path / "game";
-    fs::copy_file(Self, copy);
-    return copy;
-}
-
-std::string Report(const Directory& directory) {
-    return Read(directory.path / "anyps5-report.json");
-}
-
-void ChildExitTest() {
-    Directory directory;
-    RunChild(CopySelf(directory), directory.path, "exit");
-    const auto text = Report(directory);
-    Require(Contains(text, "\"exit\": \"clean\"") && Contains(text, "\"exitCode\": 7") && Contains(text, "\"reason\": \"guest-exit\"") && Contains(text, "\"kind\": \"none\"") && Contains(text, "\"recovered\": false"), "exit() through the runtime did not write a clean report: " + text);
-}
-
-void ChildFlagTest() {
-    Directory directory;
-    const auto copy = CopySelf(directory);
-    const int status = RunChild(copy, directory.path, "exit", "--aps5-report=off", "APS5_REPORT=1");
-    Require(WIFEXITED(status) && WEXITSTATUS(status) == 7, "the run with --aps5-report=off did not exit with its own status");
-    Require(!fs::exists(directory.path / "anyps5-report.json"), "--aps5-report=off still wrote a report");
-    RunChild(copy, directory.path, "exit", "--aps5-report=on", "APS5_REPORT=0");
-    Require(fs::exists(directory.path / "anyps5-report.json"), "--aps5-report=on did not write a report");
-}
-
-void ChildMissingFunctionTest() {
-    Directory directory;
-    const int status = RunChild(CopySelf(directory), directory.path, "caught-missing-function");
-    Require(WIFEXITED(status) && WEXITSTATUS(status) == 0, "the run that caught an unimplemented function did not exit normally");
-    const auto text = Report(directory);
-    for (const char* part : {"\"kind\": \"none\"", "\"exit\": \"clean\"", "\"name\": \"sceNpCaught\"", "\"calls\": 1", "\"missing\": true"}) {
-        Require(Contains(text, part), std::string("the report of the caught missing function lacks ") + part + ": " + text);
-    }
-}
-
-void GuestRootIsNotFixedAtLoadTest() {
-    Directory directory;
-    const auto output = directory.path / "resolved.txt";
-    RunChild(CopySelf(directory), directory.path, "guest-root", "'" + output.string() + "'", "unset APS5_REPORT &&");
-    const auto resolved = Read(output);
-    Require(!resolved.empty(), "the child did not resolve a path");
-    Require(SamePath(fs::path(resolved).parent_path(), directory.path / "later"), "the guest root was fixed when the library loaded, not at the first path lookup: " + resolved);
-}
-
-void LibraryFromSourceTest() {
-    Directory directory;
-    RunChild(CopySelf(directory), directory.path, "library-path");
-    const auto text = Report(directory);
-    Require(Contains(text, "\"library\": \"libA\""), "the library is not the one in the core/libs/prx/ path: " + text);
-    Require(!Contains(text, "libB") && !Contains(text, "/home/x"), "a deeper prx/ folder or a host path got into the report: " + text);
-}
-
-
 void Dump(const fs::path& directory) {
     fs::create_directories(directory);
     auto write = [&](const char* name, const RunReport::Report& report) {
@@ -1163,12 +1100,79 @@ void Dump(const fs::path& directory) {
     fs::copy_file(collector.ReportPath(), directory / "collector-clean.json", fs::copy_options::overwrite_existing);
 }
 
+#ifndef _WIN32
+int RunChild(const fs::path& executable, const fs::path& directory, const std::string& mode, const std::string& arguments = "", const std::string& environment = "APS5_REPORT=1") {
+    const auto command = "cd '" + directory.string() + "' && " + environment + " exec '" + executable.string() + "' --child " + mode + " " + arguments + " 2>/dev/null";
+    return std::system(command.c_str());
+}
+
+fs::path Self;
+
+fs::path CopySelf(const Directory& directory) {
+    const auto copy = directory.path / "game";
+    fs::copy_file(Self, copy);
+    return copy;
+}
+
+std::string Report(const Directory& directory) {
+    return Read(directory.path / "anyps5-report.json");
+}
+
+void ChildExitTest() {
+    Directory directory;
+    RunChild(CopySelf(directory), directory.path, "exit");
+    const auto text = Report(directory);
+    Require(Contains(text, "\"exit\": \"clean\"") && Contains(text, "\"exitCode\": 7") && Contains(text, "\"reason\": \"guest-exit\"") && Contains(text, "\"kind\": \"none\"") && Contains(text, "\"recovered\": false"), "exit() through the runtime did not write a clean report: " + text);
+}
+
+void ChildFlagTest() {
+    Directory directory;
+    const auto copy = CopySelf(directory);
+    const int status = RunChild(copy, directory.path, "exit", "--aps5-report=off", "APS5_REPORT=1");
+    Require(WIFEXITED(status) && WEXITSTATUS(status) == 7, "the run with --aps5-report=off did not exit with its own status");
+    Require(!fs::exists(directory.path / "anyps5-report.json"), "--aps5-report=off still wrote a report");
+    RunChild(copy, directory.path, "exit", "--aps5-report=on", "APS5_REPORT=0");
+    Require(fs::exists(directory.path / "anyps5-report.json"), "--aps5-report=on did not write a report");
+}
+
+void ChildMissingFunctionTest() {
+    Directory directory;
+    const int status = RunChild(CopySelf(directory), directory.path, "caught-missing-function");
+    Require(WIFEXITED(status) && WEXITSTATUS(status) == 0, "the run that caught an unimplemented function did not exit normally");
+    const auto text = Report(directory);
+    for (const char* part : {"\"kind\": \"none\"", "\"exit\": \"clean\"", "\"name\": \"sceNpCaught\"", "\"calls\": 1", "\"missing\": true"}) {
+        Require(Contains(text, part), std::string("the report of the caught missing function lacks ") + part + ": " + text);
+    }
+}
+
+void GuestRootIsNotFixedAtLoadTest() {
+    Directory directory;
+    const auto output = directory.path / "resolved.txt";
+    RunChild(CopySelf(directory), directory.path, "guest-root", "'" + output.string() + "'", "unset APS5_REPORT &&");
+    const auto resolved = Read(output);
+    Require(!resolved.empty(), "the child did not resolve a path");
+    Require(SamePath(fs::path(resolved).parent_path(), directory.path / "later"), "the guest root was fixed when the library loaded, not at the first path lookup: " + resolved);
+}
+
+void LibraryFromSourceTest() {
+    Directory directory;
+    RunChild(CopySelf(directory), directory.path, "library-path");
+    const auto text = Report(directory);
+    Require(Contains(text, "\"library\": \"libA\""), "the library is not the one in the core/libs/prx/ path: " + text);
+    Require(!Contains(text, "libB") && !Contains(text, "/home/x"), "a deeper prx/ folder or a host path got into the report: " + text);
+}
+
+
 #endif
 
 }
 
 int main(int argc, char** argv) {
     try {
+        if (argc > 2 && std::string(argv[1]) == "--dump") {
+            Dump(argv[2]);
+            return 0;
+        }
 #ifndef _WIN32
         const std::string first = argc > 1 ? argv[1] : "";
         if (first == "--child" && argc > 2) {
@@ -1192,10 +1196,6 @@ int main(int argc, char** argv) {
             }
             std::raise(SIGKILL);
             return 3;
-        }
-        if (first == "--dump" && argc > 2) {
-            Dump(argv[2]);
-            return 0;
         }
         Self = fs::absolute(argv[0]);
 #endif
