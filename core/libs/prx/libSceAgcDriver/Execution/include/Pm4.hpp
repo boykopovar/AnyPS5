@@ -106,6 +106,7 @@ bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet);
 // Whether a WAIT_REG_MEM's compare holds for `value` (the 4 or 8 bytes a label the recorder still
 // holds will store), without reading memory.
 bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value);
+bool WaitCompares(std::uint32_t function, std::uint64_t reference, std::uint64_t mask, std::uint64_t value);
 std::size_t WaitAwaitedBytes(std::span<const std::uint32_t> packet);
 std::size_t ConditionalWords(std::span<const std::uint32_t> packet);
 std::uint32_t ReadCondition(std::span<const std::uint32_t> packet);

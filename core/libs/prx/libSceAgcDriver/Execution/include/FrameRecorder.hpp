@@ -6,6 +6,8 @@
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "SceShaders.hpp"
 #include "SceTypes.hpp"
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -42,6 +44,12 @@ public:
     void Suspend(const std::function<void()>& accept);
     void PresentBuffer(const DisplayBuffer& buffer);
     void FrameBoundary();
+    static void NoteGpuStore(std::uint64_t address, std::span<const std::byte> bytes) {
+        if (notingGpuStores.load(std::memory_order_relaxed)) Active()->noteGpuStore(address, bytes);
+    }
+    static void NoteGpuFill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern) {
+        if (notingGpuStores.load(std::memory_order_relaxed)) Active()->noteGpuFill(address, bytes, pattern);
+    }
 
 private:
     enum class State { Waiting, Recording, Done };
@@ -56,6 +64,12 @@ private:
     };
 
     FrameRecorder(std::filesystem::path directory, std::filesystem::path trigger, std::uint64_t atBoundary, std::uint64_t frames);
+    struct GpuFill {
+        std::uint64_t end = 0;
+        std::array<std::uint32_t, 4> pattern{};
+    };
+    static constexpr std::size_t GpuStoreWordLimit = 64u * 1024u;
+
     struct Span {
         std::uint64_t address = 0;
         std::uint64_t bytes = 0;
@@ -72,7 +86,12 @@ private:
     void start();
     void finish();
     void snapshot(const Range& range);
-    void readGuest(std::uint64_t address, std::span<std::byte> bytes, GuestRead read);
+    void readGuest(std::uint64_t address, std::span<std::byte> bytes);
+    void noteGpuStore(std::uint64_t address, std::span<const std::byte> bytes);
+    void noteGpuFill(std::uint64_t address, std::uint64_t bytes, const std::array<std::uint32_t, 4>& pattern);
+    void endGpuStores();
+    void forgetGpuStores(std::uint64_t begin, std::uint64_t end);
+    void keepTitleWords(std::uint64_t address, std::span<const std::byte> bytes, std::vector<std::pair<std::size_t, std::size_t>>& runs, bool zero);
     void writeReferenceFrames();
     bool abandonIfDiskLow();
     void stop(const char* reason);
@@ -92,6 +111,12 @@ private:
     std::vector<Range> ranges;
     std::map<std::uint64_t, std::uint64_t> shaderMarks;
     std::map<std::uint64_t, std::uint64_t> hostPageHashes;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, std::pair<std::uint64_t, std::uint64_t>> unwatchedHashes;
+    inline static std::atomic<bool> notingGpuStores{false};
+    std::mutex gpuStoresMutex;
+    std::map<std::uint64_t, std::uint32_t> gpuWords;
+    std::map<std::uint64_t, GpuFill> gpuFills;
+    std::uint64_t gpuStoreBytes = 0;
     std::mutex displayMutex;
     std::map<std::uint64_t, DisplayBuffer> displayBuffers;
     std::uint64_t ordinal = 0;

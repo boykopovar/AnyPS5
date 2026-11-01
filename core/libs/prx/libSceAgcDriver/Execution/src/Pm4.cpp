@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include <algorithm>
@@ -124,10 +125,15 @@ std::vector<std::byte> dmaSourceBytes(std::span<const std::uint32_t> packet) {
     return copySource(GdsAddress() + packet[2], bytes, false);
 }
 
+void driverStore(std::uint64_t destination, std::span<const std::byte> bytes, std::size_t alignment = 1) {
+    GuestMemory::Write(destination, bytes, alignment);
+    FrameRecorder::NoteGpuStore(destination, bytes);
+}
+
 void copyMemory(std::uint64_t source, std::uint64_t destination, std::size_t bytes, bool immediate) {
     if (bytes == 0) return;
     GuestMemory::CheckRange(reinterpret_cast<void*>(destination), bytes, 1, true);
-    GuestMemory::Write(destination, copySource(source, bytes, immediate));
+    driverStore(destination, copySource(source, bytes, immediate));
 }
 
 constexpr std::uint32_t CopyDataRegisterSource = 0;
@@ -538,13 +544,9 @@ bool IsTagMarker(std::span<const std::uint32_t> packet) {
     return packet.size() >= 3 && ((packet[0] >> 8u) & 0xffu) == 0x79u && packet[1] == 0x342u;
 }
 
-namespace {
-
-bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_t value) {
-    const std::uint64_t reference = wide ? address(packet[4], packet[5]) : packet[4];
-    const std::uint64_t mask = wide ? address(packet[6], packet[7]) : packet[5];
+bool WaitCompares(std::uint32_t function, std::uint64_t reference, std::uint64_t mask, std::uint64_t value) {
     const auto masked = value & mask;
-    switch (packet[1] & 7u) {
+    switch (function) {
         case 0: return true;
         case 1: return masked < reference;
         case 2: return masked <= reference;
@@ -554,6 +556,12 @@ bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_
         case 6: return masked > reference;
         default: return false;
     }
+}
+
+namespace {
+
+bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_t value) {
+    return WaitCompares(packet[1] & 7u, wide ? address(packet[4], packet[5]) : packet[4], wide ? address(packet[6], packet[7]) : packet[5], value);
 }
 
 }
@@ -1093,10 +1101,12 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             if ((packet[3] >> 29u) == 6u) {
                 prepare();
                 const bool set = (packet[3] & 0x100000u) != 0;
+                std::uint64_t stored = 1;
                 GuestMemory::StoreOwnBytes(semaphore, sizeof(*word), [&] {
                     if (set) shared.store(1, std::memory_order_release);
-                    else shared.fetch_add(1, std::memory_order_acq_rel);
+                    else stored = shared.fetch_add(1, std::memory_order_acq_rel) + 1;
                 });
+                FrameRecorder::NoteGpuStore(semaphore, std::as_bytes(std::span(&stored, 1)));
                 return;
             }
             const auto start = std::chrono::steady_clock::now();
@@ -1112,8 +1122,10 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                     GuestMemory::StoreOwnBytes(semaphore, sizeof(*word), [&] {
                         taken = shared.compare_exchange_strong(value, value - 1, std::memory_order_acq_rel);
                     });
-                    if (taken) return;
-                    continue;
+                    if (!taken) continue;
+                    const auto stored = value - 1;
+                    FrameRecorder::NoteGpuStore(semaphore, std::as_bytes(std::span(&stored, 1)));
+                    return;
                 }
                 PreciseSleepUs(50);
                 if (!warned && std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) {
@@ -1132,7 +1144,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             if (dataSelect == 3) {
                 value = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10);
             }
-            GuestMemory::Write(destination, std::as_bytes(std::span(&value, 1)).first(dataSelect == 1 ? 4 : 8), dataSelect == 1 ? 4 : 8);
+            driverStore(destination, std::as_bytes(std::span(&value, 1)).first(dataSelect == 1 ? 4 : 8), dataSelect == 1 ? 4 : 8);
             return;
         }
         case 0x69: case 0x76: case 0x79: case 0x7a: {
@@ -1146,7 +1158,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             return;
         case 0x83: {
             const auto dump = DecodeConstantRamDump(packet);
-            GuestMemory::Write(dump.destination, std::as_bytes(queue.ConstantRam().subspan(dump.offset / 4, dump.words)), 4);
+            driverStore(dump.destination, std::as_bytes(queue.ConstantRam().subspan(dump.offset / 4, dump.words)), 4);
             return;
         }
         case 0x45: {
@@ -1156,7 +1168,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                 const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
                 GuestMemory::Read(write.compared, std::as_writable_bytes(std::span(&value, 1)), 4);
             }
-            if (waitCompares(packet, false, value)) GuestMemory::Write(write.destination, std::as_bytes(std::span(&write.value, 1)), 4);
+            if (waitCompares(packet, false, value)) driverStore(write.destination, std::as_bytes(std::span(&write.value, 1)), 4);
             return;
         }
         case 0x37: {
@@ -1167,8 +1179,8 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             }
             const auto destination = address(packet[2], packet[3]);
             if ((packet[1] & 0x10000u) != 0) {
-                for (const auto& value : packet.subspan(4)) GuestMemory::Write(destination, std::as_bytes(std::span(&value, 1)), 4);
-            } else GuestMemory::Write(destination, std::as_bytes(packet.subspan(4)), 4);
+                for (const auto& value : packet.subspan(4)) driverStore(destination, std::as_bytes(std::span(&value, 1)), 4);
+            } else driverStore(destination, std::as_bytes(packet.subspan(4)), 4);
             return;
         }
         case 0x40: {
@@ -1183,7 +1195,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             const auto destination = address(packet[4], packet[5]);
             const auto data = copyDataSource(packet, queue, CopyDataBytes(packet));
             GuestMemory::CheckRange(reinterpret_cast<void*>(destination), data.size(), 1, true);
-            GuestMemory::Write(destination, data);
+            driverStore(destination, data);
             return;
         }
         case 0x28: return;
@@ -1193,7 +1205,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
             auto data = dmaSourceBytes(packet);
             const auto destination = dmaDestination(packet) == DmaSelectGds ? GdsAddress() + packet[4] : address(packet[4], packet[5]);
             GuestMemory::CheckRange(reinterpret_cast<void*>(destination), bytes, 1, true);
-            GuestMemory::Write(destination, data);
+            driverStore(destination, data);
             return;
         }
         default: throw std::runtime_error("packet requires driver execution");

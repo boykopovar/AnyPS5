@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
+#include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libSceAgcDriver/Eq/include/Event.hpp"
@@ -290,7 +291,9 @@ void Driver::dumpSampleCounters(std::uint64_t address) {
     constexpr std::uint64_t ready = 1ull << 63u;
     for (std::uint64_t db = 0; db < Pm4::SampleDumpBlocks; ++db) {
         const std::uint64_t value = ready | (db == 0 ? samples : 0u);
-        GuestMemory::Write(address + db * Pm4::SampleDumpStride, std::as_bytes(std::span(&value, 1)).first(Pm4::SampleDumpBlockBytes), 8);
+        const auto bytes = std::as_bytes(std::span(&value, 1)).first(Pm4::SampleDumpBlockBytes);
+        GuestMemory::Write(address + db * Pm4::SampleDumpStride, bytes, 8);
+        FrameRecorder::NoteGpuStore(address + db * Pm4::SampleDumpStride, bytes);
     }
 }
 
