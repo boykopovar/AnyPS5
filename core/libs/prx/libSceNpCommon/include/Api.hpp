@@ -169,8 +169,8 @@ int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec);
 void APS5_VABI sceNpGetSdkVersion(char* version);
 int APS5_VABI sceNpCloseSema(void);
 int APS5_VABI sceNpGetNavSdkVersion(void);
-int APS5_VABI sceNpIntGetPlatformType(void);
-int APS5_VABI sceNpIntSetPlatformType(void);
+int APS5_VABI sceNpIntGetPlatformType(const NpIdFull* npId);
+int APS5_VABI sceNpIntSetPlatformType(NpIdFull* npId, std::uint32_t platformType);
 int APS5_VABI sceNpJsonParse(void* guestContext, const char* data, int length);
 int APS5_VABI sceNpJsonParseBuf(void* guestContext, const char* data, int length);
 int APS5_VABI sceNpJsonParseBufInit(void* guestContext, const NpJsonRuleSet* rules, char* key,
@@ -181,14 +181,14 @@ int APS5_VABI sceNpJsonParseExInit(void* guestContext, const NpJsonRuleSet* rule
 int APS5_VABI sceNpJsonParseInit(void* guestContext, const NpJsonRuleSet* rules, NpJsonCallback callback,
     void* user);
 int APS5_VABI sceNpOpenSema(void);
+int APS5_VABI sceNpSetPlatformType(NpIdFull* npId, std::uint32_t platformType);
+int APS5_VABI sceNpUtilCanonicalizeNpIdForPs4(NpIdFull* npId, std::int32_t replace);
+int APS5_VABI sceNpUtilCanonicalizeNpIdForPsp2(NpIdFull* npId, std::int32_t replace);
 int APS5_VABI sceNpServerErrorJsonGetErrorCode(std::int32_t httpStatus, const char* json, std::size_t length);
 int APS5_VABI sceNpServerErrorJsonMultiGetErrorCode(std::int32_t httpStatus, const char* json, std::size_t length);
 int APS5_VABI sceNpServerErrorJsonParse(void* guestContext, const char* data, int length);
 int APS5_VABI sceNpServerErrorJsonParseInit(void* guestContext, NpServerErrorJsonResult* result);
 int APS5_VABI sceNpServerErrorJsonParseMultiInit(void* guestContext, NpServerErrorJsonResult* result);
-int APS5_VABI sceNpSetPlatformType(void);
-int APS5_VABI sceNpUtilCanonicalizeNpIdForPs4(void);
-int APS5_VABI sceNpUtilCanonicalizeNpIdForPsp2(void);
 int APS5_VABI sceNpUtilGetDateSetAuto(void);
 int APS5_VABI sceNpUtilGetDbgCommerce(void);
 int APS5_VABI sceNpUtilGetEnv(void);
