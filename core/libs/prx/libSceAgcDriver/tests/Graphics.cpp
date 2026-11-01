@@ -5236,6 +5236,17 @@ void TwoSampleDitheredAlphaToCoverageTests() {
             Require(decoded.alphaToCoverage && decoded.ditheredAlphaToCoverage && decoded.ditheredAlphaSamples == 1u && decoded.singleSampleDither == pattern && decoded.samples == 1u, "a measured single-sample dither did not reach the shader state");
             Require(AgcDriver::Graphics::DrawRejection(singleSample, false).empty(), "the precheck refused a measured single-sample dither");
             Require(AgcDriver::Graphics::CanonicalPipelineState(decoded).singleSampleDither == ShaderRecompiler::SingleSampleDither::None, "shader-only alpha dither entered the pipeline journal state");
+            for (const auto& locations : std::array{
+                std::array{0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+                std::array{0x77777777u, 0x77777777u, 0x77777777u, 0x77777777u},
+                std::array{0x88888888u, 0x88888888u, 0x88888888u, 0x88888888u},
+                std::array{0x01234567u, 0x89abcdefu, 0xfedcba98u, 0x76543210u}}) {
+                auto shifted = singleSample;
+                for (std::uint32_t pixel = 0; pixel < locations.size(); ++pixel) shifted.context[0x2feu + pixel * 4u] = locations[pixel];
+                const auto state = AgcDriver::Graphics::DecodeState(shifted);
+                Require(state.samples == 1u && state.singleSampleDither == pattern && !state.customSampleLocations && !state.sampleLocationGrid && std::ranges::all_of(state.sampleLocations, [](auto location) { return location == 0; }), "single-sample dither retained ignored sample locations without MSAA_ENABLE");
+                Require(AgcDriver::Graphics::DrawRejection(shifted, false).empty(), "the single-sample dither precheck refused ignored sample locations without MSAA_ENABLE");
+            }
         }
         for (const auto eqaa : {0x100u, 0x1000u, 0x10u, 0x1u}) {
             auto invalid = singleSample;
