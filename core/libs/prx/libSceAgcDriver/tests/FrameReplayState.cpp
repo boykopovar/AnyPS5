@@ -2,6 +2,7 @@
 #include "../tools/FrameReplay.cpp"
 #undef main
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <barrier>
@@ -394,6 +395,80 @@ void testShaderCode(const std::filesystem::path& directory, bool host) {
     check(listed && *listed == expected, "the offline shader listing read other code than the capture holds at the registration");
 }
 
+bool insideRanges(const FrameCaptureReader& reader, const FrameMemoryChunk& chunk) {
+    std::map<std::uint64_t, std::uint64_t> ranges;
+    for (const auto& range : reader.Chunks()) {
+        if (range.kind == FrameMemoryKind::Range) ranges[range.address] = std::max(ranges[range.address], range.address + range.bytes);
+    }
+    auto cursor = chunk.address;
+    for (const auto& [begin, end] : ranges) {
+        if (begin <= cursor && cursor < end) cursor = end;
+    }
+    return cursor >= chunk.address + chunk.bytes;
+}
+
+void testShaderBlockHole(const std::filesystem::path& directory) {
+    constexpr std::size_t Block = FrameCaptureWriter::BlockBytes;
+    constexpr std::size_t Page = 4096;
+    auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(2 * Block, Block));
+    check(block != nullptr, "guest reservation failed");
+    auto* tail = block + 8 * Page;
+    for (const auto& [piece, bytes] : {std::pair{block, 7 * Page}, std::pair{tail, Block - 8 * Page}}) {
+        GuestArena::GuestArenaCommit_nid_postfix(piece, bytes, 0x04, bytes);
+#ifdef _WIN32
+        AgcDriver::GuestMemory::Unwatch(address(piece), bytes);
+#endif
+        GuestAllocations::Mutation mutation;
+        mutation.Add(piece, bytes, true, true, false);
+    }
+    auto* shader = reinterpret_cast<Shader*>(tail + 0x2b0);
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    recorder->RegisterShader(shader);
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    bool shaderDelta = false;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind != FrameMemoryKind::Delta) continue;
+        check(insideRanges(reader, chunk), "a memory delta of the shader's block reaches a page that no range of the capture holds");
+        shaderDelta = shaderDelta || (chunk.address <= address(shader) && address(shader) + sizeof(Shader) <= chunk.address + chunk.bytes);
+    }
+    check(shaderDelta, "the capture holds no memory delta with the registered shader");
+}
+
+void testDeltaOutsideRanges(const std::filesystem::path& directory) {
+    constexpr std::size_t Block = FrameCaptureWriter::BlockBytes;
+    constexpr std::size_t Page = 4096;
+    auto* block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Block, Block));
+    check(block != nullptr, "guest reservation failed");
+    GuestArena::GuestArenaRelease_nid_postfix(block, Block);
+    std::uintptr_t base = 0;
+    std::size_t arenaSize = 0;
+    GuestArena::GuestArenaRange_nid_postfix(&base, &arenaSize);
+    const std::vector<std::byte> delta(Block, std::byte{0x5a});
+    FrameCaptureWriter writer(directory);
+    writer.WriteRange(address(block), 7 * Page, FrameRangeKind::Section, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable);
+    writer.WriteRange(address(block) + 8 * Page, Block - 8 * Page, FrameRangeKind::Section, ReadWrite, FrameRangeAccess::Readable | FrameRangeAccess::Writable);
+    writer.WriteDelta(2, 0, address(block), delta);
+    writer.WriteCall(memoryCall(2, 1));
+    writer.Finish("{\"arena_base\":" + std::to_string(base) + "}");
+    const FrameCaptureReader reader(directory);
+    std::string message;
+    try {
+        restoreMemory(reader);
+    } catch (const std::exception& error) {
+        message = error.what();
+    }
+    char hole[48];
+    std::snprintf(hole, sizeof(hole), "reaches 0x%llx", static_cast<unsigned long long>(address(block) + 7 * Page));
+    check(message.find(hole) != std::string::npos, ("the replay accepted a memory delta across a page that no range of the capture maps: " + message).c_str());
+}
+
 void writeInspectionCapture(const std::filesystem::path& directory) {
     constexpr std::uint64_t Commands = 0x1000000001ull;
     constexpr std::uint64_t Header = 0x2000000000ull;
@@ -495,6 +570,8 @@ int main(int argc, char** argv) {
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "environment") testColdPipelines();
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");
+        else if (mode == "shader_hole") testShaderBlockHole(directory);
+        else if (mode == "delta_hole") testDeltaOutsideRanges(directory);
         else throw std::runtime_error("unknown test");
         if (mode != "reservation_failure") AgcDriverShutdown_nid_postfix();
         std::puts("frame replay state test passed");

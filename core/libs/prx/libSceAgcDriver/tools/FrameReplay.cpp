@@ -143,6 +143,27 @@ std::uint64_t headerNumber(const std::string& header, std::string_view key) {
     return std::strtoull(header.c_str() + at + quoted.size(), nullptr, 10);
 }
 
+void requireMemoryInRanges(const FrameCaptureReader& reader) {
+    std::map<std::uint64_t, std::uint64_t> mapped;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind != FrameMemoryKind::Range) continue;
+        auto& end = mapped[chunk.address];
+        end = std::max(end, chunk.address + chunk.bytes);
+    }
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind != FrameMemoryKind::Snapshot && chunk.kind != FrameMemoryKind::Delta) continue;
+        const auto end = chunk.address + chunk.bytes;
+        auto cursor = chunk.address;
+        auto range = mapped.upper_bound(cursor);
+        if (range != mapped.begin()) --range;
+        for (; range != mapped.end() && range->first <= cursor && cursor < end; ++range) cursor = std::max(cursor, range->second);
+        if (cursor >= end) continue;
+        char where[96];
+        std::snprintf(where, sizeof(where), " at 0x%llx (%llu bytes) reaches 0x%llx", static_cast<unsigned long long>(chunk.address), static_cast<unsigned long long>(chunk.bytes), static_cast<unsigned long long>(cursor));
+        throw std::runtime_error(std::string("frame replay: the memory ") + (chunk.kind == FrameMemoryKind::Delta ? "delta of group " + std::to_string(chunk.group) : std::string("snapshot")) + where + ", which no range of the capture maps");
+    }
+}
+
 void restore(const FrameCaptureReader& reader, const FrameMemoryChunk& chunk) {
     reader.Read(chunk, std::span(reinterpret_cast<std::byte*>(static_cast<std::uintptr_t>(chunk.address)), static_cast<std::size_t>(chunk.bytes)));
 }
@@ -276,6 +297,7 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
     if (!reader.Header().empty() && headerNumber(reader.Header(), "arena_base") != base) throw std::runtime_error("frame replay: the guest arena is at a different address than in the capture");
+    requireMemoryInRanges(reader);
     progress();
     Skipped skipped;
     mapHostRanges(reader, skipped);

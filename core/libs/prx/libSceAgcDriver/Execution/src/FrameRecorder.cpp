@@ -392,14 +392,39 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
         for (const auto* sharps : shader->user_data->sharp_resource_offset) note(sharps);
     }
     if (blocks.empty() && hostPages.empty()) return;
+    const auto added = newRanges();
+    std::map<std::uint64_t, std::uint64_t> captured;
+    for (const auto& list : {std::span<const Range>(ranges), std::span<const Range>(added)}) {
+        for (const auto& range : list) {
+            if (!range.readable) continue;
+            auto& end = captured[range.address];
+            end = std::max(end, range.address + range.bytes);
+        }
+    }
+    const auto inside = [&](std::uint64_t begin, std::uint64_t end, const auto& visit) {
+        auto range = captured.upper_bound(begin);
+        if (range != captured.begin()) --range;
+        for (; range != captured.end() && range->first < end; ++range) {
+            const auto first = std::max(begin, range->first);
+            const auto stop = std::min(end, range->second);
+            if (first < stop) visit(first, stop);
+        }
+    };
     const auto mark = GuestMemory::WriteGeneration();
     std::vector<Span> spans;
     for (const auto block : blocks) {
         const auto found = shaderMarks.find(block);
-        spans.push_back({block, FrameCaptureWriter::BlockBytes, found != shaderMarks.end() ? std::max(found->second, generation) : generation});
+        const auto since = found != shaderMarks.end() ? std::max(found->second, generation) : generation;
+        inside(block, block + FrameCaptureWriter::BlockBytes, [&](std::uint64_t first, std::uint64_t stop) { spans.push_back({first, stop - first, since}); });
     }
-    const std::vector<std::uint64_t> pages(hostPages.begin(), hostPages.end());
-    writeDelta(spans, pages);
+    std::vector<std::uint64_t> pages;
+    for (const auto page : hostPages) {
+        std::uint64_t covered = 0;
+        inside(page, page + HostPageBytes, [&](std::uint64_t first, std::uint64_t stop) { covered += stop - first; });
+        if (covered == HostPageBytes) pages.push_back(page);
+        else inside(page, page + HostPageBytes, [&](std::uint64_t first, std::uint64_t stop) { spans.push_back({first, stop - first, generation}); });
+    }
+    writeDelta(spans, pages, added);
     for (const auto block : blocks) shaderMarks[block] = mark;
 }
 
