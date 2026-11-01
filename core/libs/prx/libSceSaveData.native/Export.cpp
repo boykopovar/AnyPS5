@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -754,6 +755,40 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
 int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
     const int rc = mount3(mount, mount_result);
     SAVEDATA_TRACE("mount3 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_point.data : "", rc == SAVE_DATA_OK && mount_result != nullptr ? mount_result->mount_status : 0u);
+    return rc;
+}
+
+static int mount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result) {
+    if (mount == nullptr || mount_result == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    if (mount->user_id == -1 || mount->user_id == 0) {
+        return SAVE_DATA_ERROR_INVALID_LOGIN_USER;
+    }
+    const bool creates = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
+    if (mount->mount_mode == 0 || (creates && mount->blocks < SAVE_DATA_BLOCKS_MIN2)) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (mount->dir_name != nullptr) {
+        const std::string_view name(mount->dir_name->data, sizeof(mount->dir_name->data));
+        if (name.substr(0, name.find('\0')).find('_') != std::string_view::npos) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+    }
+    SaveDataMount3 converted{};
+    converted.user_id = mount->user_id;
+    converted.dir_name = mount->dir_name;
+    converted.blocks = mount->blocks;
+    converted.mount_mode = mount->mount_mode;
+    return mount3(&converted, mount_result);
+}
+
+int APS5_VABI sceSaveDataMount2(const SaveDataMount2* mount, SaveDataMountResult* mount_result) {
+    const int rc = mount2(mount, mount_result);
+    SAVEDATA_TRACE("mount2 user=%d dir=%.*s mode=0x%x blocks=%llu -> 0x%08x point=%.*s status=%u", mount != nullptr ? mount->user_id : -1, static_cast<int>(sizeof(SceSaveDataDirName::data)), mount != nullptr && mount->dir_name != nullptr ? mount->dir_name->data : "(null)", mount != nullptr ? mount->mount_mode : 0u, mount != nullptr ? static_cast<unsigned long long>(mount->blocks) : 0ull, static_cast<unsigned>(rc), static_cast<int>(sizeof(SaveDataMountPoint::data)), mount_result != nullptr ? mount_result->mount_point.data : "", mount_result != nullptr ? mount_result->mount_status : 0u);
     return rc;
 }
 
