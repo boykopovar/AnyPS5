@@ -27,7 +27,7 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7439 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7437 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -1694,7 +1694,6 @@
 | `_ZN3WTF14createIteratorENS_10StringViewE` | `svIkqWCw-LU` |
 | `_ZN3WTF14dataLogFStringEPKc` | `xQQ4VSubx-k` |
 | `_ZN3WTF14dupCloseOnExecEi` | `wQ9-tXakN90` |
-| `_ZN3WTF14isVersion4UUIDENS_10StringViewE` | `XbR6JVGM+0U` |
 | `_ZN3WTF15AtomStringTableD1Ev` | `YHjoCx7QaOs` |
 | `_ZN3WTF15AtomStringTableD2Ev` | `JxkGFAxlPa8` |
 | `_ZN3WTF15AutomaticThread14threadDidStartEv` | `WgCZ0HyfQ3I` |
@@ -1819,7 +1818,6 @@
 | `_ZN3WTF24AutomaticThreadConditionD2Ev` | `qjebiZKT83w` |
 | `_ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE` | `uTDkdY+Gquc` |
 | `_ZN3WTF24currentTextBreakLocaleIDEv` | `xr2263Do-NU` |
-| `_ZN3WTF24isDefaultPortForProtocolEtNS_10StringViewE` | `SC58p5kvRVg` |
 | `_ZN3WTF24normalizeLineEndingsToLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE` | `aRe4HfMOslA` |
 | `_ZN3WTF25activateSignalHandlersForENS_6SignalE` | `Pyu7Zyt6XUE` |
 | `_ZN3WTF25addLanguageChangeObserverEPvPFvS0_E` | `dsxMZLBYKOU` |
@@ -7473,6 +7471,7 @@
 
 ### Functional
 
+- [WTF URL scalar helpers](../../../core/libs/prx/libSceNKWebKit/UrlHelpers.cpp) - The device WebKit revision and guest ABI are unmeasured. The port assumes a 16-byte release [StringView](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringView.h), follows the published [UUID](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/UUID.cpp), [URL](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp) and [URLParser](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URLParser.cpp) behavior, and supports only the five built-in default ports. Testing-only port override exports still throw; nonempty null pointers throw rather than dereference.
 - [WTF::Thread::yield](../../../core/libs/prx/libSceNKWebKit/Export.cpp) is source-guided, not console-measured; the PS5 build may differ from pinned upstream WebKit [Threading.h](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/Threading.h#L182) and [ThreadingPOSIX.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WTF/wtf/posix/ThreadingPOSIX.cpp#L572-L580). It returns void and requests a yield through libc's existing `_Thrd_yield` helper.
 
 - [parseDateFromNullTerminatedCharacters(const char*)](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - still throws: it subtracts [calculateLocalTimeOffset](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/DateMath.cpp#L318-L361), whose code path follows `HAVE_LOCALTIME_R`, `HAVE_TIMEGM` and `HAVE_TM_GMTOFF` from [configure checks](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/cmake/OptionsCommon.cmake#L131-L148) against the port's sysroot, and the device time zone.
