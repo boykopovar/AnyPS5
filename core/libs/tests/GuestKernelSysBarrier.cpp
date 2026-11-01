@@ -38,6 +38,13 @@ int main() {
     Require(scePthreadBarrierattrInit(&attr) == 0 && attr != nullptr);
     int pshared = -1;
     Require(scePthreadBarrierattrGetpshared(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, -1) == 22);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, 2) == 22);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, 9999) == 22);
+    Require(pthread_barrierattr_setpshared_nid_postfix(&attr, PROCESS_SHARED) == 22);
+    Require(scePthreadBarrierattrSetpshared(&attr, -1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierattrSetpshared(&attr, 2) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierattrSetpshared(&attr, 9999) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrSetpshared(&attr, PROCESS_SHARED) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrSetpshared(&attr, PROCESS_PRIVATE) == 0);
 
