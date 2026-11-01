@@ -387,6 +387,14 @@ int main() {
             unterminatedRecordRejected = std::string(error.what()).find("CIE fields exceed record") != std::string::npos;
         }
         Require(unterminatedRecordRejected);
-        std::cout << "33 unwind record cases passed\n";
+        auto invalidHdrVersionBytes = Fixture();
+        invalidHdrVersionBytes[0] = 8;
+        bool invalidHdrVersionRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(invalidHdrVersionBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            invalidHdrVersionRejected = std::string(error.what()).find("unsupported EH frame header") != std::string::npos;
+        }
+        Require(invalidHdrVersionRejected);
+        std::cout << "34 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
