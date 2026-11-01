@@ -1,3 +1,7 @@
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include <stdexcept>
@@ -12,6 +16,89 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+
+namespace {
+
+constexpr std::uintptr_t wordLocked = 1;
+constexpr std::uintptr_t wordQueueLocked = 2;
+constexpr std::uintptr_t wordFlags = 3;
+
+struct WordWaiter {
+    std::mutex mutex;
+    std::condition_variable condition;
+    bool waiting{true};
+    WordWaiter* next{nullptr};
+    WordWaiter* tail{nullptr};
+};
+
+static_assert(sizeof(std::uintptr_t) == 8 && alignof(WordWaiter) >= 4);
+static_assert(std::atomic_ref<std::uintptr_t>::required_alignment <= alignof(std::uintptr_t));
+
+}  // namespace
+
+extern "C" {
+
+void APS5_VABI _ZN3WTF8WordLock8lockSlowEv(std::uintptr_t* self) {
+    if (!self) throw std::runtime_error("WTF::WordLock: null lock");
+    std::atomic_ref word(*self);
+    unsigned spins = 0;
+    for (;;) {
+        auto value = word.load();
+        if (!(value & wordLocked)) {
+            if (value & wordQueueLocked) throw std::runtime_error("WTF::WordLock: queue locked without ownership");
+            if (word.compare_exchange_weak(value, value | wordLocked)) return;
+            continue;
+        }
+        if (!(value & ~wordFlags) && spins < 40) {
+            ++spins;
+            std::this_thread::yield();
+            continue;
+        }
+        WordWaiter waiter;
+        value = word.load();
+        if ((value & wordQueueLocked) || !(value & wordLocked) || !word.compare_exchange_weak(value, value | wordQueueLocked)) {
+            std::this_thread::yield();
+            continue;
+        }
+        auto* head = reinterpret_cast<WordWaiter*>(value & ~wordFlags);
+        if (head) {
+            head->tail->next = &waiter;
+            head->tail = &waiter;
+            word.store(value);
+        } else {
+            waiter.tail = &waiter;
+            word.store(reinterpret_cast<std::uintptr_t>(&waiter) | wordLocked);
+        }
+        std::unique_lock lock(waiter.mutex);
+        waiter.condition.wait(lock, [&] { return !waiter.waiting; });
+    }
+}
+
+void APS5_VABI _ZN3WTF8WordLock10unlockSlowEv(std::uintptr_t* self) {
+    if (!self) throw std::runtime_error("WTF::WordLock: null lock");
+    std::atomic_ref word(*self);
+    for (;;) {
+        auto value = word.load();
+        if (!(value & wordLocked)) throw std::runtime_error("WTF::WordLock: unlock of an unlocked lock");
+        if (value == wordLocked) {
+            if (word.compare_exchange_weak(value, 0)) return;
+        } else if (!(value & wordQueueLocked) && word.compare_exchange_weak(value, value | wordQueueLocked)) {
+            auto* head = reinterpret_cast<WordWaiter*>(value & ~wordFlags);
+            auto* next = head->next;
+            if (next) next->tail = head->tail;
+            word.store(reinterpret_cast<std::uintptr_t>(next));
+            head->next = nullptr;
+            head->tail = nullptr;
+            std::lock_guard lock(head->mutex);
+            head->waiting = false;
+            head->condition.notify_one();
+            return;
+        }
+        std::this_thread::yield();
+    }
+}
+
+}
 
 namespace NKWebKit {
 void FillRandomBytes(void* buffer, std::size_t bytes);

@@ -20132,14 +20132,6 @@ int APS5_VABI _ZN3WTF8JSONImpl9ArrayBaseD1Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF8WordLock10unlockSlowEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF8WordLock8lockSlowEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF8dataFileEv() {
     NotImplemented_nid_no_patch(__func__);
 }

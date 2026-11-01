@@ -2003,8 +2003,6 @@ int APS5_VABI _ZN3WTF8JSONImpl9ArrayBaseC1Ev();
 int APS5_VABI _ZN3WTF8JSONImpl9ArrayBaseC2Ev();
 int APS5_VABI _ZN3WTF8JSONImpl9ArrayBaseD0Ev();
 int APS5_VABI _ZN3WTF8JSONImpl9ArrayBaseD1Ev();
-int APS5_VABI _ZN3WTF8WordLock10unlockSlowEv();
-int APS5_VABI _ZN3WTF8WordLock8lockSlowEv();
 int APS5_VABI _ZN3WTF8dataFileEv();
 int APS5_VABI _ZN3WTF9BitVector11excludeSlowERKS0_();
 int APS5_VABI _ZN3WTF9BitVector13OutOfLineBits6createEm();
