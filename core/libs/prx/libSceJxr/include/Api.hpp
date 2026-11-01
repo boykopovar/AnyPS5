@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include <cstddef>
 #include "prx/libSceJxr/GuestPixelInfo.h"
 #include "prx/libSceJxr/Stream.hpp"
 
@@ -27,7 +28,7 @@ int APS5_VABI GetPosWS_Memory_nid_postfix();
 int APS5_VABI IDPEmpty_nid_postfix();
 int APS5_VABI InitZigzagScan_nid_postfix();
 int APS5_VABI PKAllocAligned_nid_postfix();
-int APS5_VABI PKAlloc_nid_postfix();
+std::int64_t APS5_VABI PKAlloc_nid_postfix(void** memory, std::size_t size);
 int APS5_VABI PKCodecFactory_CreateCodec_nid_postfix();
 int APS5_VABI PKCodecFactory_CreateDecoderFromFile_nid_postfix();
 int APS5_VABI PKCodecFactory_CreateFormatConverter_nid_postfix();
