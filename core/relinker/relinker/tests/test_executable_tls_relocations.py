@@ -6,7 +6,7 @@ STT_TLS. The Windows and macOS images resolve TPOFF64 and DTPOFF64 statically ag
 AlignUp(p_memsz, p_align) below the thread pointer, and reject what they cannot express. Every target
 rejects the link-time types GOT32, PLT32, GOTPCREL, 32S, GOTPCRELX and REX_GOTPCRELX, which glibc's
 ld.so does not apply; the Windows and macOS images also reject other types they cannot apply, such as
-PC32 and 32."""
+PC32 and 32. Every target rejects a non-TLS relocation against an STT_TLS symbol, defined or imported."""
 
 from pathlib import Path
 import struct
@@ -187,6 +187,19 @@ def main():
                 assert result.returncode == 2 and "Symbol table entry out of bounds" in result.stderr, (
                     name, result.returncode, result.stdout, result.stderr)
                 assert not output.exists(), name
+
+        non_tls = "FAIL: Non-TLS relocation names an STT_TLS symbol (offset 0x4700)"
+        for kind in (1, 2, 6, 10):
+            for symbol in (TLS_SYMBOL, IMPORTED):
+                for flags, target in TARGETS.items():
+                    name = f"{target}-non-tls-{kind}-{symbol}"
+                    data = image([(0x1000, kind, symbol, 0)], symbol_bytes=96)
+                    result, output = relink(relinker, directory, name, data, *flags)
+                    assert result.returncode == 2 and non_tls in result.stderr, (name, result.returncode, result.stderr)
+                    assert not output.exists(), name
+            data = image([(0x1000, kind, DATA_SYMBOL, 0)], symbol_bytes=96)
+            result, output = relink(relinker, directory, f"non-tls-{kind}-data", data)
+            assert result.returncode == 0 and output.exists(), (kind, result.returncode, result.stderr)
 
         bound = "Runtime-bound executable TLS template relocation is not supported"
         for target, kind in ((0x1800, 1), (0x1800, 6), (0x1804, 1), (0x17fc, 6)):

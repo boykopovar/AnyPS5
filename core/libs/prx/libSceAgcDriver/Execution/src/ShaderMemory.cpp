@@ -179,6 +179,10 @@ ShaderMemory::~ShaderMemory() {
     }
 }
 
+std::size_t ShaderMemory::Bytes() const {
+    return sizeof(ShaderMemory) + initial.capacity() * sizeof(initial[0]) + pages.capacity() * sizeof(pages[0]) + pages.size() * sizeof(Page) + supplied.capacity() * sizeof(Supplied) + spilled.capacity() * sizeof(spilled[0]);
+}
+
 void ShaderMemory::WordMask::SetRun(std::size_t first, std::size_t count) {
     while (count != 0) {
         const auto shift = first % 64u;
@@ -502,7 +506,7 @@ bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t
 std::uint64_t ShaderMemory::descriptorScope(void* context, std::size_t bytes) {
     auto& self = *static_cast<ShaderMemory*>(context);
     if (bytes == ShaderRecompiler::SrtDescriptorForceSync) {
-        ++self.forceSync;
+        if (self.forceSync++ == 0u && self.invalidateRawPages()) ++self.rawInvalidations;
         self.descriptorSpanBytes = 0;
         return self.rawInvalidations;
     }
@@ -783,24 +787,35 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::collect(bool recentOnl
     std::vector<Cursor> cursors;
     std::size_t runs = 0;
     for (const auto& entry : supplied) {
-        if (recentOnly && !entry.recent) continue;
+        if ((recentOnly && !entry.recent) || entry.words->runs.empty()) continue;
         cursors.push_back({entry.words.get(), 0u, 0u});
         runs += entry.words->runs.size() + entry.words->words.size() / PageWords;
     }
     std::vector<ShaderRecompiler::MemoryRegion> result;
     result.reserve((recentOnly ? 0u : initial.size()) + pages.size() + runs);
     auto next = recentOnly ? initial.end() : initial.begin();
+    const bool heap = cursors.size() > 1u;
+    const auto later = [](const Cursor& left, const Cursor& right) {
+        return left.words->runs[left.run].first > right.words->runs[right.run].first;
+    };
+    if (heap) std::make_heap(cursors.begin(), cursors.end(), later);
     const auto emitBefore = [&](std::uint64_t address) {
         while (true) {
-            Cursor* lowest = nullptr;
-            for (auto& cursor : cursors) {
-                if (cursor.run < cursor.words->runs.size() && (lowest == nullptr || cursor.words->runs[cursor.run].first < lowest->words->runs[lowest->run].first)) lowest = &cursor;
+            Cursor* lowest = heap && !cursors.empty() ? &cursors.front() : nullptr;
+            if (!heap) {
+                for (auto& cursor : cursors) {
+                    if (cursor.run < cursor.words->runs.size() && (lowest == nullptr || cursor.words->runs[cursor.run].first < lowest->words->runs[lowest->run].first)) lowest = &cursor;
+                }
             }
             const auto run = lowest != nullptr ? lowest->words->runs[lowest->run].first : std::numeric_limits<std::uint64_t>::max();
             if (next != initial.end() && next->first < address && next->first < run) {
                 result.push_back({next->first, next->second});
                 ++next;
             } else if (lowest != nullptr && run < address) {
+                if (heap) {
+                    std::pop_heap(cursors.begin(), cursors.end(), later);
+                    lowest = &cursors.back();
+                }
                 const auto count = lowest->words->runs[lowest->run].second;
                 const auto words = std::span(lowest->words->words).subspan(lowest->at, count);
                 for (std::size_t done = 0; done < count;) {
@@ -811,6 +826,10 @@ std::vector<ShaderRecompiler::MemoryRegion> ShaderMemory::collect(bool recentOnl
                 }
                 lowest->at += count;
                 ++lowest->run;
+                if (heap) {
+                    if (lowest->run == lowest->words->runs.size()) cursors.pop_back();
+                    else std::push_heap(cursors.begin(), cursors.end(), later);
+                }
             } else {
                 return;
             }

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
@@ -70,6 +71,8 @@ constexpr std::size_t PaddedCubeOffset = 0x120000;
 constexpr std::size_t SmallCubeOffset = 0x180000;
 constexpr std::size_t LargeCubeOffset = 0x200000;
 constexpr std::size_t GuestDepthBitsOffset = 0x480000;
+constexpr std::size_t FrameCopiesOffset = 0x520000;
+constexpr std::size_t ReloadOffset = 0x700000;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -172,7 +175,7 @@ std::uint32_t Bits(float value) {
 
 // Draws a full-target triangle at depth `z` into the depth surface at `address`, which makes the driver create the
 // surface (the base slice a later plane copy reads from the surface instead of from guest memory).
-void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z) {
+void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0) {
     static std::deque<std::vector<std::array<float, 4>>> vertexData;
     vertexData.push_back({{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}});
     const auto& vertices = vertexData.back();
@@ -217,6 +220,7 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.depth = AgcDriver::Graphics::DepthTarget{address, 0, extent, format, 1.0f, 0};
+    state.depth->depthSwizzle = swizzle;
     state.depthTest = true;
     state.depthWrite = true;
     state.depthCompare = VK_COMPARE_OP_ALWAYS;
@@ -338,6 +342,21 @@ void GuestDepthBitsCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std:
     }
 }
 
+void GuestWriteAfterDrawCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    auto* base = block.At(ReloadOffset);
+    if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(reinterpret_cast<std::uintptr_t>(base), SliceBytes)) {
+        std::puts("guest memory has no write watch: the guest write after a draw is not checked");
+        return;
+    }
+    const Shape shape{Format32Float, 128, 128, Type2D, 0, Swizzle64KbZX};
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth, AgcDriver::Graphics::XorSwizzleMode(AgcDriver::Graphics::TextureTileMode::kZ64KBX));
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(DrawnDepth), "D32 plane sampled after a draw");
+    FillSlice(base, SliceBytes, Bits(0.75f), 4u);
+    Load(device, base, shape, 0, output);
+    Expect(output, Bits(0.75f), "D32 plane the guest wrote after a draw, sampled before its surface is bound again");
+}
+
 void FirstSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
     auto* one = block.At(OneSliceOffset);
     DrawDepth(device, reinterpret_cast<std::uintptr_t>(one), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth);
@@ -414,6 +433,43 @@ void BaseSliceCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span
     Expect(output, Bits(0.5f), "D32 2D array from base slice 1 through a 2D shader image");
 }
 
+void FrameCopiesCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    constexpr VkExtent2D extent{128, 256};
+    constexpr VkDeviceSize budget = 1u << 20u;
+    const auto stride = AgcDriver::Graphics::DepthSliceBytes(extent, 4u);
+    Require(FrameCopiesOffset + 9u * stride <= BlockBytes, "the three 3-slice 128x256 D32 arrays must fit the guest block");
+    const std::array<std::uint8_t*, 3> bases{block.At(FrameCopiesOffset), block.At(FrameCopiesOffset + 3u * stride), block.At(FrameCopiesOffset + 6u * stride)};
+    const std::array<float, 3> expected{0.375f, 0.625f, 0.875f};
+    for (std::size_t copy = 0; copy < bases.size(); ++copy) {
+        DrawDepth(device, reinterpret_cast<std::uintptr_t>(bases[copy]), extent, VK_FORMAT_D32_SFLOAT, DrawnDepth);
+        for (std::uint32_t slice = 1; slice < 3u; ++slice) FillSlice(bases[copy] + slice * stride, stride, Bits(expected[copy]), 4u);
+    }
+    const Shape shape{Format32Float, extent.width, extent.height, Type2DArray, 2, Swizzle64KbZX};
+    const auto sample = [&](std::size_t copy) {
+        Load(device, bases[copy], shape, 2, output);
+        Expect(output, Bits(expected[copy]), "D32 2D array " + std::to_string(copy) + " slice 2");
+    };
+    AgcDriver::Graphics::Recorder::CountPresent();
+    AgcDriver::Graphics::Recorder::CountPresent();
+    sample(0);
+    sample(1);
+    sample(0);
+    sample(1);
+    const auto kept = AgcDriver::Graphics::DepthPlaneCopyCount();
+    Require(kept == 2, std::to_string(kept) + " depth plane copies were kept after two copies over the 1 MiB budget were sampled in one present, expected both");
+    const auto pair = AgcDriver::Graphics::DepthPlaneCopyBytes();
+    Require(pair > budget && pair <= 2u * budget, "the two copies sampled in one present hold " + std::to_string(pair) + " bytes, the case needs more than the 1 MiB budget and no more than twice it");
+    sample(2);
+    const auto capped = AgcDriver::Graphics::DepthPlaneCopyBytes();
+    Require(capped <= 2u * budget, "the depth plane copies sampled in one present hold " + std::to_string(capped) + " bytes in " + std::to_string(AgcDriver::Graphics::DepthPlaneCopyCount()) + " copies, more than twice the 1 MiB budget");
+    Require(AgcDriver::Graphics::DepthPlaneCopyCount() == 2, std::to_string(AgcDriver::Graphics::DepthPlaneCopyCount()) + " depth plane copies were kept after a third copy took the ones sampled in one present past twice the budget, expected the two most recently used");
+    AgcDriver::Graphics::Recorder::CountPresent();
+    AgcDriver::Graphics::Recorder::CountPresent();
+    sample(1);
+    const auto left = AgcDriver::Graphics::DepthPlaneCopyCount();
+    Require(left == 1, std::to_string(left) + " depth plane copies were kept two presents after the other copy was last sampled, expected only the newest");
+}
+
 void ExpectRefusal(AgcDriver::VulkanDevice& device, GuestBlock& block, std::size_t offset, const Shape& shape, std::uint32_t baseArray, const std::string& expected, const std::string& what) {
     const auto words = TextureDescriptor(block.At(offset), shape);
     auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
@@ -441,21 +497,39 @@ int main(int argc, char** argv) {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const std::span<std::uint32_t> output(reinterpret_cast<std::uint32_t*>(block.At(OutputOffset)), Threads);
+        const auto present = [&] {
+            if (!evicting) return;
+            AgcDriver::Graphics::Recorder::CountPresent();
+            AgcDriver::Graphics::Recorder::CountPresent();
+        };
         ArrayCase(*device, block, output);
+        present();
         CubeCase(*device, block, output);
+        present();
         IntegerCase(*device, block, output);
+        present();
         DepthBitsArrayCase(*device, block, output);
+        present();
         DepthBitsBaseSliceCase(*device, block, output);
+        present();
         GuestDepthBitsCase(*device, block, output);
+        present();
+        GuestWriteAfterDrawCase(*device, block, output);
+        present();
         FirstSliceCase(*device, block, output);
+        present();
         PaddedCubeCase(*device, block, output);
+        present();
         SmallD16CubeCase(*device, block, output);
+        present();
         PaddedD16CubeCase(*device, block, output);
+        present();
         BaseSliceCase(*device, block, output);
         RefusalCase(*device, block);
         if (evicting) {
             const auto kept = AgcDriver::Graphics::DepthPlaneCopyCount();
             Require(kept >= 1 && kept < 8, std::to_string(kept) + " depth plane copies were kept with a 1 MiB budget, expected at least the newest and fewer than the 8 an unbounded cache keeps");
+            FrameCopiesCase(*device, block, output);
         }
         std::puts("depth plane sampling tests passed");
         return 0;

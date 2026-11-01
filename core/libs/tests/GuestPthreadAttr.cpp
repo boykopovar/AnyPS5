@@ -319,7 +319,23 @@ static void CheckEndedThreads() {
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
 }
 
+static void CheckGetprioOfTheCallingThread() {
+    const Pthread self = scePthreadSelf();
+    int original = 0;
+    Require(scePthreadGetprio(self, &original) == SCE_OK);
+    int priority = 0;
+    Require(scePthreadSetprio(self, UPDATED_PRIORITY) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == UPDATED_PRIORITY);
+    Require(scePthreadSetprio(self, CREATION_PRIORITY) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == CREATION_PRIORITY);
+    Require(scePthreadGetprio(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadSetprio(self, original) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
+}
+
 int main() {
+    CheckGetprioOfTheCallingThread();
     CheckStackSizeLimit();
     CheckSoloSched();
     CheckSchedArguments();

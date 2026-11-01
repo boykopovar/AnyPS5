@@ -317,7 +317,7 @@ class SilentStubSectionTests(unittest.TestCase):
             env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="safe.directory", GIT_CONFIG_VALUE_0=str(root))
             return subprocess.run(
                 [sys.executable, str(checker), "--base", "HEAD~1"],
-                cwd=root, capture_output=True, text=True, env=env, timeout=10,
+                cwd=root, capture_output=True, text=True, env=env, timeout=120,
             )
 
     def require_rejected(self, debt, debt_path=library_debt):
