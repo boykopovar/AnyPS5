@@ -305,6 +305,42 @@ void testPartlyCoveredBlock(const std::filesystem::path& directory) {
     throw std::runtime_error(failure);
 }
 
+void testLateClear(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    auto* late = allocate(Size);
+    std::fill_n(late, Size, std::byte{0});
+    auto* x = late + 2 * FrameCaptureWriter::BlockBytes;
+    auto* shader = reinterpret_cast<Shader*>(x + 2 * Page);
+    *shader = {};
+    shader->file_header = 0x34333231u;
+    shader->version = 0x18u;
+    shader->header_size = sizeof(Shader);
+    auto* neighbor = x + FrameCaptureWriter::BlockBytes;
+    std::fill_n(neighbor, Page, std::byte{0x5a});
+    recorder->RegisterShader(shader);
+    std::fill_n(neighbor, Page, std::byte{0});
+    recorder->Suspend([] {});
+    recorder->Suspend([] {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    std::uint64_t holding = 0;
+    std::uint64_t lastGroup = 0;
+    std::byte last{0};
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind != FrameMemoryKind::Delta || chunk.address > address(neighbor) || address(neighbor) + Page > chunk.address + chunk.bytes) continue;
+        ++holding;
+        if (chunk.group < lastGroup) continue;
+        lastGroup = chunk.group;
+        last = reader.Read(chunk)[address(neighbor) - chunk.address];
+    }
+    check(holding != 0, "the neighbour of the registered shader is in no memory delta");
+    if (last != std::byte{0}) throw std::runtime_error("the last memory delta holding the neighbour of the registered shader (group " + std::to_string(lastGroup) + " of " + std::to_string(holding) + " holding it) has byte " + std::to_string(static_cast<int>(last)) + ", not the 0 the CPU stored after the registration");
+}
+
 void testEopTokens() {
     Frames frames;
     auto output = std::make_shared<ReplayOutput>(frames);
@@ -457,6 +493,7 @@ int main(int argc, char** argv) {
         else if (mode == "once") testPagesCollectedOnce(directory);
         else if (mode == "pending_result") testPendingResultRead(directory);
         else if (mode == "partly_covered") testPartlyCoveredBlock(directory);
+        else if (mode == "late_clear") testLateClear(directory);
         else if (mode == "tokens") testEopTokens();
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "shader" || mode == "shader_host") testShaderCode(directory, mode == "shader_host");

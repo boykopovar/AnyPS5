@@ -438,7 +438,8 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     for (const auto& range : added) {
         writer->WriteRange(range.address, range.bytes, range.kind, range.protection, range.access);
         auto& stored = ranges.emplace_back(range);
-        if (stored.kind == FrameRangeKind::Watched || stored.kind == FrameRangeKind::Unwatched) stored.since = GuestMemory::CollectWrittenBlocks(stored.address, static_cast<std::size_t>(stored.bytes), std::numeric_limits<std::uint64_t>::max(), written);
+        const bool collected = stored.kind == FrameRangeKind::Watched || stored.kind == FrameRangeKind::Unwatched;
+        if (collected) stored.since = GuestMemory::CollectWrittenBlocks(stored.address, static_cast<std::size_t>(stored.bytes), std::numeric_limits<std::uint64_t>::max(), written);
         ++lateRanges;
         if (!range.readable) {
             unreadableBytes += range.bytes;
@@ -448,7 +449,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
             bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, range.bytes - at)));
             readGuest(range.address + at, bytes);
             const bool zero = std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; });
-            if (!zero) {
+            if (!zero || collected) {
                 writer->WriteDelta(group, completed, range.address + at, bytes);
                 deltaBytes += bytes.size();
                 any = true;
