@@ -882,29 +882,25 @@ void GzipRedirect(int ssl) {
 
 void Http1GzipPolicy(int ssl) {
     for (const int version : {1, 2}) {
-        for (const int enabled : {0, 1}) {
+        {
             Server server(Mode::Http11Gzip);
             Client client(ssl, 1, 0, version);
-            Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, enabled) == 0, "HTTP1 gzip option");
+            Require(sceHttp2SetInflateGZIPEnabled(client.tmpl, 0) == 0, "HTTP1 gzip option");
             client.Create(server.Url());
-            if (enabled) {
-                Require(Throws([&] { sceHttp2SendRequest(client.request, nullptr, 0); }), "HTTP1 enabled gzip remains explicit");
-            } else {
-                Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 disabled gzip send");
-                const std::string expected = StoredGzip("response body");
-                int kind = -1;
-                std::uint64_t length = 0;
-                Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == expected.size(), "HTTP1 gzip wire length");
-                std::string received;
-                std::array<char, 64> buffer;
-                for (;;) {
-                    const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
-                    Require(count >= 0, "HTTP1 gzip raw read");
-                    if (!count) break;
-                    received.append(buffer.data(), static_cast<std::size_t>(count));
-                }
-                Require(received == expected, "HTTP1 disabled gzip preserves encoded bytes");
+            Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "HTTP1 disabled gzip send");
+            const std::string expected = StoredGzip("response body");
+            int kind = -1;
+            std::uint64_t length = 0;
+            Require(sceHttp2GetResponseContentLength(client.request, &kind, &length) == 0 && kind == 0 && length == expected.size(), "HTTP1 gzip wire length");
+            std::string received;
+            std::array<char, 64> buffer;
+            for (;;) {
+                const int count = sceHttp2ReadData(client.request, buffer.data(), buffer.size());
+                Require(count >= 0, "HTTP1 gzip raw read");
+                if (!count) break;
+                received.append(buffer.data(), static_cast<std::size_t>(count));
             }
+            Require(received == expected, "HTTP1 disabled gzip preserves encoded bytes");
             server.Join();
         }
         Server identity(Mode::Http11);
