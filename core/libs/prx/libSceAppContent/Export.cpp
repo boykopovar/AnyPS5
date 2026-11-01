@@ -21,6 +21,7 @@ static constexpr int SCE_APP_CONTENT_ERROR_BUSY = static_cast<int>(0x80D90003);
 static constexpr int SCE_APP_CONTENT_ERROR_NOT_MOUNTED = static_cast<int>(0x80D90004);
 static constexpr int SCE_APP_CONTENT_ERROR_NOT_FOUND = static_cast<int>(0x80D90005);
 static constexpr int SCE_APP_CONTENT_ERROR_DRM_NO_ENTITLEMENT = static_cast<int>(0x80D90007);
+static constexpr int SCE_APP_CONTENT_ERROR_GET_STORE_COUNTRY = static_cast<int>(0x80D91000);
 static constexpr uint32_t APPPARAM_ID_SKU_FLAG = 0;
 static constexpr int32_t SKU_FLAG_FULL = 3;
 
@@ -326,9 +327,12 @@ int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppConten
     return 0;
 }
 
-int APS5_VABI sceAppContentGetDownloadedStoreCountry(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceAppContentGetDownloadedStoreCountry(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, void* storeCountry) {
+    if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
+    (void)serviceLabel;
+    if (!entitlementLabel || !storeCountry) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    if (!validEntitlementLabel(*entitlementLabel, 0x01500000)) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    return SCE_APP_CONTENT_ERROR_GET_STORE_COUNTRY;
 }
 
 int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnifiedEntitlementLabel* entitlementLabel, AppContentEntitlementKey* key) {

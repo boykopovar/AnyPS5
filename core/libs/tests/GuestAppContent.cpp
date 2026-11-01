@@ -15,6 +15,7 @@ static constexpr int ErrorNotFound = static_cast<int>(0x80D90005);
 static constexpr int ErrorDrmNoEntitlement = static_cast<int>(0x80D90007);
 static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotMounted = static_cast<int>(0x80D90004);
+static constexpr int ErrorGetStoreCountry = static_cast<int>(0x80D91000);
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
@@ -50,6 +51,7 @@ int main() {
     std::uint32_t pftFlag = 0x5a5a5a5a;
     Require(sceAppContentGetPftFlag(&pftFlag) == notInitialized);
     Require(pftFlag == 0x5a5a5a5a);
+    Require(sceAppContentGetDownloadedStoreCountry(0, nullptr, nullptr) == notInitialized);
     const auto original = std::filesystem::current_path();
     const auto directory = original / ("appcontent-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(directory));
@@ -238,6 +240,15 @@ int main() {
     Require(sceAppContentGetEntitlementKey(0, nullptr, &key) == ErrorParameter);
     Require(std::memcmp(&key, &untouchedKey, sizeof(key)) == 0);
     Require(sceAppContentGetEntitlementKey(0, &label, nullptr) == ErrorParameter);
+    unsigned char country[24];
+    std::memset(country, 0x5a, sizeof(country));
+    unsigned char untouchedCountry[sizeof(country)];
+    std::memcpy(untouchedCountry, country, sizeof(country));
+    Require(sceAppContentGetDownloadedStoreCountry(0, nullptr, country) == ErrorParameter);
+    Require(sceAppContentGetDownloadedStoreCountry(0, &label, nullptr) == ErrorParameter);
+    Require(sceAppContentGetDownloadedStoreCountry(0, &label, country) == ErrorGetStoreCountry);
+    Require(sceAppContentGetDownloadedStoreCountry(7, &label, country) == ErrorGetStoreCountry);
+    Require(std::memcmp(country, untouchedCountry, sizeof(country)) == 0);
 
     for (const std::uint32_t version : {0x014fffffu, 0x01500000u, 0x034fffffu, 0x03500000u}) {
         std::memcpy(process.data() + 16, &version, sizeof(version));
@@ -246,7 +257,10 @@ int main() {
             const int earlyError = version >= 0x01500000 ? ErrorParameter : ErrorNotFound;
             const int infoError = version >= 0x01500000 ? ErrorParameter : ErrorDrmNoEntitlement;
             const int lateError = version >= 0x03500000 ? ErrorParameter : ErrorNotFound;
+            const int countryError = version >= 0x01500000 ? ErrorParameter : ErrorGetStoreCountry;
             Require(sceAppContentAddcontMount(0, &label, &mountPoint) == earlyError);
+            Require(sceAppContentGetDownloadedStoreCountry(0, &label, info) == countryError);
+            Require(std::memcmp(info, untouchedInfo, sizeof(info)) == 0);
             Require(sceAppContentGetAddcontInfo(0, &label, reinterpret_cast<AppContentAddcontInfo*>(info)) == infoError);
             Require(sceAppContentGetEntitlementKey(0, &label, &key) == infoError);
             Require(std::memcmp(&key, &untouchedKey, sizeof(key)) == 0);
