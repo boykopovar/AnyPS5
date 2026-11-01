@@ -431,8 +431,7 @@ static int StatNative(const std::filesystem::path& native, bool directory, FileS
     FileStat archived{};
     if (File::FillArchivedStat(native, &archived)) {
         if (directory && (archived.st_mode & 0170000) != 0040000) return SceErrorFromErrno(GuestEnotdir);
-        if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
-        *sb = archived;
+        if (sb == nullptr || !GuestCopyOut_nid_no_patch(sb, &archived, sizeof(archived))) return SceErrorFromErrno(GuestEfault);
         return 0;
     }
     auto metadataPath = native;
