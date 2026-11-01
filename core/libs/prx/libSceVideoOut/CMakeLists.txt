@@ -1,11 +1,13 @@
 add_library(libSceVideoOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Unimplemented.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/InventoryExports.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Buffer.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Output.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VideoOutDriver.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DisplayWindow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PadInput.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PadStatusSdl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Telemetry.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MouseInput.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyboardInput.cpp
@@ -107,7 +109,8 @@ if(BUILD_TESTING)
     endforeach()
 
     set_target_properties(video_out_flip_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
-    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay unopened ps4 resolution resolution_override fresh)
+    foreach(flipMode IN ITEMS lifetime reopen decode controls overlay padstatus unopened ps4 resolution resolution_override fresh
+            present backtoback dcc pacing aftergpu onedevice deferred unregistered)
         if(flipMode STREQUAL "lifetime")
             add_test(NAME video_out_flip_${flipMode} COMMAND video_out_flip_tests)
         else()
@@ -127,10 +130,22 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
+    add_test(NAME video_out_flip_fps_limit COMMAND video_out_flip_tests fps_limit)
+    set_tests_properties(video_out_flip_fps_limit PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};ANYPS5_FPS_LIMIT=20")
+    if(WIN32)
+        set_tests_properties(video_out_flip_fps_limit PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME video_out_flip_cpuflip_in_order COMMAND video_out_flip_tests cpuflip)
     set_tests_properties(video_out_flip_cpuflip_in_order PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_CPU_FLIP_IN_ORDER=1")
     if(WIN32)
         set_tests_properties(video_out_flip_cpuflip_in_order PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME video_out_flip_unavailable COMMAND video_out_flip_tests unavailable)
+    set_tests_properties(video_out_flip_unavailable PROPERTIES TIMEOUT 30 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+    if(WIN32)
+        set_tests_properties(video_out_flip_unavailable PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -162,6 +177,18 @@ if(BUILD_TESTING)
         set_tests_properties(pad_sdl PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(pad_identify_pad_input_tests tests/PadIdentify.cpp)
+    target_include_directories(pad_identify_pad_input_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(pad_identify_pad_input_tests PRIVATE libSceVideoOut libScePad libSceIme libSceUserService libc SDL2-static)
+    configure_windows_unwind(pad_identify_pad_input_tests)
+    foreach(identifyMode connect off rumble invalid)
+        add_test(NAME pad_identify_${identifyMode} COMMAND pad_identify_pad_input_tests ${identifyMode})
+        set_tests_properties(pad_identify_${identifyMode} PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+        if(WIN32)
+            set_tests_properties(pad_identify_${identifyMode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
     add_test_executable(pad_input_mapping_tests tests/InputMapping.cpp src/InputMapping.cpp)
     target_include_directories(pad_input_mapping_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
     target_link_libraries(pad_input_mapping_tests PRIVATE SDL2-static libc)
@@ -172,6 +199,11 @@ if(BUILD_TESTING)
         set_tests_properties(pad_input_mapping PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(pad_status_sdl_tests tests/PadStatusSdl.cpp src/PadStatusSdl.cpp)
+    target_include_directories(pad_status_sdl_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
+    set_target_properties(pad_status_sdl_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_host_test_executable(pad_status_sdl_tests)
+    add_test(NAME pad_status_sdl COMMAND pad_status_sdl_tests)
     add_test_executable(pad_output_pacing_tests tests/PadOutputPacing.cpp)
     target_include_directories(pad_output_pacing_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(pad_output_pacing_tests PRIVATE libc)
@@ -181,6 +213,17 @@ if(BUILD_TESTING)
         set_tests_properties(pad_output_pacing PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(pad_host_volume_tests tests/HostVolumeInput.cpp ${CMAKE_CURRENT_SOURCE_DIR}/../libScePad/src/HostVolumeState.cpp)
+    target_include_directories(pad_host_volume_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
+    target_link_libraries(pad_host_volume_tests PRIVATE SDL2-static)
+    if(MINGW)
+        target_compile_options(pad_host_volume_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(pad_host_volume_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME pad_host_volume COMMAND pad_host_volume_tests)
 endif()
 
 if(BUILD_TESTING)
@@ -204,7 +247,12 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_video_out_wqhd_detection PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-        add_test(NAME guest_video_out_wqhd_detection_no_vulkan COMMAND guest_video_out_wqhd_detection_tests)
+        add_executable(guest_video_out_wqhd_detection_exit_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutWqhdDetection.cpp)
+        set_target_properties(guest_video_out_wqhd_detection_exit_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+        target_include_directories(guest_video_out_wqhd_detection_exit_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_video_out_wqhd_detection_exit_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+        configure_windows_unwind(guest_video_out_wqhd_detection_exit_tests)
+        add_test(NAME guest_video_out_wqhd_detection_no_vulkan COMMAND guest_video_out_wqhd_detection_exit_tests)
         set_tests_properties(guest_video_out_wqhd_detection_no_vulkan PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0
             ENVIRONMENT "VK_DRIVER_FILES=${CMAKE_CURRENT_BINARY_DIR}/missing_icd.json;VK_ICD_FILENAMES=${CMAKE_CURRENT_BINARY_DIR}/missing_icd.json"
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -326,5 +374,26 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(video_out_telemetry video_out_telemetry_caption PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(video_out_port0_presence_tests tests/Port0Presence.cpp)
+    target_include_directories(video_out_port0_presence_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(video_out_port0_presence_tests)
+    add_test(NAME video_out_port0_presence COMMAND video_out_port0_presence_tests)
+    set_tests_properties(video_out_port0_presence PROPERTIES TIMEOUT 30)
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(pad_port0_tests tests/PadPort0.cpp)
+    target_include_directories(pad_port0_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(pad_port0_tests PRIVATE libSceVideoOut libScePad libSceIme libSceUserService libc SDL2-static)
+    configure_windows_unwind(pad_port0_tests)
+    add_test(NAME pad_port0 COMMAND pad_port0_tests)
+    set_tests_properties(pad_port0 PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(pad_port0 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoOut>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
