@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
+#include <algorithm>
 #include <spirv/unified1/GLSL.std.450.h>
 #include <spirv/unified1/spirv.hpp>
 #include <stdexcept>
@@ -282,6 +283,24 @@ namespace ShaderRecompiler
             return {target, ConstantBool(state, true)};
         }
         FailEmit("DPP control " + std::to_string(control) + " is not supported");
+    }
+
+    bool DppQuadRead(const SpirvEmitterState& state, std::uint32_t control) {
+        return control <= 0xffu && StageOf(state) == IrShaderStage::Pixel && !HostSubgroupSingleLane(state) && std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformQuad)) != state.supportedCapabilities.end();
+    }
+
+    std::uint32_t EmitDppQuadRead(SpirvEmitterState& state, std::uint32_t type, std::uint32_t value, std::uint32_t control) {
+        state.module.EmitCapability(spv::CapabilityGroupNonUniformQuad);
+        const auto quadLane = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitSubgroupLocalInvocationId(state), ConstantU32(state, 3u));
+        const auto shift = EmitBinaryU32(state, spv::OpShiftLeftLogical, quadLane, ConstantU32(state, 1u));
+        const auto source = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, ConstantU32(state, control), shift), ConstantU32(state, 3u));
+        std::uint32_t result = 0;
+        for (std::uint32_t lane = 0; lane < 4u; ++lane) {
+            const auto broadcast = state.module.AllocateId();
+            state.module.AddFunction(spv::OpGroupNonUniformQuadBroadcast, type, broadcast, ConstantU32(state, spv::ScopeSubgroup), value, ConstantU32(state, lane));
+            result = lane == 0u ? broadcast : Select(state, type, Binary(state, spv::OpIEqual, TypeBool(state), source, ConstantU32(state, lane)), broadcast, result);
+        }
+        return result;
     }
 
     std::uint32_t EmitBallotLaneActiveBool(SpirvEmitterState& state, std::uint32_t ballot, std::uint32_t lane) {
