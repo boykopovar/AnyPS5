@@ -176,6 +176,7 @@ int main() {
     Require(sceNpProfileDialogGetStatus() == kStatusFinished);
     Require(sceNpProfileDialogUpdateStatus() == kStatusFinished);
     Require(sceNpProfileDialogGetResult(nullptr) == kErrArgNull);
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(0x10)) == static_cast<int>(0x80B8000Au));
     Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == 0);
     RequireCanceled(result, &first);
     RequireThrows([] { sceNpProfileDialogClose(); });
