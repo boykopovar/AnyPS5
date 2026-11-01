@@ -8,6 +8,8 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <vector>
 
 extern "C" {
 
@@ -199,7 +201,7 @@ int APS5_VABI _dup2_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* const* envp) {
+int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp) {
     constexpr int GuestEfault = 14;
     constexpr int GuestEacces = 13;
     constexpr int GuestEnoexec = 8;
@@ -295,8 +297,123 @@ int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* con
     return fail(GuestEnoexec);
 }
 
-int APS5_VABI _execvpe_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* const* envp) {
+    return GuestExecve_nid_no_patch(path, argv, envp);
+}
+
+int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* const* envp) {
+    constexpr int GuestEacces = 13;
+    constexpr int GuestEnoent = 2;
+    constexpr int GuestE2big = 7;
+    constexpr int GuestEnoexec = 8;
+    constexpr int GuestEnomem = 12;
+    constexpr int GuestEtxtbsy = 26;
+    constexpr int GuestEloop = 62;
+    constexpr int GuestEnametoolong = 63;
+    constexpr int GuestEnotdir = 20;
+    constexpr int GuestEfault = 14;
+    constexpr std::size_t GuestCandidateMax = 1024;
+    const std::string_view DefaultSearchPath = "/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin";
+    const std::string_view ShellPath = "/bin/sh";
+    const auto fail = [](int error) {
+        *__error_nid_postfix() = error;
+        return -1;
+    };
+    std::string searchPath;
+    if (!CopyGuestEnvironment_nid_no_patch("PATH", searchPath)) searchPath = std::string(DefaultSearchPath);
+    std::string nameText;
+    if (name != nullptr) {
+        for (std::size_t read = 0;;) {
+            const auto address = reinterpret_cast<std::uintptr_t>(name) + read;
+            const std::size_t bytes = 4096 - address % 4096;
+            char buffer[4096];
+            if (!GuestCopyIn_nid_no_patch(buffer, name + read, bytes)) return fail(GuestEfault);
+            const auto end = static_cast<const char*>(std::memchr(buffer, 0, bytes));
+            if (end != nullptr) {
+                nameText.append(buffer, static_cast<std::size_t>(end - buffer));
+                break;
+            }
+            nameText.append(buffer, bytes);
+            read += bytes;
+        }
+    } else {
+        return fail(GuestEfault);
+    }
+    bool accessFailure = false;
+    const auto ladder = [&](const std::string& candidate) {
+        GuestExecve_nid_no_patch(candidate.c_str(), argv, envp);
+        const int refusal = *__error_nid_postfix();
+        switch (refusal) {
+        case GuestE2big:
+        case GuestEnomem:
+        case GuestEtxtbsy:
+            return true;
+        case GuestEloop:
+        case GuestEnametoolong:
+        case GuestEnoent:
+        case GuestEnotdir:
+            return false;
+        case GuestEnoexec: {
+            std::size_t count = 0;
+            for (;;) {
+                char* entry = nullptr;
+                if (!GuestCopyIn_nid_no_patch(&entry, argv + count, sizeof(entry))) {
+                    fail(GuestEfault);
+                    return true;
+                }
+                if (entry == nullptr) break;
+                ++count;
+            }
+            const std::string shell("sh");
+            std::vector<char*> shellArgs;
+            shellArgs.reserve(count + 2);
+            shellArgs.push_back(const_cast<char*>(shell.c_str()));
+            shellArgs.push_back(const_cast<char*>(candidate.c_str()));
+            for (std::size_t index = 1; index < count; ++index) {
+                char* next = nullptr;
+                if (!GuestCopyIn_nid_no_patch(&next, argv + index, sizeof(next))) {
+                    fail(GuestEfault);
+                    return true;
+                }
+                shellArgs.push_back(next);
+            }
+            shellArgs.push_back(nullptr);
+            GuestExecve_nid_no_patch(ShellPath.data(), shellArgs.data(), envp);
+            return true;
+        }
+        default: {
+            std::filesystem::path native;
+            if (const int resolved = ResolvePathError_nid_no_patch(candidate.c_str(), native)) return false;
+            std::error_code lookupError;
+            const auto status = std::filesystem::status(native, lookupError);
+            if (lookupError || status.type() == std::filesystem::file_type::not_found) return false;
+            if (refusal == GuestEacces) {
+                accessFailure = true;
+                return false;
+            }
+            return true;
+        }
+        }
+    };
+    if (nameText.find('/') != std::string::npos) {
+        if (ladder(nameText)) return -1;
+        return fail(accessFailure ? GuestEacces : GuestEnoent);
+    }
+    if (nameText.empty()) return fail(GuestEnoent);
+    std::size_t offset = 0;
+    for (bool finished = false; !finished;) {
+        const auto separator = searchPath.find(':', offset);
+        finished = separator == std::string::npos;
+        const std::string_view element(searchPath.data() + offset, finished ? searchPath.size() - offset : separator - offset);
+        offset = finished ? searchPath.size() : separator + 1;
+        const std::string_view directory = element.empty() ? std::string_view(".") : element;
+        if (directory.size() + nameText.size() + 2 > GuestCandidateMax) continue;
+        std::string candidate(directory);
+        candidate.push_back('/');
+        candidate += nameText;
+        if (ladder(candidate)) return -1;
+    }
+    return fail(accessFailure ? GuestEacces : GuestEnoent);
 }
 
 int APS5_VABI _wait4_nid_postfix() {
