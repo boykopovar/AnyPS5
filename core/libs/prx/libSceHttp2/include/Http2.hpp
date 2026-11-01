@@ -2,6 +2,8 @@
 
 #include "SceTypes.hpp"
 
+using Http2RedirectCallback = int (APS5_VABI*)(int requestId, int statusCode, const char** method, const char* location, void* userArg);
+
 struct Http2MemoryPoolStats {
     size_t pool_size;
     size_t max_inuse_size;
@@ -48,7 +50,7 @@ int APS5_VABI sceHttp2SetConnectionWaitTimeOut(int id, uint32_t usec);
 int APS5_VABI sceHttp2SetConnectTimeOut(int id, uint32_t usec);
 int APS5_VABI sceHttp2SetInflateGZIPEnabled(int id, int enable);
 int APS5_VABI sceHttp2SetRecvTimeOut(int id, uint32_t usec);
-int APS5_VABI sceHttp2SetRedirectCallback(int id, void* cbFunc, void* userArg);
+int APS5_VABI sceHttp2SetRedirectCallback(int id, Http2RedirectCallback cbFunc, void* userArg);
 int APS5_VABI sceHttp2SetRequestContentLength(int id, uint64_t contentLength);
 int APS5_VABI sceHttp2SetResolveTimeOut(int id, uint32_t usec);
 int APS5_VABI sceHttp2SetSendTimeOut(int id, uint32_t usec);
