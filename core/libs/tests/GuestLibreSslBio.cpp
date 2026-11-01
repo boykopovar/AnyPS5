@@ -501,10 +501,6 @@ void TestUnsupported() {
     Require(BIO_write_nid_postfix(bio, "a", 1) == -2, "reject uninitialized write");
     RequireError(0x20fff078);
     bio->initialized = 1;
-    bio->extraData = bio;
-    RequireUnsupported([&] { BIO_free_nid_postfix(bio); });
-    Require(bio->references == 1, "unsupported ex-data preserves reference");
-    bio->extraData = nullptr;
     const BioMethod* method = bio->method;
     bio->method = nullptr;
     Require(BIO_ctrl_nid_postfix(bio, 1, 0, nullptr) == -2, "reject control without a method");

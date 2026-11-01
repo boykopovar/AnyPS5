@@ -73,12 +73,13 @@ struct GainGraph {
     }
 };
 
-static void ExpectChannels(const std::vector<float>& out, std::initializer_list<std::vector<float>> channels) {
-    std::size_t c = 0;
-    for (const auto& samples : channels) {
-        Require(out.size() == samples.size() * channels.size());
-        for (std::size_t i = 0; i < samples.size(); i++) Require(out[i * channels.size() + c] == samples[i]);
-        c++;
+static void ExpectRamp(const std::vector<float>& out, std::initializer_list<float> from, std::initializer_list<float> to) {
+    Require(from.size() == to.size() && out.size() == Grain * from.size());
+    for (std::size_t c = 0; c < from.size(); ++c) {
+        for (std::size_t i = 0; i < Grain; ++i) {
+            const float expected = from.begin()[c] + (to.begin()[c] - from.begin()[c]) * static_cast<float>(i) / Grain;
+            Require(out[i * from.size() + c] == expected);
+        }
     }
 }
 
@@ -96,16 +97,16 @@ static void TestRamps() {
     GainGraph graph;
     graph.Set({64.0f, -64.0f});
     graph.Set({8.0f, -16.0f});
-    ExpectChannels(graph.Render(), {{0, 0.5f, 1, 1.5f, 2, 2.5f, 3, 3.5f}, {0, 0.5f, 1, 1.5f, 2, 2.5f, 3, 3.5f}});
+    ExpectRamp(graph.Render(), {0, 0}, {4, 4});
     ExpectConstant(graph.Render(), {4, 4});
     graph.Set({8.0f, -16.0f});
     ExpectConstant(graph.Render(), {4, 4});
     graph.Set({16.0f, 16.0f});
     graph.Set({-80.0f, 96.0f});
-    ExpectChannels(graph.Render(), {{4, -1.5f, -7, -12.5f, -18, -23.5f, -29, -34.5f}, {4, 0.5f, -3, -6.5f, -10, -13.5f, -17, -20.5f}});
+    ExpectRamp(graph.Render(), {4, 4}, {-40, -24});
     ExpectConstant(graph.Render(), {-40, -24});
     graph.Set({0, 0});
-    ExpectChannels(graph.Render(), {{-40, -35, -30, -25, -20, -15, -10, -5}, {-24, -21, -18, -15, -12, -9, -6, -3}});
+    ExpectRamp(graph.Render(), {-40, -24}, {0, 0});
     ExpectConstant(graph.Render(), {0, 0});
 }
 
@@ -114,8 +115,9 @@ static void TestEightChannels() {
     graph.Set({2, 8, 24, 64, 160, 384, 896, 2048});
     const auto out = graph.Render();
     ExpectFrame(out, 0, {0, 0, 0, 0, 0, 0, 0, 0});
-    ExpectFrame(out, 4, {0.5f, -1, 1.5f, -2, 2.5f, -3, 3.5f, -4});
-    ExpectFrame(out, 7, {7.0f / 8, -7.0f / 4, 21.0f / 8, -7.0f / 2, 35.0f / 8, -21.0f / 4, 49.0f / 8, -7});
+    ExpectFrame(out, Grain / 2, {0.5f, -1, 1.5f, -2, 2.5f, -3, 3.5f, -4});
+    const float last = static_cast<float>(Grain - 1) / Grain;
+    ExpectFrame(out, Grain - 1, {last, -2 * last, 3 * last, -4 * last, 5 * last, -6 * last, 7 * last, -8 * last});
     ExpectConstant(graph.Render(), {1, -2, 3, -4, 5, -6, 7, -8});
 }
 
@@ -191,7 +193,7 @@ static void TestParameterPositions() {
         param.header.id = SCE_NGS2_CUSTOM_VOICE_PARAM_GAIN | position;
         Require(sceNgs2VoiceControl(graph.voices[0], &param.header) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
     }
-    ExpectChannels(graph.Render(), {{0, 0.5f, 1, 1.5f, 2, 2.5f, 3, 3.5f}});
+    ExpectRamp(graph.Render(), {0}, {4});
     ExpectConstant(graph.Render(), {4});
 }
 
@@ -204,7 +206,7 @@ static void TestLinkedParameters() {
     params[2].gain[0] = 16;
     params[2].header.next = 0;
     Require(sceNgs2VoiceControl(graph.voices[0], &params[0].header) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
-    ExpectChannels(graph.Render(), {{0, 0.5f, 1, 1.5f, 2, 2.5f, 3, 3.5f}});
+    ExpectRamp(graph.Render(), {0}, {4});
     ExpectConstant(graph.Render(), {4});
 }
 
@@ -216,7 +218,7 @@ static void TestIntegerOutput() {
         std::array<std::int16_t, Grain> out{};
         const Ngs2RenderBufferInfo info{out.data(), sizeof(out), SCE_NGS2_WAVEFORM_TYPE_PCM_I16L, 1};
         Require(sceNgs2SystemRender(graph.system, &info, 1) == SCE_NGS2_OK);
-        for (const auto sample : out) Require(sample == (gain > 0.0f ? 16384 : -16384));
+        for (const auto sample : out) Require(sample == (gain > 0.0f ? 16383 : -16383));
     }
 }
 

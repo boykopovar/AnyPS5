@@ -10,7 +10,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#elif defined(__linux__) || defined(__APPLE__)
+#elif defined(__linux__) || defined(__APPLE__) || defined(__EMSCRIPTEN__)
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include <dlfcn.h>
 #endif
@@ -88,7 +88,7 @@ const void* ApplicationProcessParameters_nid_no_patch() {
     }
     if (!found) throw std::runtime_error("application heap: process metadata is missing; relink the executable");
     return result;
-#elif defined(__linux__) || defined(__APPLE__)
+#elif defined(__linux__) || defined(__APPLE__) || defined(__EMSCRIPTEN__)
     struct Search {
         const void* parameters = nullptr;
         bool invalid = false;

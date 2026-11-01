@@ -245,6 +245,49 @@ void scanning() {
     });
     require(instructions.size() == code.size(), "Progress changed image code analysis");
     require(updates > 10 && previous == 10000, "Missing intermediate image analysis progress");
+    std::vector<std::uint8_t> wrappingImage(0x1000);
+    Io::WriteU64(wrappingImage, 24, 0x2000);
+    wrappingImage[0x200] = 0xc3;
+    wrappingImage[0x208] = 0xc3;
+    Io::WriteU64(wrappingImage, 0x3c0, 0x2008);
+    Io::WriteU64(wrappingImage, 0x700, 0x2008);
+    Domain::ProgramHeader execHeader{};
+    execHeader.Type = 1;
+    execHeader.Flags = 1;
+    execHeader.Offset = 0x200;
+    execHeader.MappedAddress = 0x2000;
+    execHeader.FileSize = 0x100;
+    execHeader.MemorySize = 0x100;
+    Domain::ProgramHeader dynamicHeader{};
+    dynamicHeader.Type = 2;
+    dynamicHeader.Flags = 6;
+    dynamicHeader.Offset = 0x100;
+    dynamicHeader.MappedAddress = 0x1000;
+    dynamicHeader.FileSize = 48;
+    dynamicHeader.MemorySize = 48;
+    Domain::ProgramHeader wrappingDataHeader{};
+    wrappingDataHeader.Type = 1;
+    wrappingDataHeader.Flags = 0;
+    wrappingDataHeader.Offset = ~std::uint64_t{0} - 63;
+    wrappingDataHeader.MappedAddress = 0x8000;
+    wrappingDataHeader.FileSize = 0x410;
+    wrappingDataHeader.MemorySize = 0x410;
+    auto controlDataHeader = wrappingDataHeader;
+    controlDataHeader.Offset = 0x300;
+    for (const auto [addrTag, sizeTag] : {std::pair{25u, 27u}, std::pair{26u, 28u}, std::pair{32u, 33u}}) {
+        Io::WriteU64(wrappingImage, 0x100, addrTag);
+        Io::WriteU64(wrappingImage, 0x108, 0x8400);
+        Io::WriteU64(wrappingImage, 0x110, sizeTag);
+        Io::WriteU64(wrappingImage, 0x118, 8);
+        Io::WriteU64(wrappingImage, 0x120, 0);
+        Io::WriteU64(wrappingImage, 0x128, 0);
+        reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
+        const auto roots = Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, controlDataHeader});
+        require(roots == std::set<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
+        Io::WriteU64(wrappingImage, 0x3c0, 0);
+        reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
+        Io::WriteU64(wrappingImage, 0x3c0, 0x2008);
+    }
     code[70000] = 0x0f;
     code[70001] = 0x05;
     progress.Events.clear();
@@ -434,6 +477,66 @@ void relocationValidation() {
 
 }
 
+void sysvHashBoundsInCodeInstructionCollector() {
+    auto baseImage = fixture();
+    const auto parseHeaders = [](const std::vector<std::uint8_t>& bytes) {
+        std::vector<Domain::ProgramHeader> headers;
+        const auto count = Io::ReadU16(bytes, 56);
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto at = 64 + i * 56;
+            Domain::ProgramHeader h{};
+            h.Type = Io::ReadU32(bytes, at);
+            h.Flags = Io::ReadU32(bytes, at + 4);
+            h.Offset = Io::ReadU64(bytes, at + 8);
+            h.MappedAddress = Io::ReadU64(bytes, at + 16);
+            h.FileSize = Io::ReadU64(bytes, at + 32);
+            h.MemorySize = Io::ReadU64(bytes, at + 40);
+            headers.push_back(h);
+        }
+        return headers;
+    };
+    const auto headers = parseHeaders(baseImage);
+    const auto checkRejection = [&](const std::vector<std::uint8_t>& img, std::string_view expected) {
+        try {
+            Relinker::CodeInstructionCollector().Collect(img, headers);
+            throw std::runtime_error("Collector accepted invalid SysV hash table");
+        } catch (const Domain::RelinkerException& error) {
+            require(std::string(error.what()).find(expected) != std::string::npos, "Wrong error message from collector");
+        }
+    };
+    {
+        auto zeroBucket = baseImage;
+        Io::WriteU32(zeroBucket, 0x2680, 0);
+        checkRejection(zeroBucket, "invalid SysV hash header");
+    }
+    {
+        auto zeroChain = baseImage;
+        Io::WriteU32(zeroChain, 0x2684, 0);
+        checkRejection(zeroChain, "invalid SysV hash header");
+    }
+    {
+        auto oobBucket = baseImage;
+        Io::WriteU32(oobBucket, 0x2688, 4);
+        checkRejection(oobBucket, "invalid SysV hash bucket index");
+    }
+    {
+        auto tableOob = baseImage;
+        Io::WriteU32(tableOob, 0x2684, 0x2000);
+        checkRejection(tableOob, "unmapped address");
+    }
+    {
+        auto lastBucket = baseImage;
+        Io::WriteU32(lastBucket, 0x2680, 2);
+        Io::WriteU32(lastBucket, 0x268c, 1);
+        checkRejection(lastBucket, "invalid SysV hash bucket index");
+    }
+    {
+        auto chainPastSegment = baseImage;
+        Io::WriteU32(chainPastSegment, 0x2680, 0x25e);
+        checkRejection(chainPastSegment, "unmapped address");
+    }
+}
+
 int main() {
     try {
         convert();
@@ -447,6 +550,7 @@ int main() {
         baseRelocations();
         runtimeDirectories();
         relocationValidation();
+        sysvHashBoundsInCodeInstructionCollector();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

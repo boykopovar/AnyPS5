@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -77,7 +78,7 @@ void CheckErrors(const char* path) {
     Require(putw_nid_postfix(0x12345678, reader) == -1, "write on read-only stream fails");
     Require((reader->GuestState().flags & 0x60) == 0x40, "publish write error");
     Require(fclose_nid_postfix(reader) == 0, "close read-only file");
-    FileStream closed(std::tmpfile());
+    FileStream closed(TemporaryFile::Open());
     Require(closed.Close() == 0, "close temporary stream");
     errno = 0;
     Require(getw_nid_postfix(&closed) == -1 && errno == 9, "closed read reports EBADF");
