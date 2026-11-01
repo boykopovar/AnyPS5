@@ -247,7 +247,12 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_video_out_wqhd_detection PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-        add_test(NAME guest_video_out_wqhd_detection_no_vulkan COMMAND guest_video_out_wqhd_detection_tests)
+        add_executable(guest_video_out_wqhd_detection_exit_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutWqhdDetection.cpp)
+        set_target_properties(guest_video_out_wqhd_detection_exit_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+        target_include_directories(guest_video_out_wqhd_detection_exit_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_video_out_wqhd_detection_exit_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+        configure_windows_unwind(guest_video_out_wqhd_detection_exit_tests)
+        add_test(NAME guest_video_out_wqhd_detection_no_vulkan COMMAND guest_video_out_wqhd_detection_exit_tests)
         set_tests_properties(guest_video_out_wqhd_detection_no_vulkan PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0
             ENVIRONMENT "VK_DRIVER_FILES=${CMAKE_CURRENT_BINARY_DIR}/missing_icd.json;VK_ICD_FILENAMES=${CMAKE_CURRENT_BINARY_DIR}/missing_icd.json"
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")

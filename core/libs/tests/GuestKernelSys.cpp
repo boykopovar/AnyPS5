@@ -465,15 +465,19 @@ void CheckSchedSetscheduler() {
     Require(sched_setscheduler_nid_postfix(0, 1, nullptr) == -1 && Error() == 14);
     Require(sched_setscheduler_nid_postfix(getpid_nid_postfix() + 1, 1, &param) == -1 && Error() == 3);
     Require(sched_setscheduler_nid_postfix(-1, 1, &param) == -1 && Error() == 3);
-    for (const int policy : {-1, 0, 4, 7}) Require(sched_setscheduler_nid_postfix(0, policy, &param) == -1 && Error() == 22);
+    Require(sched_setscheduler_nid_postfix(0, 1, reinterpret_cast<const KernelSchedParam*>(std::uintptr_t{0x10})) == -1 && Error() == 14);
+    Require(sched_setscheduler_nid_postfix(getpid_nid_postfix() + 1, 1, reinterpret_cast<const KernelSchedParam*>(std::uintptr_t{0x10})) == -1 && Error() == 14);
+    for (const int pid : {0, getpid_nid_postfix()}) {
+        for (const int policy : {-1, 0, 1, 2, 3, 4, 7}) {
+            Require(sched_setscheduler_nid_postfix(pid, policy, &param) == -1 && Error() == 1);
+            param.sched_priority = 300;
+            Require(sched_setscheduler_nid_postfix(pid, policy, &param) == -1 && Error() == 1);
+            param.sched_priority = 700;
+        }
+    }
     int policy = 0;
     KernelSchedParam current{};
-    Require(sched_setscheduler_nid_postfix(0, 1, &param) == 0);
-    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 1 && current.sched_priority == 700);
-    param.sched_priority = 300;
-    Require(sched_setscheduler_nid_postfix(0, 3, &param) == 0);
-    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == 3 && current.sched_priority == 300);
-    Require(scePthreadSetschedparam(self, savedPolicy, &saved) == 0);
+    Require(scePthreadGetschedparam(self, &policy, &current) == 0 && policy == savedPolicy && current.sched_priority == saved.sched_priority);
 }
 
 void CheckCondattrClock() {
@@ -1510,6 +1514,9 @@ int main() {
     Require(lchflags_nid_postfix((file + "/child").c_str(), 0) == -1 && Error() == 20);
     Require(lchflags_nid_postfix(file.c_str(), 0x20) == -1 && Error() == 45);
     Require(lchflags_nid_postfix(file.c_str(), 0x200000) == -1 && Error() == 1);
+    Require(lchflags_nid_postfix(file.c_str(), 0x20000) == -1 && Error() == 1);
+    Require(lchflags_nid_postfix(file.c_str(), 0x2 | 0x40000) == -1 && Error() == 1);
+    Require(lchflags_nid_postfix(file.c_str(), 0x40000 | 0x20) == -1 && Error() == 45);
     const auto symbolic = (root / "symbolic").string();
     const int created = symlink_nid_postfix("original.bin", symbolic.c_str());
     if (created == 0) {

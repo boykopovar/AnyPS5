@@ -395,7 +395,7 @@ int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyph() {
 }
 
 int APS5_VABI sceFontGraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradient, float position, const void* color) {
-    NotImplemented_nid_no_patch(__func__);
+    return Font::GraphicsAppendGradientSegment(graphicsObject, gradient, position, color);
 }
 
 int APS5_VABI sceFontSupportSystemUpdation() {

@@ -23,7 +23,18 @@
 #include <windows.h>
 #else
 #include <fcntl.h>
+#ifdef __APPLE__
+struct udmabuf_create {
+    std::uint32_t memfd;
+    std::uint32_t flags;
+    std::uint64_t offset;
+    std::uint64_t size;
+};
+constexpr std::uint32_t UDMABUF_FLAGS_CLOEXEC = 0x01;
+constexpr unsigned long UDMABUF_CREATE = 0;
+#else
 #include <linux/udmabuf.h>
+#endif
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -289,6 +300,7 @@ struct HostImports {
     // Bumped whenever an import is dropped, so HostImport pointers taken under the lock earlier can be
     // reused while it is unchanged.
     std::uint64_t epoch = 1;
+    std::uint64_t inserted = 0;
     VkDevice watchDevice = VK_NULL_HANDLE;
     bool unwatchImports = false;
     bool unwatchDmaBufImports = false;
@@ -601,6 +613,9 @@ const char* createHostPointerImport(const Context& context, HostImport& entry, V
 
 #ifndef _WIN32
 int udmabufDevice() {
+#ifdef __APPLE__
+    return -1;
+#endif
     static const int device = [] {
         const int result = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
         if (result < 0) {
@@ -2268,9 +2283,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         }
     }
 #endif
-    const auto inserted = state.imports.emplace(base, entry);
+    const auto [placed, added] = state.imports.emplace(base, entry);
+    if (added) ++state.inserted;
     owner.armed = false;
-    return &inserted.first->second;
+    return &placed->second;
 }
 
 // The readable registered range containing [begin, end), or null.
@@ -4004,6 +4020,10 @@ ImportProbe ProbeDmaBufImportWriteProtection(const Context& context) {
 #ifdef _WIN32
     static_cast<void>(context);
     probe.failure = "the Linux write watch";
+    return probe;
+#elif defined(__APPLE__)
+    static_cast<void>(context);
+    probe.failure = "dma-buf import support";
     return probe;
 #else
     if (!context.dmaBufImport) {
@@ -6711,11 +6731,20 @@ bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof)
     return state.device == proof.device && state.epoch == proof.epoch && state.refreshedGeneration == proof.refreshedGeneration && !importsStale(context, state);
 }
 
+bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof) {
+    if (proof.device == VK_NULL_HANDLE || proof.device != context.device) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != proof.device) return false;
+    if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
+    return state.device == proof.device && state.epoch == proof.epoch && state.inserted == proof.inserted;
+}
+
 HostImportsProof HostImportsIdentity(const Context& context) {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     if (importsStale(context, state)) return {};
-    return {state.device, state.epoch, state.refreshedGeneration};
+    return {state.device, state.epoch, state.refreshedGeneration, state.inserted};
 }
 
 }

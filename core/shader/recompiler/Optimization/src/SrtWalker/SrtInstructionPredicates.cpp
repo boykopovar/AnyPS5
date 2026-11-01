@@ -109,6 +109,7 @@ bool IsRuntimeUniformOp(IrOpcode opcode) {
         case IrOpcode::ULessThan32:
         case IrOpcode::IEqual32:
         case IrOpcode::UGreaterThan32:
+        case IrOpcode::UGreaterThanEqual32:
         case IrOpcode::INotEqual32:
         case IrOpcode::LogicalOr:
         case IrOpcode::LogicalAnd:
