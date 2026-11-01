@@ -5,6 +5,7 @@
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -46,8 +48,8 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint64_t address) {
     };
 }
 
-std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint64_t base, std::uint32_t surface) {
-    const auto address = base + surface * Stride;
+std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint64_t base, std::uint32_t surface, std::uint64_t stride, bool flush) {
+    const auto address = base + surface * stride;
     std::vector<std::uint32_t> userData(16, 0u);
     const auto texture = TextureDescriptor(address);
     std::copy(texture.begin(), texture.end(), userData.begin() + 4);
@@ -64,8 +66,10 @@ std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint
     const auto result = ShaderRecompiler::Recompile(request);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
-    StorageTexture::FlushPending(address, static_cast<std::size_t>(SurfaceBytes), nullptr, "test");
-    device.WaitIdle();
+    if (flush) {
+        StorageTexture::FlushPending(address, static_cast<std::size_t>(SurfaceBytes), nullptr, "test");
+        device.WaitIdle();
+    }
     return StorageTexture::FindLive(address, SurfaceBytes);
 }
 
@@ -81,16 +85,20 @@ void SetVariable(const char* name, const char* value) {
 
 int main(int argc, char** argv) {
     try {
-        const bool unlimited = argc > 1 && std::string(argv[1]) == "--unlimited";
+        const std::string mode = argc > 1 ? argv[1] : "";
+        const bool unlimited = mode == "--unlimited";
+        const bool profile = mode == "--profile";
         const std::string limit = unlimited ? "no entry limit" : "a limit of " + std::to_string(Entries) + " entries";
+        const auto stride = profile ? SurfaceBytes : Stride;
         SetVariable("APS5_STORAGE_CACHE_ENTRIES", unlimited ? "0" : "4");
         SetVariable("APS5_TEXTURE_CACHE_MIB", "1024");
+        if (profile) SetVariable("APS5_PROFILE_DRAW", "1");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        std::vector<std::uint32_t> storage((SurfaceBytes + Surfaces * Stride + Stride) / 4u, 0u);
+        std::vector<std::uint32_t> storage((SurfaceBytes + Surfaces * stride + Stride) / 4u, 0u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
         const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
-        const auto blockBytes = static_cast<std::size_t>(SurfaceBytes + (Surfaces - 1u) * Stride);
+        const auto blockBytes = static_cast<std::size_t>(SurfaceBytes + (Surfaces - 1u) * stride);
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(texels, blockBytes, true, true, true);
@@ -103,28 +111,33 @@ int main(int argc, char** argv) {
         try {
             std::vector<std::weak_ptr<StorageTexture>> images(Surfaces);
             for (std::uint32_t surface = 0; surface < Entries; ++surface) {
-                images[surface] = Store(*device, base, surface);
+                images[surface] = Store(*device, base, surface, stride, !profile);
                 Require(!images[surface].expired(), "surface " + std::to_string(surface) + " has no cached storage image");
             }
             for (std::uint32_t surface = 0; surface < Entries; ++surface) {
-                const auto again = Store(*device, base, surface);
+                const auto again = Store(*device, base, surface, stride, !profile);
                 Require(again != nullptr && again == images[surface].lock(), "surface " + std::to_string(surface) + " was made again while the cache held " + std::to_string(Entries) + " of its " + std::to_string(Entries) + " entries");
             }
-            for (std::uint32_t surface = Entries; surface < Surfaces; ++surface) images[surface] = Store(*device, base, surface);
+            for (std::uint32_t surface = Entries; surface < Surfaces; ++surface) images[surface] = Store(*device, base, surface, stride, !profile);
             for (std::uint32_t surface = 0; surface < Surfaces; ++surface) {
-                const bool cached = StorageTexture::FindLive(base + surface * Stride, SurfaceBytes) != nullptr;
+                const bool cached = StorageTexture::FindLive(base + surface * stride, SurfaceBytes) != nullptr;
                 Require(cached == (unlimited || surface >= Surfaces - Entries), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(Surfaces) + " small surfaces under " + limit + " and a 1024 MiB budget");
                 Require(cached == !images[surface].expired(), "surface " + std::to_string(surface) + (cached ? " is cached but its weak image expired" : " was evicted but its image is still alive"));
+            }
+            if (profile) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10500));
+                StorageTexture::FlushPending(base + (Surfaces - 1u) * stride, static_cast<std::size_t>(SurfaceBytes), nullptr, "test");
+                device->WaitIdle();
             }
         } catch (...) {
             release();
             throw;
         }
         release();
-        std::puts(unlimited ? "storage cache without an entry limit tests passed" : "storage cache entry limit tests passed");
+        std::puts(unlimited ? "storage cache without an entry limit tests passed" : profile ? "storage cache entry limit counter tests passed" : "storage cache entry limit tests passed");
         return 0;
     } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
+        std::cerr << "storage cache entry limit test failed: " << error.what() << '\n';
         return 1;
     }
 }
