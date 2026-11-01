@@ -50,6 +50,8 @@ FrameTiming* Driver::includeTimingSubmission(const Submission& submission, bool 
 }
 
 void Driver::markCompleted(std::uint64_t serial) {
+    static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
+    if (traceGpu) std::fprintf(stderr, "[gpu] %.1f completed serial=%llu (in order up to %llu)\n", TraceMs(), static_cast<unsigned long long>(serial), static_cast<unsigned long long>(completed));
     completedOutOfOrder.insert(serial);
     while (!completedOutOfOrder.empty() && *completedOutOfOrder.begin() == completed + 1) {
         completed = *completedOutOfOrder.begin();
@@ -70,6 +72,8 @@ void Driver::deferCompletion(const Submission& submission) {
         queue0Uncommitted.push_back(received);
     }
     completionDeferred() = true;
+    static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
+    if (traceGpu) std::fprintf(stderr, "[gpu] %.1f deferred completion serial=%llu to the draw pipeline\n", TraceMs(), static_cast<unsigned long long>(submission.serial));
     DrawPipeline::Queue0().Enqueue([this, serial = submission.serial, received, labelWrites = submission.labelWrites, progress = submission.progress] {
         completeSubmission(serial, received, labelWrites, progress);
     }, {});
