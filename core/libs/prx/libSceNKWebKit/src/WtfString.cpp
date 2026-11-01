@@ -272,7 +272,7 @@ unsigned Hash(StringView view, bool masked = true) {
 }
 
 unsigned AvoidDeletedHashValue(unsigned hash) {
-    return hash | (static_cast<unsigned>(!(hash + 1)) << 31);
+    return hash ^ (static_cast<unsigned>(!(hash + 1)) << 31);
 }
 
 StringImpl* EmptyImpl() {
