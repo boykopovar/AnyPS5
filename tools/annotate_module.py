@@ -75,10 +75,18 @@ class Module:
             raise ModuleError("not an ELF file")
         if self.data[4] != 2 or self.data[5] != 1:
             raise ModuleError("not a 64-bit little-endian ELF")
+        if self.data[6] != 1 or self.unpack("<I", 20)[0] != 1:
+            raise ModuleError("unsupported ELF version")
+        if self.unpack("<H", 52)[0] != 64:
+            raise ModuleError("unsupported ELF header size")
         if self.unpack("<H", 0x12)[0] != 0x3E:
             raise ModuleError("not an x86-64 ELF")
         phoff, = self.unpack("<Q", 0x20)
         phentsize, phnum = self.unpack("<HH", 0x36)
+        if phentsize != 56:
+            raise ModuleError("unsupported ELF program header size")
+        if phoff < 64 or phoff + phnum * phentsize > len(self.data):
+            raise ModuleError("ELF program header table is outside its supported file range")
         for index in range(phnum):
             kind, flags, offset, vaddr, _, filesz, _, _ = self.unpack("<IIQQQQQQ", phoff + index * phentsize)
             if kind == PT_LOAD:
