@@ -125,6 +125,14 @@ bool IsNullTextureResource(std::span<const std::uint32_t> words) {
     return base40 == 0 || type <= 1;
 }
 
+bool IsNullSampledTextureResource(std::span<const std::uint32_t> words) {
+    if (IsNullTextureResource(words)) return true;
+    const auto type = static_cast<ShaderRecompiler::ImageType>((words[3] >> 28u) & 0xfu);
+    if (type < ShaderRecompiler::ImageType::Color1D || type > ShaderRecompiler::ImageType::Color2DMsaa) return false;
+    const auto format = (words[1] >> 20u) & 0x1ffu;
+    return format == 0u || format == 0x1ffu;
+}
+
 GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descriptor) {
     Require(descriptor.size() == 8, "guest texture descriptor must contain 8 dwords");
     const bool gcn = ShaderRecompiler::GcnGuestShaders();
