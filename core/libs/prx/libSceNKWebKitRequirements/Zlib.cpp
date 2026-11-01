@@ -1,3 +1,39 @@
+/* uncompress_nid_postfix is adapted from uncompress2() in uncompr.c of zlib 1.3.1
+ * (https://github.com/madler/zlib/blob/51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf/uncompr.c).
+ * Altered for AnyPS5: it takes 64-bit guest lengths, counts the produced bytes itself
+ * instead of reading total_out, and does not report the consumed source length.
+ */
+
+/* uncompr.c -- decompress a memory buffer
+ * Copyright (C) 1995-2003, 2010, 2014, 2016 Jean-loup Gailly, Mark Adler
+ * For conditions of distribution and use, see copyright notice in zlib.h
+ */
+
+/* zlib.h -- interface of the 'zlib' general purpose compression library
+  version 1.3.1, January 22nd, 2024
+
+  Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  Jean-loup Gailly        Mark Adler
+  jloup@gzip.org          madler@alumni.caltech.edu
+*/
+
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
 #include "zlib.h"
 #include <cstdint>
