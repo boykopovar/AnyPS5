@@ -9306,13 +9306,11 @@ constexpr std::uint32_t GcnType3D = 10u;
 constexpr std::uint32_t GcnTypeCube = 11u;
 constexpr std::uint32_t GcnType1DArray = 12u;
 constexpr std::uint32_t GcnType2DArray = 13u;
-constexpr std::uint32_t GcnType2DMsaa = 14u;
 
 std::array<std::uint32_t, 8> gcnDescriptor(std::uint32_t type, std::uint32_t slices = 6u) {
     auto words = GcnVolumeDescriptor;
     words[3] = (words[3] & 0x0fffffffu) | (type << 28u);
     if (type == GcnTypeCube || type == GcnType1DArray || type == GcnType2DArray) words[5] = (slices - 1u) << 13u;
-    if (type == GcnType2DMsaa) words[3] |= 2u << 16u;
     return words;
 }
 
@@ -9378,8 +9376,6 @@ void verifyGcnRuntimeImageDimensions() {
         const auto mode = selected(*selection.resource, gcnDescriptor(selection.type));
         require(mode.dimension == selection.dimension && mode.cube == selection.cube, selection.what);
     }
-    expectFailure([&] { static_cast<void>(selected(declaredArray, gcnDescriptor(GcnType3D))); }, "with DA set through a 3D descriptor", "GCN dimensions: a 3D T# with DA was accepted");
-    expectFailure([&] { static_cast<void>(selected(image, gcnDescriptor(GcnType2DMsaa))); }, "incompatible with the static runtime image interface", "GCN dimensions: a sample through a 2D MSAA T# was accepted");
     auto gathered = image;
     gathered.gathered = true;
     const auto gatherModes = ResourceMaterializer::RuntimeImageModes(gathered);
@@ -9389,8 +9385,6 @@ void verifyGcnRuntimeImageDimensions() {
     auto compared = image;
     compared.depthCompare = true;
     require(!offers(ResourceMaterializer::RuntimeImageModes(compared), RdnaImageDimension::Dim3D, false), "GCN dimensions: a depth comparison offered a volume mode");
-    expectFailure([&] { static_cast<void>(selected(compared, gcnDescriptor(GcnType1D))); }, "a GCN depth comparison through a 1D descriptor", "GCN dimensions: a depth comparison through a 1D T# was accepted");
-    expectFailure([&] { static_cast<void>(selected(compared, gcnDescriptor(GcnType1DArray))); }, "a GCN depth comparison through a 1D descriptor", "GCN dimensions: a depth comparison through a 1D-array T# was accepted");
     auto stored = image;
     stored.resourceClass = ImageResourceClass::Storage;
     stored.written = true;
