@@ -184,9 +184,11 @@ struct HostImportsProof {
     VkDevice device = VK_NULL_HANDLE;
     std::uint64_t epoch = 0;
     std::uint64_t refreshedGeneration = 0;
+    std::uint64_t inserted = 0;
 };
 // Whether the table still matches `proof` (one lock); false for an empty or stale proof.
 bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof);
+bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof);
 // The table's identity when it is reconciled with the live registry (one lock), else empty.
 HostImportsProof HostImportsIdentity(const Context& context);
 
