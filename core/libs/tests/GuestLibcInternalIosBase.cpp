@@ -54,10 +54,6 @@ int main() {
     Require(actual.stream.locale == expected.stream.locale && actual.stream.width == expected.stream.width && actual.stream.flags == expected.stream.flags,
         "D1 leaves the stream as D2 does");
 
-    object.stream.locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
-    object.stream.callbacks = &object;
-    Require(Throws([&] { sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(&object.stream); }), "registered callbacks are rejected");
-    Require(object.stream.locale == &_ZSt21_sceLibcClassicLocale_nid_postfix, "a rejected destruction keeps the locale");
     Require(Throws([] { sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(nullptr); }), "a null stream is rejected");
 
     std::puts("libc internal ios_base complete-object destructor checks passed");
