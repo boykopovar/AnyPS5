@@ -269,7 +269,6 @@ int APS5_VABI libSceLibcInternalInventory_261_nid_no_patch();
 int APS5_VABI libSceLibcInternalUnknown_hsn2TaF3poY_nid_no_patch();
 int APS5_VABI libSceLibcInternalUnknown_oCH4efUlxZ0_nid_no_patch();
 int APS5_VABI libSceLibcInternalUnknown_GdwuPYbVpP4_nid_no_patch();
-int APS5_VABI libSceLibcInternalInventory_262_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_263_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_264_nid_no_patch();
 int APS5_VABI libSceLibcInternalInventory_265_nid_no_patch();
