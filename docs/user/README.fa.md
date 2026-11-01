@@ -16,13 +16,13 @@
 
 ## وضعیت پیشرفت
 
-[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shaders](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
+[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shader forms decoded, counted from the code](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![implemented in 7 days](https://boykopovar.github.io/AnyPS5/badge-week.svg)](https://boykopovar.github.io/AnyPS5/history.html)
 
 [![progress map](https://boykopovar.github.io/AnyPS5/progress.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
 
 [تاریخچه پیشرفت پروژه](https://boykopovar.github.io/AnyPS5/history.html)
 
-<sub>* کتابخانه‌های سیستمی: درصد نمایش‌داده‌شده بر اساس توابعی محاسبه می‌شود که پروژه تاکنون شناسایی و در [core/libs/prx](../../core/libs/prx) اعلان کرده است؛ این عدد به معنی پوشش درصدی از تمام توابع سیستمی PS5 نیست. با اعلان توابع بیشتر، مجموعه توابعِ مبنای محاسبه نیز بزرگ‌تر می‌شود.</sub>
+<sub>* کتابخانه‌های سیستمی: سبز نشان‌دهندهٔ تابع پیاده‌سازی‌شده است؛ قرمز یک تابع stub مشاهده‌شده را نشان می‌دهد (تابع اعلان شده و استفاده‌ای اندازه‌گیری‌شده، نیاز به آن را نشان می‌دهد)؛ خاکستری یک تابع stub مشاهده‌نشده است (تابع اعلان شده، اما استفادهٔ اندازه‌گیری‌شده‌ای از آن شناخته نشده است؛ این موضوع به معنی استفاده‌نشدن آن در هیچ بازی‌ای نیست). درصد اصلی از نسبت «توابع پیاده‌سازی‌شده / (توابع پیاده‌سازی‌شده + stubهای مشاهده‌شده)» به دست می‌آید؛ بنابراین stubهای خاکستری آن را کاهش نمی‌دهند. مقدار «اعلان‌شده» در صفحهٔ پیشرفت همهٔ توابع اعلان‌شده را در بر می‌گیرد. در این محاسبه فقط توابع اعلان‌شده در [core/libs/prx](../../core/libs/prx) لحاظ می‌شوند، نه همهٔ توابع سیستمی PS5. در نمودار شیدرها نیز رنگ خاکستری نشان‌دهندهٔ دستور پیاده‌سازی‌نشده است. جزئیات بیشتر در [مستندات گزارش پیشرفت](../dev/PROGRESS.md).</sub>
 
 مواجهه با یک حالت پشتیبانی‌نشده یا غیرمنتظره باعث پرتاب استثنای C++ می‌شود که معمولاً از نوع `std::runtime_error` است. اگر هیچ بخشی این استثنا را دریافت نکند، متن آن (خروجی `what()`) در `stderr` چاپ می‌شود و فرایند خاتمه می‌یابد.
 
