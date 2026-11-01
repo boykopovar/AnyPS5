@@ -1,5 +1,13 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/FilesystemError.hpp"
+
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <string>
 
 extern "C" {
 
@@ -191,8 +199,100 @@ int APS5_VABI _dup2_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _execve_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _execve_nid_postfix(const char* path, char* const* argv, char* const* envp) {
+    constexpr int GuestEfault = 14;
+    constexpr int GuestEacces = 13;
+    constexpr int GuestEnoexec = 8;
+    constexpr int GuestE2big = 7;
+    constexpr int GuestEnoent = 2;
+    constexpr int GuestEnametoolong = 63;
+    constexpr std::size_t GuestPathMax = 1024;
+    constexpr std::size_t GuestArgMax = 262144;
+    const auto fail = [](int error) {
+        *__error_nid_postfix() = error;
+        return -1;
+    };
+    const auto gather = [](const char* guest, std::size_t maxLength, std::string& copy) -> int {
+        for (std::size_t read = 0; read < maxLength;) {
+            const auto address = reinterpret_cast<std::uintptr_t>(guest) + read;
+            const std::size_t boundary = 4096 - address % 4096;
+            const std::size_t bytes = boundary < maxLength - read ? boundary : maxLength - read;
+            char buffer[4096];
+            if (!GuestCopyIn_nid_no_patch(buffer, guest + read, bytes)) return GuestEfault;
+            const auto end = static_cast<const char*>(std::memchr(buffer, 0, bytes));
+            if (end != nullptr) {
+                copy.append(buffer, static_cast<std::size_t>(end - buffer));
+                return 0;
+            }
+            copy.append(buffer, bytes);
+            read += bytes;
+        }
+        return GuestEnametoolong;
+    };
+    if (argv == nullptr) return fail(GuestEfault);
+    std::string fname;
+    if (path != nullptr) {
+        const int error = gather(path, GuestPathMax, fname);
+        if (error != 0) return fail(error);
+    }
+    std::string text;
+    std::size_t stringspace = GuestArgMax;
+    for (char* const* slot = argv;; ++slot) {
+        char* argument = nullptr;
+        if (!GuestCopyIn_nid_no_patch(&argument, slot, sizeof(argument))) return fail(GuestEfault);
+        if (argument == nullptr) break;
+        text.clear();
+        const int error = gather(argument, stringspace, text);
+        if (error != 0) return fail(error == GuestEnametoolong ? GuestE2big : error);
+        stringspace -= text.size() + 1;
+    }
+    if (envp != nullptr) {
+        for (char* const* slot = envp;; ++slot) {
+            char* variable = nullptr;
+            if (!GuestCopyIn_nid_no_patch(&variable, slot, sizeof(variable))) return fail(GuestEfault);
+            if (variable == nullptr) break;
+            text.clear();
+            const int error = gather(variable, stringspace, text);
+            if (error != 0) return fail(error == GuestEnametoolong ? GuestE2big : error);
+            stringspace -= text.size() + 1;
+        }
+    }
+    if (path == nullptr || fname.empty()) return fail(GuestEnoent);
+    std::filesystem::path native;
+    if (const int error = ResolvePathError_nid_no_patch(fname.c_str(), native)) return fail(error);
+    std::error_code statusError;
+    const auto status = std::filesystem::status(native, statusError);
+    if (status.type() == std::filesystem::file_type::not_found) return fail(NotFoundError_nid_no_patch(native));
+    if (statusError) return fail(FilesystemError(statusError));
+#ifdef _WIN32
+    const bool executable = std::filesystem::is_regular_file(status);
+#else
+    constexpr std::filesystem::perms execute = std::filesystem::perms::owner_exec | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
+    const bool executable = (status.permissions() & execute) != std::filesystem::perms::none && std::filesystem::is_regular_file(status);
+#endif
+    if (!executable) return fail(GuestEacces);
+    std::error_code sizeError;
+    const auto size = std::filesystem::file_size(native, sizeError);
+    if (sizeError) return fail(FilesystemError(sizeError));
+    if (size == 0) return fail(GuestEnoexec);
+    if (!ExecutePermission_nid_no_patch(native)) return fail(GuestEacces);
+    std::ifstream image(native, std::ios::binary);
+    if (!image) return fail(GuestEacces);
+    unsigned char header[4]{};
+    image.read(reinterpret_cast<char*>(header), sizeof(header));
+    if (image.gcount() < static_cast<std::streamsize>(sizeof(header))) return fail(GuestEnoexec);
+    if (header[0] == '#' && header[1] == '!') {
+        throw std::runtime_error(std::string("execve: running the script ") + fname + " is not supported, script interpreters are not modelled");
+    }
+    constexpr unsigned char ElfMagic[] = {0x7f, 0x45, 0x4c, 0x46};
+    constexpr unsigned char Ps4SelfMagic[] = {0x4f, 0x15, 0x3d, 0x1d};
+    constexpr unsigned char Ps5SelfMagic[] = {0x54, 0x14, 0xf5, 0xee};
+    if (std::memcmp(header, ElfMagic, sizeof(ElfMagic)) == 0 ||
+        std::memcmp(header, Ps4SelfMagic, sizeof(Ps4SelfMagic)) == 0 ||
+        std::memcmp(header, Ps5SelfMagic, sizeof(Ps5SelfMagic)) == 0) {
+        throw std::runtime_error(std::string("execve: replacing the process image with ") + fname + " is not supported, program activation is not modelled");
+    }
+    return fail(GuestEnoexec);
 }
 
 int APS5_VABI _execvpe_nid_postfix() {
