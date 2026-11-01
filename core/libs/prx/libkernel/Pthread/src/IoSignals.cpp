@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <memory>
@@ -181,6 +182,7 @@ private:
             while (sem_wait(Semaphore()) != 0 && errno == EINTR) {}
 #endif
             bool pending;
+            auto retry = std::chrono::milliseconds(1);
             do {
                 pending = false;
                 {
@@ -192,7 +194,10 @@ private:
                         if (state->wait) state->wait->Wake();
                     }
                 }
-                if (pending) std::this_thread::yield();
+                if (pending) {
+                    std::this_thread::sleep_for(retry);
+                    retry = std::min(retry * 2, std::chrono::milliseconds(16));
+                }
             } while (pending);
         }
     }

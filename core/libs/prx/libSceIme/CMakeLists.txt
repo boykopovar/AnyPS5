@@ -1,4 +1,4 @@
-add_library(libSceIme SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ModalDialog.cpp)
+add_library(libSceIme SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ModalDialog.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PsnDialogNotice.cpp)
 target_include_directories(libSceIme PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceIme)
 
@@ -50,6 +50,21 @@ if(BUILD_TESTING)
     add_test(NAME guest_ime_modal_dialog COMMAND guest_ime_modal_dialog_tests)
     if(WIN32)
         set_tests_properties(guest_ime_modal_dialog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
+    endif()
+
+    add_test_executable(psn_dialog_notice_mode_tests ${LIBS_INCLUDE_DIR}/tests/PsnDialogNoticeMode.cpp)
+    target_include_directories(psn_dialog_notice_mode_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    configure_host_test_executable(psn_dialog_notice_mode_tests)
+    add_test(NAME psn_dialog_notice_mode COMMAND psn_dialog_notice_mode_tests)
+
+    add_test_executable(psn_dialog_notice_tests ${LIBS_INCLUDE_DIR}/tests/PsnDialogNotice.cpp)
+    target_include_directories(psn_dialog_notice_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(psn_dialog_notice_tests PRIVATE libSceIme libc)
+    configure_windows_unwind(psn_dialog_notice_tests)
+    add_test(NAME psn_dialog_notice COMMAND psn_dialog_notice_tests)
+    if(WIN32)
+        set_tests_properties(psn_dialog_notice PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
     endif()
 

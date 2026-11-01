@@ -245,6 +245,22 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
     return data;
 }
 
+bool WithdrawnPort(int port, const PadSlot& slot) {
+    return port == 0 && !slot.connected;
+}
+
+PadData WithdrawnData(std::uint64_t changeTime) {
+    PadData data{};
+    data.orientation_w = 1.0f;
+    std::uint8_t connectedCount = 0;
+    for (const auto& s : slots) {
+        if (s.connected) ++connectedCount;
+    }
+    data.connected_count = connectedCount;
+    data.timestamp = changeTime;
+    return data;
+}
+
 Pad::InputCommandFile& InjectedCommands() {
     static Pad::InputCommandFile commands([] {
 #ifdef _WIN32
@@ -290,8 +306,9 @@ PadData Pad::ReadState(int port) {
     const std::uint64_t now = sceKernelGetProcessTime();
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
     auto& slot = slots[port];
-    PadData data = BuildData(slot, slot.state, slot.timestamp, now, injected, port);
-    if (slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
+    const bool withdrawn = WithdrawnPort(port, slot);
+    PadData data = withdrawn ? WithdrawnData(slot.timestamp) : BuildData(slot, slot.state, slot.timestamp, now, injected, port);
+    if (!withdrawn && slot.pressedSinceRead != 0 && now - slot.pressedAt <= LatchExpiry(slot)) {
         data.buttons |= slot.pressedSinceRead;
         if (slot.pressedSinceRead & 0x100u) data.analog_buttons_l2 = std::max(data.analog_buttons_l2, slot.pressedAnalogL2);
         if (slot.pressedSinceRead & 0x200u) data.analog_buttons_r2 = std::max(data.analog_buttons_r2, slot.pressedAnalogR2);
@@ -312,6 +329,11 @@ int Pad::Read(PadData* data, int num, int port) {
     slot.pressedSinceRead = 0;
     const std::uint64_t now = sceKernelGetProcessTime();
     const auto injected = port == 0 ? InjectedTitleInput(now) : Pad::InputCommandFile::Input{};
+    if (WithdrawnPort(port, slot)) {
+        slot.queue.clear();
+        data[0] = WithdrawnData(slot.timestamp);
+        return 1;
+    }
     if (slot.queue.empty()) {
         data[0] = BuildData(slot, slot.state, slot.timestamp, now, injected, port);
         return 1;

@@ -30,6 +30,10 @@ void APS5_VABI pthread_cleanup_push_nid_postfix(void (APS5_VABI* routine)(void*)
 void APS5_VABI pthread_cleanup_pop_nid_postfix(int execute);
 }
 
+#ifdef _WIN32
+extern "C" void GuestExceptionQueueIoForTest_nid_no_patch(void (APS5_VABI* handler)(int, void*));
+#endif
+
 namespace ThreadCancel {
 
 bool Requested();
