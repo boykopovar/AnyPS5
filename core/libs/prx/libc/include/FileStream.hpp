@@ -283,6 +283,17 @@ public:
 #endif
     }
 
+    bool OpenForReading() {
+#ifdef _WIN32
+        constexpr long UcrtReading = 0x0001;
+        constexpr long UcrtUpdate = 0x0004;
+        std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(GetHandle())->flags);
+        return (state.load() & (UcrtReading | UcrtUpdate)) != 0;
+#else
+        return true;
+#endif
+    }
+
     bool SwitchToReadingUnlocked() {
 #ifdef _WIN32
         constexpr long UcrtReading = 0x0001;
@@ -290,6 +301,12 @@ public:
         constexpr long UcrtUpdate = 0x0004;
         auto* native = GetHandle();
         std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(native)->flags);
+        if ((state.load() & (UcrtReading | UcrtUpdate)) == 0) {
+            errno = 9;
+            guestError = true;
+            SyncUnlockedStatus();
+            return false;
+        }
         if ((state.load() & (UcrtReading | UcrtUpdate)) != UcrtUpdate) return true;
         const bool switched = (state.load() & UcrtWriting) == 0 || ::_fflush_nolock(native) == 0;
         if (switched) state.fetch_or(UcrtReading);

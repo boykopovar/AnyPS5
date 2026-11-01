@@ -400,6 +400,35 @@ static void CheckWriteAfterRead(const std::string& path, const char* mode, const
     Require(ReadWhole(path) == expected, "Write after read wrote other bytes");
 }
 
+static void CheckReadsOnWriteOnlyStreams(const std::string& path) {
+    for (const char* mode : {"wb", "ab"}) {
+        auto* stream = fopen_nid_postfix(path.c_str(), mode);
+        Require(stream != nullptr && fwrite_nid_postfix("abc", 1, 3, stream) == 3, "fwrite on a write-only stream");
+        const auto failed = [stream](bool result, const char* message) {
+            Require(result && errno == EBADF && ferror_nid_postfix(stream) != 0, message);
+            clearerr_nid_postfix(stream);
+            errno = 0;
+        };
+        std::array<char, 4> buffer{};
+        errno = 0;
+        failed(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == 0, "fread on a write-only stream");
+        failed(fgetc_nid_postfix(stream) == EOF, "fgetc on a write-only stream");
+        failed(getc_unlocked_nid_postfix(stream) == EOF, "getc_unlocked on a write-only stream");
+        failed(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), stream) == nullptr, "fgets on a write-only stream");
+        int value = 0;
+        Require(fscanf_nid_postfix(stream, "%d", &value) == EOF, "fscanf on a write-only stream");
+#ifdef _WIN32
+        Require(errno == EBADF && ferror_nid_postfix(stream) != 0, "fscanf on a write-only stream left errno or the error indicator unset");
+        clearerr_nid_postfix(stream);
+        errno = 0;
+        Require(ungetc_nid_postfix('q', stream) == EOF && errno == 0 && ferror_nid_postfix(stream) == 0, "ungetc on a write-only stream");
+#endif
+        Require(fclose_nid_postfix(stream) == 0, "fclose after reads on a write-only stream");
+        Require(ReadWhole(path) == "abc", "Reads on a write-only stream changed the file");
+        Require(std::remove(path.c_str()) == 0);
+    }
+}
+
 static void CheckStreamWritesAfterReads(const std::string& base) {
     CheckCharacterScanLengths();
     const std::string path = base + ".written";
@@ -455,6 +484,7 @@ static void CheckStreamWritesAfterReads(const std::string& base) {
         errno = 0;
         Require(fprintf_nid_postfix(stream, "%s", "XY") == -1 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fprintf after fgetc on a read-only stream");
     });
+    CheckReadsOnWriteOnlyStreams(base + ".write-only");
     Require(std::remove(path.c_str()) == 0);
 }
 
