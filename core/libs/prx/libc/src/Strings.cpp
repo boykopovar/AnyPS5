@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cwchar>
 #include <cstdio>
+#include <array>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -32,12 +33,43 @@ int ByteDifference(const void* s1, const void* s2, size_t n, bool stopAtNul) {
     return 0;
 }
 
-bool Contains(const char16_t* set, char16_t character) {
-    for (; *set != 0; ++set) {
-        if (*set == character) return true;
+class WideSet {
+public:
+    explicit WideSet(const char16_t* units) : units_(units) {
+        size_t length = 0;
+        while (units[length] != 0 && length < LinearLimit) ++length;
+        if (units[length] == 0) return;
+        pageOf_.fill(0);
+        pages_[0] = {};
+        size_t used = 0;
+        for (; *units != 0; ++units) {
+            auto& page = pageOf_[*units >> 8];
+            if (page == 0) {
+                if (used == MaxPages) return;
+                page = static_cast<std::uint8_t>(++used);
+                pages_[page] = {};
+            }
+            pages_[page][(*units & 0xff) >> 6] |= std::uint64_t{1} << (*units & 63);
+        }
+        indexed_ = true;
     }
-    return false;
-}
+
+    bool Has(char16_t character) const {
+        if (indexed_) return ((pages_[pageOf_[character >> 8]][(character & 0xff) >> 6] >> (character & 63)) & 1) != 0;
+        for (const char16_t* unit = units_; *unit != 0; ++unit) {
+            if (*unit == character) return true;
+        }
+        return false;
+    }
+
+private:
+    static constexpr size_t LinearLimit = 16;
+    static constexpr size_t MaxPages = 32;
+    const char16_t* units_;
+    bool indexed_ = false;
+    std::array<std::uint8_t, 256> pageOf_;
+    std::array<std::array<std::uint64_t, 4>, MaxPages + 1> pages_;
+};
 
 size_t Length(const char16_t* s) {
     size_t length = 0;
@@ -785,21 +817,24 @@ const char16_t* APS5_VABI wcsstr_nid_postfix(const char16_t* haystack, const cha
 }
 
 const char16_t* APS5_VABI wcspbrk_nid_postfix(const char16_t* s, const char16_t* accept) {
+    const WideSet set(accept);
     for (; *s != 0; ++s) {
-        if (Contains(accept, *s)) return s;
+        if (set.Has(*s)) return s;
     }
     return nullptr;
 }
 
 size_t APS5_VABI wcsspn_nid_postfix(const char16_t* s, const char16_t* accept) {
+    const WideSet set(accept);
     size_t count = 0;
-    while (s[count] != 0 && Contains(accept, s[count])) ++count;
+    while (s[count] != 0 && set.Has(s[count])) ++count;
     return count;
 }
 
 size_t APS5_VABI wcscspn_nid_postfix(const char16_t* s, const char16_t* reject) {
+    const WideSet set(reject);
     size_t count = 0;
-    while (s[count] != 0 && !Contains(reject, s[count])) ++count;
+    while (s[count] != 0 && !set.Has(s[count])) ++count;
     return count;
 }
 
@@ -807,13 +842,14 @@ char16_t* APS5_VABI wcstok_nid_postfix(char16_t* text, const char16_t* delimiter
     static const char16_t exhausted[] = u"";
     if (text == nullptr) text = *last;
     if (text == nullptr) return nullptr;
-    while (*text != 0 && Contains(delimiters, *text)) ++text;
+    const WideSet set(delimiters);
+    while (*text != 0 && set.Has(*text)) ++text;
     if (*text == 0) {
         *last = const_cast<char16_t*>(exhausted);
         return nullptr;
     }
     char16_t* end = text;
-    while (*end != 0 && !Contains(delimiters, *end)) ++end;
+    while (*end != 0 && !set.Has(*end)) ++end;
     if (*end == 0) {
         *last = end;
     } else {
