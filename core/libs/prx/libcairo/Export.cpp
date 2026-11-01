@@ -224,10 +224,6 @@ int APS5_VABI cairo_get_line_cap() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_region_get_rectangle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_font_options_set_hint_style() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -281,10 +277,6 @@ int APS5_VABI cairo_matrix_transform_point() {
 }
 
 int APS5_VABI cairo_image_surface_get_format() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_region_create() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -397,14 +389,6 @@ int APS5_VABI cairo_surface_mark_dirty_rectangle() {
 }
 
 int APS5_VABI cairo_append_path() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_region_union_rectangle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_region_reference() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -616,10 +600,6 @@ int APS5_VABI cairo_set_source_surface() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI cairo_region_destroy() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI cairo_image_surface_get_data() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -637,10 +617,6 @@ int APS5_VABI cairo_image_surface_create_for_data() {
 }
 
 int APS5_VABI cairo_pattern_add_color_stop_rgba() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI cairo_region_num_rectangles() {
     NotImplemented_nid_no_patch(__func__);
 }
 

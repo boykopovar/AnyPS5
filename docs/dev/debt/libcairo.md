@@ -2,7 +2,9 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 161 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and the [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 161 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and the [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Six region exports are implemented in [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp); the other 155 still throw through `NotImplemented_nid_no_patch` and their prototypes remain unverified.
+
+- [Region semantics](../../../core/libs/prx/libcairo/Region.cpp) use the public [Cairo region contract](https://chromium.googlesource.com/chromiumos/third_party/cairo/+/master/src/cairo-region.c) and [Pixman region representation](https://sources.debian.org/src/pixman/0.42.2-1/pixman/pixman-region.c/): refcounted lifetime, half-open rectangles, sorted horizontal bands, horizontal unions and vertical band coalescing. Rectangles with zero or negative area are ignored. An integer endpoint beyond `INT32_MAX`, or a merged span that exceeds `INT32_MAX`, reports `CAIRO_STATUS_INVALID_SIZE` and makes the region unusable; this is a defined bounds guard where upstream Pixman's signed endpoint conversion has no portable result. An invalid rectangle index produces an empty rectangle; upstream Cairo leaves out-of-range indices undefined.
 
 | Name | NID |
 | --- | --- |
@@ -61,7 +63,6 @@
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
 | `cairo_mesh_pattern_line_to` | `HTB1uUwgSVQ` |
 | `cairo_get_line_cap` | `Hkp7M+pJILk` |
-| `cairo_region_get_rectangle` | `I5wa74016LQ` |
 | `cairo_font_options_set_hint_style` | `IDmch1bKy34` |
 | `cairo_set_miter_limit` | `IKnEk6g6ZV0` |
 | `cairo_translate` | `IdKE2DrNBck` |
@@ -76,7 +77,6 @@
 | `cairo_set_scaled_font` | `LUh-6rZhniA` |
 | `cairo_matrix_transform_point` | `LdSTmOZ-KDs` |
 | `cairo_image_surface_get_format` | `LrT15KUYBvc` |
-| `cairo_region_create` | `MGMwq9DNMyE` |
 | `cairo_fill` | `Ndvm8s28Gyc` |
 | `cairo_matrix_transform_distance` | `NsFZqlmmZ9E` |
 | `cairo_transform` | `OHgp1uE8P2c` |
@@ -105,8 +105,6 @@
 | `cairo_get_target` | `Wr3nsor1aNc` |
 | `cairo_surface_mark_dirty_rectangle` | `X64Wjxgh1L4` |
 | `cairo_append_path` | `XX9tocaUX+g` |
-| `cairo_region_union_rectangle` | `Ya+vgrJjBQE` |
-| `cairo_region_reference` | `Yarxt1LHaf0` |
 | `cairo_matrix_init_identity` | `ZFmp0rD1F14` |
 | `cairo_scaled_font_status` | `a5WkqZXnG2w` |
 | `cairo_in_fill` | `akimK5gpdho` |
@@ -159,11 +157,9 @@
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
 | `cairo_surface_get_content` | `ut+atyIgpQw` |
 | `cairo_set_source_surface` | `vcN1gg+gWRg` |
-| `cairo_region_destroy` | `vnHq+jcDKBM` |
 | `cairo_image_surface_get_data` | `wHTcu1PV-MU` |
 | `cairo_surface_create_for_rectangle` | `wJzrbtZ7MOk` |
 | `cairo_device_destroy` | `wO1D4B90k0k` |
 | `cairo_image_surface_create_for_data` | `wlO4ljYI06M` |
 | `cairo_pattern_add_color_stop_rgba` | `xXWrbaaPNNg` |
-| `cairo_region_num_rectangles` | `xoe4ss9GmYc` |
 | `cairo_set_line_width` | `zwMGP3ASKMI` |
