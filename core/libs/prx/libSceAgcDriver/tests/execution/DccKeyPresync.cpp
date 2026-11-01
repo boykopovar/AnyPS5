@@ -15,6 +15,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -234,6 +235,54 @@ void RunKnownKeys(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
     RequireSampledClear(scenario, "a dispatch behind a pending fill of the keys");
 }
 
+void RunMixedWordKeys(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
+    Reset(scenario);
+    const std::array<std::uint32_t, 4> pattern{0x00ff00ffu, 0x00ff00ffu, 0x00ff00ffu, 0x00ff00ffu};
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(device.FillBuffer(AddressOf(scenario.keys), KeyBytes, pattern), "the word fill of the keys was not recorded");
+        Require(AgcDriver::Graphics::DccKeyWritersPending(AddressOf(scenario.keys), KeyBytes), "a recorded word fill of the keys is not seen as a pending key writer");
+        Require(!AgcDriver::Graphics::DccKeyWriterNeedsSync(AddressOf(scenario.keys), KeyBytes), "the keys of a recorded fill of a word with different bytes need a synchronization");
+    }
+    const auto sample = Compile(device, SampleSecondTexelCode, scenario.sampleData);
+    const auto waits = AgcDriver::Graphics::KeyWaitCounts();
+    const auto before = AgcDriver::VulkanDevice::PresyncCounts();
+    auto prepared = device.PrepareDispatch(sample, {}, Threads, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()));
+    const auto after = AgcDriver::VulkanDevice::PresyncCounts();
+    Require(after.keyChecks > before.keyChecks, "stage A did not list the DCC keys of the sampled texture for the pre-sync");
+    Require(after.presyncs == before.presyncs, "stage A waited for a word fill whose keys the locked lookup derives from the pending stores");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        device.Dispatch(sample, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(SampleSecondTexelCode.data()), std::move(prepared));
+        device.WaitIdle();
+    }
+    Require(AgcDriver::Graphics::KeyWaitCounts().synced == waits.synced, "the dispatch synchronized with the GPU although the pending word fill gives the keys");
+    for (std::uint32_t index = 0; index < Threads * 4u; ++index) {
+        float value = 0.0f;
+        std::memcpy(&value, &scenario.output[index], sizeof(value));
+        char message[256];
+        std::snprintf(message, sizeof(message), "a dispatch behind a pending fill of mixed keys: component %u of thread %u is %g, expected the stored texel 0x55 (%g)", index % 4u, index / 4u, value, 85.0 / 255.0);
+        Require(std::fabs(value - 85.0f / 255.0f) < 1.0f / 512.0f, message);
+    }
+}
+
+void RunWordFillKeyBytes(AgcDriver::VulkanDevice& device, const Scenario& scenario) {
+    Reset(scenario);
+    constexpr std::uint32_t word = 0x33221100u;
+    const std::array<std::uint32_t, 4> pattern{word, word, word, word};
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    Require(device.FillBuffer(AddressOf(scenario.keys), KeyBytes, pattern), "the word fill of the keys was not recorded");
+    for (std::uint64_t offset = 0; offset < 8u; ++offset) {
+        const auto key = AgcDriver::Graphics::CurrentUniformMetadataByte(AddressOf(scenario.keys) + offset, 1);
+        const auto expected = static_cast<std::uint8_t>(word >> (8u * (offset % 4u)));
+        char message[160];
+        std::snprintf(message, sizeof(message), "key byte %llu behind a pending fill of the word 0x%08x is %d, expected 0x%02x", static_cast<unsigned long long>(offset), word, key.has_value() ? static_cast<int>(*key) : -1, expected);
+        Require(key == expected, message);
+    }
+    Require(!AgcDriver::Graphics::CurrentUniformMetadataByte(AddressOf(scenario.keys) + 1, 2).has_value(), "two key bytes of different values behind a pending word fill read as one key");
+    device.WaitIdle();
+}
+
 void RunOneKeyReadPerLookup(AgcDriver::VulkanDevice& device, const Scenario& scenario, const char* what) {
     Reset(scenario);
     const auto sample = Compile(device, SampleSecondTexelCode, scenario.sampleData);
@@ -295,6 +344,8 @@ int main() {
         RunOneKeyReadPerLookup(*device, reads, "a dispatch's first lookup");
         RunOneKeyReadPerLookup(*device, reads, "a dispatch's repeated lookup");
         RunKnownKeys(*device, fills);
+        RunMixedWordKeys(*device, fills);
+        RunWordFillKeyBytes(*device, fills);
         std::puts("DCC key pre-sync tests passed");
         return 0;
     } catch (const std::exception& error) {
