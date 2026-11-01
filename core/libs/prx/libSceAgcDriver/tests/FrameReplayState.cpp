@@ -554,6 +554,9 @@ void testUnverifiedDeltas(const std::filesystem::path& directory) {
     };
     refused("missing", std::nullopt, "capture.json is missing");
     refused("bare", arena + "}", "capture.json has no stale_delta");
+    refused("unrecorded", arena + ",\"stale_delta\":0,\"warnings\":[]}", "capture.json has no unverified_deltas");
+    refused("unparsed", arena + ",\"stale_delta\":0,\"unverified_deltas\":null,\"warnings\":[]}", "unverified_deltas is not a number");
+    refused("unverified", arena + ",\"stale_delta\":0,\"unverified_deltas\":1,\"warnings\":[]}", "capture.json has unverified_deltas 1");
     refused("stale", arena + ",\"stale_delta\":1,\"unverified_deltas\":0,\"warnings\":[\"stopped: memory delta 1 was read while submission 2, in flight at its read, stored into its page 0x10000\"]}", "(stale_delta 1)");
     const auto verified = refusal("verified", true, arena + ",\"stale_delta\":0,\"unverified_deltas\":0,\"warnings\":[\"a \\\"stopped: quoted\\\" warning \\\\ \\u0009\",\"4096 bytes under multisampled targets whose samples are only on the host are zero in the capture, so replay starts those targets without their earlier contents\"]}");
     check(verified.empty(), ("the replay refused a capture whose memory delta read in flight was verified: " + verified).c_str());
@@ -561,6 +564,8 @@ void testUnverifiedDeltas(const std::filesystem::path& directory) {
     check(stopped.empty(), ("the replay refused a capture that stopped early, although the check after its stop verified its memory delta read in flight: " + stopped).c_str());
     const auto held = refusal("held", false, arena + ",\"unverified_deltas\":1,\"warnings\":[\"stopped: less than 4 GiB free on the capture volume\"]}");
     check(held.empty(), ("the replay refused a capture without memory deltas read in flight: " + held).c_str());
+    const auto unheaded = refusal("unheaded", false, std::nullopt);
+    check(unheaded.find("capture.json is missing") != std::string::npos, ("the replay did not refuse capture unheaded, which has no memory delta read in flight but no capture.json either, so its last records may name memory that was never written: " + unheaded).c_str());
 }
 
 void testShaderCode(const std::filesystem::path& directory, bool host, std::string_view mode = {}) {

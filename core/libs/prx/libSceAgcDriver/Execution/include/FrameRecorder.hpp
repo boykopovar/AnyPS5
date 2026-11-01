@@ -25,6 +25,8 @@
 
 namespace AgcDriver {
 
+struct StartedProgressSnapshot;
+
 class FrameRecorder {
 public:
     static constexpr std::uint64_t DefaultFrames = 10;
@@ -82,6 +84,7 @@ private:
     void recordUnwatched(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stores);
     void arm(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks, std::uint64_t group, std::uint64_t accepted);
     bool stopOnHazard();
+    void awaitLateStores();
 
     struct Range {
         std::uint64_t address = 0;
@@ -108,10 +111,10 @@ private:
     FrameCall make(FrameCallKind kind);
     void record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders = {}, const std::function<void()>& accept = {});
     void recordLocked(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders);
-    void emitDelta();
+    void emitDelta(const StartedProgressSnapshot* decision = nullptr);
     static void collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages);
-    void emitShaderDelta(std::span<const Shader* const> shaders);
-    void writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
+    void emitShaderDelta(std::span<const Shader* const> shaders, const StartedProgressSnapshot* decision = nullptr);
+    void writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {}, const StartedProgressSnapshot* decision = nullptr);
     bool triggered();
     void start();
     void finish();
@@ -172,12 +175,14 @@ private:
     std::unordered_map<std::uint64_t, StoreOwner> storeOwners;
     StoreHazard storeHazard;
     std::uint64_t unattributedStores = 0;
+    std::uint64_t unverifiedDeltas = 0;
     std::uint64_t inFlightDeltas = 0;
     std::uint64_t heldDeltas = 0;
-    std::array<std::uint64_t, 12> holdReasons{};
+    std::array<std::uint64_t, 13> holdReasons{};
     std::map<std::uint32_t, std::uint64_t> holdMasks;
     std::unordered_map<std::uint64_t, UnwatchedPage> unwatchedPages;
     std::map<std::pair<std::uint64_t, std::uint64_t>, UnwatchedCounts> unwatchedCounts;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> finishedWaitDwords;
     std::set<std::uint64_t> callThreads;
     static std::atomic<FrameRecorder*> observing;
     std::vector<std::string> warnings;

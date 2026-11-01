@@ -156,13 +156,16 @@ std::uint64_t headerNumber(const std::string& header, std::string_view key) {
 void requireVerifiedDeltas(const FrameCaptureReader& reader) {
     if (reader.Version() < AgcDriver::InFlightCallsVersion) return;
     const auto& header = reader.Header();
+    if (header.empty()) throw std::runtime_error("frame replay: capture.json is missing or empty, so the capture never ended and its last memory deltas may be partial or never verified");
     const auto stale = headerValue(header, "stale_delta");
     if (stale.value_or(0) != 0) throw std::runtime_error("frame replay: the capture stopped because a memory delta was read while submissions that stored into it were in flight (stale_delta " + std::to_string(*stale) + ")");
     const auto inFlight = std::count_if(reader.Calls().begin(), reader.Calls().end(), [](const FrameCall& call) { return call.kind == FrameCallKind::Memory && (call.flags & AgcDriver::InFlightDeltaFlag) != 0; });
     if (inFlight == 0) return;
     const auto refuse = [&](const std::string& reason) { return std::runtime_error("frame replay: " + std::to_string(inFlight) + " memory deltas were read while submissions were in flight, but " + reason + ", so stores those submissions made into them later were never checked"); };
-    if (header.empty()) throw refuse("capture.json is missing or empty");
     if (!stale) throw refuse("capture.json has no stale_delta");
+    const auto unverified = headerValue(header, "unverified_deltas");
+    if (!unverified) throw refuse("capture.json has no unverified_deltas");
+    if (*unverified != 0) throw refuse("capture.json has unverified_deltas " + std::to_string(*unverified));
 }
 
 void requireMemoryInRanges(const FrameCaptureReader& reader) {

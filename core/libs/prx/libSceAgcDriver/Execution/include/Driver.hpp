@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -26,6 +27,12 @@ struct StartedProgressSnapshot {
     std::uint64_t completed = 0;
     std::vector<std::uint64_t> started;
     std::uint64_t queued = 0;
+};
+
+struct AwaitedDwordsSnapshot {
+    bool title = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unfinished;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> finished;
 };
 
 }

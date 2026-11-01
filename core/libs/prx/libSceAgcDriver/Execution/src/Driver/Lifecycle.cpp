@@ -280,6 +280,22 @@ bool Driver::WaitIdleFor(std::chrono::milliseconds timeout) {
     return idle;
 }
 
+bool Driver::WaitCompletedFor(std::uint64_t serial, std::chrono::milliseconds timeout) {
+    require(!onWorkerThread(), "worker cannot wait for itself");
+    std::unique_lock lock(mutex);
+    ++idleWaiters;
+    const bool done = changed.wait_for(lock, timeout, [&] { return failure != nullptr || stopping || completed >= serial; });
+    --idleWaiters;
+    rethrowFailure();
+    checkStopping();
+    return done;
+}
+
+void Driver::WaitDeviceIdle() {
+    std::lock_guard gpuLock(GuestMemory::GpuMutex());
+    if (const auto localDevice = device.Load()) localDevice->WaitIdle();
+}
+
 bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
     require(!onWorkerThread(), "worker cannot wait for itself");
     std::unique_lock lock(mutex);
