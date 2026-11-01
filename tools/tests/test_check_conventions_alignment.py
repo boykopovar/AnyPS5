@@ -127,6 +127,11 @@ class AlignmentRuleTests(unittest.TestCase):
                 os.chdir(original)
             return check.findings
 
+    def test_abi_alias_expansion_does_not_hide_excessive_alignment(self):
+        source = "#define A APS5_VABI\n" + "\n".join(f"int A Decl{i}();" for i in range(8))
+        source += "\nconstexpr int BufferSize = 16384;\nalignas(BufferSize) unsigned char storage[1];\n"
+        self.assertEqual(self.findings(source), [("alignment", SOURCE, 12, "alignas(BufferSize)")])
+
     def test_only_added_code_is_reported(self):
         self.assertEqual(self.findings("alignas(256) char small[16];\n"
                                        "const char* text = \"alignas(65536)\";\n"

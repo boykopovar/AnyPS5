@@ -25,10 +25,10 @@ def main():
         metadata = root / "param.json"
         metadata.write_text(json.dumps({"titleId": "TEST00001", "contentVersion": "01.000.000"}))
 
-        def advise(digest, patches=("patch.toml",), *options):
+        def advise(digest, patches=("patch.toml",), *options, entry_metadata=None):
             (catalog / "index.json").write_text(json.dumps({"format": 1, "entries": [{
                 "titleId": "TEST00001", "contentVersion": "01.000.000", "patch": name,
-                "targets": {"eboot.bin": digest}
+                "targets": {"eboot.bin": digest}, **(entry_metadata or {})
             } for name in patches]}))
             return subprocess.run([sys.executable, str(advisor), "--catalog", str(catalog),
                                    "--param-json", str(metadata), "--input", str(source),
@@ -38,6 +38,13 @@ def main():
         digest = hashlib.sha256(image).hexdigest()
         result = advise(digest)
         assert result.returncode == 0 and f"Recommended: {patch}" in result.stdout, (result.stdout, result.stderr)
+        result = advise(digest, ("patch.toml",), "--list-verified", entry_metadata={
+            "id": "synthetic_fix", "name": "Synthetic fix", "category": "compatibility",
+            "description": "Changes one byte", "revision": 1,
+            "tested": [{"stage": "verification", "result": "passed", "evidence": "Relinker confirmed one patch"}]})
+        assert result.returncode == 0 and "Name: Synthetic fix" in result.stdout, (result.stdout, result.stderr)
+        assert "Tested: verification passed: Relinker confirmed one patch" in result.stdout, (result.stdout, result.stderr)
+        assert source.read_bytes() == image
         second = catalog / "second patch.toml"
         second.write_text(patch_text(address, expected, "flip_bit"))
         result = advise(digest, ("patch.toml", second.name))

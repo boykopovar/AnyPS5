@@ -700,14 +700,20 @@ bool HostFusesFma(AgcDriver::VulkanDevice& device) {
 }
 
 void CheckScaleDenormals(AgcDriver::VulkanDevice& device) {
-    const std::array<std::optional<ShaderRecompiler::ShaderFloatMode>, 5> modes{{
+    const std::array<std::optional<ShaderRecompiler::ShaderFloatMode>, 9> modes{{
         std::nullopt,
         ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false},
         ShaderRecompiler::ShaderFloatMode{0xc0u, true, true, false},
+        ShaderRecompiler::ShaderFloatMode{0xd0u, true, false, false},
+        ShaderRecompiler::ShaderFloatMode{0xd0u, true, true, false},
+        ShaderRecompiler::ShaderFloatMode{0xe0u, true, false, false},
+        ShaderRecompiler::ShaderFloatMode{0xe0u, true, true, false},
         ShaderRecompiler::ShaderFloatMode{0xf0u, true, false, false},
         ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false},
     }};
     for (const auto& mode : modes) {
+        const std::uint32_t denormals = mode.has_value() ? (mode->floatMode >> 4u) & 3u : 0u;
+        if (denormals == 1u && !device.Target().float32DenormPreserve) continue;
         Shader shader(device, ScaleCode, mode);
         Input.fill(0u);
         for (std::uint32_t lane = 0; lane < std::size(ScaleVectors); ++lane) {
@@ -718,19 +724,11 @@ void CheckScaleDenormals(AgcDriver::VulkanDevice& device) {
         for (std::uint32_t lane = 0; lane < std::size(ScaleVectors); ++lane) {
             const auto& vector = ScaleVectors[lane];
             const auto* out = &Output[lane * Stride];
-            const auto expected = mode.has_value() && ((mode->floatMode >> 4u) & 3u) == 3u ? vector.kept : vector.flushed;
+            const std::uint32_t keptResult = (vector.kept & 0x7f800000u) == 0u ? vector.kept & 0x80000000u : vector.kept;
+            const auto expected = denormals == 3u ? vector.kept : denormals == 1u ? keptResult : vector.flushed;
             const std::string where = "division scale denormals: lane " + std::to_string(lane) + " mode " + (mode.has_value() ? Hex(mode->floatMode) : "unknown");
             Require(out[0] == expected && out[1] == vector.vcc, where + ": v_div_scale_f32 is " + Hex(out[0]) + " vcc " + std::to_string(out[1]) + ", expected " + Hex(expected) + " vcc " + std::to_string(vector.vcc));
         }
-    }
-    for (const std::uint32_t mode : {0xd0u, 0xe0u}) {
-        bool refused = false;
-        try {
-            Shader shader(device, ScaleCode, ShaderRecompiler::ShaderFloatMode{mode, true, false, false});
-        } catch (const std::runtime_error& error) {
-            refused = std::string(error.what()).find("f32 denormal mode") != std::string::npos;
-        }
-        Require(refused, "division scale denormals: FLOAT_MODE " + Hex(mode) + " was not refused");
     }
 }
 

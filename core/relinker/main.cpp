@@ -25,6 +25,8 @@
 #include <cwchar>
 #endif
 
+#include "RelinkerRevision.hpp"
+
 namespace {
 
 struct ConvertedExecutable {
@@ -264,6 +266,11 @@ int Run(const int argc, char* argv[]) {
         return 0;
     }
 
+    if (args.showVersion) {
+        std::cout << "relinker " << ANYPS5_RELINKER_REVISION << '\n';
+        return 0;
+    }
+
     Cli::ConsoleProgress progress(std::cout);
     try {
         if (!args.verifyPatchesPath.empty()) return RunVerifyPatches(args);
@@ -349,6 +356,8 @@ int Run(const int argc, char* argv[]) {
 
         const auto checkOutputInputs = [&](const std::filesystem::path& path, const char* kind) {
             if (!std::filesystem::exists(path)) return;
+            if (std::filesystem::is_directory(path))
+                throw Domain::RelinkerException(std::string(kind) + " output is a directory: " + Io::Utf8Path(path));
             for (const auto& input : metadataInputs)
                 if (std::filesystem::exists(input) && SameOutputFile(input, path))
                     throw Domain::RelinkerException(std::string(kind) + " output would overwrite input metadata: " + Io::Utf8Path(path));
