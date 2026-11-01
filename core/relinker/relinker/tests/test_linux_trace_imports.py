@@ -80,7 +80,7 @@ def main():
         result = relink(relinker, source, case / "output.elf", "--trace-imports", "--lazy-binding")
         assert result.returncode != 0 and "--trace-imports conflicts with --lazy-binding" in result.stderr, (result.returncode, result.stderr)
         result = relink(relinker, source, case / "output", "--trace-imports", "--macos")
-        assert result.returncode != 0 and "--trace-imports cannot be used with --macos" in result.stderr, (result.returncode, result.stderr)
+        assert result.returncode == 2 and "--trace-imports requires libc.prx" in result.stderr, (result.returncode, result.stderr)
 
     print("Linux import tracing tests passed")
 

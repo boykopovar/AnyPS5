@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -11,26 +14,6 @@
 #include <fstream>
 #include <string>
 #include <unistd.h>
-
-extern "C" {
-int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
-int APS5_VABI sceKernelUnlink(const char* path);
-int APS5_VABI sceKernelClose(int d);
-int APS5_VABI open_nid_postfix(const char* path, int flags, int mode);
-int APS5_VABI unlink_nid_postfix(const char* path);
-int APS5_VABI sceKernelStat(const char* path, FileStat* sb);
-int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb);
-int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb);
-int APS5_VABI sceKernelMkdir(const char* path, std::uint16_t mode);
-int APS5_VABI sceKernelRmdir(const char* path);
-int APS5_VABI mkdir_nid_postfix(const char* path, std::uint16_t mode);
-int APS5_VABI rmdir_nid_postfix(const char* path);
-int APS5_VABI sceKernelRename(const char* from, const char* to);
-int APS5_VABI rename_nid_postfix(const char* from, const char* to);
-int APS5_VABI sceKernelTruncate_nid_postfix(const char* path, std::int64_t length);
-int APS5_VABI truncate_nid_postfix(const char* path, std::int64_t length);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 

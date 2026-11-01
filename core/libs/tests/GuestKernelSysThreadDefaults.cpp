@@ -1,23 +1,11 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 
-extern "C" {
-int APS5_VABI pthread_set_defaultstacksize_np_nid_postfix(std::size_t size);
-int APS5_VABI scePthreadSetDefaultstacksize(std::size_t size);
-void APS5_VABI scePthreadSetName(Pthread thread, const char* name);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-Pthread APS5_VABI scePthreadSelf(void);
-int APS5_VABI scePthreadGetname(Pthread thread, char* name);
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, std::size_t* stackSize);
-}
-
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int POSIX_EINVAL = 22;
 static constexpr std::size_t INITIAL_DEFAULT = 1u << 20;
 
@@ -70,9 +58,11 @@ static void CheckDefaultStackSize() {
 static void CheckSetName() {
     char name[32] = {};
     scePthreadSetName(scePthreadSelf(), "renamed main");
+
     Require(scePthreadGetname(scePthreadSelf(), name) == 0);
     Require(std::strcmp(name, "renamed main") == 0);
     scePthreadSetName(scePthreadSelf(), nullptr);
+
     Require(scePthreadGetname(scePthreadSelf(), name) == 0);
     Require(name[0] == '\0');
 }

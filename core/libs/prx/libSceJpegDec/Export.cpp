@@ -1,3 +1,4 @@
+#include "prx/libSceJpegDec/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -21,6 +22,7 @@ namespace {
 constexpr std::int32_t SCE_JPEG_DEC_ERROR_INVALID_ADDR = static_cast<std::int32_t>(0x80650001);
 constexpr std::int32_t SCE_JPEG_DEC_ERROR_INVALID_SIZE = static_cast<std::int32_t>(0x80650002);
 constexpr std::int32_t SCE_JPEG_DEC_ERROR_INVALID_PARAM = static_cast<std::int32_t>(0x80650003);
+constexpr std::int32_t SCE_JPEG_DEC_ERROR_COEFFICIENT_MEMORY = static_cast<std::int32_t>(0x80650005);
 constexpr std::int32_t SCE_JPEG_DEC_ERROR_INVALID_HANDLE = static_cast<std::int32_t>(0x80650004);
 constexpr std::int32_t SCE_JPEG_DEC_ERROR_IMAGE_TOO_WIDE = static_cast<std::int32_t>(0x80650006);
 constexpr std::int32_t SCE_JPEG_DEC_ERROR_INVALID_DATA = static_cast<std::int32_t>(0x80650010);
@@ -84,7 +86,7 @@ Context* toContext(void* handle) {
     return context->self == context ? context : nullptr;
 }
 
-void fillImageInfo(const Decoder::Jpeg::Header& header, std::uint32_t downScale, JpegDecImageInfo* info) {
+bool fillImageInfo(const Decoder::Jpeg::Header& header, std::uint32_t downScale, JpegDecImageInfo* info) {
     *info = {};
     info->image_width = header.width;
     info->image_height = header.height;
@@ -109,10 +111,13 @@ void fillImageInfo(const Decoder::Jpeg::Header& header, std::uint32_t downScale,
     if (header.progressive) {
         const std::uint32_t mcuColumns = (header.width + 8 * maxHorizontal - 1) / (8 * maxHorizontal);
         const std::uint32_t mcuRows = (header.height + 8 * maxVertical - 1) / (8 * maxVertical);
-        info->coefficient_mem_size = mcuColumns * mcuRows * blocksPerMcu * 128 + 64;
+        const std::uint64_t coefficientSize = std::uint64_t{mcuColumns} * mcuRows * blocksPerMcu * 128 + 64;
+        if (coefficientSize > UINT32_MAX) return false;
+        info->coefficient_mem_size = static_cast<std::uint32_t>(coefficientSize);
     }
     info->output_image_width = Decoder::Jpeg::ScaledDimension(header.width, downScale);
     info->output_image_height = Decoder::Jpeg::ScaledDimension(header.height, downScale);
+    return true;
 }
 
 std::uint32_t rowBufferSize(const Decoder::Jpeg::Header& header, std::uint32_t downScale) {
@@ -178,8 +183,8 @@ int32_t APS5_VABI sceJpegDecDecode(void* handle, const JpegDecDecodeParam* param
     const std::optional<Decoder::Jpeg::Header> header = Decoder::Jpeg::ParseHeader(jpeg);
     if (!header) return SCE_JPEG_DEC_ERROR_INVALID_DATA;
     JpegDecImageInfo parsedInfo{};
-    fillImageInfo(*header, downScale, &parsedInfo);
-    if (parsedInfo.coefficient_mem_size != 0 && (!param->coefficient_mem_addr || param->coefficient_mem_size < parsedInfo.coefficient_mem_size)) return static_cast<std::int32_t>(0x80650005);
+    if (!fillImageInfo(*header, downScale, &parsedInfo)) return SCE_JPEG_DEC_ERROR_COEFFICIENT_MEMORY;
+    if (parsedInfo.coefficient_mem_size != 0 && (!param->coefficient_mem_addr || param->coefficient_mem_size < parsedInfo.coefficient_mem_size)) return SCE_JPEG_DEC_ERROR_COEFFICIENT_MEMORY;
     if (parsedInfo.color_space == COLOR_SPACE_UNKNOWN) return static_cast<std::int32_t>(0x80650011);
     const std::uint32_t outputWidth = Decoder::Jpeg::ScaledDimension(header->width, downScale);
     const std::uint32_t outputHeight = Decoder::Jpeg::ScaledDimension(header->height, downScale);
@@ -240,7 +245,7 @@ int32_t APS5_VABI sceJpegDecParseHeader(const JpegDecParseParam* param, JpegDecI
     const std::uint32_t downScale = param->down_scale;
     const std::optional<Decoder::Jpeg::Header> header = Decoder::Jpeg::ParseHeader(toBytes(param->jpeg_mem_addr, param->jpeg_mem_size));
     if (!header) return SCE_JPEG_DEC_ERROR_INVALID_DATA;
-    fillImageInfo(*header, downScale, imageInfo);
+    if (!fillImageInfo(*header, downScale, imageInfo)) return SCE_JPEG_DEC_ERROR_COEFFICIENT_MEMORY;
     return 0;
 }
 

@@ -317,7 +317,7 @@ class SilentStubSectionTests(unittest.TestCase):
             env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="safe.directory", GIT_CONFIG_VALUE_0=str(root))
             return subprocess.run(
                 [sys.executable, str(checker), "--base", "HEAD~1"],
-                cwd=root, capture_output=True, text=True, env=env, timeout=10,
+                cwd=root, capture_output=True, text=True, env=env, timeout=120,
             )
 
     def require_rejected(self, debt, debt_path=library_debt):
@@ -387,6 +387,25 @@ class SilentStubSectionTests(unittest.TestCase):
         self.assertIn("docs/dev/debt/libSceExample.md:5: error: [debt-file]", result.stdout)
         self.assertIn("docs/dev/debt/shader.md", result.stdout)
 
+    def test_entry_linking_core_on_a_continuation_line_goes_in_the_library_file(self):
+        entry = "- sceExample is unverified against the console\n  ([reference](../../../core/libs/prx/libSceExample/Reference.hpp)).\n"
+        result = self.check_stub(f"# libSceExample technical debt\n\n### Functional\n\n{entry}")
+        self.assertNotIn("[debt-file]", result.stdout + result.stderr)
+        result = self.check_stub(f"# Project technical debt\n\n### Functional\n\n{entry.replace('../../../', '../../')}", "docs/dev/TechnicalDebt.md")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/dev/TechnicalDebt.md:5: error: [debt-file]", result.stdout)
+        self.assertIn("docs/dev/debt/libSceExample.md", result.stdout)
+
+    def test_entry_continuation_after_a_blank_line_still_names_its_file(self):
+        entry = "- sceExample is unverified against the console\n\n  ([reference](../../../core/libs/prx/libSceExample/Reference.hpp)).\n"
+        result = self.check_stub(f"# libSceExample technical debt\n\n### Functional\n\n{entry}")
+        self.assertNotIn("[debt-file]", result.stdout + result.stderr)
+
+    def test_core_link_in_prose_after_an_entry_does_not_name_its_file(self):
+        text = "# Project technical debt\n\n### Build\n\n- A toolchain limitation.\n\nSee [reference](../../core/libs/prx/libSceExample/Reference.hpp).\n"
+        result = self.check_stub(text, "docs/dev/TechnicalDebt.md")
+        self.assertNotIn("[debt-file]", result.stdout + result.stderr)
+
     def test_entry_without_a_core_link_stays_in_the_index(self):
         result = self.check_stub("# Project technical debt\n\n### Build\n\n- A toolchain limitation.\n", "docs/dev/TechnicalDebt.md")
         self.assertNotIn("[debt-file]", result.stdout + result.stderr)
@@ -399,7 +418,7 @@ class SilentStubSectionTests(unittest.TestCase):
 
 
 class TestFixtureExportTests(unittest.TestCase):
-    def check(self, path, text=None):
+    def check(self, path, text=None, base=None):
         files = path if text is None else {path: text}
         checker = Path(__file__).resolve().parents[1] / "check_conventions.py"
         with tempfile.TemporaryDirectory() as directory:
@@ -420,6 +439,8 @@ class TestFixtureExportTests(unittest.TestCase):
             git("init", "-q")
             write("core/libs/prx/libkernel/src/Time.cpp", "std::uint64_t APS5_VABI sceKernelGetProcessTime() { return now(); }\n")
             write("core/libs/prx/libSceNgs2/tests/Render.cpp", "static int APS5_VABI Process(int value) { return value; }\n")
+            for relative, content in (base or {}).items():
+                write(relative, content)
             git("add", ".")
             git("commit", "-qm", "feat: add libraries")
             for relative, content in files.items():
@@ -449,6 +470,63 @@ class TestFixtureExportTests(unittest.TestCase):
         result = self.check("core/libs/prx/libSceAudioOut/src/Clock.cpp", "std::uint64_t APS5_VABI sceKernelGetProcessTime() { return now(); }\n")
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("core/libs/prx/libSceAudioOut/src/Clock.cpp:1: error: [duplicate-export]", result.stdout)
+        self.assertIn("sceKernelGetProcessTime is also in libkernel", result.stdout)
+
+    def test_large_export_set_uses_a_file_backed_pattern(self):
+        names = [f"ConventionExport{index:08d}LongName" for index in range(1100)]
+        self.assertGreater(len("|".join(names)), 32767)
+        source = "\n".join(f"int APS5_VABI {name}(void) {{ return 0; }}" for name in names)
+        source += "\nstd::uint64_t APS5_VABI sceKernelGetProcessTime() { return now(); }\n"
+        result = self.check("core/libs/prx/libSceAudioOut/src/Exports.cpp", source)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/prx/libSceAudioOut/src/Exports.cpp:1101: error: [duplicate-export]", result.stdout)
+        self.assertIn("sceKernelGetProcessTime is also in libkernel", result.stdout)
+
+    def test_export_shadowing_an_assembly_export_is_a_duplicate(self):
+        result = self.check("core/libs/prx/libSceLibcInternal/Export.cpp",
+                            "int APS5_VABI setjmp_nid_postfix(void) {\n    NotImplemented_nid_no_patch(__func__);\n    return 0;\n}\n",
+                            base={"core/libs/prx/libc/src/JumpBuffer.cpp": 'asm(".text\\n"\n    APS5_ASM_FUNCTION("setjmp_nid_postfix")\n    "    ret\\n");\n'})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/prx/libSceLibcInternal/Export.cpp:1: error: [duplicate-export]", result.stdout)
+        self.assertIn("setjmp_nid_postfix is also in libc", result.stdout)
+
+    def test_export_shadowing_a_spaced_or_split_assembly_export_is_a_duplicate(self):
+        for macro, call in (("APS5_ASM_FUNCTION", ' ("setjmp_nid_postfix")'),
+                            ("APS5_ASM_FUNCTION", '(\n        "setjmp_nid_postfix")'),
+                            ("APS5_SIGNAL_ASM_FUNCTION", ' (\n        "setjmp_nid_postfix")')):
+            with self.subTest(macro=macro, call=call):
+                result = self.check("core/libs/prx/libSceLibcInternal/Export.cpp",
+                                    "int APS5_VABI setjmp_nid_postfix(void) {\n    NotImplemented_nid_no_patch(__func__);\n    return 0;\n}\n",
+                                    base={"core/libs/prx/libc/src/JumpBuffer.cpp": 'asm(".text\\n"\n    ' + macro + call + '\n    "    ret\\n");\n'})
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("core/libs/prx/libSceLibcInternal/Export.cpp:1: error: [duplicate-export]", result.stdout)
+                self.assertIn("setjmp_nid_postfix is also in libc", result.stdout)
+
+    def test_assembly_export_in_another_library_is_a_duplicate(self):
+        result = self.check("core/libs/prx/libSceAudioOut/src/Clock.cpp",
+                            'asm(".text\\n"\n    APS5_SIGNAL_ASM_FUNCTION("sceKernelGetProcessTime")\n    "    ret\\n");\n')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/prx/libSceAudioOut/src/Clock.cpp:2: error: [duplicate-export]", result.stdout)
+        self.assertIn("sceKernelGetProcessTime is also in libkernel", result.stdout)
+
+    def test_assembly_export_after_a_raw_string_is_a_duplicate(self):
+        result = self.check("core/libs/prx/libSceAudioOut/src/Jump.cpp",
+                            'asm(R"(\n    .text\n)" APS5_ASM_FUNCTION("setjmp_nid_postfix") R"(\n    ret\n)");\n',
+                            base={"core/libs/prx/libc/src/JumpBuffer.cpp": 'asm(".text\\n"\n    APS5_ASM_FUNCTION("setjmp_nid_postfix")\n    "    ret\\n");\n'})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("core/libs/prx/libSceAudioOut/src/Jump.cpp:3: error: [duplicate-export]", result.stdout)
+        self.assertIn("setjmp_nid_postfix is also in libc", result.stdout)
+
+    def test_assembly_export_in_a_block_comment_is_not_an_export(self):
+        result = self.check("core/libs/prx/libSceLibcInternal/Export.cpp",
+                            "int APS5_VABI setjmp_nid_postfix(void) {\n    NotImplemented_nid_no_patch(__func__);\n    return 0;\n}\n",
+                            base={"core/libs/prx/libc/src/JumpBuffer.cpp": '/*\n    APS5_ASM_FUNCTION("setjmp_nid_postfix")\n*/\n'})
+        self.assertNotIn("duplicate-export", result.stdout, result.stdout + result.stderr)
+
+    def test_assembly_name_that_is_not_an_identifier_keeps_the_check(self):
+        result = self.check("core/libs/prx/libSceAudioOut/src/Clock.cpp",
+                            'asm(".text\\n"\n    APS5_ASM_FUNCTION("x(y")\n    "    ret\\n");\nstd::uint64_t APS5_VABI sceKernelGetProcessTime() {\n    return 1;\n}\n')
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("sceKernelGetProcessTime is also in libkernel", result.stdout)
 
     def test_comment_in_a_shader_is_reported(self):

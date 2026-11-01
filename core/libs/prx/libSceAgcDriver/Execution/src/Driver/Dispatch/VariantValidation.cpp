@@ -93,7 +93,7 @@ EntryOutcome Driver::validateVariant(std::uint64_t program, std::uint32_t queue,
     if (live != nullptr) live->clear();
     if (DrawPipeline::Active()) {
         auto& pipeline = DrawPipeline::Queue0();
-        if (pipeline.Busy() && std::any_of(variant.runs.begin(), variant.runs.end(), [&](const auto& run) { return pipeline.Overlaps(run.first, static_cast<std::size_t>(run.second - run.first)); })) pipeline.Drain(DrawPipeline::DrainReason::Capture);
+        if (pipeline.Busy() && pipeline.OverlapsAny(variant.runs)) pipeline.Drain(DrawPipeline::DrainReason::Capture);
     }
     const bool masked = live != nullptr && !variant.dataPositions.empty();
     const DataMask mask{variant.dataPositions, live};

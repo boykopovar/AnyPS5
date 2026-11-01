@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -12,13 +14,7 @@
 #include <fstream>
 #include <string>
 #include <thread>
-extern "C" {
-int APS5_VABI sceKernelOpen(const char* path, int flags, std::uint16_t mode);
-int APS5_VABI sceKernelClose(int d);
-std::int64_t APS5_VABI sceKernelRead(int d, void* buf, std::size_t nbytes);
-std::int64_t APS5_VABI sceKernelPread(int d, void* buf, std::size_t nbytes, std::int64_t offset);
-std::int64_t APS5_VABI sceKernelLseek(int d, std::int64_t offset, int whence);
-}
+
 static void Check(bool value, int line) {
     if (!value) {
         std::fprintf(stderr, "Positioned race check failed at line %d\n", line);
