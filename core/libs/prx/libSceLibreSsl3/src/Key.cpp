@@ -1,11 +1,17 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 
 #include <atomic>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 
 namespace {
 
+using PkeyBitsFunction = int (APS5_VABI *)(const LibreSsl3EvpPkey*);
+constexpr std::size_t PkeyBitsOffset = 104;
+
+static_assert(sizeof(PkeyBitsFunction) == 8);
+static_assert(offsetof(LibreSsl3EvpPkey, method) == 8);
 static_assert(std::atomic_ref<std::int32_t>::required_alignment <= alignof(std::int32_t));
 
 int Retain_nid_no_patch(std::int32_t& references) {
@@ -22,6 +28,14 @@ int Retain_nid_no_patch(std::int32_t& references) {
 } // namespace
 
 extern "C" {
+
+int APS5_VABI EVP_PKEY_bits_nid_postfix(const LibreSsl3EvpPkey* key) {
+    if (!key || !key->method)
+        return 0;
+    PkeyBitsFunction bits;
+    std::memcpy(&bits, static_cast<const unsigned char*>(key->method) + PkeyBitsOffset, sizeof(bits));
+    return bits ? bits(key) : 0;
+}
 
 int APS5_VABI EVP_PKEY_up_ref_nid_postfix(LibreSsl3EvpPkey* key) {
     if (!key)
