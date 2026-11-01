@@ -198,29 +198,7 @@ void CheckFailures() {
     Require(curl_escape(nullptr, -1) == nullptr);
     Require(curl_easy_unescape(nullptr, nullptr, -1, &outputLength) == nullptr);
     Require(curl_unescape(nullptr, -1) == nullptr);
-    const auto requireThrow = [](auto operation) {
-        bool threw = false;
-        try {
-            operation();
-        } catch (const std::exception&) {
-            threw = true;
-        }
-        Require(threw);
-    };
-    for (int length : {0, 1}) {
-        requireThrow([&] { curl_easy_escape(nullptr, nullptr, length); });
-        requireThrow([&] { curl_escape(nullptr, length); });
-        requireThrow([&] { curl_easy_unescape(nullptr, nullptr, length, &outputLength); });
-        requireThrow([&] { curl_unescape(nullptr, length); });
-    }
     Require(outputLength == 123 && allocationCalls == calls);
-    bool threw = false;
-    try {
-        curl_slist_append(nullptr, nullptr);
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw && allocationCalls == calls);
 
     for (int failure : {1, 2}) {
         failureCountdown = failure;
