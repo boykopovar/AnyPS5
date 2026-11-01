@@ -1,4 +1,5 @@
 #include "prx/libSceNpProfileDialog/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -137,10 +138,14 @@ int APS5_VABI sceNpProfileDialogGetResult(SceNpProfileDialogResult* result) {
         return COMMON_DIALOG_ERROR_NOT_FINISHED;
     }
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    *result = SceNpProfileDialogResult{};
-    result->result = COMMON_DIALOG_OK;
-    result->userAction = COMMON_DIALOG_RESULT_USER_CANCELED;
-    result->userData = dialog.userData;
+    SceNpProfileDialogResult dialogResult{};
+    dialogResult.result = COMMON_DIALOG_OK;
+    dialogResult.userAction = COMMON_DIALOG_RESULT_USER_CANCELED;
+    dialogResult.userData = dialog.userData;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &dialogResult, sizeof(dialogResult));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return COMMON_DIALOG_OK;
 }
 

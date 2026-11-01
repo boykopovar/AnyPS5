@@ -2,6 +2,7 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -176,6 +177,9 @@ int main() {
     Require(sceNpProfileDialogGetStatus() == kStatusFinished);
     Require(sceNpProfileDialogUpdateStatus() == kStatusFinished);
     Require(sceNpProfileDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == 0);
     RequireCanceled(result, &first);
     RequireThrows([] { sceNpProfileDialogClose(); });
@@ -190,6 +194,9 @@ int main() {
         Require(std::memcmp(paramA, paramACopy, sizeof(paramA)) == 0);
         Require(sceNpProfileDialogUpdateStatus() == kStatusFinished);
         Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == 0);
+        errno = 71;
+        Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(0x10)) == kErrArgNull);
+        Require(errno == 71);
         RequireCanceled(result, &second);
     }
 
@@ -208,6 +215,9 @@ int main() {
     Store<std::uint32_t>(param, 56, 4);
     Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(param)) == 0);
     Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == 0);
+    errno = 71;
+    Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     RequireCanceled(result, &first);
     Require(sceNpProfileDialogTerminate() == 0);
     Require(sceNpProfileDialogTerminate() == kErrNotInitialized);
