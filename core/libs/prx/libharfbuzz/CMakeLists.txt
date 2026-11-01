@@ -6,6 +6,7 @@ set_target_properties(harfbuzz_backend PROPERTIES
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN ON)
 install(FILES ${harfbuzzSourceDir}/COPYING DESTINATION licenses/harfbuzz)
+install(FILES ${harfbuzzSourceDir}/src/ms-use/COPYING DESTINATION licenses/harfbuzz/ms-use)
 
 add_library(libharfbuzz SHARED EXCLUDE_FROM_ALL Export.cpp Buffer.cpp)
 target_include_directories(libharfbuzz PUBLIC ${LIBS_INCLUDE_DIR})
