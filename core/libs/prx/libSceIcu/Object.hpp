@@ -21,6 +21,9 @@ void* Allocate_nid_no_patch(std::size_t size);
 void Free_nid_no_patch(void* pointer);
 const GuestFunction* Vtable_nid_no_patch(Class type);
 const TypeInfo* Rtti_nid_no_patch(Class type);
+const GuestFunction* ClassTypeTable_nid_no_patch();
+const GuestFunction* SingleTypeTable_nid_no_patch();
+const GuestFunction* MultipleTypeTable_nid_no_patch();
 void* ClassId_nid_no_patch(Class type);
 void Initialize_nid_no_patch(void* object, Class type);
 template<typename TFunction> TFunction Virtual_nid_no_patch(const void* object, std::size_t slot) {

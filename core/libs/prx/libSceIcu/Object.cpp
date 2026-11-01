@@ -108,11 +108,13 @@ static_assert(sizeof(TypeTable) == 88 && alignof(TypeTable) == 8);
 static_assert(offsetof(TypeTable, slots) == 16);
 const TypeInfo ClassCategory{nullptr, "N10__cxxabiv117__class_type_infoE"};
 const TypeInfo SingleCategory{nullptr, "N10__cxxabiv120__si_class_type_infoE"};
+const TypeInfo MultipleCategory{nullptr, "N10__cxxabiv121__vmi_class_type_infoE"};
 TypeTable MakeTypeTable(const TypeInfo* category) {
     return {0, category, {reinterpret_cast<GuestFunction>(DestroyType_nid_no_patch), reinterpret_cast<GuestFunction>(DeleteType_nid_no_patch), reinterpret_cast<GuestFunction>(FalseType_nid_no_patch), reinterpret_cast<GuestFunction>(FalseType_nid_no_patch), reinterpret_cast<GuestFunction>(CatchType_nid_no_patch), reinterpret_cast<GuestFunction>(UpcastType_nid_no_patch), UnsupportedType_nid_no_patch, UnsupportedType_nid_no_patch, UnsupportedType_nid_no_patch}};
 }
 const TypeTable ClassTable = MakeTypeTable(&ClassCategory);
 const TypeTable SingleTable = MakeTypeTable(&SingleCategory);
+const TypeTable MultipleTable = MakeTypeTable(&MultipleCategory);
 const TypeInfo MemoryType{ClassTable.slots, "N6icu_687UMemoryE"};
 const DerivedTypeInfo ObjectType{{SingleTable.slots, "N6icu_687UObjectE"}, &MemoryType};
 const DerivedTypeInfo ReplaceableType{{SingleTable.slots, "N6icu_6811ReplaceableE"}, &ObjectType.type};
@@ -135,6 +137,9 @@ template<std::size_t TCount> struct VirtualTable {
 static_assert(sizeof(VirtualTable<3>) == 40 && alignof(VirtualTable<3>) == 8);
 static_assert(offsetof(VirtualTable<3>, slots) == 16);
 }
+const GuestFunction* ClassTypeTable_nid_no_patch() { return ClassTable.slots; }
+const GuestFunction* SingleTypeTable_nid_no_patch() { return SingleTable.slots; }
+const GuestFunction* MultipleTypeTable_nid_no_patch() { return MultipleTable.slots; }
 const TypeInfo* Rtti_nid_no_patch(Class type) {
     switch (type) {
     case Class::Object: return &ObjectType.type;
