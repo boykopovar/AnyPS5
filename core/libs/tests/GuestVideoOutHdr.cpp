@@ -36,6 +36,9 @@ VideoOutOutputStatus Status(int handle) {
     std::array<std::byte, 80> withVrr{};
     Require(sceVideoOutGetOutputStatusWithVrr(handle, withVrr.data()) == 0, "sceVideoOutGetOutputStatusWithVrr failed");
     Require(std::memcmp(withVrr.data(), &status, sizeof(status)) == 0, "the output status with VRR differs from the output status");
+    Require(sceVideoOutGetOutputStatusWithVrr(handle, nullptr) == static_cast<int>(0x80290002), "sceVideoOutGetOutputStatusWithVrr did not reject null status pointer");
+    Require(sceVideoOutGetOutputStatusWithVrr(-1, withVrr.data()) == static_cast<int>(0x8029000B), "sceVideoOutGetOutputStatusWithVrr did not reject negative handle");
+    Require(sceVideoOutGetOutputStatusWithVrr(9999, withVrr.data()) == static_cast<int>(0x8029000B), "sceVideoOutGetOutputStatusWithVrr did not reject out-of-range handle");
     return status;
 }
 
