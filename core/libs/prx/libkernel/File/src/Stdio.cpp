@@ -717,7 +717,7 @@ static constexpr std::pair<std::uint64_t, const char*> GUEST_FILE_FLAGS[] = {
     {0x00000400, "UF_REPARSE"}, {0x00000800, "UF_ARCHIVE"}, {0x00001000, "UF_READONLY"}, {0x00008000, "UF_HIDDEN"},
     {0x00010000, "SF_ARCHIVED"}, {0x00020000, "SF_IMMUTABLE"}, {0x00040000, "SF_APPEND"}, {0x00100000, "SF_NOUNLINK"},
     {0x00200000, "SF_SNAPSHOT"}};
-static constexpr std::uint64_t GUEST_SF_SNAPSHOT = 0x00200000;
+static constexpr std::uint64_t GUEST_SF_SETTABLE = 0xffff0000;
 
 static std::string FileFlagNames(std::uint64_t flags) {
     std::string names;
@@ -733,7 +733,7 @@ static int SetFileFlags(const char* function, const std::string& target, std::ui
     std::uint64_t known = 0;
     for (const auto& entry : GUEST_FILE_FLAGS) known |= entry.first;
     if ((flags & ~known) != 0) return GUEST_EOPNOTSUPP;
-    if ((flags & GUEST_SF_SNAPSHOT) != 0) return GUEST_EPERM;
+    if ((flags & GUEST_SF_SETTABLE) != 0) return GUEST_EPERM;
     if (flags != 0)
         throw std::runtime_error(std::string(function) + ": setting " + FileFlagNames(flags) + " on " + target + " is not supported, the host keeps no BSD file flags");
     return 0;
@@ -1126,6 +1126,8 @@ std::int64_t APS5_VABI _write_nid_postfix(int descriptor, const void* buffer, st
     return PosixResult(sceKernelWrite(descriptor, buffer == nullptr ? &emptyBuffer : buffer, count));
 }
 
+const bool g_libcWriteHookRegistered = (LibcSetGuestWriteHook_nid_no_patch(&_write_nid_postfix), true);
+
 int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
     if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
     std::string copy;
@@ -1210,11 +1212,8 @@ int APS5_VABI sceKernelFdatasync(int fd) {
 }
 
 int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t* status) {
-    if (status == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
-    status[0] = std::numeric_limits<std::uint32_t>::max();
-    status[1] = 0;
-    status[2] = 0;
-    status[3] = 0;
+    const std::uint64_t values[4]{std::numeric_limits<std::uint32_t>::max(), 0, 0, 0};
+    if (!GuestCopyOut_nid_no_patch(status, values, sizeof(values))) return SceErrorFromErrno(GUEST_EFAULT);
     return 0;
 }
 
@@ -1290,7 +1289,11 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (base < 0) return SceErrorFromErrno(errno);
     if (basep != nullptr) *basep = static_cast<int64_t>(base);
     std::vector<char> host(static_cast<std::size_t>(nbytes) < 4096 ? 4096 : static_cast<std::size_t>(nbytes));
+#ifdef __EMSCRIPTEN__
+    const auto read = ::getdents(fd, reinterpret_cast<struct dirent*>(host.data()), host.size());
+#else
     const auto read = ::syscall(SYS_getdents64, fd, host.data(), host.size());
+#endif
     if (read < 0) return SceErrorFromErrno(errno);
     std::size_t written = 0;
     off_t resume = base;

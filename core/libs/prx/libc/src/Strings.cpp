@@ -296,6 +296,12 @@ bool HasHexadecimalPrefix(const char* text, const char* parsedEnd) {
 
 extern "C" {
 
+const char* NanSubjectEnd_nid_no_patch(const char* text) {
+    if (text == nullptr) return nullptr;
+    const auto subject = FindNanSubject(text);
+    return subject.tail == nullptr ? nullptr : NanSequenceEnd(subject.tail);
+}
+
 void* APS5_VABI memset_nid_postfix(void* s, int c, size_t n) {
     // APS5_LOG_OUT("s=%p c=%d n=%zu", s, c, n);
     return std::memset(s, c, n);
@@ -831,8 +837,10 @@ float APS5_VABI wcstof_nid_postfix(const char16_t* str, char16_t** endptr) {
 }
 
 long double APS5_VABI wcstold_nid_postfix(const char16_t* str, char16_t** endptr) {
+#ifndef __EMSCRIPTEN__
     static_assert(sizeof(long double) == 16);
     static_assert(std::numeric_limits<long double>::digits == 64);
+#endif
     return ParseAsciiPrefix(str, endptr, [](const char* text, char** end) { return ParseFloat<long double>(text, end, std::strtold); });
 }
 

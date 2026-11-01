@@ -340,6 +340,13 @@ int main() {
         Require(unequalFilterSamples == magFilterReference, "unnormalized sampler with unequal filters does not sample with its magnification filter");
         const auto clampModeZeroSamples = Run(*device, Plain, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, coordinates);
         Require(clampModeZeroSamples == magFilterReference, "unnormalized sampler with clamp mode 0 does not sample with clamp mode 2");
+        for (const std::size_t index : {std::size_t{0}, std::size_t{1}, std::size_t{4}}) {
+            auto truncated = Samplers[index].words;
+            truncated[0] |= 1u << 27u;
+            const auto truncatedSamples = Run(*device, Plain, single, truncated, coordinates);
+            Check(Plain, Samplers[index], 0u, "1-level image through an S# with TRUNC_COORD", coordinates, truncatedSamples);
+            Require(truncatedSamples == Run(*device, Plain, single, Samplers[index].words, coordinates), std::string(Samplers[index].name) + ": TRUNC_COORD changed the samples");
+        }
         const auto constantView = [&](std::uint32_t type, std::uint32_t format, std::uint32_t swizzle) {
             auto descriptor = TextureDescriptor(SingleLevel.data(), 0u, 0u);
             descriptor[1] = (descriptor[1] & ~(0x1ffu << 20u)) | (format << 20u);

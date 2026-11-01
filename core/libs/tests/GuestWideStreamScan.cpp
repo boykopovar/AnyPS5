@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -79,7 +80,7 @@ static int APS5_VABI ScanNarrowInput(const char* format, ...) {
 #endif
 
 static FileStream* Open(const char* text) {
-    auto* stream = new FileStream(std::tmpfile());
+    auto* stream = new FileStream(TemporaryFile::Open());
     Require(std::fputs(text, stream->GetHandle()) >= 0, "seed the stream");
     std::rewind(stream->GetHandle());
     return stream;
