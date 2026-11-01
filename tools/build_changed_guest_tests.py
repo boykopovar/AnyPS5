@@ -20,7 +20,7 @@ BROAD_CHANGES = {
 
 def reaches_libs(changed):
     return any(
-        path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/"))
+        path == "CMakeLists.txt" or path.startswith(("core/libs/", ".github/workflows/build.yml", "tools/") + host_only.BUILD_WIDE_PREFIXES)
         for path in changed
     )
 
@@ -45,7 +45,7 @@ def guest_test_targets(source_root, targets, changed_paths=None):
     if changed_paths is None:
         return selected
     changed = {Path(path).as_posix() for path in changed_paths if path}
-    broad_change = any(path in BROAD_CHANGES or path.startswith("core/libs/") and (
+    broad_change = any(path in BROAD_CHANGES or path.startswith(host_only.BUILD_WIDE_PREFIXES) or path.startswith("core/libs/") and (
         path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
     ) for path in changed)
     if broad_change:
