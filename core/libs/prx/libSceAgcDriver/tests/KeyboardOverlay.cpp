@@ -335,6 +335,132 @@ void paletteTests() {
     }
 }
 
+ModalDialogView dialogOf(const std::u16string& message, std::vector<std::u16string> labels, std::size_t focus) {
+    ModalDialogView view;
+    view.message = message;
+    for (std::size_t index = 0; index < labels.size(); ++index) view.buttons.push_back({labels[index], index == focus});
+    return view;
+}
+
+std::vector<OverlayRect> rectsOf(const OverlayLayout& layout, OverlayColor color) {
+    std::vector<OverlayRect> found;
+    for (const auto& rect : layout.rects) {
+        if (rect.color == colorOf(color)) found.push_back(rect);
+    }
+    return found;
+}
+
+void dialogWrapTests() {
+    using AgcDriver::WrapDialogMessage;
+    using Lines = std::vector<std::u32string>;
+    require(WrapDialogMessage(u"hello world", 5, 8) == Lines{U"hello", U"world"}, "words are not wrapped at the column limit");
+    require(WrapDialogMessage(u"a b c", 5, 8) == Lines{U"a b c"}, "words that fit were split");
+    require(WrapDialogMessage(u"abcdefghij", 4, 8) == Lines{U"abcd", U"efgh", U"ij"}, "a long word is not broken at the column limit");
+    require(WrapDialogMessage(u"one\ntwo", 20, 8) == Lines{U"one", U"two"}, "a line break is not kept");
+    require(WrapDialogMessage(u"one\n\ntwo", 20, 8) == Lines{U"one", U"", U"two"}, "a blank line is not kept");
+    require(WrapDialogMessage(u"one\r\ntwo", 20, 8) == Lines{U"one", U"two"}, "a carriage return is drawn");
+    require(WrapDialogMessage(u"  spaced   out  ", 20, 8) == Lines{U"spaced out"}, "extra spaces are kept");
+    require(WrapDialogMessage(u"", 20, 8) == Lines{U""}, "an empty message has no line");
+    require(WrapDialogMessage(u"one\n", 20, 8) == Lines{U"one"}, "a trailing line break adds a line");
+    require(WrapDialogMessage(u"a\U0001F600b", 4, 8) == Lines{U"a\U0001F600b"}, "a surrogate pair counts as two characters");
+    require(WrapDialogMessage(u"aa bb cc dd ee", 5, 2) == Lines{U"aa bb", U"cc..."}, "an overlong message does not end in dots");
+    require(WrapDialogMessage(u"abcde fghij klmno", 5, 2) == Lines{U"abcde", U"fg..."}, "a full last line is not cut to make room for the dots");
+    bool threw = false;
+    try {
+        static_cast<void>(WrapDialogMessage(u"x", 3, 8));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    require(threw, "a dialog with no room for its text was accepted");
+    std::printf("dialog wrap: words, long words, breaks, dots\n");
+}
+
+void dialogLayoutTests() {
+    const auto message = u"Overwrite the save?\nThis cannot be undone, and the previous data cannot be restored afterwards.";
+    for (const VkExtent2D extent : {VkExtent2D{640, 360}, VkExtent2D{1280, 720}, VkExtent2D{1920, 1080}, VkExtent2D{3840, 2160}}) {
+        for (const std::size_t count : {std::size_t{1}, std::size_t{2}, std::size_t{3}}) {
+            const std::vector<std::u16string> labels{u"Yes", u"No", u"Cancel"};
+            const auto view = dialogOf(message, {labels.begin(), labels.begin() + static_cast<std::ptrdiff_t>(count)}, count - 1);
+            const auto layout = AgcDriver::LayOutDialog(view, extent);
+            const auto name = std::to_string(extent.width) + "x" + std::to_string(extent.height) + " with " + std::to_string(count) + " buttons";
+            require(layout.scale == std::max<std::int32_t>(1, static_cast<std::int32_t>(extent.height / KeyboardMetrics::LinesPerScale)), name + ": the dialog scale is not the keyboard's");
+            require(contains({0, 0, static_cast<std::int32_t>(extent.width), static_cast<std::int32_t>(extent.height), 0}, layout.bounds), name + ": the dialog leaves the screen");
+            require(std::abs(layout.bounds.x + layout.bounds.width / 2 - static_cast<std::int32_t>(extent.width) / 2) <= layout.scale && std::abs(layout.bounds.y + layout.bounds.height / 2 - static_cast<std::int32_t>(extent.height) / 2) <= layout.scale, name + ": the dialog is not centred");
+            require(layout.rects.front().color == colorOf(OverlayColor::Panel) && layout.rects.front().x == layout.bounds.x, name + ": the panel is not drawn first");
+            for (const auto& rect : layout.rects) require(contains(layout.bounds, rect), name + ": a rectangle leaves the panel");
+            const auto accents = rectsOf(layout, OverlayColor::Accent);
+            require(rectsOf(layout, OverlayColor::Key).size() == count && accents.size() == 1, name + ": one key per button and one accent border are expected");
+            std::vector<OverlayRect> buttons;
+            for (const auto& rect : layout.rects) {
+                if ((rect.color == colorOf(OverlayColor::Key) || rect.color == colorOf(OverlayColor::Accent)) && rect.height == AgcDriver::DialogMetrics::ButtonHeight * layout.scale) buttons.push_back(rect);
+            }
+            std::sort(buttons.begin(), buttons.end(), [](const OverlayRect& a, const OverlayRect& b) { return a.x < b.x; });
+            require(buttons.size() == count, name + ": the buttons are not all drawn");
+            for (std::size_t index = 1; index < buttons.size(); ++index) require(buttons[index].x >= buttons[index - 1].x + buttons[index - 1].width, name + ": the buttons overlap");
+            require(buttons.back().color == colorOf(OverlayColor::Accent), name + ": the accent border is not on the focused button");
+            require(!rectsOf(layout, OverlayColor::Text).empty(), name + ": no text is drawn");
+        }
+    }
+    std::printf("dialog layout: bounds, centring, buttons, focus\n");
+
+    const VkExtent2D extent{1280, 720};
+    const auto first = AgcDriver::LayOutDialog(dialogOf(u"Question", {u"Yes", u"No"}, 0), extent);
+    const auto second = AgcDriver::LayOutDialog(dialogOf(u"Question", {u"Yes", u"No"}, 1), extent);
+    require(first.bounds.x == second.bounds.x && first.bounds.width == second.bounds.width, "the focus changed the panel size");
+    require(rectsOf(first, OverlayColor::Accent).front().x < rectsOf(second, OverlayColor::Accent).front().x, "the accent border does not follow the focus");
+    require(rectsOf(AgcDriver::LayOutDialog(dialogOf(u"Question", {u"Yes", u"No"}, 5), extent), OverlayColor::Accent).empty(), "a dialog with no focused button drew an accent border");
+
+    const auto crowded = dialogOf(std::u16string(400, u'w'), {u"OK"}, 0);
+    const auto crowdedLayout = AgcDriver::LayOutDialog(crowded, extent);
+    require(contains({0, 0, 1280, 720, 0}, crowdedLayout.bounds), "a long message makes the dialog leave the screen");
+    require(crowdedLayout.bounds.height <= 720, "a long message makes the dialog taller than the screen");
+
+    const auto small = AgcDriver::LayOutDialog(dialogOf(u"Very long message that needs the whole panel width to be shown at once here", {u"Yes", u"No", u"Cancel"}, 0), VkExtent2D{1280, 720});
+    const auto narrow = AgcDriver::LayOutDialog(dialogOf(u"Very long message that needs the whole panel width to be shown at once here", {u"Yes", u"No", u"Cancel"}, 0), VkExtent2D{320, 720});
+    require(narrow.scale == 1 && narrow.scale < small.scale, "the dialog does not shrink for a narrow target");
+
+    for (const auto& bad : {dialogOf(u"x", {}, 0), dialogOf(u"x", {u"a", u"b", u"c", u"d"}, 0)}) {
+        bool threw = false;
+        try {
+            static_cast<void>(AgcDriver::LayOutDialog(bad, extent));
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        require(threw, "a dialog without one to three buttons was laid out");
+    }
+    bool threw = false;
+    try {
+        static_cast<void>(AgcDriver::LayOutDialog(dialogOf(u"x", {u"OK"}, 0), VkExtent2D{0, 0}));
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    require(threw, "a dialog without a destination was laid out");
+    std::printf("dialog layout: focus, long text, narrow target, invalid input\n");
+}
+
+void systemDialogTests() {
+    const VkExtent2D extent{1280, 720};
+    require(!AgcDriver::SystemDialogView().has_value() && !AgcDriver::SystemOverlayLayout(extent).has_value(), "an overlay is laid out before one was set");
+    const auto dialog = dialogOf(u"Continue?", {u"Yes", u"No"}, 1);
+    AgcDriverSetSystemDialog_nid_postfix(&dialog);
+    const auto shown = AgcDriver::SystemDialogView();
+    require(shown.has_value() && shown->message == u"Continue?" && shown->buttons.size() == 2 && shown->buttons[1].selected, "the shown dialog is not the one set");
+    const auto layout = AgcDriver::SystemOverlayLayout(extent);
+    const auto expected = AgcDriver::LayOutDialog(dialog, extent);
+    require(layout.has_value() && layout->bounds.x == expected.bounds.x && layout->bounds.width == expected.bounds.width && layout->rects.size() == expected.rects.size(), "the system overlay is not the dialog");
+    ImeDialog::PadKeyboardOptions options;
+    const auto keyboard = viewOf(ImeDialog::PadKeyboardOpen(options), u"ab", 1);
+    AgcDriverSetSystemOverlay_nid_postfix(&keyboard);
+    const auto both = AgcDriver::SystemOverlayLayout(extent);
+    const auto keyboardLayout = AgcDriver::LayOutKeyboard(keyboard, extent);
+    require(both.has_value() && both->bounds.width == keyboardLayout.bounds.width && both->rects.size() == keyboardLayout.rects.size(), "the keyboard does not take the overlay from the dialog");
+    AgcDriverSetSystemOverlay_nid_postfix(nullptr);
+    require(AgcDriver::SystemOverlayLayout(extent).has_value(), "the dialog is gone after the keyboard was cleared");
+    AgcDriverSetSystemDialog_nid_postfix(nullptr);
+    require(!AgcDriver::SystemDialogView().has_value() && !AgcDriver::SystemOverlayLayout(extent).has_value(), "a cleared dialog is still shown");
+    std::printf("system dialog: set, read back, ranked below the keyboard and cleared\n");
+}
+
 void systemOverlayTests() {
     require(!AgcDriver::SystemOverlayView().has_value(), "a keyboard is shown before one was set");
     ImeDialog::PadKeyboardOptions options;
@@ -358,6 +484,9 @@ int main() {
         caretTests();
         paletteTests();
         systemOverlayTests();
+        dialogWrapTests();
+        dialogLayoutTests();
+        systemDialogTests();
         std::cout << "keyboard overlay tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -108,6 +108,20 @@ class InputRowsTests(unittest.TestCase):
                     assemble.assert_not_called()
                     oracle.assert_not_called()
 
+    def test_cli_accepts_utf8_bom_in_body_and_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            body, rows = (Path(directory) / name for name in ("body.s", "rows.txt"))
+            argv = ["hw_oracle.py", str(body), str(rows)]
+            argv += [item for name, value in MODES.items()
+                     for item in ["--" + name.replace("_", "-"), str(value)]]
+            for bom in ("body", "rows"):
+                with self.subTest(bom=bom):
+                    body.write_text("s_nop 0", encoding="utf-8-sig" if bom == "body" else "utf-8")
+                    rows.write_text("1 2 3 4\n", encoding="utf-8-sig" if bom == "rows" else "utf-8")
+                    with patch("sys.argv", argv), patch.object(hw_oracle, "run", return_value=[]) as run:
+                        hw_oracle.main()
+                    run.assert_called_once_with("s_nop 0", [(1, 2, 3, 4)], b"", False, False, **MODES, lds=4096)
+
     def test_successful_dispatch_without_output_cannot_reuse_previous_results(self):
         with tempfile.TemporaryDirectory() as directory:
             runner = Path(directory) / "runner.py"
@@ -742,6 +756,33 @@ class HipOracleTests(unittest.TestCase):
             self.assertNotIn("Traceback", errors.getvalue())
             read.assert_not_called()
             dispatch.assert_not_called()
+
+    def test_cli_rejects_short_dispatch_input_before_oracle_work(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            code, inputs, output = (root / name for name in ("code.co", "input.bin", "output.bin"))
+            code.write_bytes(b"code")
+            for threads, size in ((1, 0), (1, 15), (2, 31)):
+                with self.subTest(threads=threads, size=size):
+                    inputs.write_bytes(bytes(size))
+                    output.unlink(missing_ok=True)
+                    with patch.object(self.oracle_hip, "dispatch", side_effect=AssertionError("dispatch called")) as dispatch, \
+                            contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as exited:
+                        self.oracle_hip.main([str(code), str(threads), str(inputs), str(output), "1"])
+                    self.assertEqual(exited.exception.code, 2)
+                    self.assertIn(f"input file must contain at least {threads * 16} bytes", errors.getvalue())
+                    self.assertFalse(output.exists())
+                    dispatch.assert_not_called()
+
+            for size in (32, 35):
+                with self.subTest(threads=2, accepted_size=size):
+                    payload = bytes(range(size))
+                    inputs.write_bytes(payload)
+                    output.unlink(missing_ok=True)
+                    with patch.object(self.oracle_hip, "dispatch", return_value=bytes(8)) as dispatch:
+                        self.assertEqual(self.oracle_hip.main([str(code), "2", str(inputs), str(output), "1"]), 0)
+                    dispatch.assert_called_once_with(b"code", 2, payload, 1, False)
+                    self.assertEqual(output.read_bytes(), bytes(8))
 
     def test_cli_rejects_output_aliases_before_oracle_work(self):
         with tempfile.TemporaryDirectory() as directory:

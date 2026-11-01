@@ -8,7 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 CPP = (".cpp", ".cc", ".cxx", ".c")
 DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
@@ -70,7 +70,10 @@ def validate_arguments(arguments):
 
 
 def compilation_database(text, source, skip_empty_commands=False):
-    database = json.loads(text)
+    try:
+        database = json.loads(text)
+    except RecursionError as error:
+        raise ValueError(f"{source}: compilation database is nested too deeply") from error
     if not isinstance(database, list):
         raise ValueError(f"{source}: expected an array of command objects")
     commands = []
@@ -248,14 +251,43 @@ def preprocessor_arguments(argument):
     return "-Wp," + ",".join(kept) if kept else None
 
 
+def launcher_prefix(arguments):
+    if len(arguments) < 3 or PureWindowsPath(arguments[0]).stem.lower() != "cmake" or arguments[1:3] != ["-E", "env"]:
+        return []
+    index = 3
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument == "--":
+            index += 1
+            break
+        if argument == "--modify":
+            if index + 1 == len(arguments):
+                raise ValueError("missing operand for cmake -E env --modify")
+            index += 2
+            continue
+        if argument.startswith("--unset="):
+            index += 1
+            continue
+        if argument.startswith("-"):
+            raise ValueError(f"unsupported cmake -E env option {argument}")
+        if "=" not in argument:
+            break
+        index += 1
+    if index == len(arguments):
+        raise ValueError("cmake -E env launcher has no command")
+    return arguments[:index]
+
+
 def syntax_arguments(arguments, directory, source):
     validate_arguments(arguments)
+    if prefix := launcher_prefix(arguments):
+        return [*prefix, *syntax_arguments(arguments[len(prefix):], directory, source)]
     if any(argument.startswith("@") for argument in arguments[1:]):
         compiler = Path(arguments[0]).stem.lower()
         if compiler in ("cl", "clang-cl") or any(argument in ("--driver-mode=cl", "--rsp-quoting=windows") for argument in arguments):
             raise ValueError("Windows-style compiler response files are unsupported; provide expanded arguments")
     arguments = [arguments[0], *expand_response_files(arguments[1:], directory)]
-    wanted = source.resolve()
+    wanted = real(source)
     trimmed = [arguments[0]]
     index = 1
     positional = False
