@@ -339,6 +339,7 @@ static void CheckFgetsSizeOne() {
     Require(ftello_nid_postfix(&stream) == 0 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) == 0);
     Require(fgets_nid_postfix(buffer, sizeof(buffer), &stream) == buffer && std::strcmp(buffer, "line\n") == 0);
     stream.Close();
+}
 
 static void CheckGetdelimAndGetline() {
     std::size_t nextCap = 0;
