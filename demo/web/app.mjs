@@ -136,7 +136,8 @@ async function fail(message) {
   update();
 }
 
-async function onMessage({ data }) {
+async function onMessage({ data }, currentWorker) {
+  if (currentWorker !== worker || failing) return;
   try {
     if (data.type === "progress") {
       if (data.message) {
@@ -195,27 +196,41 @@ async function onMessage({ data }) {
       if (parts.some(part => !part || part === "." || part === ".." || part.includes("\\"))) throw new Error("Invalid output path");
       const filename = data.type === "open-file" ? parts.pop() : null;
       let parent = outputDirectory;
-      for (const part of parts) parent = await parent.getDirectoryHandle(part, { create: true });
+      for (const part of parts) {
+        parent = await parent.getDirectoryHandle(part, { create: true });
+        if (currentWorker !== worker) return;
+      }
       if (filename) {
         try {
           const handle = await parent.getFileHandle(filename, { create: true });
-          sink = await handle.createWritable();
+          if (currentWorker !== worker) return;
+          const writable = await handle.createWritable();
+          if (currentWorker !== worker) {
+            await writable.abort().catch(() => {});
+            return;
+          }
+          sink = writable;
         } catch (error) {
           throw new Error(`Cannot write ${data.name}: ${error.message}. Choose ZIP output if the browser blocks this file type.`);
         }
       }
-      worker?.postMessage({ type: "written" });
+      if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "close-file") {
       if (!sink) throw new Error("No output file is open");
       await sink.close();
+      if (currentWorker !== worker) return;
       sink = null;
-      worker?.postMessage({ type: "written" });
+      currentWorker.postMessage({ type: "written" });
     } else if (data.type === "write") {
       if (!sink) throw new Error("No output file is open");
       await sink.write(data.bytes);
-      worker?.postMessage({ type: "written" });
+      if (currentWorker === worker) currentWorker.postMessage({ type: "written" });
     } else if (data.type === "complete") {
-      if (sink) { await sink.close(); sink = null; }
+      if (sink) {
+        await sink.close();
+        if (currentWorker !== worker) return;
+        sink = null;
+      }
       working = false;
       $("done").hidden = false;
       $("status").hidden = true;
@@ -245,7 +260,9 @@ async function onMessage({ data }) {
       lock(false);
       update();
     } else if (data.type === "error") await fail(data.message);
-  } catch (error) { await fail(error.message); }
+  } catch (error) {
+    if (currentWorker === worker) await fail(error.message);
+  }
 }
 
 async function selectInputs(inputs) {
@@ -272,10 +289,13 @@ async function selectInputs(inputs) {
   $("progress").removeAttribute("value");
   lock(true);
   update();
-  worker = new Worker(new URL("./worker.mjs", import.meta.url), { type: "module" });
-  worker.onmessage = onMessage;
-  worker.onerror = event => fail(event.message || "The converter worker stopped. Try a smaller app or use the native relinker.");
-  worker.postMessage({ type: "inspect", inputs });
+  const currentWorker = new Worker(new URL("./worker.mjs", import.meta.url), { type: "module" });
+  worker = currentWorker;
+  currentWorker.onmessage = event => onMessage(event, currentWorker);
+  currentWorker.onerror = event => {
+    if (currentWorker === worker) return fail(event.message || "The converter worker stopped. Try a smaller app or use the native relinker.");
+  };
+  currentWorker.postMessage({ type: "inspect", inputs });
 }
 
 $("choose").onclick = () => { $("file").value = ""; $("file").click(); };
@@ -317,6 +337,7 @@ for (const id of ["save", "target", "acknowledge"]) $(id).addEventListener("chan
 $("cancel").onclick = () => fail("Cancelled. Choose the ZIP or folder again to restart.");
 $("convert").onclick = async () => {
   if ($("convert").disabled) return;
+  const currentWorker = worker;
   working = true;
   lock(true);
   update();
@@ -325,18 +346,31 @@ $("convert").onclick = async () => {
     if ($("save").value === "zip") {
       const name = selectedInputs.length > 1 ? `anyps5-${target}-apps.zip` : `${selectedInputs[0].name.replace(/\.zip$/iu, "")}-${target}.zip`;
       const handle = await window.showSaveFilePicker({ suggestedName: name, types: [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }] });
-      sink = await handle.createWritable();
+      if (currentWorker !== worker) return;
+      const writable = await handle.createWritable();
+      if (currentWorker !== worker) {
+        await writable.abort().catch(() => {});
+        return;
+      }
+      sink = writable;
     } else if ($("save").value === "disk") {
-      const parent = await window.showDirectoryPicker({ mode: "readwrite" });
       const name = selectedInputs[0].name.replace(/\.zip$/iu, "") + "-" + target;
-      outputTransaction = await OutputDirectoryTransaction.create(parent, name);
-      outputDirectory = outputTransaction.directory;
+      const parent = await window.showDirectoryPicker({ mode: "readwrite" });
+      if (currentWorker !== worker) return;
+      const transaction = await OutputDirectoryTransaction.create(parent, name);
+      if (currentWorker !== worker) {
+        await transaction.discard();
+        return;
+      }
+      outputTransaction = transaction;
+      outputDirectory = transaction.directory;
     }
     $("status").hidden = false;
     $("cancel").hidden = false;
     $("error").hidden = true;
-    worker.postMessage({ type: "convert", target, toIntel: $("intel").checked, mode: $("save").value });
+    currentWorker.postMessage({ type: "convert", target, toIntel: $("intel").checked, mode: $("save").value });
   } catch (error) {
+    if (currentWorker !== worker) return;
     if (error.name === "AbortError") { working = false; lock(false); update(); }
     else await fail(error.message);
   }
