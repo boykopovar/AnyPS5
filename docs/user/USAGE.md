@@ -661,3 +661,21 @@ By default, imports use the library export naming rules: `_nid_no_patch` and `SD
 `nid_patcher --exec --only-sce <file>` restricts renaming to names starting with `sce` (case-insensitive) or ending with `_nid_postfix`. Both modes accept `--preserve-exports <unpatched-library>` or `--preserve-export-list <export-list>` for explicit exclusions. The existing `nid_patcher <library_name> <file>` mode is unchanged.
 
 Unsupported layouts fail before the input file is written.
+
+## Sons of Sparta launch resolution
+
+For PPSA28997, `tools/launch_sparta.py` selects the game's internal resolution before launching its converted executable. Run the game once to create its settings, then close it before using this tool. Python 3 and an SDL2 shared library are required for automatic display detection; an explicit resolution does not require SDL2.
+
+```sh
+python3 tools/launch_sparta.py /path/to/game/sons-of-sparta.elf
+python3 tools/launch_sparta.py --resolution 1440p /path/to/game/sons-of-sparta.elf
+python3 tools/launch_sparta.py --dry-run /path/to/game/sons-of-sparta.elf
+```
+
+The default `--resolution auto` chooses the largest supported size that fits both desktop dimensions: 1920x1080, 2560x1440 or 3840x2160. A 1920x1200 desktop selects 1080p; a 2560x1600 or 3440x1440 desktop selects 1440p. Below 1080p it uses the minimum supported size, 1920x1080. Detection uses SDL display 0, or `ANYPS5_DISPLAY_INDEX` when set, matching the runtime's initial display selection. Use a desktop pixel mode, not the smaller window dimensions. SDL2 must be available to the operating system's shared-library loader (`SDL2.dll` on Windows).
+
+`--resolution 1080p`, `1440p` or `2160p` overrides automatic selection for that launch. Options precede the executable; subsequent arguments are passed to the game. The tool launches from the executable's directory and inherits the existing runtime environment. It does not relink the game or locate its runtime libraries.
+
+Only `resolutionIndex` in `_sd/GOWSOSSAVE999/GoW_SoS999.dat` is updated. The original file is retained as `GoW_SoS999.dat.resolution.bak` before the first change; subsequent changes preserve that backup. Other bytes and player saves are unchanged. Missing, ambiguous or unsupported settings are rejected without launching. No settings file is generated. Close the game before restoring the backup. Concurrent instances of this launcher using the same settings are rejected; launching the executable directly bypasses that lock.
+
+The tool controls the title's saved rendering quality, independently of VideoOut output resolution. It does not resize arbitrary AGC resources or change resolution when a running window moves between monitors.
