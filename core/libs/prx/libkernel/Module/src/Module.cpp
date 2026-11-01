@@ -278,37 +278,22 @@ int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleIn
 #endif
 }
 
-namespace {
-
-thread_local PendingModuleArgs pendingModuleArgs;
-thread_local int pendingModuleInitResult = 0;
-
-}
-
-extern "C" {
-
-const void* __aps5_get_pending_module_args_nid_no_patch() {
-    return &pendingModuleArgs;
-}
-
-void __aps5_set_module_init_result_nid_no_patch(int result) {
-    pendingModuleInitResult = result;
-}
-
-}
-
 KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
  (void)flags;
  (void)opt;
  if (res) *res = 0;
  if (!module_file_name) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
- pendingModuleArgs = {args, argp};
- pendingModuleInitResult = 0;
+ SetPendingModuleArgs_nid_no_patch(args, argp, true);
  const auto systemLibrary = SystemLibraryPath(module_file_name);
- void* handle = dlopen_nid_postfix(systemLibrary ? systemLibrary->c_str() : module_file_name, kRtldNow);
- const int started = pendingModuleInitResult;
- pendingModuleArgs = {};
- pendingModuleInitResult = 0;
+ void* handle = nullptr;
+ try {
+     handle = dlopen_nid_postfix(systemLibrary ? systemLibrary->c_str() : module_file_name, kRtldNow);
+ } catch (...) {
+     SetPendingModuleArgs_nid_no_patch(0, nullptr, false);
+     throw;
+ }
+ const int started = GetPendingModuleInitResult_nid_no_patch();
+ SetPendingModuleArgs_nid_no_patch(0, nullptr, false);
  if (res) *res = started;
  if (!handle) return static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT);
  return static_cast<KernelModule>(reinterpret_cast<intptr_t>(handle));
