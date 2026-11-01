@@ -794,16 +794,6 @@ int APS5_VABI OCSP_check_validity_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI OCSP_resp_count_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI OCSP_resp_get0_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI OCSP_response_get1_basic_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
