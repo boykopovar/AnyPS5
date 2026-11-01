@@ -115,7 +115,10 @@ int main() {
     Require(sceKernelClockGettime(GUEST_CLOCK_PROCESS_CPUTIME_ID, &time) == SCE_OK);
     Require(time.tv_sec >= 0 && time.tv_nsec >= 0 && time.tv_nsec < NANOS_PER_SECOND);
     Require(sceKernelClockGettime(GUEST_CLOCK_THREAD_CPUTIME_ID, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelClockGettime(GUEST_CLOCK_PROCESS_CPUTIME_ID, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelClockGetres(GUEST_CLOCK_THREAD_CPUTIME_ID, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelClockGetres(GUEST_CLOCK_PROCESS_CPUTIME_ID, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelClockGettime(static_cast<KernelClockid>(-1), &time) == SCE_KERNEL_ERROR_EINVAL);
 
     RequireResolution(GUEST_CLOCK_THREAD_CPUTIME_ID);
     RequireResolution(GUEST_CLOCK_PROCESS_CPUTIME_ID);

@@ -103,9 +103,8 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
             const auto type = primitive == queue.userConfig.end() ? 0u : primitive->second & 0x3fu;
             const bool strip = type == 3 || type == 5 || type == 6 || type == 21;
             const bool list = type == 1 || type == 2 || type == 4;
-            const auto restartDevice = device.Load();
-            if (!strip && !(list && restartDevice != nullptr && restartDevice->PrimitiveListRestart())) {
-                rejected = "AGC graphics: primitive restart is only supported for strips, and for lists with VK_EXT_primitive_topology_list_restart";
+            if (!strip && !list) {
+                rejected = "AGC graphics: primitive restart is only supported for strips and lists";
                 return DrawVerdict::Rejected;
             }
             if (resetIndex == queue.context.end() || (resetIndex->second & allOnes) != allOnes) {

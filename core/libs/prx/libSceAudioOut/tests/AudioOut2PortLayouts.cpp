@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
 #include <cmath>
@@ -22,6 +23,14 @@ static void SetEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+static void UnsetEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -144,12 +153,14 @@ struct PortData {
     std::vector<float> volume;
 };
 
-std::vector<float> Play(const std::vector<PortData>& inputs) {
+template<typename TAfterCreate>
+std::vector<float> Play(const std::vector<PortData>& inputs, TAfterCreate afterCreate) {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_port_layouts-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
 
     const auto context = CreateContext();
+    afterCreate();
     std::vector<AudioOut2PortHandle> ports;
     for (const auto& input : inputs) {
         AudioOut2PortHandle port = 0;
@@ -176,6 +187,10 @@ std::vector<float> Play(const std::vector<PortData>& inputs) {
     while (first < last && samples[first] == 0.0f) first++;
     while (last > first && samples[last - 1] == 0.0f) last--;
     return {samples + first, samples + last};
+}
+
+std::vector<float> Play(const std::vector<PortData>& inputs) {
+    return Play(inputs, [] {});
 }
 
 std::vector<float> Play(std::uint32_t format, const void* data, const std::vector<float>& volume) {
@@ -277,6 +292,48 @@ void TestPadPortsWithoutPadDevice() {
     Require(Play({{portTypePadVibration, Format(stereo.channels, formatFloat), vibration.data(), unity}}).empty());
 }
 
+void TestPadSpeakerFallbackOverride() {
+    const auto speaker = FloatGrain(mono.channels);
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "-15");
+    const auto played = Play({{portTypePadSpeaker, Format(mono.channels, formatFloat), speaker.data(), {1.0f}}});
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
+    RequireFold(played, mono, speaker, {1.0f}, 0.17782794f);
+}
+
+void TestPadSpeakerFallbackMute() {
+    const auto speaker = FloatGrain(mono.channels);
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "mute");
+    const auto played = Play({{portTypePadSpeaker, Format(mono.channels, formatFloat), speaker.data(), {1.0f}}});
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
+    Require(played.empty());
+}
+
+void TestPadSpeakerFallbackReadOnce() {
+    const auto speaker = FloatGrain(mono.channels);
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "-15");
+    const auto played = Play({{portTypePadSpeaker, Format(mono.channels, formatFloat), speaker.data(), {1.0f}}}, [] {
+        SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "garbage");
+    });
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
+    RequireFold(played, mono, speaker, {1.0f}, 0.17782794f);
+}
+
+void TestPadSpeakerFallbackInvalidStopsTheTitle() {
+    const auto speaker = FloatGrain(mono.channels);
+    SetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV, "garbage");
+    std::string what;
+    bool thrown = false;
+    try {
+        Play({{portTypePadSpeaker, Format(mono.channels, formatFloat), speaker.data(), {1.0f}}});
+    } catch (const std::exception& error) {
+        thrown = true;
+        what = error.what();
+    }
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
+    Require(thrown);
+    Require(what.find(AUDIO_PAD_SPEAKER_FALLBACK_ENV) != std::string::npos && what.find("garbage") != std::string::npos);
+}
+
 void TestMeasuredMainPortFormats() {
     struct Case {
         std::uint32_t format;
@@ -326,6 +383,7 @@ void TestMeasuredMainPortFormats() {
 }
 
 int main() {
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     TestUserAttributes();
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     for (const Layout* layout : {&mono, &stereo, &surround71, &surround714}) {
@@ -345,6 +403,10 @@ int main() {
     TestHeightChannels();
     TestDroppedLfe();
     TestPadPortsWithoutPadDevice();
+    TestPadSpeakerFallbackOverride();
+    TestPadSpeakerFallbackReadOnce();
+    TestPadSpeakerFallbackMute();
+    TestPadSpeakerFallbackInvalidStopsTheTitle();
     TestMeasuredMainPortFormats();
     return 0;
 }

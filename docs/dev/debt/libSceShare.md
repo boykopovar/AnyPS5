@@ -1,5 +1,9 @@
 # libSceShare technical debt
 
+### Silent stubs
+
+- [sceShareFeaturePermit, sceShareFeatureProhibit, sceShareInitialize, sceShareRegisterContentEventCallback, sceShareSetCaptureSource, sceShareSetContentParam, sceShareSetScreenshotOverlayImage, sceShareTerminate and sceShareUnregisterContentEventCallback](../../../core/libs/prx/libSceShare/Export.cpp) return success without interacting with share or capture services.
+
 ### Unknown function info
 
 - [sceShareGetCurrentStatus](../../../core/libs/prx/libSceShare/Export.cpp) (libSceShare) - validation (feature flag non-zero, status non-null) and the all-zero 16-byte status taken from the [KytyPS5](https://github.com/KytyPS5/KytyPS5) reimplementation, not confirmed on a PS5 title; the meaning of the recording status values is unknown
@@ -9,3 +13,16 @@
 ### Functional
 
 - [sceShareCaptureVideoClipExtended, sceShareCaptureScreenshotExtended](../../../core/libs/prx/libSceShare/Export.cpp) - the 40-byte video and 24-byte screenshot parameters and request-ID write precedence are recovered. Video values at offsets 8 and 16 and screenshot mode semantics remain incomplete. Valid requests still return NOT_SUPPORTED without capture; screenshot mode 2 platform checks, throttling, initialization and the backend text limit are not modeled.
+
+### Additional callable exports
+
+- Six [callable exports](../../../core/libs/prx/libSceShare/Export.cpp) are throwing import-resolution declarations. Names for two entries, signatures and behavior are unverified. The module identity is `libSceShare`; the library identities are `libSceShareForAcf` and `libSceShareForSf`. The entries occur in two version-labelled images; these labels are not authenticated.
+
+| Name | NID |
+| --- | --- |
+| `sceShareFeatureExPermit` | `KVfMsyLNp5w` |
+| `sceShareFeatureExProhibit` | `x+EVsi+Qhrk` |
+| `sceShareRegisterUploadCallback` | `K0I-WwCewVU` |
+| `sceShareUnregisterUploadCallback` | `4WSYopUYUPI` |
+| `Unknown` | `YPIiGz4uKOU` |
+| `Unknown` | `txixe0fiPKM` |
