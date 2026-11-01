@@ -47,6 +47,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (header.Type == 1) {
             if (header.FileSize > header.MemorySize || header.MemorySize > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress || (header.Flags & ~7u) != 0) fail("Invalid load segment");
             if (header.Alignment > 1 && (!std::has_single_bit(header.Alignment) || header.Offset % header.Alignment != header.MappedAddress % header.Alignment)) fail("Invalid load segment alignment");
+            if (header.MemorySize == 0) continue;
             const auto next = loads.lower_bound(header.MappedAddress);
             if ((next != loads.end() && next->first < header.MappedAddress + header.MemorySize) || (next != loads.begin() && std::prev(next)->second > header.MappedAddress)) fail("Overlapping load segments");
             loads.emplace(header.MappedAddress, header.MappedAddress + header.MemorySize);
@@ -312,9 +313,12 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         image.Init = tags.at(12);
         image.HasInit = true;
     }
-    if (tags.contains(13)) image.Fini = tags.at(13);
+    if (tags.contains(13)) {
+        image.Fini = tags.at(13);
+        image.HasFini = true;
+    }
     if (image.HasInit) mapped(image.Init, 1, 1);
-    if (image.Fini != 0) mapped(image.Fini, 1, 1);
+    if (image.HasFini) mapped(image.Fini, 1, 1);
     const auto readLifecycleArray = [&](std::uint64_t addressTag, std::uint64_t sizeTag, std::vector<std::uint64_t>& entries) {
         if (!tags.contains(sizeTag)) return;
         if (tags.at(sizeTag) != 0 && !tags.contains(addressTag)) fail("Incomplete guest lifecycle array");

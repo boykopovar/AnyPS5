@@ -20,6 +20,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceNet/src/ResolverTestHooks.hpp"
 #include "SceTypes.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -91,7 +92,7 @@ static bool Failed(std::int64_t result, int error) {
 template<typename TBody>
 static std::string CaptureStdout(TBody body) {
     std::fflush(stdout);
-    std::FILE* capture = std::tmpfile();
+    std::FILE* capture = TemporaryFile::Open();
     Require(capture != nullptr);
 #ifdef _WIN32
     const int saved = _dup(_fileno(stdout));
@@ -189,7 +190,7 @@ static void CheckStreamSender(int family) {
 
 template <typename Diagnostic>
 static std::string CaptureDiagnostic(Diagnostic diagnostic) {
-    auto* file = std::tmpfile();
+    auto* file = TemporaryFile::Open();
     Require(file != nullptr);
     Require(std::fflush(stdout) == 0);
 #ifdef _WIN32
@@ -1210,6 +1211,22 @@ static void CheckInetPtonEx() {
     }
 }
 
+static void CheckEtherNtostrErrors() {
+    const NetEtherAddr address{{0, 1, 2, 10, 11, 15}};
+    std::array<char, 18> text{};
+    text.fill('#');
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(nullptr, text.data(), text.size()), 22));
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(&address, nullptr, text.size()), 22));
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(&address, text.data(), text.size() - 1), 22));
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(&address, text.data(), 0), 22));
+    Require(std::all_of(text.begin(), text.end(), [](char character) { return character == '#'; }));
+    Require(sceNetEtherNtostr(&address, text.data(), text.size()) == 0);
+}
+
 static void CheckEtherAddress() {
     struct GuardedAddress {
         std::uint8_t before;
@@ -2184,6 +2201,7 @@ static void CheckDatagramDisconnect() {
 
 int main() {
     CheckEtherAddress();
+    CheckEtherNtostrErrors();
     const auto epoch = std::chrono::steady_clock::time_point{};
     Require(KernelSocketSelect::DeadlineAfter(epoch, 2, 250000) == epoch + std::chrono::milliseconds(2250));
     Require(KernelSocketSelect::DeadlineAfter(epoch, INT64_MAX, 0) == std::chrono::steady_clock::time_point::max());
@@ -2194,7 +2212,12 @@ int main() {
     for (int i = 0; i < 16; ++i) {
         Require(in6addr_any_nid_postfix[i] == 0);
         Require(in6addr_loopback_nid_postfix[i] == (i == 15 ? 1 : 0));
+        Require(sce_net_in6addr_loopback_nid_postfix[i] == (i == 15 ? 1 : 0));
+        Require(sce_net_in6addr_nodelocal_allnodes_nid_postfix[i] == (i == 0 ? 0xff : i == 1 || i == 15 ? 1 : 0));
+        Require(sce_net_in6addr_linklocal_allrouters_nid_postfix[i] == (i == 0 ? 0xff : i == 1 || i == 15 ? 2 : 0));
     }
+    Require(sce_net_dummy_nid_postfix == 0);
+    Require(&sce_net_in6addr_loopback_nid_postfix[0] != &in6addr_loopback_nid_postfix[0]);
     for (const int flags : {0, 1, -1}) {
         Require(sceNetClearDnsCache(flags) == static_cast<int>(0x804101C8));
         Require(*sceNetErrnoLoc() == 200);

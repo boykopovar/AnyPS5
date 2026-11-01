@@ -1650,8 +1650,8 @@ void materializeTables(const IrResourcePlan& plan, ResourceSnapshot& snapshot) {
         const auto decoded = decodeBufferDescriptor(snapshot.buffers.at(i));
         if (decoded.Type() != 0u) {
             const auto& words = snapshot.buffers.at(i).dwords;
-            char detail[64];
-            std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x)", i, words[0], words[1], words[2], words[3]);
+            char detail[96];
+            std::snprintf(detail, sizeof(detail), " (buffer %u V# %08x %08x %08x %08x) first used at pc 0x%x", i, words[0], words[1], words[2], words[3], buffer.firstUsePc);
             throw std::runtime_error(std::string("buffer descriptor uses an unsupported type") + detail);
         }
         if (plan.stage != IrShaderStage::Compute && decoded.AddTid()) throw std::runtime_error("buffer ADD_TID is only valid for compute shaders");
@@ -2043,7 +2043,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible && conversion != FmaskExpansion;
         const bool volumeStore = image.dimension == RdnaImageDimension::Dim2DArray && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
         const bool volumePlaneBias = image.dimension == RdnaImageDimension::Dim2D && image.singleMipPlaneBiasCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
-        const bool volumeArraySample = image.dimension == RdnaImageDimension::Dim2DArray && image.volumeArraySampleCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
+        const bool volumeArraySample = image.dimension == RdnaImageDimension::Dim2DArray && image.volumeArraySampleCompatible && !image.adjustedSample && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
         if ((volumeLoad || volumeStore || volumePlaneBias || volumeArraySample) && !depth && packed == IrBufferFormat::Invalid && image.byElements == 0u) {
             auto volume = mode;
             volume.dimension = RdnaImageDimension::Dim3D;
@@ -2078,7 +2078,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             modes.push_back(line);
         }
         const bool cubeFaceStorage = image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
-        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && (!storage || cubeFaceStorage) && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
+        if (image.dimension == RdnaImageDimension::Dim2D && image.cubeFaceCompatible && !image.adjustedSample && (!storage || cubeFaceStorage) && !depth && conversion == IrBufferFormat::Invalid && packed == IrBufferFormat::Invalid) {
             auto face = mode;
             face.dimension = RdnaImageDimension::Dim2DArray;
             face.cube = true;
@@ -2642,13 +2642,26 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
             const SrtForceSyncScope forceSync(runtime, attempt == 2u);
             const auto beforeSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
             activeSources.clear();
-            materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
-            const auto afterSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
-            TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
-            const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
-            if (runtime.descriptorScope == nullptr || (afterTables == afterSnapshot && (plan.uniformFill.fill.kind == UniformFillKind::None || afterSnapshot == beforeSnapshot))) {
+            try {
+                materializeSnapshot(plan, runtime, walker, nextSnapshot, activeSources);
+                const auto afterSnapshot = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+                TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
+                const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+                if (runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) {
+                    continue;
+                }
+                const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+                materializeForcedDegamma(plan, nextSnapshot);
+                materializeTables(plan, nextSnapshot);
+                materializeSrtGuards(plan, nextSnapshot);
+                if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
                 completed = true;
                 break;
+            } catch (const ConvertedSampleRequired&) {
+                throw;
+            } catch (const std::runtime_error&) {
+                if (runtime.descriptorScope == nullptr || attempt == 2u) throw;
+                if (runtime.descriptorScope(runtime.userContext, 0u) == beforeSnapshot) attempt = 1u;
             }
         }
         if (!completed) throw std::runtime_error("runtime resource snapshot did not stabilize");
@@ -2656,11 +2669,6 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
         reportTables();
         throw;
     }
-    const auto started = MaterializeProfiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    materializeForcedDegamma(plan, nextSnapshot);
-    materializeTables(plan, nextSnapshot);
-    materializeSrtGuards(plan, nextSnapshot);
-    if (MaterializeProfiled()) specializationNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
     snapshot = std::move(nextSnapshot);
     reportTables();
     if (MaterializeProfiled()) materializeNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - materializeStarted).count()), std::memory_order_relaxed);
