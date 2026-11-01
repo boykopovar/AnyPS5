@@ -31,7 +31,7 @@ int main() {
             std::shared_ptr<void> owner;
             std::uintptr_t native = 0;
             Require(KernelFindSocketNative_nid_no_patch(socket, &owner, &native));
-            for (const int option : {4, 32}) {
+            for (const int option : {4, 16, 32}) {
                 if (option == 32 && (family != 2 || type != 2)) continue;
                 for (const int setting : {1, -1, 0, 4, 0}) {
                     Require(sceNetSetsockopt(socket, 0xffff, option, &setting, sizeof(setting)) == 0);
@@ -47,7 +47,7 @@ int main() {
                     }
                 }
                 const int enabled = 1;
-                Require(::setsockopt(native, SOL_SOCKET, option == 4 ? SO_REUSEADDR : SO_BROADCAST,
+                Require(::setsockopt(native, SOL_SOCKET, option == 4 ? SO_REUSEADDR : option == 16 ? SO_DONTROUTE : SO_BROADCAST,
                     reinterpret_cast<const char*>(&enabled), sizeof(enabled)) == 0);
                 int value = 0;
                 std::uint32_t size = sizeof(value);
