@@ -538,13 +538,9 @@ bool IsTagMarker(std::span<const std::uint32_t> packet) {
     return packet.size() >= 3 && ((packet[0] >> 8u) & 0xffu) == 0x79u && packet[1] == 0x342u;
 }
 
-namespace {
-
-bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_t value) {
-    const std::uint64_t reference = wide ? address(packet[4], packet[5]) : packet[4];
-    const std::uint64_t mask = wide ? address(packet[6], packet[7]) : packet[5];
+bool WaitCompares(std::uint32_t function, std::uint64_t reference, std::uint64_t mask, std::uint64_t value) {
     const auto masked = value & mask;
-    switch (packet[1] & 7u) {
+    switch (function) {
         case 0: return true;
         case 1: return masked < reference;
         case 2: return masked <= reference;
@@ -554,6 +550,12 @@ bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_
         case 6: return masked > reference;
         default: return false;
     }
+}
+
+namespace {
+
+bool waitCompares(std::span<const std::uint32_t> packet, bool wide, std::uint64_t value) {
+    return WaitCompares(packet[1] & 7u, wide ? address(packet[4], packet[5]) : packet[4], wide ? address(packet[6], packet[7]) : packet[5], value);
 }
 
 }
