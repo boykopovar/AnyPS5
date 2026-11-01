@@ -385,6 +385,82 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 
+static void TestMappedFiles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto construct = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb;
+    const auto readOnly = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_14MappedFileModeERb;
+    const auto fromPath = &_ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto fromPathBase = &_ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto destroy = &_ZN3WTF14FileSystemImpl14MappedFileDataD1Ev;
+    const auto destroyBase = &_ZN3WTF14FileSystemImpl14MappedFileDataD2Ev;
+    const auto map = &_ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE;
+    WTF::MappedFileData mapped{};
+    bool success = true;
+    readOnly(&mapped, -1, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    destroy(&mapped);
+    const auto root = std::filesystem::current_path() / ("nkwebkit-mapped-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-mapped", reinterpret_cast<const char*>(hostPath.c_str()));
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-mapped/file.bin"));
+    fromPath(&mapped, path, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    int handle = open(path, 2, true, true);
+    Require(handle >= 0);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && !mapped.data && !mapped.size);
+    destroyBase(&mapped);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "abcdef", 6) == 0);
+    VirtualQueryInfo info{};
+    void* address = mapped.data;
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) == 0);
+    close(handle);
+    Require(std::memcmp(mapped.data, "abcdef", 6) == 0);
+    destroy(&mapped);
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) != 0);
+    handle = open(path, 2, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'S';
+    char contents[6]{};
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroy(&mapped);
+    construct(&mapped, handle, 2, 1, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'P';
+    Require(sceKernelLseek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroyBase(&mapped);
+    construct(&mapped, handle, 1, 0, success);
+    Require(success);
+    static_cast<char*>(mapped.data)[1] = 'W';
+    destroy(&mapped);
+    close(handle);
+    fromPathBase(&mapped, path, 1, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroyBase(&mapped);
+    handle = open(path, 0, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    Require(map(&mapped, handle, 0, 1));
+    Require(mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroy(&mapped);
+    close(handle);
+#ifndef _WIN32
+    std::filesystem::resize_file(root / "file.bin", std::uint64_t{1} << 32);
+    handle = open(path, 0, true, false);
+    readOnly(&mapped, handle, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    close(handle);
+#endif
+    RemovePathAlias_nid_no_patch("/nkwebkit-mapped");
+    std::filesystem::remove_all(root);
+}
+
 static void TestFileHandles() {
     const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
     const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
@@ -486,6 +562,7 @@ int main() {
     TestString();
     TestWebCorePure();
     TestJscAndPal();
+    TestMappedFiles();
     TestFileHandles();
     return 0;
 }

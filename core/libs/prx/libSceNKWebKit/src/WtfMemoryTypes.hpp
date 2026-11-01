@@ -9,6 +9,15 @@ struct FastMallocStatistics {
 };
 
 namespace WTF {
+struct MappedFileData {
+    void* data;
+    unsigned size;
+};
+
+static_assert(sizeof(MappedFileData) == 16);
+static_assert(offsetof(MappedFileData, data) == 0);
+static_assert(offsetof(MappedFileData, size) == 8);
+
 struct TryMallocReturnValue {
     void* data;
 };
