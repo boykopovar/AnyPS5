@@ -6262,6 +6262,7 @@ void expectSingleAccepted(const ShaderRecompiler::DescriptorBinding& binding, st
     mock = MockVulkan{};
     auto context = mockContext();
     context.emptyBuffer = reinterpret_cast<VkBuffer>(std::uintptr_t{0x1000});
+    context.oversizedBuffer = reinterpret_cast<VkBuffer>(std::uintptr_t{0x2000});
     const auto color = AgcDriver::Graphics::DecodeState(makeState()).color;
     { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }
     Require(mock.live == 0, std::string(what) + " leaked Vulkan objects");
