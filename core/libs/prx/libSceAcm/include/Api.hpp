@@ -4,6 +4,18 @@
 
 extern "C" {
 
+int APS5_VABI sceAcmChain_Audio3dPO1_Clear();
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderObject();
+int APS5_VABI sceAcmChain_Audio3dPO1_Activate();
+int APS5_VABI sceAcmChain_Audio3dPO1_Output();
+int APS5_VABI sceAcm_ConvReverb_SharedIr_2();
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderAmbisonicsChannel();
+int APS5_VABI sceAcmChain_Audio3dPO2_Activate();
+int APS5_VABI sceAcmChain_Audio3dPO1_RenderPassthroughObject();
+int APS5_VABI sceAcmChain_Audio3dPO2_RenderDelay();
+int APS5_VABI sceAcmGetTelemetry();
+int APS5_VABI sceAcm_ConvReverb_SharedInput_2();
+
 int APS5_VABI sceAcmBatchStartBuffer(AcmContextId context, const void* batchCommands, size_t batchSize, AcmBatchError* batchError, AcmBatchId* batch);
 int APS5_VABI sceAcmBatchStartBuffers(AcmContextId context, uint32_t batchInfoCount, const AcmBatchInfo* const batch_info[], AcmBatchError* batchError, AcmBatchId* batch);
 int APS5_VABI sceAcmBatchWait(AcmContextId context, AcmBatchId batch, uint32_t timeout);

@@ -317,6 +317,16 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
         self.assertIn("flags.rsp", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
 
+    def test_syntax_arguments_does_not_call_path_resolve_on_the_source(self):
+        loop = self.root / "loop.cpp"
+        other = self.root / "other.cpp"
+        try:
+            loop.symlink_to(other)
+            other.symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        check_compile.syntax_arguments([sys.executable, "loop.cpp"], self.build, loop)
+
     def test_a_new_untracked_translation_unit_is_checked(self):
         self.source("base.cpp")
         subprocess.run(["git", "-C", str(self.root), "add", "base.cpp"], check=True)
@@ -413,6 +423,24 @@ class CheckCompilePathSelectionTests(CheckCompileFixture):
                 self.assertEqual(json.loads(seen.read_text(encoding="utf-8")),
                                  ["-fsyntax-only", *flags, str(source)])
 
+    def test_a_cmake_env_launcher_keeps_its_environment_and_the_compiler_command_is_rewritten(self):
+        cmake = shutil.which("cmake")
+        if cmake is None:
+            self.skipTest("cmake is not on PATH")
+        source = self.source("unit.cpp")
+        script = self.compiler(
+            "import json\nimport os\nimport sys\nfrom pathlib import Path\n"
+            "Path(sys.argv[1]).write_text(json.dumps([sys.argv[2:], os.environ.get('CHECK_COMPILE_SET'), "
+            "os.environ.get('CHECK_COMPILE_UNSET')]))\n")
+        seen = self.root / "arguments.json"
+        self.manifest([self.entry("unit.cpp", f'"{cmake}" -E env CHECK_COMPILE_SET=pch_defines,time_macros '
+                                                f'--unset=CHECK_COMPILE_UNSET "{sys.executable}" "{script}" "{seen}" '
+                                                f'-include unit.hpp -c -o unit.o "{source}"')])
+        result = self.tool("unit.cpp", env={"CHECK_COMPILE_UNSET": "1"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(seen.read_text(encoding="utf-8")),
+                         [["-fsyntax-only", "-include", "unit.hpp", str(source)], "pch_defines,time_macros", None])
+
     def test_parallel_checks_overlap_but_diagnostics_keep_source_order(self):
         barrier = self.root / "barrier"
         barrier.mkdir()
@@ -465,6 +493,30 @@ class CheckCompileDatabaseTests(CheckCompileFixture):
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn("compile_commands.json: expected an array of command objects", result.stderr)
                 self.assertNotIn("Traceback", result.stderr)
+
+    def test_excessively_nested_compilation_databases_are_rejected_without_a_traceback(self):
+        depth = sys.getrecursionlimit() + 64
+        while True:
+            text = "[" * depth + "]" * depth
+            try:
+                json.loads(text)
+            except RecursionError:
+                break
+            depth *= 2
+            if depth > 10_000_000:
+                self.fail("the JSON decoder accepts every probed nesting depth")
+        (self.build / "compile_commands.json").write_text(text, encoding="utf-8")
+        result = self.tool("unit.cpp")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertNotIn("expected an array of command objects", result.stderr)
+
+    def test_a_recursion_error_outside_the_database_parser_is_not_a_usage_error(self):
+        source = self.source("unit.cpp")
+        with patch.object(check_compile, "repository", return_value=self.root):
+            with patch.object(check_compile, "check", side_effect=RecursionError("unrelated")):
+                with self.assertRaises(RecursionError):
+                    check_compile.main(["--build", str(self.build), str(source)])
 
     def test_non_object_entries_are_rejected_before_any_compiler_runs(self):
         self.check_invalid_entries(lambda valid: [(value, "expected a command object")
@@ -994,6 +1046,42 @@ class CheckCompileResponseTests(CheckCompileFixture):
                     for path, content in preserved.items():
                         self.assertEqual(path.read_bytes(), content)
 
+
+
+class CheckCompileLauncherTests(unittest.TestCase):
+    def test_a_cmake_env_prefix_is_kept_and_only_the_command_after_it_is_rewritten(self):
+        source = Path.cwd() / "unit.cpp"
+        for prefix in (["cmake", "-E", "env", "CCACHE_SLOPPINESS=pch_defines,time_macros"],
+                       ["/usr/bin/cmake", "-E", "env", "--unset=CCACHE_DIR", "--modify", "PATH=path_list_prepend:/x", "--"],
+                       ["C:\\Program Files\\CMake\\bin\\cmake.exe", "-E", "env", "A=1", "B="]):
+            with self.subTest(prefix=prefix):
+                self.assertEqual(check_compile.syntax_arguments(
+                    [*prefix, "ccache", "g++", "-DNAME=1", "-include", "pch.hxx", "-c", "-o", "unit.o", str(source)],
+                    Path.cwd(), source),
+                    [*prefix, "ccache", "g++", "-fsyntax-only", "-DNAME=1", "-include", "pch.hxx", str(source)])
+
+    def test_env_delimiter_preserves_a_command_path_containing_equals(self):
+        source = Path.cwd() / "unit.cpp"
+        prefix = ["cmake", "-E", "env", "--"]
+        command = "compiler=tools/g++"
+        self.assertEqual(check_compile.syntax_arguments([*prefix, command, "-c", str(source)], Path.cwd(), source),
+                         [*prefix, command, "-fsyntax-only", str(source)])
+
+    def test_only_cmake_starts_an_env_prefix(self):
+        source = Path.cwd() / "unit.cpp"
+        self.assertEqual(check_compile.syntax_arguments(["g++", "-E", "env", "-c", str(source)], Path.cwd(), source),
+                         ["g++", "-fsyntax-only", "env", str(source)])
+
+    def test_an_env_prefix_without_a_command_or_with_an_unmodeled_option_is_rejected(self):
+        source = Path.cwd() / "unit.cpp"
+        for arguments, message in ((["cmake", "-E", "env", "A=1"], "no command"),
+                                   (["cmake", "-E", "env", "A=1", "--"], "no command"),
+                                   (["cmake", "-E", "env", "--modify"], "--modify"),
+                                   (["cmake", "-E", "env", "-", "cc", "-c", str(source)], "unsupported"),
+                                   (["cmake", "-E", "env", "--chdir=x", "cc", "-c", str(source)], "unsupported")):
+            with self.subTest(arguments=arguments):
+                with self.assertRaisesRegex(ValueError, message):
+                    check_compile.syntax_arguments(arguments, Path.cwd(), source)
 
 
 if __name__ == "__main__":

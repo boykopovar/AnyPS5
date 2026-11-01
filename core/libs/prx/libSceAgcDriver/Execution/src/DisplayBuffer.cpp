@@ -291,6 +291,17 @@ std::vector<std::byte> ReadDisplayBufferTexels(const DisplayBuffer& buffer) {
     return DisplayBufferTexels(buffer, {reinterpret_cast<const std::byte*>(buffer.address), size});
 }
 
+bool ResidentServesDisplay(std::uint64_t residentBase, std::uint64_t residentDcc, Graphics::DccKeys uploadedKeys, Graphics::DccKeys filledKeys, bool hasWritesSinceFill, const std::function<Graphics::DccKeys()>& residentKeys, const DisplayBuffer& buffer) {
+    const auto keys = DisplayBufferKeys(buffer);
+    if (keys == Graphics::DccKeys::ClearRegister) {
+        char message[320];
+        std::snprintf(message, sizeof(message), "VideoOut: display buffer 0x%llx reads register-clear DCC keys at 0x%llx over the pending image 0x%llx (DCC 0x%llx, filled keys %s): whether its results precede the clear is not modeled", static_cast<unsigned long long>(buffer.address), static_cast<unsigned long long>(buffer.dccAddress), static_cast<unsigned long long>(residentBase), static_cast<unsigned long long>(residentDcc), Graphics::DccKeysName(filledKeys));
+        throw std::runtime_error(message);
+    }
+    if (Graphics::IsDccClear(filledKeys) && filledKeys == keys && !hasWritesSinceFill) return false;
+    return Graphics::KeysServeSurface(residentDcc, uploadedKeys, filledKeys, buffer.dccAddress, residentKeys, [&] { return keys; });
+}
+
 }
 
 extern "C" std::size_t AgcDriverDisplayBufferSize_nid_postfix(const AgcDriver::DisplayBuffer& buffer) {
