@@ -99,10 +99,6 @@ static int APS5_VABI CallVdprintf(int descriptor, const char* format, ...) {
 
 int main() {
     *__error_nid_postfix() = 0;
-    Require(strndup_nid_postfix(nullptr, 0) == nullptr);
-    Require(*__error_nid_postfix() == 22);
-
-    *__error_nid_postfix() = 0;
     Require(strndup_nid_postfix(nullptr, 32) == nullptr);
     Require(*__error_nid_postfix() == 22);
 
@@ -126,6 +122,13 @@ int main() {
     Require(allocated == nullptr);
 
     InitializeHeap();
+
+    *__error_nid_postfix() = 0;
+    char* empty = strndup_nid_postfix(nullptr, 0);
+    Require(empty != nullptr);
+    Require(empty[0] == '\0');
+    Require(*__error_nid_postfix() == 0);
+    free_nid_postfix(empty);
 
     char* dup1 = strndup_nid_postfix("hello world", 5);
     Require(dup1 != nullptr);
