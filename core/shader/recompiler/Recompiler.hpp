@@ -329,6 +329,9 @@ struct SpirvTarget {
     std::uint32_t maxWorkgroupSharedMemoryBytes;
     std::optional<MeshTargetLimits> mesh;
     std::optional<TessellationTargetLimits> tessellation;
+    std::array<std::uint64_t, 2> featureDigest{};
+    std::array<std::uintptr_t, 4> featureDigestSpans{};
+    bool featureDigestSealed = false;
     bool nonConstantImageOffsets = false;
     std::uint32_t srgbDecodeFormats = 0;
     bool narrowSubgroupClock = false;
