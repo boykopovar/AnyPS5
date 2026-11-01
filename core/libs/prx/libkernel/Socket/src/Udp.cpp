@@ -1451,6 +1451,7 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
         && Disconnect(*socket) != 0)
         return -1;
     if (socket->type == 1 && Listening(*socket)) return Fail(45);
+    if (socket->family == GuestUnix && socket->type != 2 && !socket->peer.expired()) return Fail(56);
     const int mapped = LongMappedDualStack(*socket, address, length);
     if (mapped < 0) return -1;
     sockaddr_storage native{};
@@ -1668,9 +1669,16 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     if ((flags & ~GuestSendFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
     if (!buffer && length) return Fail(14);
+    bool sendShut = false;
+    if (address && socket->family == GuestUnix) {
+        std::lock_guard lock(socket->modeMutex);
+        sendShut = socket->sendShut;
+    }
+    const bool paired = address && socket->family == GuestUnix && (socket->type != 2 || sendShut || !socket->peer.expired());
+    if (paired && socket->type == 2 && !sendShut) return Fail(56);
     if (const int waited = WaitForTransfer(*socket, true, flags)) return Fail(waited);
     int result;
-    if (!address || (socket->type == 1 && PeerConnected(*socket))) {
+    if (!address || paired || (socket->type == 1 && PeerConnected(*socket))) {
         if (!address && addressLength != 0) return Fail(22);
 #ifdef _WIN32
         if (SourceFaults(buffer, length)) return Fail(14);
