@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
+#include "prx/libc/include/General.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -368,11 +369,17 @@ int APS5_VABI wcsrtombs_s_nid_postfix(
     return WideToLocaleChecked(result, destination, capacity, source, limit, state, false);
 }
 
-int APS5_VABI wcstombs_s_nid_postfix(
+int WideToMultibyteChecked_nid_no_patch(
     std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit
 ) {
     std::array<std::uint64_t, 16> state{};
     return WideToLocaleChecked(result, destination, capacity, &source, limit, state.data(), limit < capacity);
+}
+
+int APS5_VABI wcstombs_s_nid_postfix(
+    std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit
+) {
+    return WideToMultibyteChecked_nid_no_patch(result, destination, capacity, source, limit);
 }
 
 std::size_t APS5_VABI mbsrtowcs_nid_postfix(std::uint16_t* destination, const char** source, std::size_t capacity, void* state) {

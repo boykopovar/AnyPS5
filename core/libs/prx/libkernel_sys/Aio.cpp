@@ -1,5 +1,6 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
 #include <chrono>
@@ -94,7 +95,7 @@ int Fail(int error) {
 void Run(Job& job) {
     std::int64_t result = 0;
     if (job.opcode == LioRead) result = job.bytes == 0 ? 0 : pread_nid_postfix(job.descriptor, job.buffer, job.bytes, job.offset);
-    else if (job.opcode == LioWrite) result = pwrite_nid_disambig1_nid_postfix(job.descriptor, job.buffer, job.bytes, job.offset);
+    else if (job.opcode == LioWrite) result = PosixPwrite_nid_no_patch(job.descriptor, job.buffer, job.bytes, job.offset);
     else result = fsync_nid_postfix(job.descriptor);
     job.status = result < 0 ? -1 : result;
     job.error = result < 0 ? *__error_nid_postfix() : 0;
