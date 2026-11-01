@@ -7,6 +7,8 @@
 #include <string>
 #include <utility>
 
+extern "C" int APS5_VABI libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(std::uint32_t userId, char* path, std::size_t size);
+
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
@@ -66,6 +68,40 @@ int main() {
         Require(setting(USER_SERVICE_USER_ID_INVALID, &value) == USER_SERVICE_ERROR_UNKNOWN_USER && value == 0x5A5A);
         Require(setting(USER_SERVICE_INITIAL_USER_ID, &value) == USER_SERVICE_OK && value == expected);
     }
+    Require(sceUserServiceSetKeyboardType(USER_SERVICE_INITIAL_USER_ID, 12) == USER_SERVICE_OK);
+    Require(sceUserServiceSetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, 3) == USER_SERVICE_OK);
+    Require(sceUserServiceSetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID, 2) == USER_SERVICE_OK);
+    std::int32_t savedKeyboardSetting = 0;
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 12);
+    Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 3);
+    Require(sceUserServiceSetChatStatus(USER_SERVICE_INITIAL_USER_ID, 0x1234u) == USER_SERVICE_OK);
+    std::uint32_t chatStatus = 0;
+    Require(sceUserServiceGetChatStatus(USER_SERVICE_INITIAL_USER_ID, &chatStatus) == USER_SERVICE_OK && chatStatus == 0x1234u);
+    Require(sceUserServiceSetAccountRemarks(USER_SERVICE_INITIAL_USER_ID, "remark") == USER_SERVICE_OK);
+    char accountRemarks[32]{};
+    Require(sceUserServiceGetAccountRemarks(USER_SERVICE_INITIAL_USER_ID, accountRemarks, sizeof(accountRemarks)) == USER_SERVICE_OK);
+    Require(std::strcmp(accountRemarks, "remark") == 0);
+    Require(sceUserServiceGetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 2);
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID + 1, &savedKeyboardSetting) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    UserServiceSetUserConnected_nid_postfix(1, true);
+    Require(sceUserServiceGetKeyboardType(USER_SERVICE_INITIAL_USER_ID + 1, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 20);
+    Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID + 1, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 0);
+    Require(sceUserServiceGetTraditionalChineseInputType(USER_SERVICE_INITIAL_USER_ID + 1, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 0);
+    Require(sceUserServiceGetChatStatus(USER_SERVICE_INITIAL_USER_ID + 1, &chatStatus) == USER_SERVICE_OK && chatStatus == 0);
+    Require(sceUserServiceGetAccountRemarks(USER_SERVICE_INITIAL_USER_ID + 1, accountRemarks, sizeof(accountRemarks)) == USER_SERVICE_OK);
+    Require(accountRemarks[0] == '\0');
+    Require(sceUserServiceSetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID + 1, 7) == USER_SERVICE_OK);
+    Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID + 1, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 7);
+    Require(sceUserServiceGetJapaneseInputType(USER_SERVICE_INITIAL_USER_ID, &savedKeyboardSetting) == USER_SERVICE_OK && savedKeyboardSetting == 3);
+    std::uint8_t muteList[240];
+    std::uint8_t muteListResult[240];
+    for (std::size_t i = 0; i < sizeof(muteList); ++i) {
+        muteList[i] = static_cast<std::uint8_t>(i);
+    }
+    Require(sceUserServiceSetPartyMuteListA(USER_SERVICE_INITIAL_USER_ID, muteList) == USER_SERVICE_OK);
+    Require(sceUserServiceGetPartyMuteListA(USER_SERVICE_INITIAL_USER_ID, muteListResult) == USER_SERVICE_OK);
+    Require(std::memcmp(muteList, muteListResult, sizeof(muteList)) == 0);
+    UserServiceSetUserConnected_nid_postfix(1, false);
     constexpr std::int32_t keyboardTypeByLanguage[] = {37, 20, 26, 21, 17, 28, 29, 33, 34, 38, 39, 40, 23, 35, 16, 30, 31, 32, 19, 36, 22, 41, 25, 44, 48, 43, 47, 42, 46, 45};
     for (int language = 0; language < 30; ++language) {
         SetLanguage(std::to_string(language).c_str());
