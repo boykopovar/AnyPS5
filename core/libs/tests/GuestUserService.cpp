@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr int SCE_USER_SERVICE_ERROR_INVALID_PARAM = USER_SERVICE_ERROR_INVALID_ARGUMENT;
+
 void Require(bool value) { if (!value) std::abort(); }
 
 void SetLanguage(const char* value) {
@@ -151,6 +153,15 @@ int main() {
     int initialUser = -1;
     Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK && initialUser == USER_SERVICE_INITIAL_USER_ID);
+    Require(sceUserServiceLogout(0) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceLogout(-1) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceLogout(static_cast<int>(0xFFFFFFFFu)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceLogout(USER_SERVICE_USER_ID_INVALID) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceLogout(USER_SERVICE_INITIAL_USER_ID - 1) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceLogout(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceLogout(0x20000000) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceLogout(123) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceLogout(USER_SERVICE_INITIAL_USER_ID) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
     Require(sceUserServiceGetGamePresets(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     UserServiceGamePresets presets{};
     presets.difficulty = 0x5a;
