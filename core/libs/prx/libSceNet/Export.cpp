@@ -6,9 +6,12 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <iphlpapi.h>
 #else
 #include <arpa/inet.h>
 #include <cerrno>
+#include <ifaddrs.h>
+#include <net/if.h>
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -33,6 +36,7 @@
 #include <map>
 #include <mutex>
 #include <new>
+#include <optional>
 #include <random>
 #include <vector>
 #include <set>
@@ -136,6 +140,8 @@ constexpr std::uint32_t NET_IFF_LOOPBACK = 0x8;
 constexpr std::uint32_t NET_IFF_RUNNING = 0x40;
 constexpr std::uint32_t NET_IFF_MULTICAST = 0x8000;
 constexpr std::uint32_t NET_IF_LO0 = 0;
+constexpr std::array<const char*, 10> NET_INTERFACE_NAMES = {
+    "lo0", "eth0", "eth1", "dbg0", "wlan0", "wlan1", "gbe0", "bt0", "phone0", "pppoe0"};
 
 constexpr int NET_AF_INET = 2;
 constexpr int NET_AF_INET6 = 28;
@@ -396,6 +402,56 @@ void set_errno(int err) {
 int fail(int err) {
     set_errno(err);
     return NET_ERROR_BASE | err;
+}
+
+std::optional<std::uint32_t> HostInterfaceByRole(bool loopback) {
+#ifdef _WIN32
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    ULONG size = 0;
+    if (GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return std::nullopt;
+    std::vector<std::uint8_t> storage(size);
+    auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
+    if (GetAdaptersAddresses(AF_UNSPEC, flags, nullptr, adapters, &size) != NO_ERROR) return std::nullopt;
+    std::optional<std::uint32_t> primary;
+    for (auto* adapter = adapters; adapter != nullptr; adapter = adapter->Next) {
+        if (adapter->IfIndex == 0) continue;
+        if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
+            if (loopback) return static_cast<std::uint32_t>(adapter->IfIndex);
+            continue;
+        }
+        if (!primary && adapter->OperStatus == IfOperStatusUp && adapter->FirstUnicastAddress != nullptr)
+            primary = static_cast<std::uint32_t>(adapter->IfIndex);
+    }
+    return loopback ? std::nullopt : primary;
+#else
+    ifaddrs* list = nullptr;
+    if (getifaddrs(&list) != 0) return std::nullopt;
+    std::uint32_t loop = 0;
+    std::optional<std::uint32_t> primary;
+    for (auto* item = list; item != nullptr; item = item->ifa_next) {
+        if (item->ifa_name == nullptr || !(item->ifa_flags & IFF_UP)) continue;
+        const unsigned int index = if_nametoindex(item->ifa_name);
+        if (index == 0) continue;
+        if ((item->ifa_flags & IFF_LOOPBACK) != 0) {
+            if (loop == 0) loop = index;
+            continue;
+        }
+        if (!primary && item->ifa_addr != nullptr &&
+            (item->ifa_addr->sa_family == AF_INET || item->ifa_addr->sa_family == AF_INET6))
+            primary = static_cast<std::uint32_t>(index);
+    }
+    freeifaddrs(list);
+    if (loopback) return loop == 0 ? std::nullopt : std::optional<std::uint32_t>(loop);
+    return primary;
+#endif
+}
+
+std::optional<std::uint32_t> HostInterfaceIndex(std::uint32_t interfaceId) {
+    if (interfaceId >= NET_INTERFACE_NAMES.size()) return std::nullopt;
+    if (interfaceId == 0) return HostInterfaceByRole(true);
+    if (interfaceId == 1) return HostInterfaceByRole(false);
+    const unsigned int index = if_nametoindex(NET_INTERFACE_NAMES[interfaceId]);
+    return index == 0 ? std::nullopt : std::optional<std::uint32_t>(index);
 }
 
 void* APS5_VABI RunNetThread(void* param) {
@@ -733,6 +789,20 @@ bool parse_ipv4_parts(const char* text, std::uint32_t& address) {
     for (std::size_t i = 0; i < count; ++i) value |= parts[i] << (24 - 8 * i);
     address = value;
     return true;
+}
+
+std::optional<std::uint32_t> InterfaceIdOfName(std::string_view name) {
+    for (std::uint32_t interfaceId = 0; interfaceId < NET_INTERFACE_NAMES.size(); ++interfaceId) {
+        if (name == NET_INTERFACE_NAMES[interfaceId]) return interfaceId;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint32_t> InterfaceIdOfHostIndex(std::uint32_t index) {
+    for (std::uint32_t interfaceId = 0; interfaceId < NET_INTERFACE_NAMES.size(); ++interfaceId) {
+        if (HostInterfaceIndex(interfaceId) == index) return interfaceId;
+    }
+    return std::nullopt;
 }
 
 }  // namespace
@@ -2728,13 +2798,11 @@ int APS5_VABI sceNetGetIfListOnce(std::int32_t interfaceId, NetInterfaceStatisti
 }
 
 const char* APS5_VABI sceNetGetIfName(std::uint32_t index) {
-    static constexpr std::array<const char*, 10> names = {
-        "lo0", "eth0", "eth1", "dbg0", "wlan0", "wlan1", "gbe0", "bt0", "phone0", "pppoe0"};
-    if (index >= names.size()) {
+    if (index >= NET_INTERFACE_NAMES.size()) {
         set_errno(NET_EINVAL);
         return "";
     }
-    return names[index];
+    return NET_INTERFACE_NAMES[index];
 }
 
 int APS5_VABI sceNetGetIfnameNumList(std::uint32_t* interfaceIds, std::int32_t capacity, std::uint32_t flags) {
@@ -2960,14 +3028,22 @@ int APS5_VABI sceNetShowNetstatExForBuffer(char* buffer, std::int32_t bufferSize
 
 const char* APS5_VABI sceNetInetNtopWithScopeId(std::int32_t family, const void* address, char* text, std::uint32_t size, std::uint32_t scopeId) {
     if (address == nullptr || text == nullptr) {
-        set_errno(NET_EINVAL);
+        set_errno(NET_ENOSPC);
         return nullptr;
     }
-    if (family != NET_AF_INET6) throw std::runtime_error("sceNetInetNtopWithScopeId: family " + std::to_string(family) + " is not implemented");
+    if (family != NET_AF_INET6) {
+        set_errno(NET_EAFNOSUPPORT);
+        return nullptr;
+    }
     std::array<char, 64> unscoped{};
     if (sceNetInetNtop(family, address, unscoped.data(), static_cast<std::uint32_t>(unscoped.size())) == nullptr) return nullptr;
     std::string scoped(unscoped.data());
-    if (scopeId != 0) scoped += "%" + std::to_string(scopeId);
+    if (scopeId != 0) {
+        const auto interfaceId = InterfaceIdOfHostIndex(scopeId);
+        if (!interfaceId) throw std::runtime_error("sceNetInetNtopWithScopeId: scope " + std::to_string(scopeId) + " matches no interface, and the module's answer for it is not known");
+        scoped += '%';
+        scoped += NET_INTERFACE_NAMES[*interfaceId];
+    }
     if (scoped.size() >= size) {
         set_errno(NET_ENOSPC);
         return nullptr;
@@ -2977,26 +3053,24 @@ const char* APS5_VABI sceNetInetNtopWithScopeId(std::int32_t family, const void*
 }
 
 int APS5_VABI sceNetInetPtonWithScopeId(std::int32_t family, const char* text, void* address, std::uint32_t* scopeId) {
-    if (text == nullptr || address == nullptr || scopeId == nullptr) return fail(NET_EINVAL);
-    if (family != NET_AF_INET6) throw std::runtime_error("sceNetInetPtonWithScopeId: family " + std::to_string(family) + " is not implemented");
-    const char* percent = std::strchr(text, '%');
-    std::uint64_t zone = 0;
+    if (family != NET_AF_INET6) return fail(NET_EAFNOSUPPORT);
+    if (text == nullptr) return fail(NET_EINVAL);
+    const char* percent = scopeId != nullptr ? std::strchr(text, '%') : nullptr;
+    std::uint32_t zone = 0;
     if (percent != nullptr) {
-        const std::string_view digits(percent + 1);
-        if (digits.empty()) return 0;
-        if (!std::all_of(digits.begin(), digits.end(), [](char digit) { return digit >= '0' && digit <= '9'; }))
-            throw std::runtime_error("sceNetInetPtonWithScopeId: the interface name zone in " + std::string(text) + " is not implemented");
-        for (const char digit : digits) {
-            zone = zone * 10 + static_cast<std::uint64_t>(digit - '0');
-            if (zone > 0xffffffffull) return 0;
-        }
+        const auto interfaceId = InterfaceIdOfName(percent + 1);
+        if (!interfaceId) return 0;
+        const auto index = HostInterfaceIndex(*interfaceId);
+        if (!index) return 0;
+        zone = *index;
     }
     const std::string unscoped = percent != nullptr ? std::string(text, percent) : std::string(text);
     std::array<unsigned char, 16> parsed{};
     const int converted = sceNetInetPton(family, unscoped.c_str(), parsed.data());
     if (converted != 1) return converted;
+    if (address == nullptr) throw std::invalid_argument("sceNetInetPtonWithScopeId: null address");
     std::memcpy(address, parsed.data(), parsed.size());
-    *scopeId = static_cast<std::uint32_t>(zone);
+    if (scopeId != nullptr) *scopeId = zone;
     return 1;
 }
 

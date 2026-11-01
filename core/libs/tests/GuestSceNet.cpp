@@ -386,33 +386,44 @@ static void CheckSysctl() {
 }
 
 static void CheckScopeIdText() {
-    std::array<std::uint8_t, 16> address{};
-    std::uint32_t scope = 0xa5a5a5a5u;
-    Require(sceNetInetPtonWithScopeId(28, "fe80::1%2", address.data(), &scope) == 1 && scope == 2);
     std::array<std::uint8_t, 16> plain{};
-    Require(sceNetInetPton(28, "fe80::1", plain.data()) == 1 && address == plain);
+    Require(sceNetInetPton(28, "fe80::1", plain.data()) == 1);
+    std::array<std::uint8_t, 16> address{};
+    std::uint32_t scope = 0;
+    Require(sceNetInetPtonWithScopeId(28, "fe80::1%lo0", address.data(), &scope) == 1 && scope != 0 && address == plain);
     std::array<char, 32> text{};
     Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), text.size(), scope) == text.data());
-    Require(std::strcmp(text.data(), "fe80::1%2") == 0);
+    Require(std::strcmp(text.data(), "fe80::1%lo0") == 0);
     text.fill('x');
     *sceNetErrnoLoc() = 123;
-    Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), 9, 2) == nullptr && *sceNetErrnoLoc() == 28 && text[0] == 'x');
-    Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), 10, 2) == text.data() && std::strcmp(text.data(), "fe80::1%2") == 0);
+    Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), 11, scope) == nullptr && *sceNetErrnoLoc() == 28 && text[0] == 'x');
+    Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), 12, scope) == text.data() && std::strcmp(text.data(), "fe80::1%lo0") == 0);
     Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), text.size(), 0) == text.data() && std::strcmp(text.data(), "fe80::1") == 0);
-    scope = 7;
-    Require(sceNetInetPtonWithScopeId(28, "fe80::1", address.data(), &scope) == 1 && scope == 0 && address == plain);
-    Require(sceNetInetPtonWithScopeId(28, "ff02::1%4294967295", address.data(), &scope) == 1 && scope == 0xffffffffu);
-    Require(sceNetInetNtopWithScopeId(28, address.data(), text.data(), text.size(), scope) == text.data());
-    Require(std::strcmp(text.data(), "ff02::1%4294967295") == 0);
-    for (const char* rejected : {"fe80::1%", "fe80::1%4294967296", "fe80::g%2", "1.2.3.4%2"}) {
+    for (const char* rejected : {"fe80::1%2", "ff02::1%4294967295", "fe80::1%", "fe80::1%eth9", "fe80::g%lo0", "1.2.3.4%lo0"}) {
         address.fill(0xa5);
         scope = 0xa5a5a5a5u;
         Require(sceNetInetPtonWithScopeId(28, rejected, address.data(), &scope) == 0);
         Require(scope == 0xa5a5a5a5u && address[0] == 0xa5 && address[15] == 0xa5);
     }
-    Require(Failed(sceNetInetPtonWithScopeId(28, "fe80::1%2", address.data(), nullptr), 22));
+    address.fill(0xa5);
+    Require(sceNetInetPtonWithScopeId(28, "fe80::1", address.data(), nullptr) == 1 && address == plain);
+    address.fill(0xa5);
+    Require(sceNetInetPtonWithScopeId(28, "fe80::1%lo0", address.data(), nullptr) == 0 && address[0] == 0xa5 && address[15] == 0xa5);
+    Require(Failed(sceNetInetPtonWithScopeId(2, "fe80::1", address.data(), &scope), 47));
+    Require(Failed(sceNetInetPtonWithScopeId(28, nullptr, address.data(), &scope), 22));
+    bool threw = false;
+    try {
+        sceNetInetPtonWithScopeId(28, "fe80::1", nullptr, &scope);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
     *sceNetErrnoLoc() = 123;
-    Require(sceNetInetNtopWithScopeId(28, nullptr, text.data(), text.size(), 2) == nullptr && *sceNetErrnoLoc() == 22);
+    Require(sceNetInetNtopWithScopeId(28, nullptr, text.data(), text.size(), 0) == nullptr && *sceNetErrnoLoc() == 28);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetNtopWithScopeId(28, plain.data(), nullptr, 32, 0) == nullptr && *sceNetErrnoLoc() == 28);
+    *sceNetErrnoLoc() = 123;
+    Require(sceNetInetNtopWithScopeId(2, plain.data(), text.data(), text.size(), 0) == nullptr && *sceNetErrnoLoc() == 47);
 }
 
 static void CheckDefaultRoute() {
