@@ -7,6 +7,7 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -1053,6 +1054,12 @@ const char* APS5_VABI getprogname_nid_postfix() {
 
 const char* APS5_VABI _getprogname_nid_postfix() {
     return getprogname_nid_postfix();
+}
+
+void APS5_VABI setprogname_nid_postfix(const char* name) {
+    if (name == nullptr) throw std::invalid_argument("setprogname: null name");
+    const char* slash = std::strrchr(name, '/');
+    __progname_nid_postfix = (slash != nullptr) ? slash + 1 : name;
 }
 
 void APS5_VABI __cxa_finalize_nid_postfix(void* dsoHandle) {

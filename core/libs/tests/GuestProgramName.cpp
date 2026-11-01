@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 extern "C" {
 
@@ -31,6 +32,23 @@ int main() {
     Require(getprogname_nid_postfix()[0] == '\0');
 
     __progname_nid_postfix = original;
+    Require(getprogname_nid_postfix() == original);
+    Require(*__error_nid_postfix() == 45);
+    setprogname_nid_postfix("/app0/game.elf");
+    Require(std::strcmp(getprogname_nid_postfix(), "game.elf") == 0);
+    Require(std::strcmp(_getprogname_nid_postfix(), "game.elf") == 0);
+    setprogname_nid_postfix("doom");
+    Require(std::strcmp(getprogname_nid_postfix(), "doom") == 0);
+    setprogname_nid_postfix("");
+    Require(std::strcmp(getprogname_nid_postfix(), "") == 0);
+    bool nullNameThrew = false;
+    try {
+        setprogname_nid_postfix(nullptr);
+    } catch (const std::invalid_argument&) {
+        nullNameThrew = true;
+    }
+    Require(nullNameThrew);
+    setprogname_nid_postfix(original);
     Require(getprogname_nid_postfix() == original);
     Require(*__error_nid_postfix() == 45);
 }
