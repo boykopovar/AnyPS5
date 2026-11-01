@@ -950,7 +950,9 @@ void APS5_VABI sceKernelSetGPO(std::uint32_t bits) {
 }
 
 int APS5_VABI sceKernelGetOpenPsId(void* openPsIdOutput) {
-    if (!openPsIdOutput || !GuestCopyOut_nid_no_patch(openPsIdOutput, openPsId.data(), openPsId.size()))
+    if (!openPsIdOutput)
+        throw std::invalid_argument("sceKernelGetOpenPsId: null output");
+    if (!GuestCopyOut_nid_no_patch(openPsIdOutput, openPsId.data(), openPsId.size()))
         return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
