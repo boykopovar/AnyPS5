@@ -1274,7 +1274,7 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
         const auto group = read(queue.userConfig, 0x25b, RegisterBank::UserConfig);
         const auto vertices = (group >> 9u) & 0x1ffu;
         const auto primitives = group & 0x1ffu;
-        validate(!fastLaunch || (!vertexWorkgroup && inputPrimitive == 1 && vertices == 1 && primitives == 1), "fast launch other than one point per subgroup is unsupported");
+        validate(!fastLaunch || (!vertexWorkgroup && vertices == 1 && primitives == 1), "fast launch other than one vertex and one primitive per subgroup is unsupported");
         const auto maxVertices = read(queue.context, 0x1ff);
         const auto verticesPerPrimitive = vertexWorkgroup ? 3u : read(queue.context, 0x2ce);
         const auto outputType = read(queue.context, 0x29b);
@@ -1329,7 +1329,7 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup) {
     } else {
         const bool fastLaunch = ((value >> 19u) & 3u) == 1u;
         validate((value & ~(fastLaunch ? 0x004fec30u : 0x0047ec30u)) == 0, "unsupported geometry routing, fast launch or wave-ID state");
-        result.mesh = meshConfiguration(primitive, fastLaunch);
+        result.mesh = meshConfiguration(fastLaunch ? 1u : primitive, fastLaunch);
     }
     return result;
 }

@@ -4,6 +4,7 @@
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -1068,8 +1069,13 @@ void testRegisteredFastLaunchWorkgroupVertex() {
     const std::array<ShaderRegister, 6> context{{
         {0x2d5u, 0x00482030u}, {0x1ffu, 32u}, {0x2ceu, 32u}, {0x2d3u, 64u}, {0x29bu, 2u}, {0x2abu, 4u},
     }};
+    auto& driver = AgcDriver::DriverDetail::Driver::Get();
+    const std::array<ShaderRegister, 2> strip{{{0x242u, 6u}, {0x25bu, 0x201u}}};
+    AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, strip);
+    const auto prepared = driver.PreparedEntryHashes(&header.shader);
     const std::array<ShaderRegister, 2> primitive{{{0x242u, 1u}, {0x25bu, 0x201u}}};
     AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive);
+    check(driver.PreparedEntryHashes(&header.shader) == prepared, "a registered fast-launch program resolved with a triangle strip was not prepared as for a point list");
 }
 
 void testWorkerFailure() {
