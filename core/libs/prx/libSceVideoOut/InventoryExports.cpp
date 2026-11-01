@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/LegacyExports.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libc/include/General.hpp"
@@ -781,5 +782,48 @@ int APS5_VABI libSceVideoOutUnknown_ys239q8VgXY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("ys239q8VgXY", libSceVideoOutUnknown_ys239q8VgXY_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI videoOutLegacyUnknown__plus_epU_plus_rgObyw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("+epU+rgObyw", videoOutLegacyUnknown__plus_epU_plus_rgObyw_nid_no_patch);
+
+int APS5_VABI videoOutLegacyUnknown_6L0_minus_A5piudQ_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("6L0-A5piudQ", videoOutLegacyUnknown_6L0_minus_A5piudQ_nid_no_patch);
+
+int APS5_VABI videoOutLegacyUnknown_QSmT3attiVg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("QSmT3attiVg", videoOutLegacyUnknown_QSmT3attiVg_nid_no_patch);
+
+int APS5_VABI videoOutLegacyUnknown_ekwMB_minus_Ftq18_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ekwMB-Ftq18", videoOutLegacyUnknown_ekwMB_minus_Ftq18_nid_no_patch);
+
+int APS5_VABI videoOutLegacyUnknown_fZgBeiGqE_plus_c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fZgBeiGqE+c", videoOutLegacyUnknown_fZgBeiGqE_plus_c_nid_no_patch);
+
+int APS5_VABI videoOutLegacyUnknown_spvjek0G4es_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("spvjek0G4es", videoOutLegacyUnknown_spvjek0G4es_nid_no_patch);
+
+int APS5_VABI videoOutLegacyUnknown_xwhyGPZkW6w_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("xwhyGPZkW6w", videoOutLegacyUnknown_xwhyGPZkW6w_nid_no_patch);
+
+int APS5_VABI sceVideoOutSetConfigurationMode() {
+    NotImplemented_nid_no_patch(__func__);
+}
 
 }

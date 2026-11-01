@@ -58,6 +58,7 @@ struct Instance {
     Audiodec::At9Format at9{};
     std::uint32_t channels = 0;
     std::uint32_t sampleRate = 0;
+    std::uint32_t surroundChannelInterleaveOrder = 0;
 };
 
 std::mutex g_mutex;
@@ -146,7 +147,6 @@ std::int32_t createAac(const AudiodecParamM4aac* param, AudiodecM4aacInfo* info,
     if (enableNondelayOutput > 1) return ERROR_M4AAC_INVALID_ENABLE_NONDELAY_OUTPUT;
     if (param->ui_size == 32) std::memcpy(&surroundChannelInterleaveOrder, bytes + 28, sizeof(surroundChannelInterleaveOrder));
     if (surroundChannelInterleaveOrder > 2) return ERROR_M4AAC_INVALID_SURROUND_CHANNEL_INTERLEAVE_ORDER;
-    if (surroundChannelInterleaveOrder != 0) throw std::runtime_error("M4AAC surround channel interleave order " + std::to_string(surroundChannelInterleaveOrder) + " is not implemented");
     if (param->ui_config_number != M4AAC_CONFIG_ADTS && param->ui_config_number != M4AAC_CONFIG_RAW) return ERROR_M4AAC_INVALID_CONFIG_NUMBER;
     const std::uint32_t sampleRate = Audiodec::AacSampleRate(param->ui_sampling_freq_index);
     if (param->ui_config_number == M4AAC_CONFIG_RAW && sampleRate == 0) return ERROR_M4AAC_INVALID_SAMPLING_FREQ;
@@ -156,6 +156,7 @@ std::int32_t createAac(const AudiodecParamM4aac* param, AudiodecM4aacInfo* info,
     instance.decoder = Audiodec::CreateAac(param->i_bw_pcm, param->ui_config_number == M4AAC_CONFIG_ADTS, param->ui_sampling_freq_index, channels, param->ui_enable_heaac == 1);
     instance.channels = channels;
     instance.sampleRate = sampleRate;
+    instance.surroundChannelInterleaveOrder = surroundChannelInterleaveOrder;
     info->ui_sampling_freq = sampleRate;
     info->ui_number_of_channels = channels;
     info->ui_heaac = 0;
@@ -172,14 +173,6 @@ Instance* find(std::int32_t handle) {
 }
 
 extern "C" {
-
-int APS5_VABI sceAudiodecUnregisterCodec() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAudiodecGetAjmContext() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int32_t APS5_VABI sceAudiodecInitLibrary(uint32_t codec_type) {
     if (!validType(codec_type)) return ERROR_INVALID_TYPE;
@@ -247,6 +240,7 @@ int32_t APS5_VABI sceAudiodecDecode(int32_t handle, AudiodecCtrl* ctrl) {
     const Audiodec::DecodeResult decoded = instance->decoder->Decode(static_cast<const std::uint8_t*>(ctrl->pAuInfo->p_au_addr), ctrl->pAuInfo->ui_au_size,
                                                                      static_cast<std::uint8_t*>(ctrl->pPcmItem->p_pcm_addr), ctrl->pPcmItem->ui_pcm_size);
     if (instance->codecType == TYPE_M4AAC) {
+        if (instance->surroundChannelInterleaveOrder != 0 && decoded.channels > 2) throw std::runtime_error("M4AAC surround channel interleave order " + std::to_string(instance->surroundChannelInterleaveOrder) + " is not implemented for " + std::to_string(decoded.channels) + " decoded channels");
         auto* info = static_cast<AudiodecM4aacInfo*>(ctrl->pBsiInfo);
         info->i_result = decoded.status == Audiodec::DecodeStatus::InvalidData ? M4AAC_RESULT_DECODE_ERROR
             : decoded.status == Audiodec::DecodeStatus::PartialInput ? M4AAC_RESULT_INSUFFICIENT_DATA : 0;
