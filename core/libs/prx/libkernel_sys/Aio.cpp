@@ -92,8 +92,10 @@ int Fail(int error) {
 }
 
 template <typename Field>
-bool Store(Field* field, Field value) {
-    return GuestCopyOut_nid_no_patch(field, &value, sizeof(value));
+bool Store(GuestAiocb* user, Field GuestAiocb::*member, Field value) {
+    static const GuestAiocb layout{};
+    const auto offset = reinterpret_cast<std::uintptr_t>(&(layout.*member)) - reinterpret_cast<std::uintptr_t>(&layout);
+    return GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(user) + offset), &value, sizeof(value));
 }
 
 void Run(Job& job) {
@@ -139,8 +141,8 @@ std::int64_t Consume(Aio& aio, std::list<std::shared_ptr<Job>>::iterator found) 
     const auto job = *found;
     aio.done.erase(found);
     aio.all.remove(job);
-    Store(&job->user->error, std::int64_t{job->error});
-    Store(&job->user->status, job->status);
+    Store(job->user, &GuestAiocb::error, std::int64_t{job->error});
+    Store(job->user, &GuestAiocb::status, job->status);
     return job->error != 0 ? Fail(job->error) : job->status;
 }
 
@@ -157,11 +159,11 @@ int Queue(GuestAiocb* user, int opcode) {
     auto& aio = Instance();
     std::unique_lock lock(aio.lock);
     aio.used = true;
-    Store(&user->status, std::int64_t{-1});
-    Store(&user->error, std::int64_t{0});
-    Store(&user->kernelinfo, reinterpret_cast<void*>(std::intptr_t{-1}));
+    Store(user, &GuestAiocb::status, std::int64_t{-1});
+    Store(user, &GuestAiocb::error, std::int64_t{0});
+    Store(user, &GuestAiocb::kernelinfo, reinterpret_cast<void*>(std::intptr_t{-1}));
     const auto fail = [&](int error) {
-        Store(&user->error, std::int64_t{error});
+        Store(user, &GuestAiocb::error, std::int64_t{error});
         return Fail(error);
     };
     if (aio.all.size() >= QueuePerProcess) return fail(GuestEagain);
@@ -184,9 +186,9 @@ int Queue(GuestAiocb* user, int opcode) {
     const bool vnode = type != 0 && type != TypeFifo;
     if (opcode == LioSync && !vnode) return fail(GuestEinval);
     if (opcode != LioSync && request.offset < 0) return fail(GuestEinval);
-    if (!Store(&user->kernelinfo, reinterpret_cast<void*>(aio.nextId++))) return fail(GuestEinval);
+    if (!Store(user, &GuestAiocb::kernelinfo, reinterpret_cast<void*>(aio.nextId++))) return fail(GuestEinval);
     if (notify != SigevNone) NotImplemented_nid_no_patch("aio completion delivering a signal or a kevent");
-    Store(&user->error, std::int64_t{GuestEinprogress});
+    Store(user, &GuestAiocb::error, std::int64_t{GuestEinprogress});
     if (type != TypeRegular && type != TypeDirectory) return fail(GuestEopnotsupp);
     auto job = std::make_shared<Job>(Job{user, request.fildes, opcode, request.offset, request.buf, request.nbytes});
     aio.all.push_back(job);
