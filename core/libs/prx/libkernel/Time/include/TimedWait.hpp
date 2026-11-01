@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 
@@ -38,6 +39,10 @@ public:
 void DeliverDeferred();
 
 #ifdef _WIN32
+void QueueForDeliveryDrain(unsigned long thread, void (*run)(void*), void* argument);
+void ReapDeliveryDrain();
+std::size_t DeliveryDrainPending();
+
 constexpr unsigned PARK_SPINS = 1000;
 
 void SpinPause();

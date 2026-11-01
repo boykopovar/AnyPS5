@@ -290,13 +290,32 @@ bool StackWritable(DWORD64 low, DWORD64 high) {
 struct QueuedDelivery {
     GuestExceptionHandler handler;
     int signum;
+    Pthread thread;
     std::atomic<bool> taken{false};
     std::atomic<bool> waiting{false};
+    std::atomic<bool> posted{false};
+    std::atomic<bool> closed{false};
     std::atomic<int> references{1};
 };
 
 void ReleaseQueued(QueuedDelivery* queued) {
     if (queued != nullptr && queued->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete queued;
+}
+
+void SettleQueued(QueuedDelivery* queued) {
+    if (queued != nullptr) queued->closed.store(true, std::memory_order_release);
+}
+
+void DeferredWaitingEntry(void* parameter) {
+    auto* queued = static_cast<QueuedDelivery*>(parameter);
+    const auto handler = queued->handler;
+    const int signum = queued->signum;
+    const bool claimed = !queued->closed.load(std::memory_order_acquire) && !queued->thread->_finished.load(std::memory_order_acquire) && !queued->taken.exchange(true, std::memory_order_acq_rel);
+    ReleaseQueued(queued);
+    if (!claimed) return;
+    CONTEXT context{};
+    RtlCaptureContext(&context);
+    Deliver(handler, signum, context);
 }
 
 void CALLBACK WaitingEntry(ULONG_PTR parameter) {
@@ -735,7 +754,7 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
             continue;
         }
         if (thread->waitCount.load(std::memory_order_seq_cst) > 0) {
-            if (queued == nullptr) queued = new QueuedDelivery{handler, signum};
+            if (queued == nullptr) queued = new QueuedDelivery{handler, signum, thread};
             const bool accepted = QueueWaitingDelivery(native, queued);
             ResumeThread(native);
             if (!accepted) throw std::runtime_error("sceKernelRaiseException: cannot queue delivery to the waiting thread");
@@ -756,10 +775,16 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
             Redirect(native, delivery);
             return Attempt::Delivered;
         }
-        if (running == CodeKind::Host && queued == nullptr) queued = new QueuedDelivery{handler, signum};
+        bool postAfterResume = false;
+        if (running == CodeKind::Host) {
+            if (queued == nullptr) queued = new QueuedDelivery{handler, signum, thread};
+            postAfterResume = !queued->posted.exchange(true, std::memory_order_acq_rel);
+            if (postAfterResume) queued->references.fetch_add(1, std::memory_order_acq_rel);
+        }
         DWORD64 unknown = 0;
         if (arm != nullptr && running == CodeKind::Host && !restoring) ArmReturnBreak(native, delivery.context, queued, *arm, unknown);
         ResumeThread(native);
+        if (postAfterResume) TimedWait::QueueForDeliveryDrain(GetThreadId(native), &DeferredWaitingEntry, queued);
         if (running == CodeKind::Unknown) {
             static_cast<void>(ClassifyImage(image));
             continue;
@@ -823,6 +848,7 @@ private:
                     continue;
                 }
                 DisarmReturnBreak(raise.native, raise.arm);
+                SettleQueued(raise.queued);
                 ReleaseQueued(raise.queued);
                 CloseHandle(raise.native);
             }
@@ -864,6 +890,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         const auto attempt = TryDeliver(thread, native, handler, signum, queued, &arm);
         if (attempt == Attempt::Delivered || attempt == Attempt::Exited) {
             DisarmReturnBreak(native, arm);
+            SettleQueued(queued);
             ReleaseQueued(queued);
             return attempt == Attempt::Delivered;
         }
@@ -871,6 +898,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
         if (attempt == Attempt::Restoring && now >= retryDeadline) {
             const bool taken = queued != nullptr && queued->taken.exchange(true, std::memory_order_acq_rel);
             DisarmReturnBreak(native, arm);
+            SettleQueued(queued);
             ReleaseQueued(queued);
             if (taken) return true;
             throw std::runtime_error("sceKernelRaiseException: the target thread stayed inside NtContinue for 1 s");
@@ -879,6 +907,7 @@ bool RaiseOn(Pthread thread, GuestExceptionHandler handler, int signum) {
             HANDLE owned = nullptr;
             if (!DuplicateHandle(GetCurrentProcess(), native, GetCurrentProcess(), &owned, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
                 DisarmReturnBreak(native, arm);
+                SettleQueued(queued);
                 ReleaseQueued(queued);
                 throw std::runtime_error("sceKernelRaiseException: cannot keep the target thread for a later delivery");
             }

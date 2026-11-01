@@ -7,6 +7,7 @@
 #include "../include/WindowsThreadLocal.hpp"
 #include "../include/Cancel.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -743,6 +744,9 @@ static void finishThread(PthreadPrivate* self, void* retval) {
         self->_finished.store(true, std::memory_order_release);
     }
     self->_join_cv.NotifyAll();
+#ifdef _WIN32
+    TimedWait::ReapDeliveryDrain();
+#endif
 }
 
 bool ThreadCancel::Requested() {
