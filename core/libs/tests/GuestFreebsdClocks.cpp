@@ -17,7 +17,14 @@ static constexpr int GUEST_CLOCK_REALTIME = 0;
 static constexpr int GUEST_CLOCK_VIRTUAL = 1;
 static constexpr int GUEST_CLOCK_PROF = 2;
 static constexpr int GUEST_CLOCK_MONOTONIC = 4;
+static constexpr int GUEST_CLOCK_UPTIME = 5;
+static constexpr int GUEST_CLOCK_BOOTTIME = 7;
+static constexpr int GUEST_CLOCK_UPTIME_PRECISE = 7;
+static constexpr int GUEST_CLOCK_UPTIME_FAST = 8;
 static constexpr int GUEST_CLOCK_REALTIME_PRECISE = 9;
+static constexpr int GUEST_CLOCK_REALTIME_FAST = 10;
+static constexpr int GUEST_CLOCK_MONOTONIC_PRECISE = 11;
+static constexpr int GUEST_CLOCK_MONOTONIC_FAST = 12;
 static constexpr int GUEST_CLOCK_SECOND = 13;
 static constexpr int GUEST_CLOCK_THREAD_CPUTIME_ID = 14;
 static constexpr int GUEST_CLOCK_PROCESS_CPUTIME_ID = 15;
@@ -70,10 +77,15 @@ static void UnsupportedResolutionStillThrows() {
 }
 
 static void OmittedTimeIsFaultAfterClockValidation() {
+    constexpr int fault = static_cast<int>(0x8002000eu);
     for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC,
-             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID}) {
+             GUEST_CLOCK_UPTIME, GUEST_CLOCK_BOOTTIME, GUEST_CLOCK_UPTIME_FAST,
+             GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_REALTIME_FAST,
+             GUEST_CLOCK_MONOTONIC_PRECISE, GUEST_CLOCK_MONOTONIC_FAST,
+             GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID}) {
         *__error_nid_postfix() = 0;
         Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 14);
+        Require(sceKernelClockGettime(clockId, nullptr) == fault);
     }
     bool rejected = false;
     try {
@@ -83,6 +95,16 @@ static void OmittedTimeIsFaultAfterClockValidation() {
         rejected = true;
     }
     Require(rejected);
+    Require(sceKernelClockGettime(3, nullptr) == fault);
+    rejected = false;
+    try {
+        clock_gettime_nid_postfix(21, nullptr);
+
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+    Require(sceKernelClockGettime(21, nullptr) == fault);
 }
 
 static KernelTimespec Read(int clockId) {
