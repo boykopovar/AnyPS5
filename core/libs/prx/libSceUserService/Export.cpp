@@ -354,11 +354,11 @@ int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t*
 }
 
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
- if (!IsUserLoggedIn(user_id)) {
-  return USER_SERVICE_ERROR_UNKNOWN_USER;
- }
  if (account_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+ }
+ if (!IsUserLoggedIn(user_id)) {
+  return USER_SERVICE_ERROR_UNKNOWN_USER;
  }
  *account_id = 0;
  return USER_SERVICE_OK;

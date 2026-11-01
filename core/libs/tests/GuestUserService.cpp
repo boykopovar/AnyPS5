@@ -102,7 +102,7 @@ int main() {
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetNpAccountId(123, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(account_id == 0xdeadbeefu);
-    Require(sceUserServiceGetNpAccountId(123, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetNpAccountId(123, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID, &account_id) == USER_SERVICE_OK);
     Require(account_id == 0);
 
@@ -120,7 +120,7 @@ int main() {
         account_id = 0xdeadbeefu;
         Require(sceUserServiceGetNpAccountId(user_id, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
         Require(account_id == 0xdeadbeefu);
-        Require(sceUserServiceGetNpAccountId(user_id, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
+        Require(sceUserServiceGetNpAccountId(user_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, &age_level) == USER_SERVICE_OK);
     Require(age_level == 0xffffffffu);
@@ -202,7 +202,7 @@ int main() {
     account_id = 0xdeadbeefu;
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(account_id == 0xdeadbeefu);
-    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
@@ -248,7 +248,7 @@ int main() {
     account_id = 0xdeadbeefu;
     Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, &account_id) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(account_id == 0xdeadbeefu);
-    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetNpAccountId(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     for (const Setting& setting : settings) {
         std::int32_t value = 0x5a5a5a5a;
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID + 1, &value) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
