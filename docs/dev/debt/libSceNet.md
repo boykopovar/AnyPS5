@@ -49,6 +49,8 @@
 
 ### Functional
 
+- [sceNetGetMacAddress](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - the console's result for a non-null unwritable output is unmeasured. AnyPS5 returns `EFAULT` through a checked guest write instead of crashing the host; null output and invalid flags retain `EINVAL`. The synthetic address remains independent of the host adapter.
+
 - [IPV6_V6ONLY in sceNetSetsockopt and sceNetGetsockopt](../../../core/libs/prx/libSceNet/Export.cpp) is unverified on PS5. The IPv6 level (41), option (27), exact integer input size, nonzero enable behavior, boolean readback and rejection after binding follow FreeBSD 11.4's [`ip6_ctloutput`](https://github.com/freebsd/freebsd-src/blob/releng/11.4/sys/netinet6/ip6_output.c). The shared libkernel option implementation applies the host's IPv6-only mode; disabling it permits IPv4-mapped traffic on a socket bound to the IPv6 wildcard address. Host network configuration controls IPv6 availability. Null buffers retain this library's `EINVAL` behavior instead of FreeBSD's fault handling. Crimson Desert (PPSA25286) disables it, passing a 4-byte 0 at both of its two calls; of the other nine titles checked, only Borderlands 4 (PPSA01494) passes an IPv6-level option as a constant, one `IPV6_JOIN_GROUP` (12).
 
 - [sceNetRecv/sceNetRecvfrom](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) translate Windows WSAEMSGSIZE into the copied byte count for datagram sockets, including MSG_PEEK, and retain the sender address. This follows FreeBSD 11.4 recv(2) and Winsock's documented truncated-datagram behavior; the console measurement covered only libkernel_sys `recv` and `recvfrom`, not libSceNet.

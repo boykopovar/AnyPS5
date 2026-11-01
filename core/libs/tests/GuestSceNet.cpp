@@ -665,6 +665,9 @@ static void CheckRejectedArguments() {
         Require(std::memcmp(mac.data, untouched.data(), untouched.size()) == 0);
     }
     Require(Failed(sceNetGetMacAddress(nullptr, 1), 22));
+    Require(Failed(sceNetGetMacAddress(reinterpret_cast<NetEtherAddr*>(std::uintptr_t{0x10}), 0), 14));
+    Require(sceNetGetMacAddress(&mac, 0) == 0);
+    Require(std::memcmp(mac.data, "\x02\x50\x53\x35\x00\x01", sizeof(mac.data)) == 0);
 
     for (const int flags : {1, 0x10000, -1}) Require(Failed(sceNetResolverCreate("rejected-resolver", 0, flags), 22));
 
