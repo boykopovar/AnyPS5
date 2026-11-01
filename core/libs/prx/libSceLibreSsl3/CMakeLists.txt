@@ -1,4 +1,4 @@
-add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp)
+add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Validity.cpp)
 target_include_directories(libSceLibreSsl3 PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl3 PRIVATE libSceLibreSsl libc)
 configure_windows_unwind(libSceLibreSsl3)
@@ -89,6 +89,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl3_key_reference PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_crypto_memcmp guest_libressl3_digest guest_libressl3_asn1 guest_libressl3_key_reference PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+
+    add_test_executable(guest_libressl3_x509_validity_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3X509Validity.cpp)
+    target_include_directories(guest_libressl3_x509_validity_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_x509_validity_tests PRIVATE libSceLibreSsl3)
+    configure_windows_unwind(guest_libressl3_x509_validity_tests)
+    add_test(NAME guest_libressl3_x509_validity COMMAND guest_libressl3_x509_validity_tests)
+    set_tests_properties(guest_libressl3_x509_validity PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_x509_validity PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 endif()
