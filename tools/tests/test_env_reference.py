@@ -38,6 +38,15 @@ static std::uint64_t v = MyEnvironmentNumber("APS5_NOT_A_NUMBER_READ");
 
 
 class EnvReferenceTests(unittest.TestCase):
+    def test_reader_identifiers_require_a_token_boundary(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('auto a = custom_getenv("APS5_FAKE");\n'
+                          'auto b = reEnvInt("APS5_FAKE2", 1);\n'
+                          'auto c = std::getenv("APS5_REAL");\n'
+                          'auto d = os.getenv("APS5_PYTHON");\n', encoding="utf-8")
+        self.assertEqual(set(env_reference.reads([root / "core"])), {"APS5_REAL", "APS5_PYTHON"})
+
     def fixture(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
