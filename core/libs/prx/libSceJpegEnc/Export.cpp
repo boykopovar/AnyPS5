@@ -2,12 +2,14 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <cstring>
 #include <new>
 #include <stdexcept>
 #include <vector>
 #include "Decoder/Jpeg.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 static_assert(sizeof(JpegEncCreateParam) == 0x8);
 static_assert(sizeof(JpegEncEncodeParam) == 0x30);
@@ -176,7 +178,13 @@ int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory
     const std::uintptr_t aligned = (address + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
     auto* encoder = new (reinterpret_cast<void*>(aligned)) Encoder{};
     encoder->self = encoder;
-    *handle = encoder;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &encoder, sizeof(encoder));
+    errno = savedErrno;
+    if (!copied) {
+        encoder->self = nullptr;
+        return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    }
     return 0;
 }
 
@@ -200,11 +208,26 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
     const std::vector<std::uint8_t> jpeg = Decoder::Jpeg::Encode(pixels, param->image_width, param->image_height, channels, toQuality(*param), toSampling(*param), restartBlocks, restartRows);
     if (jpeg.size() > param->jpeg_size) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
 
-    std::memcpy(param->jpeg, jpeg.data(), jpeg.size());
-    if (outputInfo) {
-        outputInfo->size = static_cast<std::uint32_t>(jpeg.size());
-        outputInfo->height = param->image_height;
+    JpegEncOutputInfo originalOutputInfo{};
+    const int savedErrno = errno;
+    if (outputInfo && !GuestCopyIn_nid_no_patch(&originalOutputInfo, outputInfo, sizeof(originalOutputInfo))) {
+        errno = savedErrno;
+        return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     }
+    if (!GuestCopyOut_nid_no_patch(param->jpeg, jpeg.data(), jpeg.size())) {
+        errno = savedErrno;
+        return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    }
+    if (outputInfo) {
+        JpegEncOutputInfo outInfo{};
+        outInfo.size = static_cast<std::uint32_t>(jpeg.size());
+        outInfo.height = param->image_height;
+        if (!GuestCopyOut_nid_no_patch(outputInfo, &outInfo, sizeof(outInfo))) {
+            errno = savedErrno;
+            return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+        }
+    }
+    errno = savedErrno;
     return static_cast<std::int32_t>(jpeg.size());
 }
 
