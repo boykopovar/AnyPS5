@@ -179,6 +179,41 @@ test('captured media and browser keys round trip through INI bindings', () => {
     }
 });
 
+test('capture maps additional letters, digits, numpad, function and special keys', () => {
+    const cases = {
+        KeyB: 'B', KeyC: 'C', KeyD: 'D', KeyE: 'E', KeyF: 'F', KeyG: 'G', KeyH: 'H', KeyI: 'I',
+        KeyJ: 'J', KeyK: 'K', KeyL: 'L', KeyM: 'M', KeyN: 'N', KeyO: 'O', KeyP: 'P',
+        KeyR: 'R', KeyS: 'S', KeyT: 'T', KeyU: 'U', KeyV: 'V', KeyW: 'W', KeyX: 'X',
+        KeyY: 'Y', KeyZ: 'Z',
+        Digit0: '0', Digit2: '2', Digit3: '3', Digit4: '4', Digit5: '5', Digit6: '6',
+        Digit7: '7', Digit8: '8', Digit9: '9',
+        Numpad0: 'Keypad 0', Numpad2: 'Keypad 2', Numpad3: 'Keypad 3', Numpad4: 'Keypad 4',
+        Numpad5: 'Keypad 5', Numpad6: 'Keypad 6', Numpad7: 'Keypad 7', Numpad8: 'Keypad 8',
+        Numpad9: 'Keypad 9',
+        F1: 'F1', F2: 'F2', F3: 'F3', F4: 'F4', F5: 'F5', F6: 'F6', F7: 'F7', F8: 'F8',
+        F9: 'F9', F10: 'F10', F11: 'F11', F12: 'F12', F13: 'F13', F14: 'F14', F15: 'F15',
+        F16: 'F16', F17: 'F17', F18: 'F18', F19: 'F19', F20: 'F20', F21: 'F21', F22: 'F22',
+        F23: 'F23',
+        Minus: '-', BracketLeft: '[', BracketRight: ']', Quote: "'", Backquote: '`',
+        Comma: ',', Period: '.', Slash: '/',
+        CapsLock: 'CapsLock', PrintScreen: 'PrintScreen', ScrollLock: 'ScrollLock', Pause: 'Pause',
+        Insert: 'Insert', Home: 'Home', PageUp: 'PageUp', Delete: 'Delete', End: 'End', PageDown: 'PageDown',
+        ArrowRight: 'Right', ArrowLeft: 'Left', ArrowDown: 'Down',
+        NumLock: 'Numlock',
+        NumpadDivide: 'Keypad /', NumpadMultiply: 'Keypad *', NumpadSubtract: 'Keypad -',
+        NumpadAdd: 'Keypad +', NumpadDecimal: 'Keypad .', NumpadEqual: 'Keypad =', NumpadComma: 'Keypad ,',
+        ContextMenu: 'Application',
+        ControlRight: 'Right Ctrl', ShiftLeft: 'Left Shift', ShiftRight: 'Right Shift',
+        AltLeft: 'Left Alt', MetaLeft: 'Left GUI', MetaRight: 'Right GUI',
+    };
+    for (const [code, value] of Object.entries(cases)) assert.deepEqual(captureKey({code, key: 'ignored'}), {value}, code);
+});
+
+test('capture rejects out-of-range function keys and numpad keys', () => {
+    assert.match(captureKey({code: 'F25'}).error, /This physical key cannot be captured/);
+    assert.match(captureKey({code: 'Numpad10'}).error, /This physical key cannot be captured/);
+});
+
 test('capture rejects missing identifiers, composition and unsafe punctuation', () => {
     for (const event of [{code: 'Unidentified'}, {key: 'a'}, {code: 'IntlBackslash'}, {code: 'Semicolon'}, {code: 'KeyA', isComposing: true}, {code: 'Quote', key: 'Dead'}, {code: 'KeyA', key: 'Process'}]) {
         assert.ok(captureKey(event).error);
