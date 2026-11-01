@@ -23,6 +23,7 @@
 #include <cstdio>
 #include <cstring>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -65,9 +66,9 @@ struct Layout {
     AgcDriver::Graphics::TileMipLayout mip;
 };
 
-Layout Describe(TextureTileMode mode) {
+Layout Describe(TextureTileMode mode, std::optional<VkExtent2D> size = std::nullopt) {
     const auto geometry = AgcDriver::Graphics::GcnTiling(mode, 4u);
-    const VkExtent2D extent{geometry.blockWidth * 2u, geometry.blockHeight * 2u};
+    const VkExtent2D extent = size.value_or(VkExtent2D{geometry.blockWidth * 2u, geometry.blockHeight * 2u});
     const auto mip = AgcDriver::Graphics::ComputeGcnMipLayout(mode, Format32Float, extent.width, extent.height, extent.width, false, 1u).front();
     return {extent, geometry, mip};
 }
@@ -141,6 +142,63 @@ void Case(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders&
     }
 }
 
+void DrawPattern(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, const Surface& depth, VkExtent2D extent, std::span<std::byte> pixels) {
+    Draw(device, shaders, depth, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .minDepth = 0.75f, .maxDepth = 0.75f}, extent, pixels);
+    Draw(device, shaders, depth, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .minDepth = 0.25f, .maxDepth = 0.25f, .scissor = VkRect2D{{0, 0}, {extent.width / 2u, extent.height}}}, extent, pixels);
+    Draw(device, shaders, depth, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .minDepth = 0.5f, .maxDepth = 0.5f, .scissor = Inner(extent)}, extent, pixels);
+}
+
+void RequirePattern(const std::byte* plane, const Layout& layout, const std::string& what) {
+    for (std::uint32_t y = 0; y < layout.extent.height; ++y) {
+        for (std::uint32_t x = 0; x < layout.extent.width; ++x) {
+            const auto got = TexelAt(plane, layout, x, y);
+            if (got != Expected(layout.extent, x, y)) Require(false, what + ": texel " + std::to_string(x) + "," + std::to_string(y) + " holds " + std::to_string(got) + " at its tiled offset, expected " + std::to_string(Expected(layout.extent, x, y)));
+        }
+    }
+}
+
+void TileModeSwitch(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, TextureTileMode first, TextureTileMode second) {
+    constexpr VkExtent2D extent{512, 256};
+    const auto firstLayout = Describe(first, extent);
+    const auto secondLayout = Describe(second, extent);
+    const std::string what = "PS4 depth tile mode " + std::to_string(static_cast<int>(first)) + " then " + std::to_string(static_cast<int>(second));
+    Require(firstLayout.mip.tiledSize <= Block && secondLayout.mip.tiledSize <= Block, what + ": the surface does not fit the test buffers");
+    auto* plane = static_cast<std::byte*>(AllocateWatched(Block));
+    const auto address = reinterpret_cast<std::uintptr_t>(plane);
+    const auto reader = Compile(device, plane);
+    const std::span<std::byte> pixels(Pixels.data(), static_cast<std::size_t>(extent.width) * extent.height * 4u);
+    Surface firstDepth{address, 0, 0, false, VK_FORMAT_D32_SFLOAT};
+    firstDepth.gcnTileMode = first;
+    Surface secondDepth = firstDepth;
+    secondDepth.gcnTileMode = second;
+
+    DrawPattern(device, shaders, firstDepth, extent, pixels);
+    Draw(device, reader, firstDepth, {.depthTest = false}, extent, pixels);
+    RequirePattern(plane, firstLayout, what + ": the first tiling, after a buffer read");
+    DrawPattern(device, shaders, secondDepth, extent, pixels);
+    Draw(device, reader, secondDepth, {.depthTest = false}, extent, pixels);
+    RequirePattern(plane, secondLayout, what + ": the second tiling, after a buffer read");
+    DrawPattern(device, shaders, firstDepth, extent, pixels);
+    Draw(device, reader, firstDepth, {.depthTest = false}, extent, pixels);
+    RequirePattern(plane, firstLayout, what + ": back in the first tiling, after a buffer read");
+    DrawPattern(device, shaders, secondDepth, extent, pixels);
+    DrawPattern(device, shaders, firstDepth, extent, pixels);
+    Draw(device, reader, firstDepth, {.depthTest = false}, extent, pixels);
+    RequirePattern(plane, firstLayout, what + ": drawn in both tilings with no read between them, after a buffer read");
+
+    if (!AgcDriver::GuestMemory::WriteWatched() || !AgcDriver::GuestMemory::Watched(address, Block)) return;
+    DrawPattern(device, shaders, firstDepth, extent, pixels);
+    Draw(device, shaders, secondDepth, {}, extent, pixels);
+    RequirePattern(plane, firstLayout, what + ": the plane drawn in the first tiling, after the second was bound");
+    for (std::uint32_t y = 0; y < extent.height; ++y) {
+        for (std::uint32_t x = 0; x < extent.width; ++x) {
+            const auto held = TexelAt(plane, secondLayout, x, y);
+            const bool passed = std::to_integer<std::uint8_t>(pixels[(static_cast<std::size_t>(y) * extent.width + x) * 4u]) == 255u;
+            if (passed != (held > 0.5f)) Require(false, what + ": a draw at depth 0.5 under LESS " + (passed ? "passed" : "failed") + " at " + std::to_string(x) + "," + std::to_string(y) + " against " + std::to_string(held) + ", the plane's bytes in the second tiling");
+        }
+    }
+}
+
 }
 
 int main() {
@@ -149,6 +207,8 @@ int main() {
         if (!device) return VulkanTestSkipped;
         const auto shaders = Compile(*device);
         for (const auto mode : Modes) Case(*device, shaders, mode);
+        TileModeSwitch(*device, shaders, Modes[0], Modes[1]);
+        TileModeSwitch(*device, shaders, Modes[1], Modes[0]);
         if (!AgcDriver::GuestMemory::WriteWatched()) std::puts("guest memory is not write-watched here: a guest write into a PS4 depth plane is not exercised");
         std::puts("GCN depth plane buffer memory tests passed");
         return 0;

@@ -980,6 +980,23 @@ public:
         written = ++depthWrites;
     }
 
+    void LoadFromMemory(const GuestTextureResource& resource) {
+        std::uint64_t generation = 0;
+        static_cast<void>(WrittenUnits(resource, generation));
+        ClearStale();
+        {
+            struct Syncing {
+                bool& flag;
+                ~Syncing() { flag = false; }
+            } guard{syncing};
+            syncing = true;
+            static_cast<void>(Mirror(resource));
+        }
+        unitGeneration.assign(unitGeneration.size(), generation);
+        copyPlane(mirrorPlane, mirrorPlane.storage, false, false, true);
+        written = ++depthWrites;
+    }
+
     void DropMirror() {
         mirrorPlane = {};
     }
@@ -1667,8 +1684,12 @@ std::map<std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, std::
     return *storages;
 }
 
-bool sameSurface(const DepthTarget& a, const DepthTarget& b) {
+bool sameStorage(const DepthTarget& a, const DepthTarget& b) {
     return a.address == b.address && a.stencilAddress == b.stencilAddress && a.extent.width == b.extent.width && a.extent.height == b.extent.height && a.format == b.format && a.samples == b.samples && (a.samples == 1u || (a.htileAddress == b.htileAddress && a.htileStencil == b.htileStencil && a.depthSwizzle == b.depthSwizzle && a.pipeBankXor == b.pipeBankXor && a.firstSlice == b.firstSlice && a.lastSlice == b.lastSlice && a.iterate256 == b.iterate256 && a.htilePipeAligned == b.htilePipeAligned && a.htileVrsEncoding == b.htileVrsEncoding && a.htileDepthOnly == b.htileDepthOnly));
+}
+
+bool sameSurface(const DepthTarget& a, const DepthTarget& b) {
+    return sameStorage(a, b) && a.gcnTileMode == b.gcnTileMode;
 }
 
 std::recursive_mutex& surfacesMutex() {
@@ -2269,6 +2290,14 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
         }
     }
     const bool created = surface == nullptr;
+    bool retiled = false;
+    if (mirrorable(target)) {
+        for (const auto& candidate : surfaces()) {
+            if (!candidate->active->load(std::memory_order_acquire) || candidate->context.device != context.device || candidate->retired || candidate->target.gcnTileMode == target.gcnTileMode || !mirrorable(candidate->target) || !sameStorage(candidate->target, target)) continue;
+            retireStoringStale(*candidate);
+            retiled = true;
+        }
+    }
     GuestAllocations::Lease creationLease;
     if (created) {
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
@@ -2309,7 +2338,8 @@ VkImageView DepthSurfaceView(const Context& context, const DepthTarget& target, 
         if (!created) surface->NoteHtileClear(VK_IMAGE_ASPECT_DEPTH_BIT);
     }
     if (!created) surface->NoteHtileClear(htileCleared);
-    if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target));
+    if (created && retiled && !cleared && (htileCleared & VK_IMAGE_ASPECT_DEPTH_BIT) == 0) surface->LoadFromMemory(mirrorResource(target));
+    else if (mirrorable(target)) surface->SyncFromMemory(mirrorResource(target));
     if (surface->StencilMirrorable()) surface->SyncStencilFromMemory(stencilResource(target));
     surface->ApplyFastClear();
     if (drawnDepth != nullptr && drawnDepth != surface) drawnDepth->written = ++depthWrites;
