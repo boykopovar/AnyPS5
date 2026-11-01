@@ -34,8 +34,8 @@ struct Mapping {
 struct sigaction g_previous[std::size(FatalSignals)]{};
 Mapping g_mappings[MappingCapacity];
 std::size_t g_mappingCount = 0;
+bool g_mappingsTruncated = false;
 std::atomic<bool> g_reporting{false};
-std::atomic<bool> g_reported{false};
 alignas(16) unsigned char g_alternateStack[64 * 1024];
 
 class ReportLine {
@@ -65,7 +65,7 @@ public:
 
     void Write() {
         Text("\n");
-        log_file::CrashWrite(STDERR_FILENO, _buffer, _length);
+        log_file::SignalWrite_nid_no_patch(STDERR_FILENO, _buffer, _length);
         _length = 0;
     }
 
@@ -93,7 +93,10 @@ void SkipField(const char*& cursor, const char* end) {
 }
 
 void ParseMapsLine(const char* line, const char* end) {
-    if (g_mappingCount == MappingCapacity) return;
+    if (g_mappingCount == MappingCapacity) {
+        g_mappingsTruncated = true;
+        return;
+    }
     Mapping mapping{};
     const char* cursor = line;
     if (!ParseHex(cursor, end, mapping.start) || cursor == end || *cursor++ != '-' || !ParseHex(cursor, end, mapping.end)) return;
@@ -118,6 +121,7 @@ void ParseMapsLine(const char* line, const char* end) {
 
 void ReadMappings() {
     g_mappingCount = 0;
+    g_mappingsTruncated = false;
     const int file = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
     if (file < 0) return;
     static char buffer[8192];
@@ -178,6 +182,7 @@ void Report(int signal, const siginfo_t* info, const ucontext_t* context) {
     ReportLine line;
     line.Text("[libc] fatal ").Text(SignalName(signal)).Text(" (code ").Decimal(static_cast<std::uint64_t>(static_cast<std::uint32_t>(info->si_code))).Text(") at address ");
     line.Hex(reinterpret_cast<std::uint64_t>(info->si_addr), 16).Text(" in thread ").Decimal(static_cast<std::uint64_t>(syscall(SYS_gettid))).Write();
+    if (g_mappingsTruncated) line.Text("  mappings truncated after ").Decimal(MappingCapacity).Text(" entries").Write();
     if (context == nullptr) return;
     const greg_t* registers = context->uc_mcontext.gregs;
     const auto rip = static_cast<std::uint64_t>(registers[REG_RIP]);
@@ -256,10 +261,10 @@ void OnFatalSignal(int signal, siginfo_t* info, void* context) {
     if (!g_reporting.exchange(true, std::memory_order_acq_rel)) {
         Report(signal, info, static_cast<const ucontext_t*>(context));
         ReportCallTrace();
-        g_reported.store(true, std::memory_order_release);
+        g_reporting.store(false, std::memory_order_release);
     } else {
         const timespec pause{0, 1000000};
-        for (int waited = 0; waited < 2000 && !g_reported.load(std::memory_order_acquire); ++waited) nanosleep(&pause, nullptr);
+        for (int waited = 0; waited < 2000 && g_reporting.load(std::memory_order_acquire); ++waited) nanosleep(&pause, nullptr);
     }
     errno = savedErrno;
     std::size_t slot = 0;
@@ -282,14 +287,34 @@ void OnFatalSignal(int signal, siginfo_t* info, void* context) {
 
 const bool g_installed = [] {
     stack_t alternate{};
-    alternate.ss_sp = g_alternateStack;
-    alternate.ss_size = sizeof(g_alternateStack);
-    sigaltstack(&alternate, nullptr);
-    struct sigaction action{};
-    action.sa_sigaction = OnFatalSignal;
-    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
-    sigemptyset(&action.sa_mask);
-    for (std::size_t slot = 0; slot < std::size(FatalSignals); ++slot) sigaction(FatalSignals[slot], &action, &g_previous[slot]);
+    if (sigaltstack(nullptr, &alternate) != 0) {
+        constexpr char message[] = "[libc] crash report: cannot query alternate signal stack\n";
+        write(STDERR_FILENO, message, sizeof(message) - 1);
+        return false;
+    }
+    if ((alternate.ss_flags & SS_DISABLE) != 0) {
+        alternate.ss_sp = g_alternateStack;
+        alternate.ss_size = sizeof(g_alternateStack);
+        alternate.ss_flags = 0;
+        if (sigaltstack(&alternate, nullptr) != 0) {
+            constexpr char message[] = "[libc] crash report: cannot install alternate signal stack\n";
+            write(STDERR_FILENO, message, sizeof(message) - 1);
+            return false;
+        }
+    }
+    for (std::size_t slot = 0; slot < std::size(FatalSignals); ++slot) {
+        if (sigaction(FatalSignals[slot], nullptr, &g_previous[slot]) != 0) continue;
+        const auto& previous = g_previous[slot];
+        if (previous.sa_handler == SIG_IGN) continue;
+        struct sigaction action{};
+        action.sa_sigaction = OnFatalSignal;
+        action.sa_flags = SA_SIGINFO | SA_ONSTACK | (previous.sa_flags & (SA_RESTART | SA_NODEFER | SA_RESETHAND));
+        action.sa_mask = previous.sa_mask;
+        if (sigaction(FatalSignals[slot], &action, nullptr) != 0) {
+            constexpr char message[] = "[libc] crash report: cannot install signal handler\n";
+            write(STDERR_FILENO, message, sizeof(message) - 1);
+        }
+    }
     return true;
 }();
 

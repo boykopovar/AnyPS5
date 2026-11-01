@@ -51,6 +51,7 @@ public:
     void Stop();
     bool Flush(bool ending);
     void CrashWrite(int standard, const char* text, std::size_t length);
+    void SignalWrite(int standard, const char* text, std::size_t length);
     void Note(const char* text, std::size_t length);
     bool FileFailed() const;
 
@@ -102,6 +103,7 @@ bool Active();
 void Flush();
 void Release();
 void CrashWrite(int standard, const char* text, std::size_t length);
+void SignalWrite_nid_no_patch(int standard, const char* text, std::size_t length);
 
 }
 
