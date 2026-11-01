@@ -654,6 +654,129 @@ static void TestResidualAccessors() {
     _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V126RequestPlayerSessionPlayerEED1Ev(&owner);
 }
 
+static void TestAuditedModelAccessors() {
+    int context = 0;
+    deleterCalls = 0;
+    deletedObject = nullptr;
+
+    alignas(8) unsigned char entry[0xa0];
+    std::memset(entry, 0, sizeof(entry));
+    const std::uint32_t rank = 7;
+    const std::int64_t score = -9000000;
+    std::memcpy(entry + 0x88, &rank, sizeof(rank));
+    std::memcpy(entry + 0x90, &score, sizeof(score));
+    for (std::size_t index = 0; index < 0x14; ++index) entry[0x69 + index] = static_cast<unsigned char>(index + 1);
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry7getRankEv(entry) == rank);
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry8getScoreEv(entry) == score);
+    alignas(8) unsigned char onlineId[0x14];
+    std::memset(onlineId, 0, sizeof(onlineId));
+    Require(_ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getOnlineIdEv(onlineId, entry) == onlineId);
+    Require(std::memcmp(onlineId, entry + 0x69, sizeof(onlineId)) == 0);
+
+    alignas(8) unsigned char representative[0x30];
+    std::memset(representative, 0, sizeof(representative));
+    const std::uint64_t account = 0xfeed1234;
+    std::memcpy(representative + 0x10, &account, sizeof(account));
+    for (std::size_t index = 0; index < 0x14; ++index) representative[0x18 + index] = static_cast<unsigned char>(0xf0 - index);
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V114Representative12getAccountIdEv(representative) == account);
+    std::memset(onlineId, 0, sizeof(onlineId));
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V114Representative11getOnlineIdEv(onlineId, representative) == onlineId);
+    Require(std::memcmp(onlineId, representative + 0x18, sizeof(onlineId)) == 0);
+
+    alignas(8) unsigned char session[0x130];
+    std::memset(session, 0, sizeof(session));
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V111GameSession12getSessionIdEv(session) == session + 0x10);
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead14getCustomData1Ev(session) == session + 0xd0);
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead14getCustomData2Ev(session) == session + 0xf0);
+    Require(!_ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead16matchmakingIsSetEv(session));
+    session[0x128] = 1;
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead16matchmakingIsSetEv(session));
+    Require(_ZNK3sce2Np9CppWebApi11Matchmaking2V124SubmitTicketResponseBody11getTicketIdEv(session) == session + 0x30);
+    alignas(8) unsigned char detail[0x90];
+    std::memset(detail, 0, sizeof(detail));
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail12getFirstNameEv(detail) == detail + 0x10);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail11getLastNameEv(detail) == detail + 0x60);
+    Require(!_ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail14firstNameIsSetEv(detail));
+    detail[0x30] = 1;
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V114PersonalDetail14firstNameIsSetEv(detail));
+
+    alignas(8) unsigned char nestedObject[ObjectSize];
+    std::memset(nestedObject, 0x5a, sizeof(nestedObject));
+    WriteCount(nestedObject, 0, 3);
+    IntrusivePtr member{nestedObject, RecordDelete, &context};
+    std::memset(session + 0x110, 0, sizeof(member));
+    std::memcpy(session + 0xb0, &member, sizeof(member));
+    IntrusivePtr out{nullptr, nullptr, nullptr};
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead17getRepresentativeEv(&out, session) == &out);
+    Require(out.object == nestedObject && out.deleter == RecordDelete && out.libContext == &context);
+    Require(ReadCount(nestedObject, 0) == 4);
+    std::memcpy(session + 0x110, &member, sizeof(member));
+    out = {nullptr, nullptr, nullptr};
+    Require(_ZNK3sce2Np9CppWebApi14SessionManager2V118GameSessionForRead14getMatchmakingEv(&out, session) == &out);
+    Require(out.object == nestedObject && ReadCount(nestedObject, 0) == 5);
+
+    alignas(8) unsigned char headers[0x18];
+    std::memset(headers, 0, sizeof(headers));
+    Require(std::strcmp(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24getXPsnAtomicOperationIdEv(headers), "") == 0);
+    Require(!_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24hasXPsnAtomicOperationIdEv(headers));
+    alignas(8) unsigned char operationId[0x28];
+    std::memset(operationId, 0, sizeof(operationId));
+    std::memcpy(operationId, "op-1", 5);
+    operationId[0x20] = 1;
+    *reinterpret_cast<unsigned char**>(headers + 0x10) = operationId;
+    Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24getXPsnAtomicOperationIdEv(headers) == reinterpret_cast<const char*>(operationId));
+    Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi25UploadDataResponseHeaders24hasXPsnAtomicOperationIdEv(headers));
+
+    alignas(8) unsigned char body[0x50];
+    std::memset(body, 0, sizeof(body));
+    const std::uint64_t magic = 0x434e507056656342ULL;
+    const std::uint64_t two = 2;
+    std::memcpy(body, &magic, sizeof(magic));
+    WriteCount(body, VectorReferenceCountOffset, 1);
+    WriteCount(body, 0x34, 1);
+    IntrusivePtr elements[2] = {};
+    *reinterpret_cast<IntrusivePtr**>(body + 0x38) = elements;
+    std::memcpy(body + 0x40, &two, sizeof(two));
+    std::memcpy(body + 0x48, &two, sizeof(two));
+    IntrusivePtr memberVector{body, nullptr, &context};
+
+    alignas(8) unsigned char response[0x60];
+    std::memset(response, 0, sizeof(response));
+    std::memcpy(response + 0x30, &memberVector, sizeof(memberVector));
+    const std::uint32_t dataCount = 9;
+    std::memcpy(response + 0x5c, &dataCount, sizeof(dataCount));
+    Require(_ZNK3sce2Np9CppWebApi17TitleCloudStorage2V132GetMultiDataStatusesResponseBody23getTotalDataStatusCountEv(response) == dataCount);
+    IntrusivePtr copied{};
+    Require(_ZN3sce2Np9CppWebApi12Leaderboards2V122GetRankingResponseBody10getEntriesEv(&copied, response) == &copied);
+    Require(copied.object == body && copied.libContext == &context);
+    Require(ReadCount(body, VectorReferenceCountOffset) == 2);
+
+    auto* entryBody = _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_12Leaderboards2V15EntryEEEEEEptEv(&copied);
+    Require(entryBody == body);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE4sizeEv(entryBody) == 2);
+    unsigned char first[0x10] = {}, last[0x10] = {};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE5beginEv(first, entryBody) == first);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEE3endEv(last, entryBody) == last);
+    unsigned visited = 0;
+    while (_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEneERKS9_(first, last)) {
+        Require(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEdeEv(first) == &elements[visited]);
+        Require(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Leaderboards2V15EntryEEEEppEv(first) == first);
+        ++visited;
+    }
+    Require(visited == 2);
+
+    alignas(8) unsigned char transaction[0x10];
+    std::memset(transaction, 0, sizeof(transaction));
+    alignas(8) unsigned char transactionOut[0x18];
+    std::memset(transactionOut, 0xa5, sizeof(transactionOut));
+    Require(_ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS2_6VectorINS4_INS1_13InGameCatalog2V59ContainerEEEEEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERSB_(transaction, transactionOut) == static_cast<int>(0x80553508));
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V114RepresentativeEED1Ev(&member);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V114RepresentativeEED1Ev(&out);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_12Leaderboards2V15EntryEEEEEED1Ev(&copied);
+    Require(ReadCount(nestedObject, 0) == 3 && ReadCount(body, VectorReferenceCountOffset) == 1);
+    Require(deleterCalls == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::strcmp(argv[1], "alias-vector") == 0) { TestVectorAliasedGrowth(); return 0; }
     Require(sizeof(IntrusivePtr) == 0x18);
@@ -774,5 +897,6 @@ int main(int argc, char** argv) {
     TestUserProfileVectorAssign();
     TestUserProfileModelAndTransaction();
     TestResidualAccessors();
+    TestAuditedModelAccessors();
     return 0;
 }
