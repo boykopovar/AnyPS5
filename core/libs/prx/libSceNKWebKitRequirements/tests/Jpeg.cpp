@@ -8,6 +8,7 @@
 
 extern "C" {
 #include <jpeglib.h>
+#include <jerror.h>
 }
 
 namespace {
@@ -226,9 +227,44 @@ void TestProgressiveBuffered(const std::vector<uint8_t>& jpegData) {
     jpeg_destroy_decompress_nid_postfix(&cinfo);
 }
 
+int g_errorExitCalls = 0;
+int g_errorExitCode = -1;
+
+void APS5_VABI RecordingErrorExit(NKWebKit::GuestCommonPtr cinfo) {
+    ++g_errorExitCalls;
+    g_errorExitCode = cinfo->err->msg_code;
+}
+
+void TestGuestErrorExit() {
+    const uint8_t notJpeg[] = {'N', 'O', 'T', ' ', 'J', 'P', 'E', 'G', 0, 0, 0, 0};
+    NKWebKit::GuestJpegErrorMgr jerr{};
+    jpeg_std_error_nid_postfix(&jerr);
+    jerr.error_exit = RecordingErrorExit;
+
+    NKWebKit::GuestJpegDecompress guest_cinfo{};
+    guest_cinfo.err = &jerr;
+    jpeg_CreateDecompress_nid_postfix(&guest_cinfo, 62, sizeof(NKWebKit::GuestJpegDecompress));
+
+    NKWebKit::GuestJpegSourceMgr srcMgr{};
+    srcMgr.next_input_byte = notJpeg;
+    srcMgr.bytes_in_buffer = sizeof(notJpeg);
+    srcMgr.init_source = GuestInitSource;
+    srcMgr.fill_input_buffer = GuestFillInputBuffer;
+    srcMgr.skip_input_data = GuestSkipInputData;
+    srcMgr.resync_to_restart = GuestResyncToRestart;
+    srcMgr.term_source = GuestTermSource;
+    guest_cinfo.src = &srcMgr;
+
+    AssertTrue(jpeg_read_header_nid_postfix(&guest_cinfo, 1) == 0, "jpeg_read_header should end early after error_exit returns");
+    AssertTrue(g_errorExitCalls == 1, "the guest error_exit should be called once");
+    AssertTrue(g_errorExitCode == JERR_NO_SOI, "the guest error_exit should see JERR_NO_SOI");
+    jpeg_destroy_decompress_nid_postfix(&guest_cinfo);
+}
+
 } // namespace
 
 int main() {
+    TestGuestErrorExit();
     std::vector<uint8_t> baselineJpeg;
     const uint8_t app1Data[] = "EXIF_TEST_MARKER_PAYLOAD";
     GenerateJpeg(baselineJpeg, 16, 16, 3, JCS_RGB, false, 0, app1Data, sizeof(app1Data));

@@ -32,22 +32,22 @@ void TestBuiltinMetadata() {
     AssertTrue(fn != nullptr, "psl_builtin_filename null");
 
     const char* sha = psl_builtin_sha1sum_nid_postfix();
-    AssertTrue(sha != nullptr, "psl_builtin_sha1sum null");
+    AssertTrue(sha != nullptr && std::strlen(sha) == 40 && std::strspn(sha, "0123456789abcdef") == 40, "psl_builtin_sha1sum should be 40 lowercase hex digits");
 
     const char* distFn = psl_dist_filename_nid_postfix();
-    AssertTrue(distFn != nullptr, "psl_dist_filename null");
+    AssertTrue(distFn != nullptr && std::strcmp(distFn, "public_suffix_list.dat") == 0, "psl_dist_filename should be the configured PSL_DISTFILE");
 
     int outdated = psl_builtin_outdated_nid_postfix();
-    (void)outdated;
+    AssertTrue(outdated == 0 || outdated == 1, "psl_builtin_outdated should be 0 or 1");
 
     int totalCount = psl_suffix_count_nid_postfix(psl);
     AssertTrue(totalCount > 1000, "psl_suffix_count unexpectedly small");
 
     int wildCount = psl_suffix_wildcard_count_nid_postfix(psl);
-    AssertTrue(wildCount >= 0, "psl_suffix_wildcard_count negative");
+    AssertTrue(wildCount > 0, "the public suffix list has wildcard rules such as *.ck");
 
     int excCount = psl_suffix_exception_count_nid_postfix(psl);
-    AssertTrue(excCount >= 0, "psl_suffix_exception_count negative");
+    AssertTrue(excCount > 0, "the public suffix list has exception rules such as !www.ck");
 }
 
 void TestSuffixAndRegistrableDomain() {

@@ -3,7 +3,7 @@ function(add_bundled_libxml2)
         return()
     endif()
 
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF)
     set(LIBXML2_WITH_AUTOMATA ON CACHE BOOL "" FORCE)
     set(LIBXML2_WITH_C14N OFF CACHE BOOL "" FORCE)
     set(LIBXML2_WITH_CATALOG OFF CACHE BOOL "" FORCE)
