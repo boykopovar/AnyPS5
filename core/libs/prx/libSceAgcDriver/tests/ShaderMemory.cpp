@@ -22,6 +22,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "SavedExecMaskLoop.hpp"
+#include "ShaderDiskCache.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
@@ -5532,6 +5533,100 @@ void verifyDescriptorPhis() {
     require(planImages(splitReloads(8u)) == 4u, "descriptor Phi: separate reloads of T# dword 7 and dwords 0-6 were not split into their 4 T#s");
     expectFailure([&] { static_cast<void>(planImages(splitReloads(260u))); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a web over more than 512 descriptor tuples was accepted");
     expectFailure([&] { static_cast<void>(planImages(splitReloads(260u))); }, "; descriptor web: more than 512 descriptor states", "descriptor Phi: the failure did not name the state limit");
+
+    static constexpr std::array<std::uint32_t, 33> rawCode{
+        0xbe8803ffu, 0x00021000u, 0xbe8903ffu, 0x03c00000u, 0xbe8a03ffu, 0x0000003fu, 0xbe8b03ffu, 0x9000003fu,
+        0xbe8c03ffu, 0x00000000u, 0xbe8d03ffu, 0x00000000u, 0xbe8e03ffu, 0x00000000u, 0xbe8f03ffu, 0x00000000u,
+        0x7e040207u, 0x7d820480u, 0xbe840300u, 0xbe850301u, 0xbf068007u, 0xbf850003u, 0xf40c0202u, 0x06000000u,
+        0xbf8cc07fu, 0x7e000280u, 0x7e020280u, 0xf0000f08u, 0x00020400u, 0xbf8c3f70u, 0xf800180fu, 0x07060504u,
+        0xbf810000u,
+    };
+    constexpr std::array<std::uint32_t, 8> directImage{0x00021000u, 0x03c00000u, 0x0000003fu, 0x9000003fu, 0u, 0u, 0u, 0u};
+    constexpr std::array<std::uint32_t, 8> loadedImage{0x00021080u, 0x03c00000u, 0x0000003fu, 0x9000003fu, 0u, 0u, 0u, 0u};
+    std::array<std::uint32_t, 64> rawMemory{};
+    std::copy(loadedImage.begin(), loadedImage.end(), rawMemory.begin() + 16);
+    std::array<std::uint32_t, 18> rawUserData{};
+    rawUserData[0] = 0x500000u;
+    rawUserData[3] = 0x40u;
+    rawUserData[7] = 1u;
+    const std::array<MemoryRegion, 1> rawRegions{{{0x500000u, std::as_bytes(std::span{rawMemory})}}};
+    ShaderPixelStageInfo rawPixel{};
+    rawPixel.targetOutputMode[0] = 9u;
+    rawPixel.targetExportMapping.fill(0xe4u);
+    RecompileRequest rawRequest{};
+    rawRequest.shader = {ShaderStage::Fragment, 0x240000u, rawCode, 0, {}};
+    rawRequest.context.waveSize = 32u;
+    rawRequest.context.userDataBaseRegister = 0u;
+    rawRequest.context.userData = rawUserData;
+    rawRequest.context.pixel = rawPixel;
+    rawRequest.context.memory = rawRegions;
+    rawRequest.target = BufferTarget();
+    rawRequest.target.vulkanVersion = 0x00401000u;
+    rawRequest.target.spirvVersion = 0x00010300u;
+    rawRequest.target.subgroupSize = 32u;
+    rawRequest.layout.pushConstantSizeBytes = 128u;
+    rawRequest.useCache = false;
+    require(GetResourcePlan(rawRequest)->info.images.size() == 2u, "descriptor Phi: a literal T# and a scalar-address-loaded T# were not split into separate images");
+    RequestMemoryView rawView(rawRequest.context.memory);
+    const auto rawRuntime = rawView.MakeRuntime(rawRequest.context.userData, rawRequest.shader.codeAddress);
+    const auto rawCapture = CaptureResources(rawRequest, rawRuntime);
+    const auto holdsRaw = [&](const std::array<std::uint32_t, 8>& words) {
+        return std::ranges::any_of(rawCapture->snapshot.images, [&](const DescriptorValue& value) { return value.dwords == words; });
+    };
+    require(rawCapture->snapshot.images.size() == 2u && holdsRaw(directImage) && holdsRaw(loadedImage), "descriptor Phi: the capture did not keep both the literal and loaded T#s");
+    for (const auto& source : rawCapture->plan->descriptorSources) {
+        if (source.requiredBlocks.empty()) continue;
+        for (std::uint32_t dword = 0; dword < source.dwordCount; ++dword) {
+            const auto* read = source.dwords[dword]->Resolve();
+            if (read->Opcode() == IrOpcode::LoadAddressU32) require(rawCapture->plan->memoryInfo.at(read->Flags<MemoryFlags>().index).planningOnly, "descriptor Phi: a copied descriptor read remains a GPU memory access");
+        }
+    }
+    require(!Recompile(rawRequest).spirv.empty(), "descriptor Phi: a scalar-address-loaded T# merged with a literal did not recompile");
+    std::vector<std::byte> rawPlanBytes;
+    require(ShaderDiskCache::EncodePlan(*rawCapture->plan, rawPlanBytes), "descriptor Phi: the guarded raw plan did not encode");
+    IrResourcePlan cachedRawPlan;
+    require(ShaderDiskCache::DecodePlan(rawPlanBytes, cachedRawPlan), "descriptor Phi: the guarded raw plan did not decode");
+    const auto guardedSource = std::ranges::find_if(cachedRawPlan.descriptorSources, [](const DescriptorSource& source) { return !source.requiredBlocks.empty(); });
+    require(guardedSource != cachedRawPlan.descriptorSources.end(), "descriptor Phi: the cached plan lost its raw read guard");
+    const auto requiredBlock = guardedSource->requiredBlocks.front();
+    guardedSource->requiredBlocks.front() = static_cast<std::uint32_t>(cachedRawPlan.controlFlow.size());
+    std::vector<std::byte> invalidGuardBytes;
+    require(ShaderDiskCache::EncodePlan(cachedRawPlan, invalidGuardBytes), "descriptor Phi: the invalid guard fixture did not encode");
+    IrResourcePlan invalidGuardPlan;
+    require(!ShaderDiskCache::DecodePlan(invalidGuardBytes, invalidGuardPlan), "descriptor Phi: a cached guard outside control flow was accepted");
+    guardedSource->requiredBlocks.front() = requiredBlock;
+    rawUserData[7] = 0u;
+    for (const auto pointer : {0x500000u, 0x900000u, 0u}) {
+        rawUserData[0] = pointer;
+        const auto skipped = CaptureResources(rawRequest, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress));
+        require(skipped->snapshot.images.size() == 2u, "descriptor Phi: a skipped scalar-address arm lost its planned image");
+        require(skipped->snapshot.nullRootReads == 0u && skipped->snapshot.srtPoison.empty(), "descriptor Phi: an inactive raw read reported a null root or fault");
+        require(std::ranges::any_of(skipped->snapshot.images, [&](const DescriptorValue& value) { return value.dwords == directImage; }), "descriptor Phi: skipping the scalar-address arm lost the literal T#");
+        require(std::ranges::any_of(skipped->snapshot.images, [](const DescriptorValue& value) { return std::ranges::all_of(value.dwords, [](std::uint32_t word) { return word == 0u; }); }), "descriptor Phi: a skipped scalar-address T# was read");
+        ResourceSnapshot cachedSnapshot;
+        ResourceMaterializer{}.Materialize(cachedRawPlan, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress), cachedSnapshot);
+        require(cachedSnapshot.nullRootReads == 0u && cachedSnapshot.srtPoison.empty(), "descriptor Phi: a cached inactive raw read reported a null root or fault");
+        require(std::ranges::equal(cachedSnapshot.images, skipped->snapshot.images, [](const DescriptorValue& first, const DescriptorValue& second) { return first.dwords == second.dwords; }), "descriptor Phi: the decoded plan changed skipped raw reads");
+        std::vector<std::uint32_t> imageSources;
+        for (const auto& image : cachedRawPlan.info.images) imageSources.push_back(image.source);
+        std::vector<DescriptorValue> interpretedImages;
+        std::vector<std::uint32_t> interpretedFlat;
+        std::vector<std::uint8_t> interpretedActive;
+        SrtWalker{}.EvaluateRuntimeSources(cachedRawPlan, imageSources, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress), interpretedImages, interpretedFlat, cachedRawPlan.cleanFlatSlots, interpretedActive);
+        require(std::ranges::equal(interpretedImages, cachedSnapshot.images, [](const DescriptorValue& first, const DescriptorValue& second) { return first.dwords == second.dwords; }), "descriptor Phi: interpreted source queries changed skipped raw reads");
+        require(imageSources == cachedRawPlan.materializationSources, "descriptor Phi: the raw fixture has non-image materialization sources");
+        const auto* tape = Detail::SrtTape::For(cachedRawPlan);
+        require(tape != nullptr, "descriptor Phi: the guarded plan has no SRT tape");
+        std::vector<DescriptorValue> tapeImages;
+        require(tape->Run(cachedRawPlan, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress), tapeImages, interpretedFlat, interpretedActive), "descriptor Phi: the SRT tape refused skipped raw reads");
+        require(std::ranges::equal(tapeImages, interpretedImages, [](const DescriptorValue& first, const DescriptorValue& second) { return first.dwords == second.dwords; }), "descriptor Phi: SRT tape and interpreted raw reads disagree");
+        require(!Recompile(rawRequest).spirv.empty(), "descriptor Phi: an untaken scalar-address arm prevented recompilation");
+    }
+    rawUserData[7] = 1u;
+    rawUserData[0] = 0x900000u;
+    expectFailure([&] { static_cast<void>(CaptureResources(rawRequest, rawView.MakeRuntime(rawUserData, rawRequest.shader.codeAddress))); }, "failed to evaluate runtime sources", "descriptor Phi: a taken unmapped scalar-address T# was accepted");
+    expectFailure([&] { static_cast<void>(Recompile(rawRequest)); }, "failed to evaluate runtime sources", "descriptor Phi: a taken unmapped scalar-address T# recompiled");
+    std::cout << "descriptor Phi: skipped mapped, unmapped and null reads stay null; taken unmapped reads fail\n";
 }
 
 void verifyUniformTableImage() {
@@ -10270,6 +10365,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--type-zero-image-materialization") {
             verifyTypeZeroImageMaterialization();
             std::cout << "TYPE=0 image descriptor materialization passed\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--descriptor-phis") {
+            verifyDescriptorPhis();
             return 0;
         }
         require(argc == 1, "unknown shader memory test arguments");
