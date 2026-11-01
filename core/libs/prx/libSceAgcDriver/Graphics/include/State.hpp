@@ -111,6 +111,7 @@ struct DepthTarget {
     bool htilePipeAligned = false;
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
+    std::optional<TextureTileMode> gcnTileMode;
 };
 
 struct State {
