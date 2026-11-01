@@ -518,7 +518,7 @@ uint32_t APS5_VABI sceAmprCommandBufferGetNumCommands(const Apr::CommandBufferOb
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetSize(const Apr::CommandBufferObject* buffer) {
-    return buffer->size;
+    return buffer != nullptr ? buffer->size : 0;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetType(const Apr::CommandBufferObject* buffer) {

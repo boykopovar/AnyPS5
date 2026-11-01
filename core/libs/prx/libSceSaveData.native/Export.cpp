@@ -24,6 +24,7 @@
 #include "prx/libc/include/RemoveTree.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "SaveData.hpp"
+#include "prx/libSceSaveData.native/include/SaveDataHostSpace.hpp"
 #include "prx/libSceSaveData/SaveDataFile.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -390,6 +391,41 @@ int APS5_VABI sceSaveDataDeleteTransactionResource(int32_t resource) {
 
 static constexpr std::uint64_t SAVE_DATA_BLOCK_BYTES = 65536;
 
+enum class FreeSpaceMode : std::uint8_t { Fixed, Host };
+
+static FreeSpaceMode free_space_mode() {
+    const char* configured = std::getenv("ANYPS5_FREE_SPACE");
+    if (configured == nullptr || std::strcmp(configured, "fixed") == 0) return FreeSpaceMode::Fixed;
+    if (std::strcmp(configured, "host") == 0) return FreeSpaceMode::Host;
+    throw std::runtime_error("ANYPS5_FREE_SPACE must be fixed or host, not \"" + std::string(configured) + "\"");
+}
+
+static std::uint64_t default_free_space(const std::string& path) {
+    std::filesystem::path probe = std::filesystem::absolute(path);
+    std::error_code error;
+    while (!std::filesystem::exists(probe, error) && probe.has_relative_path()) probe = probe.parent_path();
+    return static_cast<std::uint64_t>(std::filesystem::space(probe).available);
+}
+
+static SaveDataFreeSpaceSource g_free_space_source = default_free_space;
+
+extern "C" void SetSaveDataFreeSpaceSourceForTest_nid_no_patch(SaveDataFreeSpaceSource source) {
+    g_free_space_source = source != nullptr ? source : default_free_space;
+}
+
+static bool host_free_bytes(const std::string& path, std::uint64_t& bytes) {
+    try {
+        bytes = g_free_space_source(path);
+        return true;
+    } catch (const std::exception& failure) {
+        static std::atomic<bool> reported{false};
+        if (!reported.exchange(true, std::memory_order_relaxed)) {
+            std::fprintf(stderr, "[SAVEDATA:native] host free space unavailable, saves keep their own size: %s\n", failure.what());
+        }
+        return false;
+    }
+}
+
 static std::uint64_t save_blocks(const std::string& real_path) {
     std::ifstream file(blocks_path(real_path));
     std::uint64_t blocks = 0;
@@ -421,7 +457,12 @@ static std::uint64_t used_blocks(const std::string& real_path) {
 
 static SaveDataSearchInfo search_info(const std::string& real_path) {
     const auto blocks = save_blocks(real_path);
-    return SaveDataSearchInfo{blocks, blocks - std::min(blocks, used_blocks(real_path)), {}};
+    auto freeBlocks = blocks - std::min(blocks, used_blocks(real_path));
+    if (free_space_mode() == FreeSpaceMode::Host) {
+        std::uint64_t available = 0;
+        if (host_free_bytes(real_path, available)) freeBlocks = std::min(freeBlocks, available / SAVE_DATA_BLOCK_BYTES);
+    }
+    return SaveDataSearchInfo{blocks, freeBlocks, {}};
 }
 
 static int dirNameSearch(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
@@ -635,6 +676,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    const FreeSpaceMode freeSpace = free_space_mode();
     const bool create = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE) != 0;
     const bool create2 = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_CREATE2) != 0;
     const bool rdonly = (mount->mount_mode & SAVE_DATA_MOUNT_MODE_RDONLY) != 0;
@@ -668,6 +710,16 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     int slot = find_free_slot();
     if (slot == -1) {
         return SAVE_DATA_ERROR_MOUNT_FULL;
+    }
+    if (!exists && (create || create2) && freeSpace == FreeSpaceMode::Host) {
+        const std::uint64_t blocks = mount->blocks == 0 ? SAVE_DATA_BLOCKS_MAX : std::min(mount->blocks, SAVE_DATA_BLOCKS_MAX);
+        const std::uint64_t required = blocks * SAVE_DATA_BLOCK_BYTES;
+        std::uint64_t available = 0;
+        if (host_free_bytes(real_path, available) && available < required) {
+            std::memset(mount_result, 0, sizeof(*mount_result));
+            mount_result->required_blocks = (required - available + SAVE_DATA_BLOCK_BYTES - 1) / SAVE_DATA_BLOCK_BYTES;
+            return SAVE_DATA_ERROR_NO_SPACE_FS;
+        }
     }
     bool keepSize = mount->blocks != 0 && (create || (create2 && !exists));
     if (mount->blocks != 0 && !keepSize) {

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
+#include <vector>
 
 static void Require(bool value) { if (!value) std::abort(); }
 using SetId = int (APS5_VABI *)(std::uint32_t);
@@ -155,7 +156,21 @@ int main() {
     Require(getgroups_nid_postfix(static_cast<int>(groups.size()), groups.data()) == 1 && groups[0] == 0);
 
     RequireFailure(setgroups_nid_postfix(-1, wanted.data()), GuestEinval);
-    RequireFailure(setgroups_nid_postfix(1024, wanted.data()), GuestEinval);
+    const std::vector<std::uint32_t> maximal(1024, 0);
+    const std::vector<std::uint32_t> oversized(1025, 0);
+    *__error_nid_postfix() = 13;
+    RequireFailure(setgroups_nid_postfix(static_cast<int>(oversized.size()), oversized.data()), GuestEinval);
+    Require(setgroups_nid_postfix(static_cast<int>(maximal.size()), maximal.data()) == 0);
+    Require(getgroups_nid_postfix(0, nullptr) == 1024);
+    Require(setgroups_nid_postfix(0, nullptr) == 0);
+    groups.fill(9);
+    Require(getgroups_nid_postfix(-1, groups.data()) == 1 && groups[0] == 0 && groups[1] == 9);
+    *__error_nid_postfix() = 13;
+    RequireFailure(getgroups_nid_postfix(-1, nullptr), GuestEfault);
+    *__error_nid_postfix() = 13;
+    RequireFailure(getgroups_nid_postfix(-1, reinterpret_cast<std::uint32_t*>(0x10)), GuestEfault);
+    *__error_nid_postfix() = 13;
+    RequireFailure(setgroups_nid_postfix(1, reinterpret_cast<const std::uint32_t*>(0x10)), GuestEfault);
     RequireFailure(setgroups_nid_postfix(1, nullptr), GuestEfault);
     Require(getgroups_nid_postfix(0, nullptr) == 1);
     return 0;

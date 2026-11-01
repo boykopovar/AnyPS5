@@ -24,6 +24,7 @@ void DirectMemoryFinishRelease(int64_t start, size_t len);
 void DirectMemoryAbandonRelease(int64_t start, size_t len) noexcept;
 void CreateDirectMemoryBacking(int64_t start, size_t len, int memoryType);
 bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uintptr_t* end, std::uint64_t* offset, int* memoryType);
+bool DirectMemoryAliased(std::uintptr_t address, std::size_t bytes);
 void ForgetDirectMemory(int64_t start, size_t len);
 
 struct DirectMemoryView {
