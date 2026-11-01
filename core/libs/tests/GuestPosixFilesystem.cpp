@@ -12,6 +12,8 @@
 #include <random>
 #include <source_location>
 #include <string>
+#include <stdexcept>
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -35,6 +37,149 @@ int main() {
         ("anyps5-posix-test-" + std::to_string(random()) + "-" + std::to_string(random()));
     Require(std::filesystem::create_directory(root));
     AddPathAlias_nid_no_patch("/anyps5-posix-test", root.string().c_str());
+    constexpr int shared = 0x10;
+    constexpr int exclusive = 0x20;
+    constexpr int closeOnExec = 0x100000;
+    const std::array flagsToTest{0, SCE_KERNEL_O_APPEND, SCE_KERNEL_O_SYNC, shared, exclusive,
+        closeOnExec, shared | exclusive, shared | closeOnExec,
+        exclusive | SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC | closeOnExec};
+    for (const int flags : flagsToTest) {
+        std::string temporary = "/anyps5-posix-test/mkostemp-XXXXXXXX";
+        const int fd = mkostemp_nid_postfix(temporary.data(), flags);
+        Require(fd >= 0);
+        Require(temporary.starts_with("/anyps5-posix-test/mkostemp-") && temporary.size() == std::strlen("/anyps5-posix-test/mkostemp-XXXXXXXX"));
+        Require(temporary.substr(temporary.size() - 8).find_first_not_of(
+            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") == std::string::npos);
+        Require(fcntl_nid_postfix(fd, 1) == ((flags & closeOnExec) ? 1 : 0));
+        Require((fcntl_nid_postfix(fd, 3) & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC)) ==
+            (flags & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC)));
+#ifdef _WIN32
+        DWORD handleFlags = 0;
+        Require(GetHandleInformation(reinterpret_cast<HANDLE>(::_get_osfhandle(fd)), &handleFlags));
+        if (flags & closeOnExec) Require((handleFlags & HANDLE_FLAG_INHERIT) == 0);
+#else
+        Require((::fcntl(fd, F_GETFD) & FD_CLOEXEC) == ((flags & closeOnExec) ? FD_CLOEXEC : 0));
+        const int nativeStatus = ::fcntl(fd, F_GETFL);
+        Require(nativeStatus >= 0);
+        Require((nativeStatus & O_APPEND) == ((flags & SCE_KERNEL_O_APPEND) ? O_APPEND : 0));
+        Require((nativeStatus & O_SYNC) == ((flags & SCE_KERNEL_O_SYNC) ? O_SYNC : 0));
+        struct stat temporaryStatus{};
+        Require(::fstat(fd, &temporaryStatus) == 0 && (temporaryStatus.st_mode & 0777) == 0600);
+#endif
+        Require(write_nid_postfix(fd, "ab", 2) == 2);
+        Require(lseek_nid_postfix(fd, 0, SEEK_SET) == 0);
+        Require(write_nid_postfix(fd, "c", 1) == 1);
+        Require(lseek_nid_postfix(fd, 0, SEEK_SET) == 0);
+        std::array<char, 3> content{};
+        Require(read_nid_postfix(fd, content.data(), content.size()) == ((flags & SCE_KERNEL_O_APPEND) ? 3 : 2));
+        Require(std::string(content.data(), (flags & SCE_KERNEL_O_APPEND) ? 3 : 2) ==
+            ((flags & SCE_KERNEL_O_APPEND) ? "abc" : "cb"));
+        const int secondFd = open_nid_postfix(temporary.c_str(), SCE_KERNEL_O_RDWR, 0);
+        Require(secondFd >= 0);
+        const int lockResult = flock_nid_postfix(secondFd, 1 | 4);
+        if (flags & exclusive) Require(lockResult == -1 && *__error_nid_postfix() == 35);
+        else {
+            Require(lockResult == 0);
+            Require(flock_nid_postfix(secondFd, 8) == 0);
+        }
+        if (flags & (shared | exclusive)) {
+            Require(flock_nid_postfix(secondFd, 2 | 4) == -1 && *__error_nid_postfix() == 35);
+        }
+        Require(close_nid_postfix(fd) == 0);
+        Require(flock_nid_postfix(secondFd, 2 | 4) == 0);
+        Require(flock_nid_postfix(secondFd, 8) == 0);
+        Require(close_nid_postfix(secondFd) == 0);
+        Require(unlink_nid_postfix(temporary.c_str()) == 0);
+    }
+    for (const int invalid : {1, 2, 4, 0x200, 0x400, 0x800, 0x40, -1, 0x10001}) {
+        std::string untouched = "/anyps5-posix-test/invalid-XXXXXX";
+        const auto before = untouched;
+        Require(mkostemp_nid_postfix(untouched.data(), invalid) == -1 && *__error_nid_postfix() == 22);
+        Require(untouched == before);
+        Require(mkostemp_nid_postfix(nullptr, invalid) == -1 && *__error_nid_postfix() == 22);
+    }
+    bool nullThrew = false;
+    try {
+        mkostemp_nid_postfix(nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        nullThrew = true;
+    }
+    Require(nullThrew);
+    std::string direct = "/anyps5-posix-test/direct-XXXXXX";
+    bool directThrew = false;
+    try {
+        mkostemp_nid_postfix(direct.data(), SCE_KERNEL_O_DIRECT);
+    } catch (const std::exception& error) {
+        directThrew = std::string(error.what()).find("not implemented") != std::string::npos;
+    }
+    Require(directThrew && direct == "/anyps5-posix-test/direct-XXXXXX");
+    const std::array optionalFlags{SCE_KERNEL_O_APPEND, SCE_KERNEL_O_SYNC, shared, exclusive, closeOnExec};
+    for (unsigned int combination = 0; combination < 32; ++combination) {
+        int flags = 0;
+        for (unsigned int bit = 0; bit < optionalFlags.size(); ++bit)
+            if (combination & (1u << bit)) flags |= optionalFlags[bit];
+        std::string combined = "/anyps5-posix-test/combined-XXXXXX";
+        const int fd = mkostemp_nid_postfix(combined.data(), flags);
+        Require(fd >= 0);
+        Require(fcntl_nid_postfix(fd, 1) == ((flags & closeOnExec) ? 1 : 0));
+        Require((fcntl_nid_postfix(fd, 3) & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC)) ==
+            (flags & (SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC)));
+        Require(close_nid_postfix(fd) == 0);
+        Require(unlink_nid_postfix(combined.c_str()) == 0);
+    }
+    for (const int flags : {0, SCE_KERNEL_O_APPEND | SCE_KERNEL_O_SYNC | closeOnExec}) {
+        std::string absent = "/anyps5-posix-test/absent/file-XXXXXX";
+        Require(mkostemp_nid_postfix(absent.data(), flags) == -1 && *__error_nid_postfix() == 2);
+        Require(absent.substr(absent.size() - 6).find_first_not_of(
+            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") == std::string::npos);
+        std::string emptyTemplate;
+        Require(mkostemp_nid_postfix(emptyTemplate.data(), flags) == -1 && *__error_nid_postfix() == 22);
+        std::string longTemplate(1024, 'X');
+        Require(mkostemp_nid_postfix(longTemplate.data(), flags) == -1 && *__error_nid_postfix() == 63);
+        Require(longTemplate == std::string(1024, 'X'));
+        std::string invalidLong(1024, 'X');
+        Require(mkostemp_nid_postfix(invalidLong.data(), flags | 4) == -1 && *__error_nid_postfix() == 22);
+        Require(invalidLong == std::string(1024, 'X'));
+    }
+    for (const unsigned int count : {1u, 2u, 6u, 17u}) {
+        const std::string base = "/anyps5-posix-test/trailing-";
+        std::string arbitrary = base + std::string(count, 'X');
+        const int fd = mkostemp_nid_postfix(arbitrary.data(), closeOnExec);
+        Require(fd >= 0 && arbitrary.starts_with(base) && arbitrary.size() == base.size() + count);
+        Require(arbitrary.substr(base.size()).find_first_not_of(
+            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz") == std::string::npos);
+        Require(close_nid_postfix(fd) == 0);
+        Require(unlink_nid_postfix(arbitrary.c_str()) == 0);
+    }
+    Require(std::filesystem::create_directory(root / "directory-X"));
+    for (const int flags : {0, closeOnExec | exclusive}) {
+        std::string nested = "/anyps5-posix-test/directory-X/nested-XXX";
+        const int fd = mkostemp_nid_postfix(nested.data(), flags);
+        Require(fd >= 0 && nested.starts_with("/anyps5-posix-test/directory-X/nested-"));
+        Require(std::filesystem::is_directory(root / "directory-X"));
+        Require(close_nid_postfix(fd) == 0);
+        Require(unlink_nid_postfix(nested.c_str()) == 0);
+    }
+    Require(std::filesystem::remove(root / "directory-X"));
+    std::string prefixWithX = "/anyps5-posix-test/embedded-X-fixed";
+    const int embedded = mkostemp_nid_postfix(prefixWithX.data(), closeOnExec);
+    Require(embedded >= 0 && prefixWithX == "/anyps5-posix-test/embedded-X-fixed");
+    Require(close_nid_postfix(embedded) == 0);
+    std::string underFile = prefixWithX + "/child-XXXXXX";
+    Require(mkostemp_nid_postfix(underFile.data(), 0) == -1 && *__error_nid_postfix() == 20);
+    Require(unlink_nid_postfix(prefixWithX.c_str()) == 0);
+    std::string directoryTemplate = "/anyps5-posix-test/";
+    Require(mkostemp_nid_postfix(directoryTemplate.data(), 0) == -1 && *__error_nid_postfix() == 17);
+    for (const int flags : {SCE_KERNEL_O_DIRECT | closeOnExec, SCE_KERNEL_O_DIRECT | shared | exclusive}) {
+        std::string untouched = "/anyps5-posix-test/direct-combination-XXXXXX";
+        bool threw = false;
+        try {
+            mkostemp_nid_postfix(untouched.data(), flags);
+        } catch (const std::exception& error) {
+            threw = std::string(error.what()).find("not implemented") != std::string::npos;
+        }
+        Require(threw && untouched == "/anyps5-posix-test/direct-combination-XXXXXX");
+    }
     const std::string prefix = "/anyps5-posix-test/file-";
     std::string pattern = prefix + "XXXXXXXXX";
     const int descriptor = mkstemp_nid_postfix(pattern.data());
@@ -78,6 +223,26 @@ int main() {
     const int collision = mkstemp_nid_postfix(occupied.data());
     Require(collision >= 0 && occupied == "/anyps5-posix-test/occupied-7");
     Require(close_nid_postfix(collision) == 0);
+    occupied = "/anyps5-posix-test/occupied-X";
+    Require(mkostemp_nid_postfix(occupied.data(), closeOnExec) == -1 && *__error_nid_postfix() == 17);
+    Require(std::filesystem::remove(root / "occupied-8"));
+    occupied = "/anyps5-posix-test/occupied-X";
+    const int flaggedCollision = mkostemp_nid_postfix(occupied.data(), closeOnExec);
+    Require(flaggedCollision >= 0 && occupied == "/anyps5-posix-test/occupied-8");
+    Require(fcntl_nid_postfix(flaggedCollision, 1) == 1);
+    Require(close_nid_postfix(flaggedCollision) == 0);
+    std::string flaggedFixed = "/anyps5-posix-test/flagged-fixed";
+    const int fixedFd = mkostemp_nid_postfix(flaggedFixed.data(), 0);
+    Require(fixedFd >= 0 && flaggedFixed == "/anyps5-posix-test/flagged-fixed");
+    Require(write_nid_postfix(fixedFd, "kept", 4) == 4);
+    Require(close_nid_postfix(fixedFd) == 0);
+    Require(mkostemp_nid_postfix(flaggedFixed.data(), 0) == -1 && *__error_nid_postfix() == 17);
+    const int preservedFd = open_nid_postfix(flaggedFixed.c_str(), SCE_KERNEL_O_RDONLY, 0);
+    Require(preservedFd >= 0);
+    std::array<char, 4> preserved{};
+    Require(read_nid_postfix(preservedFd, preserved.data(), preserved.size()) == 4);
+    Require(std::string(preserved.data(), preserved.size()) == "kept");
+    Require(close_nid_postfix(preservedFd) == 0);
     std::string fixed = "/anyps5-posix-test/fixed";
     const int unchanged = mkstemp_nid_postfix(fixed.data());
     Require(unchanged >= 0 && fixed == "/anyps5-posix-test/fixed");
