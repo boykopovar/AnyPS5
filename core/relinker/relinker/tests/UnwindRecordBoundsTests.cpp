@@ -352,6 +352,18 @@ int main() {
             lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaS2Rejected);
-        std::cout << "30 unwind record cases passed\n";
+        auto fdeZeroBytes = Fixture();
+        Io::WriteU32(fdeZeroBytes, 96, 0);
+        bool fdeZeroRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeZeroBytes, {load, eh}, {}, {}); }
+        catch (const std::exception&) { fdeZeroRejected = true; }
+        if (!fdeZeroRejected) throw std::runtime_error("fdeZeroRejected failed");
+        auto fdeOverflowBytes = Fixture();
+        Io::WriteU32(fdeOverflowBytes, 96, 1000);
+        bool fdeOverflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeOverflowBytes, {load, eh}, {}, {}); }
+        catch (const std::exception&) { fdeOverflowRejected = true; }
+        if (!fdeOverflowRejected) throw std::runtime_error("fdeOverflowRejected failed");
+        std::cout << "32 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
