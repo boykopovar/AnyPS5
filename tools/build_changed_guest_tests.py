@@ -46,7 +46,7 @@ def guest_test_targets(source_root, targets, changed_paths=None):
         return selected
     changed = {Path(path).as_posix() for path in changed_paths if path}
     broad_change = any(path in BROAD_CHANGES or path.startswith("core/libs/") and (
-        path.endswith((".h", ".hpp", ".hh", ".inl")) or Path(path).name == "CMakeLists.txt"
+        path.endswith((".h", ".hpp", ".hh", ".inl", ".cmake")) or Path(path).name == "CMakeLists.txt"
     ) for path in changed)
     if broad_change:
         return selected

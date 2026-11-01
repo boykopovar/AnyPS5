@@ -88,6 +88,12 @@ class GuestTestTargets(unittest.TestCase):
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest_a, guest_b]), ["core/libs/prx/libScePad/include/Pad.hpp"]), ["guest_a_tests", "guest_b_tests"])
 
+    def test_a_cmake_fragment_change_selects_every_guest_test(self):
+        guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
+        guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
+        fragment = "core/libs/prx/libSceAgcDriver/tests/cmake/agc_driver_flip_tests.cmake"
+        self.assertEqual(self.selections(self.fixture([guest_a, guest_b]), [fragment]), ["guest_a_tests", "guest_b_tests"])
+
     def test_an_unrelated_change_selects_nothing(self):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])
