@@ -1499,6 +1499,12 @@ if(MINGW)
         set_tests_properties(windows_backtrace_report PROPERTIES TIMEOUT 20
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>"
             PASS_REGULAR_EXPRESSION "aborting[^~]*SIGABRT. on thread[^~]*stack return address candidates:[^~]*rsp[+]0x")
+        foreach(guardedFault IN ITEMS destination expected outside)
+            add_test(NAME windows_guarded_read_wild_${guardedFault} COMMAND windows_backtrace_report_tests guarded-${guardedFault})
+            set_tests_properties(windows_guarded_read_wild_${guardedFault} PROPERTIES TIMEOUT 20
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>"
+                PASS_REGULAR_EXPRESSION "FATAL: unhandled exception 0xc0000005")
+        endforeach()
         add_test(NAME windows_backtrace_failure_report COMMAND windows_backtrace_report_tests report)
         set_tests_properties(windows_backtrace_failure_report PROPERTIES TIMEOUT 20
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>"
