@@ -190,8 +190,8 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
 
 int CopyToBuffer(char* dst, std::size_t size, const char* src, std::size_t length) {
     if (size < length + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-    std::strncpy(dst, src, size - 1);
-    dst[size - 1] = '\0';
+    std::memcpy(dst, src, length);
+    std::memset(dst + length, 0, size - length);
     return 0;
 }
 
