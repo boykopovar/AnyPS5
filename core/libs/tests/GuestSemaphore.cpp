@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
@@ -56,6 +57,20 @@ static void RequireInvalidArguments() {
     Require(sceKernelSignalSema(sem, 3) == SCE_OK);
     Require(sceKernelPollSema(sem, 3) == SCE_OK);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
+
+    int val = -1;
+    Require(sem_getvalue_nid_postfix(nullptr, &val) == -1 && *__error_nid_postfix() == 22);
+    Require(sem_getvalue_nid_postfix(nullptr, nullptr) == -1 && *__error_nid_postfix() == 22);
+    std::uintptr_t invalidSem = 0;
+    Require(sem_getvalue_nid_postfix(&invalidSem, &val) == -1 && *__error_nid_postfix() == 22);
+    Require(sem_getvalue_nid_postfix(&invalidSem, nullptr) == -1 && *__error_nid_postfix() == 22);
+    std::uintptr_t validSem = 0;
+    Require(sem_init_nid_postfix(&validSem, 0, 1) == 0);
+    Require(sem_getvalue_nid_postfix(&validSem, nullptr) == -1 && *__error_nid_postfix() == 22);
+    Require(sem_getvalue_nid_postfix(&validSem, &val) == 0 && val == 1);
+    Require(sem_destroy_nid_postfix(&validSem) == 0);
+    Require(ksem_getvalue_nid_postfix(-1, &val) == -1 && *__error_nid_postfix() == 22);
+    Require(ksem_getvalue_nid_postfix(-1, nullptr) == -1 && *__error_nid_postfix() == 22);
 }
 
 int main() {
