@@ -31,6 +31,10 @@ def working_directory(path):
 
 
 class PublicHeaderPackageTests(unittest.TestCase):
+    def test_bom_prefixed_header_keeps_dependencies_and_original_bytes(self):
+        self.umbrella.write_bytes(b"\xef\xbb\xbf" + self.umbrella.read_bytes())
+        self.test_recursive_headers_keep_paths_and_bytes_without_private_files()
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
