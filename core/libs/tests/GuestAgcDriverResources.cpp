@@ -1,37 +1,15 @@
+#include "prx/libSceAgcDriver/State/include/Status.hpp"
+#include "prx/libSceAgcDriver/Resource/include/Registration.hpp"
+#include "prx/libSceAgcDriver/Resource/include/Lifecycle.hpp"
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceAgcDriverRegisterDefaultOwner(std::uint32_t);
-int APS5_VABI sceAgcDriverRegisterOwner(std::uint32_t*, const char*);
-int APS5_VABI sceAgcDriverRegisterResource(std::uint32_t*, std::uint32_t, const void*, std::size_t, const char*, std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverRegisterMultipleResources(std::uint32_t*, std::uint32_t, const void*, std::uint32_t);
-int APS5_VABI sceAgcDriverRegisterGdsResource(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, const char*, std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverUnregisterAllResourcesForOwner(std::uint32_t);
-int APS5_VABI sceAgcDriverRegisterWorkloadStream(std::uint32_t, const void*);
-int APS5_VABI sceAgcDriverUnregisterWorkloadStream(std::uint32_t);
-int APS5_VABI sceAgcDriverGetDefaultOwner(std::uint32_t*);
-int APS5_VABI sceAgcDriverGetResourceRegistrationMaxNameLength(std::uint32_t*);
-int APS5_VABI sceAgcDriverGetOwnerName(std::uint32_t, const char**);
-int APS5_VABI sceAgcDriverGetResourceName(std::uint32_t, const char**);
-int APS5_VABI sceAgcDriverGetResourceType(std::uint32_t, std::uint32_t*);
-int APS5_VABI sceAgcDriverGetResourceUserData(std::uint32_t, std::uint64_t*);
-int APS5_VABI sceAgcDriverSetResourceUserData(std::uint32_t, std::uint64_t);
-int APS5_VABI sceAgcDriverGetResourceBaseAddressAndSizeInBytes(std::uint32_t, void**, std::size_t*);
-int APS5_VABI sceAgcDriverGetResourceShaderGuid(std::uint32_t, void*);
-int APS5_VABI sceAgcDriverFindResourcesPublic(const void*, void*);
-bool APS5_VABI sceAgcDriverIsCaptureInProgress(void);
-bool APS5_VABI sceAgcDriverIsTraceInProgress(void);
-bool APS5_VABI sceAgcDriverIsSubmitValidationEnabled(void);
-int APS5_VABI sceAgcDriverRegisterOwnerForSystem();
-int APS5_VABI sceAgcDriverInitResourceRegistrationInterface();
-int APS5_VABI sceAgcDriverSetResourceRegistrationInfo();
-}
 
 static constexpr int Unavailable = static_cast<int>(0x8A6C9018);
 static void Require(bool value) { if (!value) std::abort(); }
@@ -76,6 +54,10 @@ int main() {
     Require(sceAgcDriverGetDefaultOwner(&owner) == Unavailable && owner == 7u);
     std::uint32_t maxNameLength = 8u;
     Require(sceAgcDriverGetResourceRegistrationMaxNameLength(&maxNameLength) == 0 && maxNameLength == 0xfcu);
+    bool nullLengthRejected = false;
+    try { sceAgcDriverGetResourceRegistrationMaxNameLength(nullptr); }
+    catch (const std::invalid_argument&) { nullLengthRejected = true; }
+    Require(nullLengthRejected);
     const char* name = "unchanged";
     Require(sceAgcDriverGetOwnerName(owner, &name) == Unavailable);
     Require(sceAgcDriverGetResourceName(resource, &name) == Unavailable);
@@ -91,30 +73,63 @@ int main() {
     Require(sceAgcDriverGetResourceShaderGuid(resource, guid) == Unavailable);
     Require(sceAgcDriverFindResourcesPublic(nullptr, nullptr) == Unavailable);
     Require(sceAgcDriverUnregisterAllResourcesForOwner(owner) == Unavailable);
+    Require(sceAgcDriverUnregisterOwnerAndResources(owner) == Unavailable);
+    Require(sceAgcDriverUnregisterOwnerAndResources(0u) == Unavailable);
+    Require(sceAgcDriverUnregisterResource(resource) == Unavailable);
+    Require(sceAgcDriverUnregisterResource(0u) == Unavailable);
     Require(std::string_view(name) == "unchanged");
     constexpr int InvalidStream = static_cast<int>(0x8A6C0033);
     constexpr int NullStream = static_cast<int>(0x8A6C0035);
     constexpr int StreamNotRegistered = static_cast<int>(0x8A6C003A);
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(0u));
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(1u));
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(2u));
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(31u));
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(32u));
     for (const std::uint32_t id : {0u, 32u, 0x101u, 0xffffffffu}) {
         Require(sceAgcDriverRegisterWorkloadStream(id, memory) == InvalidStream);
         Require(sceAgcDriverRegisterWorkloadStream(id, nullptr) == InvalidStream);
         Require(sceAgcDriverUnregisterWorkloadStream(id) == InvalidStream);
+        Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(id));
     }
     Require(sceAgcDriverRegisterWorkloadStream(2u, nullptr) == NullStream);
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(2u));
     Require(sceAgcDriverUnregisterWorkloadStream(2u) == StreamNotRegistered);
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(2u));
     Require(sceAgcDriverRegisterWorkloadStream(1u, memory) == 0);
+    Require(AgcDriverWorkloadStreamRegistered_nid_postfix(1u));
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(2u));
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(31u));
     Require(sceAgcDriverRegisterWorkloadStream(1u, memory) == InvalidStream);
     Require(sceAgcDriverRegisterWorkloadStream(1u, nullptr) == InvalidStream);
+    Require(AgcDriverWorkloadStreamRegistered_nid_postfix(1u));
     Require(sceAgcDriverRegisterWorkloadStream(31u, reinterpret_cast<const char*>(memory) + 1) == 0);
+    Require(AgcDriverWorkloadStreamRegistered_nid_postfix(1u));
+    Require(AgcDriverWorkloadStreamRegistered_nid_postfix(31u));
     Require(sceAgcDriverUnregisterWorkloadStream(1u) == 0);
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(1u));
+    Require(AgcDriverWorkloadStreamRegistered_nid_postfix(31u));
     Require(sceAgcDriverUnregisterWorkloadStream(1u) == StreamNotRegistered);
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(1u));
     Require(sceAgcDriverRegisterWorkloadStream(1u, memory) == 0);
+    Require(AgcDriverWorkloadStreamRegistered_nid_postfix(1u));
     Require(sceAgcDriverUnregisterWorkloadStream(1u) == 0);
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(1u));
     Require(sceAgcDriverUnregisterWorkloadStream(31u) == 0);
+    Require(!AgcDriverWorkloadStreamRegistered_nid_postfix(31u));
     Require(!sceAgcDriverIsCaptureInProgress());
     Require(!sceAgcDriverIsTraceInProgress());
     Require(!sceAgcDriverIsSubmitValidationEnabled());
+    constexpr int CaptureUnavailable = static_cast<int>(0x8A6C1000);
+    Require(sceAgcDriverRequestCaptureStart(nullptr) == CaptureUnavailable);
+    Require(sceAgcDriverRequestCaptureStart("capture.trace") == CaptureUnavailable);
+    Require(sceAgcDriverRequestCaptureStop() == CaptureUnavailable);
+    Require(sceAgcDriverTriggerCapture() == CaptureUnavailable);
     Require(sceAgcDriverRegisterOwnerForSystem() == Unavailable);
     Require(sceAgcDriverInitResourceRegistrationInterface() == Unavailable);
     Require(sceAgcDriverSetResourceRegistrationInfo() == 0);
+    Require(sceAgcDriverInitResourceRegistration() == 0);
+    std::uint64_t userMemSize = 0;
+    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&userMemSize) == 0 && userMemSize == 0x4000ull);
+    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(nullptr) == 0x80020065u);
 }

@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/HostStandardStreams.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -13,19 +15,7 @@
 #endif
 
 extern "C" {
-int APS5_VABI pipe_nid_postfix(int*);
-int APS5_VABI dup2_nid_postfix(int, int);
-std::int64_t APS5_VABI write_nid_postfix(int, const void*, std::size_t);
-int APS5_VABI printf_nid_postfix(const char*, ...);
-int APS5_VABI puts_nid_postfix(const char*);
-int APS5_VABI fprintf_nid_postfix(FileStream*, const char*, ...);
-int APS5_VABI fflush_nid_postfix(FileStream*);
-int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
-void APS5_VABI setbuf_nid_postfix(FileStream*, char*);
-void APS5_VABI flockfile_nid_postfix(FileStream*);
-void APS5_VABI funlockfile_nid_postfix(FileStream*);
-void APS5_VABI perror_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
+
 extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
 }
@@ -89,6 +79,7 @@ static void GuestText(int standard, const std::string& text) {
         Require(fprintf_nid_postfix(&_Stderr_nid_postfix, "guest-fprintf\n") >= 0);
         *__error_nid_postfix() = 2;
         perror_nid_postfix("guest-perror");
+
         Require(fflush_nid_postfix(&_Stderr_nid_postfix) == 0);
     }
     std::string got(text.size(), '\0');
@@ -109,9 +100,11 @@ static void Buffering(int standard) {
     auto* guestStream = standard == 1 ? &_Stdout_nid_postfix : &_Stderr_nid_postfix;
     char buffer[4096]{};
     flockfile_nid_postfix(guestStream);
+
     if (standard == 1) setbuf_nid_postfix(guestStream, buffer);
     else Require(setvbuf_nid_postfix(guestStream, buffer, 0, sizeof(buffer)) == 0);
     funlockfile_nid_postfix(guestStream);
+
     Require(fprintf_nid_postfix(guestStream, "guest-buffered") == 14);
     Require(std::fputs("host-immediate", standard == 1 ? stdout : stderr) >= 0);
     char bytes[64]{};

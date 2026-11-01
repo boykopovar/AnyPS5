@@ -1,3 +1,4 @@
+#include "prx/libSceAvPlayerStreaming/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -59,6 +60,10 @@ int APS5_VABI MvpHttpSetRecvTimeout_nid_postfix(void) {
 int APS5_VABI MvpHttpSetRedirectCb_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceAvPlayerStreamingRegisterVprinf() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceTsCloseFile(void) {

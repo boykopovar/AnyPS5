@@ -1,46 +1,15 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <chrono>
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
 #include <future>
 #include <thread>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadSetprio(Pthread thread, int prio);
-int APS5_VABI scePthreadSetaffinity(Pthread thread, KernelCpumask mask);
-int APS5_VABI scePthreadAttrInit(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrDestroy(PthreadAttr* attr);
-int APS5_VABI scePthreadAttrGet(Pthread thread, PthreadAttr* attr);
-int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr* attr, int inheritSched);
-int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr* attr, const KernelSchedParam* param);
-int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr* attr, KernelCpumask mask);
-int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr* attr, std::size_t stackSize);
-int APS5_VABI scePthreadAttrGetschedparam(const PthreadAttr* attr, KernelSchedParam* param);
-int APS5_VABI scePthreadAttrGetaffinity(const PthreadAttr* attr, KernelCpumask* mask);
-int APS5_VABI scePthreadAttrGetstacksize(const PthreadAttr* attr, std::size_t* stackSize);
-int APS5_VABI scePthreadAttrGetdetachstate(const PthreadAttr* attr, int* state);
-int APS5_VABI scePthreadAttrGetsolosched(const PthreadAttr* attr, int* solosched);
-int APS5_VABI pthread_attr_setstacksize_nid_postfix(PthreadAttr* attr, std::size_t stackSize);
-int APS5_VABI pthread_attr_setsolosched_np_nid_postfix(PthreadAttr* attr, int solosched);
-int APS5_VABI pthread_attr_getinheritsched_nid_postfix(const PthreadAttr* attr, int* inherit_sched);
-int APS5_VABI pthread_attr_setinheritsched_nid_postfix(PthreadAttr* attr, int inherit_sched);
-int APS5_VABI pthread_attr_getscope_nid_postfix(const PthreadAttr* attr, int* scope);
-int APS5_VABI pthread_attr_setscope_nid_postfix(PthreadAttr* attr, int scope);
-int APS5_VABI pthread_attr_get_np_nid_postfix(Pthread thread, PthreadAttr* attr);
-int APS5_VABI pthread_attr_setschedparam_nid_postfix(PthreadAttr* attr, const KernelSchedParam* param);
-int APS5_VABI pthread_attr_setschedpolicy_nid_postfix(PthreadAttr* attr, int policy);
-int APS5_VABI pthread_attr_getschedpolicy_nid_postfix(const PthreadAttr* attr, int* policy);
-int APS5_VABI scePthreadAttrSetdetachstate(PthreadAttr* attr, int state);
-int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI scePthreadKeyDelete(PthreadKey key);
-int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
-Pthread APS5_VABI scePthreadSelf();
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int EXPLICIT_SCHED = 0;
 static constexpr int INHERIT_SCHED = 4;
 static constexpr int SCOPE_PROCESS = 0;
@@ -52,9 +21,9 @@ static constexpr KernelCpumask CREATION_AFFINITY = 0x3;
 static constexpr KernelCpumask UPDATED_AFFINITY = 0x1000;
 static constexpr std::size_t STACK_SIZE = 2u << 20;
 static constexpr std::size_t MIN_STACK_SIZE = 16384;
+static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_ENOTSUP = 45;
-static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
 static constexpr int DETACH_DETACHED = 1;
 static constexpr int DETACHED_THREADS = 32;
 
@@ -66,12 +35,6 @@ struct ReportedAttributes {
     std::size_t stackSize = 0;
     int detachState = -1;
 };
-
-extern "C" {
-int APS5_VABI pthread_attr_setstack_nid_postfix(PthreadAttr* attr, void* addr, std::size_t size);
-int APS5_VABI pthread_attr_getstack_nid_postfix(const PthreadAttr* attr, void** addr, std::size_t* size);
-int APS5_VABI pthread_attr_getstackaddr_nid_postfix(const PthreadAttr* attr, void** addr);
-}
 
 static ReportedAttributes Query(Pthread thread) {
     PthreadAttr attr = nullptr;
@@ -100,8 +63,6 @@ static void CheckStackSizeLimit() {
     Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK && stackSize == MIN_STACK_SIZE);
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
 }
-
-extern "C" int APS5_VABI scePthreadAttrSetsolosched(PthreadAttr* attr, int solosched);
 
 static void CheckSoloSched() {
     PthreadAttr attr = nullptr;
@@ -204,13 +165,7 @@ static void CheckSchedulingAttributes() {
 
     Require(pthread_attr_getscope_nid_postfix(&attr, nullptr) == GUEST_EINVAL);
 
-    bool threw = false;
-    try {
-        pthread_attr_getinheritsched_nid_postfix(&attr, nullptr);
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(pthread_attr_getinheritsched_nid_postfix(&attr, nullptr) == GUEST_EINVAL);
 
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
     Require(pthread_attr_getinheritsched_nid_postfix(&attr, &inherit) == GUEST_EINVAL);
@@ -234,6 +189,8 @@ static void CheckThreadScope() {
     PthreadAttr queryAttr = nullptr;
     Require(scePthreadAttrInit(&queryAttr) == SCE_OK);
     Require(scePthreadAttrGet(thread, &queryAttr) == SCE_OK);
+    int reportedInherit = -1;
+    Require(pthread_attr_getinheritsched_nid_postfix(&queryAttr, &reportedInherit) == 0 && reportedInherit == EXPLICIT_SCHED);
     int scope = -1;
     Require(pthread_attr_getscope_nid_postfix(&queryAttr, &scope) == 0 && scope == SCOPE_PROCESS);
 
@@ -256,26 +213,40 @@ static void CheckThreadScope() {
 
     Require(scePthreadAttrInit(&queryAttr) == SCE_OK);
     Require(scePthreadAttrGet(inheritedThread, &queryAttr) == SCE_OK);
+    reportedInherit = -1;
+    Require(pthread_attr_getinheritsched_nid_postfix(&queryAttr, &reportedInherit) == 0 && reportedInherit == INHERIT_SCHED);
     scope = -1;
     Require(pthread_attr_getscope_nid_postfix(&queryAttr, &scope) == 0 && scope == SCOPE_SYSTEM);
+    Require(pthread_attr_setinheritsched_nid_postfix(&queryAttr, EXPLICIT_SCHED) == 0);
     Require(pthread_attr_get_np_nid_postfix(inheritedThread, &queryAttr) == 0);
     Require(pthread_attr_getscope_nid_postfix(&queryAttr, &scope) == 0 && scope == SCOPE_SYSTEM);
+    reportedInherit = -1;
+    Require(pthread_attr_getinheritsched_nid_postfix(&queryAttr, &reportedInherit) == 0 && reportedInherit == INHERIT_SCHED);
     Require(scePthreadAttrDestroy(&queryAttr) == SCE_OK);
 
     releaseInherited.set_value();
     Require(scePthreadJoin(inheritedThread, nullptr) == SCE_OK);
 }
 
-static int QueryResult(Pthread thread) {
+static int QueryResult(Pthread thread, bool posix = false) {
     PthreadAttr attr = nullptr;
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     Require(scePthreadAttrSetstacksize(&attr, STACK_SIZE) == SCE_OK);
-    const int result = scePthreadAttrGet(thread, &attr);
+    *__error_nid_postfix() = 12345;
+    const int result = posix ? pthread_attr_get_np_nid_postfix(thread, &attr) : scePthreadAttrGet(thread, &attr);
+    if (posix) Require(*__error_nid_postfix() == 12345);
     std::size_t stackSize = 0;
     Require(scePthreadAttrGetstacksize(&attr, &stackSize) == SCE_OK);
     Require(result == SCE_OK || stackSize == STACK_SIZE);
     Require(scePthreadAttrDestroy(&attr) == SCE_OK);
     return result;
+}
+
+static void CheckPosixQuery(Pthread thread, int expected) {
+    const int result = QueryResult(thread, true);
+    if (result == expected) return;
+    std::fprintf(stderr, "pthread_attr_get_np returned %d, expected %d\n", result, expected);
+    std::abort();
 }
 
 static bool ReportedEnded(Pthread thread) {
@@ -290,11 +261,13 @@ static bool ReportedEnded(Pthread thread) {
 struct ExitQuery {
     PthreadKey key = -1;
     int result = -1;
+    int posixResult = -1;
 };
 
 static void APS5_VABI QuerySelfAtExit(void* value) {
     auto* query = static_cast<ExitQuery*>(value);
     query->result = QueryResult(scePthreadSelf());
+    query->posixResult = QueryResult(scePthreadSelf(), true);
 }
 
 static void* APS5_VABI SetExitQuery(void* arg) {
@@ -309,22 +282,28 @@ static void* APS5_VABI Finish(void*) {
 
 static void CheckEndedThreads() {
     Require(QueryResult(scePthreadSelf()) == SCE_OK);
+    CheckPosixQuery(scePthreadSelf(), 0);
+    CheckPosixQuery(nullptr, GUEST_EINVAL);
 
     Pthread joined = nullptr;
     Require(scePthreadCreate(&joined, nullptr, Finish, nullptr, nullptr) == SCE_OK);
     Require(scePthreadJoin(joined, nullptr) == SCE_OK);
     Require(QueryResult(joined) == SCE_KERNEL_ERROR_ESRCH);
+    CheckPosixQuery(joined, GUEST_ESRCH);
     PthreadAttr unset = nullptr;
     Require(scePthreadAttrGet(joined, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadAttrGet(joined, &unset) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(joined, nullptr) == GUEST_EINVAL);
+    Require(pthread_attr_get_np_nid_postfix(joined, &unset) == GUEST_EINVAL);
 
     ExitQuery exitQuery;
     Require(scePthreadKeyCreate(&exitQuery.key, reinterpret_cast<pthread_key_destructor_func_t>(QuerySelfAtExit)) == SCE_OK);
     Pthread finished = nullptr;
     Require(scePthreadCreate(&finished, nullptr, SetExitQuery, &exitQuery, nullptr) == SCE_OK);
     Require(ReportedEnded(finished));
+    CheckPosixQuery(finished, GUEST_ESRCH);
     Require(scePthreadJoin(finished, nullptr) == SCE_OK);
-    Require(exitQuery.result == SCE_OK);
+    Require(exitQuery.result == SCE_OK && exitQuery.posixResult == 0);
     Require(QueryResult(finished) == SCE_KERNEL_ERROR_ESRCH);
     Require(scePthreadKeyDelete(exitQuery.key) == SCE_OK);
 
@@ -335,11 +314,28 @@ static void CheckEndedThreads() {
         Pthread detached = nullptr;
         Require(scePthreadCreate(&detached, &detachedAttr, Finish, nullptr, nullptr) == SCE_OK);
         Require(ReportedEnded(detached));
+        CheckPosixQuery(detached, GUEST_ESRCH);
     }
     Require(scePthreadAttrDestroy(&detachedAttr) == SCE_OK);
 }
 
+static void CheckGetprioOfTheCallingThread() {
+    const Pthread self = scePthreadSelf();
+    int original = 0;
+    Require(scePthreadGetprio(self, &original) == SCE_OK);
+    int priority = 0;
+    Require(scePthreadSetprio(self, UPDATED_PRIORITY) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == UPDATED_PRIORITY);
+    Require(scePthreadSetprio(self, CREATION_PRIORITY) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == CREATION_PRIORITY);
+    Require(scePthreadGetprio(self, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadGetprio(nullptr, &priority) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadSetprio(self, original) == SCE_OK);
+    Require(scePthreadGetprio(self, &priority) == SCE_OK && priority == original);
+}
+
 int main() {
+    CheckGetprioOfTheCallingThread();
     CheckStackSizeLimit();
     CheckSoloSched();
     CheckSchedArguments();
@@ -366,6 +362,11 @@ int main() {
     Require(reported.stackSize == STACK_SIZE);
     Require(reported.detachState == DETACH_JOINABLE);
 
+    for (const int rejected : {-1, 0, 255, 768, 895, 960, 1023, 131840}) Require(scePthreadSetprio(thread, rejected) == SCE_KERNEL_ERROR_EINVAL);
+    for (const int accepted : {256, 900, 959, 65792, -65280}) {
+        Require(scePthreadSetprio(thread, accepted) == SCE_OK);
+        Require(Query(thread).priority == accepted);
+    }
     Require(scePthreadSetprio(thread, UPDATED_PRIORITY) == SCE_OK);
     Require(scePthreadSetaffinity(thread, UPDATED_AFFINITY) == SCE_OK);
     reported = Query(thread);

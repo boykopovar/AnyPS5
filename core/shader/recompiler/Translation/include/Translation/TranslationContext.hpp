@@ -25,7 +25,9 @@ public:
     }
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
     void SetNativeFloat16(bool enabled) { nativeFloat16 = enabled; }
+    void SetFloat32DenormPreserve(bool enabled) { float32DenormPreserve = enabled; }
     void SetFloat32FlushToZero(bool enabled) { float32FlushToZero = enabled; }
+    void SetFloat32FlushDeclared(bool enabled) { float32FlushDeclared = enabled; }
     void AddBranchCondition(const BasicBlock& source, BlockInfo& info);
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
@@ -81,7 +83,7 @@ private:
     IrU32 flushTinyF16Conversion(IrF32 value, IrU32 bits);
     void writeF16Conversion(const RdnaOperand& operand, IrF32 value, std::initializer_list<IrValue*> sources);
     IrU32 readU32(const RdnaOperand& operand);
-    IrU32 flushF32Denormal(IrU32 bits);
+    IrU32 flushF32Denormal(IrU32 bits, std::uint32_t flushBit = 1u);
     IrF32 flushTinyProduct(IrValue* lhs, IrValue* rhs, IrValue* product, IrValue* addend = nullptr, bool afterRounding = true);
     IrU32 quietNan32(IrU32 bits);
     IrU32 quietNan16(IrU32 bits);
@@ -93,7 +95,7 @@ private:
     IrU64 readU64(const RdnaOperand& operand);
     std::array<IrU32, 2> readF64Bits(const RdnaOperand& operand);
     std::array<IrU32, 2> flushF64Bits(const std::array<IrU32, 2>& bits, std::uint32_t keepBit);
-    IrValue& flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue& result);
+    IrValue& flushTinyF64Result(IrOpcode opcode, IrValue& lhs, IrValue& rhs, IrValue* addend, IrValue& result);
     IrU64 readF64(const RdnaOperand& operand);
     IrF32 readF16LaneAsF32(const RdnaOperand& operand, bool highLane, bool packed = false);
     IrF32 readF16AsF32(const RdnaOperand& operand);
@@ -387,6 +389,8 @@ private:
     RdnaOpcode currentOpcode = RdnaOpcode::Unknown;
     std::uint32_t f32DenormalFlush = 0u;
     bool float32FlushToZero = false;
+    bool float32FlushDeclared = false;
+    bool float32DenormPreserve = false;
     std::uint32_t currentProgramCounter = 0;
     std::uint32_t currentVectorLimit = 1;
 };

@@ -256,7 +256,7 @@ void ResetPool() {
 
 std::size_t WrittenPixels() {
     std::vector<std::byte> colors(ColorBytes);
-    AgcDriver::GuestMemory::Read(reinterpret_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(ColorMemory)), colors);
+    AgcDriver::GuestMemory::Read(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(ColorMemory)), colors);
     std::size_t written = 0;
     for (std::uint32_t pixel = 0; pixel < Width * Height; ++pixel) {
         const auto value = std::to_integer<std::uint8_t>(colors[pixel * 4u]);
@@ -274,7 +274,7 @@ void RequireTriangle(const char* phase) {
 void LandPool() {
     const auto landBy = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     do {
-        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Pool)), PoolBytes);
+        AgcDriver::GuestMemory::FlushGpuWrites(static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Pool)), PoolBytes);
         AgcDriverWaitIdle_nid_postfix();
     } while (IndicesIntact() && std::chrono::steady_clock::now() < landBy);
     Require(!IndicesIntact(), "queued index read: the image's results never reached the memory they cover, so the run above proves nothing");
@@ -322,7 +322,7 @@ void WaitForHeldRange(std::uint64_t address, std::size_t bytes, const char* what
 }
 
 void CopyPendingImage(std::size_t bytes, const char* phase) {
-    const auto poolAddress = reinterpret_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Pool));
+    const auto poolAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Pool));
     ResetPool();
     std::memset(Copied, 0, PoolBytes);
     Submit(ImageWrite(), phase);
@@ -343,10 +343,8 @@ void CopyPendingImage(std::size_t bytes, const char* phase) {
 int main() {
 #ifdef _WIN32
     _putenv_s("APS5_PIPELINED_DRAWS", "1");
-    _putenv_s("APS5_PIPELINE_DMA", "1");
 #else
     setenv("APS5_PIPELINED_DRAWS", "1", 1);
-    setenv("APS5_PIPELINE_DMA", "1", 1);
 #endif
     try {
         {
@@ -365,7 +363,7 @@ int main() {
         for (std::size_t i = 0; i < Vertices.size(); ++i) Vertices[i] = {{PositionX[i], PositionY[i], 0.5f, 1.0f}, {Negative[i], Negative[i], Negative[i], 0.0f}};
         std::memcpy(Pool + VertexOffset, Vertices.data(), sizeof(Vertex) * Vertices.size());
 
-        const auto poolAddress = reinterpret_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Pool));
+        const auto poolAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Pool));
         const auto vertexAddress = poolAddress + VertexOffset;
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> poolRange{{
             {poolAddress, static_cast<std::uint64_t>(PoolBytes)}}};
@@ -373,6 +371,11 @@ int main() {
         AgcDriverWaitIdle_nid_postfix();
         Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "queued index read: the image write left no pending result to order against");
         Require(IndicesIntact(), "queued index read: the image's results reached guest memory before any consumer asked");
+        const auto copiedAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Copied));
+        const auto heldQueries = AgcDriver::DriverDetail::DrawPipeline::HeldReadQueries();
+        Require(!AgcDriver::Graphics::StorageTexture::FlushPending(copiedAddress, PoolBytes), "queued index read: a flush over memory without pending results stored something");
+        Require(AgcDriver::DriverDetail::DrawPipeline::HeldReadQueries() == heldQueries, "queued index read: a flush with nothing to store asked the draw pipeline for held reads");
+        Require(IndicesIntact(), "queued index read: a flush over other memory stored the image's results");
         GateUntilQueued();
         std::fill_n(ColorMemory, ColorBytes, std::byte{0});
         Submit(Draw(Vertices.data(), Vertices.size()), "the indexed draw");

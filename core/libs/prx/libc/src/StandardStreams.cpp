@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -80,8 +81,7 @@ const bool standardDescriptorsOpen = [] {
 FileStream input{stdin};
 }
 extern "C" {
-void APS5_VABI flockfile_nid_postfix(FileStream*);
-void APS5_VABI funlockfile_nid_postfix(FileStream*);
+
 FileStream* __stdinp_nid_postfix = &input;
 FileStream* __stdoutp_nid_postfix = &_Stdout_nid_postfix;
 FileStream* __stderrp_nid_postfix = &_Stderr_nid_postfix;
@@ -101,31 +101,35 @@ std::int32_t APS5_VABI fgetwc_nid_postfix(FileStream* stream) {
         errno = 22;
         return -1;
     }
+    if (const char16_t low = stream->TakeLowSurrogate(); low != 0) return low;
+    stream->NoteWideRead();
+    const auto invalid = [stream] {
+        errno = 86;
+        stream->SetError();
+        return -1;
+    };
     const int first = fgetc_nid_postfix(stream);
     if (first == -1) return -1;
     const unsigned char lead = static_cast<unsigned char>(first);
     if (lead < 0x80) return lead;
-    const std::size_t extra = lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
-    if (extra == 0) {
-        errno = 86;
-        stream->SetError();
-        return -1;
-    }
+    const std::size_t extra = lead >= 0xf8 ? 0 : lead >= 0xf0 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : 0;
+    if (extra == 0) return invalid();
     std::uint32_t code = extra == 3 ? (lead & 0x07) : extra == 2 ? (lead & 0x0f) : (lead & 0x1f);
     for (std::size_t index = 0; index < extra; ++index) {
         const int next = fgetc_nid_postfix(stream);
-        if (next == -1 || (static_cast<unsigned char>(next) & 0xc0) != 0x80) {
-            errno = 86;
-            stream->SetError();
-            return -1;
-        }
+        if (next == -1 || (static_cast<unsigned char>(next) & 0xc0) != 0x80) return invalid();
         code = (code << 6) | (static_cast<unsigned char>(next) & 0x3f);
     }
-    return static_cast<std::int32_t>(code);
+    constexpr std::uint32_t smallest[] = {0, 0x80, 0x800, 0x10000};
+    if (code < smallest[extra] || code > 0x10ffff) return invalid();
+    if (code < 0x10000) return static_cast<std::int32_t>(code);
+    code -= 0x10000;
+    stream->SetLowSurrogate(static_cast<char16_t>(0xdc00 | (code & 0x3ff)));
+    return static_cast<std::int32_t>(0xd800 | (code >> 10));
 }
 
-
 std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* stream) {
+    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
     if (value == -1) return -1;
     if (value < 0 || value > 255) {
         errno = 86;
@@ -136,6 +140,7 @@ std::int32_t APS5_VABI ungetwc_nid_postfix(std::int32_t value, FileStream* strea
     if (!stream->SwitchToReading()) return -1;
     const int result = std::ungetc(value, native);
     stream->SyncStatus();
+    if (result != -1) stream->NotePushback();
     return result;
 }
 int APS5_VABI getc_nid_postfix(FileStream* stream) { return fgetc_nid_postfix(stream); }
@@ -159,6 +164,7 @@ char* APS5_VABI gets_nid_postfix(char* buffer) {
     auto* stream = __stdinp_nid_postfix;
     if (stream && !stream->IsOpen()) { errno = 9; return nullptr; }
     flockfile_nid_postfix(stream);
+
     struct Unlock {
         FileStream* stream;
         ~Unlock() { funlockfile_nid_postfix(stream); }
@@ -183,17 +189,21 @@ std::int32_t APS5_VABI getwchar_nid_postfix() { return fgetwc_nid_postfix(__stdi
 int APS5_VABI getchar_unlocked_nid_postfix() { return getc_unlocked_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
-    const int result = std::fputc(value, GetNativeStream(stream));
+    auto* native = GetNativeStream(stream);
+    if (!stream->SwitchToWriting()) return -1;
+    const int result = std::fputc(value, native);
     stream->SyncStatus();
     return result;
 }
 int APS5_VABI putc_nid_postfix(int value, FileStream* stream) { return fputc_nid_postfix(value, stream); }
 int APS5_VABI putc_unlocked_nid_postfix(int value, FileStream* stream) {
     if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    auto* native = GetNativeStream(stream);
+    if (!stream->SwitchToWritingUnlocked()) return -1;
 #ifdef _WIN32
-    const int result = _fputc_nolock(value, GetNativeStream(stream));
+    const int result = _fputc_nolock(value, native);
 #else
-    const int result = putc_unlocked(value, GetNativeStream(stream));
+    const int result = putc_unlocked(value, native);
 #endif
     stream->SyncUnlockedStatus();
     return result;
@@ -276,10 +286,12 @@ int APS5_VABI setvbuf_nid_postfix(FileStream* stream, char* buffer, int mode, st
 #ifdef _WIN32
     if (handle == __acrt_iob_func(1) && KeepHostStandardOutput_nid_no_patch() < 0) return -1;
     if (handle == __acrt_iob_func(2) && KeepHostStandardError_nid_no_patch() < 0) return -1;
+    buffer = nullptr;
 #endif
     return std::setvbuf(handle, buffer, native, size);
 }
 void APS5_VABI setbuf_nid_postfix(FileStream* stream, char* buffer) {
     setvbuf_nid_postfix(stream, buffer, buffer ? 0 : 2, buffer ? 1024 : 0);
+
 }
 }

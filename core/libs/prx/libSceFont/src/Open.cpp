@@ -1,3 +1,4 @@
+#include "prx/libSceFont/include/Api.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -109,7 +110,7 @@ std::uint32_t ClaimEntry(FontCtxHeader* header, const OpenRequest& request) {
         std::uint32_t firstFree = 0xFFFFFFFFu;
         for (std::uint32_t i = 0; i < header->max_entries; ++i) {
             const auto& entry = entries[i];
-            if ((entry.active != 0 && entry.unique_id == uniqueId) || (request.matchAddress && entry.font_address == address)) {
+            if (entry.active != 0 && (entry.unique_id == uniqueId || (request.matchAddress && entry.font_address == address))) {
                 entryIndex = i;
                 break;
             }

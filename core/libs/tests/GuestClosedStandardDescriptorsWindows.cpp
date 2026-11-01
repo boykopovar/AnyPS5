@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
@@ -7,17 +9,11 @@
 #include <io.h>
 
 extern "C" {
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
+
 extern FileStream* __stdinp_nid_postfix;
 extern FileStream* __stdoutp_nid_postfix;
 extern FileStream* __stderrp_nid_postfix;
-int APS5_VABI fileno_nid_postfix(FileStream*);
-int APS5_VABI fputc_nid_postfix(int, FileStream*);
-int APS5_VABI fflush_nid_postfix(FileStream*);
-int APS5_VABI fgetc_nid_postfix(FileStream*);
-int APS5_VABI feof_nid_postfix(FileStream*);
-int APS5_VABI ferror_nid_postfix(FileStream*);
-void APS5_VABI clearerr_nid_postfix(FileStream*);
+
 }
 
 namespace {

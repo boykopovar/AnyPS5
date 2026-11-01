@@ -8,6 +8,32 @@ if(BUILD_TESTING)
     target_link_libraries(guest_http_tests PRIVATE libSceHttp libc)
     configure_windows_unwind(guest_http_tests)
     add_test(NAME guest_http COMMAND guest_http_tests)
+    add_test(NAME guest_http_uri_locale COMMAND guest_http_tests --uri-locale)
+    set_tests_properties(guest_http_uri_locale PROPERTIES SKIP_RETURN_CODE 77)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set(ANYPS5_HTTP_TEST_LOCALE_DIR "" CACHE PATH "Private locale directory for the HTTP URI regression")
+        set(http_test_locale_dir "${ANYPS5_HTTP_TEST_LOCALE_DIR}")
+        if(NOT http_test_locale_dir AND CMAKE_HOST_SYSTEM_NAME STREQUAL "Linux")
+            set(private_locale_dir "${CMAKE_CURRENT_BINARY_DIR}/locales")
+            file(MAKE_DIRECTORY "${private_locale_dir}")
+            execute_process(
+                COMMAND localedef --no-archive -i en_US -f ISO-8859-1 "${private_locale_dir}/en_US.ISO8859-1"
+                RESULT_VARIABLE locale_result
+                OUTPUT_VARIABLE locale_output
+                ERROR_VARIABLE locale_error
+                TIMEOUT 30
+            )
+            if(locale_result STREQUAL "0")
+                set(http_test_locale_dir "${private_locale_dir}")
+                message(STATUS "HTTP URI locale: ${http_test_locale_dir}")
+            else()
+                message(STATUS "HTTP URI locale unavailable (${locale_result}): ${locale_output}${locale_error}")
+            endif()
+        endif()
+        if(http_test_locale_dir)
+            set_property(TEST guest_http_uri_locale APPEND PROPERTY ENVIRONMENT "LOCPATH=${http_test_locale_dir}")
+        endif()
+    endif()
     add_test_executable(guest_http_response_header_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttpResponseHeader.cpp)
     target_include_directories(guest_http_response_header_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_http_response_header_tests PRIVATE libSceHttp libc)
@@ -19,7 +45,7 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_http_options_tests)
     add_test(NAME guest_http_options COMMAND guest_http_options_tests)
     if(WIN32)
-        set_tests_properties(guest_http guest_http_response_header guest_http_options PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_http guest_http_uri_locale guest_http_response_header guest_http_options PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
     endif()
 endif()

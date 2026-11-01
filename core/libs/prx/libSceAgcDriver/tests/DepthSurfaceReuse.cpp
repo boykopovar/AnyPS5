@@ -1,9 +1,12 @@
 #include "GraphicsTests.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -13,6 +16,14 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 namespace {
 
@@ -149,6 +160,21 @@ VKAPI_ATTR VkResult VKAPI_CALL mapMemory(VkDevice, VkDeviceMemory, VkDeviceSize,
     return VK_ERROR_MEMORY_MAP_FAILED;
 }
 VKAPI_ATTR void VKAPI_CALL unmapMemory(VkDevice, VkDeviceMemory) {}
+VKAPI_ATTR VkResult VKAPI_CALL createDescriptorSetLayout(VkDevice, const VkDescriptorSetLayoutCreateInfo*, const VkAllocationCallbacks*, VkDescriptorSetLayout* layout) {
+    *layout = newHandle<VkDescriptorSetLayout>();
+    return VK_SUCCESS;
+}
+VKAPI_ATTR VkResult VKAPI_CALL createPipelineLayout(VkDevice, const VkPipelineLayoutCreateInfo*, const VkAllocationCallbacks*, VkPipelineLayout* layout) {
+    *layout = newHandle<VkPipelineLayout>();
+    return VK_SUCCESS;
+}
+VKAPI_ATTR VkResult VKAPI_CALL createShaderModule(VkDevice, const VkShaderModuleCreateInfo*, const VkAllocationCallbacks*, VkShaderModule* module) {
+    *module = newHandle<VkShaderModule>();
+    return VK_SUCCESS;
+}
+VKAPI_ATTR void VKAPI_CALL destroyDescriptorSetLayout(VkDevice, VkDescriptorSetLayout, const VkAllocationCallbacks*) {}
+VKAPI_ATTR void VKAPI_CALL destroyPipelineLayout(VkDevice, VkPipelineLayout, const VkAllocationCallbacks*) {}
+VKAPI_ATTR void VKAPI_CALL destroyShaderModule(VkDevice, VkShaderModule, const VkAllocationCallbacks*) {}
 
 VKAPI_ATTR void VKAPI_CALL formatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
     *properties = {};
@@ -207,7 +233,13 @@ PFN_vkVoidFunction VKAPI_CALL deviceProc(VkDevice, const char* name) {
         {"vkBindBufferMemory", reinterpret_cast<PFN_vkVoidFunction>(bindBufferMemory)},
         {"vkDestroyBuffer", reinterpret_cast<PFN_vkVoidFunction>(destroyBuffer)},
         {"vkMapMemory", reinterpret_cast<PFN_vkVoidFunction>(mapMemory)},
-        {"vkUnmapMemory", reinterpret_cast<PFN_vkVoidFunction>(unmapMemory)}
+        {"vkUnmapMemory", reinterpret_cast<PFN_vkVoidFunction>(unmapMemory)},
+        {"vkCreateDescriptorSetLayout", reinterpret_cast<PFN_vkVoidFunction>(createDescriptorSetLayout)},
+        {"vkCreatePipelineLayout", reinterpret_cast<PFN_vkVoidFunction>(createPipelineLayout)},
+        {"vkCreateShaderModule", reinterpret_cast<PFN_vkVoidFunction>(createShaderModule)},
+        {"vkDestroyDescriptorSetLayout", reinterpret_cast<PFN_vkVoidFunction>(destroyDescriptorSetLayout)},
+        {"vkDestroyPipelineLayout", reinterpret_cast<PFN_vkVoidFunction>(destroyPipelineLayout)},
+        {"vkDestroyShaderModule", reinterpret_cast<PFN_vkVoidFunction>(destroyShaderModule)}
     };
     const auto it = table.find(name);
     return it == table.end() ? nullptr : it->second;
@@ -417,6 +449,178 @@ void TestRetiredSurfaceRelease(const Context& context) {
     ClearDepthSurfaces(context.device);
 }
 
+std::atomic<std::uint64_t> untrackedHtileBegin{0};
+std::atomic<std::uint64_t> untrackedHtileEnd{0};
+std::atomic<int> untrackedHtileReads{0};
+
+void CountUntrackedHtileReads(std::uint64_t address, std::size_t bytes) {
+    if (address < untrackedHtileEnd.load() && address + bytes > untrackedHtileBegin.load()) untrackedHtileReads.fetch_add(1);
+}
+
+void TestUntrackedHtileScan(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0xffffffffu);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    Require(!AgcDriver::GuestMemory::Watched(htile, bytes), "the HTILE must lie outside the write watch");
+    DepthTarget target{0xb4000000, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.htileAddress = htile;
+    untrackedHtileBegin = htile;
+    untrackedHtileEnd = htile + bytes;
+    const auto view = [&] {
+        untrackedHtileReads = 0;
+        DepthSurfaceView(context, target);
+        return untrackedHtileReads.load();
+    };
+    AgcDriver::GuestMemory::SetFlushHook(&CountUntrackedHtileReads);
+    try {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(view() >= 2, "the first check of an HTILE outside the write watch must read it");
+        const auto image = lastImage;
+        Require(view() == 1, "an HTILE outside the write watch that held no clear must flush pending GPU results before its stamp and not be read again before the stamp moves");
+        std::fill(words.begin(), words.end(), 0u);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        clearedImages.clear();
+        Require(view() >= 2, "an HTILE outside the write watch must be read again in a new collect epoch");
+        Require(std::ranges::find(clearedImages, image) != clearedImages.end(), "a clear the CPU wrote into an HTILE outside the write watch must be found in the next collect epoch");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearDepthSurfaces(context.device);
+}
+
+void TestUntrackedHtileStencilScan(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0x0000000fu);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    Require(!AgcDriver::GuestMemory::Watched(htile, bytes), "the HTILE must lie outside the write watch");
+    DepthTarget target{0xb8000000, 0xb8800000, extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0};
+    target.htileAddress = htile;
+    untrackedHtileBegin = htile;
+    untrackedHtileEnd = htile + bytes;
+    const auto view = [&] {
+        untrackedHtileReads = 0;
+        DepthSurfaceView(context, target);
+        return untrackedHtileReads.load();
+    };
+    AgcDriver::GuestMemory::SetFlushHook(&CountUntrackedHtileReads);
+    try {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(view() >= 2, "the first check of an HTILE outside the write watch must read it");
+        const auto image = lastImage;
+        clearedImages.clear();
+        Require(view() == 1, "an HTILE outside the write watch that held no clear without stencil must not be read again for the same lookup");
+        Require(std::ranges::find(clearedImages, image) == clearedImages.end(), "HTILE words 0x0000000f without stencil in the HTILE must not clear the surface");
+        target.htileStencil = true;
+        clearedImages.clear();
+        Require(view() >= 2, "an HTILE outside the write watch scanned without stencil must be read again for a lookup with stencil in the same collect epoch");
+        Require(std::ranges::find(clearedImages, image) != clearedImages.end(), "HTILE words 0x0000000f with stencil in the HTILE must clear the stencil after a scan without stencil in the same collect epoch");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearDepthSurfaces(context.device);
+}
+
+void TestUntrackedHtileDriverStore(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{1024, 512};
+    const auto bytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    std::vector<std::uint32_t> words(bytes / 4u, 0xffffffffu);
+    const auto htile = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(words.data()));
+    Require(!AgcDriver::GuestMemory::Watched(htile, bytes), "the HTILE must lie outside the write watch");
+    DepthTarget target{0xbc000000, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.htileAddress = htile;
+    untrackedHtileBegin = htile;
+    untrackedHtileEnd = htile + bytes;
+    const auto view = [&] {
+        untrackedHtileReads = 0;
+        DepthSurfaceView(context, target);
+        return untrackedHtileReads.load();
+    };
+    AgcDriver::GuestMemory::SetFlushHook(&CountUntrackedHtileReads);
+    try {
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(view() >= 2, "the first check of an HTILE outside the write watch must read it");
+        const auto image = lastImage;
+        Require(view() == 1, "an HTILE outside the write watch that held no clear must not be read again before its stamp moves");
+        std::fill(words.begin(), words.end(), 0u);
+        AgcDriver::GuestMemory::MarkWritten(htile, bytes);
+        clearedImages.clear();
+        Require(view() >= 2, "an HTILE outside the write watch must be read again after a driver store in the same collect epoch");
+        Require(std::ranges::find(clearedImages, image) != clearedImages.end(), "a clear stored by the driver into an HTILE outside the write watch must be found in the same collect epoch");
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearDepthSurfaces(context.device);
+}
+
+void TestUnmappedStalePlaneFlush(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr VkExtent2D extent{256, 256};
+    constexpr std::uint64_t unmapped = 0xa0000000;
+    DepthTarget target{unmapped, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.depthSwizzle = XorSwizzleMode(TextureTileMode::kZ64KBX);
+    Require(DepthSurfaceView(context, target, true) != VK_NULL_HANDLE, "a mirrorable depth surface must render");
+    Require(DepthPlanesStale(), "a written mirrorable depth surface must leave its plane stale");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> stored;
+    try {
+        stored = FlushDepthPlanes(unmapped, DepthSliceBytes(extent, 4u));
+    } catch (const std::exception& error) {
+        Require(false, std::string("flushing a depth plane whose guest memory is not mapped must drop its results: ") + error.what());
+    }
+    Require(stored.empty(), "a depth plane without mapped guest memory must not be stored");
+    Require(!DepthPlanesStale(), "a dropped depth plane must not stay stale");
+    ClearDepthSurfaces(context.device);
+}
+
+void TestReadOnlyStalePlaneFlush(const Context& context) {
+    ClearDepthSurfaces(context.device);
+    constexpr std::size_t bytes = 1024 * 1024;
+#ifdef _WIN32
+    const auto release = [](void* pointer) { VirtualFree(pointer, 0, MEM_RELEASE); };
+    std::unique_ptr<void, decltype(release)> mapping(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY), release);
+    Require(mapping != nullptr, "cannot map a read-only depth plane");
+#else
+    const auto release = [](void* pointer) { munmap(pointer, bytes); };
+    std::unique_ptr<void, decltype(release)> mapping(mmap(nullptr, bytes, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0), release);
+    Require(mapping.get() != MAP_FAILED, "cannot map a read-only depth plane");
+#endif
+    const auto address = (reinterpret_cast<std::uintptr_t>(mapping.get()) + 65535u) & ~std::uintptr_t{65535u};
+    constexpr VkExtent2D extent{256, 256};
+    const auto planeBytes = DepthSliceBytes(extent, 4u);
+    Require(!AgcDriver::GuestMemory::CommittedRanges(address, planeBytes).empty(), "a read-only depth plane must remain readable");
+    Require(AgcDriver::GuestMemory::CommittedRanges(address, planeBytes, true).empty(), "a read-only depth plane must not be writable");
+    auto storageContext = context;
+    storageContext.formatProperties = [](VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+        *properties = {};
+        properties->optimalTilingFeatures = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT;
+    };
+    TextureDetiler detiler(storageContext);
+    storageContext.detiler = &detiler;
+    DepthTarget target{address, 0, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+    target.depthSwizzle = XorSwizzleMode(TextureTileMode::kZ64KBX);
+    Require(DepthSurfaceView(storageContext, target, true) != VK_NULL_HANDLE, "a read-only depth plane must render");
+    Require(DepthPlanesStale(), "the read-only depth plane must have pending results");
+    bool rejected = false;
+    try {
+        static_cast<void>(FlushDepthPlanes(address, planeBytes));
+    } catch (const std::runtime_error& error) {
+        rejected = std::string_view(error.what()).find("storage texture has no committed guest pages") != std::string_view::npos;
+    }
+    Require(rejected, "a mapped read-only depth plane must retain the unsupported-store rejection");
+    Require(DepthPlanesStale(), "a mapped read-only depth plane must retain its pending results");
+    ClearDepthSurfaces(context.device);
+}
+
 void RunDepthSurfaceReuseTests() {
     static int deviceTag = 0;
     Context context{};
@@ -432,6 +636,11 @@ void RunDepthSurfaceReuseTests() {
     TestMultisampleDepthOwnership(context);
     TestMultisampleStencilAliases(context);
     TestStencilUnormView(context);
+    TestUntrackedHtileScan(context);
+    TestUntrackedHtileStencilScan(context);
+    TestUntrackedHtileDriverStore(context);
+    TestUnmappedStalePlaneFlush(context);
+    TestReadOnlyStalePlaneFlush(context);
     constexpr std::uint64_t depth32 = 0x40000000;
     constexpr std::uint64_t depth16 = 0x50000000;
     constexpr std::uint64_t depthStencil = 0x60000000;

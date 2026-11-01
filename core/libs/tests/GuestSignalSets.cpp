@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
@@ -7,21 +9,8 @@
 #include <cstring>
 #include <initializer_list>
 
-struct GuestSignalSet {
-    std::uint32_t bits[4];
-};
-
 extern "C" {
-int APS5_VABI sigemptyset_nid_postfix(GuestSignalSet*);
-int APS5_VABI sigfillset_nid_postfix(GuestSignalSet*);
-int APS5_VABI sigaddset_nid_postfix(GuestSignalSet*, int);
-int APS5_VABI sigdelset_nid_postfix(GuestSignalSet*, int);
-int APS5_VABI sigismember_nid_postfix(const GuestSignalSet*, int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI _sigprocmask_nid_postfix(int, const GuestSignalSet*, GuestSignalSet*);
-int APS5_VABI sigprocmask_nid_postfix(int, const void*, void*);
-[[gnu::returns_twice]] int APS5_VABI sigsetjmp_nid_postfix(std::uint64_t* buffer, int saveMask);
-[[noreturn]] void APS5_VABI siglongjmp_nid_postfix(std::uint64_t* buffer, int value);
+
 int APS5_VABI JumpKeepingCalleeSaved(std::uint64_t* buffer);
 }
 
@@ -165,6 +154,30 @@ static void CheckSigsetjmp() {
     SetBlockedMask(0);
 }
 
+static int LongjumpBack(int value, std::uint32_t maskAtSet, std::uint32_t maskAtJump) {
+    std::uint64_t buffer[12]{};
+    volatile int jumped = 0;
+    SetBlockedMask(maskAtSet);
+    const int result = setjmp_nid_postfix(buffer);
+    if (jumped == 0) {
+        Require(result == 0);
+        Require(BufferWord(buffer, 72) == maskAtSet);
+        Require(BufferWord(buffer, 88) == 1);
+        jumped = 1;
+        SetBlockedMask(maskAtJump);
+        longjmp_nid_postfix(buffer, value);
+    }
+    return result;
+}
+
+static void CheckLongjmp() {
+    Require(LongjumpBack(0, 0x5u, 0x30u) == 1);
+    Require(BlockedMask() == 0x5u);
+    Require(LongjumpBack(7, 0x80000009u, 0u) == 7);
+    Require(BlockedMask() == 0x80000009u);
+    SetBlockedMask(0);
+}
+
 static void CheckInvalidHow() {
     SetBlockedMask(0x5u);
     const GuestSignalSet blocked{{0x30u, 0, 0, 0}};
@@ -186,6 +199,7 @@ static void CheckInvalidHow() {
 int main() {
     CheckSigsetjmp();
     CheckSiglongjmp();
+    CheckLongjmp();
     CheckInvalidHow();
     static constexpr int Untouched = 5;
     GuestSignalSet set{{0x12345678u, 0x9abcdef0u, 0xffffffffu, 1u}};

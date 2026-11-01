@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -7,22 +8,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-struct AesKey {
-    std::uint32_t roundKeys[60];
-    std::int32_t rounds;
-};
-
-extern "C" {
-int APS5_VABI AES_set_encrypt_key_nid_postfix(const unsigned char*, int, AesKey*);
-int APS5_VABI AES_set_decrypt_key_nid_postfix(const unsigned char*, int, AesKey*);
-void APS5_VABI AES_encrypt_nid_postfix(const unsigned char*, unsigned char*, const AesKey*);
-void APS5_VABI AES_decrypt_nid_postfix(const unsigned char*, unsigned char*, const AesKey*);
-void APS5_VABI AES_ecb_encrypt_nid_postfix(const unsigned char*, unsigned char*, const AesKey*, int);
-void APS5_VABI AES_cbc_encrypt_nid_postfix(const unsigned char*, unsigned char*, std::size_t, const AesKey*, unsigned char*, int);
-void APS5_VABI AES_cfb128_encrypt_nid_postfix(const unsigned char*, unsigned char*, std::size_t, const AesKey*, unsigned char*, int*, int);
-void APS5_VABI AES_ctr128_encrypt_nid_postfix(const unsigned char*, unsigned char*, std::size_t, const AesKey*, unsigned char*, unsigned char*, unsigned*);
-}
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -104,12 +89,16 @@ int main() {
         const int last = 4 * encrypt.rounds;
         Require(!std::memcmp(decrypt.roundKeys, encrypt.roundKeys + last, 16) && !std::memcmp(decrypt.roundKeys + last, encrypt.roundKeys, 16), "decrypt key reverses the round keys");
         AES_encrypt_nid_postfix(plain.data(), out, &encrypt);
+
         Require(Hex(out, 16) == ciphers[i], "FIPS-197 appendix C cipher");
         AES_decrypt_nid_postfix(out, back, &decrypt);
+
         Require(!std::memcmp(back, plain.data(), 16), "FIPS-197 appendix C inverse cipher");
         AES_ecb_encrypt_nid_postfix(plain.data(), out, &encrypt, 1);
+
         Require(Hex(out, 16) == ciphers[i], "ECB encrypt");
         AES_ecb_encrypt_nid_postfix(out, out, &decrypt, 0);
+
         Require(!std::memcmp(out, plain.data(), 16), "ECB decrypt in place");
     }
 
@@ -167,36 +156,44 @@ int main() {
     AesKey encrypt {}, decrypt {};
     AES_set_encrypt_key_nid_postfix(key.data(), 128, &encrypt);
     AES_set_decrypt_key_nid_postfix(key.data(), 128, &decrypt);
+
     std::vector<unsigned char> out(message.size() + 16), back(message.size() + 16);
 
     auto iv = Bytes("000102030405060708090a0b0c0d0e0f");
     AES_cbc_encrypt_nid_postfix(message.data(), out.data(), 64, &encrypt, iv.data(), 1);
+
     Require(Hex(out.data(), 64) == "7649abac8119b246cee98e9b12e9197d5086cb9b507219ee95db113a917678b273bed6b8e3c1743b7116e69e222295163ff1caa1681fac09120eca307586e1a7", "SP 800-38A F.2.1 CBC encrypt");
     Require(Hex(iv.data(), 16) == "3ff1caa1681fac09120eca307586e1a7", "CBC encrypt returns the last cipher block as iv");
     iv = Bytes("000102030405060708090a0b0c0d0e0f");
     std::memcpy(back.data(), out.data(), 64);
     AES_cbc_encrypt_nid_postfix(back.data(), back.data(), 32, &decrypt, iv.data(), 0);
     AES_cbc_encrypt_nid_postfix(back.data() + 32, back.data() + 32, 32, &decrypt, iv.data(), 0);
+
     Require(!std::memcmp(back.data(), message.data(), 64) && Hex(iv.data(), 16) == "3ff1caa1681fac09120eca307586e1a7", "SP 800-38A F.2.2 CBC decrypt in place across calls");
     iv = Bytes("000102030405060708090a0b0c0d0e0f");
     std::vector<unsigned char> partial(32, 0xee);
     AES_cbc_encrypt_nid_postfix(message.data(), partial.data(), 20, &encrypt, iv.data(), 1);
+
     Require(Hex(partial.data(), 16) == "7649abac8119b246cee98e9b12e9197d" && partial[31] != 0xee && Hex(iv.data(), 16) == Hex(partial.data() + 16, 16), "CBC encrypt pads a partial block with the iv and writes the whole block");
     iv = Bytes("000102030405060708090a0b0c0d0e0f");
     std::vector<unsigned char> plainPartial(32, 0xee);
     AES_cbc_encrypt_nid_postfix(partial.data(), plainPartial.data(), 20, &decrypt, iv.data(), 0);
+
     Require(!std::memcmp(plainPartial.data(), message.data(), 20) && plainPartial[20] == 0xee && Hex(iv.data(), 16) == Hex(partial.data() + 16, 16), "CBC decrypt writes only the requested length");
 
     iv = Bytes("000102030405060708090a0b0c0d0e0f");
     int num = 0;
     AES_cfb128_encrypt_nid_postfix(message.data(), out.data(), 5, &encrypt, iv.data(), &num, 1);
     AES_cfb128_encrypt_nid_postfix(message.data() + 5, out.data() + 5, 32, &encrypt, iv.data(), &num, 1);
+
     Require(num == 5, "CFB128 keeps the block position");
     AES_cfb128_encrypt_nid_postfix(message.data() + 37, out.data() + 37, 27, &encrypt, iv.data(), &num, 1);
+
     Require(Hex(out.data(), 64) == "3b3fd92eb72dad20333449f8e83cfb4ac8a64537a0b3a93fcde3cdad9f1ce58b26751f67a3cbb140b1808cf187a4f4dfc04b05357c5d1c0eeac4c66f9ff7f2e6" && num == 0, "SP 800-38A F.3.13 CFB128 encrypt in pieces");
     iv = Bytes("000102030405060708090a0b0c0d0e0f");
     num = 0;
     AES_cfb128_encrypt_nid_postfix(out.data(), back.data(), 64, &encrypt, iv.data(), &num, 0);
+
     Require(!std::memcmp(back.data(), message.data(), 64), "SP 800-38A F.3.14 CFB128 decrypt");
     num = 16;
     RequireThrows([&] { AES_cfb128_encrypt_nid_postfix(message.data(), out.data(), 1, &encrypt, iv.data(), &num, 1); }, "CFB128 position out of range");
@@ -206,11 +203,13 @@ int main() {
     unsigned position = 0;
     AES_ctr128_encrypt_nid_postfix(message.data(), out.data(), 7, &encrypt, counter.data(), keystream, &position);
     AES_ctr128_encrypt_nid_postfix(message.data() + 7, out.data() + 7, 57, &encrypt, counter.data(), keystream, &position);
+
     Require(Hex(out.data(), 64) == "874d6191b620e3261bef6864990db6ce9806f66b7970fdff8617187bb9fffdff5ae4df3edbd5d35e5b4f09020db03eab1e031dda2fbe03d1792170a0f3009cee", "SP 800-38A F.5.1 CTR encrypt in pieces");
     Require(position == 0 && Hex(counter.data(), 16) == "f0f1f2f3f4f5f6f7f8f9fafbfcfdff03", "CTR advances the counter per block");
     counter = Bytes("ffffffffffffffffffffffffffffffff");
     position = 0;
     AES_ctr128_encrypt_nid_postfix(message.data(), out.data(), 37, &encrypt, counter.data(), keystream, &position);
+
     Require(Hex(out.data(), 37) == "e13338e36cb71962e00d020b4cedbd86d3dae15b04bb352fa0f59febfcb4da3e67da610697", "CTR counter wraps across all 128 bits");
     Require(position == 5 && Hex(counter.data(), 16) == "00000000000000000000000000000002", "CTR position and counter after a partial block");
     position = 16;

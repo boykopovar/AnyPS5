@@ -1,3 +1,4 @@
+#include "prx/libSceNpEntitlementAccess/include/Api.hpp"
 #include "SceTypes.hpp"
 
 #include <cstdint>
@@ -6,19 +7,11 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
-
-extern "C" {
-int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfo(std::uint32_t, const NpUnifiedEntitlementLabel*, NpEntitlementAccessAddcontEntitlementInfo*);
-int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoList(std::uint32_t, NpEntitlementAccessAddcontEntitlementInfo*, std::uint32_t, std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessGetSkuFlag(std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessGetPftFlag(std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessGetGameTrialsFlag(std::uint32_t*);
-int APS5_VABI sceNpEntitlementAccessGenerateTransactionId(void*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -50,6 +43,7 @@ int main(int argc, char** argv) {
         bool rejected = false;
         try {
             sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, nullptr, 0, &hits);
+
         } catch (const std::runtime_error& error) {
             rejected = std::string_view(error.what()).starts_with("NpEntitlementAccess: cannot read ");
         }
@@ -75,6 +69,42 @@ int main(int argc, char** argv) {
     NpEntitlementAccessAddcontEntitlementInfo info{};
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &label, &info) == 0);
     Require(std::strcmp(info.entitlement_label.data, "SECONDADDON") == 0 && info.package_type == 3 && info.download_status == 4);
+    for (std::int32_t userId : {1, 0x10000000, std::numeric_limits<std::int32_t>::min()}) {
+        NpEntitlementAccessAddcontEntitlementInfo individual{};
+        Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(userId, 0, &label, &individual) == 0);
+        Require(std::memcmp(&individual, &info, sizeof(info)) == 0);
+    }
+    NpEntitlementAccessAddcontEntitlementInfo untouched{};
+    std::memset(&untouched, 0x5a, sizeof(untouched));
+    const auto original = untouched;
+    NpUnifiedEntitlementLabel unlisted{};
+    std::memcpy(unlisted.data, "UNLISTEDADDON", 13);
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &unlisted, &untouched) == static_cast<int>(0x80558007));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(-1, 0, &label, &untouched) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(-1, 0, nullptr, nullptr) == static_cast<int>(0x80558003));
+    Require(std::memcmp(&untouched, &original, sizeof(original)) == 0);
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, nullptr, &untouched) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &label, nullptr) == static_cast<int>(0x80558003));
+    NpUnifiedEntitlementLabel empty{};
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &empty, &untouched) == static_cast<int>(0x80558007));
+    NpUnifiedEntitlementLabel unterminated{};
+    std::memset(unterminated.data, 'A', sizeof(unterminated.data));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &unterminated, &untouched) == static_cast<int>(0x80558007));
+    Require(std::memcmp(&untouched, &original, sizeof(original)) == 0);
+    auto padded = label;
+    std::memset(padded.padding, 0x5a, sizeof(padded.padding));
+    NpEntitlementAccessAddcontEntitlementInfo paddedInfo{};
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoIndividual(1, 0, &padded, &paddedInfo) == 0);
+    Require(std::memcmp(&paddedInfo, &info, sizeof(info)) == 0);
+    NpEntitlementAccessEntitlementKey key{};
+    Require(sceNpEntitlementAccessGetEntitlementKey(0, nullptr, &key) == static_cast<int>(0x817D0002));
+    Require(sceNpEntitlementAccessGetEntitlementKey(0, &label, nullptr) == static_cast<int>(0x817D0002));
+    Require(sceNpEntitlementAccessGetEntitlementKey(0, &label, &key) == static_cast<int>(0x817D0007));
+    for (std::int64_t requestId : {std::int64_t{0}, std::int64_t{1}, std::int64_t{-7}, std::numeric_limits<std::int64_t>::max()}) {
+        Require(sceNpEntitlementAccessAbortRequest(requestId) == 0);
+        Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
+        Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
+    }
     std::filesystem::remove_all(root);
     std::puts("Guest entitlements passed");
     return 0;

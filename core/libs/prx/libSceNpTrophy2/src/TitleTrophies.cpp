@@ -139,6 +139,10 @@ StatChanges ApplyStatRules(const StatRules& rules, const NpTrophy2Event& event, 
     const auto matching = rules.events.find(event.name);
     if (matching == rules.events.end()) return changes;
     for (const auto& rule : matching->second) {
+        if (rule.filter) {
+            const auto filtered = std::find_if(event.properties.begin(), event.properties.end(), [&rule](const NpTrophy2EventProperty& candidate) { return candidate.path == rule.filter->path; });
+            if (filtered == event.properties.end() || filtered->value != rule.filter->value) continue;
+        }
         const auto& definition = rules.stats.at(rule.statId);
         const auto property = std::find_if(event.properties.begin(), event.properties.end(), [&rule](const NpTrophy2EventProperty& candidate) { return candidate.path == rule.input; });
         const auto where = event.name + " $." + rule.input + " for stat " + std::to_string(rule.statId);
@@ -148,6 +152,8 @@ StatChanges ApplyStatRules(const StatRules& rules, const NpTrophy2Event& event, 
             changes.problems.push_back({where, property->text + " is not an unsigned integer"});
         } else if (*property->value < definition.minimum || *property->value > definition.maximum) {
             changes.problems.push_back({where, property->text + " is not from " + std::to_string(definition.minimum) + " to " + std::to_string(definition.maximum)});
+        } else if (definition.aggregation == StatAggregation::Max) {
+            changes.updates.push_back({rule.statId, stats.Raise(userId, serviceLabel, rule.statId, std::max(*property->value, definition.initial)), rule.input});
         } else {
             stats.Set(userId, serviceLabel, rule.statId, *property->value);
             changes.updates.push_back({rule.statId, *property->value, rule.input});

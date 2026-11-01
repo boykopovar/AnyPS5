@@ -1,3 +1,6 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAjm.native/include/InventoryExports.hpp"
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -12,32 +15,6 @@ static void AjmStub(const char* name) {
     std::fprintf(stderr, "[ajm] unimplemented %s called\n", name);
     NotImplemented_nid_no_patch(name);
 }
-
-struct WVorbisHeaderPacketParameter {
-    std::size_t size;
-    std::int32_t channels;
-    std::uint32_t sampleRate;
-    std::int32_t bytesPerSecond;
-    std::int32_t shortBlockExponent;
-    std::int32_t longBlockExponent;
-    std::uint32_t reserved;
-    const void* setupPacket;
-    std::size_t setupPacketSize;
-    void* output;
-    std::size_t outputCapacity;
-    std::size_t outputSize;
-};
-
-struct WVorbisSetupPacketParameter {
-    std::size_t size;
-    std::int32_t channels;
-    std::uint32_t reserved;
-    const void* input;
-    std::size_t inputSize;
-    void* output;
-    std::size_t outputCapacity;
-    std::size_t outputSize;
-};
 
 static_assert(sizeof(WVorbisHeaderPacketParameter) == 72);
 static_assert(offsetof(WVorbisHeaderPacketParameter, setupPacket) == 32);
@@ -166,5 +143,44 @@ int APS5_VABI sceAjmInstanceSwitch(uint32_t context, uint32_t codec, uint64_t fl
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAjm_nativeUnknown_IfQ_minus_AhcmW9k_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("IfQ-AhcmW9k", libSceAjm_nativeUnknown_IfQ_minus_AhcmW9k_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_JAPya_minus_QyJlU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("JAPya-QyJlU", libSceAjm_nativeUnknown_JAPya_minus_QyJlU_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_MgTTRx1YSFw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("MgTTRx1YSFw", libSceAjm_nativeUnknown_MgTTRx1YSFw_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_POOw6Y5luA8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("POOw6Y5luA8", libSceAjm_nativeUnknown_POOw6Y5luA8_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_mKgie3ed4ao_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mKgie3ed4ao", libSceAjm_nativeUnknown_mKgie3ed4ao_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_mwtwIZb60YM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mwtwIZb60YM", libSceAjm_nativeUnknown_mwtwIZb60YM_nid_no_patch);
+
+int APS5_VABI libSceAjm_nativeUnknown_qkuXdR4_minus_Ihc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qkuXdR4-Ihc", libSceAjm_nativeUnknown_qkuXdR4_minus_Ihc_nid_no_patch);
 
 }

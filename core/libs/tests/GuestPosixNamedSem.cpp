@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -6,19 +8,6 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
-
-extern "C" {
-void* APS5_VABI sem_open_nid_postfix(const char* name, int flags, ...);
-int APS5_VABI sem_close_nid_postfix(void* sem);
-int APS5_VABI sem_unlink_nid_postfix(const char* name);
-int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value);
-int APS5_VABI sem_destroy_nid_postfix(void* sem);
-int APS5_VABI sem_wait_nid_postfix(void* sem);
-int APS5_VABI sem_trywait_nid_postfix(void* sem);
-int APS5_VABI sem_post_nid_postfix(void* sem);
-int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static constexpr int GUEST_ENOENT = 2;
 static constexpr int GUEST_EEXIST = 17;

@@ -1,3 +1,4 @@
+#include "prx/libSceVideoRecordingP/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
@@ -5,16 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-
-extern "C" {
-void APS5_VABI _sceVideoRecordingQueryParam_nid_postfix(void* param);
-int APS5_VABI sceVideoRecordingGetStatus(void);
-int APS5_VABI sceVideoRecordingQueryMemSize(const void* param);
-int APS5_VABI sceVideoRecordingOpen(const char* path, const void* param, void* heap, int heapSize);
-int APS5_VABI sceVideoRecordingStart(void);
-int APS5_VABI sceVideoRecordingStop(void);
-int APS5_VABI sceVideoRecordingClose(int discard);
-}
 
 namespace {
 
@@ -49,10 +40,10 @@ int main() {
     std::array<std::uint8_t, 64> heap{};
     heap.fill(Sentinel);
 
-    Require(Throws([&] { _sceVideoRecordingQueryParam_nid_postfix(param.data()); }), "the default parameters were produced");
-    Require(Throws([&] { sceVideoRecordingQueryMemSize(param.data()); }), "a heap size was reported");
+    Require(Throws([&] { _sceVideoRecordingQueryParam_nid_postfix(reinterpret_cast<VideoRecordingQueryParam*>(param.data())); }), "the default parameters were produced");
+    Require(Throws([&] { sceVideoRecordingQueryMemSize(reinterpret_cast<const VideoRecordingParam*>(param.data())); }), "a heap size was reported");
     Require(Throws([&] { sceVideoRecordingQueryMemSize(nullptr); }), "a heap size was reported for no parameters");
-    Require(Throws([&] { sceVideoRecordingOpen("clip.mp4", param.data(), heap.data(), static_cast<int>(heap.size())); }), "the recorder opened");
+    Require(Throws([&] { sceVideoRecordingOpen("clip.mp4", reinterpret_cast<const VideoRecordingParam*>(param.data()), heap.data(), static_cast<int>(heap.size())); }), "the recorder opened");
     Require(Throws([&] { sceVideoRecordingStart(); }), "the encoder started");
     Require(Throws([&] { sceVideoRecordingStop(); }), "the encoder stopped");
     Require(Throws([&] { sceVideoRecordingClose(0); }), "the recorder closed");
@@ -62,6 +53,9 @@ int main() {
     for (const std::uint8_t value : heap) Require(value == Sentinel, "the heap was written");
     Require(sceVideoRecordingGetStatus() == StatusNone, "a failed open changed the status");
 
+    Require(sceVideoRecordingGetInfo(0xa001, nullptr, 0) == static_cast<int>(0x80a80006), "info 0xa001 validation");
+    Require(sceVideoRecordingGetInfo(0xa005, nullptr, 0) == static_cast<int>(0x80a80006), "info 0xa005 validation");
+    Require(sceVideoRecordingGetInfo(0, nullptr, 0) == static_cast<int>(0x80a80003), "unknown info validation");
     std::puts("VideoRecording tests passed");
     return 0;
 }
