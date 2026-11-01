@@ -1250,6 +1250,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpGameIntent>")
     endif()
 
+    add_test_executable(guest_sdma_tests tests/GuestSdma.cpp)
+    target_include_directories(guest_sdma_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_sdma_tests PRIVATE libSceSdma libc)
+    configure_windows_unwind(guest_sdma_tests)
+    add_test(NAME guest_sdma COMMAND guest_sdma_tests)
+    if(WIN32)
+        set_tests_properties(guest_sdma PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>")
+    endif()
+
     add_test_executable(guest_gnm_neo_shaders_tests tests/GuestGnmNeoShaders.cpp)
     target_include_directories(guest_gnm_neo_shaders_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_gnm_neo_shaders_tests PRIVATE libSceGnmDriverForNeoMode libc)
