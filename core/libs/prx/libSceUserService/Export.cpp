@@ -2034,9 +2034,9 @@ int APS5_VABI sceUserServiceSetPbtcWednesdayDuration(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsGuestUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsGuestUser(int userId) {
+    const auto id = static_cast<std::uint32_t>(userId);
+    return (id & 0xe0000000u) == 0x20000000u;
 }
 
 int APS5_VABI sceUserServiceGetPadProfileDataHuntList(void) {
@@ -2514,9 +2514,9 @@ int APS5_VABI sceUserServiceSetPbtcAdditionalTime(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsSharePlayClientUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsSharePlayClientUser(int userId) {
+    const auto id = static_cast<std::uint32_t>(userId);
+    return (id & 0xf0000000u) == 0x30000000u;
 }
 
 int APS5_VABI sceUserServiceGetMonoOutput(void) {
