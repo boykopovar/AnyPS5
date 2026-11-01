@@ -173,14 +173,6 @@ Instance* find(std::int32_t handle) {
 
 extern "C" {
 
-int APS5_VABI sceAudiodecUnregisterCodec() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceAudiodecGetAjmContext() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int32_t APS5_VABI sceAudiodecInitLibrary(uint32_t codec_type) {
     if (!validType(codec_type)) return ERROR_INVALID_TYPE;
     std::lock_guard lock(g_mutex);
