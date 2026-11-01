@@ -47,6 +47,22 @@ class Tests(unittest.TestCase):
         self.assertEqual(r.returncode,2)
         self.assertEqual(r.stdout,"")
 
+    def test_value_changes_after_unicode_separators_are_reported(self):
+        baseline, candidate = self.root / "baseline", self.root / "candidate"
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=separator):
+                before, after = f"prefix{separator}before", f"prefix{separator}after"
+                baseline.write_text(f"//Test FEATURE\nFEATURE:INTERNAL={before}\n", encoding="utf-8")
+                candidate.write_text(f"//Test FEATURE\nFEATURE:INTERNAL={after}\n", encoding="utf-8")
+                result = self.run_tool(baseline, candidate)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(json.loads(result.stdout), {
+                    "added": [], "removed": [], "changed": [{
+                        "name": "FEATURE", "before": {"value": before, "help": "Test FEATURE"},
+                        "after": {"value": after, "help": "Test FEATURE"},
+                    }],
+                })
+
 
 if __name__ == "__main__":
     unittest.main()

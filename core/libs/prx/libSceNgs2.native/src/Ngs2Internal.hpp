@@ -68,23 +68,28 @@ struct Ngs2ReverbDeleter {
 
 struct Ngs2Voice;
 
+struct Ngs2ReturnCode {
+    int code;
+};
+
 struct Ngs2FilterHistory {
-    double x1 = 0.0;
-    double x2 = 0.0;
-    double y1 = 0.0;
-    double y2 = 0.0;
+    float x1 = 0.0f;
+    float x2 = 0.0f;
+    float y1 = 0.0f;
+    float y2 = 0.0f;
 };
 
 struct Ngs2Filter {
     bool enabled = false;
     bool pending = false;
+    std::uint32_t location = 0;
     Ngs2SamplerVoiceFilterParam parameter{};
     std::uint64_t bypassMask = 0;
-    double b0 = 1.0;
-    double b1 = 0.0;
-    double b2 = 0.0;
-    double a1 = 0.0;
-    double a2 = 0.0;
+    float h[4] = {};
+    float c[4] = {};
+    float d[4] = {};
+    float e1[4] = {};
+    float e2[4] = {};
     std::vector<Ngs2FilterHistory> history;
 };
 
@@ -342,6 +347,10 @@ int Ngs2DestroyRack(Ngs2Rack& rack, Ngs2ContextBufferInfo* outBufferInfo);
 int Ngs2ReleaseBuffer(const Ngs2BufferAllocator& allocator, Ngs2ContextBufferInfo bufferInfo, Ngs2ContextBufferInfo* outBufferInfo);
 void Ngs2SetupAtrac9(Ngs2Voice& voice, const Ngs2WaveformFormat& format);
 void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param);
+void Ngs2ConfigureFilter(Ngs2Filter& filter, const Ngs2SamplerVoiceFilterParam& param, float rate);
+void Ngs2ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grain);
+bool Ngs2FilterHasHistory(const Ngs2Filter& filter);
+void Ngs2ResetFilterHistory(Ngs2Voice& voice);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Voice& voice, const Ngs2WaveformBlock& block);
 std::size_t Ngs2Atrac9BlockBytes(const Ngs2Atrac9Frame& frame, const Ngs2WaveformBlock& block);
 bool Ngs2Atrac9FrameInfo(const Ngs2WaveformFormat& format, Ngs2Atrac9Frame& frame);
