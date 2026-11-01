@@ -348,9 +348,13 @@ int APS5_VABI sceNpTusDeleteMultiSlotVariableVUser(int reqId, const NpOnlineId* 
 }
 
 int APS5_VABI sceNpTusDeleteMultiSlotDataVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, const std::int32_t* slotIds, int arrayLen, void* option) {
-    if (!targetVirtualUserId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
-    if (const int error = ValidateNonEmptySlots(slotIds, arrayLen, option)) return error;
-    if (IsEmpty(targetVirtualUserId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    (void)targetVirtualUserId;
+    if (!slotIds) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    if (option || arrayLen == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (arrayLen > MAX_SLOTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_SLOTID;
+    for (int index = 0; index < arrayLen; ++index) {
+        if (slotIds[index] < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return StartOffline(reqId);
 }
 
@@ -369,11 +373,12 @@ int APS5_VABI sceNpTssGetStorageAsync(void) {
 }
 
 int APS5_VABI sceNpTusGetDataForCrossSaveVUserAsync(int reqId, const NpOnlineId* targetVirtualUserId, std::int32_t slotId, void* dataStatus, std::uint64_t dataStatusSize, void* data, std::uint64_t recvSize, void* option) {
+    (void)dataStatus;
     (void)data;
     (void)recvSize;
+    if (!targetVirtualUserId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (option || slotId < 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (!targetVirtualUserId || !dataStatus || dataStatusSize == 0) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
-    if (IsEmpty(targetVirtualUserId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (dataStatusSize != 0x1F0 && dataStatusSize != 0x210) return SCE_NP_COMMUNITY_ERROR_INVALID_ALIGNMENT;
     return StartOffline(reqId);
 }
 
