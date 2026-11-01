@@ -9,11 +9,17 @@
 #include <mutex>
 #include <thread>
 #include <barrier>
+#include <source_location>
 #include "prx/libSceUserService/Export.cpp"
 
 namespace {
 
-void Require(bool value) { if (!value) std::abort(); }
+void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (!value) {
+        std::fprintf(stderr, "UserService lifecycle failure at line %u\n", location.line());
+        std::abort();
+    }
+}
 
 template <typename Predicate>
 void WaitUntil(Predicate predicate) {
