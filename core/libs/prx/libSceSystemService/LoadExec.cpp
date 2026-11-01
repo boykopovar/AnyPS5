@@ -75,6 +75,7 @@ Handle Duplicate(HANDLE source, DWORD access) {
     }
     if (command.size() >= 32767) throw std::runtime_error("LoadExec: command line is too long");
     auto parent = Duplicate(GetCurrentProcess(), SYNCHRONIZE);
+    LogFileRelease_nid_no_patch();
     std::vector<Handle> standard;
     std::vector<HANDLE> handles{parent.get()};
     STARTUPINFOEXW startup{};
@@ -164,6 +165,7 @@ Handle Duplicate(HANDLE source, DWORD access) {
     std::fflush(nullptr);
     if (const int host = HostStandardError_nid_no_patch(); host >= 0 && dup2(host, 2) != 2)
         throw std::system_error(errno, std::generic_category(), "LoadExec: giving the host standard error back to descriptor 2");
+    LogFileRelease_nid_no_patch();
     std::filesystem::current_path(target.parent_path());
     if ((descriptor > 3 && close_range(3, static_cast<unsigned>(descriptor - 1), 0) != 0) ||
         close_range(static_cast<unsigned>(std::max(3, descriptor + 1)), ~0u, 0) != 0)
@@ -193,6 +195,7 @@ Handle Duplicate(HANDLE source, DWORD access) {
     std::fflush(nullptr);
     if (const int host = HostStandardError_nid_no_patch(); host >= 0 && dup2(host, 2) != 2)
         throw std::system_error(errno, std::generic_category(), "LoadExec: giving the host standard error back to descriptor 2");
+    LogFileRelease_nid_no_patch();
     for (const int standard : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) {
         if (fcntl(standard, F_GETFD) != -1 && posix_spawn_file_actions_addinherit_np(&actions, standard) != 0)
             throw std::runtime_error("LoadExec: keeping the standard streams");

@@ -315,13 +315,18 @@ LandedKeys KeysAfterPendingWrites(const Recorder& recorder, std::uint64_t begin,
                 continue;
             }
             covered = true;
+            if (write.value < 0 && write.word >= 0) {
+                const auto first = std::max(from, write.begin);
+                const auto last = std::min(std::min(to, write.end), first + 4u);
+                for (auto byte = first; byte < last; ++byte) see(static_cast<int>((static_cast<std::uint64_t>(write.word) >> (8u * ((byte - write.begin) % 4u))) & 0xffu));
+            }
             if (from < write.begin) rest.emplace_back(from, write.begin);
             if (write.end < to) rest.emplace_back(write.end, to);
         }
         unwritten = std::move(rest);
         if (!covered) continue;
         if (write.value >= 0) see(write.value);
-        else landed.unknown = true;
+        else if (write.word < 0) landed.unknown = true;
     }
     for (const auto& [from, to] : unwritten) {
         if (landed.mixed) break;
@@ -683,9 +688,14 @@ bool FillDccClear(VkFormat format, DccKeys keys, bool alphaOnMsb, std::span<std:
             if (((value >> i) & 1u) != 0) element[bit / 8u] |= static_cast<std::byte>(1u << (bit % 8u));
         }
     }
-    std::size_t offset = 0;
-    for (; offset + element.size() <= bytes.size(); offset += element.size()) std::memcpy(bytes.data() + offset, element.data(), element.size());
-    std::fill(bytes.begin() + offset, bytes.end(), std::byte{0});
+    const std::size_t whole = bytes.size() / element.size() * element.size();
+    if (whole != 0) std::memcpy(bytes.data(), element.data(), element.size());
+    for (std::size_t filled = element.size(); filled < whole;) {
+        const auto chunk = std::min(filled, whole - filled);
+        std::memcpy(bytes.data() + filled, bytes.data(), chunk);
+        filled += chunk;
+    }
+    std::fill(bytes.begin() + static_cast<std::ptrdiff_t>(whole), bytes.end(), std::byte{0});
     return true;
 }
 

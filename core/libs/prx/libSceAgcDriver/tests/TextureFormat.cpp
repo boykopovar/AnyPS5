@@ -250,6 +250,10 @@ void fillContractTests() {
     Require(FillDccClear(VK_FORMAT_B10G11R11_UFLOAT_PACK32, DccKeys::Clear1111, false, partial), "packed float fast clear was not encoded");
     const std::array<std::byte, 4> white{std::byte{0xc0}, std::byte{0x03}, std::byte{0x1e}, std::byte{0x78}};
     for (std::size_t index = 0; index < partial.size(); ++index) Require(partial[index] == (index < 8u ? white[index % 4u] : std::byte{0}), "a clear fill over a partial trailing element did not zero the tail");
+    std::vector<std::byte> large(1003, std::byte{0x5a});
+    Require(FillDccClear(VK_FORMAT_R16G16B16A16_SFLOAT, DccKeys::Clear1111, false, large), "half float fast clear was not encoded");
+    const std::array<std::byte, 8> halfOne{std::byte{0x00}, std::byte{0x3c}, std::byte{0x00}, std::byte{0x3c}, std::byte{0x00}, std::byte{0x3c}, std::byte{0x00}, std::byte{0x3c}};
+    for (std::size_t index = 0; index < large.size(); ++index) Require(large[index] == (index < 1000u ? halfOne[index % 8u] : std::byte{0}), "a clear fill over many elements did not repeat the element up to the last whole one");
 }
 
 void guestFormatLookupTests() {

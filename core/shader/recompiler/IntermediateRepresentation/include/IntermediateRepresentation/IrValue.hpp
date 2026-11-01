@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <memory>
+#include <memory_resource>
 #include <ranges>
 #include <stdexcept>
 #include <type_traits>
@@ -16,6 +18,51 @@ namespace ShaderRecompiler {
 
 class IrBlock;
 class IrValue;
+struct IrUse;
+
+template<typename T>
+class IrUseAllocator {
+public:
+    using value_type = T;
+    using propagate_on_container_move_assignment = std::true_type;
+    using propagate_on_container_swap = std::true_type;
+    IrUseAllocator() noexcept = default;
+    explicit IrUseAllocator(std::pmr::memory_resource* arena) noexcept : arena(arena) {}
+    template<typename U>
+    IrUseAllocator(const IrUseAllocator<U>& other) noexcept : arena(other.Arena()) {}
+    T* allocate(std::size_t count) {
+        if (arena == nullptr) return std::allocator<T>{}.allocate(count);
+        return static_cast<T*>(arena->allocate(count * sizeof(T), alignof(T)));
+    }
+    void deallocate(T* pointer, std::size_t count) noexcept {
+        if (arena == nullptr) std::allocator<T>{}.deallocate(pointer, count);
+    }
+    [[nodiscard]] std::pmr::memory_resource* Arena() const noexcept { return arena; }
+    IrUseAllocator select_on_container_copy_construction() const noexcept { return {}; }
+    friend bool operator==(const IrUseAllocator& left, const IrUseAllocator& right) noexcept { return left.arena == right.arena; }
+
+private:
+    std::pmr::memory_resource* arena = nullptr;
+};
+
+using IrUseList = std::vector<IrUse, IrUseAllocator<IrUse>>;
+
+class IrUseArena {
+public:
+    IrUseArena() = default;
+    IrUseArena(IrUseArena&& other) noexcept = default;
+    IrUseArena& operator=(IrUseArena&& other) noexcept {
+        resource.swap(other.resource);
+        return *this;
+    }
+    std::pmr::memory_resource* Resource() {
+        if (resource == nullptr) resource = std::make_unique<std::pmr::monotonic_buffer_resource>();
+        return resource.get();
+    }
+
+private:
+    std::unique_ptr<std::pmr::monotonic_buffer_resource> resource;
+};
 
 struct IrUse {
     IrValue* user = nullptr;
@@ -91,7 +138,7 @@ private:
 
 class IrValue {
 public:
-    IrValue(IrOpcode opcode, IrType type, std::uint32_t id);
+    IrValue(IrOpcode opcode, IrType type, std::uint32_t id, std::pmr::memory_resource* useArena = nullptr);
     IrValue(const IrValue& other) = delete;
     IrValue& operator=(const IrValue& other) = delete;
     IrValue(IrValue&& other) = delete;
@@ -136,7 +183,8 @@ public:
     [[nodiscard]] std::size_t PhiBlockCount() const;
     [[nodiscard]] IrValue* Argument(std::size_t index) const;
     [[nodiscard]] IrBlock* PhiBlock(std::size_t index) const;
-    [[nodiscard]] const std::vector<IrUse>& OperandUses() const;
+    [[nodiscard]] const IrUseList& OperandUses() const;
+    void MoveUsesToHeap();
     [[nodiscard]] std::uint64_t ImmediateU64() const;
     [[nodiscard]] std::uint16_t ImmediateF16Bits() const;
     [[nodiscard]] float ImmediateF32() const;
@@ -166,7 +214,7 @@ private:
     GuestRegister registerValue{};
     std::uint64_t flags = 0;
     std::vector<IrBlock*> phiBlocks;
-    std::vector<IrUse> operandUses;
+    IrUseList operandUses;
     bool hasImmediate;
     IrOperands arguments;
     IrBlock* parent;
