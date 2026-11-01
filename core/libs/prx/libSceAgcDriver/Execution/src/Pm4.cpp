@@ -312,7 +312,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         }
         case 0x3f: size(4); break;
         case 0x13: case 0x2f: graphics(); size(2); break;
-        case 0x26: graphics(); size(3); break;
+        case 0x26:
+            graphics();
+            size(3);
+            require((packet[1] & 1u) == 0 && packet[2] <= 0xffffu, "unsupported index base alignment or address bits");
+            break;
         case 0x27:
             graphics();
             size(6);
@@ -354,7 +358,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             require((packet[2] >> 16u) == 0 && (packet[3] >> 16u) == 0, "start-index location semantics are not implemented");
             require(drawLocation(packet[2]) && drawLocation(packet[3]) && drawLocation(packet[4] & 0xffffu), "invalid indirect draw register location");
             require((packet[4] & ~(0xffffu | (1u << 30u) | (1u << 31u))) == 0, "indirect multi-draw control bits are not implemented");
-            if ((packet[4] & (1u << 30u)) != 0) require((packet[6] & 3u) == 0 && address(packet[6], packet[7]) != 0, "invalid indirect draw count address");
+            if ((packet[4] & (1u << 30u)) != 0) require((packet[6] & 3u) == 0 && address(packet[6], packet[7]) != 0 && packet[7] <= 0xffffu, "invalid indirect draw count address");
             else require(address(packet[6], packet[7]) == 0, "count address without an indirect draw count");
             require((packet[8] & 3u) == 0 && packet[8] >= (opcode == 0x2c ? 16u : 20u), "invalid indirect draw stride");
             require((packet[9] & ~0x20u) == (opcode == 0x2c ? 2u : 0u), "unsupported indirect draw initiator");

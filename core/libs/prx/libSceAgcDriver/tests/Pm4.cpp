@@ -256,6 +256,8 @@ void testContextAndBases() {
     AgcDriver::Pm4::Validate(makePacket(0x16, {0, 0x49}), 0);
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x15, {1, 1, 1, 0x51}), 0); }, "dispatch modifiers");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x16, {0, 0x51}), 0); }, "indirect dispatch modifiers");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x26, {0x1001, 1}), 0); }, "unsupported index base alignment or address bits");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x26, {0x1000, 0x10000}), 0); }, "unsupported index base alignment or address bits");
     execute(state, makePacket(0x13, {32}));
     execute(state, makePacket(0x26, {0x1000, 1}));
     execute(state, makePacket(0x2a, {1}));
@@ -447,6 +449,8 @@ void testIndirectDraw() {
     const auto counted = AgcDriver::Pm4::ResolveDraw(makePacket(0x2c, {0, 0x280, 0x280, 0x280 | (1u << 30u), 5, low(&countValue), high(&countValue), 16, 2}), state);
     check(counted.indirect->countIndirect && counted.indirect->count == 5 && counted.indirect->countAddress == reinterpret_cast<std::uintptr_t>(&countValue) && AgcDriver::Pm4::ReadDrawCount(*counted.indirect) == 2, "indirect draw count mismatch");
     expectFailure([&] { AgcDriver::Pm4::ReadDrawCount(*local.indirect); }, "count address");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x2c, {0, 0x280, 0x280, 0x280 | (1u << 30u), 5, low(&countValue), 0x10000, 16, 2}), 0); }, "invalid indirect draw count address");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x38, {0, 0x280, 0x280, 0x280 | (1u << 30u), 5, low(&countValue), 0x10000, 20, 0}), 0); }, "invalid indirect draw count address");
 }
 
 bool sameDraw(const AgcDriver::Pm4::DrawParameters& left, const AgcDriver::Pm4::DrawParameters& right) {
