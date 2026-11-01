@@ -150,6 +150,8 @@ void TestMount2() {
 
 void TestSaveDataMemoryV1() {
     Check(sceSaveDataSetupSaveDataMemory(7, 0x1000, nullptr) == SaveDataErrorNotInitialized, "v1 SetupSaveDataMemory before v1 Initialize");
+    Check(sceSaveDataGetSaveDataMemory(7, nullptr, 0, 0) == SaveDataErrorNotInitialized, "v1 GetSaveDataMemory before v1 Initialize");
+    Check(sceSaveDataSetSaveDataMemory(7, nullptr, 0, 0) == SaveDataErrorNotInitialized, "v1 SetSaveDataMemory before v1 Initialize");
     Check(sceSaveDataInitialize(nullptr) == 0, "v1 Initialize");
     Check(sceSaveDataSetupSaveDataMemory(7, 0x1000, nullptr) == 0, "v1 SetupSaveDataMemory");
     char written[16] = "settings-v1";
@@ -157,6 +159,14 @@ void TestSaveDataMemoryV1() {
     char read[16] = {};
     Check(sceSaveDataGetSaveDataMemory(7, read, sizeof(read), 0x100) == 0, "v1 GetSaveDataMemory");
     Check(std::memcmp(read, written, sizeof(read)) == 0, "v1 GetSaveDataMemory returns the bytes v1 set");
+    Check(sceSaveDataGetSaveDataMemory(7, read, sizeof(read), -1) == SaveDataErrorParameter, "v1 GetSaveDataMemory negative offset returns PARAMETER");
+    Check(sceSaveDataSetSaveDataMemory(7, written, sizeof(written), -1) == SaveDataErrorParameter, "v1 SetSaveDataMemory negative offset returns PARAMETER");
+    Check(sceSaveDataGetSaveDataMemory(7, read, sizeof(read), 0x1001) == SaveDataErrorParameter, "v1 GetSaveDataMemory offset beyond size returns PARAMETER");
+    Check(sceSaveDataSetSaveDataMemory(7, written, sizeof(written), 0x1001) == SaveDataErrorParameter, "v1 SetSaveDataMemory offset beyond size returns PARAMETER");
+    Check(sceSaveDataGetSaveDataMemory(7, nullptr, sizeof(read), 0x100) == SaveDataErrorParameter, "v1 GetSaveDataMemory null buffer returns PARAMETER");
+    Check(sceSaveDataSetSaveDataMemory(7, nullptr, sizeof(written), 0x100) == SaveDataErrorParameter, "v1 SetSaveDataMemory null buffer returns PARAMETER");
+    Check(sceSaveDataGetSaveDataMemory(7, nullptr, 0, 0x100) == 0, "v1 GetSaveDataMemory zero length is a no-op");
+    Check(sceSaveDataSetSaveDataMemory(7, nullptr, 0, 0x100) == 0, "v1 SetSaveDataMemory zero length is a no-op");
     std::ifstream slot("_sd_mem/u7/slot0.bin", std::ios::binary);
     slot.seekg(0x100);
     char stored[16] = {};
