@@ -85,6 +85,7 @@ struct NpTitleIdParts {
     std::uint8_t index;
 };
 
+using NpTime = RtcTick;
 struct NpMemoryStreamReader {
     const void* const* vtable;
     const void* data;
@@ -114,6 +115,18 @@ struct NpStreamCtx {
 struct NpRefObject {
     const void* const* vtable;
     std::int32_t refCount;
+};
+
+struct NpCommunicationId {
+    char data[9];
+    char term;
+    std::uint8_t num;
+    char dummy;
+};
+
+struct NpCommIdObject {
+    const void* const* vtable;
+    NpCommunicationId commId;
 };
 
 struct NpTitleIdObject {
@@ -244,6 +257,41 @@ int APS5_VABI sceNpAllocateKernelMemoryWithAlignment(std::uint64_t size, const c
 int APS5_VABI sceNpFreeKernelMemory(NpKernelMemory* memory);
 void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version);
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds);
+int APS5_VABI _ZN3sce2np4Time12GetUserClockEPS1_(NpTime* time);
+int APS5_VABI _ZN3sce2np4Time15GetNetworkClockEPS1_(NpTime* time);
+int APS5_VABI _ZN3sce2np4Time20GetDebugNetworkClockEPS1_(NpTime* time);
+int APS5_VABI _ZN3sce2np4Time11SetDateTimeERKNS0_8DateTimeE(NpTime* self, const RtcDateTime* dateTime);
+int APS5_VABI _ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(const NpTime* self, RtcDateTime* dateTime);
+int APS5_VABI _ZNK3sce2np4Time18ConvertToPosixTimeEPl(const NpTime* self, std::int64_t* seconds);
+NpTime* APS5_VABI _ZN3sce2np4Time15AddMicroSecondsEl(NpTime* self, std::int64_t microseconds);
+NpTime* APS5_VABI _ZN3sce2np4Time10AddSecondsEl(NpTime* self, std::int64_t seconds);
+NpTime* APS5_VABI _ZN3sce2np4Time10AddMinutesEl(NpTime* self, std::int64_t minutes);
+NpTime* APS5_VABI _ZN3sce2np4Time8AddHoursEl(NpTime* self, std::int64_t hours);
+NpTime* APS5_VABI _ZN3sce2np4Time7AddDaysEl(NpTime* self, std::int64_t days);
+bool APS5_VABI _ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_lPl(const NpTime* self, const NpTime* since, std::int64_t timeout, std::int64_t* remaining);
+bool APS5_VABI _ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_jPj(const NpTime* self, const NpTime* since, std::uint32_t timeout, std::uint32_t* remaining);
+bool APS5_VABI _ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(const NpTime* self, const NpTime* since, std::int64_t timeout, std::int64_t* remaining);
+int APS5_VABI _ZNK3sce2np4Time13FormatRFC3339EPcmi(const NpTime* self, char* text, std::size_t size, int timeZoneMinutes);
+NpTime* APS5_VABI _ZN3sce2np4TimeplERKS1_(NpTime* self, const NpTime* other);
+NpTime* APS5_VABI _ZN3sce2np4TimeplERK10SceRtcTick(NpTime* self, const RtcTick* tick);
+bool APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npeqERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npeqERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs);
+bool APS5_VABI _ZN3sce2npleERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npleERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs);
+bool APS5_VABI _ZN3sce2npgeERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npgeERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npgeERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs);
+bool APS5_VABI _ZN3sce2npltERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npltERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npltERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs);
+bool APS5_VABI _ZN3sce2npgtERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npgtERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs);
+bool APS5_VABI _ZN3sce2npgtERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs);
 int APS5_VABI sceNpRtcFormatRFC3339(char* text, std::size_t size, const RtcTick* utc, int timeZoneMinutes);
 int APS5_VABI sceNpUserGetUserIdList(int* users, std::size_t capacity, int* count);
 int APS5_VABI sceNpRtcParseRFC3339(RtcTick* utc, const char* text);
@@ -315,7 +363,6 @@ int APS5_VABI _ZN3sce2np8JsonFileD2Ev(void);
 int APS5_VABI _ZN3sce2np9JsonArray12AddItemArrayEPPS1_(void);
 int APS5_VABI _ZN3sce2np14CalloutContextD0Ev(void);
 int APS5_VABI _ZN3sce2np9Semaphore4WaitEj(void);
-int APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(void);
 int APS5_VABI _ZN3sce2np13RingBufMemory6ExpandEm(void);
 int APS5_VABI _ZThn8_N3sce2np10MemoryFile4ReadEPNS0_6HandleEPvmPm(void);
 int APS5_VABI _ZN3sce2np7RingBuf15CheckoutForReadEPm(void);
@@ -334,7 +381,6 @@ int APS5_VABI _ZN3sce2np3ipc10IpmiClient11IsConnectedEv(void);
 int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTypePKcPcS5_iPPhPmPiPvESA_(void);
 int APS5_VABI sceNpUtilParseJid(void);
 int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void);
-int APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(void);
 int APS5_VABI sceNpUtilXmlUnescape(void);
 int APS5_VABI sceNpXmlParse(void);
 int APS5_VABI _ZN3sce2np9WorkQueue15GetFinishedItemENS0_14WorkItemStatusE(void);
@@ -352,7 +398,6 @@ int APS5_VABI _ZN3sce2np15CancelableScopeD0Ev(void);
 int APS5_VABI _ZN3sce2np10Cancelable7DestroyEv(void);
 int APS5_VABI _ZThn8_N3sce2np9LocalFileD1Ev(void);
 int APS5_VABI _ZNK3sce2np10JsonString6GetStrEPcm(void);
-int APS5_VABI _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(void);
 int APS5_VABI _ZN3sce2np10Cancelable10LockCancelEPKciS3_(void);
 int APS5_VABI _ZN3sce2np8WorkItem10SetPendingEv(void);
 int APS5_VABI _ZN3sce2np7Callout4StopEv(void);
@@ -369,7 +414,6 @@ int APS5_VABI _ZN3sce2np6HandleD1Ev(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient17UnregisterServiceEi(void);
 int APS5_VABI _ZN3sce2np9WorkQueue4ctorEv(void);
 int APS5_VABI _ZN3sce2np6Thread4InitEPKcimm(void);
-int APS5_VABI _ZNK3sce2np4Time18ConvertToPosixTimeEPl(void);
 int APS5_VABI _ZN3sce2np7Callout10IsTimedoutEv(void);
 int APS5_VABI _ZN3sce2np7Callout11CalloutFuncEPv(void);
 int APS5_VABI _ZThn8_N3sce2np6HandleD1Ev(void);
@@ -392,7 +436,6 @@ int APS5_VABI _ZN3sce2np8WorkItemD0Ev(void);
 int APS5_VABI _ZN3sce2np9SemaphoreD2Ev(void);
 int APS5_VABI _ZN3sce2np9EventFlagD2Ev(void);
 int APS5_VABI _sceNpAllocatorMalloc(void);
-int APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(void);
 int APS5_VABI _ZN3sce2np13RingBufMemory6IsInitEv(void);
 int APS5_VABI _ZN3sce2np7RingBufD0Ev(void);
 int APS5_VABI _sceNpHeapMalloc(void);
@@ -410,14 +453,12 @@ int APS5_VABI _ZN3sce2np4CondD1Ev(void);
 int APS5_VABI _ZN3sce2np9EventFlag7DestroyEv(void);
 int APS5_VABI _ZN3sce2np9HttpTransC1EP16SceNpAllocatorEx(void);
 int APS5_VABI _ZN3sce2np6Thread4dtorEv(void);
-int APS5_VABI _ZN3sce2np4Time8AddHoursEl(void);
 int APS5_VABI _ZN3sce2np12WorkerThreadD0Ev(void);
 int APS5_VABI _ZN3sce2np13RingBufMemoryD0Ev(void);
 int APS5_VABI _ZN3sce2np9LocalFile5CloseEv(void);
 int APS5_VABI _ZNK3sce2np10JsonString9GetLengthEv(void);
 int APS5_VABI _ZN3sce2np10EventQueueD0Ev(void);
 int APS5_VABI _ZN3sce2np8JsonNull5ClearEv(void);
-int APS5_VABI _ZN3sce2np4Time12GetUserClockEPS1_(void);
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient12AbortRequestEii(void);
 int APS5_VABI _ZNK3sce2np5Mutex6IsInitEv(void);
 
@@ -480,6 +521,30 @@ void APS5_VABI _ZN3sce2np9RefObjectD2Ev(NpRefObject* self);
 void APS5_VABI _ZN3sce2np9RefObjectD0Ev(NpRefObject* self);
 int APS5_VABI _ZN3sce2np9RefObject6AddRefEv(NpRefObject* self);
 int APS5_VABI _ZN3sce2np9RefObject7ReleaseEv(NpRefObject* self);
+int APS5_VABI sceNpUtilParseTitleId(NpCommunicationId* parts, const char* titleId);
+void APS5_VABI _ZN3sce2np8NpCommIdC1Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommIdC2Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommIdC1ERKS1_(NpCommIdObject* self, const NpCommIdObject* other);
+void APS5_VABI _ZN3sce2np8NpCommIdC2ERKS1_(NpCommIdObject* self, const NpCommIdObject* other);
+void APS5_VABI _ZN3sce2np8NpCommIdC1ERK20SceNpCommunicationId(NpCommIdObject* self, const NpCommunicationId* commId);
+void APS5_VABI _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(NpCommIdObject* self, const NpCommunicationId* commId);
+void APS5_VABI _ZN3sce2np8NpCommIdD1Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommIdD2Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommIdD0Ev(NpCommIdObject* self);
+void APS5_VABI _ZN3sce2np8NpCommId5ClearEv(NpCommIdObject* self);
+bool APS5_VABI _ZNK3sce2np8NpCommId7IsEmptyEv(const NpCommIdObject* self);
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsEPKc(const NpCommIdObject* self, const char* commId);
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERKS1_(const NpCommIdObject* self, const NpCommIdObject* other);
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(const NpCommIdObject* self, const NpCommunicationId* commId);
+int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKc(NpCommIdObject* out, const char* text);
+int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char* text, std::size_t length);
+int APS5_VABI _ZN3sce2np8NpCommId5BuildERKS1_Pcm(const NpCommIdObject* commId, char* text, std::size_t size);
+bool APS5_VABI _ZN3sce2npeqERKNS0_8NpCommIdES3_(const NpCommIdObject* lhs, const NpCommIdObject* rhs);
+bool APS5_VABI _ZN3sce2npeqERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCommunicationId* lhs, const NpCommIdObject* rhs);
+bool APS5_VABI _ZN3sce2npeqERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdES3_(const NpCommIdObject* lhs, const NpCommIdObject* rhs);
+bool APS5_VABI _ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCommunicationId* lhs, const NpCommIdObject* rhs);
+bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs);
 [[noreturn]] void APS5_VABI sceNpPanic(void);
 
 }

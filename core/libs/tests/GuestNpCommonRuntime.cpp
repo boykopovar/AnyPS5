@@ -35,6 +35,7 @@ constexpr int NpEventFlagBusy = static_cast<int>(0x8055800C);
 constexpr int NpSemaBusy = static_cast<int>(0x8055800D);
 constexpr int NpStreamBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpTitleIdInvalid = static_cast<int>(0x80559E11);
+constexpr int NpUtilParseOutOfRange = static_cast<int>(0x8055060A);
 constexpr int NpTitleIdBufferTooSmall = static_cast<int>(0x80559E0D);
 constexpr int NpStreamShort = static_cast<int>(0x80559E10);
 constexpr int KernelNotPermitted = static_cast<int>(0x80020001);
@@ -77,6 +78,73 @@ void TestSemaphoresAndFlags() {
     Require(sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear event flag reports the busy error");
     Require(sceNpSetEventFlag(flag, 1) == 0 && sceNpPollEventFlag(flag, 1, EventFlagWaitAnd, &result) == 0 && result == 1, "a set bit is polled");
     Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
+}
+
+void TestEventFlagClearAndCancel() {
+    KernelEventFlag flag {};
+    Require(sceNpCreateEventFlag(&flag, "NpClearFlag", 0, 0) == 0, "an event flag is created");
+    std::uint64_t result = 0;
+    Require(sceNpSetEventFlag(flag, 0b111) == 0 && sceNpClearEventFlag(flag, 0b101) == 0, "the pattern is set and masked");
+    Require(sceNpPollEventFlag(flag, 0b010, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a clear keeps only the bits of its pattern");
+    Require(sceNpPollEventFlag(flag, 0b101, EventFlagWaitAnd, &result) == 0 && result == 0b101, "a clear leaves the masked bits set");
+    int waiting = -1;
+    Require(sceNpCancelEventFlag(flag, 0b1000, &waiting) == 0 && waiting == 0, "a cancel reports no waiting thread");
+    Require(sceNpPollEventFlag(flag, 0b101, EventFlagWaitAnd, &result) == NpEventFlagBusy, "a cancel replaces the old pattern");
+    Require(sceNpPollEventFlag(flag, 0b1000, EventFlagWaitAnd, &result) == 0 && result == 0b1000, "a cancel sets its pattern");
+    Require(sceNpDeleteEventFlag(flag) == 0, "the event flag is deleted");
+}
+
+struct CondWaiter {
+    PthreadMutex* mutex;
+    PthreadCond* cond;
+    int (APS5_VABI* wait)(PthreadCond*, PthreadMutex*);
+    bool ready = false;
+    bool released = false;
+};
+
+void* APS5_VABI WaitOnCondition(void* arg) {
+    auto* waiter = static_cast<CondWaiter*>(arg);
+    Require(sceNpMutexLock(waiter->mutex) == 0, "the waiter locks the mutex");
+    waiter->ready = true;
+    while (!waiter->released) Require(waiter->wait(waiter->cond, waiter->mutex) == 0, "the wait ends without an error");
+    Require(sceNpMutexUnlock(waiter->mutex) == 0, "the waiter holds the mutex after the wait");
+    return nullptr;
+}
+
+template <typename TWake>
+void WakeWaiter(PthreadCond* cond, int (APS5_VABI* wait)(PthreadCond*, PthreadMutex*), TWake wake) {
+    PthreadMutex mutex {};
+    Require(sceNpMutexInit(&mutex, "NpCondMutex", 0) == 0, "a mutex is created");
+    CondWaiter waiter {&mutex, cond, wait};
+    Pthread thread {};
+    Require(sceNpCreateThread(&thread, WaitOnCondition, &waiter, 0, 0x10000, 0, "NpCondWaiter") == 0, "the waiter is created");
+    for (bool ready = false; !ready;) {
+        Require(sceNpMutexLock(&mutex) == 0, "the main thread locks the mutex");
+        ready = waiter.ready;
+        if (!ready) {
+            Require(sceNpMutexUnlock(&mutex) == 0, "the main thread unlocks the mutex");
+            std::this_thread::yield();
+        }
+    }
+    waiter.released = true;
+    Require(wake(thread) == 0, "the waiter is signalled");
+    Require(sceNpMutexUnlock(&mutex) == 0, "the main thread unlocks the mutex");
+    Require(sceNpJoinThread(thread, nullptr) == 0, "the woken waiter is joined");
+    Require(sceNpMutexDestroy(&mutex) == 0, "the mutex is destroyed");
+}
+
+void TestConditionWakeups() {
+    PthreadCond cond {};
+    Require(sceNpCondInit(&cond, "NpCond", 0) == 0, "a condition is created");
+    WakeWaiter(&cond, sceNpCondWait, [&](Pthread) { return sceNpCondSignalAll(&cond); });
+    WakeWaiter(&cond, sceNpCondWait, [&](Pthread thread) { return sceNpCondSignalTo(&cond, thread); });
+    Require(sceNpCondDestroy(&cond) == 0, "the condition is destroyed");
+    PthreadCond lightweight {};
+    Require(sceNpLwCondInit(&lightweight, "NpLwCond") == 0, "a lightweight condition is created");
+    WakeWaiter(&lightweight, sceNpLwCondWait, [&](Pthread) { return sceNpLwCondSignal(&lightweight); });
+    WakeWaiter(&lightweight, sceNpLwCondWait, [&](Pthread) { return sceNpLwCondSignalAll(&lightweight); });
+    WakeWaiter(&lightweight, sceNpLwCondWait, [&](Pthread thread) { return sceNpLwCondSignalTo(&lightweight, thread); });
+    Require(sceNpLwCondDestroy(&lightweight) == 0, "the lightweight condition is destroyed");
 }
 
 void TestSharedEventFlags() {
@@ -300,7 +368,7 @@ void TestTitleIdObjects() {
     auto* owned = static_cast<NpTitleIdObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpTitleIdObject), &allocator));
     _ZN3sce2np9NpTitleIdC1Ev(owned);
     using Destructor = void APS5_VABI (*)(NpTitleIdObject*);
-    reinterpret_cast<Destructor>(owned->vtable[1])(owned);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
     Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
 }
 
@@ -814,7 +882,7 @@ void TestMemoryStreams() {
     Require(reader.data == text && reader.size == 8 && reader.position == 0, "a reader starts at the beginning of its buffer");
     std::array<char, 8> out {};
     std::size_t count = 99;
-    Require(reinterpret_cast<Read>(reader.vtable[2])(&reader, nullptr, out.data(), 5, &count) == 0 && count == 5 &&
+    Require(reinterpret_cast<Read>(const_cast<void*>(reader.vtable[2]))(&reader, nullptr, out.data(), 5, &count) == 0 && count == 5 &&
                 std::memcmp(out.data(), "abcde", 5) == 0 && reader.position == 5,
         "a read through the vtable copies the requested bytes");
     out.fill(0);
@@ -832,7 +900,7 @@ void TestMemoryStreams() {
     std::array<char, 6> buffer {};
     NpMemoryStreamWriter writer;
     _ZN3sce2np18MemoryStreamWriterC2EPvm(&writer, buffer.data(), 6);
-    Require(reinterpret_cast<Write>(writer.vtable[2])(&writer, nullptr, "abcd", 4, &count) == 0 && count == 4 && writer.position == 4,
+    Require(reinterpret_cast<Write>(const_cast<void*>(writer.vtable[2]))(&writer, nullptr, "abcd", 4, &count) == 0 && count == 4 && writer.position == 4,
         "a write through the vtable stores the bytes");
     count = 99;
     Require(_ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "xyz", 3, &count) == NpStreamBufferTooSmall &&
@@ -851,10 +919,10 @@ void TestMemoryStreams() {
                 _ZN3sce2np18MemoryStreamWriter5WriteEPNS0_6HandleEPKvmPm(&writer, nullptr, "ab", 2, &count) == 0 && writer.position == 8,
         "a writer without a buffer only counts");
 
-    reinterpret_cast<Destroy>(reader.vtable[0])(&reader);
+    reinterpret_cast<Destroy>(const_cast<void*>(reader.vtable[0]))(&reader);
     _ZN3sce2np18MemoryStreamReaderD2Ev(&reader);
     Require(reader.data == text && reader.size == 8 && reader.position == 12, "the reader destructors leave the object untouched");
-    reinterpret_cast<Destroy>(writer.vtable[0])(&writer);
+    reinterpret_cast<Destroy>(const_cast<void*>(writer.vtable[0]))(&writer);
     _ZN3sce2np18MemoryStreamWriterD2Ev(&writer);
     Require(writer.data == nullptr && writer.size == 2 && writer.position == 8, "the writer destructors leave the object untouched");
 }
@@ -1004,11 +1072,67 @@ void TestRefObjects() {
         "releasing the last reference deletes the object through the stored allocator");
 }
 
+void TestCommIdObjects() {
+    NpCommunicationId parts {};
+    std::memset(&parts, 0x77, sizeof(parts));
+    Require(sceNpUtilParseTitleId(&parts, "WXYZ54321_07") == 0 && std::memcmp(parts.data, "WXYZ54321", 9) == 0 && parts.term == '\0'
+            && parts.num == 7 && parts.dummy == '\0',
+        "sceNpUtilParseTitleId splits the id and its number");
+    Require(sceNpUtilParseTitleId(&parts, "WXYZ54321-07") == NpUtilParseOutOfRange && sceNpUtilParseTitleId(&parts, "WXYZ54321_007") == NpUtilParseOutOfRange
+            && sceNpUtilParseTitleId(&parts, "WXYZ") == NpUtilParseOutOfRange && sceNpUtilParseTitleId(&parts, nullptr) == NpUtilInvalid,
+        "sceNpUtilParseTitleId needs an underscore at index 9 and at most 12 characters");
+
+    NpCommIdObject commId {};
+    std::memset(&commId, 0x77, sizeof(commId));
+    _ZN3sce2np8NpCommIdC1Ev(&commId);
+    Require(commId.vtable != nullptr && _ZNK3sce2np8NpCommId7IsEmptyEv(&commId), "a default communication id is empty");
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, "WXYZ54321_42") == 0 && commId.commId.num == 42 && !_ZNK3sce2np8NpCommId7IsEmptyEv(&commId),
+        "parsing keeps the number");
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, "WXY154321_00") == NpTitleIdInvalid
+            && _ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, "WXYZ54321_0", 11) == NpTitleIdInvalid && commId.commId.num == 42,
+        "a rejected communication id leaves the object as it was");
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, "ABCD12345_09xyz", 12) == 0 && commId.commId.num == 9
+            && std::memcmp(commId.commId.data, "ABCD12345", 9) == 0,
+        "the sized parse reads only the given length");
+
+    char text[16];
+    std::memset(text, 'x', sizeof(text));
+    Require(_ZN3sce2np8NpCommId5BuildERKS1_Pcm(&commId, text, 14) == 0 && std::strcmp(text, "ABCD12345_09") == 0 && text[13] == '\0'
+            && text[14] == 'x',
+        "building writes the id and clears the rest of the buffer");
+    Require(_ZN3sce2np8NpCommId5BuildERKS1_Pcm(&commId, text, 12) == NpUtilBufferTooSmall && text[0] == '\0', "building needs 13 bytes");
+
+    NpCommIdObject copy {};
+    _ZN3sce2np8NpCommIdC1ERKS1_(&copy, &commId);
+    NpCommunicationId plain = commId.commId;
+    plain.dummy = 'q';
+    Require(_ZNK3sce2np8NpCommId6EqualsERKS1_(&copy, &commId) && _ZN3sce2npeqERKNS0_8NpCommIdERK20SceNpCommunicationId(&copy, &plain)
+            && _ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_09") && !_ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_9"),
+        "equal communication ids compare equal, ignoring the spare byte");
+    plain.num = 10;
+    Require(_ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(&plain, &copy) && !_ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(&copy, &plain),
+        "the number takes part in the comparison");
+    _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(&copy, &plain);
+    Require(copy.commId.dummy == 'q', "constructing from a plain id copies all twelve bytes");
+    _ZN3sce2np8NpCommId5ClearEv(&copy);
+    Require(_ZNK3sce2np8NpCommId7IsEmptyEv(&copy) && copy.commId.dummy == '\0', "clearing empties the communication id");
+
+    AllocatorRecord record {};
+    NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
+    auto* owned = static_cast<NpCommIdObject*>(_ZN3sce2np6ObjectnwEmR14SceNpAllocator(sizeof(NpCommIdObject), &allocator));
+    _ZN3sce2np8NpCommIdC1Ev(owned);
+    using Destructor = void APS5_VABI (*)(NpCommIdObject*);
+    reinterpret_cast<Destructor>(const_cast<void*>(owned->vtable[1]))(owned);
+    Require(record.released == record.block.data(), "the deleting destructor frees through the stored allocator");
+}
+
 int main() {
     TestAtomics();
     TestSemaphoresAndFlags();
+    TestEventFlagClearAndCancel();
     TestSharedEventFlags();
     TestThreads();
+    TestConditionWakeups();
     TestHeaps();
     TestObjects();
     TestObjectsThroughStoredAllocator();
@@ -1016,6 +1140,7 @@ int main() {
     TestTitleIdObjects();
     TestStreamHelpers();
     TestRefObjects();
+    TestCommIdObjects();
     TestBase64();
     TestNumbers();
     TestHexAndCopies();
