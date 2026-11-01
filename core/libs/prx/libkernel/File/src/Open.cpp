@@ -431,8 +431,7 @@ static int StatNative(const std::filesystem::path& native, bool directory, FileS
     FileStat archived{};
     if (File::FillArchivedStat(native, &archived)) {
         if (directory && (archived.st_mode & 0170000) != 0040000) return SceErrorFromErrno(GuestEnotdir);
-        if (sb == nullptr) return SceErrorFromErrno(GuestEfault);
-        *sb = archived;
+        if (sb == nullptr || !GuestCopyOut_nid_no_patch(sb, &archived, sizeof(archived))) return SceErrorFromErrno(GuestEfault);
         return 0;
     }
     auto metadataPath = native;
@@ -488,8 +487,25 @@ int APS5_VABI sceKernelUnlink(const char* path) {
     if (const int error = ResolvePathError_nid_no_patch(path, native)) return SceKernelError(error);
     constexpr int GuestEperm = 1;
     std::error_code error;
-    if (std::filesystem::is_directory(std::filesystem::symlink_status(native, error))) {
+    bool directory = std::filesystem::is_directory(std::filesystem::symlink_status(native, error));
 #ifdef _WIN32
+    constexpr DWORD DirectoryLink = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT;
+    const DWORD linkAttributes = GetFileAttributesW(native.c_str());
+    if (linkAttributes != INVALID_FILE_ATTRIBUTES && (linkAttributes & DirectoryLink) == DirectoryLink) directory = true;
+#endif
+    if (directory) {
+#ifdef _WIN32
+        if (native.has_filename()) {
+            WIN32_FIND_DATAW found{};
+            if (const HANDLE find = FindFirstFileW(native.c_str(), &found); find != INVALID_HANDLE_VALUE) {
+                FindClose(find);
+                if ((found.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && found.dwReserved0 == IO_REPARSE_TAG_SYMLINK) {
+                    if (!RemoveDirectoryW(native.c_str())) return SceErrorFromErrno(GetLastError() == ERROR_ACCESS_DENIED ? 13 : 5);
+                    RecordWrittenPath_nid_no_patch(native);
+                    return 0;
+                }
+            }
+        }
         const DWORD attributes = GetFileAttributesW(native.c_str());
         if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
             std::string junctionTarget;

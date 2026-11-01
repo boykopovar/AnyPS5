@@ -15,6 +15,7 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -25,15 +26,22 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <pdh.h>
 #include <psapi.h>
 #else
 #include <sys/resource.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
 #endif
 
 namespace AgcDriver {
@@ -530,6 +538,7 @@ OverlayContent ComposeOverlayDetails(const OverlayDetailSample& sample) {
     joined("UNIMPLEMENTED:", {shown(sample.unimplementedPerSecond, [&](double calls) { return count(calls) + "/S"; }), shown(sample.unimplementedTotal, [&](std::uint64_t calls) { return count(static_cast<double>(calls)) + " TOTAL"; })});
     joined("REFUSED SHADERS:", {shown(sample.refusedShaders, [&](std::uint64_t refused) { return count(static_cast<double>(refused)); })});
     joined("", {sample.title.empty() ? std::nullopt : std::optional<std::string>("TITLE: " + OverlayText(sample.title)), sample.presentMode.empty() ? std::nullopt : std::optional<std::string>("PRESENT: " + OverlayText(sample.presentMode))});
+    joined("FPS LIMIT:", {shown(sample.fpsLimit, [&](double limit) { return limit < 10000.0 ? rate(limit) : count(limit); })});
     return content;
 }
 
@@ -616,6 +625,11 @@ std::optional<std::uint64_t> ReadProcessPrivateBytes() {
     counters.cb = sizeof(counters);
     if (K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) == 0) return std::nullopt;
     return static_cast<std::uint64_t>(counters.PrivateUsage);
+#elif defined(__APPLE__)
+    task_vm_info_data_t info{};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS || info.phys_footprint == 0) return std::nullopt;
+    return static_cast<std::uint64_t>(info.phys_footprint);
 #else
     std::FILE* status = std::fopen("/proc/self/status", "r");
     if (status == nullptr) return std::nullopt;
@@ -649,6 +663,26 @@ std::optional<OverlayMemory> ParseCommitCharge(std::string_view meminfo) {
 
 std::optional<OverlayMemory> ReadCommitCharge() {
 #ifdef _WIN32
+    struct CommitCounters {
+        PDH_HQUERY query = nullptr;
+        PDH_HCOUNTER committed = nullptr;
+        PDH_HCOUNTER limit = nullptr;
+        bool ready = PdhOpenQueryW(nullptr, 0, &query) == ERROR_SUCCESS
+            && PdhAddEnglishCounterW(query, L"\\Memory\\Committed Bytes", 0, &committed) == ERROR_SUCCESS
+            && PdhAddEnglishCounterW(query, L"\\Memory\\Commit Limit", 0, &limit) == ERROR_SUCCESS;
+    };
+    static CommitCounters counters;
+    static std::mutex mutex;
+    if (counters.ready) {
+        const std::lock_guard lock(mutex);
+        PDH_FMT_COUNTERVALUE committed{};
+        PDH_FMT_COUNTERVALUE limit{};
+        if (PdhCollectQueryData(counters.query) == ERROR_SUCCESS
+            && PdhGetFormattedCounterValue(counters.committed, PDH_FMT_LARGE, nullptr, &committed) == ERROR_SUCCESS
+            && PdhGetFormattedCounterValue(counters.limit, PDH_FMT_LARGE, nullptr, &limit) == ERROR_SUCCESS
+            && committed.largeValue > 0 && limit.largeValue > 0)
+            return OverlayMemory{static_cast<std::uint64_t>(committed.largeValue), static_cast<std::uint64_t>(limit.largeValue)};
+    }
     PERFORMANCE_INFORMATION information{};
     information.cb = sizeof(information);
     if (K32GetPerformanceInfo(&information, sizeof(information)) == 0) return std::nullopt;
@@ -675,6 +709,20 @@ std::optional<std::uint64_t> ReadPageFaults() {
     rusage usage{};
     if (getrusage(RUSAGE_SELF, &usage) != 0) return std::nullopt;
     return static_cast<std::uint64_t>(usage.ru_minflt) + static_cast<std::uint64_t>(usage.ru_majflt);
+#endif
+}
+
+std::optional<std::uint64_t> ReadPhysicalMemoryBytes() {
+#ifdef _WIN32
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (::GlobalMemoryStatusEx(&status) == 0) return std::nullopt;
+    return static_cast<std::uint64_t>(status.ullTotalPhys);
+#else
+    const auto pages = ::sysconf(_SC_PHYS_PAGES);
+    const auto pageSize = ::sysconf(_SC_PAGESIZE);
+    if (pages <= 0 || pageSize <= 0) return std::nullopt;
+    return static_cast<std::uint64_t>(pages) * static_cast<std::uint64_t>(pageSize);
 #endif
 }
 
@@ -930,6 +978,8 @@ void PerformanceOverlay::sampleDetails(OverlayStatistics::Clock::time_point at, 
         detailSample.hostImportBytes = OverlayMemory{imports.liveBytes, imports.liveBytes + Graphics::HostImportBudgetRemaining(context)};
     }
     detailSample.presentMode = std::string(OverlayPresentModeName(info.presentMode));
+    if (info.fpsLimit > 0.0) detailSample.fpsLimit = info.fpsLimit;
+    else detailSample.fpsLimit.reset();
     sampleTrace(at);
     detail.base = std::move(now);
     detail.repeats = 0;

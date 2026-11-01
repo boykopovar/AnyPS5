@@ -1,6 +1,8 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
+#include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -82,6 +84,9 @@ void TestValidation() {
         Require(sceAudioInGetGain(badHandle, &gain) == invalidHandle && gain == 1.0f);
         Require(sceAudioInGetRerouteCount(badHandle) == invalidHandle);
         Require(sceAudioInGetGain(badHandle, nullptr) == invalidPointer);
+        Require(sceAudioInClose(badHandle) == invalidHandle);
+        Require(sceAudioInInput(badHandle, nullptr) == invalidHandle);
+        Require(sceAudioInGetSilentState(badHandle) == invalidHandle);
     }
     int port = sceAudioInAsyncOpen(user, 0, 0, 128, 48000, 2);
     float gain = 0.0f;
@@ -116,7 +121,31 @@ void InputSound(int handle, std::vector<std::int16_t>& block, int samples = 256)
     Require(false);
 }
 
+void TestQueuedAudioDiscard() {
+    std::array<std::uint8_t, 4096> discard{};
+    std::size_t calls = 0;
+    audioin::detail::discardQueuedAudio(8192, discard.data(), discard.size(), [&calls](std::uint8_t*, std::uint32_t chunk) {
+        ++calls;
+        Require(chunk == 4096);
+        return std::uint32_t{0};
+    });
+    Require(calls == 1);
+    calls = 0;
+    audioin::detail::discardQueuedAudio(8192, discard.data(), discard.size(), [&calls](std::uint8_t*, std::uint32_t) {
+        ++calls;
+        return std::uint32_t{1024};
+    });
+    Require(calls == 8);
+    calls = 0;
+    audioin::detail::discardQueuedAudio(1024, discard.data(), discard.size(), [&calls](std::uint8_t*, std::uint32_t) {
+        ++calls;
+        return std::uint32_t{2048};
+    });
+    Require(calls == 1);
+}
+
 void TestCapture() {
+    TestQueuedAudioDiscard();
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_in_capture-" + std::to_string(std::random_device{}()) + ".raw");
     std::vector<std::int16_t> recorded(256 * 2 * 4);
     for (std::size_t i = 0; i < recorded.size(); ++i) recorded[i] = static_cast<std::int16_t>(i * 7 - 3000);

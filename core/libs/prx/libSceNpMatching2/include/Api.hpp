@@ -52,7 +52,7 @@ int APS5_VABI sceNpMatching2SetUserInfo();
 int APS5_VABI sceNpMatching2SignalingGetConnectionInfo();
 int APS5_VABI sceNpMatching2Terminate(void);
 
-int APS5_VABI sceNpMatching2AbortContextStart();
+int APS5_VABI sceNpMatching2AbortContextStart(std::uint16_t ctxId);
 int APS5_VABI sceNpMatching2CreateContextA();
 int APS5_VABI sceNpMatching2CreateContextInternal();
 int APS5_VABI sceNpMatching2CreateJoinRoomA();
@@ -85,7 +85,7 @@ int APS5_VABI sceNpMatching2SignalingCancelPeerNetInfo();
 int APS5_VABI sceNpMatching2SignalingEnableManualUdpMode();
 int APS5_VABI sceNpMatching2SignalingEstablishConnection();
 int APS5_VABI sceNpMatching2SignalingGetConnectionInfoA();
-int APS5_VABI sceNpMatching2SignalingGetConnectionStatus();
+int APS5_VABI sceNpMatching2SignalingGetConnectionStatus(std::uint16_t ctxId, std::uint64_t roomId, std::uint16_t memberId, std::int32_t* connStatus, void* peerAddr, std::uint16_t* peerPort);
 int APS5_VABI sceNpMatching2SignalingGetLocalNetInfo();
 int APS5_VABI sceNpMatching2SignalingGetPeerNetInfo();
 int APS5_VABI sceNpMatching2SignalingGetPeerNetInfoResult();

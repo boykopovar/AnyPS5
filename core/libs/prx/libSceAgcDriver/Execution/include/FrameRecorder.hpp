@@ -72,6 +72,7 @@ private:
     void start();
     void finish();
     void snapshot(const Range& range);
+    void readGuest(std::uint64_t address, std::span<std::byte> bytes, GuestRead read);
     void writeReferenceFrames();
     bool abandonIfDiskLow();
     void stop(const char* reason);
@@ -104,6 +105,7 @@ private:
     std::uint64_t recordedCalls = 0;
     std::uint64_t startAttempts = 0;
     std::uint64_t unreadableBytes = 0;
+    std::uint64_t hostOnlySampleBytes = 0;
     std::uint64_t allocationsGeneration = 0;
     std::uint64_t lateRanges = 0;
     std::vector<std::string> warnings;

@@ -40,4 +40,10 @@ int APS5_VABI scePlayReadyProfileResume();
 int APS5_VABI scePlayReadyProfileStart();
 int APS5_VABI scePlayReadyProfileStop();
 
+int APS5_VABI scePlayReadyCdmiProcessLicenseAckResponse();
+int APS5_VABI scePlayReadyCdmiGetSessionId2();
+int APS5_VABI scePlayReadyCdmiGenerateLicenseAckRequest();
+int APS5_VABI scePlayReadyCdmiGenerateRequest2();
+int APS5_VABI scePlayReadyDomainJoinProcessResponse2();
+
 }

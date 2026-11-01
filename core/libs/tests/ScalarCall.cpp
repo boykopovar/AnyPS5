@@ -141,6 +141,18 @@ static void CheckUserDataCalls() {
     Require(UserDataCalls({0xbe842104u, 0xbf810000u}, 6u).empty());
     const auto direct = UserDataCalls({0xbe8e2104u, 0xbf810000u}, 6u);
     Require(direct.size() == 1u && direct[0].linkRegister == 14u && direct[0].userDataRegister == 4u);
+    const std::vector<std::uint32_t> branchedCopy{0xbe8e0300u, 0xbe8f0301u, 0xbf880001u, 0x7e020280u, 0xbe8e210eu, 0xbf810000u};
+    const auto acrossBranch = UserDataCalls(branchedCopy);
+    Require(acrossBranch.size() == 1u && acrossBranch[0].programCounter == 0x10u && acrossBranch[0].linkRegister == 14u && acrossBranch[0].userDataRegister == 0u);
+    auto skippedWrite = branchedCopy;
+    skippedWrite[3] = 0xbe8e0380u;
+    Require(UserDataCalls(skippedWrite).empty());
+    const std::vector<std::uint32_t> loopedCall{0xbe8e0300u, 0xbe8f0301u, 0xbe8e210eu, 0xbf85fffeu, 0xbf810000u};
+    Require(UserDataCalls(loopedCall).empty());
+    auto separateLink = loopedCall;
+    separateLink[2] = 0xbe90210eu;
+    const auto keptPointer = UserDataCalls(separateLink);
+    Require(keptPointer.size() == 1u && keptPointer[0].programCounter == 0x8u && keptPointer[0].linkRegister == 16u && keptPointer[0].userDataRegister == 0u);
 
     const std::vector<std::uint32_t> addFive{0x4a020285u, 0xbe80200eu};
     const std::vector<std::uint32_t> addSixtyFour{0x4a0202c0u, 0xbe80200eu};
@@ -397,6 +409,32 @@ static std::vector<std::uint32_t> HoistedTableCaller(HoistedShape shape) {
     return code;
 }
 
+static void CheckTableCalleeProgramCounter() {
+    const SwappcInfo swappc{false, 0u, 16u};
+    const auto caller = TableCaller();
+    const auto program = RdnaInstructionDecoder{}.Decode(caller);
+    const auto calls = FindTableCalls(program, swappc);
+    Require(calls.size() == 1u);
+    const std::vector<std::uint32_t> callee{0xbf820001u, 0xbe901f00u, 0xbe80200eu};
+    ExpectThrow("reads its program counter", [&] { static_cast<void>(UserDataCalleeLength(callee, 14u)); });
+    Require(UserDataCalleeLength(callee, 14u, true) == 3u);
+    const std::vector<std::vector<TableCallee>> callees{{{0x1122334400ull, callee}}};
+    const auto linkedCalls = LinkCalls(program, {}, {}, calls, callees);
+    const auto& linked = linkedCalls.code;
+    const std::vector<std::uint32_t> expanded{0xbf820004u, 0xbe9003ffu, 0x22334408u, 0xbe9103ffu, 0x00000011u, 0xbe80200eu};
+    Require(std::search(linked.begin(), linked.end(), expanded.begin(), expanded.end()) != linked.end());
+    Require(std::search(linked.begin(), linked.end(), callee.begin(), callee.end()) == linked.end());
+    SwappcInfo linkedSwappc = swappc;
+    linkedSwappc.linkedCallFallbacks = linkedCalls.fallbacks;
+    static_cast<void>(BuildCode(linked, linkedSwappc));
+    static_cast<void>(TranslateCode(linked, linkedSwappc));
+    const std::vector<std::vector<TableCallee>> plain{{{0x1122334400ull, std::vector<std::uint32_t>{0x4a020285u, 0xbe80200eu}}}};
+    const auto unchanged = LinkCalls(program, {}, {}, calls, plain).code;
+    Require(std::search(unchanged.begin(), unchanged.end(), plain[0][0].code.begin(), plain[0][0].code.end()) != unchanged.end());
+    const std::vector<std::vector<TableCallee>> vcc{{{0x1122334400ull, std::vector<std::uint32_t>{0xbeea1f00u, 0xbe80200eu}}}};
+    ExpectThrow("into another operand than an SGPR pair", [&] { static_cast<void>(LinkCalls(program, {}, {}, calls, vcc)); });
+}
+
 static void CheckHoistedTableCalls() {
     const std::vector<std::uint32_t> callee{0x4a0202c0u, 0xbe80200eu};
     const std::vector<std::vector<TableCallee>> callees{{{0x1122334455ull, callee}}};
@@ -537,6 +575,7 @@ int main(int argc, char** argv) {
             CheckRejections();
             CheckUserDataCalls();
             CheckTableCalls();
+            CheckTableCalleeProgramCounter();
             CheckHoistedTableCalls();
             CheckGuards("");
         } else {

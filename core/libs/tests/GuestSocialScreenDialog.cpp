@@ -66,7 +66,10 @@ int main() {
     Require(sceSocialScreenDialogTerminate() == 0);
     Require(sceSocialScreenDialogTerminate() == kErrNotInitialized);
     Require(sceSocialScreenDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSocialScreenDialogOpen(&param) == kErrNotInitialized);
+    Require(sceSocialScreenDialogClose() == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceSocialScreenDialogGetResult(result) == kErrNotInitialized);
     Require(sceSocialScreenDialogGetStatus() == kStatusNone);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);
 }

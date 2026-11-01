@@ -131,7 +131,10 @@ int APS5_VABI sceBluetoothHidSetFeatureReport(std::uint64_t deviceHandle, std::u
 }
 
 int APS5_VABI sceBluetoothHidThreadParamInitialize(BluetoothHidThreadParam* param, std::int32_t priority, std::uint64_t affinityMask) {
-    NotImplemented_nid_no_patch(__func__);
+    if (param == nullptr) return InvalidArgument;
+    param->priority = priority;
+    param->affinityMask = affinityMask;
+    param->reserved = 0;
     return 0;
 }
 

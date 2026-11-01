@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -23,6 +24,7 @@ char g_titleId[12] = {};
 char g_contentVersion[16] = {};
 std::uint64_t g_downloadDataSizeMiB = 0;
 std::uint32_t g_attribute3 = 0;
+std::optional<std::uint32_t> g_paramSfoAttribute;
 std::int32_t g_userDefinedParams[4] = {};
 std::vector<std::uint8_t> g_iconBytes;
 
@@ -51,6 +53,7 @@ void ensureTitleLoaded() {
     if (!parsed.contentVersion.empty() && parsed.contentVersion.size() < sizeof(g_contentVersion)) copyToFixedBuffer(g_contentVersion, sizeof(g_contentVersion), parsed.contentVersion);
     g_downloadDataSizeMiB = parsed.downloadDataSizeMiB;
     g_attribute3 = parsed.attribute3;
+    g_paramSfoAttribute = parsed.paramSfoAttribute;
     std::memcpy(g_userDefinedParams, parsed.userDefinedParams, sizeof(g_userDefinedParams));
     g_titleLoaded = true;
 }
@@ -120,6 +123,13 @@ std::uint64_t GetAppDownloadDataSizeMiB_nid_postfix() {
 std::uint32_t GetAppAttribute3_nid_no_patch() {
     ensureTitleLoaded();
     return g_attribute3;
+}
+
+bool GetAppParamSfoAttribute_nid_no_patch(std::uint32_t* attribute) {
+    ensureTitleLoaded();
+    if (!g_paramSfoAttribute) return false;
+    *attribute = *g_paramSfoAttribute;
+    return true;
 }
 
 std::int32_t GetAppUserDefinedParam_nid_postfix(std::uint32_t index) {

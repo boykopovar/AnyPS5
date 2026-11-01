@@ -107,7 +107,7 @@ bool NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(AvPlayerInternal* h, s
 
 class Player final : public AvPlayerInternal, private ISourceEvents {
 public:
-    Player(const AvPlayerInitData& init, std::uint32_t bufferCount, bool ps5Layout = false);
+    Player(const AvPlayerInitData& init, std::uint32_t bufferCount);
     ~Player() override;
     Player(const Player&) = delete;
     Player& operator=(const Player&) = delete;
@@ -166,7 +166,6 @@ private:
     AvPlayerMemAllocator memory{};
     AvPlayerEventReplacement callback{};
     bool autoStartEnabled = false;
-    bool ps5Layout = false;
     char language[4]{};
     std::uint32_t videoBuffers = 2;
 

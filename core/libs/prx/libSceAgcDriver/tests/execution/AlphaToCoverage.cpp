@@ -522,6 +522,64 @@ constexpr std::array<DitherCase, 56> TwoSampleDitherCases{{
     {0x00007e00u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
 }};
 
+void DccSrgbClearTests(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 4);
+    const ColorTargetLayout allocation(Width, Height, ColorTileMode::RenderTarget, 8);
+    std::vector<std::unique_ptr<Block>> blocks;
+    struct ClearTargets {
+        AgcDriver::VulkanDevice& device;
+        ~ClearTargets() {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+            AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        }
+    } clearTargets{device};
+    const auto targetFor = [&](const Block& block, std::uint32_t count, VkFormat format) {
+        auto target = DecodeTarget(block, count);
+        target.format = format;
+        target.elementBytes = 4;
+        target.bytes = layout.Bytes();
+        return target;
+    };
+    for (const auto format : {VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB}) {
+        for (const auto key : {0x00u, 0x40u, 0x80u, 0xc0u}) {
+            for (const auto alphaOnMsb : {false, true}) {
+                blocks.push_back(std::make_unique<Block>(allocation.Bytes() * samples));
+                auto& source = *blocks.back();
+                std::memset(source.data, 0x5a, source.bytes);
+                blocks.push_back(std::make_unique<Block>(BlockBytes));
+                auto& metadata = *blocks.back();
+                std::memset(metadata.data, key, metadata.bytes);
+                auto target = targetFor(source, samples, format);
+                target.dccAddress = metadata.Address();
+                target.dccPipeAligned = true;
+                target.dccAlphaOnMsb = alphaOnMsb;
+                Draw(device, target, false, Float32Export, Program(Color{0.25f, 0.5f, 0.75f, 0.125f}, Float32Export, 0u), false, true);
+                blocks.push_back(std::make_unique<Block>(allocation.Bytes()));
+                auto& resolved = *blocks.back();
+                std::memset(resolved.data, 0xa5, resolved.bytes);
+                AgcDriver::Graphics::ColorMetadataPass pass{};
+                pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+                pass.source = target;
+                pass.targets = {targetFor(resolved, 1u, format)};
+                device.ColorMetadataPass(pass);
+                const auto stored = ReadBack(device, resolved);
+                const auto bytes = std::as_bytes(std::span(stored));
+                std::array<std::byte, 4> expected{};
+                const auto keys = key == 0x00u ? AgcDriver::Graphics::DccKeys::Clear0000 : key == 0x40u ? AgcDriver::Graphics::DccKeys::Clear0001 : key == 0x80u ? AgcDriver::Graphics::DccKeys::Clear1110 : AgcDriver::Graphics::DccKeys::Clear1111;
+                Require(AgcDriver::Graphics::FillDccClear(format, keys, alphaOnMsb, expected), "the sRGB DCC expected texel was not encoded");
+                for (std::uint32_t y = 0; y < Height; ++y) {
+                    for (std::uint32_t x = 0; x < Width; ++x) {
+                        for (std::uint32_t channel = 0; channel < 4; ++channel) Require(bytes[layout.Offset(x, y) + channel] == expected[channel], "an sRGB DCC import or resolve changed an undrawn sample endpoint");
+                    }
+                }
+            }
+        }
+    }
+}
+
 void DccFastClearTests(AgcDriver::VulkanDevice& device, std::uint32_t selectedSamples) {
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
     const auto expectRange = [](std::string_view message, const char* plane, std::uint64_t address, std::size_t bytes, std::uint32_t samples) {
@@ -1147,6 +1205,19 @@ int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 3 && std::string_view(argv[1]) == "--dcc-srgb-clear") {
+            const auto samples = std::string_view(argv[2]) == "2" ? 2u : std::string_view(argv[2]) == "4" ? 4u : std::string_view(argv[2]) == "8" ? 8u : 0u;
+            Require(samples != 0, "unknown sRGB DCC test sample count");
+            try {
+                DccSrgbClearTests(*device, samples);
+            } catch (const std::runtime_error& error) {
+                if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+                std::printf("skipped, the device lacks the requested multisample color attachments: %s\n", error.what());
+                return VulkanTestSkipped;
+            }
+            std::cout << "Multisampled sRGB DCC clear tests passed\n";
+            return 0;
+        }
         if ((argc == 2 || argc == 3) && std::string_view(argv[1]) == "--dcc-fast-clear") {
             const auto samples = argc == 2 ? 0u : std::string_view(argv[2]) == "2" ? 2u : std::string_view(argv[2]) == "4" ? 4u : std::string_view(argv[2]) == "8" ? 8u : 0u;
             Require(argc == 2 || samples != 0, "unknown DCC test sample count");

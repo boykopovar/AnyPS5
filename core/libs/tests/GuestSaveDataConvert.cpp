@@ -78,7 +78,7 @@ int main() {
     Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after subsequent failed convert");
     Check(progress < 1.0f, "convert progress drops below 1.0f after subsequent failed convert");
     Check(progress == 0.0f, "convert progress reports 0.0f after subsequent failed convert");
-    for (const char* invalid : {"../kept", "", ".", "..", "a\\b", "c:d"}) {
+    for (const char* invalid : {"../kept", "", ".", "..", "a/b", "a\\b", "c:d"}) {
         Check(Convert(invalid, std::strlen(invalid) + 1) == SaveDataErrorParameter, std::string("\"") + invalid + "\" is rejected");
     }
     char unterminated[sizeof(SceSaveDataDirName::data)];

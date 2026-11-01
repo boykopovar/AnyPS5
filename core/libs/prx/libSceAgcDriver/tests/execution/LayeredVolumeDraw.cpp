@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -20,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <iostream>
 #include <span>
 #include <string>
@@ -66,6 +68,10 @@ alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{
     0x7e0e02f2, 0xf800180f, 0x07070707, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 7> UintPixelCode{
+    0x7e0802ff, 0x00ff00ff, 0x7e0a02ff, 0x00ff00ff, 0xf8001c0f, 0x00000504, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 6> LayerFieldPixelCode{
     0x2c020090, 0x7e020d01, 0x100202f0, 0xf800180f, 0x01010101, 0xbf810000,
 };
@@ -79,7 +85,7 @@ struct Vertex {
     std::uint32_t layer;
 };
 
-alignas(256) std::array<Vertex, 6 * Layers> Vertices{};
+alignas(256) std::array<Vertex, 6 * 8> Vertices{};
 
 constexpr ShaderRecompiler::MeshConfiguration Subgroup{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u};
 
@@ -88,10 +94,11 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t st
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu) | (stride << 16u), count, 0x01016facu};
 }
 
-void BuildBands() {
-    for (std::uint32_t layer = 0; layer < Layers; ++layer) {
-        const float left = -1.0f + 2.0f * static_cast<float>(layer) / Layers;
-        const float right = -1.0f + 2.0f * static_cast<float>(layer + 1u) / Layers;
+void BuildBands(std::uint32_t layers = Layers) {
+    Require(layers != 0 && 6u * layers <= Vertices.size(), "too many layers for the vertex allocation");
+    for (std::uint32_t layer = 0; layer < layers; ++layer) {
+        const float left = -1.0f + 2.0f * static_cast<float>(layer) / layers;
+        const float right = -1.0f + 2.0f * static_cast<float>(layer + 1u) / layers;
         const std::array<std::array<float, 2>, 6> corners{{{left, -1.0f}, {right, -1.0f}, {left, 1.0f}, {right, -1.0f}, {right, 1.0f}, {left, 1.0f}}};
         for (std::uint32_t k = 0; k < corners.size(); ++k) Vertices[6u * layer + k] = {{corners[k][0], corners[k][1], 0.5f, 1.0f}, {1.0f, 1.0f, 1.0f}, layer};
     }
@@ -149,12 +156,12 @@ bool DeclaresLayer(std::span<const std::uint32_t> words) {
     return false;
 }
 
-void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool mesh, std::span<const std::uint32_t> pixelCode, bool layerField) {
+void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& color, bool mesh, std::span<const std::uint32_t> pixelCode, bool layerField, std::span<const Vertex> vertices = Vertices) {
     const auto target = device.Target();
-    const auto vertexBuffer = BufferDescriptor(Vertices.data(), sizeof(Vertex), static_cast<std::uint32_t>(Vertices.size()));
-    const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Vertices.size()), 0, 1, 0, false};
+    const auto vertexBuffer = BufferDescriptor(vertices.data(), sizeof(Vertex), static_cast<std::uint32_t>(vertices.size()));
+    const AgcDriver::Pm4::DrawParameters draw{0, 6u * color.layers, 0, 1, 0, false};
     ShaderRecompiler::ShaderVertexStageInfo vertexInfo{};
-    vertexInfo.paClVsOutCntl = LayerExport;
+    vertexInfo.paClVsOutCntl = color.layers > 1u ? LayerExport : 0u;
     std::vector<std::uint32_t> userData(mesh ? 12u : 4u, 0u);
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), userData.begin() + (mesh ? 8 : 0));
     const std::span<const std::uint32_t> code = mesh ? std::span<const std::uint32_t>(GeometryCode) : std::span<const std::uint32_t>(VertexCode);
@@ -172,7 +179,7 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     const auto geometryPush = static_cast<std::uint32_t>(geometryResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
-    pixel.targetOutputMode[0] = 9;
+    pixel.targetOutputMode[0] = color.uintExport ? 7u : 9u;
     pixel.targetExportMapping.fill(0xe4u);
     if (layerField) {
         pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::Ancillary);
@@ -200,13 +207,13 @@ void Run(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget
     state.color = color;
     state.colors = {state.color};
     state.hasColorTarget = true;
-    state.renderExtent = {Width, Height};
-    state.renderLayers = Layers;
-    state.layerExports = LayerExport;
+    state.renderExtent = color.extent;
+    state.renderLayers = color.layers;
+    state.layerExports = color.layers > 1u ? LayerExport : 0u;
     state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-    state.viewport = {0, static_cast<float>(Height), static_cast<float>(Width), -static_cast<float>(Height), 0, 1};
+    state.viewport = {0, static_cast<float>(color.extent.height), static_cast<float>(color.extent.width), -static_cast<float>(color.extent.height), 0, 1};
     state.negativeOneToOne = false;
-    state.scissor = {{0, 0}, {Width, Height}};
+    state.scissor = {{0, 0}, color.extent};
     state.cullMode = VK_CULL_MODE_NONE;
     state.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     state.blend.colorWriteMask = 15;
@@ -265,12 +272,110 @@ void Check(const std::byte* volume, const AgcDriver::Graphics::ColorTarget& colo
     }
 }
 
+void MipTargets(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::Graphics;
+    struct Selection {
+        std::uint32_t width;
+        std::uint32_t height;
+        std::uint32_t depth;
+        std::uint32_t levels;
+        std::uint32_t level;
+        std::uint32_t firstSlice;
+        std::uint32_t layers;
+        ColorTileMode tileMode;
+        bool uintExport;
+        std::uint32_t pipeBankXor = 0;
+    };
+    constexpr Selection selections[] = {
+        {96, 32, 1, 1, 0, 0, 1, ColorTileMode::Linear, false},
+        {96, 32, 1, 1, 0, 0, 1, ColorTileMode::Standard4KB, false},
+        {96, 32, 1, 1, 0, 0, 1, ColorTileMode::RenderTarget, false},
+        {96, 32, 1, 1, 0, 0, 1, ColorTileMode::S4KBX, false},
+        {96, 32, 8, 3, 0, 1, 3, ColorTileMode::RenderTarget, false},
+        {96, 32, 8, 3, 1, 1, 3, ColorTileMode::RenderTarget, false},
+        {96, 32, 8, 3, 2, 0, 2, ColorTileMode::RenderTarget, false},
+        {96, 32, 1, 3, 1, 0, 1, ColorTileMode::RenderTarget, false},
+        {96, 32, 8, 3, 0, 1, 3, ColorTileMode::S4KBX, false},
+        {96, 32, 8, 3, 1, 1, 3, ColorTileMode::S4KBX, false},
+        {96, 32, 8, 3, 2, 0, 2, ColorTileMode::S4KBX, false},
+        {96, 32, 1, 3, 1, 0, 1, ColorTileMode::S4KBX, false},
+        {128, 128, 8, 2, 0, 0, 8, ColorTileMode::S4KBX, true},
+        {128, 128, 8, 2, 1, 0, 4, ColorTileMode::S4KBX, true, 0x500},
+    };
+    for (const auto& selection : selections) {
+        const auto [width, height, depth, levels, level, firstSlice, layers, mode, uintExport, pipeBankXor] = selection;
+        GuestTextureResource surface{};
+        surface.width = width;
+        surface.height = height;
+        surface.depthOrLastArray = depth - 1u;
+        surface.mipCount = levels;
+        surface.tileMode = ColorTextureTileMode(mode);
+        surface.dimension = TextureDimension::k3D;
+        surface.format = FindGuestColorTargetFormat(uintExport ? VK_FORMAT_R8G8B8A8_UINT : VK_FORMAT_R8G8B8A8_UNORM, 4u).value();
+        const auto geometry = DescribeSurface(surface);
+        const bool linear = mode == ColorTileMode::Linear;
+        const auto thin = linear ? std::array<std::uint32_t, 3>{} : ThinBlockLayout(surface.tileMode, 4u);
+        const auto block = geometry.thick ? ThickBlockExtent(surface.tileMode, 4u) : std::array<std::uint32_t, 3>{thin[1], thin[2], 1u};
+        const auto* equation = linear ? nullptr : FindTextureSwizzleEquation((geometry.thick ? 0x100u : 0u) | static_cast<std::uint32_t>(mode), 4u);
+        Require(linear || equation != nullptr, "missing volume mip swizzle equation");
+        const GuestVolume volume((geometry.guestBytes + sizeof(Vertices) + 65535u) & ~std::size_t{65535u});
+        const auto address = reinterpret_cast<std::uintptr_t>(volume.Data()) | pipeBankXor;
+        AgcDriver::QueueState queue;
+        auto& registers = queue.context;
+        registers = {
+            {0x318, static_cast<std::uint32_t>(address >> 8u)}, {0x390, static_cast<std::uint32_t>(address >> 40u)},
+            {0x31b, (level << 26u) | ((firstSlice + layers - 1u) << 13u) | firstSlice}, {0x31c, uintExport ? 0x70428u : 0x28028u}, {0x31d, 0u},
+            {0x3b0, ((levels - 1u) << 28u) | ((width - 1u) << 14u) | (height - 1u)},
+            {0x3b8, (uintExport ? 0x0ea00000u : 0x0a000000u) | (static_cast<std::uint32_t>(mode) << 14u) | (depth - 1u)}
+        };
+        auto color = DecodeColorBuffer(registers, 0u);
+        color.uintExport = uintExport;
+        Require(SurfaceForTarget(color).dimension == TextureDimension::k3D, "a depth-one volume mip was treated as a 2D image");
+        BuildBands(layers);
+        auto* adjacentVertices = reinterpret_cast<Vertex*>(volume.Data() + geometry.guestBytes);
+        std::memcpy(adjacentVertices, Vertices.data(), sizeof(Vertices));
+        Run(device, color, false, uintExport ? std::span<const std::uint32_t>(UintPixelCode) : std::span<const std::uint32_t>(PixelCode), false, {adjacentVertices, Vertices.size()});
+        Require(std::memcmp(adjacentVertices, Vertices.data(), sizeof(Vertices)) == 0, "a volume mip draw changed the adjacent vertex buffer");
+        for (std::uint32_t mipLevel = 0u; mipLevel < levels; ++mipLevel) {
+            const auto& mip = geometry.mips.at(mipLevel);
+            for (std::uint32_t slice = 0u; geometry.HasLayer(mipLevel, slice) && slice < depth; ++slice) {
+                const auto* base = volume.Data() + geometry.GuestLayerOffset(slice) + mip.tiledOffset;
+                for (std::uint32_t y = 0u; y < mip.height; ++y) {
+                    for (std::uint32_t x = 0u; x < mip.width; ++x) {
+                        const auto bandWidth = color.extent.width / layers;
+                        const bool drawn = mipLevel == level && slice >= firstSlice && slice < firstSlice + layers && x / bandWidth == slice - firstSlice;
+                        auto offset = linear ? static_cast<std::uint64_t>(y) * mip.pitchBytes + x * 4u : BlockOffset(*equation, x + (mip.tail ? mip.tailX : 0u), y + (mip.tail ? mip.tailY : 0u), slice);
+                        if (!linear && !mip.tail) offset += (static_cast<std::uint64_t>(y / block[1]) * mip.blocksPerRow + x / block[0]) * thin[0];
+                        offset ^= pipeBankXor;
+                        for (std::uint32_t channel = 0u; channel < 4u; ++channel) {
+                            Require(std::to_integer<std::uint8_t>(base[offset + channel]) == (drawn ? 255u : Kept), "a volume mip draw lost its selected slice or changed another mip/slice");
+                        }
+                    }
+                }
+            }
+        }
+        std::printf("Volume mip target %ux%ux%u levels=%u mip=%u first=%u layers=%u mode=%u uint=%u XOR=%x preserves other mips and slices\n", width, height, depth, levels, level, firstSlice, layers, static_cast<std::uint32_t>(mode), uintExport ? 1u : 0u, pipeBankXor);
+    }
+}
+
 }
 
 int main(int argc, char** argv) {
     try {
+        const bool directReadback = std::getenv("APS5_TEST_DIRECT_READBACK") != nullptr;
+        if (directReadback) {
+            std::remove("private-readback.ready");
+            char extent[64];
+            std::snprintf(extent, sizeof(extent), "%ux%ux%u", Width, Height, Slices);
+#ifdef _WIN32
+            Require(_putenv_s("APS5_DUMP_STORAGE", extent) == 0 && _putenv_s("APS5_DUMP_STORAGE_GATE", "private-readback.ready") == 0, "cannot set private readback options");
+#else
+            Require(setenv("APS5_DUMP_STORAGE", extent, 1) == 0 && setenv("APS5_DUMP_STORAGE_GATE", "private-readback.ready", 1) == 0, "cannot set private readback options");
+#endif
+        }
         const bool vertexOnly = argc == 2 && std::strcmp(argv[1], "--vertex-only") == 0;
-        Require(argc == 1 || vertexOnly, "usage: layered volume draw [--vertex-only]");
+        const bool mips = argc == 2 && std::strcmp(argv[1], "--mips") == 0;
+        Require(argc == 1 || vertexOnly || mips, "usage: layered volume draw [--vertex-only|--mips]");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto target = device->Target();
@@ -278,11 +383,47 @@ int main(int argc, char** argv) {
             std::puts("skipped, the device has no VK_EXT_shader_viewport_index_layer");
             return VulkanTestSkipped;
         }
+        if (mips) {
+            MipTargets(*device);
+            return 0;
+        }
         BuildBands();
         const GuestVolume volume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
         const auto color = VolumeTarget(volume.Data());
         Run(*device, color, false, PixelCode, false);
         Check(volume.Data(), color, "vertex draw", WhiteBands);
+        if (directReadback) {
+            char name[80];
+            std::snprintf(name, sizeof(name), "storage_direct_%llx_0.raw", static_cast<unsigned long long>(color.address));
+            std::remove(name);
+            AgcDriver::Graphics::StorageTexture::FlushDumpSelected("closed readback gate fixture");
+            Require(!std::filesystem::exists(name), "private readback ignored its closed gate");
+            auto* trigger = std::fopen("private-readback.ready", "wb");
+            Require(trigger != nullptr, "cannot create private readback trigger");
+            Require(std::fclose(trigger) == 0, "cannot close private readback trigger");
+            AgcDriver::Graphics::StorageTexture::FlushDumpSelected("private readback fixture");
+            std::remove("private-readback.ready");
+            auto* file = std::fopen(name, "rb");
+            Require(file != nullptr, "clean volume image was not exported by direct readback");
+            std::array<std::uint32_t, 3> header{};
+            Require(std::fread(header.data(), sizeof(header), 1, file) == 1, "private readback header is incomplete");
+            Require(header[0] >= Width && header[1] == Height && header[2] == VK_FORMAT_R8G8B8A8_UNORM, "private readback header disagrees with the volume");
+            std::vector<std::uint8_t> pixels(static_cast<std::size_t>(header[0]) * Height * Slices * 4u);
+            Require(std::fread(pixels.data(), 1, pixels.size(), file) == pixels.size(), "private readback pixels are incomplete");
+            Require(std::fgetc(file) == EOF, "private readback has unexpected trailing pixels");
+            Require(std::fclose(file) == 0, "cannot close private readback");
+            for (std::uint32_t z = 0; z < Slices; ++z) {
+                for (std::uint32_t y = 0; y < Height; ++y) {
+                    for (std::uint32_t x = 0; x < Width; ++x) {
+                        const bool drawn = z >= FirstSlice && x / BandWidth == z - FirstSlice;
+                        const auto expected = drawn ? WhiteBands[z - FirstSlice] : Kept;
+                        for (std::uint32_t channel = 0; channel < 4; ++channel) Require(pixels[((z * Height + y) * header[0] + x) * 4u + channel] == expected, "private readback changed a volume texel");
+                    }
+                }
+            }
+            std::puts("private clean-volume direct readback pixels verified");
+            return 0;
+        }
         const GuestVolume fieldVolume((VolumeTarget(nullptr).bytes + 65535u) & ~std::size_t{65535u});
         const auto fieldColor = VolumeTarget(fieldVolume.Data());
         Run(*device, fieldColor, false, LayerFieldPixelCode, true);

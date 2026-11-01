@@ -244,7 +244,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         }
         if (needed != 1) rejectSharedImport(base, Io::Utf8Path(inputPath));
         const auto found = exports.find(name);
-        if (!windows && found != exports.end()) {
+        const auto declared = windows || executableModules[offset / 24].empty() ? guestNames.end() : findGuest(executableModules[offset / 24]);
+        if (!windows && found != exports.end() && (declared == guestNames.end() || std::any_of(found->second.begin(), found->second.end(), [&](const auto& candidate) { return candidate.Provider == declared->second; }))) {
             rename(dynamic.DynSymData, dynamic.DynStrData, offset / 24, name);
             if (executableReferences[offset / 24] && found->second.size() == 1) executableProviders.insert(found->second.front().Provider);
         }
@@ -316,7 +317,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (const auto provider : executableProviders) require(provider);
     for (std::size_t index = 0; index < images.size(); ++index) {
         if (!isRuntime(index)) require(index);
-        if (windows) for (const auto dependency : dependencies[index]) require(dependency);
+        if (windows) for (const auto dependency : dependencies[index]) if (standardDirectory(dependency)) require(dependency);
     }
     const auto deferred = [&](const std::size_t index) {
         return !required[index] && isRuntime(index);
@@ -327,11 +328,12 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     };
     if (!windows) {
         const auto executableExports = macos ? std::set<std::string>{} : ExportedNames(dynamic);
-        for (auto& image : images) {
+        for (std::size_t module = 0; module < images.size(); ++module) {
+            auto& image = images[module];
             for (std::size_t index = 1; index < image.Symbols.size(); ++index) {
                 const auto& symbol = image.Symbols[index];
                 const bool exported = symbol.Section != 0 && (symbol.Info >> 4) != 0 && symbol.Visibility != 1 && symbol.Visibility != 2;
-                if (((symbol.Section == 0 && !declaresHost(symbol.Library)) || exported) && exports.contains(symbol.Name)) rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, symbol.Name);
+                if (((symbol.Section == 0 && !declaresHost(symbol.Library) && !systemImports[module].contains(index)) || exported) && exports.contains(symbol.Name)) rename(image.Dynamic.DynSymData, image.Dynamic.DynStrData, index, symbol.Name);
             }
             if (!macos) BindNamedImportsByNid(image, executableExports);
         }

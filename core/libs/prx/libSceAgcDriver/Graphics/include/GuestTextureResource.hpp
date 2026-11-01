@@ -25,6 +25,21 @@ enum class TextureTileMode {
     kD64KBT,
     kS4KBX,
     kD4KBX,
+    kGcnThin1D,
+    kGcnDisplay1D,
+    kGcnDisplay2D,
+    kGcnThin2D,
+    kGcnDepth2D64,
+    kGcnDepth2D128,
+    kGcnDepth2D256,
+    kGcnDepth2D512,
+    kGcnDepth2D1K,
+    kGcnDepthPrt256,
+    kGcnDepthPrt1K,
+    kGcnDisplayPrt,
+    kGcnDisplay2DPrt,
+    kGcnThinPrt,
+    kGcnThin2DPrt,
     // Upstream's name for SW_64KB_R_X (tile mode 0x1b).
     RenderTarget64KB = kR64KBX
 };
@@ -91,7 +106,36 @@ struct GuestTextureResource {
     std::uint32_t allocatedMipCount = 0;
     std::uint32_t samples = 1;
     std::uint64_t fmaskCmaskAddress = 0;
+    std::uint32_t gcnPitch = 0;
+    bool gcnPow2Pad = false;
+    bool gcnLinearGeneral = false;
 };
+
+constexpr bool IsGcnMicroTiled(TextureTileMode mode) {
+    return mode == TextureTileMode::kGcnThin1D || mode == TextureTileMode::kGcnDisplay1D;
+}
+
+constexpr bool IsGcnDepthTiled(TextureTileMode mode) {
+    return mode == TextureTileMode::kGcnDepth2D64 || mode == TextureTileMode::kGcnDepth2D128 || mode == TextureTileMode::kGcnDepth2D256 || mode == TextureTileMode::kGcnDepth2D512 || mode == TextureTileMode::kGcnDepth2D1K
+        || mode == TextureTileMode::kGcnDepthPrt256 || mode == TextureTileMode::kGcnDepthPrt1K;
+}
+
+constexpr bool IsGcnPrtTiled(TextureTileMode mode) {
+    return mode == TextureTileMode::kGcnDepthPrt256 || mode == TextureTileMode::kGcnDepthPrt1K || mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnDisplay2DPrt || mode == TextureTileMode::kGcnThinPrt || mode == TextureTileMode::kGcnThin2DPrt;
+}
+
+constexpr bool IsGcnMacroTiled(TextureTileMode mode) {
+    return mode == TextureTileMode::kGcnDisplay2D || mode == TextureTileMode::kGcnThin2D || IsGcnDepthTiled(mode) || IsGcnPrtTiled(mode);
+}
+
+constexpr bool IsGcnTiled(TextureTileMode mode) {
+    return IsGcnMicroTiled(mode) || IsGcnMacroTiled(mode);
+}
+
+constexpr TextureTileMode GcnMicroTileMode(TextureTileMode mode) {
+    if (mode == TextureTileMode::kGcnDisplay2D || mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnDisplay2DPrt) return TextureTileMode::kGcnDisplay1D;
+    return IsGcnMacroTiled(mode) ? TextureTileMode::kGcnThin1D : mode;
+}
 
 float EffectiveMinLod(const GuestTextureResource& resource);
 

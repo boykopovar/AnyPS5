@@ -25,6 +25,8 @@ struct DisplayBuffer {
     std::uint32_t alignment = 65536;
 };
 
+inline constexpr std::uint32_t DisplayTilingGcn = 2;
+
 std::size_t DisplayBufferSize(const DisplayBuffer& buffer);
 std::size_t DisplayBufferOffset(const DisplayBuffer& buffer, std::uint32_t x, std::uint32_t y);
 std::vector<std::byte> DecodeDisplayBuffer(const DisplayBuffer& buffer, std::span<const std::byte> source);

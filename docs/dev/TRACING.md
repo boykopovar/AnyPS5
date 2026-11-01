@@ -20,6 +20,7 @@ Set a switch before starting the emulator. Unless noted, any value enables it. M
 | `APS5_TRACE_SSE4A` | Each emulated SSE4A instruction once per guest instruction address (Windows). |
 | `APS5_TRACE_SYNC` | Event-flag operations and their wait and wake results. |
 | `APS5_TRACE_TIMERS` | Timing measurements for the host wait primitives used by the emulator. |
+| `APS5_TRACE_UDS` | Universal Data System events posted to a context, and the trophy title data it cannot find. |
 | `APS5_TRACE_USLEEP` | Every 2,000 guest `usleep` calls, with caller addresses and requested delays. |
 | `APS5_TRACE_VIDEODEC` | Video decoder API calls and decode results. |
 | `APS5_TRACE_WAITS` | Blocking waits aggregated by guest call site, including timeout counts and longest waits, every three seconds. |

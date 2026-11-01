@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -25,6 +26,7 @@ int main() {
     constexpr int notInitialized = static_cast<int>(0x80770001u);
     constexpr int invalidContext = static_cast<int>(0x80770003u);
     constexpr int invalidArgument = static_cast<int>(0x80770004u);
+    constexpr int cancelled = static_cast<int>(0x80770014u);
     constexpr int invalidPoll = static_cast<int>(0x8077001Fu);
     constexpr int tooManyContexts = static_cast<int>(0x80770020u);
     constexpr int add = 1;
@@ -41,6 +43,7 @@ int main() {
     Require(sceRudpPollControl(1, add, 0, read) == notInitialized);
     Require(sceRudpPollWait(1, events.data(), eventCount, 0) == notInitialized);
     Require(sceRudpPollDestroy(1) == notInitialized);
+    Require(sceRudpPollCancel(0) == notInitialized);
     Require(sceRudpInit_nid_postfix(pool.data(), static_cast<int>(pool.size())) == 0);
 
     Require(sceRudpPollCreate(0) == invalidArgument);
@@ -108,6 +111,67 @@ int main() {
     Require(sceRudpPollControl(poll, add, third, read) == 0);
     Require(sceRudpPollControl(other, add, third, read) == 0);
 
+    Require(sceRudpPollCancel(-1) == invalidArgument);
+    Require(sceRudpPollCancel(std::numeric_limits<int>::min()) == invalidArgument);
+    Require(sceRudpPollCancel(12345) == invalidPoll);
+    Require(sceRudpPollCancel(poll) == 0);
+    Require(sceRudpPollCancel(poll) == 0);
+    Require(sceRudpPollWait(other, events.data(), eventCount, 1000) == 0);
+    Require(sceRudpPollWait(poll, events.data(), eventCount, 1000) == cancelled);
+    Require(sceRudpPollWait(poll, events.data(), eventCount, 1000) == 0);
+    Require(sceRudpPollCancel(poll) == 0);
+    Require(sceRudpPollWait(poll, events.data(), eventCount, 0) == cancelled);
+    Require(sceRudpPollWait(poll, events.data(), eventCount, 0) == 0);
+
+    const int cancelPoll = sceRudpPollCreate(1);
+    Require(cancelPoll > 0);
+    int foreverResult = 0;
+    int timedResult = 0;
+    std::thread foreverWaiter([&] { foreverResult = sceRudpPollWait(cancelPoll, events.data(), eventCount, forever); });
+    std::thread timedWaiter([&] { timedResult = sceRudpPollWait(cancelPoll, events.data(), eventCount, 10000000); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto cancelledAt = std::chrono::steady_clock::now();
+    Require(sceRudpPollCancel(cancelPoll) == 0);
+    Require(std::chrono::steady_clock::now() - cancelledAt < std::chrono::milliseconds(500));
+    foreverWaiter.join();
+    timedWaiter.join();
+    Require(foreverResult == cancelled && timedResult == cancelled);
+    Require(sceRudpPollWait(cancelPoll, events.data(), eventCount, 1000) == 0);
+    Require(sceRudpPollDestroy(cancelPoll) == 0);
+    Require(sceRudpPollCancel(cancelPoll) == invalidPoll);
+
+    const int latePoll = sceRudpPollCreate(1);
+    Require(latePoll > 0);
+    for (int round = 0; round < 40; ++round) {
+        std::array<RudpPollEvent, 4> earlyEvents{};
+        std::array<RudpPollEvent, 4> lateEvents{};
+        std::atomic<int> earlyResult{1};
+        std::atomic<int> lateResult{1};
+        std::atomic<bool> cancelReturned{false};
+        std::thread earlyWaiter([&] { earlyResult = sceRudpPollWait(latePoll, earlyEvents.data(), eventCount, forever); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        std::thread canceller([&] {
+            Require(sceRudpPollCancel(latePoll) == 0);
+            cancelReturned = true;
+        });
+        std::thread lateWaiter([&] { lateResult = sceRudpPollWait(latePoll, lateEvents.data(), eventCount, forever); });
+        const auto cancelledAt = std::chrono::steady_clock::now();
+        while (!cancelReturned && std::chrono::steady_clock::now() - cancelledAt < std::chrono::seconds(2))
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        Require(cancelReturned);
+        canceller.join();
+        while (earlyResult == 1 || lateResult == 1) {
+            Require(sceRudpPollCancel(latePoll) == 0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        earlyWaiter.join();
+        lateWaiter.join();
+        Require(earlyResult == cancelled && lateResult == cancelled);
+        sceRudpPollWait(latePoll, events.data(), eventCount, 0);
+        Require(sceRudpPollWait(latePoll, events.data(), eventCount, 0) == 0);
+    }
+    Require(sceRudpPollDestroy(latePoll) == 0);
+
     const int finitePoll = sceRudpPollCreate(1);
     Require(finitePoll > 0);
     int finiteResult = 0;
@@ -137,6 +201,7 @@ int main() {
     Require(sceRudpEnd() == 0);
     endedWaiter.join();
     Require(endedResult == notInitialized);
+    Require(sceRudpPollCancel(other) == notInitialized);
 
     Require(sceRudpInit_nid_postfix(pool.data(), static_cast<int>(pool.size())) == 0);
     Require(sceRudpPollDestroy(other) == invalidPoll);

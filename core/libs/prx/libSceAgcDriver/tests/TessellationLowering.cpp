@@ -135,6 +135,10 @@ struct Hull {
         static_cast<void>(builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&loaded}));
     }
 
+    IrValue& packed() {
+        return builder.BitwiseOr(builder.ShiftLeftLogical(invocation(), builder.Constant(8u)), relativePatch());
+    }
+
     IrValue& merge(std::uint32_t firstMultiple, std::uint32_t secondMultiple) {
         IrBlock& entry = *block;
         IrBlock& first = newBlock();
@@ -339,6 +343,14 @@ bool LowersUnderComplementedBallot(Conjunction conjunction) {
     auto& address = hull.inPatch(offset);
     hull.read(address, *predicate);
     return LoweredAt(hull.program, address);
+}
+
+bool OwnControlPoint(const IrValue* address, std::uint32_t stride) {
+    if (address == nullptr || address->Opcode() != IrOpcode::IAdd32 || !address->Argument(1)->Resolve()->HasImmediate() || address->Argument(1)->Resolve()->ImmediateU32() != 0u) return false;
+    const IrValue* scaled = address->Argument(0)->Resolve();
+    if (scaled->Opcode() != IrOpcode::IMul32 || scaled->Argument(1)->Resolve()->ImmediateU32() != stride) return false;
+    const IrValue* invocation = scaled->Argument(0)->Resolve();
+    return invocation->Opcode() == IrOpcode::GetBuiltin && invocation->Argument(0)->Resolve()->ImmediateU32() == static_cast<std::uint32_t>(StageInputKind::InvocationId);
 }
 
 bool run(const char* name, const std::function<bool()>& body) {
@@ -548,6 +560,29 @@ int main() {
 
     passed &= run("a hull read of another control point's output at an immediate address past the last control point reads the last control point", [] {
         return EmittedControlPoint(IrShaderStage::TessellationControl, TessellationAttribute::ControlOutput, InputControlPoints * 16u) == InputControlPoints - 1u;
+    });
+
+    passed &= run("a hull read at its control point masked out of the packed control point and relative patch reads its own input control point", [] {
+        Hull hull;
+        auto& masked = hull.builder.BitwiseAnd(hull.packed(), hull.builder.Constant(0x1f00u));
+        hull.read(hull.inPatch(hull.builder.ShiftRightLogical(masked, hull.builder.Constant(3u))));
+        const Outcome outcome = Lower(hull.program);
+        if (!outcome.lowered) std::fprintf(stderr, "refused: %s\n", outcome.reason.c_str());
+        return outcome.lowered && OwnControlPoint(outcome.emitted, LocalStride);
+    });
+
+    passed &= run("a mask that drops the low bit of the packed control point is refused", [] {
+        Hull hull;
+        auto& masked = hull.builder.BitwiseAnd(hull.packed(), hull.builder.Constant(0x1e00u));
+        hull.read(hull.inPatch(hull.builder.ShiftRightLogical(masked, hull.builder.Constant(3u))));
+        return RefusedBecause(hull.program, "not affine");
+    });
+
+    passed &= run("a mask with a gap below the packed control point is refused", [] {
+        Hull hull;
+        auto& masked = hull.builder.BitwiseAnd(hull.packed(), hull.builder.Constant(0x1f0fu));
+        hull.read(hull.inPatch(hull.builder.ShiftRightLogical(masked, hull.builder.Constant(3u))));
+        return RefusedBecause(hull.program, "not affine");
     });
 
     return passed ? 0 : 1;

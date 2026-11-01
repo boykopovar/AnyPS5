@@ -3,11 +3,17 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <source_location>
 #include <xmmintrin.h>
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void Require(bool value, std::source_location location = std::source_location::current()) {
+    if (value) return;
+    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
+    std::abort();
+}
 
 static std::uint64_t Bits(double value) { return std::bit_cast<std::uint64_t>(value); }
 static std::uint32_t Bits(float value) { return std::bit_cast<std::uint32_t>(value); }
@@ -57,6 +63,18 @@ static void CheckComparisons() {
     Require(__eqsf2_nid_postfix(-0.f, 0.f) == 0 && __ltsf2_nid_postfix(-INFINITY, -1e30f) == -1);
     Require(__gesf2_nid_postfix(NAN, 0.f) == -1 && __unordsf2_nid_postfix(NAN, 0.f) == 1);
     Require(__ledf2_nid_postfix(Double(0x0000000000000001ull), 0.) == 1);
+}
+
+static void CheckSingleComparisonsAndAddition() {
+    Require(__lesf2_nid_postfix(1.f, 2.f) <= 0 && __lesf2_nid_postfix(2.f, 2.f) <= 0 && __lesf2_nid_postfix(2.f, 1.f) > 0);
+    Require(__lesf2_nid_postfix(NAN, 1.f) > 0 && __lesf2_nid_postfix(1.f, NAN) > 0);
+    Require(__gtsf2_nid_postfix(-1.f, -2.f) > 0 && __gtsf2_nid_postfix(-2.f, -1.f) <= 0 && __gtsf2_nid_postfix(2.f, 2.f) <= 0);
+    Require(__gtsf2_nid_postfix(1.f, NAN) <= 0 && __gtsf2_nid_postfix(NAN, NAN) <= 0);
+    Require(__nesf2_nid_postfix(1.f, -1.f) != 0 && __nesf2_nid_postfix(NAN, 0.f) != 0 && __nesf2_nid_postfix(0.f, -0.f) == 0);
+    Require(__addsf3_nid_postfix(1.f, 2.f) == 3.f && __addsf3_nid_postfix(-1.5f, .25f) == -1.25f);
+    Require(__addsf3_nid_postfix(0x1p-149f, 0x1p-149f) == 0x1p-148f);
+    Require(__addsf3_nid_postfix(0x1.fffffep127f, 0x1.fffffep127f) == INFINITY);
+    Require(Bits(__addsf3_nid_postfix(1.f, -1.f)) == 0u);
 }
 
 static void CheckFloatConversions() {
@@ -144,6 +162,7 @@ static void CheckComplex() {
 int main() {
     CheckArithmetic();
     CheckComparisons();
+    CheckSingleComparisonsAndAddition();
     CheckFloatConversions();
     CheckFloatToInteger();
     CheckIntegerToFloat();

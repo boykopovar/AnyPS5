@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 #include "prx/libc/include/General.hpp"
@@ -75,6 +76,12 @@ constexpr std::array<std::uint8_t, 658> AvcIpppStream{
     0x43, 0xd5, 0x7b, 0x00, 0x00, 0x00, 0x01, 0x09, 0x30, 0x00, 0x00, 0x01, 0x41, 0x9a, 0x60, 0x35,
     0xc6, 0xc0};
 
+constexpr std::array<std::uint8_t, 38> RichSps{
+    0x67, 0x64, 0x00, 0x0a, 0xac, 0xd9, 0x44, 0x7f, 0x97, 0x0d, 0xeb, 0x09, 0x10, 0x09, 0xa5, 0x00, 0x00, 0x03, 0x03,
+    0xe9, 0x00, 0x00, 0xea, 0x60, 0xe8, 0x60, 0x07, 0xd0, 0x00, 0x1f, 0x40, 0x3a, 0x5a, 0x03, 0xe2, 0x44, 0xb2, 0xc0};
+constexpr std::array<std::uint8_t, 6> RichTimingTails{0x04, 0x32, 0x42, 0x72, 0x81, 0x61};
+constexpr std::array<std::uint8_t, 13> IpppInferredSps{0x67, 0x42, 0xc0, 0x0a, 0xda, 0x11, 0xef, 0xfc, 0x00, 0x1c, 0x00, 0x14, 0x02};
+
 void check(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
@@ -88,6 +95,88 @@ void checkThrows(TAction action) {
         threw = true;
     }
     check(threw, "expected a decoding exception");
+}
+
+template <typename TAction>
+bool tryProjection(TAction action) {
+    try {
+        action();
+        return true;
+    } catch (const std::runtime_error&) {
+        return false;
+    }
+}
+
+auto avcFields(const AvcPictureInfo& info) {
+    return std::tie(info.thisSize, info.isValid, info.ptsData, info.dtsData, info.attachedData, info.idrPictureFlag, info.profileIdc, info.levelIdc, info.picWidthInMbsMinus1, info.picHeightInMapUnitsMinus1,
+        info.frameMbsOnlyFlag, info.frameCroppingFlag, info.frameCropLeftOffset, info.frameCropRightOffset, info.frameCropTopOffset, info.frameCropBottomOffset, info.aspectRatioInfoPresentFlag,
+        info.aspectRatioIdc, info.sarWidth, info.sarHeight, info.videoSignalTypePresentFlag, info.videoFormat, info.videoFullRangeFlag, info.colourDescriptionPresentFlag, info.colourPrimaries,
+        info.transferCharacteristics, info.matrixCoefficients, info.timingInfoPresentFlag, info.numUnitsInTick, info.timeScale, info.fixedFrameRateFlag, info.bitstreamRestrictionFlag,
+        info.maxDecFrameBuffering, info.picStructPresentFlag, info.picStruct, info.fieldPicFlag, info.bottomFieldFlag, info.sequenceParameterSetPresentFlag, info.pictureParameterSetPresentFlag,
+        info.auDelimiterPresentFlag, info.endOfSequencePresentFlag, info.endOfStreamPresentFlag, info.fillerDataPresentFlag, info.pictureTimingSeiPresentFlag, info.bufferingPeriodSeiPresentFlag,
+        info.constraintSet0Flag, info.constraintSet1Flag, info.constraintSet2Flag, info.constraintSet3Flag, info.constraintSet4Flag, info.constraintSet5Flag);
+}
+
+AvcPictureInfo streamRecord(std::uint64_t unit) {
+    AvcPictureInfo info{sizeof(AvcPictureInfo), true, 1000 + unit, unit, 0xa0 + unit};
+    info.idrPictureFlag = unit == 0;
+    info.profileIdc = 100;
+    info.levelIdc = 10;
+    info.picWidthInMbsMinus1 = 3;
+    info.picHeightInMapUnitsMinus1 = 2;
+    info.frameMbsOnlyFlag = 1;
+    info.frameCroppingFlag = 1;
+    info.frameCropBottomOffset = 4;
+    info.aspectRatioInfoPresentFlag = 1;
+    info.aspectRatioIdc = 1;
+    info.sarWidth = 1;
+    info.sarHeight = 1;
+    info.videoFormat = 5;
+    info.colourPrimaries = 2;
+    info.transferCharacteristics = 2;
+    info.matrixCoefficients = 2;
+    info.timingInfoPresentFlag = 1;
+    info.numUnitsInTick = 1;
+    info.timeScale = 60;
+    info.bitstreamRestrictionFlag = 1;
+    info.maxDecFrameBuffering = 4;
+    info.sequenceParameterSetPresentFlag = unit == 0;
+    info.pictureParameterSetPresentFlag = unit == 0;
+    info.auDelimiterPresentFlag = 1;
+    return info;
+}
+
+AvcPictureInfo queryAvc(const OutputInfo& output) {
+    struct Guarded { AvcPictureInfo info{sizeof(AvcPictureInfo)}; std::uint64_t guard = 0x123456789abcdef0ull; } typed, generic;
+    check(sceVideodec2GetAvcPictureInfo_nid_postfix(&output, &typed.info, nullptr) == 0 && typed.guard == 0x123456789abcdef0ull, "AVC picture info failed or crossed its boundary");
+    check(sceVideodec2GetPictureInfo_nid_postfix(&output, &generic.info, nullptr) == 0 && generic.guard == 0x123456789abcdef0ull, "generic AVC picture info failed or crossed its boundary");
+    check(avcFields(typed.info) == avcFields(generic.info), "generic and typed AVC picture info differ");
+    return typed.info;
+}
+
+void checkUnprojected(const OutputInfo& output, std::uint64_t size) {
+    alignas(8) std::array<std::uint8_t, 0xc8> initial;
+    initial.fill(0x5a);
+    std::memcpy(initial.data(), &size, sizeof(size));
+    auto cleared = initial;
+    std::memset(cleared.data() + 8, 0, 4);
+    for (const bool generic : {false, true}) {
+        alignas(8) std::array<std::uint8_t, 0xc8> bytes = initial;
+        auto* info = reinterpret_cast<AvcPictureInfo*>(bytes.data());
+        const bool completed = tryProjection([&] {
+            if (generic) sceVideodec2GetPictureInfo_nid_postfix(&output, info, nullptr);
+            else sceVideodec2GetAvcPictureInfo_nid_postfix(&output, info, nullptr);
+        });
+        check(std::equal(bytes.begin() + static_cast<std::ptrdiff_t>(size), bytes.end(), cleared.begin() + static_cast<std::ptrdiff_t>(size)), "AVC picture info crossed its declared size");
+        check(completed || bytes == cleared, "an AVC picture info query that threw changed more than its validity word");
+    }
+}
+
+std::vector<std::uint8_t> withSps(std::vector<std::uint8_t> unit, std::size_t length, std::span<const std::uint8_t> sps) {
+    check(unit[SpsOffset] == 0x67 && unit[SpsOffset + length] == 0 && unit[SpsOffset + length + 1] == 0, "the access unit has no SPS of that length at the fixture offset");
+    unit.erase(unit.begin() + static_cast<std::ptrdiff_t>(SpsOffset), unit.begin() + static_cast<std::ptrdiff_t>(SpsOffset + length));
+    unit.insert(unit.begin() + static_cast<std::ptrdiff_t>(SpsOffset), sps.begin(), sps.end());
+    return unit;
 }
 
 void testFailures() {
@@ -112,7 +201,7 @@ void testFailures() {
     input.auSize = 2;
     checkThrows([&] { sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output); });
     check(sceVideodec2Reset_nid_postfix(handle) == 0, "reset failed");
-    AvcPictureInfo avc{sizeof(AvcPictureInfo)};
+    AvcPictureInfo avc{0x38};
     check(sceVideodec2GetAvcPictureInfo_nid_postfix(nullptr, &avc, nullptr) == static_cast<int>(0x811D0102u), "null AVC output error");
     check(sceVideodec2GetAvcPictureInfo_nid_postfix(&output, nullptr, nullptr) == static_cast<int>(0x811D0102u), "null AVC destination error");
     output.frameBuffer = buffer.data();
@@ -148,7 +237,7 @@ void testClip(std::uint32_t codec, std::uint32_t profile, const std::vector<std:
         if (!output.isValid) return false;
         check(pictures < hashes.size(), "more pictures than access units");
         check(output.codecType == codec && !output.isErrorFrame && output.frameWidth == Width && output.frameHeight == Height && output.framePitch == 256 && output.frameBuffer == buffer.data(), "unexpected picture geometry");
-        AvcPictureInfo info{sizeof(AvcPictureInfo)};
+        AvcPictureInfo info{0x38};
         check(sceVideodec2GetPictureInfo_nid_postfix(&output, &info, nullptr) == static_cast<int>(0x811D0101u) && !info.isValid, "partial AVC destination size was accepted");
         Vp9PictureInfo vp9{sizeof(Vp9PictureInfo)};
         if (codec == CodecVp9) {
@@ -334,10 +423,14 @@ void testDecode(bool lengthPrefixed, bool separateParameters = false) {
         if (!output.isValid) return false;
         check(pictures < PictureHashes.size(), "more pictures than access units");
         check(!output.isErrorFrame && output.frameWidth == Width && output.frameHeight == CodedHeight && output.framePitch == 256 && output.frameBuffer == buffer.data(), "unexpected picture geometry");
-        AvcPictureInfo info{sizeof(AvcPictureInfo)};
-        check(sceVideodec2GetPictureInfo_nid_postfix(&output, &info, nullptr) == static_cast<int>(0x811D0101u) && !info.isValid, "partial AVC destination size was accepted");
-        AvcPictureInfo avc{sizeof(AvcPictureInfo)};
-        check(sceVideodec2GetAvcPictureInfo_nid_postfix(&output, &avc, nullptr) == static_cast<int>(0x811D0101u) && !avc.isValid, "partial typed AVC destination size was accepted");
+        auto expected = streamRecord(DisplayOrderUnits[pictures]);
+        if (separateParameters && expected.idrPictureFlag) {
+            expected.sequenceParameterSetPresentFlag = 0;
+            expected.pictureParameterSetPresentFlag = 0;
+            expected.auDelimiterPresentFlag = 0;
+        }
+        check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture info of picture " + std::to_string(pictures) + " differs");
+        for (const std::uint64_t size : {0x58u, 0x68u}) checkUnprojected(output, size);
         check(hashNv12(buffer.data(), output.framePitch, output.frameHeight) == PictureHashes[pictures], "picture " + std::to_string(pictures) + " differs from the reference");
         ++pictures;
         return true;
@@ -556,6 +649,122 @@ std::uint64_t frameBufferBytes(std::uint32_t* alignment = nullptr, std::uint32_t
     check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&config, &memory) == 0, "memory query failed");
     if (alignment) *alignment = memory.frameBufferAlignment;
     return memory.maxFrameBufferSize;
+}
+
+void testAvcPictureMetadata() {
+    std::uint32_t alignment = 0;
+    const auto bytes = frameBufferBytes(&alignment);
+    std::vector<std::uint8_t> storage;
+    const auto buffer = AlignedFrameStorage(storage, bytes, alignment);
+    const auto hash = [&](const OutputInfo& output) { return hashNv12(buffer.data(), output.framePitch, output.frameHeight); };
+    const auto decodeAll = [&](std::uint32_t profile, const std::vector<std::vector<std::uint8_t>>& units, const auto& take) {
+        const auto handle = createDecoder(1, profile);
+        std::size_t pictures = 0;
+        const auto emit = [&](const OutputInfo& output) {
+            if (!output.isValid) return false;
+            check(pictures < units.size(), "more pictures than access units");
+            take(output, pictures++);
+            return true;
+        };
+        for (std::size_t unit = 0; unit < units.size(); ++unit) {
+            const InputData input{sizeof(InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
+            FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+            OutputInfo output{sizeof(OutputInfo)};
+            check(sceVideodec2Decode_nid_postfix(handle, &input, &frame, &output) == 0, "AVC metadata decode failed");
+            emit(output);
+        }
+        for (;;) {
+            FrameBuffer frame{sizeof(FrameBuffer), buffer.data(), buffer.size(), false};
+            OutputInfo output{sizeof(OutputInfo)};
+            check(sceVideodec2Flush_nid_postfix(handle, &frame, &output) == 0, "AVC metadata flush failed");
+            if (!emit(output)) break;
+        }
+        check(sceVideodec2DeleteDecoder_nid_postfix(handle) == 0, "delete failed");
+        return pictures;
+    };
+    const auto cropped = croppedStream();
+    check(decodeAll(100, accessUnits(cropped.data(), cropped.size(), false), [&](const OutputInfo& output, std::size_t picture) {
+        auto expected = streamRecord(DisplayOrderUnits[picture]);
+        expected.frameCropTopOffset = 4;
+        check(hash(output) == PictureHashes[picture] && avcFields(queryAvc(output)) == avcFields(expected), "cropped AVC picture " + std::to_string(picture) + " differs");
+    }) == PictureHashes.size(), "cropped AVC pictures are missing");
+
+    auto rich = accessUnits(false);
+    std::vector<std::uint8_t> head(RichSps.begin(), RichSps.end());
+    head.insert(head.end(), {0, 0, 0, 1, 0x06, 0x00, 0x03, 0xad, 0x19, 0xc0, 0x01, 0x04, 0x12, 0x34, 0x56, RichTimingTails[0], 0x80});
+    rich[0] = withSps(rich[0], 25, head);
+    for (std::size_t unit = 1; unit < rich.size(); ++unit) {
+        check(rich[unit][4] == 0x09, "an access unit does not open with its delimiter");
+        const std::array<std::uint8_t, 12> timing{0, 0, 0, 1, 0x06, 0x01, 0x04, 0x12, 0x34, 0x56, RichTimingTails[unit], 0x80};
+        rich[unit].insert(rich[unit].begin() + 6, timing.begin(), timing.end());
+    }
+    rich[2].insert(rich[2].end(), {0, 0, 1, 0x0c, 0xff, 0xff, 0x80});
+    rich[5].insert(rich[5].end(), {0, 0, 1, 0x0a, 0, 0, 1, 0x0b});
+    auto untimed = rich;
+    untimed[3].erase(untimed[3].begin() + 6, untimed[3].begin() + 18);
+    for (const auto* units : {&rich, &untimed}) {
+        check(decodeAll(100, *units, [&](const OutputInfo& output, std::size_t picture) {
+            const auto unit = DisplayOrderUnits[picture];
+            auto expected = streamRecord(unit);
+            expected.aspectRatioIdc = 13;
+            expected.sarWidth = 160;
+            expected.sarHeight = 99;
+            expected.videoSignalTypePresentFlag = 1;
+            expected.videoFormat = 2;
+            expected.videoFullRangeFlag = 1;
+            expected.colourDescriptionPresentFlag = 1;
+            expected.colourPrimaries = 9;
+            expected.transferCharacteristics = 16;
+            expected.matrixCoefficients = 9;
+            expected.numUnitsInTick = 1001;
+            expected.timeScale = 60000;
+            expected.fixedFrameRateFlag = 1;
+            expected.picStructPresentFlag = 1;
+            expected.picStruct = RichTimingTails[unit] >> 4;
+            expected.pictureTimingSeiPresentFlag = 1;
+            expected.bufferingPeriodSeiPresentFlag = unit == 0;
+            expected.fillerDataPresentFlag = unit == 2;
+            expected.endOfSequencePresentFlag = unit == 5;
+            expected.endOfStreamPresentFlag = unit == 5;
+            check(hash(output) == PictureHashes[picture], "AVC picture " + std::to_string(picture) + " with VUI, HRD and SEI metadata differs from the reference");
+            if (units == &untimed && unit == 3) checkUnprojected(output, sizeof(AvcPictureInfo));
+            else check(avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " with VUI, HRD and SEI metadata differs");
+        }) == PictureHashes.size(), "AVC pictures with VUI, HRD and SEI metadata are missing");
+    }
+
+    auto reserved = accessUnits(false);
+    check(reserved[0][SpsOffset + 9] == 1, "the fixture SPS does not carry aspect_ratio_idc 1 in its tenth byte");
+    reserved[0][SpsOffset + 9] = 100;
+    check(decodeAll(100, reserved, [&](const OutputInfo& output, std::size_t picture) {
+        auto expected = streamRecord(DisplayOrderUnits[picture]);
+        expected.aspectRatioIdc = 100;
+        expected.sarWidth = 0;
+        expected.sarHeight = 0;
+        check(hash(output) == PictureHashes[picture] && avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " with a reserved aspect ratio differs");
+    }) == PictureHashes.size(), "a reserved aspect ratio cost AVC pictures");
+
+    const auto ippp = accessUnits(AvcIpppStream.data(), AvcIpppStream.size(), false);
+    std::vector<std::uint64_t> hashes;
+    decodeAll(66, ippp, [&](const OutputInfo& output, std::size_t) { hashes.push_back(hash(output)); });
+    auto inferred = ippp;
+    inferred[0] = withSps(inferred[0], 21, IpppInferredSps);
+    check(hashes.size() == ippp.size() && decodeAll(66, inferred, [&](const OutputInfo& output, std::size_t picture) {
+        auto expected = streamRecord(picture);
+        expected.profileIdc = 66;
+        expected.constraintSet0Flag = 1;
+        expected.constraintSet1Flag = 1;
+        expected.frameCroppingFlag = 0;
+        expected.frameCropBottomOffset = 0;
+        expected.aspectRatioIdc = 255;
+        expected.sarWidth = 7;
+        expected.sarHeight = 5;
+        expected.timingInfoPresentFlag = 0;
+        expected.numUnitsInTick = 0;
+        expected.timeScale = 0;
+        expected.bitstreamRestrictionFlag = 0;
+        expected.maxDecFrameBuffering = 16;
+        check(hash(output) == hashes[picture] && avcFields(queryAvc(output)) == avcFields(expected), "AVC picture " + std::to_string(picture) + " with an inferred DPB size differs");
+    }) == ippp.size(), "AVC pictures with an inferred DPB size are missing");
 }
 
 void testEmptyAccessUnit() {
@@ -832,14 +1041,31 @@ void testConcurrentOwnership() {
 
 }
 
+void testComputeQueues() {
+    SceVideodec2::ComputeMemoryInfo memory{sizeof(SceVideodec2::ComputeMemoryInfo), 0, nullptr};
+    checkThrows([] { sceVideodec2QueryComputeMemoryInfo_nid_postfix(nullptr); });
+    check(sceVideodec2QueryComputeMemoryInfo_nid_postfix(&memory) == 0 && memory.cpuGpuMemorySize == (1u << 20u), "the compute work memory is not 1 MiB");
+    const SceVideodec2::ComputeConfigInfo config{sizeof(SceVideodec2::ComputeConfigInfo), 0, 0, false};
+    std::uint64_t first = 0;
+    std::uint64_t second = 0;
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(nullptr, &memory, &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, nullptr, &first); });
+    checkThrows([&] { sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, nullptr); });
+    check(first == 0, "a rejected allocation wrote a queue");
+    check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &first) == 0 && first != 0, "the first compute queue was not allocated");
+    check(sceVideodec2AllocateComputeQueue_nid_postfix(&config, &memory, &second) == 0 && second != 0 && second != first, "a second compute queue repeats the first");
+}
+
 int main() {
     try {
+        testComputeQueues();
         testFailures();
         testDecode(false);
         testDecode(true);
         testLengthPrefixLooksLikeStartCode();
         testStartCodeLooksLikeLengthPrefix();
         testDecode(false, true);
+        testAvcPictureMetadata();
         const auto hevc = hevcUnits(HevcStream.data(), HevcStream.size());
         testClip(CodecHevc, 1, hevc, HevcHashes);
         std::vector<std::vector<std::uint8_t>> hevcLengthPrefixed;

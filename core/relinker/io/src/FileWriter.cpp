@@ -57,9 +57,14 @@ bool writeAll(const int descriptor, const char* data, std::size_t size) {
     return true;
 }
 
-bool replaceFile(const std::filesystem::path& target, const std::string& path, const char* data, const std::size_t size) {
+bool replaceFile(std::filesystem::path target, const std::string& path, const char* data, const std::size_t size) {
     std::error_code error;
-    const auto previous = std::filesystem::symlink_status(target, error);
+    auto previous = std::filesystem::symlink_status(target, error);
+    if (std::filesystem::is_symlink(previous)) {
+        target = std::filesystem::canonical(target, error);
+        if (error) return false;
+        previous = std::filesystem::symlink_status(target, error);
+    }
     const bool regular = std::filesystem::is_regular_file(previous);
     if (!regular && previous.type() != std::filesystem::file_type::not_found)
         return false;

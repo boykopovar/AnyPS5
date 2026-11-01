@@ -4,6 +4,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
 
 using GetU32 = int(APS5_VABI*)(std::int32_t, std::uint32_t, std::uint32_t*, void*);
 using SetU32 = int(APS5_VABI*)(std::int32_t, std::uint32_t, std::uint32_t, const void*);
@@ -19,11 +24,39 @@ constexpr std::uint32_t Channel0 = 1;
 constexpr std::uint32_t Channel1 = 2;
 constexpr std::uint32_t ChannelBoth = 3;
 
+using AudioGetData = int (APS5_VABI*)(void*);
+
+AudioGetData ResolveAudio(const char* name) {
+#ifdef _WIN32
+    void* symbol = reinterpret_cast<void*>(GetProcAddress(GetModuleHandleA("libSceCamera.prx"), name));
+#else
+    void* symbol = dlsym(RTLD_DEFAULT, name);
+#endif
+    if (!symbol) {
+        std::fprintf(stderr, "%s is not exported by libSceCamera\n", name);
+        std::abort();
+    }
+    return reinterpret_cast<AudioGetData>(symbol);
+}
+
 void Require(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "Camera settings: %s\n", message);
         std::abort();
     }
+}
+
+void CheckAudioAfterOpen() {
+    std::array<std::uint8_t, 64> data{};
+    data.fill(0xA5);
+    for (const char* name : {"sceCameraAudioGetData", "sceCameraAudioGetData2"}) {
+        const AudioGetData getData = ResolveAudio(name);
+        Require(getData(nullptr) == ErrorParam, "camera audio data must reject a null buffer");
+        Require(getData(data.data()) == 0, "camera audio data must answer 0 after the failed open");
+    }
+    for (const std::uint8_t byte : data) Require(byte == 0xA5, "camera audio data must not be written");
+    Require(sceCameraAudioReset() == 0, "camera audio reset must answer 0");
+    Require(sceCameraAudioClose() == 0, "camera audio close must answer 0");
 }
 
 CameraConfig SizedConfig() {
@@ -56,6 +89,8 @@ void CheckGetter(GetU32 get, std::uint32_t expected, const char* message) {
     Require(get(99, Channel0, &value, nullptr) == ErrorNotOpen && value == 0x5a5a5a5a, "a fabricated handle must not read settings");
     Require(get(1, 0, &value, nullptr) == ErrorParam, "a getter must reject channel 0");
     Require(get(1, ChannelBoth, &value, nullptr) == ErrorParam, "a getter must reject both channels");
+    Require(get(1, 4, &value, nullptr) == ErrorParam, "a getter must reject channel 4");
+    Require(get(1, 0xFFFFFFFFu, &value, nullptr) == ErrorParam, "a getter must reject invalid channel");
     Require(get(1, Channel0, nullptr, nullptr) == ErrorParam, "a getter must reject a null result");
     Require(get(1, Channel0, &value, &option) == ErrorParam, "a getter must reject an option");
     Require(value == 0x5a5a5a5a, "a refused getter must not write its result");
@@ -113,7 +148,9 @@ void CheckSetter(SetU32 set, std::uint32_t largestValue) {
     std::uint32_t option = 0;
     Require(set(1, ChannelBoth, largestValue, nullptr) == ErrorNotConnected, "a setter must report NOT_CONNECTED");
     Require(set(0, Channel0, 0, nullptr) == ErrorParam, "a setter must reject handle 0");
+    Require(set(1, 0, 0, nullptr) == ErrorParam, "a setter must reject channel 0");
     Require(set(1, 4, 0, nullptr) == ErrorParam, "a setter must reject channel 4");
+    Require(set(1, 0xFFFFFFFFu, 0, nullptr) == ErrorParam, "a setter must reject invalid channel");
     Require(set(1, Channel0, 0, &option) == ErrorParam, "a setter must reject an option");
     if (largestValue != UINT32_MAX) Require(set(1, Channel0, largestValue + 1, nullptr) == ErrorParam, "a setter must reject a value past its range");
 }
@@ -194,6 +231,7 @@ void CheckDevice() {
         Require(sceCameraGetCalibrationData(&refused, out.data()) == ErrorParam, "a bad calibration request must be rejected");
     }
     Require(sceCameraAudioOpen() == ErrorFatal, "camera audio must fail with FATAL");
+    CheckAudioAfterOpen();
 }
 
 }

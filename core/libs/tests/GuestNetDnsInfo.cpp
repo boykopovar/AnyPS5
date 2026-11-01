@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <initializer_list>
 #ifdef _WIN32
 #include <windows.h>
@@ -128,12 +129,35 @@ void CheckUnreadableInfo() {
 #endif
 }
 
+void CheckKernelDnsThrows() {
+    NetDnsInfo info{0x08080808u, 0};
+    NetDns6Info info6{};
+    bool threwV4 = false;
+    try {
+        sceNetSetDnsInfoToKernel(&info, 0);
+    } catch (const std::runtime_error&) {
+        threwV4 = true;
+    }
+    Require(threwV4);
+
+    bool threwV6 = false;
+    try {
+        sceNetSetDns6InfoToKernel(&info6, 0);
+    } catch (const std::runtime_error&) {
+        threwV6 = true;
+    }
+    Require(threwV6);
+}
+
 int main() {
     CheckUninitialized();
+    CheckKernelDnsThrows();
     Require(sceNetInit_nid_postfix() == 0);
     CheckDns();
+    CheckKernelDnsThrows();
     CheckUnreadableInfo();
     Require(sceNetTerm() == 0);
     CheckUninitialized();
+    CheckKernelDnsThrows();
     return 0;
 }

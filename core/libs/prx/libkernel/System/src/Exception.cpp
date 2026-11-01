@@ -319,6 +319,19 @@ bool Exited(HANDLE native) {
     return WaitForSingleObject(native, 0) == WAIT_OBJECT_0;
 }
 
+using NtSuspendThreadFunction = LONG(NTAPI*)(HANDLE, PULONG);
+constexpr LONG ThreadIsTerminating = static_cast<LONG>(0xc000004bu);
+
+LONG SuspendTarget(HANDLE native) {
+    static const auto suspend = [] {
+        const auto found = reinterpret_cast<NtSuspendThreadFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtSuspendThread")));
+        if (found == nullptr) throw std::runtime_error("sceKernelRaiseException: ntdll.dll has no NtSuspendThread");
+        return found;
+    }();
+    ULONG previous = 0;
+    return suspend(native, &previous);
+}
+
 bool RestoringContext(DWORD64 rip) {
     static const std::array<DWORD64, 2> stubs = [] {
         const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -519,8 +532,8 @@ constexpr DWORD64 ReturnBreakBits = 0xf0003ull;
 
 struct ReturnBreak {
     std::atomic<DWORD> thread{0};
-    DWORD64 at = 0;
-    QueuedDelivery* queued = nullptr;
+    std::atomic<DWORD64> at{0};
+    std::atomic<QueuedDelivery*> queued{nullptr};
 };
 
 std::atomic<bool>& ReturnBreaksInstalled() {
@@ -576,11 +589,10 @@ bool DisarmedReturnBreak(const EXCEPTION_POINTERS& info) {
     return at == context.Rip && ArmedOnThread(GetCurrentThreadId(), at);
 }
 
-QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, DWORD thread) {
-    DWORD expected = thread;
-    if (!entry.thread.compare_exchange_strong(expected, ReservedThread, std::memory_order_acq_rel)) return nullptr;
-    auto* queued = entry.queued;
-    entry.thread.store(0, std::memory_order_release);
+QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, QueuedDelivery* queued) {
+    if (queued == nullptr) return nullptr;
+    auto* expected = queued;
+    if (!entry.queued.compare_exchange_strong(expected, nullptr, std::memory_order_acq_rel)) return nullptr;
     return queued;
 }
 
@@ -606,8 +618,8 @@ LONG CALLBACK ReturnBreakHandler(EXCEPTION_POINTERS* info) {
     const DWORD self = GetCurrentThreadId();
     QueuedDelivery* queued = nullptr;
     for (auto& entry : ReturnBreaks()) {
-        if (entry.thread.load(std::memory_order_acquire) != self || entry.at != at) continue;
-        queued = ClaimReturnBreak(entry, self);
+        if (entry.thread.load(std::memory_order_acquire) != self || entry.at.load(std::memory_order_acquire) != at) continue;
+        queued = ClaimReturnBreak(entry, entry.queued.load(std::memory_order_acquire));
         if (queued != nullptr) break;
     }
     if (queued == nullptr && !ArmedOnThread(self, at)) return EXCEPTION_CONTINUE_SEARCH;
@@ -650,9 +662,18 @@ bool SetReturnBreak(HANDLE native, DWORD64 at, bool armed) {
 
 struct ReturnArm {
     ReturnBreak* entry = nullptr;
-    DWORD thread = 0;
+    QueuedDelivery* queued = nullptr;
     DWORD64 at = 0;
 };
+
+void RetireReturnBreak(HANDLE native, ReturnArm& arm, bool suspended) {
+    if (auto* queued = ClaimReturnBreak(*arm.entry, arm.queued)) {
+        if (suspended && !Exited(native)) static_cast<void>(SetReturnBreak(native, arm.at, false));
+        ReleaseQueued(queued);
+    }
+    arm.entry->thread.store(0, std::memory_order_release);
+    arm = {};
+}
 
 void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queued, ReturnArm& arm, DWORD64& unknown) {
     if (!ReturnBreaksInstalled().load(std::memory_order_acquire) || queued == nullptr) return;
@@ -660,24 +681,23 @@ void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queue
     if (!GuestReturn(context, at, unknown)) return;
     if (arm.entry != nullptr && arm.at == at) return;
     if (arm.entry != nullptr) {
-        static_cast<void>(SetReturnBreak(native, arm.at, false));
-        ReleaseQueued(ClaimReturnBreak(*arm.entry, arm.thread));
-        arm = {};
+        RetireReturnBreak(native, arm, true);
     }
     const DWORD thread = GetThreadId(native);
     for (auto& entry : ReturnBreaks()) {
         DWORD expected = 0;
         if (!entry.thread.compare_exchange_strong(expected, ReservedThread, std::memory_order_acq_rel)) continue;
-        entry.at = at;
-        entry.queued = queued;
+        entry.at.store(at, std::memory_order_relaxed);
+        entry.queued.store(queued, std::memory_order_release);
         queued->references.fetch_add(1, std::memory_order_relaxed);
         entry.thread.store(thread, std::memory_order_release);
         NoteArmedBreak(thread, at);
         if (!SetReturnBreak(native, at, true)) {
-            ReleaseQueued(ClaimReturnBreak(entry, thread));
+            ReleaseQueued(ClaimReturnBreak(entry, queued));
+            entry.thread.store(0, std::memory_order_release);
             return;
         }
-        arm = {&entry, thread, at};
+        arm = {&entry, queued, at};
         return;
     }
 }
@@ -685,17 +705,17 @@ void ArmReturnBreak(HANDLE native, const CONTEXT& context, QueuedDelivery* queue
 void DisarmReturnBreak(HANDLE native, ReturnArm& arm) {
     if (arm.entry == nullptr) return;
     const bool suspended = SuspendThread(native) != static_cast<DWORD>(-1);
-    if (suspended && !Exited(native)) static_cast<void>(SetReturnBreak(native, arm.at, false));
-    ReleaseQueued(ClaimReturnBreak(*arm.entry, arm.thread));
+    RetireReturnBreak(native, arm, suspended);
     if (suspended) ResumeThread(native);
-    arm = {};
 }
 
 Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler, int signum, QueuedDelivery*& queued, ReturnArm* arm = nullptr) {
     alignas(16) Delivery delivery{handler, signum, {}, {}, SaveVectors ? 1u : 0u};
     const auto contextDeadline = std::chrono::steady_clock::now() + RetryLimit;
     for (;;) {
-        if (SuspendThread(native) == static_cast<DWORD>(-1)) {
+        const LONG suspended = SuspendTarget(native);
+        if (suspended == ThreadIsTerminating) return Attempt::Exited;
+        if (suspended < 0) {
             if (Exited(native)) return Attempt::Exited;
             throw std::runtime_error("sceKernelRaiseException: cannot suspend the target thread");
         }
@@ -1069,13 +1089,26 @@ int APS5_VABI sceKernelRemoveExceptionHandler(int signum) {
  return 0;
 }
 
+#ifdef _WIN32
+void DeliverPendingException_nid_no_patch(PthreadPrivate* thread) {
+ const int signum = thread->pendingException.exchange(-1, std::memory_order_acq_rel);
+ if (signum <= 0) return;
+ const auto handler = Handler(signum);
+ if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: the handler was removed before the signal was delivered");
+ RaiseOn(thread, handler, signum);
+}
+#endif
+
 int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  if (signum != RaisedSignal) return SCE_KERNEL_ERROR_EINVAL;
  if (thread == nullptr || thread->_finished.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
  const auto handler = Handler(signum);
  if (handler == nullptr) throw std::runtime_error("sceKernelRaiseException: no handler installed for the signal");
 #ifdef _WIN32
- if (thread->suspended.load(std::memory_order_acquire)) throw std::runtime_error("sceKernelRaiseException: the target thread is still suspended at creation");
+ if (thread->suspended.load(std::memory_order_acquire)) {
+  int pending = 0;
+  if (thread->pendingException.compare_exchange_strong(pending, signum, std::memory_order_acq_rel) || pending > 0) return 0;
+ }
  return RaiseOn(thread, handler, signum) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 #else
  return RaiseOn(thread) ? 0 : SCE_KERNEL_ERROR_ESRCH;

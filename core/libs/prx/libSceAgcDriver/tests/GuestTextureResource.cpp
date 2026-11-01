@@ -371,9 +371,14 @@ void RunGuestTextureResourceTests() {
     result = DecodeTextureResource(pack(cubeExtraSlice));
     Require(result.baseArray == 0 && result.depthOrLastArray == 6, "a cube descriptor with a slice past its last whole cube lost a slice");
     Require(DescribeSurface(result).imageLayers == 7, "a cube allocation with a slice past its last whole cube omitted it");
-    Fields cubePartial = cube;
-    cubePartial.depth = 4;
-    rejectFields(cubePartial, "fewer than 6 array slices");
+    for (const auto [first, last] : {std::pair{0u, 4u}, std::pair{0u, 1u}, std::pair{2u, 5u}, std::pair{6u, 10u}}) {
+        auto shortCube = cube;
+        shortCube.baseArray = first;
+        shortCube.depth = last;
+        result = DecodeTextureResource(pack(shortCube));
+        Require(result.baseArray == first && result.depthOrLastArray == first + 5u, "a cube descriptor with fewer than six slices did not expose six faces from its base slice");
+        Require(DescribeSurface(result).imageLayers == first + 6u, "a cube allocation with fewer than six slices omitted faces");
+    }
 
     Fields multisampled = base;
     multisampled.typeRaw = 14;

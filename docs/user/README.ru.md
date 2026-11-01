@@ -16,7 +16,7 @@
 
 ## Статус
 
-[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shaders](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
+[![libraries](https://boykopovar.github.io/AnyPS5/badge-libraries.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![shaders](https://boykopovar.github.io/AnyPS5/badge-shaders.svg)](https://boykopovar.github.io/AnyPS5/progress.html) [![implemented in 7 days](https://boykopovar.github.io/AnyPS5/badge-week.svg)](https://boykopovar.github.io/AnyPS5/history.html)
 
 [![progress map](https://boykopovar.github.io/AnyPS5/progress.svg)](https://boykopovar.github.io/AnyPS5/progress.html)
 
@@ -24,7 +24,7 @@
 
 <sub>* Системные библиотеки: процент функций, известных проекту на данный момент (объявленных в [core/libs/prx](../../core/libs/prx)), а не всех системных функций PS5. Общее число растёт по мере объявления новых функций.</sub>
 
-Неподдерживаемые или неожиданные состояния строго выбрасывают `std::runtime_error`. `what()` выводится в stderr, и процесс завершается.
+Неподдерживаемые или неожиданные состояния выбрасывают исключение C++, обычно `std::runtime_error`. Исключение, которое никто не перехватил, выводит свой `what()` в stderr и завершает процесс.
 
 [Рекомпилятор шейдеров](../../core/shader/recompiler/Recompiler.cpp) успешно генерирует SPIR-V (проверяется через [Spirv-Tools](../../3rdparty/SPIRV-Tools) при сборке с `ANYPS5_ENABLE_SPIRV_TOOLS`).
 

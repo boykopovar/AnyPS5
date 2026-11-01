@@ -22,6 +22,7 @@ struct PosixSemaphore {
     std::mutex lock;
     TimedWait::Condition available;
     unsigned int count;
+    bool named = false;
 };
 
 static constexpr int GUEST_ENOENT = 2;
@@ -179,6 +180,17 @@ int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value) {
     if (!semaphore || !value) return Fail(PosixThread::GUEST_EINVAL);
     std::lock_guard lock(semaphore->lock);
     *value = static_cast<int>(semaphore->count);
+    return 0;
+}
+
+int APS5_VABI sem_setname_nid_postfix(void* sem, const char* name) {
+    if (!sem) throw std::invalid_argument("sem_setname: null semaphore");
+    if (!name) throw std::invalid_argument("sem_setname: null name");
+    auto* semaphore = Get(sem);
+    if (!semaphore) return Fail(GUEST_EAGAIN);
+    std::lock_guard lock(semaphore->lock);
+    if (semaphore->named) return Fail(GUEST_EAGAIN);
+    semaphore->named = true;
     return 0;
 }
 

@@ -19,6 +19,7 @@
 #include <cstring>
 #include <ctime>
 #include <functional>
+#include <limits>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -335,36 +336,58 @@ void KernelTraceWait_nid_postfix(const char* kind, const void* caller, std::uint
 
 static void CancellableSleep(std::uint64_t nanos) {
     ThreadCancel::Check();
+    const int savedErrno = errno;
+    if (nanos <= SleepWake::MAX_WAKEABLE_NANOS) {
+        SleepWake::Sleep(nanos);
+    } else {
+        const auto now = TimedWait::NowNanos();
+        const auto deadline = now + std::min(nanos, std::numeric_limits<std::uint64_t>::max() - now);
+        std::mutex mutex;
+        TimedWait::Condition condition;
+        std::unique_lock lock(mutex);
+        while (!ThreadCancel::Requested() && TimedWait::NowNanos() < deadline) {
+            ThreadCancel::Wait(condition, lock, deadline);
+        }
+    }
+    errno = savedErrno;
+    ThreadCancel::Check();
+}
+
+static void SleepUntilComplete(std::uint64_t nanos) {
+    ThreadCancel::Check();
     SleepWake::Sleep(nanos);
     ThreadCancel::Check();
 }
 
 int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds) {
     TraceSleep(__builtin_return_address(0), microseconds);
-    CancellableSleep(static_cast<std::uint64_t>(microseconds) * 1000ULL);
+    SleepUntilComplete(static_cast<std::uint64_t>(microseconds) * 1000ULL);
     return 0;
 }
 
-static int SleepForRequest(const KernelTimespec* rqtp) {
+static int SleepForRequest(const KernelTimespec* rqtp, bool cancellable) {
     constexpr int guestFault = 14;
     constexpr int guestInvalid = 22;
     if (rqtp == nullptr) return guestFault;
     if (rqtp->tv_nsec < 0 || rqtp->tv_nsec >= 1000000000LL) return guestInvalid;
     constexpr std::int64_t longestSleepSeconds = INT32_MAX / 2;
     if (rqtp->tv_sec >= 0) {
-        CancellableSleep(static_cast<std::uint64_t>(std::min(static_cast<std::int64_t>(rqtp->tv_sec), longestSleepSeconds)) * 1000000000ULL +
-                         static_cast<std::uint64_t>(rqtp->tv_nsec));
+        const auto nanos = static_cast<std::uint64_t>(
+                               std::min(static_cast<std::int64_t>(rqtp->tv_sec), longestSleepSeconds)) *
+                           1000000000ULL + static_cast<std::uint64_t>(rqtp->tv_nsec);
+        if (cancellable) CancellableSleep(nanos);
+        else SleepUntilComplete(nanos);
     }
     return 0;
 }
 
 int APS5_VABI sceKernelNanosleep(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
-    const int error = SleepForRequest(rqtp);
+    const int error = SleepForRequest(rqtp, false);
     return error == 0 ? 0 : SceKernelError(error);
 }
 
 int APS5_VABI nanosleep_nid_postfix(const KernelTimespec* rqtp, KernelTimespec* rmtp) {
-    const int error = SleepForRequest(rqtp);
+    const int error = SleepForRequest(rqtp, true);
     if (error == 0) return 0;
     *__error_nid_postfix() = error;
     return -1;
@@ -572,9 +595,11 @@ int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp) {
 static std::mutex guestTimezoneMutex;
 static KernelTimezone guestTimezone{0, 0};
 
-int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
-    KernelTimeval ignoredTime{};
-    if (tv == nullptr) tv = &ignoredTime;
+int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zoneOutput) {
+    KernelTimeval current{};
+    auto* tv = &current;
+    KernelTimezone zone{};
+    auto* tz = zoneOutput == nullptr ? nullptr : &zone;
 #ifdef _WIN32
     FILETIME ft{};
     GetSystemTimePreciseAsFileTime(&ft);
@@ -593,6 +618,14 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* tv, KernelTimezone* tz) {
     if (tz != nullptr) {
         std::lock_guard lock(guestTimezoneMutex);
         *tz = guestTimezone;
+    }
+    if (output != nullptr && !GuestCopyOut_nid_no_patch(output, &current, sizeof(current))) {
+        *__error_nid_postfix() = 14;
+        return -1;
+    }
+    if (zoneOutput != nullptr && !GuestCopyOut_nid_no_patch(zoneOutput, &zone, sizeof(zone))) {
+        *__error_nid_postfix() = 14;
+        return -1;
     }
     return 0;
 }
@@ -788,39 +821,56 @@ int APS5_VABI sceKernelConvertLocaltimeToUtc(int64_t local_time, int64_t reserve
     (void)reserved;
     const HostZone guess = HostZoneAt(local_time);
     const HostZone zone = HostZoneAt(local_time - guess.standardEast - guess.daylight);
-    if (utc_time != nullptr) *utc_time = local_time - zone.standardEast - zone.daylight;
-    if (timezone != nullptr) *timezone = ZoneState(local_time, zone);
-    if (dst_seconds != nullptr) *dst_seconds = static_cast<int32_t>(HostDaylightAmount(local_time - zone.standardEast - zone.daylight));
+    if (utc_time != nullptr) {
+        const int64_t converted = local_time - zone.standardEast - zone.daylight;
+        if (!GuestCopyOut_nid_no_patch(utc_time, &converted, sizeof(converted))) return SceKernelErrorEfault;
+    }
+    if (timezone != nullptr) {
+        const KernelTimesec state = ZoneState(local_time, zone);
+        if (!GuestCopyOut_nid_no_patch(timezone, &state, sizeof(state))) return SceKernelErrorEfault;
+    }
+    if (dst_seconds != nullptr) {
+        const int32_t daylight = static_cast<int32_t>(HostDaylightAmount(local_time - zone.standardEast - zone.daylight));
+        if (!GuestCopyOut_nid_no_patch(dst_seconds, &daylight, sizeof(daylight))) return SceKernelErrorEfault;
+    }
     return 0;
 }
 
 int APS5_VABI sceKernelConvertUtcToLocaltime(int64_t utc_time, int64_t* local_time, KernelTimesec* st, int32_t* dst_sec) {
     const HostZone zone = HostZoneAt(utc_time);
-    if (local_time != nullptr) *local_time = utc_time + zone.standardEast + zone.daylight;
-    if (st != nullptr) *st = ZoneState(utc_time, zone);
-    if (dst_sec != nullptr) *dst_sec = static_cast<int32_t>(zone.daylight);
+    if (local_time != nullptr) {
+        const int64_t converted = utc_time + zone.standardEast + zone.daylight;
+        if (!GuestCopyOut_nid_no_patch(local_time, &converted, sizeof(converted))) return SceKernelErrorEfault;
+    }
+    if (st != nullptr) {
+        const KernelTimesec state = ZoneState(utc_time, zone);
+        if (!GuestCopyOut_nid_no_patch(st, &state, sizeof(state))) return SceKernelErrorEfault;
+    }
+    if (dst_sec != nullptr) {
+        const int32_t daylight = static_cast<int32_t>(zone.daylight);
+        if (!GuestCopyOut_nid_no_patch(dst_sec, &daylight, sizeof(daylight))) return SceKernelErrorEfault;
+    }
     return 0;
 }
 
 int APS5_VABI sceKernelGettimeofday(KernelTimeval* tp) {
     if (tp == nullptr) return SceKernelErrorEfault;
-    return gettimeofday_nid_postfix(tp, nullptr);
+    const int result = gettimeofday_nid_postfix(tp, nullptr);
+    return result != 0 && *__error_nid_postfix() == 14 ? SceKernelErrorEfault : result;
 }
 
 int APS5_VABI sceKernelGettimezone(KernelTimezone* tz) {
     if (tz == nullptr) return SceKernelErrorEfault;
     const auto now = static_cast<std::int64_t>(std::time(nullptr));
-    *tz = {static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
-    return 0;
+    const KernelTimezone zone{static_cast<std::int32_t>(HostZoneAt(now).standardEast / 60), static_cast<std::int32_t>(HostDaylightAmount(now) / 60)};
+    return GuestCopyOut_nid_no_patch(tz, &zone, sizeof(zone)) ? 0 : SceKernelErrorEfault;
 }
 
 uint64_t APS5_VABI sceKernelReadTsc(void) {
-    if (TimeScale() == 1.0) return __rdtsc();
-    static const std::uint64_t origin = __rdtsc();
-    return origin + static_cast<std::uint64_t>(static_cast<double>(__rdtsc() - origin) * TimeScale());
+    return __rdtsc();
 }
 
-uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
+std::uint64_t APS5_VABI HostTscFrequency_nid_no_patch() {
     static const std::uint64_t frequency = [] {
         const CurrentCpuPin pin;
         const std::uint64_t startNanos = RawMonotonicNanos();
@@ -833,12 +883,17 @@ uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
     return frequency;
 }
 
+uint64_t APS5_VABI sceKernelGetTscFrequency(void) {
+    static const std::uint64_t frequency = static_cast<std::uint64_t>(static_cast<double>(HostTscFrequency_nid_no_patch()) / TimeScale());
+    return frequency;
+}
+
 std::int64_t APS5_VABI sceKernelGetCpuFrequency(void) {
     return static_cast<std::int64_t>(sceKernelGetTscFrequency());
 }
 
 unsigned int APS5_VABI sceKernelSleep(unsigned int seconds) {
-    CancellableSleep(static_cast<std::uint64_t>(seconds) * 1000000000ULL);
+    SleepUntilComplete(static_cast<std::uint64_t>(seconds) * 1000000000ULL);
     return 0;
 }
 

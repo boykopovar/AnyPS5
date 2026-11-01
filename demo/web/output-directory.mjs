@@ -1,5 +1,6 @@
 export class OutputDirectoryTransaction {
   #state = "open";
+  #discard;
 
   constructor(parent, name, directory) {
     this.parent = parent;
@@ -23,10 +24,15 @@ export class OutputDirectoryTransaction {
     this.#state = "committed";
   }
 
-  async discard() {
-    if (this.#state !== "open") return;
-    await this.parent.removeEntry(this.name, { recursive: true });
-    this.#state = "discarded";
+  discard() {
+    if (this.#state === "discarding") return this.#discard;
+    if (this.#state !== "open") return Promise.resolve();
+    this.#state = "discarding";
+    this.#discard = Promise.resolve().then(() => this.parent.removeEntry(this.name, { recursive: true })).then(
+      () => { this.#state = "discarded"; },
+      error => { this.#state = "open"; throw error; }
+    );
+    return this.#discard;
   }
 }
 

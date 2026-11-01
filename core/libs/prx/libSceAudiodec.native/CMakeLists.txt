@@ -1,3 +1,15 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/../libSceAudiodec/AudiodecLibrary.cmake)
 add_sce_audiodec_library(libSceAudiodec.native)
 target_sources(libSceAudiodec.native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_audiodec_ajm_context_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudiodecAjmContext.cpp)
+    target_include_directories(guest_audiodec_ajm_context_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audiodec_ajm_context_tests PRIVATE libSceAudiodec.native libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_audiodec_ajm_context_tests)
+    add_test(NAME guest_audiodec_ajm_context COMMAND guest_audiodec_ajm_context_tests)
+    if(WIN32)
+        set_tests_properties(guest_audiodec_ajm_context PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudiodec.native>")
+    endif()
+endif()
