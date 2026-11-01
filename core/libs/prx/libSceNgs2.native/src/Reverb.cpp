@@ -301,7 +301,7 @@ bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
         mapped.assign(static_cast<std::size_t>(grain) * channels, 0.0f);
         for (std::uint32_t dst = 0; dst < channels; dst++) {
             for (std::uint32_t src = 0; src < inputChannels; src++) {
-                const float level = Ngs2DefaultLevel(inputChannels, src, channels, dst);
+                const float level = Ngs2FixedDownmixLevel(inputChannels, src, channels, dst);
                 if (level == 0.0f) continue;
                 for (std::uint32_t i = 0; i < grain; i++) mapped[static_cast<std::size_t>(dst) * grain + i] += input[static_cast<std::size_t>(src) * grain + i] * level;
             }

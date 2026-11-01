@@ -461,6 +461,46 @@ void framesFramePointerLeavesThatPushInTheirBody() {
     require(sites[1].Body == stubBody({0x48, 0x01, 0xd0, 0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00, 0x5d, 0xc3}), "the add before pop rbp was not copied ahead of raising rsp");
 }
 
+void skipsOpcodeEncodedRspUses() {
+    const std::vector<std::vector<std::uint8_t>> uses{
+        {0x48, 0x0f, 0xcc, 0x48, 0x0f, 0xcc},
+        {0x0f, 0xcc, 0x0f, 0xcc},
+        {0x4c, 0x0f, 0xcc, 0x4c, 0x0f, 0xcc},
+        {0x54, 0x58},
+        {0x66, 0x54, 0x66, 0x58},
+        {0x40, 0xb4, 0x10},
+        {0x66, 0xbc, 0x00, 0x10},
+        {0x54, 0x5c},
+        {0x48, 0x94, 0x48, 0x94},
+        {0xbc, 0x00, 0x10, 0x00, 0x00},
+        {0x48, 0xbc, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    };
+    for (const auto& use : uses) {
+        auto body = StoreBelowRsp;
+        append(body, use);
+        const auto input = image({framelessLeaf(FramelessPrologue, body, FramelessExit)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(sites.empty() && displacements.empty() && report.Skipped.at("other use of rsp") == 1,
+                "an opcode-encoded rsp use was framed");
+    }
+}
+
+void framesOpcodeEncodedNonStackRegisters() {
+    for (const auto& use : std::vector<std::vector<std::uint8_t>>{
+             {0x49, 0x0f, 0xcc, 0x49, 0x0f, 0xcc}, {0x41, 0x0f, 0xcc, 0x41, 0x0f, 0xcc},
+             {0x49, 0x94, 0x49, 0x94}, {0x41, 0xbc, 0x00, 0x10, 0x00, 0x00}, {0xb4, 0x10}}) {
+        auto body = StoreBelowRsp;
+        append(body, use);
+        const auto input = image({framelessLeaf(FramelessPrologue, body, FramelessExit)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(report.Framed == 1 && sites.size() == 2, "an opcode-encoded non-stack register prevented framing");
+    }
+}
+
 void skipsLeavesThatCopyRsp() {
     std::vector<std::uint8_t> withCmov = StoreBelowRsp;
     append(withCmov, {0x48, 0x0f, 0x45, 0xc4});
@@ -849,6 +889,8 @@ int main() {
         widensExitsOverVexOperandsAtRsp();
         framesFramePointerLeavesThatPushInTheirBody();
         skipsLeavesThatCopyRsp();
+        skipsOpcodeEncodedRspUses();
+        framesOpcodeEncodedNonStackRegisters();
         framesEachFunctionFromItsOwnFde();
         treatsATailCallPastTheFdeEndAsLeaving();
         framesALeafAfterAJumpWithoutInt3FromItsOwnFde();

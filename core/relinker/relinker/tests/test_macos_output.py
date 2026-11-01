@@ -29,6 +29,7 @@ PAGE = 0x1000
 IMAGE_BASE = 0x140000000
 META_VERSION = 2
 PROT_EXEC = 4
+CODE_SIGNATURE_RESERVE = 0x400
 FS_LOAD = bytes.fromhex("64488b0425" "00000000")
 GS_LOAD = bytes.fromhex("65488b04c5" "00000000")
 
@@ -108,6 +109,7 @@ def check_structure(name, data):
     linkedit = macho.segment("__LINKEDIT")
     check(linkedit["initprot"] == 1 and linkedit["fileoff"] + linkedit["filesize"] == len(data), f"{name}: __LINKEDIT does not end the file")
     check(macho.entryoff is not None and any(lo <= macho.entryoff < hi for lo, hi in macho.executable_ranges()), f"{name}: entry point is outside the executable segments")
+    check(macho.entryoff >= macho.end + CODE_SIGNATURE_RESERVE, f"{name}: entry stub at {macho.entryoff:#x} leaves under {CODE_SIGNATURE_RESERVE:#x} bytes after the load commands for codesign")
     check("@rpath/libkernel.prx" in macho.dylibs and "/usr/lib/libSystem.B.dylib" in macho.dylibs, f"{name}: dependencies {macho.dylibs}")
     check(macho.rpaths == ["@executable_path/libs"], f"{name}: run paths {macho.rpaths}")
     check(macho.dyld_info is not None, f"{name}: no binding information")
@@ -141,6 +143,18 @@ def check_imports(data):
         check(("_" + nid(symbol)).encode() in binds, f"import: {symbol} is not bound by its NID")
     code = b"".join(data[lo:hi] for lo, hi in macho.executable_ranges())
     check(bytes.fromhex("4883ec08") in code, "import: the guest code is missing from the image")
+
+
+def check_signed_entry(directory, data):
+    if sys.platform != "darwin":
+        return
+    signed = Path(directory) / "import-signed"
+    signed.write_bytes(data)
+    result = subprocess.run(["codesign", "-s", "-", "-f", str(signed)], capture_output=True, text=True, timeout=60)
+    check(result.returncode == 0, f"codesign failed: {result.stdout}{result.stderr}")
+    entryoff = MachO(data).entryoff
+    after = signed.read_bytes()
+    check(after[entryoff:entryoff + 64] == data[entryoff:entryoff + 64], "codesign overwrote the entry stub")
 
 
 def check_runtime_dependencies(relinker, directory):
@@ -209,14 +223,81 @@ def check_runpath_lists(relinker, directory):
         check(not output.exists(), "empty run path created an output")
 
 
+def uleb(data, offset):
+    value = shift = 0
+    while True:
+        byte = data[offset]
+        offset += 1
+        value |= (byte & 0x7F) << shift
+        shift += 7
+        if byte < 0x80:
+            return value, offset
+
+
+def rebases(data):
+    macho = MachO(data)
+    offset, end = macho.dyld_info[0], macho.dyld_info[0] + macho.dyld_info[1]
+    found = []
+    segment = address = 0
+    while offset < end:
+        opcode, immediate = data[offset] & 0xF0, data[offset] & 0x0F
+        offset += 1
+        if opcode == 0x00:
+            break
+        if opcode == 0x20:
+            segment = immediate
+            address, offset = uleb(data, offset)
+        elif opcode == 0x30:
+            delta, offset = uleb(data, offset)
+            address += delta
+        elif opcode == 0x40:
+            address += immediate * 8
+        elif opcode in (0x50, 0x60, 0x70):
+            count = immediate if opcode == 0x50 else 1
+            if opcode == 0x60:
+                count, offset = uleb(data, offset)
+            for _ in range(count):
+                found.append((macho.segments[segment]["name"], address))
+                address += 8
+            if opcode == 0x70:
+                delta, offset = uleb(data, offset)
+                address += delta
+        elif opcode != 0x10:
+            raise SystemExit(f"rebase opcode {opcode:#x} is not decoded")
+    return found
+
+
+def check_fixup_protection(relinker, directory):
+    for name, target in (("fixup-data", 0x5200), ("fixup-code", 0x4100)):
+        image = import_fixture()
+        struct.pack_into("<QQq", image, 0x5C30, target, 8, 0x5100)
+        struct.pack_into("<qQ", image, 0x5800 + 7 * 16, 8, 72)
+        source = Path(directory) / f"{name}.elf"
+        output = Path(directory) / name
+        source.write_bytes(bytes(image))
+        result = subprocess.run([str(relinker), "--macos", "--skip-sce-module", str(source), str(output)],
+                                capture_output=True, text=True, timeout=20)
+        if target == 0x4100:
+            check(result.returncode == 2 and "FAIL: Mach-O fixup target is not in a writable segment (offset 0x10100)" in result.stderr,
+                  f"{name}: rebase into a non-writable segment accepted: {result.returncode} {result.stdout}{result.stderr}")
+            check(not output.exists(), f"{name}: rejected fixup created an output")
+        else:
+            check(result.returncode == 0, f"{name}: {result.stdout}{result.stderr}")
+            found = rebases(output.read_bytes())
+            check(("__ELF1", 0x200) in found, f"{name}: no rebase at __ELF1+0x200 in {found}")
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-macos-output-") as directory:
-        check_imports(relink(relinker, directory, "import", import_fixture()))
+        imported = relink(relinker, directory, "import", import_fixture())
+        check_imports(imported)
+        check_signed_entry(directory, imported)
         check_runtime_dependencies(relinker, directory)
         check_tls(relink(relinker, directory, "tls", tls_fixture()))
         check_options(relinker, directory)
         check_runpath_lists(relinker, directory)
+        check_fixup_protection(relinker, directory)
     print("macOS output checks passed")
 
 
