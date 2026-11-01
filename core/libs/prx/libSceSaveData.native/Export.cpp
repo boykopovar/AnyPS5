@@ -1342,7 +1342,7 @@ int APS5_VABI sceSaveDataGetMountedSaveDataCount() {
     return 0;
 }
 
-int APS5_VABI sceSaveDataGetProgress() {
+int APS5_VABI sceSaveDataGetProgress(float* progress) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1377,9 +1377,8 @@ int APS5_VABI sceSaveDataGetUpdatedDataCount(void) {
     return 0;
 }
 
-int APS5_VABI sceSaveDataInitialize2() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSaveDataInitialize2(const void* init) {
+    return sceSaveDataInitialize3(init);
 }
 
 int APS5_VABI sceSaveDataInitializeForCdlg(void) {
