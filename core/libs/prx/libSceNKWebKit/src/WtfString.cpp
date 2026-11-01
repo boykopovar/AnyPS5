@@ -230,6 +230,10 @@ unsigned Hash(StringView view, bool masked = true) {
     return hasher.hash(masked);
 }
 
+unsigned AvoidDeletedHashValue(unsigned hash) {
+    return hash | (static_cast<unsigned>(!(hash + 1)) << 31);
+}
+
 StringImpl* EmptyImpl() {
     static const unsigned char empty[] = "";
     static StringImpl impl{1, 0, empty, (Hash({empty, 0, true}) << 8) | 28};
@@ -1020,6 +1024,14 @@ bool APS5_VABI _ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE(StringView view)
     if (view.length < 5) return false;
     if ((Unit(view, 0) | 32) != 'h' || (Unit(view, 1) | 32) != 't' || (Unit(view, 2) | 32) != 't' || (Unit(view, 3) | 32) != 'p') return false;
     return Unit(view, 4) == ':' || ((Unit(view, 4) | 32) == 's' && view.length >= 6 && Unit(view, 5) == ':');
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashEPKDsj(const char16_t* characters, unsigned length) {
+    return AvoidDeletedHashValue(Hash({characters, length, false}, false));
+}
+
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashERKN3WTF6StringE(const String* string) {
+    return AvoidDeletedHashValue(Hash(View(Checked(string).impl), false));
 }
 
 }

@@ -158,6 +158,8 @@ bool APS5_VABI _ZN3WTFeqERKNS_7CStringEPKc(const NKWebKit::WtfAbi::CString& a, c
 bool APS5_VABI _ZN3WTFeqERKNS_7CStringES2_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 bool APS5_VABI _ZN3WTFltERKNS_7CStringES2_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 bool APS5_VABI _ZN7WebCore21isBackForwardLoadTypeENS_13FrameLoadTypeE(std::uint8_t type);
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashEPKDsj(const char16_t* characters, unsigned length);
+unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashERKN3WTF6StringE(const NKWebKit::WtfAbi::String* string);
 bool APS5_VABI _ZN7WebCore8isReloadENS_13FrameLoadTypeE(std::uint8_t type);
 void APS5_VABI _ZN7bmalloc12cryptoRandomEPvm(void* buffer, std::size_t size);
 std::size_t APS5_VABI _ZN7bmalloc15availableMemoryEv();
