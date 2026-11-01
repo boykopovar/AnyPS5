@@ -518,7 +518,7 @@ uint32_t APS5_VABI sceAmprCommandBufferGetNumCommands(const Apr::CommandBufferOb
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetSize(const Apr::CommandBufferObject* buffer) {
-    return buffer->size;
+    return buffer != nullptr ? buffer->size : 0;
 }
 
 uint32_t APS5_VABI sceAmprCommandBufferGetType(const Apr::CommandBufferObject* buffer) {
@@ -915,7 +915,7 @@ int APS5_VABI sceAmprAmmGetVirtualAddressRanges(std::uint64_t* start, std::uint6
     return 0;
 }
 
-int APS5_VABI sceAmprAmmSetPageTablePoolOccupancyNotificationThreshold(void) {
+int APS5_VABI sceAmprAmmSetPageTablePoolOccupancyNotificationThreshold(int threshold) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

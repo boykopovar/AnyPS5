@@ -17,6 +17,8 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
+#include "prx/libSceAudioOut/include/HostGain.hpp"
+#include "prx/libScePad/include/HostVolumeControl.hpp"
 #include "AudioOutShutdown.hpp"
 #include "AudioOut2PadMix.hpp"
 #include "prx/libScePad/include/PadState.hpp"
@@ -124,6 +126,7 @@ struct Port {
     AudioOut2PadLayout padLayout;
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
+    HostGainRamp hostGain;
 };
 
 static std::mutex g_mutex;
@@ -193,6 +196,21 @@ static void closeDevice(Port& port) {
     }
     port.device = 0;
     port.spec = {};
+}
+
+static void reopenStoppedDevice(Port& port) {
+    if (port.device == 0 || SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED) return;
+    closeDevice(port);
+    if (port.type == PORT_TYPE_VIBRATION) {
+        try {
+            openVibrationDevice(port);
+        } catch (const std::runtime_error&) {
+            port.device = 0;
+            port.spec = {};
+        }
+    } else {
+        openDevice(port);
+    }
 }
 
 static constexpr std::uint32_t STD_8CH_MAP[8] = {0, 1, 2, 3, 6, 7, 4, 5};
@@ -296,6 +314,7 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
         queueData = padFrames.data();
     } else {
         queueData = prepareBuffer(port, data, prepareBuf);
+        queueData = HostGainFilter(port.hostGain, HostVolumeGain_nid_no_patch(), queueData, formatIsFloat(port.format), port.samplesNum, static_cast<unsigned>(port.channels), prepareBuf);
         queueSize = checkedBufferSize(port.samplesNum, static_cast<std::uint32_t>(port.channels), bytesPerSample(port.format));
     }
 
@@ -383,6 +402,7 @@ static int allocatePort(int type, std::uint32_t len, std::uint32_t freq, Format 
             port.format = format;
             port.channels = channelsForFormat(format);
             port.lastDataOutputTime = 0;
+            port.hostGain = HostGainRamp(freq / 100);
             port.virtualQueueEnd = sceKernelGetProcessTime();
             port.mixLevel = type == PORT_TYPE_PADSPK ? DEFAULT_PADSPK_MIX_LEVEL : DEFAULT_VOLUME;
             if (type == PORT_TYPE_VIBRATION) {
@@ -491,6 +511,7 @@ int APS5_VABI sceAudioOutOutput(int handle, const void* ptr) try {
         return -2144993277;
     }
 
+    reopenStoppedDevice(*port);
     if (port->device == 0) {
         outputVirtualPort(*port, ptr, lock);
     } else {
@@ -528,6 +549,7 @@ int APS5_VABI sceAudioOutOutputs(AudioOutOutputParam* param, std::uint32_t num) 
     Port& first = *getPort(param[0].handle);
     for (std::uint32_t i = 0; i < num; i++) {
         Port& port = *getPort(param[i].handle);
+        reopenStoppedDevice(port);
         if (port.device == 0) {
             outputVirtualPort(port, param[i].ptr, lock);
         } else {

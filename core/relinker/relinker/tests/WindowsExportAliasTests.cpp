@@ -71,6 +71,22 @@ int main() {
         auto symbolic=good;symbolic.Symbolic=true;Domain::GuestRuntime symbolicRuntime;Reject([&]{Elfpatcher::GuestModuleWriter().WriteWindows(symbolic,symbolicRuntime);},"DF_SYMBOLIC");
         for(unsigned kind=0;kind<10;++kind){auto g=good;auto& s=g.Symbols[2];switch(kind){case 0:s.Value+=8;break;case 1:s.Size+=1;break;case 2:s.Info=0x22;break;case 3:s.Info=0x11;break;case 4:s.Visibility=0;break;case 5:s.Section=2;break;case 6:g.Symbols[1].Info=s.Info=0x11;break;case 7:g.Symbols[1].Section=s.Section=Relinker::AbsoluteSection;break;case 8:g.Symbols[1].Info=s.Info=0x16;g.Dynamic.RelaData.clear();break;case 9:g.Symbols[1].Info=s.Info=0x10;break;}Check(!Relinker::IdenticalOrdinaryFunctionExport(g.Symbols[1],s),"nonordinary/conflicting tuple accepted");Domain::GuestRuntime r;Reject([&]{Elfpatcher::GuestModuleWriter().WriteWindows(g,r);},kind==8?"TLS":"Duplicate guest export");}
         Check(Domain::DeclaredImportModule("same#A#B",{{1,"one"},{2,"two"}})=="one"&&Domain::DeclaredImportModule("same#A#C",{{1,"one"},{2,"two"}})=="two","module-qualified IDs merged");
+        auto zeroBucket=Fixture();Io::WriteU32(zeroBucket,0x2600,0);
+        Reject([&]{Relinker::GuestImageReader().Read("generic.prx",zeroBucket,true);},"Invalid SysV hash header");
+        auto zeroChain=Fixture();Io::WriteU32(zeroChain,0x2604,0);
+        Reject([&]{Relinker::GuestImageReader().Read("generic.prx",zeroChain,true);},"Invalid SysV hash header");
+        auto oobBucket=Fixture();Io::WriteU32(oobBucket,0x2608,4);
+        Reject([&]{Relinker::GuestImageReader().Read("generic.prx",oobBucket,true);},"Invalid SysV hash bucket index");
+        auto tableOob=Fixture();Io::WriteU32(tableOob,0x2604,0x1000);
+        Reject([&]{Relinker::GuestImageReader().Read("generic.prx",tableOob,true);},"Unmapped ELF address");
+        auto lastBucket=Fixture();Io::WriteU32(lastBucket,0x2600,2);Io::WriteU32(lastBucket,0x2608,1);Io::WriteU32(lastBucket,0x260c,4);
+        Reject([&]{Relinker::GuestImageReader().Read("generic.prx",lastBucket,true);},"Invalid SysV hash bucket index");
+        auto chainPastSegment=Fixture();Io::WriteU32(chainPastSegment,0x2600,0x27d);
+        Reject([&]{Relinker::GuestImageReader().Read("generic.prx",chainPastSegment,true);},"Unmapped ELF address");
+        auto multiBucket=Fixture();
+        Io::WriteU32(multiBucket,0x2600,2);Io::WriteU32(multiBucket,0x2604,4);Io::WriteU32(multiBucket,0x2608,1);Io::WriteU32(multiBucket,0x260c,2);
+        auto goodMulti=Relinker::GuestImageReader().Read("generic.prx",multiBucket,true);
+        Check(goodMulti.Symbols.size()==4,"valid multi-bucket SysV hash accepted");
         std::cout<<"WINDOWS_EXPORT_ALIAS_CASES_PASSED\npreserved-indices reversed-order conflicting-fields strict-nonwindows qualified-import writer-guard\n";
     } catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

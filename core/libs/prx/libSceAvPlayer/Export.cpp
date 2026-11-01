@@ -113,7 +113,7 @@ int APS5_VABI sceAvPlayerInitEx(const AvPlayerInitDataEx* init_ex, AvPlayerInter
         init.auto_start = init_ex->auto_start;
     }
     init.default_language = init_ex->default_language;
-    *handle = new Player(init, VideoBufferCount(init.num_output_video_framebuffers), init_ex->this_size >= Ps5InitDataExSize);
+    *handle = new Player(init, VideoBufferCount(init.num_output_video_framebuffers));
     return SCE_OK;
 }
 

@@ -61,6 +61,19 @@ static void CheckRoundingAndScaling() {
     Require(__isinfl_nid_postfix(1.0L) == 0 && __isinfl_nid_postfix(static_cast<long double>(NAN)) == 0 && __isinfl_nid_postfix(0.0L) == 0);
 }
 
+static void CheckLogblLroundl() {
+    Require(logbl_nid_postfix(8.0L) == 3.0L && logbl_nid_postfix(0.75L) == -1.0L && logbl_nid_postfix(-0.75L) == -1.0L);
+    Require(logbl_nid_postfix(0x1p-16445L) == -16445.0L);
+    Require(logbl_nid_postfix(0.0L) == -INFINITY && logbl_nid_postfix(-0.0L) == -INFINITY);
+    Require(logbl_nid_postfix(INFINITY) == INFINITY && logbl_nid_postfix(-INFINITY) == INFINITY);
+    Require(std::isnan(logbl_nid_postfix(NAN)));
+    Require(lroundl_nid_postfix(2.5L) == 3 && lroundl_nid_postfix(-2.5L) == -3);
+    Require(lroundl_nid_postfix(0.5L) == 1 && lroundl_nid_postfix(-0.5L) == -1);
+    Require(lroundl_nid_postfix(0.49999999999999999L) == 0);
+    Require(lroundl_nid_postfix(9007199254740993.0L) == INT64_C(9007199254740993));
+    Require(lroundl_nid_postfix(0x1p62L) == (INT64_C(1) << 62));
+}
+
 static void CheckSignalingNanPassThrough() {
     const long double signaling = Extended(0x7fff, 0x8000000000001234ull);
     Require(SameBits(fdiml_nid_postfix(signaling, 1.0L), signaling));
@@ -70,6 +83,13 @@ static void CheckSignalingNanPassThrough() {
     Require(SameBits(modfl_nid_postfix(signaling, &integral), signaling) && SameBits(integral, signaling));
     Require(SameBits(fmal_nid_postfix(1.0L, 1.0L, signaling), signaling));
     Require(SameBits(nanl_nid_postfix("123"), Extended(0x7fff, 0xc000000000000000ull)));
+}
+
+static void CheckFiniteClassification() {
+    for (const float value : {1.0f, 0.0f, -0.0f, 0x1p-149f, 0x1.fffffep127f}) Require(finitef_nid_postfix(value) != 0);
+    for (const float value : {static_cast<float>(INFINITY), -static_cast<float>(INFINITY), static_cast<float>(NAN)}) Require(finitef_nid_postfix(value) == 0);
+    for (const double value : {1.0, 0.0, -0.0, 0x1p-1074, 0x1.fffffffffffffp1023}) Require(__isfinite_nid_postfix(value) != 0);
+    for (const double value : {static_cast<double>(INFINITY), -static_cast<double>(INFINITY), static_cast<double>(NAN)}) Require(__isfinite_nid_postfix(value) == 0);
 }
 
 static void CheckErrno() {
@@ -138,6 +158,22 @@ static void CheckRoundingModes() {
     Require(std::fesetround(saved) == 0);
 }
 
+static void CheckRintTiesToEven() {
+    const int saved = std::fegetround();
+    Require(std::fesetround(FE_TONEAREST) == 0);
+    Require(rint_nid_postfix(0.5) == 0.0 && !std::signbit(rint_nid_postfix(0.5)));
+    Require(rint_nid_postfix(-0.5) == 0.0 && std::signbit(rint_nid_postfix(-0.5)));
+    Require(rint_nid_postfix(2.5) == 2.0 && rint_nid_postfix(3.5) == 4.0 && rint_nid_postfix(-2.5) == -2.0);
+    Require(!std::signbit(rint_nid_postfix(0.0)) && std::signbit(rint_nid_postfix(-0.0)));
+    Require(rint_nid_postfix(INFINITY) == INFINITY && rint_nid_postfix(-INFINITY) == -INFINITY);
+    Require(std::isnan(rint_nid_postfix(NAN)));
+    Require(rint_nid_postfix(4503599627370497.0) == 4503599627370497.0);
+    Require(rintf_nid_postfix(2.5f) == 2.0f && rintf_nid_postfix(0.5f) == 0.0f && !std::signbit(rintf_nid_postfix(0.5f)));
+    Require(std::signbit(rintf_nid_postfix(-0.5f)) && rintf_nid_postfix(8388609.0f) == 8388609.0f);
+    Require(rintl_nid_postfix(2.5L) == 2.0L && rintl_nid_postfix(3.5L) == 4.0L && std::signbit(rintl_nid_postfix(-0.5L)));
+    Require(std::fesetround(saved) == 0);
+}
+
 static void CheckClassification() {
     const long double pseudoDenormal = Extended(0x0000, 0x8000000000000000ull);
     Require(_LDtest_nid_postfix(&pseudoDenormal) == -1 && __fpclassifyl_nid_postfix(pseudoDenormal) == -2);
@@ -156,10 +192,13 @@ static void CheckClassification() {
 
 int main() {
     CheckRoundingAndScaling();
+    CheckLogblLroundl();
     CheckSignalingNanPassThrough();
     CheckErrno();
+    CheckFiniteClassification();
     CheckConsoleQuirks();
     CheckRoundingModes();
+    CheckRintTiesToEven();
     CheckClassification();
     return 0;
 }

@@ -3,6 +3,7 @@
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
 #include <elfpatcher/general/SegmentFilter.hpp>
+#include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
 #include <io/ByteWriter.hpp>
 #include <algorithm>
 #include <cstdint>
@@ -162,6 +163,69 @@ void ZeroFileBytesStayInPlace() {
     Require(OutputOffset(output, 0x2c20) == 0x2c20, "a segment whose page already reads right was moved");
 }
 
+std::uint64_t VaddrOf(const Bytes& output, const std::uint64_t fileOffset) {
+    for (const auto& load : OutputLoads(output))
+        if (fileOffset >= load.Offset && fileOffset < load.Offset + load.FileSize)
+            return load.MappedAddress + (fileOffset - load.Offset);
+    throw std::runtime_error("linux load pages: file offset is not covered by an output PT_LOAD");
+}
+
+void TrampolineDisplacementAcrossInt64Max() {
+    using Codegen::Amd64OnlySubstitutionTable::kJmpRel32;
+    auto source = Fixture(0x3000);
+    const Bytes insertq = {0xF2, 0x0F, 0x79, 0xD1, 0x10, 0x20};
+    std::copy(insertq.begin(), insertq.end(), source.begin() + 0x500);
+    Write<std::uint64_t>(source, 24, 0x7FFFFFFFFFFFE100);
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x7FFFFFFFFFFFE000, 0x2000, 0x2000, 5),
+    };
+    Codegen::TrampolineSite site;
+    site.Offset = 0x500;
+    site.Address = 0x7FFFFFFFFFFFE100;
+    site.Length = insertq.size();
+    site.OriginalBytes = insertq;
+    site.Body = {0xE9, 0x00, 0x00, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF, 0xC3};
+    site.ReturnBranchOffset = 0;
+    const auto output = Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {site});
+    const Bytes tail(site.Body.begin() + site.ReturnBranchOffset + kJmpRel32.Size, site.Body.end());
+    const auto tailStart = std::search(output.begin(), output.end(), tail.begin(), tail.end());
+    Require(tailStart != output.end(), "the trampoline body is missing from the output");
+    const auto bodyOff = static_cast<std::uint64_t>(tailStart - output.begin()) - site.ReturnBranchOffset - kJmpRel32.Size;
+    const auto bodyVaddr = VaddrOf(output, bodyOff);
+    Require(bodyVaddr >= 0x8000000000000000, "the trampoline body did not land above 2^63");
+    const auto jumpDisplacement = static_cast<std::int32_t>(bodyVaddr - (site.Address + kJmpRel32.Size));
+    const auto returnDisplacement = static_cast<std::int32_t>(site.Address + site.Length - (bodyVaddr + site.ReturnBranchOffset + kJmpRel32.Size));
+    Require(Read<std::uint8_t>(output, site.Offset) == kJmpRel32.Bytes[0], "the trampoline site was not rewritten as a rel32 jump");
+    Require(Read<std::uint32_t>(output, site.Offset + 1) == static_cast<std::uint32_t>(jumpDisplacement), "the trampoline jump displacement is wrong");
+    Require(Read<std::uint32_t>(output, bodyOff + site.ReturnBranchOffset + 1) == static_cast<std::uint32_t>(returnDisplacement), "the trampoline return displacement is wrong");
+}
+
+void TrampolineDisplacementBeyondInt64Range() {
+    using Codegen::Amd64OnlySubstitutionTable::kJmpRel32;
+    auto source = Fixture(0x3000);
+    const Bytes insertq = {0xF2, 0x0F, 0x79, 0xD1, 0x10, 0x20};
+    std::copy(insertq.begin(), insertq.end(), source.begin() + 0x500);
+    Write<std::uint64_t>(source, 24, 0xFFFFFFFFFFFFE100);
+    const std::vector<Domain::ProgramHeader> headers{
+        Load(0x400, 0x400, 0x1000, 0x1000, 5),
+        Load(0x2000, 0xFFFFFFFFFFFFE000, 0x800, 0x800, 5),
+    };
+    Codegen::TrampolineSite site;
+    site.Offset = 0x500;
+    site.Address = 0x500;
+    site.Length = insertq.size();
+    site.OriginalBytes = insertq;
+    site.Body = {0xE9, 0x00, 0x00, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF, 0xC3};
+    site.ReturnBranchOffset = 0;
+    bool threw = false;
+    try {
+        (void)Patcher().Patch(source, headers, {}, 0, "$ORIGIN/libs", true, false, {site});
+    } catch (const Domain::RelinkerException& error) {
+        threw = std::string(error.what()).find("rel32") != std::string::npos;
+    }
+    Require(threw, "a trampoline whose site and body are more than 2^63 apart was accepted with a wrapped displacement");
+}
+
 }
 
 int main() {
@@ -169,6 +233,8 @@ int main() {
         ZeroFillBelowTheNextSegment();
         DataAndZeroFillBelowTheNextSegment();
         ZeroFileBytesStayInPlace();
+        TrampolineDisplacementAcrossInt64Max();
+        TrampolineDisplacementBeyondInt64Range();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
