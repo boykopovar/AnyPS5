@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr int SCE_USER_SERVICE_ERROR_INVALID_USER_ID = USER_SERVICE_ERROR_UNKNOWN_USER;
+
 void Require(bool value) { if (!value) std::abort(); }
 
 void SetLanguage(const char* value) {
@@ -176,6 +178,10 @@ int main() {
     char name[32]{};
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserName(123, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetUserName(0x10000004, name, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_USER_ID);
+    Require(sceUserServiceGetUserName(static_cast<int>(0xFFFFFFFFu), name, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_USER_ID);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetUserName(USER_SERVICE_USER_ID_INVALID, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, 5) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_OK);
     Require(std::strcmp(name, "Player") == 0);
