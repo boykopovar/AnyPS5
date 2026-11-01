@@ -129,7 +129,7 @@ static void CheckNearbyint() {
     Require(nearbyint_nid_postfix(0x1p53) == 0x1p53);
     Require(nearbyint_nid_postfix(INFINITY) == INFINITY && nearbyint_nid_postfix(-INFINITY) == -INFINITY);
     Require(std::isnan(nearbyint_nid_postfix(NAN)));
-    Require(std::fetestexcept(FE_INEXACT) == 0);
+    Require(std::fetestexcept(FE_INEXACT) != 0);
     std::feclearexcept(FE_ALL_EXCEPT);
     std::uint16_t savedControl;
     asm volatile("fnstcw %0" : "=m"(savedControl));
@@ -718,6 +718,55 @@ struct RestoreFloatingPointState {
     RestoreFloatingPointState() { Require(std::fegetenv(&environment) == 0); }
     ~RestoreFloatingPointState() { Require(std::fesetenv(&environment) == 0); errno = error; }
 };
+
+static void CheckNearbyintEnvironment() {
+    const RestoreFloatingPointState saved;
+    const struct {
+        int mode;
+        double positiveHalf, negativeHalf, positiveTwoHalf, negativeTwoHalf;
+    } modes[] = {
+        {FE_TONEAREST, 0.0, -0.0, 2.0, -2.0},
+        {FE_UPWARD, 1.0, -0.0, 3.0, -2.0},
+        {FE_DOWNWARD, 0.0, -1.0, 2.0, -3.0},
+        {FE_TOWARDZERO, 0.0, -0.0, 2.0, -2.0},
+    };
+    for (const auto& mode : modes) {
+        Require(std::fesetround(mode.mode) == 0);
+        const double cases[][2] = {
+            {0.5, mode.positiveHalf}, {-0.5, mode.negativeHalf},
+            {2.5, mode.positiveTwoHalf}, {-2.5, mode.negativeTwoHalf},
+        };
+        for (const auto& [input, expected] : cases) {
+            Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+            Require(std::feraiseexcept(FE_DIVBYZERO) == 0);
+            errno = 1234;
+            Require(std::bit_cast<std::uint64_t>(nearbyint_nid_postfix(input)) == std::bit_cast<std::uint64_t>(expected));
+            Require(std::fetestexcept(FE_DIVBYZERO | FE_INEXACT) == (FE_DIVBYZERO | FE_INEXACT));
+            Require(std::fegetround() == mode.mode && errno == 1234);
+        }
+        for (const double input : {0.0, -0.0, 2.0, -2.0, 0x1p52, -0x1p52, 0x1p53, -0x1p53,
+                                   std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()}) {
+            Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+            Require(std::feraiseexcept(FE_DIVBYZERO | FE_INEXACT) == 0);
+            Require(std::bit_cast<std::uint64_t>(nearbyint_nid_postfix(input)) == std::bit_cast<std::uint64_t>(input));
+            Require(std::fetestexcept(FE_DIVBYZERO | FE_INEXACT) == (FE_DIVBYZERO | FE_INEXACT));
+            Require(std::fegetround() == mode.mode);
+        }
+        const std::uint64_t nanCases[][2] = {
+            {0x7ff0000000000001ull, 0x7ff8000000000001ull},
+            {0xfff4000000000123ull, 0xfffc000000000123ull},
+            {0x7ff8000000000456ull, 0x7ff8000000000456ull},
+        };
+        for (const auto& [input, expected] : nanCases) {
+            Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+            Require(std::feraiseexcept(FE_DIVBYZERO) == 0);
+            Require(std::bit_cast<std::uint64_t>(nearbyint_nid_postfix(std::bit_cast<double>(input))) == expected);
+            Require(std::fetestexcept(FE_DIVBYZERO) != 0);
+            if ((input & 0x0008000000000000ull) == 0) Require(std::fetestexcept(FE_INVALID) != 0);
+            Require(std::fegetround() == mode.mode);
+        }
+    }
+}
 
 static void CheckAcosfErrno() {
     constexpr std::uint32_t domain[][2] = {
@@ -2638,6 +2687,7 @@ int main() {
     CheckExp2Errno();
     CheckExactOperations();
     CheckNearbyint();
+    CheckNearbyintEnvironment();
     CheckFegetenv();
     CheckLongDouble();
     CheckScalbnErrno();
