@@ -356,4 +356,11 @@ int main() {
     Require(RejectsNull(sceKernelGetEventFilter));
     Require(RejectsNull(sceKernelGetEventId));
     Require(RejectsNull(sceKernelGetEventUserData));
+
+    KernelEqueue closedEq = 0;
+    Require(sceKernelCreateEqueue(&closedEq, "closed") == SCE_OK);
+    Require(sceKernelTriggerUserEvent(closedEq, 7, &payload) == SCE_OK);
+    Require(sceKernelDeleteEqueue(closedEq) == SCE_OK);
+    Require(sceKernelTriggerUserEvent(closedEq, 7, &payload) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelTriggerUserEvent(0, 7, &payload) == SCE_KERNEL_ERROR_EBADF);
 }
