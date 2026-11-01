@@ -5707,11 +5707,11 @@ void idlePublishWaitTests(const Device& device, Recorder& recorder) {
     std::cout << "idle publish wait verified\n";
 }
 
-void untrackedForgetTests(const Device& device, Recorder& recorder) {
+bool untrackedForgetTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if (base.hostImportAlignment == 0) {
         std::cout << "host imports unavailable: untracked comparison memo not tested\n";
-        return;
+        return false;
     }
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
@@ -5750,11 +5750,11 @@ void untrackedForgetTests(const Device& device, Recorder& recorder) {
     } unregister{base, block, other};
     if (HostImportFor(base, address, surfaceBytes) == nullptr) {
         std::cout << "host import of the surface refused: untracked comparison memo not tested\n";
-        return;
+        return false;
     }
     if (AgcDriver::GuestMemory::Watched(address, surfaceBytes)) {
         std::cout << "the surface is write-watched: untracked comparison memo not tested\n";
-        return;
+        return false;
     }
     TextureDetiler detiler(base);
     struct Finish {
@@ -5794,14 +5794,15 @@ void untrackedForgetTests(const Device& device, Recorder& recorder) {
     VirtualFree(other, 0, MEM_RELEASE);
 #endif
     std::cout << "untracked comparison memo: ok\n";
+    return true;
 }
 
-void untrackedRevalidateTests(const Device& device, Recorder& recorder) {
+bool untrackedRevalidateTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     context.nullDescriptors = device.NullDescriptors();
     if (context.hostImportAlignment == 0 || !context.nullDescriptors) {
         std::cout << "host imports or null descriptors unavailable: fast revalidation over untracked memory not tested\n";
-        return;
+        return false;
     }
     constexpr std::size_t bytes = 2 * 65536;
 #ifdef _WIN32
@@ -5829,11 +5830,11 @@ void untrackedRevalidateTests(const Device& device, Recorder& recorder) {
     } unregister{context, block};
     if (HostImportFor(context, address, bytes) == nullptr) {
         std::cout << "host import of the block refused: fast revalidation over untracked memory not tested\n";
-        return;
+        return false;
     }
     if (AgcDriver::GuestMemory::Watched(address, bytes)) {
         std::cout << "the block is write-watched: fast revalidation over untracked memory not tested\n";
-        return;
+        return false;
     }
     TextureDetiler detiler(context);
     auto imageContext = context;
@@ -5870,6 +5871,7 @@ void untrackedRevalidateTests(const Device& device, Recorder& recorder) {
     Require(report.path != ShaderResources::ProofPath::Fast, "a sampled template over untracked memory kept its fast proof across a store and a new collect epoch");
     sampled.reset();
     std::cout << "fast revalidation over untracked memory: ok\n";
+    return true;
 }
 
 struct WalkStore {
@@ -5898,19 +5900,19 @@ void storeDuringWalk(std::uint64_t address, std::size_t bytes) {
     }
 }
 
-void untrackedHintProofTests(const Device& device, Recorder& recorder) {
+bool untrackedHintProofTests(const Device& device, Recorder& recorder) {
     auto context = device.GetContext();
     context.nullDescriptors = device.NullDescriptors();
     if (context.hostImportAlignment == 0 || !context.nullDescriptors) {
         std::cout << "host imports or null descriptors unavailable: untracked proofs across collect epochs not tested\n";
-        return;
+        return false;
     }
     constexpr std::size_t surface = 65536;
     constexpr std::size_t bytes = 2 * surface;
     auto* block = static_cast<std::uint8_t*>(AllocateWatched(bytes, surface));
     if (block == nullptr) {
         std::cout << "guest memory is not write-watched: untracked proofs across collect epochs not tested\n";
-        return;
+        return false;
     }
     std::memset(block, 0x40, bytes);
     const auto first = reinterpret_cast<std::uint64_t>(block);
@@ -5932,12 +5934,12 @@ void untrackedHintProofTests(const Device& device, Recorder& recorder) {
     } unregister{context, block};
     if (HostImportFor(context, first, bytes) == nullptr) {
         std::cout << "host import of the block refused: untracked proofs across collect epochs not tested\n";
-        return;
+        return false;
     }
     AgcDriver::GuestMemory::Unwatch(first, bytes);
     if (AgcDriver::GuestMemory::Watched(first, bytes)) {
         std::cout << "the block stayed write-watched: untracked proofs across collect epochs not tested\n";
-        return;
+        return false;
     }
     const bool hinted = AgcDriver::GuestMemory::UntrackedHint(first, bytes) != 0;
     std::cout << (hinted ? "the block has a write-watch hint: its proofs are expected to hold across collect epochs\n" : "the block has no write-watch hint: its proofs are expected to follow the collect epoch\n");
@@ -6080,6 +6082,7 @@ void untrackedHintProofTests(const Device& device, Recorder& recorder) {
     Require(version(first) != before, "the walk on another thread after a store kept the old content");
     sampled.reset();
     std::cout << "untracked proofs across collect epochs: ok\n";
+    return true;
 }
 
 void storageRefreshTests(const Device& device, Recorder& recorder, bool watched) {
@@ -13047,16 +13050,13 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-revalidate-only") {
-            untrackedRevalidateTests(device, recorder);
-            return 0;
+            return untrackedRevalidateTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-hint-proof-only") {
-            untrackedHintProofTests(device, recorder);
-            return 0;
+            return untrackedHintProofTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--untracked-forget-only") {
-            untrackedForgetTests(device, recorder);
-            return 0;
+            return untrackedForgetTests(device, recorder) ? 0 : 77;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--draw-snapshot-cap-only") {
             drawSnapshotCapTests(device, recorder);
