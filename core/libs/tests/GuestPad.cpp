@@ -489,6 +489,12 @@ static void CheckSpecialPort(int user, int handle) {
     Require(scePadRead_nid_postfix(special, data, 1) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadReadState(special, data) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadGetControllerInformation(special, &info) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(special, &vibration) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(special, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    for (const int invalidHandle : {-1, -2, -100}) {
+        Require(scePadSetVibration(invalidHandle, &vibration) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetVibration(invalidHandle, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    }
     Require(scePadGetHandle(user, 0, 0) == handle);
     Require(scePadReadState(handle, data) == PAD_OK);
     const int other = user + 1;
@@ -644,6 +650,8 @@ static void CheckVibrationForce(int user, int handle) {
     Require(scePadSetVibrationForce(special, &strong) == PAD_OK && VibrationIs(0, 5, 6));
     Require(scePadSetVibrationForce(special, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(special) == PAD_OK);
+    Require(scePadSetVibration(special, &strong) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetVibration(special, nullptr) == PAD_ERROR_INVALID_HANDLE);
     const PadVibrationParam off{0, 0};
     Require(scePadSetVibrationForce(handle, &off) == PAD_OK && VibrationIs(0, 0, 0));
 }
@@ -1079,7 +1087,11 @@ int main() {
     Require(scePadSetVibration(handle2, &vibFull) == PAD_OK);
     Require(scePadSetVibration(handle2, &vibMixed) == PAD_OK);
     Require(scePadSetVibration(handle2 + 99, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
-    Require(scePadSetVibration(-1, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
+    for (const int invalidHandle : {-1, -2, -100, -9999}) {
+        Require(scePadSetVibration(invalidHandle, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetVibration(invalidHandle, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    }
+    Require(scePadSetVibration(handle2 + 99, nullptr) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetVibration(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
 
     const PadLightBarParam lightOff{0, 0, 0};
