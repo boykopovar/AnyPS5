@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <initializer_list>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -257,6 +258,27 @@ void TestKernelEventQueue() {
     Require(sceKernelGetEventId(&event) == 7 && sceKernelGetEventData(&event) == 0x1234 && sceKernelGetEventUserData(&event) == &userData);
     Require(sceKernelDeleteAmprEvent(eq, 7) == 0);
     Require(sceKernelDeleteEqueue(eq) == 0);
+}
+
+void TestMeasuredWaitsAndBufferSize() {
+    Recorder recorder(2048);
+    Require(sceAmprCommandBufferGetSize(&recorder.buffer) == 2048);
+    alignas(8) std::uint64_t value = 0;
+    Require(sceAmprCommandBufferWaitOnAddress(&recorder.buffer, &value, 0, 0, 0) == 0);
+    RequireAppended(recorder, 0, 0, Apr::Opcode::WaitOnAddress, sceAmprMeasureCommandSizeWaitOnAddress());
+    const std::uint32_t offset = recorder.Offset();
+    Require(sceAmprCommandBufferWaitOnCounter(&recorder.buffer, 3, 1, 0, 0) == 0);
+    RequireAppended(recorder, offset, 1, Apr::Opcode::WaitOnCounter, sceAmprMeasureCommandSizeWaitOnCounter());
+    Require(sceAmprCommandBufferGetSize(&recorder.buffer) == 2048);
+}
+
+void TestUdivti3() {
+    const unsigned __int128 high = (static_cast<unsigned __int128>(1) << 100) + 12345u;
+    const unsigned __int128 wide = (static_cast<unsigned __int128>(0x123456789ABCDEFull) << 64) | 0xFEDCBA9876543210ull;
+    for (const auto& [dividend, divisor] : {std::pair{high, static_cast<unsigned __int128>(3)}, std::pair{wide, static_cast<unsigned __int128>(0x10000000000ull)},
+                                            std::pair{wide, high}, std::pair{high, wide}, std::pair{~static_cast<unsigned __int128>(0), ~static_cast<unsigned __int128>(0)},
+                                            std::pair{static_cast<unsigned __int128>(41), static_cast<unsigned __int128>(7)}})
+        Require(sceAmprUdivti3(dividend, divisor) == dividend / divisor);
 }
 
 void TestWaits() {
@@ -1797,6 +1819,8 @@ int main() {
     TestSubmission();
     TestWriteAddressCommand();
     TestKernelEventQueue();
+    TestMeasuredWaitsAndBufferSize();
+    TestUdivti3();
     TestWaits();
     TestWaitSatisfiedAfterSubmission();
     TestAmmNotBehindAprWait();
