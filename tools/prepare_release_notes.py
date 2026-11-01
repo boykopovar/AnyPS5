@@ -50,6 +50,9 @@ def prepare_notes(source, body, full):
         if os.name == "nt" and destination.exists() and destination.stat().st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
             raise PermissionError(f"Release note destination is read-only: {destination}")
     staged = []
+    backups = {}
+    promoted = []
+    recovering = False
     try:
         for destination, text in ((full, notes), (body, body_text)):
             target = destination.resolve()
@@ -60,11 +63,37 @@ def prepare_notes(source, body, full):
                 if target.exists():
                     temporary.chmod(stat.S_IMODE(target.stat().st_mode))
                 output.write(text.encode("utf-8"))
+        for _, target in staged:
+            backups[target] = None
+            if target.exists():
+                backup = target.parent / (".release-notes-" + secrets.token_hex(16))
+                with backup.open("xb") as output:
+                    backups[target] = backup
+                    output.write(target.read_bytes())
+                backup.chmod(stat.S_IMODE(target.stat().st_mode))
         for temporary, target in staged:
             os.replace(temporary, target)
+            promoted.append(target)
+    except BaseException:
+        recovering = True
+        for target in reversed(promoted):
+            backup = backups[target]
+            if backup is None:
+                target.unlink()
+            else:
+                try:
+                    os.replace(backup, target)
+                except OSError as error:
+                    raise OSError(f"Cannot restore {target}; previous notes remain in {backup}") from error
+        recovering = False
+        raise
     finally:
         for temporary, _ in staged:
             temporary.unlink(missing_ok=True)
+        if not recovering:
+            for backup in backups.values():
+                if backup is not None:
+                    backup.unlink(missing_ok=True)
 
 
 def main(argv=None):

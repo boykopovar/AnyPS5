@@ -737,6 +737,54 @@ class ReleaseAssetsTests(unittest.TestCase):
 
 
 class ReleaseNoteDestinationsTests(unittest.TestCase):
+    def test_failed_restoration_keeps_recoverable_original_notes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, body, full = root / "notes.json", root / "body.md", root / "full.md"
+            source.write_text(json.dumps({"body": "new release notes"}), encoding="utf-8")
+            body.write_bytes(b"previous body")
+            full.write_bytes(b"previous full")
+            original_replace = os.replace
+            full_replacements = 0
+            def refuse_promotion_and_restoration(source_path, destination_path):
+                nonlocal full_replacements
+                if Path(destination_path) == body.resolve():
+                    raise OSError("body promotion refused")
+                if Path(destination_path) == full.resolve():
+                    full_replacements += 1
+                    if full_replacements == 2:
+                        raise OSError("restoration refused")
+                return original_replace(source_path, destination_path)
+            with patch.object(prepare_release_notes.os, "replace", side_effect=refuse_promotion_and_restoration), \
+                    self.assertRaisesRegex(OSError, "previous notes remain in"):
+                prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(body.read_bytes(), b"previous body")
+            backups = list(root.glob(".release-notes-*"))
+            self.assertIn(b"previous full", [path.read_bytes() for path in backups])
+
+    def test_second_promotion_failure_restores_both_note_files(self):
+        for body_exists in (False, True):
+            for full_exists in (False, True):
+                with self.subTest(body_exists=body_exists, full_exists=full_exists), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    source, body, full = root / "notes.json", root / "body.md", root / "full.md"
+                    source.write_text(json.dumps({"body": "new release notes"}), encoding="utf-8")
+                    for path, exists in ((body, body_exists), (full, full_exists)):
+                        if exists:
+                            path.write_bytes(b"previous notes\r\n\xff" + path.name.encode())
+                    previous = {path: path.read_bytes() for path in (source, body, full) if path.exists()}
+                    modes = {path: stat.S_IMODE(path.stat().st_mode) for path in previous}
+                    original_replace = os.replace
+                    def refuse_body_promotion(source_path, destination_path):
+                        if Path(destination_path) == body.resolve():
+                            raise OSError("body promotion refused")
+                        return original_replace(source_path, destination_path)
+                    with patch.object(prepare_release_notes.os, "replace", side_effect=refuse_body_promotion), \
+                            self.assertRaisesRegex(OSError, "body promotion refused"):
+                        prepare_release_notes.prepare_notes(source, body, full)
+                    self.assertEqual({path: path.read_bytes() for path in root.iterdir() if path.is_file()}, previous)
+                    self.assertEqual({path: stat.S_IMODE(path.stat().st_mode) for path in previous}, modes)
+
     def test_directory_body_preserves_existing_full_notes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1240,7 +1288,7 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             self.assertTrue(full.is_symlink())
             self.assertEqual(target.read_bytes(), b"new")
 
-    def test_promotion_failure_leaves_other_destination_intact(self):
+    def test_promotion_failure_restores_other_destination(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source, body, full = (root / name for name in ("notes.json", "body", "full"))
@@ -1257,7 +1305,7 @@ class ReleaseNotesStagingTests(unittest.TestCase):
             with patch.object(prepare_release_notes.os, "replace", replace), self.assertRaisesRegex(OSError, "second promotion failed"):
                 prepare_release_notes.prepare_notes(source, body, full)
             self.assertEqual(body.read_bytes(), b"old body")
-            self.assertEqual(full.read_bytes(), b"new")
+            self.assertEqual(full.read_bytes(), b"old full")
             self.assertEqual(list(root.glob(".release-notes-*")), [])
 
 
