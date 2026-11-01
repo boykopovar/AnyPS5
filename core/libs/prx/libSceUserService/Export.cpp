@@ -913,7 +913,7 @@ int APS5_VABI sceUserServiceGetVoiceAgentEnableFeedback(void) {
 }
 
 int APS5_VABI sceUserServiceIsKratosUser(void) {
-    return 0;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceUserServiceSetCreatedVersion(void) {
@@ -1070,7 +1070,7 @@ int APS5_VABI sceUserServiceSetIPDLeft(void) {
 }
 
 int APS5_VABI sceUserServiceGetKratosPrimaryUser(int*) {
- return USER_SERVICE_ERROR_NOT_SUPPORTED;
+ NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceUserServiceLogout(void) {
@@ -1394,7 +1394,7 @@ int APS5_VABI sceUserServiceSetHearingAssistSeparateLR(void) {
 }
 
 int APS5_VABI sceUserServiceIsUserStorageAccountBound(void) {
-    return 0;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceUserServiceSetHmd2Brightness(void) {
@@ -1530,7 +1530,7 @@ int APS5_VABI sceUserServiceGetIsQuickSignup(void) {
 }
 
 bool APS5_VABI sceUserServiceIsKratosPrimaryUser(int) {
- return false;
+ NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceUserServiceSetVoiceAgentEnableWup(void) {

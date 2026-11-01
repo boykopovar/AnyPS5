@@ -1,9 +1,9 @@
 # libSceUserService technical debt
 
-### Silent stubs
+### Unsupported account state
 
-- [sceUserServiceIsKratosUser and sceUserServiceIsKratosPrimaryUser](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) return false for AnyPS5's non-Cronos host model; Cronos behavior is unavailable.
-- [sceUserServiceIsUserStorageAccountBound](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) returns false because AnyPS5 does not model linked PSN or online-storage accounts. Bound-account behavior is not verified.
+- [sceUserServiceIsKratosUser, sceUserServiceIsKratosPrimaryUser and sceUserServiceGetKratosPrimaryUser](../../../core/libs/prx/libSceUserService/Export.cpp) throw because the account-state backend and Cronos behavior are unavailable. A non-Cronos model alone does not establish the full export contract.
+- [sceUserServiceIsUserStorageAccountBound](../../../core/libs/prx/libSceUserService/Export.cpp) throws because linked PSN and online-storage account state is unavailable; returning false would conceal the missing backend.
 
 ### Additional callable exports
 
