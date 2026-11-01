@@ -2,6 +2,9 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#ifdef ANYPS5_GUEST_LIFTED
+#include "prx/libc/include/GuestCpu.hpp"
+#endif
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include <algorithm>
 #include <cerrno>
@@ -1495,6 +1498,9 @@ int DoMprotect(const void* addr, size_t len, int prot, bool requireMappedStart) 
     auto bytes = static_cast<std::size_t>(end - first);
     const void* pointer = reinterpret_cast<const void*>(first);
     const auto nativeProtection = LinuxProtFromSce(prot);
+#ifdef ANYPS5_GUEST_LIFTED
+    if ((nativeProtection & PROT_WRITE) != 0) GuestCpuMakingWritable_nid_no_patch(first, bytes);
+#endif
     if (GuestThreadStackHostRangeOverlaps(address, address + len))
         throw std::system_error(EACCES, std::generic_category(), "mprotect overlaps host-only guest thread stack pages");
     std::uintptr_t stackStart = 0;
