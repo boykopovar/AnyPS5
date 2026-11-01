@@ -1,5 +1,6 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/Api.hpp"
 
 extern "C" {
 
@@ -203,8 +204,22 @@ int APS5_VABI _wait4_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI adjtime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* oldDelta) {
+    constexpr int GuestEfault = 14;
+    KernelTimeval adjustment{};
+    if (delta != nullptr && !GuestCopyIn_nid_no_patch(&adjustment, delta, sizeof(adjustment))) {
+        *__error_nid_postfix() = GuestEfault;
+        return -1;
+    }
+    if (delta != nullptr) NotImplemented_nid_no_patch(__func__);
+    if (oldDelta != nullptr) {
+        const KernelTimeval pending{};
+        if (!GuestCopyOut_nid_no_patch(oldDelta, &pending, sizeof(pending))) {
+            *__error_nid_postfix() = GuestEfault;
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int APS5_VABI libkernel_sysUnknown_0CV40L3tznI_nid_no_patch() {
