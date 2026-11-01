@@ -87,6 +87,9 @@ void CheckOpenPsId() {
     Require(sceKernelGetOpenPsIdForSystem(system.data()) == 0, "the system OpenPSID must be readable");
     Require(std::memcmp(plain.data(), system.data(), plain.size()) == 0, "both OpenPSID queries must agree");
     for (std::size_t i = plain.size(); i < system.size(); ++i) Require(system[i] == 0xa5, "the system OpenPSID wrote past 16 bytes");
+    Require(sceKernelGetOpenPsId(nullptr) == static_cast<int>(0x8002000eu), "a null OpenPSID must return EFAULT");
+    Require(sceKernelGetOpenPsId(reinterpret_cast<void*>(0x10)) == static_cast<int>(0x8002000eu), "an unwritable OpenPSID store must return EFAULT");
+    Require(sceKernelGetOpenPsIdForSystem(reinterpret_cast<void*>(0x10)) == static_cast<int>(0x8002000eu), "an unwritable system OpenPSID store must return EFAULT");
 }
 
 }
