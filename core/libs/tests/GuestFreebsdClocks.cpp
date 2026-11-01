@@ -70,10 +70,12 @@ static void UnsupportedResolutionStillThrows() {
 }
 
 static void OmittedTimeIsFaultAfterClockValidation() {
+    constexpr int fault = static_cast<int>(0x8002000eu);
     for (const int clockId : {GUEST_CLOCK_REALTIME, GUEST_CLOCK_VIRTUAL, GUEST_CLOCK_PROF, GUEST_CLOCK_MONOTONIC,
              GUEST_CLOCK_REALTIME_PRECISE, GUEST_CLOCK_SECOND, GUEST_CLOCK_THREAD_CPUTIME_ID, GUEST_CLOCK_PROCESS_CPUTIME_ID}) {
         *__error_nid_postfix() = 0;
         Require(clock_gettime_nid_postfix(clockId, nullptr) == -1 && *__error_nid_postfix() == 14);
+        Require(sceKernelClockGettime(clockId, nullptr) == fault);
     }
     bool rejected = false;
     try {
@@ -83,6 +85,7 @@ static void OmittedTimeIsFaultAfterClockValidation() {
         rejected = true;
     }
     Require(rejected);
+    Require(sceKernelClockGettime(3, nullptr) == fault);
 }
 
 static KernelTimespec Read(int clockId) {
