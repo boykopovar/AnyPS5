@@ -2,9 +2,13 @@
 
 #ifdef _WIN32
 #include "prx/libc/include/GuestArena.hpp"
+#include <atomic>
+#include <cstdlib>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <mutex>
+#include <stdexcept>
 #include <windows.h>
 #endif
 
@@ -90,5 +94,44 @@ void APS5_VABI GuestStackSwitch_nid_no_patch(std::uintptr_t stackPointer) {
     (void)stackPointer;
 #endif
 }
+
+#ifdef _WIN32
+[[noreturn]] void EnterGuestMainStack_nid_no_patch(void (*entry)()) {
+    if (entry == nullptr) throw std::invalid_argument("Guest main stack requires an entry point");
+    const auto host = CurrentBounds();
+    constexpr std::size_t guardBytes = 0x10000;
+    if (host.base <= host.deallocation || host.base - host.deallocation > std::numeric_limits<std::size_t>::max() - guardBytes)
+        throw std::runtime_error("Cannot obtain the host main stack capacity");
+    const auto capacity = host.base - host.deallocation;
+    if (capacity % guardBytes != 0) throw std::runtime_error("Unexpected host main stack alignment");
+    static std::atomic_flag entered = ATOMIC_FLAG_INIT;
+    if (entered.test_and_set()) throw std::runtime_error("Guest main stack already entered");
+    void* allocation = nullptr;
+    std::uintptr_t low = 0;
+    try {
+        allocation = GuestArena::GuestArenaAllocate_nid_postfix(capacity + guardBytes, guardBytes);
+        low = reinterpret_cast<std::uintptr_t>(allocation) + guardBytes;
+        GuestArena::GuestArenaCommit_nid_postfix(reinterpret_cast<void*>(low), capacity, PAGE_READWRITE, 0x1000);
+        GuestStackRegister_nid_no_patch(reinterpret_cast<void*>(low), capacity);
+    } catch (...) {
+        if (allocation != nullptr) {
+            GuestArena::GuestArenaUnpinWritable_nid_postfix(reinterpret_cast<void*>(low), capacity);
+            GuestArena::GuestArenaReset_nid_postfix(allocation, capacity + guardBytes);
+            GuestArena::GuestArenaRelease_nid_postfix(allocation, capacity + guardBytes);
+        }
+        entered.clear();
+        throw;
+    }
+    CONTEXT context{};
+    RtlCaptureContext(&context);
+    context.Rsp = low + capacity - 40;
+    context.Rbp = 0;
+    context.Rip = reinterpret_cast<DWORD64>(entry);
+    *reinterpret_cast<std::uintptr_t*>(context.Rsp) = 0;
+    ApplyBounds({low + capacity, low, reinterpret_cast<std::uintptr_t>(allocation)});
+    RtlRestoreContext(&context, nullptr);
+    std::abort();
+}
+#endif
 
 }
