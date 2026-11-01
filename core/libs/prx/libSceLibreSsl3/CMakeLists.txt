@@ -5,6 +5,22 @@ configure_windows_unwind(libSceLibreSsl3)
 
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Stack.cpp)
+
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Bio.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_bio_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Bio.cpp)
+    target_include_directories(guest_libressl3_bio_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_bio_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl3_bio_tests)
+    add_test(NAME guest_libressl3_bio COMMAND guest_libressl3_bio_tests)
+    set_tests_properties(guest_libressl3_bio PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_bio PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/DigestContext.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Cipher.cpp)
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509VerifyParam.cpp)
@@ -89,21 +105,6 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl3_key_reference PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_crypto_memcmp guest_libressl3_digest guest_libressl3_asn1 guest_libressl3_key_reference PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
-    endif()
-endif()
-
-target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Bio.cpp)
-
-if(BUILD_TESTING)
-    add_test_executable(guest_libressl3_bio_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Bio.cpp)
-    target_include_directories(guest_libressl3_bio_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_libressl3_bio_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc)
-    configure_windows_unwind(guest_libressl3_bio_tests)
-    add_test(NAME guest_libressl3_bio COMMAND guest_libressl3_bio_tests)
-    set_tests_properties(guest_libressl3_bio PROPERTIES TIMEOUT 20)
-    if(WIN32)
-        set_tests_properties(guest_libressl3_bio PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
 endif()
