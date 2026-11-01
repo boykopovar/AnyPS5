@@ -2034,9 +2034,8 @@ int APS5_VABI sceUserServiceSetPbtcWednesdayDuration(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsGuestUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsGuestUser(std::int32_t userId) {
+    return (static_cast<std::uint32_t>(userId) & 0xe0000000u) == 0x20000000u ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceGetPadProfileDataHuntList(void) {
@@ -2514,9 +2513,8 @@ int APS5_VABI sceUserServiceSetPbtcAdditionalTime(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsSharePlayClientUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsSharePlayClientUser(std::int32_t userId) {
+    return (static_cast<std::uint32_t>(userId) & 0xf0000000u) == 0x30000000u ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceGetMonoOutput(void) {
@@ -2934,9 +2932,10 @@ int APS5_VABI sceUserServiceGetPbtcSundayHoursEnd(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetIsSpartacusEnabled(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetIsSpartacusEnabled(std::int32_t, bool* enabled) {
+    if (enabled == nullptr) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    *enabled = true;
+    return USER_SERVICE_OK;
 }
 
 }
