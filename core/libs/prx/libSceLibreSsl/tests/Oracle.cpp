@@ -36,6 +36,9 @@ const char* OcspCrlReasonString(long reason);
 const char* OcspResponseStatusString(long status);
 int ObjCreate(const char* oid, const char* shortName, const char* longName);
 void ObjCleanup();
+void AddAllAlgorithms();
+void LoadBuiltinModules();
+void ConfModulesFree();
 int I2tAsn1Object(char* buffer, int length, const void* object);
 unsigned long ErrGetError();
 void ErrClearError();
@@ -366,15 +369,30 @@ void CompareCreatedObjects() {
     std::string mineLog;
     std::string theirLog;
     for (int round = 0; round < 20000; ++round) {
-        if (generator() % 25 == 0) {
-            OBJ_cleanup_nid_postfix();
-            LibreSslReference::ObjCleanup();
-        }
         const Oid oid = RandomOid();
         const char* shortName = generator() % 5 ? names[generator() % std::size(names)] : nullptr;
         const char* longName = generator() % 3 ? names[generator() % std::size(names)] : nullptr;
         ERR_clear_error_nid_postfix();
         LibreSslReference::ErrClearError();
+        switch (generator() % 60) {
+        case 0:
+        case 1:
+            OBJ_cleanup_nid_postfix();
+            LibreSslReference::ObjCleanup();
+            break;
+        case 2:
+            OPENSSL_add_all_algorithms_noconf_nid_postfix();
+            LibreSslReference::AddAllAlgorithms();
+            break;
+        case 3:
+            OPENSSL_load_builtin_modules_nid_postfix();
+            LibreSslReference::LoadBuiltinModules();
+            break;
+        case 4:
+            CONF_modules_free_nid_postfix();
+            LibreSslReference::ConfModulesFree();
+            break;
+        }
         int mineResult = 0;
         const auto error = Attempt([&] { mineResult = OBJ_create_nid_postfix(oid.text.c_str(), shortName, longName); });
         std::string mineText = error.empty() ? Describe(mineResult, ERR_get_error_nid_postfix) : error;

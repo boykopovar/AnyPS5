@@ -75,6 +75,17 @@ int main() {
     OBJ_cleanup_nid_postfix();
     Require(ERR_peek_error_nid_postfix() == 0, "PKCS12_PBE_add, OBJ_cleanup and SSL_load_error_strings queue no error");
 
+    static_assert(std::is_void_v<decltype(OPENSSL_add_all_algorithms_noconf_nid_postfix())>);
+    static_assert(std::is_void_v<decltype(OPENSSL_load_builtin_modules_nid_postfix())>);
+    static_assert(std::is_void_v<decltype(CONF_modules_free_nid_postfix())>);
+    OPENSSL_add_all_algorithms_noconf_nid_postfix();
+    OPENSSL_add_all_algorithms_noconf_nid_postfix();
+    OPENSSL_load_builtin_modules_nid_postfix();
+    OPENSSL_load_builtin_modules_nid_postfix();
+    CONF_modules_free_nid_postfix();
+    CONF_modules_free_nid_postfix();
+    Require(ERR_peek_error_nid_postfix() == 0, "the algorithm and configuration module setup and cleanup calls queue no error");
+
     std::puts("guest_libressl_error: ok");
     return 0;
 }
