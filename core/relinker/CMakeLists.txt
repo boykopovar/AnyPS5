@@ -875,6 +875,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_export_lookup COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_export_lookup.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_export_lookup PROPERTIES TIMEOUT 30)
+        add_test(NAME guest_load_start_module_defer COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_load_start_module_defer.py $<TARGET_FILE:relinker>)
+        set_tests_properties(guest_load_start_module_defer PROPERTIES TIMEOUT 60)
         add_test(NAME guest_zero_finalizer COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_zero_finalizer.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host> ${CMAKE_CXX_COMPILER})
