@@ -50,6 +50,16 @@ int main() {
     Require(sceKernelIsStack(&global, &start, &end) == SCE_OK);
     Require(start == nullptr && end == nullptr);
 
+    auto* const badPointerStore = reinterpret_cast<void**>(0x10);
+    Require(sceKernelIsStack(&local, badPointerStore, &end) == SCE_KERNEL_ERROR_EFAULT);
+    start = nullptr;
+    Require(sceKernelIsStack(&local, &start, badPointerStore) == SCE_KERNEL_ERROR_EFAULT);
+    Require(start != nullptr);
+    Require(sceKernelQueryMemoryProtection(&local, badPointerStore, &end, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelQueryMemoryProtection(&local, &start, badPointerStore, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    auto* const badProtectionStore = reinterpret_cast<int*>(0x10);
+    Require(sceKernelQueryMemoryProtection(&local, &start, &end, badProtectionStore) == SCE_KERNEL_ERROR_EFAULT);
+
     WorkerContext context;
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, Worker, &context, nullptr) == SCE_OK);
