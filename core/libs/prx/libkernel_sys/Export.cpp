@@ -17,9 +17,9 @@
 #include <system_error>
 #include <vector>
 #include <sys/stat.h>
+#include <cerrno>
 #include <ctime>
 #ifndef _WIN32
-#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -533,6 +533,19 @@ int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t 
 
 KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
     return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
+}
+
+int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
+    if (!name) throw std::invalid_argument("sceKernelIsModuleLoaded: null name");
+    KernelModule handles[0x300];
+    std::size_t count = 0;
+    if (const int result = sceKernelGetModuleListInternal(handles, std::size(handles), &count)) return result;
+    for (std::size_t i = 0; i < count; ++i) {
+        ModuleInfo info{};
+        info.st_size = sizeof(info);
+        if (sceKernelGetModuleInfo(handles[i], &info) == 0 && std::strncmp(info.name, name, sizeof(info.name)) == 0) return 0;
+    }
+    return SCE_KERNEL_ERROR_ESRCH;
 }
 
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {
@@ -1224,9 +1237,22 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (static_cast<std::uint32_t>(bit) >= 0x3A) return static_cast<int>(0x80020016);
-    *enabled = static_cast<std::int32_t>((workaround->ids[bit >> 6] >> (bit & 0x3F)) & 1);
+    if (static_cast<std::uint32_t>(bit) > 0x7F) return static_cast<int>(0x80020016);
+    KernelTitleWorkaround localWorkaround{};
+    const int saved = errno;
+    if (!GuestCopyIn_nid_no_patch(&localWorkaround, workaround, sizeof(localWorkaround))) {
+        errno = saved;
+        return static_cast<int>(0x8002000E);
+    }
+    const std::int32_t value = static_cast<std::int32_t>((localWorkaround.ids[bit >> 6] >> (bit & 0x3F)) & 1);
+    const bool copied = GuestCopyOut_nid_no_patch(enabled, &value, sizeof(value));
+    errno = saved;
+    if (!copied) return static_cast<int>(0x8002000E);
     return 0;
+}
+
+int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+    return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {

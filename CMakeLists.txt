@@ -190,6 +190,9 @@ if(BUILD_TESTING)
     if(Python3_Interpreter_FOUND)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
+        add_test(NAME patch_lib_atrac9 COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_patch_lib_atrac9.py ${CMAKE_COMMAND})
+        set_tests_properties(patch_lib_atrac9 PROPERTIES TIMEOUT 60)
         add_test(NAME build_changed_guest_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_changed_guest_tests.py)
         add_test(NAME shader_cache_native_paths COMMAND ${Python3_EXECUTABLE}
@@ -207,6 +210,8 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler ${CMAKE_COMMAND} --shard ${shard}/7)
             set_tests_properties(${shader_cache_sources_test_name} PROPERTIES TIMEOUT 180)
         endforeach()
+        add_test(NAME tools_nid_name_audit COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_audit_nid_names.py)
+        set_tests_properties(tools_nid_name_audit PROPERTIES TIMEOUT 20)
         add_test(NAME pr_overlap_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_encoding.py)
         add_test(NAME pr_overlap_dependencies COMMAND ${Python3_EXECUTABLE}
@@ -222,6 +227,10 @@ if(BUILD_TESTING)
         set_tests_properties(progress_history_output PROPERTIES TIMEOUT 20)
         add_test(NAME progress_report COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress.py)
+        add_test(NAME progress_report_inputs COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_report_inputs.py)
+        add_test(NAME tools_compdb_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compile_database_inventory.py)
+        set_tests_properties(tools_compdb_inventory PROPERTIES TIMEOUT 20)
         add_test(NAME progress_encoding COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_encoding.py)
         add_test(NAME progress_render_sliver COMMAND ${Python3_EXECUTABLE}
@@ -267,6 +276,10 @@ if(BUILD_TESTING)
         set_tests_properties(preview_pad_timeline PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_git_errors COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
+        add_test(NAME tools_base_ref COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_base_ref.py)
+        add_test(NAME tools_configure_diff COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compare_configure_checks.py)
+        set_tests_properties(tools_configure_diff PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_doc_links.py)
         add_test(NAME conventions_unknown_nids COMMAND ${Python3_EXECUTABLE}
@@ -282,6 +295,8 @@ if(BUILD_TESTING)
         add_test(NAME check_skips_ctest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips_ctest.py)
         set_tests_properties(check_skips_ctest PROPERTIES TIMEOUT 30)
+        add_test(NAME tools_pe_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_pe_symbol_inventory.py)
+        set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py)
         add_test(NAME sanitizer_report COMMAND ${Python3_EXECUTABLE}
@@ -333,6 +348,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen.py)
         add_test(NAME debt_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_debt_split.py)
+        add_test(NAME agc_test_split COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_agc_test_split.py)
         add_test(NAME stubgen_stdout_newlines COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_stubgen_stdout_newlines.py)
         add_test(NAME hardware_oracle COMMAND ${Python3_EXECUTABLE}
@@ -403,7 +420,7 @@ if(BUILD_TESTING)
             string(REGEX REPLACE "^    def (test_[A-Za-z0-9_]+).*" "\\1" test_case "${test_case}")
             add_test(NAME check_compile_modes_${test_case} COMMAND ${Python3_EXECUTABLE}
                 "${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_compile_modes.py" CheckCompileModeTests.${test_case})
-            set_tests_properties(check_compile_modes_${test_case} PROPERTIES TIMEOUT 60)
+            set_tests_properties(check_compile_modes_${test_case} PROPERTIES TIMEOUT 30)
         endforeach()
         add_test(NAME trace_digest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_trace_digest.py)
@@ -458,6 +475,8 @@ if(BUILD_TESTING)
                 endif()
             endif()
         endforeach()
+        add_test(NAME tools_headers_manifest COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_public_headers_manifest.py)
+        set_tests_properties(tools_headers_manifest PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_pr_template COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_pr_template.py)
         add_test(NAME check_compile_preprocessor COMMAND ${Python3_EXECUTABLE}

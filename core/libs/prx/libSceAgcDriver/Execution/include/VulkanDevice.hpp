@@ -25,6 +25,7 @@ namespace AgcDriver {
 
 namespace Graphics {
 class StorageTexture;
+struct HtileMaskClear;
 }
 
 // Stage A of a dispatch's resource build (see VulkanDevice::PrepareDispatch); opaque to callers.
@@ -107,7 +108,7 @@ public:
     // mutex through the flush hook, so a thread submitting on another queue's behalf (a WAIT_REG_MEM
     // poller, a compute worker's between-packet flush) passes false: it must only submit, never wait.
     void SubmitRecorded(bool reapFirst = true);
-    void StoreIdleResults(bool reapFirst = true);
+    void StoreIdleResults(bool reapFirst = true, const std::function<bool()>& stop = [] { return false; });
     // Unlocked drain: SubmitAndEpoch (under the mutex) returns the serial covering every recorded
     // batch (0: nothing in flight); WaitRecorded(serial) waits for it WITHOUT the mutex (the caller
     // holds a shared_ptr to this device); ReapRecorded(serial) (under the mutex) runs the completions
@@ -145,6 +146,7 @@ public:
     // every recorded store over the range.
     bool FillBuffer(std::uint64_t address, std::size_t bytes, std::span<const std::uint32_t, 4> pattern);
     bool DumpSamplesOnGpu(std::uint64_t address);
+    void NoteHtileMask(const Graphics::HtileMaskClear& clear) const;
     // Copies `bytes` of guest memory from `source` to `destination` (disjoint ranges) in place of the
     // engine's memcpy kernel (Driver.cpp copyBuffer). `path` 0: copied on the CPU at once, when
     // every test of the rule holds (each a pure query, nothing flushed or recorded before the
@@ -296,7 +298,7 @@ public:
     // records. Null when nothing is prepared: the resource cache may serve the dispatch (its
     // Revalidate stays under the mutex), or APS5_LOCKED_BUILD=1 keeps the whole build under it as
     // before. `shader` and `snapshots` must outlive the dispatch.
-    std::shared_ptr<PreparedDispatch> PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t dispatchThreads = 0, std::uint64_t programAddress = 0);
+    std::shared_ptr<PreparedDispatch> PrepareDispatch(const ShaderRecompiler::RecompileResult& shader, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::uint64_t dispatchThreads = 0, std::uint64_t programAddress = 0, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt);
     // APS5_PROFILE_DRAW: the parts of a PrepareDispatch in milliseconds, in the order key, find,
     // precollect, presync, stage A (the driver's 'prepare:' rows).
     static std::span<const double, 5> PreparePhaseMs(const PreparedDispatch& prepared);
