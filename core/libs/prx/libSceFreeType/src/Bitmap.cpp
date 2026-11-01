@@ -58,6 +58,10 @@ void APS5_VABI FT_Bitmap_New_nid_postfix(GuestBitmap* bitmap) {
     if (bitmap) SyncBitmap(*bitmap, {});
 }
 
+void APS5_VABI FT_Bitmap_Init_nid_postfix(GuestBitmap* bitmap) {
+    FT_Bitmap_New_nid_postfix(bitmap);
+}
+
 int APS5_VABI FT_Bitmap_Copy_nid_postfix(GuestLibrary* library, const GuestBitmap* source, GuestBitmap* target) {
     if (!library) return FT_Err_Invalid_Library_Handle;
     if (!source || !target) return FT_Err_Invalid_Argument;
