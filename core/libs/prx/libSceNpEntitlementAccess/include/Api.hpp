@@ -30,4 +30,6 @@ int APS5_VABI sceNpEntitlementAccessPollConsumableEntitlementInfo();
 int APS5_VABI sceNpEntitlementAccessRequestConsumableEntitlementInfo();
 int APS5_VABI sceNpEntitlementAccessRequestConsumeEntitlement();
 
+int APS5_VABI sceNpEntitlementAccessGetAddcontEntitlementInfoListIndividual();
+
 }
