@@ -53,6 +53,7 @@ MAX_OUTPUT_FACTOR = 4
 MIN_OUTPUT_LIMIT = 256 * 1024 * 1024
 PT_NULL = 0
 PT_LOAD = 1
+PT_DYNAMIC = 2
 PT_NOTE = 4
 PT_PHDR = 6
 ENTROPY_LIMIT = 7.5
@@ -218,7 +219,7 @@ def place_segments(data, headers, records):
             if header["size"] and (tail is None or header["offset"] > tail[0]):
                 tail = (header["offset"], header["source"] - header["offset"])
             continue
-        if header["vaddr"] != 0 or header["type"] == PT_PHDR:
+        if header["vaddr"] != 0 or header["type"] in (PT_PHDR, PT_DYNAMIC, PT_TLS):
             host = load_for(header["vaddr"], header["size"])
             if host is None:
                 if header["size"] == 0:
