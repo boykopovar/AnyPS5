@@ -1527,11 +1527,26 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
         std::uint32_t descriptorLoad = 0;
         const bool sameBlockWriter = findLastWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize, reader) && sameBlock(descriptorLoad, index);
         if (!sameBlockWriter && !reachingWriter(program, lowLoad, {descriptor, descriptor + 1u, descriptor + 2u, descriptor + 3u}, descriptorLoad, swappc.waveSize)) continue;
+        std::optional<std::uint32_t> nestedDescriptorOffset;
+        auto tableDescriptor = descriptor;
+        if (const auto& inner = program.instructions[descriptorLoad]; isScalarBufferLoad(inner.op)) {
+            const auto innerLoaded = scalarIndex(inner.destination);
+            const auto outer = scalarIndex(inner.source0);
+            if (inner.source0.kind != RdnaOperandKind::ScalarRegister || inner.source1.kind != RdnaOperandKind::Null || innerLoaded == NoScalarRegister || outer == NoScalarRegister || outer % 4u != 0u || descriptor < innerLoaded ||
+                descriptor - innerLoaded + 4u > inner.dataDwordCount || inner.memoryOffset >= 0x100000u || (inner.memoryOffset & 3u) != 0u) continue;
+            std::uint32_t outerLoad = 0;
+            const auto innerIndex = descriptorLoad;
+            const bool outerInBlock = findLastWriter(program, innerIndex, {outer, outer + 1u, outer + 2u, outer + 3u}, outerLoad, swappc.waveSize, reader) && sameBlock(outerLoad, innerIndex);
+            if (!outerInBlock && !reachingWriter(program, innerIndex, {outer, outer + 1u, outer + 2u, outer + 3u}, outerLoad, swappc.waveSize)) continue;
+            nestedDescriptorOffset = inner.memoryOffset + (descriptor - innerLoaded) * 4u;
+            tableDescriptor = outer;
+            descriptorLoad = outerLoad;
+        }
         const auto& table = program.instructions[descriptorLoad];
         const auto pointer = scalarIndex(table.source0);
         const auto loaded = scalarIndex(table.destination);
-        if ((table.op != RdnaOpcode::SLoadDwordx4 && table.op != RdnaOpcode::SLoadDwordx8 && table.op != RdnaOpcode::SLoadDwordx16) || loaded == NoScalarRegister || descriptor < loaded ||
-            (descriptor - loaded) % 4u != 0u || descriptor - loaded + 4u > table.dataDwordCount || pointer == NoScalarRegister || pointer % 2u != 0u || table.source1.kind != RdnaOperandKind::Null ||
+        if ((table.op != RdnaOpcode::SLoadDwordx4 && table.op != RdnaOpcode::SLoadDwordx8 && table.op != RdnaOpcode::SLoadDwordx16) || loaded == NoScalarRegister || tableDescriptor < loaded ||
+            (tableDescriptor - loaded) % 4u != 0u || tableDescriptor - loaded + 4u > table.dataDwordCount || pointer == NoScalarRegister || pointer % 2u != 0u || table.source1.kind != RdnaOperandKind::Null ||
             table.memoryOffset >= 0x100000u || (table.memoryOffset & 3u) != 0u) continue;
         std::optional<std::uint64_t> constantPointer;
         if (!(userData(pointer) && userData(pointer + 1u) && unchangedUntil(program, pointer, descriptorLoad, swappc.waveSize) && unchangedUntil(program, pointer + 1u, descriptorLoad, swappc.waveSize))) {
@@ -1553,7 +1568,7 @@ std::vector<TableCall> FindTableCalls(const RdnaProgram& program, const SwappcIn
             if (shifted.op != RdnaOpcode::SLshlB32 || !isScalar(shifted.destination, offset) || !isImmediate(shifted.source1, shift) || shift < 2u || shift > 24u) continue;
             stride = 1u << shift;
         }
-        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (descriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer});
+        calls.push_back({instruction.programCounter, link, target, constantPointer ? 0u : pointer, table.memoryOffset + (tableDescriptor - loaded) * 4u, load.memoryOffset + lowDword * 4u, stride, constantPointer, nestedDescriptorOffset});
     }
     return calls;
 }
