@@ -294,6 +294,7 @@ struct HostImports {
     // Bumped whenever an import is dropped, so HostImport pointers taken under the lock earlier can be
     // reused while it is unchanged.
     std::uint64_t epoch = 1;
+    std::uint64_t inserted = 0;
     VkDevice watchDevice = VK_NULL_HANDLE;
     bool unwatchImports = false;
     bool unwatchDmaBufImports = false;
@@ -2272,9 +2273,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         }
     }
 #endif
-    const auto inserted = state.imports.emplace(base, entry);
+    const auto [placed, added] = state.imports.emplace(base, entry);
+    if (added) ++state.inserted;
     owner.armed = false;
-    return &inserted.first->second;
+    return &placed->second;
 }
 
 // The readable registered range containing [begin, end), or null.
@@ -6825,11 +6827,20 @@ bool HostImportsUnchanged(const Context& context, const HostImportsProof& proof)
     return state.device == proof.device && state.epoch == proof.epoch && state.refreshedGeneration == proof.refreshedGeneration && !importsStale(context, state);
 }
 
+bool HostImportsReconciledUnchanged(const Context& context, const HostImportsProof& proof) {
+    if (proof.device == VK_NULL_HANDLE || proof.device != context.device) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != proof.device) return false;
+    if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
+    return state.device == proof.device && state.epoch == proof.epoch && state.inserted == proof.inserted;
+}
+
 HostImportsProof HostImportsIdentity(const Context& context) {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     if (importsStale(context, state)) return {};
-    return {state.device, state.epoch, state.refreshedGeneration};
+    return {state.device, state.epoch, state.refreshedGeneration, state.inserted};
 }
 
 }

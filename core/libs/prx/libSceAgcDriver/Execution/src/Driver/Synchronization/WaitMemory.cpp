@@ -35,6 +35,13 @@ void PollSleep() {
     std::this_thread::sleep_for(std::chrono::microseconds(200));
 }
 
+bool OwnStoreRejects(std::span<const std::uint32_t> packet, std::uint64_t awaited, std::size_t bytes, std::uint32_t queue) {
+    const auto own = Graphics::Recorder::UnlandedOwnLabel(awaited, bytes, queue);
+    if (own.mask == 0) return false;
+    const std::uint64_t memory = bytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
+    return !Pm4::WaitComparesValue(packet, (memory & ~own.mask) | own.value);
+}
+
 int Driver::waitTimeoutMs() {
     static const int value = [] { const char* text = std::getenv("APS5_GPU_WAIT_TIMEOUT_MS"); return text ? std::atoi(text) : 1000; }();
     return value;
@@ -135,12 +142,20 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             if (bump) bumpEpoch(&EpochBumps::waits);
         }
     } epochPoint;
+    bool ownStoreUnlanded = false;
+    const auto memorySatisfied = [&] {
+        ownStoreUnlanded = false;
+        if (!Pm4::WaitSatisfiedUnchecked(packet)) return false;
+        if (requireMemory || !OwnStoreRejects(packet, awaited, awaitedBytes, queue)) return true;
+        ownStoreUnlanded = true;
+        return false;
+    };
     const auto storedByOwnLabel = [&] {
         std::uint32_t writer = queue;
         return !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer) && writer == queue;
     };
     GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), awaitedBytes, awaitedBytes);
-    if (Pm4::WaitSatisfiedUnchecked(packet)) {
+    if (memorySatisfied()) {
         ++outcomes.atEntry;
         if (storedByOwnLabel()) epochPoint.bump = false;
         return;
@@ -245,7 +260,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         const auto generation = Graphics::Recorder::WriteGeneration();
         const bool changed = generation != seenGeneration || recheck;
         const bool labelDue = labelFlushDue();
-        const bool reap = sleeping && (behindCompletion || ((reapAll || queue0Dormant.load(std::memory_order_relaxed)) && completionsPending()));
+        const bool reap = sleeping && (behindCompletion || ownStoreUnlanded || ((reapAll || queue0Dormant.load(std::memory_order_relaxed)) && completionsPending()));
         if (!changed && !labelDue && !reap) return false;
 
         if (!changed && !pollTryEach()) {
@@ -341,7 +356,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     bool spinning = pauseSpin;
     std::uint32_t polls = 0;
     StallWatch stall(queue);
-    while (!Pm4::WaitSatisfiedUnchecked(packet)) {
+    while (!memorySatisfied()) {
         if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
             if (writer != queue) notePendingWait(packet, queue, received);
             else epochPoint.bump = false;

@@ -146,7 +146,8 @@ def noise(values, phases):
         if phase["kind"] != "B" or values[index] is None:
             continue
         neighbours = [values[other] for other in (index - 1, index + 1)
-                      if 0 <= other < len(phases) and phases[other]["kind"] == "A" and values[other] is not None]
+                      if 0 <= other < len(phases) and phases[other]["kind"] == "A"
+                      and abs(phases[other]["index"] - phase["index"]) == 1 and values[other] is not None]
         if neighbours:
             differences.append(values[index] - finite_sum(neighbours) / len(neighbours))
     if not differences:

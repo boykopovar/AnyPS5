@@ -36,6 +36,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_BDA_DWORD_STORES` | presence | `core/shader/recompiler/Translation/src/MemoryInstructions/FlatInstructions.cpp` |  | reverts BDA writes to one address store per dword instead of a wide multi-dword store |
 | `APS5_DUMP_IR` | string | `core/shader/recompiler/Recompiler.cpp` |  | hex code address (or all) of the programs whose IR is printed after each front-end pass |
 | `APS5_EXACT_RCP` | presence | `core/shader/recompiler/SpirvBackend/src/SpirvAlu/SpirvAluEmitterReciprocal.cpp` |  | emits `v_rcp_f32` and `v_rcp_iflag_f32` as the RDNA hardware reciprocal (bit-exact for normal inputs and results) instead of the driver's division; adds about 13k SPIR-V words to each shader that uses them |
+| `APS5_FAST_F32` | presence | `core/shader/recompiler/Translation/src/DispatchInstructions.cpp` |  | set to anything but 0, compiles f32 arithmetic with the host's float rules instead of RDNA's: no emulated denormal flush and no RDNA NaN payloads, which differ only for denormals and NaN results; the shader disk cache keeps the two modes apart |
 | `APS5_GATHER_CONST` | integer | `core/shader/recompiler/SpirvBackend/src/SpirvImageEmitter.cpp` |  | integer every non-depth gather returns in all four texels instead of the sampled value |
 | `APS5_IMAGE_TABLE_KEY_SCAN` | integer | `core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp` | 256 | number of image-table entries the key scan examines |
 | `APS5_IMAGE_TABLE_STRICT` | string | `core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp` |  | sets image-table materialization to its strict form; 0 leaves it off |
@@ -80,6 +81,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
+| `ANYPS5_FPS_LIMIT` | string | `core/libs/prx/libSceAgcDriver/Execution/include/FrameLimit.hpp` | 0 | the most frames per second the window presents, from 0.5 to 1000000 with at most three decimals; 0, empty or unset is no limit, and any other value is refused |
 | `ANYPS5_GPU` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | restricts physical device selection to device names containing this case-insensitive substring |
 | `ANYPS5_HOST_REPORT` | string | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` | 0 | prints the host report to stderr once when the presenting device is chosen: 1 prints it; 0, empty or unset prints nothing, and any other value stops the start with an error naming the variable |
 | `ANYPS5_OVERLAY` | string | `core/libs/prx/libSceAgcDriver/Execution/src/PerformanceOverlay.cpp` | 0 | the performance overlay's page at start: 1 the overlay, 2 its detailed page; 0 or unset hides it, and any other value is refused |
@@ -562,6 +564,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | Name | Kind | Source | Default | Description |
 |------|------|--------|---------|-------------|
 | `ANYPS5_RUMBLE` | integer | `core/libs/prx/libScePad/include/PadRumbleIntensity.hpp` | 100 | host controller vibration strength as a whole percentage from 0 to 100, read once when the pad input starts and again by the audio-out controller sound card path; 100 or unset leaves vibration exactly as the title asks, 0 turns motor rumble, impulse-trigger rumble and controller-sound-card haptics off, in between scales the motor amplitudes with rounding and the haptic samples linearly; DualSense adaptive trigger effects are not scaled; any other value (empty, signed, fractional, above 100) stops the game with an error naming the variable |
+| `ANYPS5_PAD_IDENTIFY` | string | `core/libs/prx/libScePad/include/PadIdentify.hpp` | off | which controller-identification pulse to send when a controller is bound to a player slot: `off` sends none, `connect` sends the pattern once per binding (player N gets N short pulses), `always` also repeats it every 30 seconds while the title is not rumbling; the pulse is scaled by `ANYPS5_RUMBLE`, never overrides a title's rumble, and any other value (empty, uppercase, a list) stops the game with an error naming the variable |
 | `APS5_PAD_INPUT_FILE` | string | `core/libs/prx/libScePad/src/PadState.cpp` |  | path of the file polled for injected pad button and stick commands |
 
 ### libScePlayGo
@@ -632,6 +635,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_VERIFY_DIRECT_COLLECT` | presence | `core/libs/prx/libc/include/WindowsMappings.hpp` |  | queries the regions of each private-memory collect read from the allocation map and throws when that collect succeeded over memory that is no longer committed private |
 | `APS5_WATCH_ADDR` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | absolute hex address whose writes are reported after its page is committed |
 | `APS5_WATCH_WRITE` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | guest ELF vaddr whose 8-byte writes are reported by single-stepping the protected page |
+| `APS5_WRITE_WATCH_FAULT_AHEAD` | integer | `core/libs/prx/libc/src/GuestWriteWatch.cpp` | 32 | on macOS, at most this many pages, up to the end of the faulting page's 64 KiB block, that a write fault unprotects and records as written when the two pages before it were written since the last collection; 0 or 1 unprotects only the faulting page |
 
 ### libkernel
 

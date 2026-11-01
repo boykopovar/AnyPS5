@@ -221,6 +221,29 @@ endif()
 
 target_link_libraries(libSceUsbStorageDialog PRIVATE libSceUserService)
 
+add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/libfvad ${CMAKE_CURRENT_BINARY_DIR}/webrtc-fvad EXCLUDE_FROM_ALL)
+set_target_properties(fvad PROPERTIES C_VISIBILITY_PRESET hidden)
+
+target_sources(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/prx/libwebrtc/Vad.cpp)
+target_include_directories(libwebrtc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/libfvad/src)
+target_link_libraries(libwebrtc PRIVATE fvad)
+if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(libwebrtc PRIVATE LINKER:--exclude-libs,ALL)
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_webrtc_vad_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/GuestWebrtcVad.cpp)
+    target_include_directories(guest_webrtc_vad_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_webrtc_vad_tests PRIVATE libwebrtc fvad)
+    configure_windows_unwind(guest_webrtc_vad_tests)
+    add_test(NAME guest_webrtc_vad COMMAND guest_webrtc_vad_tests)
+    set_tests_properties(guest_webrtc_vad PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_webrtc_vad PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libwebrtc>")
+    endif()
+endif()
+
 include(prx/libSceFreeType/PostScriptInfo.cmake)
 
 if(APS5_ENABLE_TRACY)
@@ -959,6 +982,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_system_gesture PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemGesture>")
+    endif()
+
+    add_test_executable(guest_sys_util_notification_tests tests/GuestSysUtilNotification.cpp)
+    target_include_directories(guest_sys_util_notification_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_sys_util_notification_tests PRIVATE libSceSysUtil libkernel libc)
+    configure_windows_unwind(guest_sys_util_notification_tests)
+    add_test(NAME guest_sys_util_notification COMMAND guest_sys_util_notification_tests)
+    if(WIN32)
+        set_tests_properties(guest_sys_util_notification PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysUtil>")
     endif()
 
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))

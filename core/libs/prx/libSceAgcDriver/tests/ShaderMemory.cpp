@@ -998,6 +998,107 @@ void verifySignedMinimum() {
     }
 }
 
+void verifyWaterfallRuntimeValues() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    plan.userDataCount = 1u;
+    std::vector<std::unique_ptr<IrValue>> values;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, static_cast<std::uint32_t>(values.size())));
+        for (auto* argument : arguments) values.back()->AddArgument(argument);
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t bits) -> IrValue& {
+        auto& value = make(IrOpcode::Void, IrType::U32);
+        value.SetImmediateU32(bits);
+        return value;
+    };
+    auto& scalar = make(IrOpcode::Void, IrType::ScalarReg);
+    scalar.SetRegister({RegisterBank::Scalar, 0});
+    auto& vector = make(IrOpcode::Void, IrType::VectorReg);
+    vector.SetRegister({RegisterBank::Vector, 0});
+    auto& input = make(IrOpcode::GetUserData, IrType::U32, {&scalar});
+    auto& lane = make(IrOpcode::GetRegister, IrType::U32, {&vector});
+    auto& varying = make(IrOpcode::IEqual32, IrType::Bool, {&input, &lane});
+    auto& uniform = make(IrOpcode::IEqual32, IrType::Bool, {&input, &constant(4u)});
+    auto& other = make(IrOpcode::IEqual32, IrType::Bool, {&lane, &constant(5u)});
+    auto& selected = make(IrOpcode::SelectU32, IrType::U32, {&varying, &input, &lane});
+    const std::array<std::uint32_t, 1> data{4u};
+    SrtRuntime runtime{data};
+    for (const bool reverse : {false, true}) {
+        auto& mask = reverse ? make(IrOpcode::LogicalAnd, IrType::Bool, {&uniform, &varying}) : make(IrOpcode::LogicalAnd, IrType::Bool, {&varying, &uniform});
+        auto& first = make(IrOpcode::ReadFirstLane, IrType::U32, {&selected, &mask});
+        require(SrtWalker().ValidateRuntimeValue(plan, &first), "waterfall: an active-mask conjunct was rejected");
+        Detail::Evaluator evaluator(plan, runtime);
+        std::uint32_t result = 0;
+        require(evaluator.Evaluate(Detail::IrNode(&first), result) && result == data[0], "waterfall: the active select arm was not evaluated");
+        auto& unrelated = make(IrOpcode::SelectU32, IrType::U32, {&other, &input, &lane});
+        auto& invalid = make(IrOpcode::ReadFirstLane, IrType::U32, {&unrelated, &mask});
+        require(!SrtWalker().ValidateRuntimeValue(plan, &invalid), "waterfall: an unrelated condition was accepted");
+    }
+    auto& either = make(IrOpcode::LogicalOr, IrType::Bool, {&varying, &uniform});
+    auto& invalid = make(IrOpcode::ReadFirstLane, IrType::U32, {&selected, &either});
+    require(!SrtWalker().ValidateRuntimeValue(plan, &invalid), "waterfall: a disjunction was treated as an implication");
+    auto& nestedCondition = make(IrOpcode::LogicalAnd, IrType::Bool, {&varying, &uniform});
+    auto& next = make(IrOpcode::IAdd32, IrType::U32, {&input, &constant(1u)});
+    auto& nested = make(IrOpcode::SelectU32, IrType::U32, {&nestedCondition, &input, &next});
+    auto& nestedFirst = make(IrOpcode::ReadFirstLane, IrType::U32, {&nested, &varying});
+    require(SrtWalker().ValidateRuntimeValue(plan, &nestedFirst), "waterfall: the active condition was not propagated into a nested select");
+    require(Detail::Evaluator::MayEvaluate(plan, &nestedFirst), "waterfall: a nested masked condition was not evaluable");
+    for (const auto word : {4u, 7u}) {
+        const std::array<std::uint32_t, 1> inputData{word};
+        SrtRuntime nestedRuntime{inputData};
+        Detail::Evaluator evaluator(plan, nestedRuntime);
+        std::uint32_t result = 0;
+        require(evaluator.Evaluate(Detail::IrNode(&nestedFirst), result) && result == (word == 4u ? word : word + 1u), "waterfall: a nested select ignored its uniform condition");
+    }
+}
+
+void verifyUniformVectorComponents() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    plan.userDataCount = 1u;
+    std::vector<std::unique_ptr<IrValue>> values;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        values.push_back(std::make_unique<IrValue>(opcode, type, static_cast<std::uint32_t>(values.size())));
+        for (auto* argument : arguments) values.back()->AddArgument(argument);
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t bits) -> IrValue& {
+        auto& value = make(IrOpcode::Void, IrType::U32);
+        value.SetImmediateU32(bits);
+        return value;
+    };
+    auto& scalar = make(IrOpcode::Void, IrType::ScalarReg);
+    scalar.SetRegister({RegisterBank::Scalar, 0});
+    auto& vector = make(IrOpcode::Void, IrType::VectorReg);
+    vector.SetRegister({RegisterBank::Vector, 0});
+    auto& input = make(IrOpcode::GetUserData, IrType::U32, {&scalar});
+    auto& lane = make(IrOpcode::GetRegister, IrType::U32, {&vector});
+    auto& tuple = make(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&constant(0u), &input, &lane, &constant(0xffffffffu)});
+    const std::array<std::uint32_t, 1> data{4u};
+    SrtRuntime runtime{data};
+    for (std::uint32_t component = 0; component <= 4u; ++component) {
+        auto& value = make(IrOpcode::CompositeExtractU32x4, IrType::U32, {&tuple, &constant(component)});
+        const bool expected = component != 2u && component < 4u;
+        require(SrtWalker().ValidateRuntimeValue(plan, &value) == expected, "uniform vector: component validation was wrong");
+        require(Detail::Evaluator::MayEvaluate(plan, &value) == expected, "uniform vector: component evaluability was wrong");
+        Detail::Evaluator evaluator(plan, runtime);
+        std::uint32_t result = 0;
+        require(evaluator.Evaluate(Detail::IrNode(&value), result) == expected, "uniform vector: component evaluation was wrong");
+        if (expected) require(result == (component == 0u ? 0u : component == 1u ? data[0] : 0xffffffffu), "uniform vector: the wrong component was read");
+    }
+    for (const auto a : {0u, 1u, 0x7fffffffu, 0x80000000u, 0xffffffffu}) {
+        for (const auto b : {0u, 1u, 0x7fffffffu, 0x80000000u, 0xffffffffu}) {
+            auto& value = make(IrOpcode::UGreaterThanEqual32, IrType::Bool, {&constant(a), &constant(b)});
+            require(SrtWalker().ValidateRuntimeValue(plan, &value) && Detail::Evaluator::MayEvaluate(plan, &value), "uniform comparison: unsigned greater-than-or-equal was rejected");
+            Detail::Evaluator evaluator(plan, runtime);
+            std::uint32_t result = 0;
+            require(evaluator.Evaluate(Detail::IrNode(&value), result) && result == static_cast<std::uint32_t>(a >= b), "uniform comparison: unsigned greater-than-or-equal was wrong");
+        }
+    }
+}
+
 void verifyMayEvaluate() {
     using namespace ShaderRecompiler;
     IrResourcePlan plan;
@@ -5173,6 +5274,35 @@ void verifyWaterfallImageTable() {
     auto& selectOther = make(IrOpcode::SelectU32, IrType::U32, {&otherCond, &input, &lane});
     auto& firstOther = make(IrOpcode::ReadFirstLane, IrType::U32, {&selectOther, &conjMask});
     require(!SrtWalker().ValidateRuntimeValue(planA, &firstOther), "waterfall image table: non-implied condition was accepted by validator");
+    auto scaledCode = code;
+    scaledCode[4] = 0x34020085u;
+    scaledCode[5] = 0x7e240501u;
+    auto scaledRequest = TableRequest(scaledCode, userData);
+    const auto scaledPlan = GetResourcePlan(scaledRequest);
+    require(scaledPlan->info.images.size() == 1u && scaledPlan->info.images[0].table == 0u, "waterfall image table: a scale before readfirstlane was not planned as a table");
+    const auto& scaledColumn = *scaledPlan->descriptorSources.at(scaledPlan->info.images[0].source).tableColumn;
+    require(scaledColumn.stride == 32u && scaledColumn.offset == 0x40u, "waterfall image table: scalarizing the offset changed its column");
+    const auto scaledCompiled = CompileTable(scaledRequest);
+    const auto& scaledSnapshot = scaledCompiled.capture->snapshot.tables.tables.at(0);
+    require(scaledSnapshot.keys == Abi::MaxKeys && (scaledSnapshot.codes[2] & Abi::PoisonFlag) == 0u && (scaledSnapshot.codes[4] & Abi::PoisonFlag) == 0u, "waterfall image table: scalarized offsets lost valid records");
+    scaledCode.insert(scaledCode.begin() + 4, {0x7d8a0080u, 0x7e020284u, 0x02000282u});
+    const auto boundedScaledPlan = GetResourcePlan(TableRequest(scaledCode, userData));
+    const auto& boundedScaledColumn = *boundedScaledPlan->descriptorSources.at(boundedScaledPlan->info.images[0].source).tableColumn;
+    require(boundedScaledColumn.maxKey == 6u && boundedScaledColumn.stride == 32u, "waterfall image table: scalarized offsets lost their key bound");
+    auto maskedRequest = TableRequest(scaledCode, userData);
+    maskedRequest.context.compute->numThreads = {1u, 1u, 1u};
+    const auto maskedPlan = GetResourcePlan(maskedRequest);
+    require(maskedPlan->info.images.size() == 1u && maskedPlan->info.images[0].table == 0u && maskedPlan->descriptorSources.at(maskedPlan->info.images[0].source).tableColumn->stride == 32u, "waterfall image table: an entry-lane mask hid the scalarized scale");
+    auto irregularCode = code;
+    irregularCode[4] = 0x34020100u;
+    irregularCode[5] = 0x7e240501u;
+    bool refused = false;
+    try {
+        static_cast<void>(GetResourcePlan(TableRequest(irregularCode, userData)));
+    } catch (const std::runtime_error& error) {
+        refused = std::string_view(error.what()).find("not a valid runtime value") != std::string_view::npos;
+    }
+    require(refused, "waterfall image table: a variable shift was accepted as a constant-stride column");
 }
 
 void verifySplitWaterfallImageTable() {
@@ -6316,6 +6446,72 @@ void verifySingleLaneElectedAtomicMax() {
     }
 }
 
+void verifySingleLaneDomainWave() {
+    using namespace ShaderRecompiler;
+    static constexpr std::array<std::uint32_t, 5> capabilities{spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic, spv::CapabilityClipDistance};
+    const auto domain = [](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool domainSubgroups) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::TessellationEvaluation, 0x58000u, code, 0, {}};
+        request.context.waveSize = 64;
+        request.context.vertex = ShaderVertexStageInfo{};
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = subgroupSize;
+        request.target.supportedCapabilities = capabilities;
+        request.target.tessellationEvaluationSubgroups = domainSubgroups;
+        request.layout.pushConstantSizeBytes = 128;
+        request.graphics = GraphicsCompileContext{0u, {}, std::nullopt, TessellationConfiguration{3u, 3u, 1u, 2u, 2u}, {}};
+        request.useCache = false;
+        return request;
+    };
+    const auto compiled = [&domain](std::span<const std::uint32_t> code, std::uint32_t subgroupSize, bool domainSubgroups) {
+        return Recompile(domain(code, subgroupSize, domainSubgroups)).spirv;
+    };
+    const auto usesSubgroups = [](std::span<const std::uint32_t> spirv) {
+        for (std::size_t cursor = 5; cursor < spirv.size() && (spirv[cursor] >> 16u) != 0u; cursor += spirv[cursor] >> 16u) {
+            const auto op = spirv[cursor] & 0xffffu;
+            if (op == spv::OpCapability && spirv[cursor + 1u] >= spv::CapabilityGroupNonUniform && spirv[cursor + 1u] <= spv::CapabilityGroupNonUniformQuad) return true;
+            if (op >= spv::OpGroupNonUniformElect && op <= spv::OpGroupNonUniformQuadSwap) return true;
+            if (op == spv::OpDecorate && spirv[cursor + 2u] == spv::DecorationBuiltIn && (spirv[cursor + 3u] == spv::BuiltInSubgroupLocalInvocationId || spirv[cursor + 3u] == spv::BuiltInSubgroupSize)) return true;
+        }
+        return false;
+    };
+    static constexpr std::array<std::uint32_t, 12> laneOps{
+        0xd7650015u, 0x000100c1u, 0xd7660015u, 0x00022ac1u, 0x7e0c0505u, 0xd7600007u, 0x00010105u, 0x4a022a06u,
+        0x4a020207u, 0xf80008cfu, 0x01010101u, 0xbf810000u,
+    };
+    static constexpr std::array<std::uint32_t, 11> waterfall{0xbe80047eu, 0xbe821400u, 0xd7600003u, 0x00000505u, 0xbe801c02u, 0xbf138000u, 0xbf85fffau, 0x7e020203u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+    static constexpr std::array<std::uint32_t, 6> lane31{0xd7600006u, 0x00013f05u, 0x7e020206u, 0xf80008cfu, 0x01010101u, 0xbf810000u};
+
+    for (const auto code : {std::span<const std::uint32_t>(laneOps), std::span<const std::uint32_t>(waterfall)}) {
+        const auto withSubgroups = compiled(code, 32u, true);
+        const auto withoutSubgroups = compiled(code, 32u, false);
+        require(usesSubgroups(withSubgroups), "single-lane domain wave: the program did not use subgroup operations with tessellation evaluation subgroups");
+        require(!withoutSubgroups.empty() && !usesSubgroups(withoutSubgroups), "single-lane domain wave: a domain program without tessellation evaluation subgroups declared a subgroup capability, built-in or instruction");
+        require(withoutSubgroups == compiled(code, 4u, false), "single-lane domain wave: the program without tessellation evaluation subgroups depended on the device subgroup size");
+        auto vertexOnly = domain(code, 32u, true);
+        vertexOnly.target.vertexSubgroups = false;
+        require(usesSubgroups(Recompile(vertexOnly).spirv), "single-lane domain wave: a domain program stopped using subgroups when only the vertex stage lacks them");
+        auto vertex = domain(code, 32u, false);
+        vertex.shader.stage = ShaderStage::Vertex;
+        vertex.graphics.reset();
+        require(usesSubgroups(Recompile(vertex).spirv), "single-lane domain wave: a vertex program stopped using subgroups when only the tessellation evaluation stage lacks them");
+    }
+    expectFailure([&] { static_cast<void>(compiled(lane31, 32u, false)); }, "v_readlane_b32 of lane 31 is outside the 1-lane host subgroup", "single-lane domain wave: a domain program without tessellation evaluation subgroups read lane 31");
+    require(!compiled(lane31, 32u, true).empty(), "single-lane domain wave: lane 31 of a 32-lane tessellation evaluation subgroup did not build");
+
+    auto request = domain(laneOps, 32u, false);
+    const auto replay = RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(request));
+    require(!replay.request.target.tessellationEvaluationSubgroups && replay.request.target.vertexSubgroups && replay.request.target.subgroupSize == 32u, "single-lane domain wave: missing tessellation evaluation subgroups were lost in serialization");
+    require(Recompile(replay.request).spirv == compiled(laneOps, 32u, false), "single-lane domain wave: the replayed request built another program");
+    std::vector<std::uint64_t> withoutKey;
+    std::vector<std::uint64_t> withKey;
+    RecompileCacheKey::Build(request, withoutKey);
+    request.target.tessellationEvaluationSubgroups = true;
+    RecompileCacheKey::Build(request, withKey);
+    require(withoutKey != withKey, "single-lane domain wave: tessellation evaluation subgroup support did not change the cache key");
+}
+
 void verifyMeshConfiguration() {
     using namespace ShaderRecompiler;
     ShaderMeshInputInfo list;
@@ -6840,7 +7036,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTEAAAA=", "new requests did not use serialization version 49");
+    require(requestPrefix(encoded, 8u) == "NVNQQTMAAAA=", "new requests did not use serialization version 51");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -6961,7 +7157,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQTQAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -7082,12 +7278,13 @@ void verifyDepthExportClamp() {
                     both.request.context.pixel->depthExportMin == 0.25f && both.request.context.pixel->depthExportMax == 0.75f,
             "depth export: a version 49 request lost the bounds or the version 45 target tail");
         auto bytes = decodeBase64(RequestSerializer{}.Serialize(tail));
-        require(bytes.size() > 8u && bytes[4] == 49u, "depth export: a depth exporting request did not use serialization version 49");
+        require(bytes.size() > 8u && bytes[4] == 51u, "depth export: a depth exporting request did not use serialization version 51");
         static constexpr std::array<std::uint8_t, 8> boundBytes{0x00u, 0x00u, 0x80u, 0x3eu, 0x00u, 0x00u, 0x40u, 0x3fu};
         const auto found = std::search(bytes.begin(), bytes.end(), boundBytes.begin(), boundBytes.end());
         require(found != bytes.end() && std::search(found + 1, bytes.end(), boundBytes.begin(), boundBytes.end()) == bytes.end(),
             "depth export: the clamp bounds were not written exactly once");
         bytes.erase(found, found + boundBytes.size());
+        bytes.pop_back();
         for (const std::uint8_t legacyVersion : {48u, 47u, 46u}) {
             if (legacyVersion == 47u) bytes.pop_back();
             bytes[4] = legacyVersion;
@@ -7107,12 +7304,13 @@ void verifyDepthExportClamp() {
             ditheredPixel.ditheredAlphaSamples = 2u;
             dithered.context.pixel = ditheredPixel;
             auto ditheredBytes = decodeBase64(RequestSerializer{}.Serialize(dithered));
-            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 49u, "a two-sample dithered request did not use serialization version 49");
+            require(ditheredBytes.size() > 8u && ditheredBytes[4] == 51u, "a two-sample dithered request did not use serialization version 51");
             if (depthExport) {
                 const auto bounds = std::search(ditheredBytes.begin(), ditheredBytes.end(), boundBytes.begin(), boundBytes.end());
                 require(bounds != ditheredBytes.end(), "a two-sample dithered depth exporting request lacks the clamp bounds");
                 ditheredBytes.erase(bounds, bounds + boundBytes.size());
             }
+            ditheredBytes.pop_back();
             ditheredBytes[4] = 48u;
             const auto main48 = RequestSerializer{}.Deserialize(encodeBase64(ditheredBytes));
             require(main48.request.context.pixel->ditheredAlphaToCoverage && main48.request.context.pixel->ditheredAlphaSamples == 2u && main48.request.context.pixel->depthExportEnable == depthExport &&
@@ -7269,7 +7467,7 @@ void verifyVertexInfoVersion19() {
     const auto version43Bytes = [&](std::vector<std::uint8_t> bytes) {
         require(bytes.end() - bytes.begin() > mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes) && std::equal(plainPixel.begin() + mergeOffset, plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), bytes.begin() + mergeOffset), "a replay fixture does not hold the default color target merge after the sample order");
         bytes.erase(bytes.begin() + mergeOffset, bytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
-        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 3u);
+        bytes.resize(bytes.size() - sizeof(std::uint32_t) - 4u);
         return bytes;
     };
     auto version42 = version43Bytes(plainPixel);
@@ -7431,10 +7629,11 @@ void verifyDepthRemapRequests() {
     const auto plainBytes = decodeBase64(plain);
     const auto remappedBytes = decodeBase64(remapped);
     constexpr std::size_t pointTailBytes = 13u;
-    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 14u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 14 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 7 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 7 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size and the barycentric built-in flag of a vertex request");
+    require(plainBytes.size() == remappedBytes.size() && plainBytes.size() > 15u + pointTailBytes && std::equal(plainBytes.begin(), plainBytes.end() - 15 - pointTailBytes, remappedBytes.begin()) && std::equal(plainBytes.end() - 8 - pointTailBytes, plainBytes.end(), remappedBytes.end() - 8 - pointTailBytes), "the depth remap flag and mode are not the 6 bytes before the f32 flush and denormal preserve flags, the point tail, the fused arithmetic flag, the pixel function LDS flag, the pixel function storage size, the barycentric built-in flag and the tessellation evaluation subgroup flag of a vertex request");
     for (const std::uint8_t legacyVersion : {32u, 34u}) {
         auto legacyBytes = remappedBytes;
         legacyBytes.resize(legacyBytes.size() - sizeof(std::uint32_t));
+        legacyBytes.pop_back();
         legacyBytes.pop_back();
         legacyBytes.pop_back();
         legacyBytes.pop_back();
@@ -7447,6 +7646,7 @@ void verifyDepthRemapRequests() {
     }
     auto version35 = remappedBytes;
     version35.resize(version35.size() - sizeof(std::uint32_t));
+    version35.pop_back();
     version35.pop_back();
     version35.pop_back();
     version35.pop_back();
@@ -7498,8 +7698,9 @@ void verifyMergedHullConfiguration() {
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     constexpr std::size_t pointTailBytes = 13u;
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 55u + pointTailBytes && legacy[4] == 49u, "a merged hull request did not use serialization version 49");
+    require(legacy.size() > 56u + pointTailBytes && legacy[4] == 51u, "a merged hull request did not use serialization version 51");
     legacy.resize(legacy.size() - sizeof(std::uint32_t) - 3u - pointTailBytes);
+    legacy.pop_back();
     legacy.pop_back();
     require(legacy[legacy.size() - 52u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
     legacy.erase(legacy.end() - 52);
@@ -10135,6 +10336,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--srt-read-patching") {
+            verifyUniformVectorComponents();
+            verifyWaterfallRuntimeValues();
             verifySrtReadPatching();
             std::cout << "SRT read patching replaces repeated and multiple uses\n";
             return 0;
@@ -10187,6 +10390,7 @@ int main(int argc, char** argv) {
         verifySingleLaneVertexWave();
         verifyExtensionKey();
         verifySingleLaneElectedAtomicMax();
+        verifySingleLaneDomainWave();
         verifyMeshConfiguration();
         verifyPixelInputs();
         verifyCanonicalVersion20And21Requests();

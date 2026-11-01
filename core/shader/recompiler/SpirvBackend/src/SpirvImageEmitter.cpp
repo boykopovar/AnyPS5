@@ -41,11 +41,6 @@ struct SampleSetup {
     std::uint32_t coord;
 };
 
-std::uint32_t RuntimeImageMode(SpirvEmitterState& state, std::uint32_t resource) {
-    const auto mode = Binary(state, spv::OpShiftRightLogical, TypeU32(state), RuntimeImageDword(state, resource, offsetof(RuntimeAbi::ResourceMetadata, flags) / sizeof(std::uint32_t)), ConstantU32(state, 1u));
-    return state.registrationModules ? Binary(state, spv::OpBitwiseAnd, TypeU32(state), mode, ConstantU32(state, RuntimeAbi::ImageModeMask)) : mode;
-}
-
 std::uint32_t RuntimeImageSwizzle(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t component) {
     const bool table = state.program.Info().images.at(resource).table != NoTable;
     if (!table && !state.registrationModules) return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ImageBase + resource * PipelineSpecialization::ImageWords + 1u + component, component + 4u);
@@ -339,6 +334,10 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
         state.module.AddFunction(spv::OpCompositeConstruct, TypeU32Vector(state, 4), result, packed[0], packed[1], packed[2], packed[3]);
         return result;
     }
+    std::uint32_t constantComponents = 0u;
+    if (mem.dataBits == 32u && !dref && !gather && access.inst.Opcode() == IrOpcode::ImageSampleRaw && access.image.table == NoTable) {
+        constantComponents = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ImageComponentBase + mem.resource, 0u);
+    }
     std::uint32_t component[4] = {};
     for (std::uint32_t index = 0; index < 4u; index++) {
         if (dref) {
@@ -357,6 +356,14 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
             const auto selector = RuntimeImageSwizzle(state, mem.resource, index);
             const auto one = Binary(state, spv::OpLogicalOr, TypeBool(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, 1u)), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, 7u)));
             component[index] = Select(state, TypeU32(state), Binary(state, spv::OpIEqual, TypeBool(state), selector, ConstantU32(state, 4u)), component[index], Select(state, TypeU32(state), one, ConstantU32(state, 1u), ConstantU32(state, 0u)));
+        }
+        if (constantComponents != 0u) {
+            using Component = PipelineSpecialization::ImageComponentConstant;
+            const auto constant = state.module.AllocateId();
+            state.module.AddFunction(spv::OpBitFieldUExtract, TypeU32(state), constant, constantComponents, ConstantU32(state, index * PipelineSpecialization::ImageComponentBits), ConstantU32(state, PipelineSpecialization::ImageComponentBits));
+            const auto equals = [&](Component kind) { return Binary(state, spv::OpIEqual, TypeBool(state), constant, ConstantU32(state, static_cast<std::uint32_t>(kind))); };
+            const auto constantBits = Select(state, TypeU32(state), equals(Component::FloatOne), ConstantU32(state, 0x3f800000u), Select(state, TypeU32(state), equals(Component::IntegerOne), ConstantU32(state, 1u), ConstantU32(state, 0u)));
+            component[index] = Select(state, TypeU32(state), equals(Component::None), component[index], constantBits);
         }
     }
     const auto result = state.module.AllocateId();
@@ -2023,7 +2030,7 @@ void EmitImage(SpirvValueEmitContext& ctx, const IrValue& inst) {
         state.runtimeImage = nullptr;
         return;
     }
-    const auto selector = tables ? tableSelector : !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ImageBase + memory.resource * PipelineSpecialization::ImageWords, 0u) : RuntimeImageMode(state, memory.resource);
+    const auto selector = tables ? tableSelector : state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ImageBase + memory.resource * PipelineSpecialization::ImageWords, 0u);
     const bool returnsValue = inst.Opcode() != IrOpcode::ImageWrite;
     const auto guardedId = returnsValue ? ctx.Result(inst) : 0u;
     ctx.definitions.erase(&inst);
