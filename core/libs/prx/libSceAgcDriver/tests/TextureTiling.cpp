@@ -181,7 +181,8 @@ std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std
     const std::uint32_t tileIndex = ((y / 8u) % bankHeight) * bankWidth + ((x / 8u) / pipes) % bankWidth;
     const std::uint64_t sliceBytes = static_cast<std::uint64_t>(pitch / macroPitch) * (height / macroHeight) * macroBytes;
     const std::uint64_t total = splitSlice * sliceBytes + macroOffset + elementOffset + static_cast<std::uint64_t>(tileIndex) * microBytes;
-    const std::uint32_t px = prt ? x % macroPitch : x, py = prt ? y % macroHeight : y;
+    const bool prtNoRotation = mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnThinPrt;
+    const std::uint32_t px = prtNoRotation ? x % macroPitch : x, py = prtNoRotation ? y % macroHeight : y;
     const std::uint32_t tx = px / 8u, ty = py / 8u;
     const bool pipe8x16 = mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnThinPrt;
     const std::uint32_t pipe = pipe8x16 ? (bit(tx, 1) ^ bit(ty, 0) ^ bit(tx, 2)) | ((bit(tx, 0) ^ bit(ty, 1)) << 1u) | ((bit(tx, 2) ^ bit(ty, 2)) << 2u)
