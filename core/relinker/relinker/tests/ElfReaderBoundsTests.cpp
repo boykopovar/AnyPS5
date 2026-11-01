@@ -106,6 +106,12 @@ void RejectProgramHeaders(Bytes bytes) {
 
 int main() {
     const std::vector<std::pair<std::string, std::function<void()>>> cases = {
+        {"load file size exceeds memory size", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 96, 64);
+            Write<std::uint64_t>(bytes, 104, 32);
+            RejectProgramHeaders(std::move(bytes));
+        }},
         {"load file range past end of file", [] {
             auto bytes = Fixture();
             Write<std::uint64_t>(bytes, 96, 0xd0);
