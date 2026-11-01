@@ -169,6 +169,7 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     sb->st_birthtim.tv_nsec = static_cast<std::int64_t>(st.st_birthtim.tv_nsec);
 #endif
 #endif
+    if ((sb->st_mode & 0170000) == 0040000) sb->st_blksize = 0x10000;
 }
 
 namespace File {
