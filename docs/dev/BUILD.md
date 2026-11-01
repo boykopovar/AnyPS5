@@ -265,6 +265,12 @@ On Windows use `agc_frame_replay.exe` and prepend `build/core/libs/libs/unpatche
 
 Set `APS5_PIPELINE_STATS=1` to capture and print driver statistics for each newly created graphics or compute pipeline. This requires `VK_KHR_pipeline_executable_properties` and `pipelineExecutableInfo`; an unsupported device fails with an error. Statistic names and units are driver-specific. Capturing statistics can increase pipeline compilation cost. The setting is disabled by default.
 
+## GPU memory accounting
+
+Set `APS5_TRACE_MEMORY_BUDGET=1` to track Vulkan allocations by device, heap and allocation category. Dynamic storage-cache budget queries print `[gpu-memory]` reports at most once every 10 seconds. Reports contain byte counts for active and retained memory, the driver's heap budget and usage, and the storage budget's sampled, cached, reserved, available and cap terms. Image reuse changes the category without counting another allocation; slab free slots and pooled buffers count as retained memory. Host fallback allocations count against the heap actually used.
+
+`unattributed_usage` is reported heap usage above tracked allocations; `tracked_above_usage` is the reverse difference. Vulkan heap usage is an estimate and includes driver allocations, so neither difference identifies a specific allocation class. `complete=0` means accounting metadata could not be recorded consistently. The switch records allocation lifetimes and leaves cache limits and eviction unchanged. A forced `APS5_TEXTURE_CACHE_MIB` bypasses dynamic budget queries and their reports.
+
 ## Device loss reports
 
 On a device that supports `VK_EXT_device_fault`, the first `VK_ERROR_DEVICE_LOST` prints the driver's fault description, the faulting addresses and the vendor fault codes as `[device-fault]` lines. Set `APS5_GPU_CHECKPOINTS=1` to also record a `VK_NV_device_diagnostic_checkpoints` marker with the program address before each compute dispatch; the report then lists the last markers the GPU reached. On a device without that extension but with `VK_AMD_buffer_marker` (RADV and AMD's own drivers), each compute dispatch instead writes a numbered marker into a host-visible buffer when the GPU reaches it and another when it finishes; the report then names the programs of the last dispatch reached, of the last one finished and of up to eight dispatches between them. Checkpoints are disabled by default and ignored on devices without the extension.

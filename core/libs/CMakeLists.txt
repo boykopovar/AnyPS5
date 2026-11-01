@@ -961,6 +961,16 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemGesture>")
     endif()
 
+    add_test_executable(guest_sys_util_notification_tests tests/GuestSysUtilNotification.cpp)
+    target_include_directories(guest_sys_util_notification_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_sys_util_notification_tests PRIVATE libSceSysUtil libkernel libc)
+    configure_windows_unwind(guest_sys_util_notification_tests)
+    add_test(NAME guest_sys_util_notification COMMAND guest_sys_util_notification_tests)
+    if(WIN32)
+        set_tests_properties(guest_sys_util_notification PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysUtil>")
+    endif()
+
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
         add_subdirectory(tests/register_context)
     endif()
