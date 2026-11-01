@@ -15,6 +15,7 @@
 #include "prx/libkernel/Apr/include/AmmPool.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/File/include/NativeStat.hpp"
+#include "prx/libkernel/File/include/WindowsExtendedPath.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <array>
@@ -75,7 +76,7 @@ bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
 #ifdef _WIN32
             // The find data carries each size; std::filesystem would query every entry again.
             WIN32_FIND_DATAW entry{};
-            const HANDLE find = FindFirstFileExW((path.parent_path() / L"*").c_str(), FindExInfoBasic, &entry, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+            const HANDLE find = FindFirstFileExW((File::WindowsExtendedPath(path.parent_path()) / L"*").c_str(), FindExInfoBasic, &entry, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
             if (find != INVALID_HANDLE_VALUE) {
                 do {
                     if ((entry.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) != 0) continue;
@@ -102,7 +103,7 @@ bool _fileSize(const std::filesystem::path& path, std::uint64_t& bytes) {
     }
     // Not in the listing (created since, or an unusual name): ask the file system directly.
     std::error_code error;
-    if (!std::filesystem::is_regular_file(path, error)) return false;
+    if (!std::filesystem::is_regular_file(File::WindowsExtendedPath(path), error)) return false;
     FileStat stat{};
     File::FillFileStat(path, &stat);
     bytes = static_cast<std::uint64_t>(stat.st_size);
@@ -161,7 +162,8 @@ void _readFile(const Apr::ReadFileCommand& command) {
     const auto file = _file(command.fileId);
     static const bool trace = std::getenv("APS5_TRACE_APR") != nullptr;
     if (trace) std::fprintf(stderr, "[apr] read %s offset=0x%llx size=0x%llx -> 0x%llx\n", file.path.string().c_str(), static_cast<unsigned long long>(command.offset), static_cast<unsigned long long>(command.size), static_cast<unsigned long long>(command.destination));
-    std::ifstream stream(file.path, std::ios::binary);
+    const auto hostPath = File::WindowsExtendedPath(file.path);
+    std::ifstream stream(hostPath, std::ios::binary);
     if (!stream) throw std::runtime_error("APR: cannot open " + file.path.string());
     stream.seekg(static_cast<std::streamoff>(command.offset));
     const GuestArena::HostWrite destination(reinterpret_cast<void*>(command.destination), command.size);
@@ -183,7 +185,7 @@ void _readFile(const Apr::ReadFileCommand& command) {
     if (stream.bad()) throw std::runtime_error("APR: read failed for " + file.path.string());
     const auto read = static_cast<std::uint64_t>(stream.gcount());
 #endif
-    if (read != command.size && (!stream.eof() || command.offset + read < std::filesystem::file_size(file.path))) throw std::runtime_error("APR: read of " + file.path.string() + " at offset " + std::to_string(command.offset) + " returned " + std::to_string(read) + " of " + std::to_string(command.size) + " bytes");
+    if (read != command.size && (!stream.eof() || command.offset + read < std::filesystem::file_size(hostPath))) throw std::runtime_error("APR: read of " + file.path.string() + " at offset " + std::to_string(command.offset) + " returned " + std::to_string(read) + " of " + std::to_string(command.size) + " bytes");
     if (read != command.size) std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
 }
 
