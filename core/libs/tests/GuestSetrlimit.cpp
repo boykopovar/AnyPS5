@@ -66,6 +66,9 @@ int main() {
     const GuestResourceLimit infinity{GUEST_RLIM_INFINITY, GUEST_RLIM_INFINITY};
     RequireError(-1, nullptr, GUEST_EFAULT);
     RequireError(GUEST_RLIM_NLIMITS, nullptr, GUEST_EFAULT);
+    const auto* unmapped = reinterpret_cast<const GuestResourceLimit*>(std::uintptr_t{0x10});
+    RequireError(GUEST_RLIMIT_STACK, unmapped, GUEST_EFAULT);
+    RequireError(GUEST_RLIM_NLIMITS, unmapped, GUEST_EFAULT);
     RequireError(-1, &infinity, GUEST_EINVAL);
     RequireError(GUEST_RLIM_NLIMITS, &infinity, GUEST_EINVAL);
 
