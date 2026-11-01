@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -12,9 +13,12 @@ LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=
 
 KNOWN_UNRUN = set()
 SCRIPT = re.compile(r"(?<![\w./-])(?:[\w.-]+/)*test_\w+\.py(?![\w./-])")
+EXPORTED = re.compile(r"\bAPS5_VABI\s+[A-Za-z_]\w*\s*\([^;{}]*\)\s*(?:noexcept\s*)?(?:try\s*)?\{")
+INCLUDED_SOURCE = re.compile(r'^[ \t]*#[ \t]*include[ \t]*"([^"]+\.cpp)"', re.M)
+COMPILE_FLAG = re.compile(r"(?:^|\s)[-/]c(?:\s|$)")
 
 
-def built(build):
+def ninja(build):
     program, generator = None, None
     for line in (Path(build) / "CMakeCache.txt").read_text(encoding="utf-8-sig").splitlines():
         if line.startswith("CMAKE_MAKE_PROGRAM:"):
@@ -33,6 +37,11 @@ def built(build):
         if codepage not in encodings:
             raise ValueError(f"unsupported Ninja build-file encoding: {codepage!r}")
         encoding = encodings[codepage]
+    return program, encoding
+
+
+def built(build):
+    program, encoding = ninja(build)
     listed = subprocess.run([program, "-C", str(build), "-t", "targets", "all"],
                             capture_output=True, text=True, encoding=encoding, check=True).stdout
     names = set()
@@ -49,6 +58,49 @@ def built(build):
         if name:
             names.add(name)
     return names
+
+
+def compiled(build):
+    program, encoding = ninja(build)
+    database = subprocess.run([program, "-C", str(build), "-t", "compdb"],
+                              capture_output=True, text=True, encoding=encoding, check=True).stdout
+    sources = set()
+    for entry in json.loads(database):
+        command = entry.get("command") or " ".join(entry.get("arguments", []))
+        if not COMPILE_FLAG.search(command):
+            continue
+        file = Path(entry["file"])
+        if not file.is_absolute():
+            file = Path(entry["directory"]) / file
+        sources.add(file.resolve())
+    return sources
+
+
+def unbuilt_exports(root, sources):
+    prx = (Path(root) / "core" / "libs" / "prx").resolve()
+    built_sources = {source for source in sources if prx in source.parents}
+    if not built_sources:
+        return None
+    pending = list(built_sources)
+    while pending:
+        source = pending.pop()
+        try:
+            text = source.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for name in INCLUDED_SOURCE.findall(text):
+            included = (source.parent / name).resolve()
+            if included not in built_sources and included.is_file():
+                built_sources.add(included)
+                pending.append(included)
+    unbuilt = []
+    for file in sorted(prx.glob("*/**/*.cpp")):
+        relative = file.relative_to(prx)
+        if any(part in ("tests", "test") for part in relative.parts[1:-1]) or file.resolve() in built_sources:
+            continue
+        if EXPORTED.search(file.read_text(encoding="utf-8", errors="replace")):
+            unbuilt.append(Path("core/libs/prx") / relative)
+    return unbuilt
 
 
 def commands(content):
@@ -215,7 +267,7 @@ def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
-    parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs")
+    parser = argparse.ArgumentParser(description="fail when a test executable is built that no ctest test runs, or a library source that defines exports is never compiled")
     parser.add_argument("build", type=Path, nargs="?", default=Path("build"), help="configured build directory")
     parser.add_argument("--list", action="store_true", help="print every test executable and whether ctest runs it")
     parser.add_argument("--scripts", action="store_true", help="instead check that an add_test or a workflow runs every test_*.py of the source tree")
@@ -232,6 +284,7 @@ def main(argv=None):
     try:
         every = sorted(built(args.build))
         run = registered(args.build)
+        unbuilt = unbuilt_exports(Path(__file__).resolve().parents[1], compiled(args.build))
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.error(str(error))
     if args.list:
@@ -252,9 +305,17 @@ def main(argv=None):
         print(f"error: {name} is built but no ctest test runs it")
     if fresh:
         print(f"{len(fresh)} test executable(s) would never run: ctest reports a full pass over what it knows, so a test nobody registered is invisible in CI")
-    if stale or fresh:
+    for path in unbuilt or []:
+        print(f"error: {path.as_posix()} defines APS5_VABI functions but no target compiles it")
+    if unbuilt:
+        print(f"{len(unbuilt)} library source(s) are never built: their exports are counted but never exported; list each in its library's add_library or target_sources")
+    if stale or fresh or unbuilt:
         return 1
     print(f"{len(every)} test executable(s), {len(unrun)} built and not run as recorded, none new")
+    if unbuilt is None:
+        print("no core/libs/prx source is compiled in this build; library sources were not checked")
+    else:
+        print("every core/libs/prx source that defines an APS5_VABI function is compiled")
     return 0
 
 
