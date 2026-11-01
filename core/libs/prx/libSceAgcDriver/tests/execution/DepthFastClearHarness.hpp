@@ -42,6 +42,7 @@ struct Surface {
     std::uint32_t slice = 0;
     std::uint8_t clearStencil = 0;
     std::uint32_t swizzle = 0;
+    float clearDepth = 1.0f;
 };
 
 struct DrawOptions {
@@ -120,7 +121,7 @@ inline std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compil
     state.color = {reinterpret_cast<std::uintptr_t>(pixels.data()), extent, VK_FORMAT_R8G8B8A8_UNORM, pixels.size(), 0xe4u};
     state.colors = {state.color};
     state.hasColorTarget = true;
-    state.depth = AgcDriver::Graphics::DepthTarget{surface.depth, surface.stencil, extent, surface.format, 1.0f, surface.clearStencil, surface.htile, surface.htileStencil};
+    state.depth = AgcDriver::Graphics::DepthTarget{surface.depth, surface.stencil, extent, surface.format, surface.clearDepth, surface.clearStencil, surface.htile, surface.htileStencil};
     state.depth->firstSlice = surface.slice;
     state.depth->depthSwizzle = surface.swizzle;
     state.depthTest = options.depthTest;
