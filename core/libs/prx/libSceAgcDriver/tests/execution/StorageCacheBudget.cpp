@@ -110,6 +110,12 @@ std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint
     return heapSlotted(device, address, StorageTexture::FindLive(address, SurfaceBytes));
 }
 
+bool LacksHeapSlots(AgcDriver::VulkanDevice& device) {
+    if (!heapSlots || device.graphicsContext().descriptorHeap) return false;
+    std::puts("skipped, the device has no VK_EXT_descriptor_heap");
+    return true;
+}
+
 int RetainedBatch() {
 #ifdef _WIN32
     Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "32") == 0, "cannot set the test cache budget");
@@ -120,10 +126,7 @@ int RetainedBatch() {
 #endif
     const auto device = OpenVulkanTestDevice();
     if (!device) return VulkanTestSkipped;
-    if (heapSlots && !device->graphicsContext().descriptorHeap) {
-        std::puts("skipped, the device has no VK_EXT_descriptor_heap");
-        return VulkanTestSkipped;
-    }
+    if (LacksHeapSlots(*device)) return VulkanTestSkipped;
     std::vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
     auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
     const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
@@ -172,11 +175,7 @@ int main(int argc, char** argv) {
     try {
         const std::string mode = argc == 2 ? argv[1] : "";
         heapSlots = mode == "--heap-slots" || mode == "--retained-batch-heap-slots";
-#ifdef _WIN32
-        if (heapSlots) Require(_putenv_s("APS5_GPU_HEAP", "1") == 0, "cannot enable the GPU heap");
-#else
-        if (heapSlots) Require(setenv("APS5_GPU_HEAP", "1", 1) == 0, "cannot enable the GPU heap");
-#endif
+        if (heapSlots) Require(SetTestEnvironment("APS5_GPU_HEAP", "1") == 0, "cannot enable the GPU heap");
         if (mode == "--retained-batch" || mode == "--retained-batch-heap-slots") return RetainedBatch();
 #ifdef _WIN32
         Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "32") == 0, "cannot set the test cache budget");
@@ -185,10 +184,7 @@ int main(int argc, char** argv) {
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (heapSlots && !device->graphicsContext().descriptorHeap) {
-            std::puts("skipped, the device has no VK_EXT_descriptor_heap");
-            return VulkanTestSkipped;
-        }
+        if (LacksHeapSlots(*device)) return VulkanTestSkipped;
         const auto budget = TestBudget;
         std::vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});

@@ -1,17 +1,8 @@
 if(BUILD_TESTING AND TARGET agc_driver_heap_compute_sample_tests)
-    add_test(NAME agc_driver_heap_compute_sample_heap_pipelined COMMAND agc_driver_heap_compute_sample_tests)
-    set_tests_properties(agc_driver_heap_compute_sample_heap_pipelined PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_GPU_HEAP=1;APS5_VERIFY_GPU_HEAP=1;APS5_PIPELINE_DISPATCH=1;APS5_PIPELINED_DRAWS=32" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-    if(WIN32)
-        set_tests_properties(agc_driver_heap_compute_sample_heap_pipelined PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
-    add_test(NAME agc_driver_heap_compute_sample_heap COMMAND agc_driver_heap_compute_sample_tests)
-    set_tests_properties(agc_driver_heap_compute_sample_heap PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_GPU_HEAP=1;APS5_VERIFY_GPU_HEAP=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-    if(WIN32)
-        set_tests_properties(agc_driver_heap_compute_sample_heap PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
-    add_test(NAME agc_driver_heap_compute_sample_full_heap COMMAND agc_driver_heap_compute_sample_tests)
-    set_tests_properties(agc_driver_heap_compute_sample_full_heap PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_GPU_HEAP=1;APS5_VERIFY_GPU_HEAP=1;APS5_HEAP_SLOT_CAP=4" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-    if(WIN32)
-        set_tests_properties(agc_driver_heap_compute_sample_full_heap PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
-    endif()
+    agc_add_env_test(agc_driver_heap_compute_sample_heap_pipelined agc_driver_heap_compute_sample_tests
+            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 APS5_VERIFY_GPU_HEAP=1 APS5_PIPELINE_DISPATCH=1 APS5_PIPELINED_DRAWS=32)
+    agc_add_env_test(agc_driver_heap_compute_sample_heap agc_driver_heap_compute_sample_tests
+            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 APS5_VERIFY_GPU_HEAP=1)
+    agc_add_env_test(agc_driver_heap_compute_sample_full_heap agc_driver_heap_compute_sample_tests
+            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 APS5_VERIFY_GPU_HEAP=1 APS5_HEAP_SLOT_CAP=4)
 endif()

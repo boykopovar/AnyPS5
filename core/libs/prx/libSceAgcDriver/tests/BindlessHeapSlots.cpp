@@ -1,4 +1,4 @@
-#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeapObjects.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
@@ -19,8 +19,6 @@ namespace {
 
 using namespace AgcDriver::Graphics;
 namespace Abi = ShaderRecompiler::RuntimeAbi;
-
-constexpr int VulkanTestSkipped = 77;
 
 void require(bool condition, const std::string& what) {
     if (!condition) throw std::runtime_error(what);
@@ -228,7 +226,7 @@ void ringSpans(const Context& context) {
 
 void ringLargeSpans(const Context& context) {
     BindlessHeap heap(context);
-    if (heap.RingChunkCount() < 5u) return;
+    require(heap.RingChunkCount() >= 5u, "the ring has fewer than five chunks, so a span over three chunks cannot be tested");
     constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
     constexpr std::size_t largeWords = chunkWords * 2u + 1024u;
     BindlessHeap::SpanMark pin;
@@ -283,8 +281,6 @@ void ringCurrentChunk(const Context& context) {
     }
     require(refused, "a span never wraps onto the current chunk behind data this batch already wrote");
     require(heap.Held(live), "the current chunk's span is still held");
-}
-
 }
 
 void heapComesBack(const Context& context, VkImageView view) {
@@ -388,32 +384,20 @@ void twoHeapsComeBack(const Context& context, VkImageView view) {
     first.reset();
 }
 
+}
+
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     const bool comesBack = !mode.empty();
     try {
-#ifdef _WIN32
-        _putenv_s("APS5_GPU_HEAP", "1");
-#else
-        setenv("APS5_GPU_HEAP", "1", 1);
-#endif
-        std::unique_ptr<AgcDriver::VulkanDevice> device;
-        try {
-            device = std::make_unique<AgcDriver::VulkanDevice>();
-        } catch (const std::exception& error) {
-            if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
-            std::printf("skipped, no usable Vulkan device: %s\n", error.what());
-            return VulkanTestSkipped;
-        }
+        SetTestEnvironment("APS5_GPU_HEAP", "1");
+        auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
         if (!device->graphicsContext().descriptorHeap) {
             std::printf("skipped, the device has no VK_EXT_descriptor_heap\n");
             return VulkanTestSkipped;
         }
-#ifdef _WIN32
-        _putenv_s("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
-#else
-        setenv("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1", 1);
-#endif
+        SetTestEnvironment("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
         if (comesBack) {
             {
                 const auto context = device->graphicsContext();

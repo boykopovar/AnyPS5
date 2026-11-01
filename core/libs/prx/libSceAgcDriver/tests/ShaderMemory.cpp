@@ -8078,7 +8078,7 @@ void verifyCoherentGds() {
     require(std::ranges::find(decorations[gds], static_cast<std::uint32_t>(spv::DecorationCoherent)) != decorations[gds].end(), "coherent GDS: the gds buffer is not Coherent");
 }
 
-void verifyCoherentBufferAccesses() {
+auto recompileCoherent(const std::vector<std::uint32_t>& code, std::uint32_t address, std::span<const std::uint32_t> capabilities, bool addressed) {
     using namespace ShaderRecompiler;
     alignas(256) static std::array<std::uint32_t, 64> input{};
     alignas(256) static std::array<std::uint32_t, 64> output{};
@@ -8088,6 +8088,28 @@ void verifyCoherentBufferAccesses() {
         static_cast<std::uint32_t>(inputAddress), static_cast<std::uint32_t>((inputAddress >> 32u) & 0xffffu), 256u, 0x31016facu,
         static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 256u, 0x31016facu};
     const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, address, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.target.gpuResolvedImages = addressed;
+    request.target.descriptorMemory = addressed;
+    request.layout.pushConstantSizeBytes = 128;
+    request.useCache = false;
+    return Recompile(request).spirv;
+}
+
+void verifyCoherentBufferAccesses() {
+    using namespace ShaderRecompiler;
     const std::array<std::uint32_t, 3> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
     struct Module {
         std::map<std::uint32_t, std::string> names;
@@ -8099,22 +8121,7 @@ void verifyCoherentBufferAccesses() {
         std::vector<std::uint32_t> code{0x34020082u};
         if (invalidate) code.insert(code.end(), {0xe1c40000u, 0u});
         code.insert(code.end(), {0xe0301000u | (glcLoad ? 0x4000u : 0u), 0x80000201u, 0xbf8c3f70u, 0xe0701000u | (glcStore ? 0x4000u : 0u), 0x80010201u, 0xbf810000u});
-        RecompileRequest request{};
-        request.shader = {ShaderStage::Compute, 0x5a000u, code, 0, {}};
-        request.context.waveSize = 32;
-        request.context.userDataBaseRegister = 0;
-        request.context.userData = userData;
-        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
-        request.target.vulkanVersion = 0x00401000u;
-        request.target.spirvVersion = 0x00010300u;
-        request.target.subgroupSize = 32;
-        request.target.bdaAbiVersion = BdaAbi::Version;
-        request.target.supportedCapabilities = capabilities;
-        request.target.supportedExtensions = extensions;
-        request.target.fragmentShaderBarycentricEnabled = false;
-        request.layout.pushConstantSizeBytes = 128;
-        request.useCache = false;
-        const auto words = Recompile(request).spirv;
+        const auto words = recompileCoherent(code, 0x5a000u, capabilities, false);
         Module module;
         std::map<std::uint32_t, std::uint32_t> bases;
         const auto base = [&](std::uint32_t pointer) {
@@ -8176,14 +8183,6 @@ void verifyCoherentBufferAccesses() {
 
 void verifyAddressedCoherentBufferAccesses() {
     using namespace ShaderRecompiler;
-    alignas(256) static std::array<std::uint32_t, 64> input{};
-    alignas(256) static std::array<std::uint32_t, 64> output{};
-    const auto inputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(input.data()));
-    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
-    const std::array<std::uint32_t, 8> userData{
-        static_cast<std::uint32_t>(inputAddress), static_cast<std::uint32_t>((inputAddress >> 32u) & 0xffffu), 256u, 0x31016facu,
-        static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 256u, 0x31016facu};
-    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
     const std::array<std::uint32_t, 4> capabilities{spv::CapabilityInt64, spv::CapabilityInt64Atomics, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
     struct Counts {
         std::uint32_t loads = 0, stores = 0, wideLoads = 0;
@@ -8194,24 +8193,7 @@ void verifyAddressedCoherentBufferAccesses() {
         std::vector<std::uint32_t> code{0x34020082u};
         if (invalidate) code.insert(code.end(), {0xe1c40000u, 0u});
         code.insert(code.end(), {loadOp | (glcLoad ? 0x4000u : 0u), 0x80000201u, 0xbf8c3f70u, storeOp | (glcStore ? 0x4000u : 0u), 0x80010201u, 0xbf810000u});
-        RecompileRequest request{};
-        request.shader = {ShaderStage::Compute, 0x5b000u, code, 0, {}};
-        request.context.waveSize = 32;
-        request.context.userDataBaseRegister = 0;
-        request.context.userData = userData;
-        request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
-        request.target.vulkanVersion = 0x00401000u;
-        request.target.spirvVersion = 0x00010300u;
-        request.target.subgroupSize = 32;
-        request.target.bdaAbiVersion = BdaAbi::Version;
-        request.target.supportedCapabilities = capabilities;
-        request.target.supportedExtensions = extensions;
-        request.target.fragmentShaderBarycentricEnabled = false;
-        request.target.gpuResolvedImages = true;
-        request.target.descriptorMemory = true;
-        request.layout.pushConstantSizeBytes = 128;
-        request.useCache = false;
-        const auto words = Recompile(request).spirv;
+        const auto words = recompileCoherent(code, 0x5b000u, capabilities, true);
         std::set<std::uint32_t> wideTypes;
         Counts counts;
         for (std::size_t cursor = 5; cursor < words.size();) {

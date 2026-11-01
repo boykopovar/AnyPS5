@@ -6051,6 +6051,7 @@ void pooledBufferAddressTests() {
             Require(staging.Handle() == pooled, "a device-local buffer of the pooled device buffer's size and usage did not reuse its allocation");
             const VkBufferDeviceAddressInfo info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, pooled};
             expected = mockGetBufferDeviceAddress(context.device, &info);
+            Require(expected != 0, "the mock device address of the pooled buffer is zero");
             try {
                 address = staging.DeviceAddress();
             } catch (const std::exception&) {

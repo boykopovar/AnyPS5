@@ -128,7 +128,6 @@ void sharedResultsChargedOnceTests() {
     result->heapUserWords.resize(resultWords);
     result->heapUserWords.shrink_to_fit();
     const std::shared_ptr<const ShaderRecompiler::RecompileResult> shared = std::move(result);
-    std::weak_ptr<const ShaderRecompiler::RecompileResult> watched = shared;
     const auto ownBytes = AgcDriver::DriverDetail::HeapWalkEntryOwnBytes(sizedEntry(1));
     const auto sharedBytes = AgcDriver::DriverDetail::HeapWalkResultBytes(*shared);
     HeapWalkMemo memo;

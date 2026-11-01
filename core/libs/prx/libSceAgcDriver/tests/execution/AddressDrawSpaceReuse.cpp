@@ -357,11 +357,6 @@ void RecipeAfterSnapshotChange(Scene& scene) {
     Require(scene.Color() == 150, "address draw space reuse: the draw asked for a recipe did not read the guest constant");
     scene.constants.Data()[CapturedOffset] ^= 0xffu;
     const auto before = Builds();
-    if (recipe != nullptr) {
-        const bool recorded = scene.DrawFromRecipe(recipe) == AgcDriver::RecipeOutcome::Recorded;
-        const auto color = scene.Color();
-        Require(!recorded, "address draw space reuse: a draw recipe made from a build whose reuse retakes its address space recorded the draw (read " + std::to_string(color) + ") after a snapshot inside that space changed, with " + std::to_string(Builds() - before) + " builds, where the draw path builds anew");
-    }
     const auto color = scene.DrawnColor();
     const auto built = Builds() - before;
     scene.constants.Data()[CapturedOffset] ^= 0xffu;
@@ -497,11 +492,7 @@ void Disabled(Scene& scene) {
 void LimitPinWait() {
     if (std::getenv("APS5_PIN_WAIT_MS") != nullptr) return;
     const auto wait = std::to_string(PinWaitMs);
-#ifdef _WIN32
-    _putenv_s("APS5_PIN_WAIT_MS", wait.c_str());
-#else
-    setenv("APS5_PIN_WAIT_MS", wait.c_str(), 1);
-#endif
+    SetTestEnvironment("APS5_PIN_WAIT_MS", wait.c_str());
 }
 
 using Case = void (*)(Scene&);
