@@ -1,3 +1,5 @@
+include(${CMAKE_SOURCE_DIR}/cmake/BundledSubdirectory.cmake)
+
 if(NOT WIN32)
     foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
         string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
