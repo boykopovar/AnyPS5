@@ -1389,7 +1389,7 @@ private:
                 return false;
             }
             seen.push_back(value);
-        } else if (!Detail::IsRuntimeUniformOp(value->Opcode()) && value->Opcode() != IrOpcode::CompositeExtractU32x4) {
+        } else if (!Detail::IsRuntimeUniformOp(value->Opcode()) && value->Opcode() != IrOpcode::CompositeExtractU32x4 && value->Opcode() != IrOpcode::WqmU64) {
             return false;
         }
         for (std::size_t index = 0; index < value->ArgumentCount(); index++) {

@@ -5487,9 +5487,10 @@ void verifyDescriptorPhis() {
         code.insert(code.begin() + 8, words);
         return code;
     };
-    const std::array<std::pair<std::vector<std::uint32_t>, const char*>, 3> controlEntries{{
+    const std::array<std::pair<std::vector<std::uint32_t>, const char*>, 4> controlEntries{{
         {entryWrites({0xbe8e1f00u}), "descriptor Phi: a loop entry whose T# registers hold the program counter was not folded onto the loop's two SRT T#s with a fault"},
         {entryWrites({0xbe8e037eu}), "descriptor Phi: a loop entry whose T# registers hold EXEC was not folded onto the loop's two SRT T#s with a fault"},
+        {entryWrites({0xbe8e0a7eu}), "descriptor Phi: a loop entry whose T# registers hold a whole-quad EXEC mask was not folded with a fault"},
         {entryWrites({0x7d840080u, 0xbe8e036au}), "descriptor Phi: a loop entry whose T# registers hold a compare mask was not folded onto the loop's two SRT T#s with a fault"},
     }};
     for (const auto& [code, message] : controlEntries) {
@@ -5497,6 +5498,9 @@ void verifyDescriptorPhis() {
         const auto plan = GetResourcePlan(request);
         require(plan->info.images.size() == 2u && plan->info.usesFaultBuffer, message);
     }
+    const auto userDataWqmCode = entryWrites({0xbe8e0a00u});
+    auto userDataWqm = makeRequest(userDataWqmCode);
+    expectFailure([&] { static_cast<void>(GetResourcePlan(userDataWqm)); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a whole-quad expansion without a control-mask origin was accepted");
     auto unwritten = loopCode;
     unwritten[4] = 0xf4080200u;
     auto unwrittenRequest = makeRequest(unwritten);
