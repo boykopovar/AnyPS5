@@ -21,7 +21,7 @@ bool TranslationContext::packedFloat16(const RdnaInstruction& inst, IrOpcode opc
         const IrU1 tiny(ir.ULessThan(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffffffu)), ir.Constant(opcode == IrOpcode::FPAdd32 ? 0x38800000u : 0x387ff000u)));
         return IrF32(ir.BitCastF32(ir.Select(tiny.Value(), ir.BitwiseAnd(bits.Value(), ir.Constant(0x80000000u)), bits.Value())));
     };
-    const auto readLane = [&](const RdnaOperand& operand, bool high) { return flushF16InputValue(readF16LaneAsF32(operand, high, true)); };
+    const auto readLane = [&](const RdnaOperand& operand, bool high) { return flushF16InputValue(readF16LaneAsF32(operand, high, true, true)); };
     const auto translateLane = [&](bool high) -> IrF32 {
         const IrF32 lhs = readLane(sourceAt(inst, 0u), high);
         const IrF32 rhs = readLane(sourceAt(inst, 1u), high);
@@ -65,7 +65,7 @@ bool TranslationContext::packedFloat16(const RdnaInstruction& inst, IrOpcode opc
         const IrU32 rhs = packU16Lanes(sourceLaneBits(1u, false), sourceLaneBits(1u, true));
         return IrU32(ir.Emit(opcode == IrOpcode::FPAdd32 ? IrOpcode::FPAdd16x2 : IrOpcode::FPMul16x2, IrType::U32, {&lhs.Value(), &rhs.Value()}));
     };
-    IrU32 result = quietSnan ? packU16Lanes(minMaxLane(false), minMaxLane(true)) : native ? nativeResult() : packHalf2x16(translateLane(false), translateLane(true));
+    IrU32 result = quietSnan ? packU16Lanes(minMaxLane(false), minMaxLane(true)) : native ? nativeResult() : packHalf2x16(translateLane(false), translateLane(true), true);
     if (native || !inst.destination.clamp || !dx10Clamp() || quietSnan) {
         const auto isNan = [&](const IrU32& bits) {
             return IrU1(ir.UGreaterThan(ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffu)), ir.Constant(0x7c00u)));
@@ -122,7 +122,7 @@ bool TranslationContext::packedFloat16(const RdnaInstruction& inst, IrOpcode opc
 
 bool TranslationContext::float16Unary(const RdnaInstruction& inst, IrOpcode opcode) {
     const RdnaOperand& operand = sourceAt(inst, 0u);
-    const IrF32 argument = flushF16InputValue(readF16AsF32(operand));
+    const IrF32 argument = flushF16InputValue(readF16AsF32(operand, true));
     const auto [result, invalid] = unaryFloatSpecials(opcode, argument, IrF32(ir.Emit(opcode, IrType::F32, {&argument.Value()})));
     const IrF16 rounded(ir.Emit(IrOpcode::ConvertF16F32, IrType::F16, {&applyF16ResultModifiers(inst.destination, clampF16Overflow(result, {&argument.Value()})).Value()}));
     IrU32 bits(ir.Emit(IrOpcode::ConvertU32U16, IrType::U32, {&ir.Emit(IrOpcode::BitCastU16F16, IrType::U16, {&rounded.Value()})}));
