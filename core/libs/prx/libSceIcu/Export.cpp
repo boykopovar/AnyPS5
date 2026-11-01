@@ -45,10 +45,6 @@ int APS5_VABI UCNV_TO_U_CALLBACK_SUBSTITUTE_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI locale_getKeywordsStart_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI res_countArrayItems_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
