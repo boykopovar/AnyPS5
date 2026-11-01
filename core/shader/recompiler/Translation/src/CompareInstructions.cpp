@@ -1,4 +1,3 @@
-#include "Translation/CompareInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
 #include <cstdint>
@@ -73,10 +72,6 @@ OrderedRelation orderedRelationOf(IrOpcode opcode) {
     }
 }
 
-}
-
-void TranslateCompareInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateCompareInstruction not implemented");
 }
 
 void TranslationContext::emitCompareResult(const RdnaInstruction& inst, IrU1 value, bool scalar, bool cmpx) {
@@ -284,10 +279,6 @@ void TranslationContext::emitFloat64ClassCompare(const RdnaInstruction& inst, bo
     IrValue& index = ir.Select(ir.IEqual(exponent, ir.Constant(0x7ff00000u)), exponentMax, finite);
     IrValue& selected = ir.BitwiseAnd(ir.ShiftRightLogical(mask.Value(), index), ir.Constant(1u));
     emitCompareResult(inst, IrU1(ir.INotEqual(selected, zero)), false, cmpx);
-}
-
-void TranslateCompareInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateCompareInstruction not implemented");
 }
 
 }

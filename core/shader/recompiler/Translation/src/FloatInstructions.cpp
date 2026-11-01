@@ -1,14 +1,9 @@
-#include "Translation/FloatInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
 #include <cstdint>
 #include <stdexcept>
 
 namespace ShaderRecompiler {
-
-void TranslateFloatInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateFloatInstruction not implemented");
-}
 
 bool TranslationContext::packedFloat16(const RdnaInstruction& inst, IrOpcode opcode, bool accumulator, bool quietSnan) {
     if (floatMode.has_value() && (floatMode->floatMode & 0x0cu) != 0u) {
@@ -940,10 +935,6 @@ bool TranslationContext::floatCube(const RdnaInstruction& inst, std::uint32_t re
     destination.omod = 0u;
     writeOperand(destination, &result.Value());
     return true;
-}
-
-void TranslateFloatInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateFloatInstruction not implemented");
 }
 
 }
