@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceLoginMgrServer/include/InventoryExports.hpp"
 #include "prx/libSceLoginMgrServer/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -163,5 +165,34 @@ int APS5_VABI sceLoginMgrServerNotifySafetyNoticeShownForGen2Vr() {
 int APS5_VABI sceLoginMgrServerCheckSafetyNoticeShownForGen2Vr() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceLoginMgrServerUnknown_GzbYqYyRTBg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("GzbYqYyRTBg", libSceLoginMgrServerUnknown_GzbYqYyRTBg_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_M1h7vFE7Hm0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("M1h7vFE7Hm0", libSceLoginMgrServerUnknown_M1h7vFE7Hm0_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_NvO5e_minus_NOkXU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NvO5e-NOkXU", libSceLoginMgrServerUnknown_NvO5e_minus_NOkXU_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_T7HQTX_minus_ylss_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("T7HQTX-ylss", libSceLoginMgrServerUnknown_T7HQTX_minus_ylss_nid_no_patch);
+
+int APS5_VABI libSceLoginMgrServerUnknown_uD_minus_Sde_plus_R4D8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("uD-Sde+R4D8", libSceLoginMgrServerUnknown_uD_minus_Sde_plus_R4D8_nid_no_patch);
 
 }
