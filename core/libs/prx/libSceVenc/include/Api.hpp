@@ -19,4 +19,10 @@ int APS5_VABI sceVencSetReferenceFrameInvalidationConfig();
 int APS5_VABI sceVencStartEncode();
 int APS5_VABI sceVencStopEncode();
 
+int APS5_VABI sceVencGetHeader();
+int APS5_VABI sceVencSetNormalPrivacyProtectionConfig();
+int APS5_VABI sceVencSetImagePasteConfig();
+int APS5_VABI sceVencQueryPreset2();
+int APS5_VABI sceVencSetCodecConfig();
+
 }

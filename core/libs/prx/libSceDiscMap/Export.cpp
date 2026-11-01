@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceDiscMap/include/InventoryExports.hpp"
 #include "prx/libSceDiscMap/include/Api.hpp"
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -34,5 +36,19 @@ int APS5_VABI sceDiscMapGetPackageSize(std::int64_t fflags, int* ret1, int* ret2
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceDiscMapUnknown_5_plus_vOlukvkfg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("5+vOlukvkfg", libSceDiscMapUnknown_5_plus_vOlukvkfg_nid_no_patch);
+
+int APS5_VABI libSceDiscMapUnknown_fJgP_plus_wqifno_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fJgP+wqifno", libSceDiscMapUnknown_fJgP_plus_wqifno_nid_no_patch);
 
 }
