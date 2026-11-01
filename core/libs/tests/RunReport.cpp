@@ -1472,6 +1472,41 @@ void ResumeKeepsNewerReportTest() {
     Require(Read(collector.ReportPath()) == newer, "Resume deleted a newer completed report");
 }
 
+void ResumeDoesNotRaceAwayAnotherRunsReportTest() {
+    Directory executable, user;
+    RunReport::Collector other(SettingsFor(executable.path, user.path, IdB));
+    Require(other.Start(), "the other run did not start");
+    std::thread publisher;
+    auto settings = SettingsFor(executable.path, user.path, IdA);
+    settings.lockWait = std::chrono::milliseconds(3000);
+    settings.afterResumeRead = [&] {
+        publisher = std::thread([&] { other.Finish(RunReport::Exit::Clean, {}, 0); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    };
+    RunReport::Collector first(std::move(settings));
+    Require(first.Start(), "the first run did not start");
+    first.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(first.Finalized() && Contains(Read(first.ReportPath()), IdA), "the first run did not publish its report");
+    Require(first.Resume(), "the run was not reopened");
+    if (publisher.joinable()) publisher.join();
+    Require(other.Finalized(), "the other run did not finish");
+    Require(Contains(Read(first.ReportPath()), IdB), "Resume removed the report another run published between its read and its removal: " + Read(first.ReportPath()));
+}
+
+void FailedFinalWriteKeepsCheckpointTest() {
+    Directory executable, user;
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    fs::create_directory(collector.ReportPath());
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(!collector.Finalized(), "a report that could not be written was reported as finalized");
+    Require(fs::exists(collector.CheckpointPath()), "the checkpoint of a run whose final write failed was removed");
+#ifdef _WIN32
+    RunReport::ProcessDetachCleanup();
+    Require(fs::exists(collector.CheckpointPath()), "process detach deleted the checkpoint of a run whose final write failed");
+#endif
+}
+
 void HandoffOutcomeTest() {
     {
         Directory executable, user;
@@ -1797,6 +1832,8 @@ int main(int argc, char** argv) {
         Run("resume-retracts-report", ResumeRetractsReportTest);
         Run("resume-keeps-newer-report", ResumeKeepsNewerReportTest);
         Run("handoff-outcome", HandoffOutcomeTest);
+        Run("resume-does-not-race-away-another-report", ResumeDoesNotRaceAwayAnotherRunsReportTest);
+        Run("failed-final-write-keeps-checkpoint", FailedFinalWriteKeepsCheckpointTest);
         Run("deferred-worker", DeferredWorkerTest);
         Run("checkpoint-does-not-block-hooks", CheckpointDoesNotBlockHooksTest);
         Run("coverage-off", CoverageOffTest);

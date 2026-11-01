@@ -178,6 +178,7 @@ struct Settings {
     std::function<GameInfo()> game;
     std::function<void()> beforeCheckpointRemoval;
     std::function<void()> duringCheckpointWrite;
+    std::function<void()> afterResumeRead;
     std::chrono::milliseconds checkpointInterval{5000};
     std::chrono::milliseconds lockWait{2000};
     std::chrono::milliseconds tableWait{200};
@@ -223,6 +224,15 @@ private:
     std::filesystem::path path;
 };
 
+struct PublishRelease {
+    void operator()(FileLock* lock) const {
+        if (lock == nullptr) return;
+        lock->RemoveAndRelease();
+        delete lock;
+    }
+};
+using PublishLock = std::unique_ptr<FileLock, PublishRelease>;
+
 class Collector {
 public:
     explicit Collector(Settings settings);
@@ -246,6 +256,7 @@ public:
     struct Tables;
 
 private:
+    PublishLock AcquirePublishLock(std::chrono::milliseconds wait) const;
     void Work();
     void RefreshGame(bool force = false);
     BuildInfo Provenance() const;
@@ -283,6 +294,10 @@ private:
     std::atomic<int> lost[4];
     HostIdentifiers host;
 };
+
+#ifdef _WIN32
+void ProcessDetachCleanup();
+#endif
 
 }
 

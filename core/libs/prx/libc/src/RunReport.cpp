@@ -1745,8 +1745,10 @@ namespace {
 
 wchar_t g_exitCheckpoint[1024];
 std::atomic<HANDLE> g_exitLock{INVALID_HANDLE_VALUE};
+std::atomic<bool> g_exitKeepCheckpoint{false};
 
 void RememberForExit(const fs::path& checkpoint, void* lock) {
+    g_exitKeepCheckpoint = false;
     const auto text = checkpoint.native();
     g_exitCheckpoint[0] = L'\0';
     if (text.size() < std::size(g_exitCheckpoint)) {
@@ -1756,11 +1758,25 @@ void RememberForExit(const fs::path& checkpoint, void* lock) {
     g_exitLock = lock != nullptr ? static_cast<HANDLE>(lock) : INVALID_HANDLE_VALUE;
 }
 
+void KeepCheckpointAtExit() {
+    g_exitKeepCheckpoint = true;
+}
+
 void ForgetForExit() {
     g_exitLock = INVALID_HANDLE_VALUE;
     g_exitCheckpoint[0] = L'\0';
 }
 
+}
+
+void ProcessDetachCleanup() {
+    const HANDLE lock = g_exitLock.exchange(INVALID_HANDLE_VALUE);
+    if (lock != INVALID_HANDLE_VALUE) {
+        FILE_DISPOSITION_INFO disposition{};
+        disposition.DeleteFile = TRUE;
+        SetFileInformationByHandle(lock, FileDispositionInfo, &disposition, sizeof(disposition));
+    }
+    if (g_exitCheckpoint[0] != L'\0' && !g_exitKeepCheckpoint) DeleteFileW(g_exitCheckpoint);
 }
 #endif
 
@@ -1880,6 +1896,27 @@ void Collector::BeginWorker() {
     }
 }
 
+PublishLock Collector::AcquirePublishLock(std::chrono::milliseconds wait) const {
+    // One lock file per report name. The holder removes it on release; a waiter that locked the removed file sees IsCurrent() fail and tries again on the new one,
+    // so two holders never share the lock and no file is left behind.
+    try {
+        auto path = reportPath;
+        path += ".publish.lock";
+        const auto deadline = std::chrono::steady_clock::now() + wait;
+        for (;;) {
+            bool busy = false;
+            if (auto lock = FileLock::TryAcquire(path, busy)) {
+                if (lock->IsCurrent()) return PublishLock(lock.release());
+                busy = true;
+            }
+            if (!busy || std::chrono::steady_clock::now() >= deadline) return nullptr;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    } catch (...) {
+        return nullptr;
+    }
+}
+
 bool Collector::Resume() {
     try {
         {
@@ -1903,9 +1940,15 @@ bool Collector::Resume() {
         RememberForExit(checkpointPath, lock->NativeHandle());
 #endif
         if (reportPublished) {
-            std::string current;
-            std::error_code error;
-            if (ReadBounded(reportPath, MaxBytes, current) && current == publishedBytes) fs::remove(reportPath, error);
+            // The report name is shared by every run from this executable folder. Read, compare and remove under the folder's publish lock, so another run cannot
+            // publish between the read and the remove; without the lock the report is left in place (a stale report is better than deleting another run's).
+            if (auto publishLock = AcquirePublishLock(settings.lockWait)) {
+                std::string current;
+                std::error_code error;
+                const bool read = ReadBounded(reportPath, MaxBytes, current);
+                if (settings.afterResumeRead) settings.afterResumeRead();
+                if (read && current == publishedBytes) fs::remove(reportPath, error);
+            }
             reportPublished = false;
             publishedBytes.clear();
         }
@@ -2125,6 +2168,9 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
         std::unique_lock files(writeMutex, std::defer_lock);
         if (!files.try_lock_for(settings.lockWait)) {
             std::fputs("[run-report] a checkpoint write did not finish; the report of this run is left to the next start\n", stderr);
+#ifdef _WIN32
+            KeepCheckpointAtExit();
+#endif
             std::lock_guard guard(mutex);
             finalized = false;
             state = 2;
@@ -2134,6 +2180,7 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
         try {
             const auto text = Serialize(Snapshot(exit, std::move(stop), exitCode, false), host);
             std::string error;
+            auto publishLock = AcquirePublishLock(settings.lockWait);   // serializes publication with another instance's Resume retraction of the shared report name
             if (WriteAtomically(reportPath, text, settings.runId.substr(0, 8), error)) {
                 reportPublished = true;
                 publishedBytes = text;
@@ -2148,11 +2195,20 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
                 std::fprintf(stderr, "[run-report] wrote %s\n", reportPath.filename().string().c_str());
             } else {
                 std::fprintf(stderr, "[run-report] could not write %s: %s\n", reportPath.filename().string().c_str(), error.c_str());
+#ifdef _WIN32
+                KeepCheckpointAtExit();
+#endif
             }
         } catch (const std::exception& failure) {
             std::fprintf(stderr, "[run-report] could not write the report: %s\n", failure.what());
+#ifdef _WIN32
+            KeepCheckpointAtExit();
+#endif
         } catch (...) {
             std::fputs("[run-report] could not write the report\n", stderr);
+#ifdef _WIN32
+            KeepCheckpointAtExit();
+#endif
         }
         files.unlock();
         std::lock_guard guard(mutex);
@@ -2310,15 +2366,7 @@ extern "C" void LibcRunReportMissingFunction_nid_no_patch(const char* name, cons
 
 #ifdef _WIN32
 extern "C" BOOL WINAPI DllMain(HINSTANCE, DWORD reason, LPVOID reserved) {
-    if (reason == DLL_PROCESS_DETACH && reserved != nullptr) {
-        const HANDLE lock = RunReport::g_exitLock.exchange(INVALID_HANDLE_VALUE);
-        if (lock != INVALID_HANDLE_VALUE) {
-            FILE_DISPOSITION_INFO disposition{};
-            disposition.DeleteFile = TRUE;
-            SetFileInformationByHandle(lock, FileDispositionInfo, &disposition, sizeof(disposition));
-        }
-        if (RunReport::g_exitCheckpoint[0] != L'\0') DeleteFileW(RunReport::g_exitCheckpoint);
-    }
+    if (reason == DLL_PROCESS_DETACH && reserved != nullptr) RunReport::ProcessDetachCleanup();
     return TRUE;
 }
 #endif

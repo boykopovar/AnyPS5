@@ -180,8 +180,7 @@ Handle Duplicate(HANDLE source, DWORD access) {
             throw std::system_error(errno, std::generic_category(), "LoadExec: giving the host standard error back to descriptor 2");
         LogFileRelease_nid_no_patch();
         std::filesystem::current_path(target.parent_path());
-        if (reportFinalized && ((descriptor > 3 && close_range(3, static_cast<unsigned>(descriptor - 1), 0) != 0) ||
-            close_range(static_cast<unsigned>(std::max(3, descriptor + 1)), ~0u, 0) != 0))
+        if (!LoadExecIsolateDescriptors_nid_no_patch(descriptor, reportFinalized))
             throw std::system_error(errno, std::generic_category(), "LoadExec: closing the old executable's descriptors");
         fexecve(descriptor, pointers.data(), environ);
         throw std::system_error(errno, std::generic_category(), "LoadExec: replacing the executable");
@@ -231,6 +230,21 @@ Handle Duplicate(HANDLE source, DWORD access) {
 #endif
 
 }
+
+#if defined(__linux__)
+#ifndef CLOSE_RANGE_CLOEXEC
+#define CLOSE_RANGE_CLOEXEC (1U << 2)
+#endif
+
+// Descriptor isolation never depends on the diagnostic report: every descriptor above 2 except KEEP stays out of the replacement. A finished report means no report
+// writer is running, so they are closed. When it could not finish, a checkpoint writer may still be using descriptors, so they are only marked close-on-exec: the
+// replacement still cannot inherit them, and a failed exec leaves them open for the writer and for Resume. Returns false (errno set) on failure.
+extern "C" bool LoadExecIsolateDescriptors_nid_no_patch(int keep, bool reportFinalized) {
+    const unsigned flags = reportFinalized ? 0u : static_cast<unsigned>(CLOSE_RANGE_CLOEXEC);
+    return (keep <= 3 || close_range(3, static_cast<unsigned>(keep - 1), flags) == 0) && close_range(static_cast<unsigned>(std::max(3, keep + 1)), ~0u, flags) == 0;
+}
+
+#endif
 
 extern "C" bool LoadConvertedExecutable_nid_no_patch(const std::filesystem::path& target, const char* const* arguments) {
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__)
