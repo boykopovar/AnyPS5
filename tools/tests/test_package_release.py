@@ -413,6 +413,122 @@ class ReleasePackageTests(unittest.TestCase):
         with working_directory(self.source), self.assertRaisesRegex(RuntimeError, "Missing patched libraries"):
             package_release.package("linux", self.build, self.output, "v1.0")
 
+    def test_promotion_failure_restores_previous_native_assets(self):
+        names = sorted(["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"])
+        for exception in (OSError, KeyboardInterrupt):
+            for present in (names, names[::2], []):
+                for blocked in names:
+                    with self.subTest(exception=exception.__name__, present=present, blocked=blocked), tempfile.TemporaryDirectory() as tmp:
+                        output = Path(tmp)
+                        previous = {name: b"old " + name.encode() for name in present}
+                        previous["unrelated.txt"] = b"unrelated"
+                        for name, content in previous.items():
+                            (output / name).write_bytes(content)
+                        timestamps = {name: (output / name).stat().st_mtime_ns for name in previous}
+                        failure = exception("simulated native promotion failure")
+                        original_replace = Path.replace
+                        failed = False
+
+                        def replace(source, destination):
+                            nonlocal failed
+                            destination = Path(destination)
+                            if destination == output / blocked and source.parent != output and not failed:
+                                failed = True
+                                raise failure
+                            return original_replace(source, destination)
+
+                        with patch.object(Path, "replace", replace), self.assertRaises(exception) as error:
+                            package_release.package("linux", self.build, output, "v1")
+                        self.assertIs(error.exception, failure)
+                        self.assertTrue(failed)
+                        self.assertEqual({path.name for path in output.iterdir()}, set(previous))
+                        for name, content in previous.items():
+                            self.assertEqual((output / name).read_bytes(), content)
+                            self.assertEqual((output / name).stat().st_mtime_ns, timestamps[name])
+
+    @unittest.skipUnless(os.name == "nt", "Windows file sharing prevents replacement")
+    def test_locked_destination_restores_previous_native_assets(self):
+        names = sorted(["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"])
+        for blocked in names:
+            with self.subTest(blocked=blocked), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp)
+                package_release.package("linux", self.build, output, "v1")
+                previous = {path.name: path.read_bytes() for path in output.iterdir()}
+                candidate = b"candidate " + blocked.encode()
+                self.library.write_bytes(candidate)
+                self.unpatched.write_bytes(candidate + b" unpatched")
+                (self.build / "core/relinker/relinker").write_bytes(candidate + b" executable")
+                with (output / blocked).open("rb"), self.assertRaises(OSError):
+                    package_release.package("linux", self.build, output, "v1")
+                self.assertEqual({path.name for path in output.iterdir()}, set(previous))
+                self.assertEqual({path.name: path.read_bytes() for path in output.iterdir()}, previous)
+                package_release.package("linux", self.build, output, "v1")
+                with zipfile.ZipFile(output / "prx-linux-v1.zip") as archive:
+                    self.assertEqual(archive.read("libs/libc.prx"), candidate)
+                self.assertEqual((output / "relinker-v1").read_bytes(), candidate + b" executable")
+
+    def test_failed_native_promotion_restores_symlinks(self):
+        self.output.mkdir()
+        names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"]
+        target = self.root / "previous.zip"
+        target.write_bytes(b"original linked target")
+        self.file_link(self.output / names[0], target)
+        self.file_link(self.output / names[1], "missing.tar.gz")
+        for name in names[2:]:
+            (self.output / name).write_bytes(b"old " + name.encode())
+        original_replace = Path.replace
+        failed = False
+
+        def replace(source, destination):
+            nonlocal failed
+            if Path(destination) == self.output / "relinker-v1" and not failed:
+                failed = True
+                raise OSError("simulated native promotion failure")
+            return original_replace(source, destination)
+
+        with patch.object(Path, "replace", replace), self.assertRaisesRegex(OSError, "simulated native promotion failure"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual({path.name for path in self.output.iterdir()}, set(names))
+        self.assertEqual((self.output / names[0]).readlink(), target)
+        self.assertEqual((self.output / names[1]).readlink(), Path("missing.tar.gz"))
+        self.assertEqual(target.read_bytes(), b"original linked target")
+        self.assertFalse((self.output / "missing.tar.gz").exists())
+        for name in names[2:]:
+            self.assertEqual((self.output / name).read_bytes(), b"old " + name.encode())
+
+    def test_failed_native_rollback_retains_recovery_assets(self):
+        names = sorted(["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"])
+        self.output.mkdir()
+        for name in names:
+            (self.output / name).write_bytes(b"old " + name.encode())
+        original_replace = Path.replace
+        promotion_failed = False
+        recovery_failed = False
+
+        def replace(source, destination):
+            nonlocal promotion_failed, recovery_failed
+            destination = Path(destination)
+            if destination == self.output / names[-1] and not promotion_failed:
+                promotion_failed = True
+                raise OSError("simulated native promotion failure")
+            if promotion_failed and destination == self.output / names[0]:
+                recovery_failed = True
+                raise OSError("simulated native restoration failure")
+            return original_replace(source, destination)
+
+        with patch.object(Path, "replace", replace), self.assertRaises(RuntimeError) as error:
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertTrue(promotion_failed)
+        self.assertTrue(recovery_failed)
+        self.assertIn("simulated native promotion failure", str(error.exception))
+        self.assertIn("simulated native restoration failure", str(error.exception))
+        recovery = [path for path in self.output.iterdir() if path.is_dir()]
+        self.assertEqual(len(recovery), 1)
+        self.assertIn(str(recovery[0]), str(error.exception))
+        self.assertEqual((recovery[0] / names[0]).read_bytes(), b"old " + names[0].encode())
+        for name in names[1:]:
+            self.assertEqual((self.output / name).read_bytes(), b"old " + name.encode())
+
     def test_directory_destination_preserves_every_existing_asset(self):
         names = ["prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"]
         for blocked in names:
