@@ -1,5 +1,7 @@
 # libSceFreeType technical debt
 
+- [FT_Library_SetLcdFilterWeights](../../../core/libs/prx/libSceFreeType/src/LcdFilter.cpp) (libSceFreeType) - as for `FT_Library_SetLcdFilter`, the bundled build returns `FT_Err_Unimplemented_Feature` and no weights take effect; the signature is unverified. The five weights are copied from the guest buffer before the call
+- [FT_Library_SetLcdFilter](../../../core/libs/prx/libSceFreeType/src/LcdFilter.cpp) (libSceFreeType) - the bundled FreeType 2.13.3 is built without `FT_CONFIG_OPTION_SUBPIXEL_RENDERING`, so the call returns `FT_Err_Unimplemented_Feature` as in [ftlcdfil.c](https://github.com/freetype/freetype/blob/42608f77f20749dd6ddc9e0536788eaad70ea4b5/src/base/ftlcdfil.c) and no filter takes effect; whether the console library enables subpixel rendering and its signature are unverified
 ### Unknown function info
 - [autofitter glyph-to-script-map](../../../core/libs/prx/libSceFreeType/src/ModuleProperties.cpp) assumes the FreeType LP64 face/map carrier and translates the guest face to its host face. The returned 16-bit map borrows host face storage and is valid only while that face is alive; the setter returns the bundled FreeType error. This is an exception to the general unsupported-property note below. Console ABI, glyph classification and firmware behavior are unverified.
 
