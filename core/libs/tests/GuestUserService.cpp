@@ -148,6 +148,11 @@ int main() {
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID, &value) == USER_SERVICE_OK);
         Require(value == setting.value);
     }
+    Require(sceUserServiceGetAccessibilityPressAndHoldDelay(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetAccessibilityPressAndHoldDelay(USER_SERVICE_USER_ID_INVALID, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    for (int user_id : absent_users) {
+        Require(sceUserServiceGetAccessibilityPressAndHoldDelay(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    }
     int initialUser = -1;
     Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK && initialUser == USER_SERVICE_INITIAL_USER_ID);
