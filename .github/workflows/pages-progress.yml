@@ -5,7 +5,11 @@ on:
     branches: [main]
     paths:
       - core/libs/prx/**
-      - core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp
+      - core/shader/recompiler/**
+      - tools/progress.py
+      - tools/shader_scan.py
+      - tools/rdna2_isa_forms.txt
+      - tools/rdna_isa.txt
 
 permissions:
   contents: read
@@ -30,7 +34,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          python3 tools/progress.py "$RUNNER_TEMP/progress"
+          python3 tools/progress.py --require-shader-source "$RUNNER_TEMP/progress"
           site=$(gh api "repos/$GH_REPO/pages" --jq .html_url)
           if curl -fsSL "${site%/}/progress.json?$GITHUB_SHA" -o "$RUNNER_TEMP/deployed.json" &&
             cmp -s "$RUNNER_TEMP/deployed.json" "$RUNNER_TEMP/progress/progress.json"; then

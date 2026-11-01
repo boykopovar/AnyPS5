@@ -893,6 +893,78 @@ std::uint64_t APS5_VABI _WStoul_nid_postfix(const char16_t* str, char16_t** endp
     return wcstoul_nid_postfix(str, endptr, base);
 }
 
+unsigned long long APS5_VABI _WStoull_nid_postfix(const char16_t* str, char16_t** endptr, int base) {
+    static constexpr char16_t digits[] = u"0123456789abcdefghijklmnopqrstuvwxyz";
+    static constexpr signed char maxDigits[] = {0, 0, 65, 41, 33, 28, 25, 23, 22, 21, 20, 19, 18, 18, 17, 17, 17, 16, 16,
+        16, 15, 15, 15, 15, 14, 14, 14, 14, 14, 14, 14, 13, 13, 13, 13, 13, 13};
+    const char16_t* current = str;
+    while (_Iswctype_nid_postfix(*current, 9)) ++current;
+    const char16_t sign = *current == u'-' || *current == u'+' ? *current++ : u'+';
+    if (base < 0 || base == 1 || base > 36) {
+        if (endptr) *endptr = const_cast<char16_t*>(str);
+        return 0;
+    }
+    const bool hexPrefix = current[0] == u'0' && (current[1] | 0x20) == u'x';
+    if (base == 0) base = current[0] != u'0' ? 10 : hexPrefix ? 16 : 8;
+    if (base == 16 && hexPrefix) current += 2;
+    const char16_t* const start = current;
+    while (*current == u'0') ++current;
+    const char16_t* const significant = current;
+    unsigned long long value = 0;
+    unsigned long long previous = 0;
+    unsigned long long digit = 0;
+    for (const char16_t* found; (found = wmemchr_nid_postfix(digits, static_cast<char16_t>(_Towctrans_nid_postfix(*current, 1)),
+             static_cast<std::size_t>(base))) != nullptr; ++current) {
+        previous = value;
+        digit = static_cast<unsigned long long>(found - digits);
+        value = value * static_cast<unsigned long long>(base) + digit;
+    }
+    if (current == start) {
+        if (endptr) *endptr = const_cast<char16_t*>(str);
+        return 0;
+    }
+    const std::ptrdiff_t excess = (current - significant) - maxDigits[base];
+    if (excess > 0 || (excess == 0 && (value < digit || (value - digit) / static_cast<unsigned long long>(base) != previous))) {
+        errno = ERANGE;
+        value = std::numeric_limits<unsigned long long>::max();
+    } else if (sign == u'-') {
+        value = 0 - value;
+    }
+    if (endptr) *endptr = const_cast<char16_t*>(current);
+    return value;
+}
+
+long long APS5_VABI _WStoll_nid_postfix(const char16_t* str, char16_t** endptr, int base) {
+    const char16_t* current = str;
+    while (_Iswctype_nid_postfix(*current, 9)) ++current;
+    const char16_t sign = *current == u'-' || *current == u'+' ? *current++ : u'+';
+    char16_t* stop = nullptr;
+    const unsigned long long magnitude = _WStoull_nid_postfix(current, &stop, base);
+    if (stop == current) {
+        if (endptr) *endptr = const_cast<char16_t*>(str);
+        return 0;
+    }
+    if (endptr) *endptr = stop;
+    constexpr unsigned long long limit = 0x8000000000000000ULL;
+    if (sign == u'-' ? magnitude > limit : magnitude >= limit) {
+        errno = ERANGE;
+        return sign == u'-' ? std::numeric_limits<long long>::min() : std::numeric_limits<long long>::max();
+    }
+    return static_cast<long long>(sign == u'-' ? 0 - magnitude : magnitude);
+}
+
+double APS5_VABI _WStod_nid_postfix(const char16_t* str, char16_t** endptr, std::int64_t pten) {
+    return ParseAsciiPrefix(str, endptr, [pten](const char* text, char** end) { return _Stodx_nid_postfix(text, end, pten, nullptr); });
+}
+
+float APS5_VABI _WStof_nid_postfix(const char16_t* str, char16_t** endptr, std::int64_t pten) {
+    return ParseAsciiPrefix(str, endptr, [pten](const char* text, char** end) { return _Stofx_nid_postfix(text, end, pten, nullptr); });
+}
+
+long double APS5_VABI _WStold_nid_postfix(const char16_t* str, char16_t** endptr, std::int64_t pten) {
+    return ParseAsciiPrefix(str, endptr, [pten](const char* text, char** end) { return _Stoldx_nid_postfix(text, end, pten, nullptr); });
+}
+
 int APS5_VABI wcscoll_nid_postfix(const char16_t* first, const char16_t* second) {
     return wcscmp_nid_postfix(first, second);
 }
