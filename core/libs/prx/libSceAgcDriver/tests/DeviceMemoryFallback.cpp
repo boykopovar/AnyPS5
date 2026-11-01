@@ -18,12 +18,15 @@ void Expect(bool condition, const std::string& what) {
 
 constexpr std::uint32_t HostType = 0;
 constexpr std::uint32_t DeviceType = 1;
+constexpr std::uint32_t SecondDeviceType = 2;
 constexpr std::uint64_t MiB = 1ull << 20u;
 
 std::uint64_t reportedBudget = 0;
 std::uint64_t reportedUsage = 0;
 std::uint64_t reportedHostBudget = 0;
 std::uint64_t reportedHostUsage = 0;
+std::uint64_t reportedSecondBudget = 0;
+std::uint64_t reportedSecondUsage = 0;
 
 VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* properties) {
     auto* reported = static_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(properties->pNext);
@@ -31,6 +34,8 @@ VKAPI_ATTR void VKAPI_CALL mockMemoryProperties2(VkPhysicalDevice, VkPhysicalDev
     reported->heapUsage[0] = reportedUsage;
     reported->heapBudget[1] = reportedHostBudget;
     reported->heapUsage[1] = reportedHostUsage;
+    reported->heapBudget[2] = reportedSecondBudget;
+    reported->heapUsage[2] = reportedSecondUsage;
 }
 
 Context mockContext(bool budgetExtension) {
@@ -140,21 +145,48 @@ void BufferPlacementTests() {
 
 void HeadroomTests() {
     Context context = mockContext(true);
-    const auto check = [&](const char* what, std::uint64_t budget, std::uint64_t usage, std::uint64_t bytes, bool expected) {
+    const auto check = [&](const char* what, std::uint32_t type, std::uint64_t budget, std::uint64_t usage, std::uint64_t bytes, bool expected) {
         reportedBudget = budget;
         reportedUsage = usage;
-        Expect(context.DeviceLocalHeadroom(bytes) == expected, std::string(what) + ": expected " + (expected ? "room" : "no room"));
+        Expect(context.DeviceLocalHeadroom(type, bytes) == expected, std::string(what) + ": expected " + (expected ? "room" : "no room"));
     };
-    check("room below seven eighths of the budget", 4096 * MiB, 3000 * MiB, 64 * MiB, true);
-    check("allocation ends at seven eighths exactly", 4096 * MiB, 3520 * MiB, 64 * MiB, true);
-    check("allocation crosses seven eighths", 4096 * MiB, 3521 * MiB, 64 * MiB, false);
-    check("usage already past seven eighths", 4096 * MiB, 3700 * MiB, 1 * MiB, false);
-    check("budget not reported", 0, 4000 * MiB, 64 * MiB, true);
+    check("room below seven eighths of the budget", DeviceType, 4096 * MiB, 3000 * MiB, 64 * MiB, true);
+    check("allocation ends at seven eighths exactly", DeviceType, 4096 * MiB, 3520 * MiB, 64 * MiB, true);
+    check("allocation crosses seven eighths", DeviceType, 4096 * MiB, 3521 * MiB, 64 * MiB, false);
+    check("usage already past seven eighths", DeviceType, 4096 * MiB, 3700 * MiB, 1 * MiB, false);
+    check("budget not reported", DeviceType, 0, 4000 * MiB, 64 * MiB, true);
+    check("a host memory type is not held to the device-local budget", HostType, 4096 * MiB, 4000 * MiB, 64 * MiB, true);
+    check("unknown memory type", 7, 4096 * MiB, 4000 * MiB, 64 * MiB, true);
     context.memoryProperties2 = nullptr;
-    check("no VK_EXT_memory_budget", 4096 * MiB, 4000 * MiB, 64 * MiB, true);
+    check("no VK_EXT_memory_budget", DeviceType, 4096 * MiB, 4000 * MiB, 64 * MiB, true);
     context.memoryProperties2 = mockMemoryProperties2;
-    context.memory.memoryTypes[DeviceType].propertyFlags = 0;
-    check("no device-local memory type", 4096 * MiB, 4000 * MiB, 64 * MiB, true);
+    context.memory.memoryHeaps[0].flags = 0;
+    check("no device-local heap", DeviceType, 4096 * MiB, 4000 * MiB, 64 * MiB, true);
+}
+
+void SecondHeapHeadroomTests() {
+    Context context = mockContext(true);
+    context.memory.memoryHeapCount = 3;
+    context.memory.memoryHeaps[2] = {4096 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
+    context.memory.memoryTypeCount = 3;
+    context.memory.memoryTypes[SecondDeviceType] = {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 2};
+    reportedBudget = 4096 * MiB;
+    reportedSecondBudget = 4096 * MiB;
+    const auto check = [&](const char* what, std::uint32_t mask, std::uint64_t firstUsage, std::uint64_t secondUsage, std::uint32_t expectedType, bool expected) {
+        reportedUsage = firstUsage;
+        reportedSecondUsage = secondUsage;
+        const auto type = context.BufferMemoryType(mask, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 64 * MiB);
+        Expect(type == expectedType, std::string(what) + ": chose memory type " + std::to_string(type) + ", expected " + std::to_string(expectedType));
+        Expect(context.DeviceLocalHeadroom(type, 64 * MiB) == expected, std::string(what) + ": expected " + (expected ? "room" : "no room"));
+    };
+    const std::uint32_t secondOnly = (1u << HostType) | (1u << SecondDeviceType);
+    const std::uint32_t all = secondOnly | (1u << DeviceType);
+    check("mask excludes the first device-local type, first heap under pressure", secondOnly, 3700 * MiB, 1000 * MiB, SecondDeviceType, true);
+    check("mask excludes the first device-local type, second heap under pressure", secondOnly, 1000 * MiB, 3700 * MiB, SecondDeviceType, false);
+    check("mask allows both device-local types, first heap under pressure", all, 3700 * MiB, 1000 * MiB, DeviceType, false);
+    check("mask allows both device-local types, second heap under pressure", all, 1000 * MiB, 3700 * MiB, DeviceType, true);
+    reportedSecondBudget = 0;
+    reportedSecondUsage = 0;
 }
 
 }
@@ -173,6 +205,7 @@ int main() {
         RefusedFallbackTests();
         ReclaimTests();
         HeadroomTests();
+        SecondHeapHeadroomTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
