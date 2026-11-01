@@ -36,6 +36,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
     const Domain::ProgramHeader* dynamic = nullptr;
     const Domain::ProgramHeader* dynlib = nullptr;
     const Domain::ProgramHeader* tls = nullptr;
+    const Domain::ProgramHeader* ehFrame = nullptr;
     std::map<std::uint64_t, std::uint64_t> loads;
     constexpr std::uint32_t sceComment = 0x6fffff00;
     constexpr std::uint32_t sceLibVersion = 0x6fffff01;
@@ -59,6 +60,10 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (header.Type == 0x61000000) {
             if (dynlib != nullptr) fail("Duplicate SCE dynamic data");
             dynlib = &header;
+        }
+        if (header.Type == 0x6474e550) {
+            if (ehFrame != nullptr) fail("Duplicate EH frame segment");
+            ehFrame = &header;
         }
         if (header.Type == 7) {
             if (tls != nullptr || header.FileSize > header.MemorySize || (header.Alignment > 1 && !std::has_single_bit(header.Alignment))) fail("Invalid TLS segment");
@@ -261,6 +266,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         Io::AppendU64(image.Dynamic.RelaData, 8);
         Io::AppendU64(image.Dynamic.RelaData, addend);
     }
+    std::map<std::uint64_t, std::size_t> relativeEntries;
     const auto copyRelocations = [&](std::uint64_t offset, std::uint64_t size, std::vector<std::uint8_t>& output, bool plt) {
         output.reserve(size);
         for (std::uint64_t index = 0; index < size; index += 24) {
@@ -275,6 +281,12 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             const auto target = Io::ReadU64(bytes, offset + index);
             const auto addend = Io::ReadU64(bytes, offset + index + 16);
             mapped(target, 8, 2);
+            const bool relative = !plt && relocation == 8 && (info >> 32) == 0;
+            if (const auto earlier = relativeEntries.find(target); relative && earlier != relativeEntries.end()) {
+                mapped(addend, 0, 0);
+                Io::WriteU64(output, earlier->second + 16, addend);
+                continue;
+            }
             const auto next = relocationTargets.lower_bound(target);
             if ((next != relocationTargets.end() && next->first < target + 8) || (next != relocationTargets.begin() && std::prev(next)->second > target)) fail("Overlapping guest relocations");
             relocationTargets.emplace(target, target + 8);
@@ -298,12 +310,14 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
                 if ((info >> 32) == 0 || (symbol.Info & 15) == 6 || (relocation != 1 && addend != 0) || (symbol.Section == 0 && symbol.Name.empty())) fail("Invalid guest symbol relocation");
             } else {
                 const auto& symbol = image.Symbols[info >> 32];
-                ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && tls != nullptr;
-                if (((info >> 32) == 0 && tls == nullptr) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
+                const bool hasTlsBlock = tls != nullptr && tls->MemorySize != 0;
+                ownTlsBlock = (info >> 32) != 0 && (relocation == 16 || relocation == 17) && symbol.Info == 3 && symbol.Section == 0 && symbol.Value == 0 && hasTlsBlock;
+                if (((info >> 32) == 0 && !hasTlsBlock) || ((info >> 32) != 0 && (symbol.Info & 15) != 6 && !ownTlsBlock) || ((symbol.Info & 15) == 6 && symbol.Section != 0 && !hasTlsBlock) || (relocation == 16 && addend != 0)) fail("Invalid guest TLS relocation");
             }
             const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
             if (ownTlsBlock) Io::WriteU64(output, position + 8, relocation);
+            if (relative) relativeEntries.emplace(target, position);
         }
     };
     copyRelocations(relaOffset, relaSize, image.Dynamic.RelaData, false);
