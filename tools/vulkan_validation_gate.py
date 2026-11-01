@@ -99,6 +99,17 @@ def artifact_hashes(build, tests, runtime):
     return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(paths)}
 
 
+def check_timeouts(tests, limit):
+    for test in tests:
+        for prop in test.get("properties", []):
+            if prop["name"] == "TIMEOUT_AFTER_MATCH":
+                raise GateError(f"{test['name']}: TIMEOUT_AFTER_MATCH can restart the requested test timeout")
+            if prop["name"] == "TIMEOUT":
+                value = prop["value"]
+                if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= limit:
+                    raise GateError(f"{test['name']}: TIMEOUT must be positive and at most {limit} seconds")
+
+
 def parse_report(path, expected):
     root = ET.parse(path).getroot()
     if root.tag not in ("testsuite", "testsuites"):
@@ -168,6 +179,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.repeat <= 0:
         parser.error("--repeat must be positive")
+    if args.test_timeout > 30:
+        parser.error("--test-timeout must be at most 30 seconds")
     if any(not re.fullmatch(r"-D[A-Za-z_][A-Za-z0-9_]*(?::[A-Z]+)?=.*", value) for value in args.cmake_arg):
         parser.error("--cmake-arg accepts only -D cache definitions")
     report = {"status": "incomplete", "iterations": [], "builds": {},
@@ -221,6 +234,7 @@ def main(argv=None):
             names = [test["name"] for test in tests]
             if not names or len(names) != len(set(names)):
                 raise GateError(f"{side}: expected nonempty unique test names")
+            check_timeouts(tests, args.test_timeout)
             for test in tests:
                 for prop in test.get("properties", []):
                     if prop["name"] in ("ENVIRONMENT", "ENVIRONMENT_MODIFICATION"):

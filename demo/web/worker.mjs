@@ -57,6 +57,7 @@ export async function downloadLibraries(target) {
       if (done) break;
       size += value.byteLength;
       if (size > asset.size) throw new Error("System library download is incomplete");
+      report({ phase: "Downloading system libraries", completed: size, total: asset.size });
       chunks.push(value);
     }
     if (size !== asset.size) throw new Error("System library download is incomplete");
@@ -194,7 +195,7 @@ self.onmessage = async ({ data }) => {
       summaries = [];
     } else throw new Error("Unknown worker request");
   } catch (error) {
-    self.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
+    self.postMessage({ type: "error", message: error instanceof TypeError ? "Cannot reach the release files: check the connection and try again." : error instanceof Error ? error.message : String(error) });
   } finally {
     busy = false;
   }

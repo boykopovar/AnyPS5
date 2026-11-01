@@ -34,6 +34,9 @@ int main() {
     std::int32_t status = 0;
     Require(sceZlibFinalize() == static_cast<std::int32_t>(0x81120032));
     Require(sceZlibInflate(nullptr, 0, nullptr, 0, nullptr) == static_cast<std::int32_t>(0x81120032));
+    Require(sceZlibWaitForDone(nullptr, nullptr) == static_cast<std::int32_t>(0x81120032));
+    std::uint64_t earlyId = 0;
+    Require(sceZlibWaitForDone(&earlyId, nullptr) == static_cast<std::int32_t>(0x81120032));
     Require(sceZlibInitialize(nullptr, 1) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibInitialize(output, 0) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibInitialize(nullptr, 0) == 0);
@@ -145,4 +148,7 @@ int main() {
     Require(sceZlibInitialize(nullptr, 0) == 0);
     Require(sceZlibGetResult(id, &produced, &status) == static_cast<std::int32_t>(0x81120002));
     Require(sceZlibFinalize() == 0);
+    Require(sceZlibFinalize() == static_cast<std::int32_t>(0x81120032));
+    Require(sceZlibInflate(nullptr, 0, nullptr, 0, nullptr) == static_cast<std::int32_t>(0x81120032));
+    Require(sceZlibWaitForDone(nullptr, nullptr) == static_cast<std::int32_t>(0x81120032));
 }
