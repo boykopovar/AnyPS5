@@ -1,6 +1,8 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -635,6 +637,80 @@ void TestUTFConversions() {
     Throws([&] { FromUTF8(U8(""), std::size_t(0x80000000)); });
 }
 
+void TestSymbols() {
+    using NKWebKit::WtfAbi::SymbolImpl;
+    const auto Create = &_ZN3WTF10SymbolImpl6createERNS_10StringImplE;
+    const auto Private = &_ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE;
+    const auto Hash = &_ZN3WTF10SymbolImpl17nextHashForSymbolEv;
+    const auto Add = &_ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE;
+    const auto Lookup = &_ZN3WTF14AtomStringImpl6lookUpEPKhj;
+    auto firstHash = Hash();
+    Check((firstHash & 0x800000FFU) == 0x80000000U && Hash() == firstHash + 256);
+    auto base = Create8(U8("symbol string with shared storage"), 33);
+    {
+        auto symbol = Create(*base.impl);
+        auto* layout = reinterpret_cast<SymbolImpl*>(symbol.impl);
+        Check(layout->owner == base.impl && base.impl->refCount == 4);
+        Check(symbol.impl->data == base.impl->data && symbol.impl->hashAndFlags == 38);
+        Check(layout->flags == 0 && layout->hashForSymbol == firstHash + 512);
+        Check(!Lookup(U8("symbol string with shared storage"), 33).impl);
+        auto atom = Add(*symbol.impl);
+        Check(atom.impl != symbol.impl && (atom.impl->hashAndFlags & 48) == 16);
+        Check(*reinterpret_cast<StringImpl**>(reinterpret_cast<unsigned char*>(atom.impl) + 24) == base.impl);
+        Check(base.impl->refCount == 6 && symbol.impl->refCount == 2);
+        _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(symbol.impl, nullptr));
+        Check(base.impl->refCount == 4 && Lookup(U8("symbol string with shared storage"), 33).impl == atom.impl);
+    }
+    Check(base.impl->refCount == 2 && !Lookup(U8("symbol string with shared storage"), 33).impl);
+    {
+        auto part = SharedSubstring(&base, 1, 20);
+        auto symbol = Private(*part.impl);
+        auto* layout = reinterpret_cast<SymbolImpl*>(symbol.impl);
+        Check(layout->owner == base.impl && layout->flags == 4);
+        Check(base.impl->refCount == 6 && part.impl->refCount == 2);
+        Check(symbol.impl->data == part.impl->data && symbol.impl->length == 20);
+        auto nested = Create(*symbol.impl);
+        Check(reinterpret_cast<SymbolImpl*>(nested.impl)->owner == base.impl);
+        Check(symbol.impl->refCount == 2 && base.impl->refCount == 8);
+        auto atom = _ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj(nested.impl, 1, 18);
+        Check(atom.impl->length == 18 && (atom.impl->hashAndFlags & 48) == 16);
+        Check(*reinterpret_cast<StringImpl**>(reinterpret_cast<unsigned char*>(atom.impl) + 24) == base.impl);
+    }
+    Check(base.impl->refCount == 2);
+    {
+        auto wide = Create16(u"wide symbol storage", 19);
+        auto symbol = Create(*wide.impl);
+        Check(symbol.impl->hashAndFlags == 34 && wide.impl->refCount == 4);
+        auto atom = Add(*symbol.impl);
+        Check(!(atom.impl->hashAndFlags & 36) && (atom.impl->hashAndFlags & 16));
+        Text(atom, "wide symbol storage");
+    }
+    {
+        auto shortText = Create8(U8("sym"), 3);
+        auto symbol = Create(*shortText.impl);
+        auto other = Private(*shortText.impl);
+        Check(reinterpret_cast<SymbolImpl*>(symbol.impl)->hashForSymbol != reinterpret_cast<SymbolImpl*>(other.impl)->hashForSymbol);
+        auto atom = Add(*symbol.impl);
+        Check(atom.impl != symbol.impl && atom.impl->data != shortText.impl->data);
+        Check(Add(*other.impl).impl == atom.impl);
+        Text(atom, "sym");
+    }
+    {
+        auto nullSymbol = _ZN3WTF10SymbolImpl16createNullSymbolEv();
+        auto* layout = reinterpret_cast<SymbolImpl*>(nullSymbol.impl);
+        Check(layout->flags == 1 && layout->owner && (layout->owner->refCount & 1));
+        Check(nullSymbol.impl->length == 0 && nullSymbol.impl->data == layout->owner->data);
+        Check(Add(*nullSymbol.impl).impl == layout->owner);
+    }
+    std::array<unsigned, 128> hashes{};
+    std::thread a([&] { for (unsigned i = 0; i < 64; ++i) hashes[i] = Hash(); });
+    std::thread b([&] { for (unsigned i = 64; i < 128; ++i) hashes[i] = Hash(); });
+    a.join();
+    b.join();
+    std::sort(hashes.begin(), hashes.end());
+    for (unsigned i = 1; i < hashes.size(); ++i) Check(hashes[i] == hashes[i - 1] + 256);
+}
+
 void TestAtoms() {
     const auto Add8 = &_ZN3WTF14AtomStringImpl3addEPKhj;
     const auto Add16 = &_ZN3WTF14AtomStringImpl3addEPKDsj;
@@ -933,6 +1009,7 @@ void Run() {
     TestUTFConversions();
     TestSubstrings();
     TestDestroy();
+    TestSymbols();
     TestAtoms();
     TestCStrings();
     TestPrimitiveState();

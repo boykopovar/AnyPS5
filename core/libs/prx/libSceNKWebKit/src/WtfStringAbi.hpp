@@ -14,6 +14,18 @@ struct StringImpl {
     mutable unsigned hashAndFlags;
 };
 
+struct SymbolImpl {
+    StringImpl string;
+    StringImpl* owner;
+    unsigned hashForSymbol;
+    unsigned flags;
+};
+
+static_assert(sizeof(SymbolImpl) == 40);
+static_assert(offsetof(SymbolImpl, owner) == 24);
+static_assert(offsetof(SymbolImpl, hashForSymbol) == 32);
+static_assert(offsetof(SymbolImpl, flags) == 36);
+
 struct StringView {
     const void* data;
     unsigned length;

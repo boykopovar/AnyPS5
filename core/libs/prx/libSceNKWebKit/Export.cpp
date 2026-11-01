@@ -18469,18 +18469,6 @@ int APS5_VABI _ZN3WTF10StringView16GraphemeClusters8IteratorppEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF10SymbolImpl16createNullSymbolEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10SymbolImpl17nextHashForSymbolEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10SymbolImpl6createERNS_10StringImplE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF10TextStream10startGroupEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19219,10 +19207,6 @@ int APS5_VABI _ZN3WTF17GregorianDateTimeC1EdNS_15LocalTimeOffsetE() {
 }
 
 int APS5_VABI _ZN3WTF17GregorianDateTimeC2EdNS_15LocalTimeOffsetE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF17PrivateSymbolImpl6createERNS_10StringImplE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
