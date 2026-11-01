@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -34,7 +35,7 @@ class WinlibsDigestTests(unittest.TestCase):
                 self.assertEqual(text.count("WINLIBS_SHA256: " + DIGEST), text.count("WINLIBS_ZIP: "))
                 self.assertGreater(text.count("WINLIBS_ZIP: "), 0)
 
-    @unittest.skipUnless(shutil.which("bash") and shutil.which("sha256sum"), "needs bash and sha256sum")
+    @unittest.skipUnless(sys.platform != "win32" and shutil.which("bash") and shutil.which("sha256sum"), "runs on POSIX where bash is the one that runs the workflow steps")
     def test_the_check_accepts_the_matching_archive_and_rejects_another(self):
         command = CHECK.strip()
         with tempfile.TemporaryDirectory() as directory:
