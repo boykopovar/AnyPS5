@@ -1,0 +1,3 @@
+# NIDs of libSceAgc that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+6nths4DHNrs  # manual: reported in PR #11169
+k0E7vkgqAuE  # manual: reported in PR #10736

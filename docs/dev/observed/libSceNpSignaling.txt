@@ -1,0 +1,2 @@
+# NIDs of libSceNpSignaling that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+bD-JizUb3JM  # manual: reported in PR #4695

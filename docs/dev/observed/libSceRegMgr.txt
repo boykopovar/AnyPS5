@@ -1,0 +1,2 @@
+# NIDs of libSceRegMgr that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+dKeshzt29G4  # manual: reported in PR #6497

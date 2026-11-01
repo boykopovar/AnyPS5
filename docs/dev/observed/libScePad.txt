@@ -1,0 +1,9 @@
+# NIDs of libScePad that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+306mCg0ibh8  # manual: reported in PR #905
+KLmYx9ij2h0  # manual: reported in comment #1672
+OL2CJ2idmhk  # manual: reported in comment #3773
+QjwkT2Ycmew  # manual: reported in PR #5038
+WFIiSfXGUq8  # manual: reported in comment #5676
+iA-DdobUen8  # manual: reported in PR #3110
+mbJHDdjhVeY  # manual: reported in PR #905
+xk0AcarP3V4  # manual: reported in comment #10935

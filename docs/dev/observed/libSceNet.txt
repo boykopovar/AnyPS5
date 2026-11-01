@@ -1,0 +1,2 @@
+# NIDs of libSceNet that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+xphrZusl78E  # manual: reported in PR #5536

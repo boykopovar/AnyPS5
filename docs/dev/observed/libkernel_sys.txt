@@ -1,0 +1,7 @@
+# NIDs of libkernel_sys that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+KCwXUKT269I  # manual: reported in PR #11441
+WslcK1FQcGI  # manual: reported in PR #12427
+cBp0Ad-24LA  # manual: found in commit bf1ae46389
+cjt-4ySmYTs  # manual: reported in PR #3160
+fNoviuIwykc  # manual: found in commit bf1ae46389
+ruyD9QkP8dI  # manual: reported in PR #6411

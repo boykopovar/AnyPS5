@@ -1,0 +1,4 @@
+# NIDs of libSceSystemService that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+7cTc7seJLfQ  # manual: reported in PR #6939
+N4RkyJh7FtA  # manual: found in commit cb43a4c306
+cltshBrDLC0  # manual: reported in PR #6939

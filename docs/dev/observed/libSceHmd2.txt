@@ -1,0 +1,8 @@
+# NIDs of libSceHmd2 that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+8GkaY2B7opM  # manual: found in commit 9a0aa5f6a7
+C0rPwER-yxg  # manual: reported in PR #8645
+U-CnbmeyYaA  # manual: reported in comment #7323
+VVvFh51o20s  # manual: reported in PR #7786
+lAoFUedcfqA  # manual: reported in PR #8907
+retc+-uRMhk  # manual: reported in PR #8907
+uv0Ae+jCeWY  # manual: reported in comment #7658

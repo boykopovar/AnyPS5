@@ -245,6 +245,10 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn("GPU shader instructions", svg)
         self.assertIn("GPU shader instructions", progress.render(dict(self.GROUP), dict(self.GROUP)))
 
+    def test_undecoded_shader_forms_are_grey_not_observed_red(self):
+        svg = progress.render({"done": 0, "total": 0, "percent": 0, "groups": []}, dict(self.GROUP), self.SOURCE)
+        self.assertEqual(svg.count(f'fill="{progress.TODO_COLOR}"'), 1, "only the legend's observed-stub swatch is red")
+
     def test_still_needed_groups_names_by_form_kind(self):
         data = progress.still_needed(self.SOURCE)
         self.assertEqual(data["lists"], [

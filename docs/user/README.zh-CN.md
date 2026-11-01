@@ -22,7 +22,7 @@
 
 [进度历史](https://boykopovar.github.io/AnyPS5/history.html)
 
-<sub>* 系统库：项目目前已知函数（在 [core/libs/prx](../../core/libs/prx) 中声明）的百分比，而非 PS5 全部系统函数的百分比。随着声明的函数增多，总数会增长。</sub>
+<sub>* 系统库：绿色表示已实现，红色表示已观察到的桩函数（已声明，且有实测使用表明它是需要的），灰色表示未观察到的桩函数（已声明，目前没有已知的实测使用；这不代表没有任何游戏使用它；在着色器中，灰色表示尚未实现的指令）。主要百分比为 已实现 /（已实现 + 已观察到的桩函数），因此灰色部分不会拉低它；进度页面上的“已声明”数值则统计所有已声明的函数。只统计在 [core/libs/prx](../../core/libs/prx) 中声明的函数，而不是 PS5 的全部系统函数。详见 [docs/dev/PROGRESS.md](../dev/PROGRESS.md#observed-imports)。</sub>
 
 不支持或意外的状态会抛出 C++ 异常，通常是 `std::runtime_error`。没有被捕获的异常会把其 `what()` 输出到 stderr，然后进程终止。
 

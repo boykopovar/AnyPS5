@@ -1,0 +1,2 @@
+# NIDs of libSceNpGameIntent that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+GbayQ7DO8jA  # manual: reported in PR #10573

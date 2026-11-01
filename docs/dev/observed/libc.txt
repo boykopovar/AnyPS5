@@ -1,0 +1,2 @@
+# NIDs of libc that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+Wn6I3wVATUE  # manual: reported in PR #2842

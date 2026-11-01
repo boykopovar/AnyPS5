@@ -1,0 +1,7 @@
+# NIDs of libScePsml_debug that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+94iBp3KvIuI  # manual: reported in PR #644
+DDVUyPyYHTA  # manual: found in commit beba4ce204
+VGjrQa-WqdU  # manual: reported in PR #644
+fccGInHrj8A  # manual: reported in PR #644
+kLF7WtQ1-Dg  # manual: reported in PR #2888
+s2psNHUIdjk  # manual: reported in PR #2412

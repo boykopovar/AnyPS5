@@ -1,0 +1,2 @@
+# NIDs of libSceContentSearch that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+bjAlYWwRTJA  # manual: reported in PR #2740

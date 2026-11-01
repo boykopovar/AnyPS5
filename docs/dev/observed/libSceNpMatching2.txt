@@ -1,0 +1,2 @@
+# NIDs of libSceNpMatching2 that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+tHD5FPFXtu4  # manual: reported in PR #12013

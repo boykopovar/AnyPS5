@@ -252,6 +252,58 @@ class StubGeneratorTests(unittest.TestCase):
                 self.assertEqual(code.stat().st_mode & 0o777, 0o666 & ~mask)
 
 
+class HelpTextTests(unittest.TestCase):
+    def test_help_says_stubs_for_unobserved_nids_are_inventory_only(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as error:
+            stubgen.main(["--help"])
+        self.assertEqual(error.exception.code, 0)
+        text = " ".join(output.getvalue().split())
+        self.assertIn("inventory only", text)
+        self.assertIn("unobserved stubs", text)
+        self.assertIn("docs/dev/PROGRESS.md", text)
+
+
+class InventoryOutputTests(unittest.TestCase):
+    def run_main(self, root, *extra):
+        nids = root / "nids.txt"
+        nids.write_text("BbBbBbBbBbB\nAaAaAaAaAaA\n", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return stubgen.main(["--module", "libSceExample", "--nids", str(nids), "--out", str(root / "Export.cpp"), "--td-out", str(root / "debt.md"), *extra])
+
+    def test_inventory_lines_are_sorted_and_name_the_source(self):
+        self.assertEqual(stubgen.inventory_text(["BbBbBbBbBbB", "AaAaAaAaAaA"], "Libs-3.20"), "AaAaAaAaAaA  Libs-3.20\nBbBbBbBbBbB  Libs-3.20\n")
+
+    def test_existing_lines_keep_their_source(self):
+        text = stubgen.inventory_text(["AaAaAaAaAaA", "BbBbBbBbBbB"], "New-1", "# header\nAaAaAaAaAaA  Old-1\n")
+        self.assertEqual(text, "AaAaAaAaAaA  Old-1\nBbBbBbBbBbB  New-1\n")
+
+    def test_bad_source_names_and_lines_are_rejected(self):
+        for source in ("has space", "a/b", ""):
+            with self.subTest(source=source), self.assertRaises(ValueError):
+                stubgen.inventory_text(["AaAaAaAaAaA"], source)
+        with self.assertRaises(ValueError):
+            stubgen.inventory_text(["AaAaAaAaAaA"], "ok", "short ok\n")
+
+    def test_main_writes_the_listing_beside_the_other_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            listing = root / "inventory.txt"
+            self.assertEqual(self.run_main(root, "--inventory-source", "Libs-3.20", "--inventory-out", str(listing)), 0)
+            self.assertEqual(listing.read_text(encoding="utf-8"), "AaAaAaAaAaA  Libs-3.20\nBbBbBbBbBbB  Libs-3.20\n")
+            self.assertTrue((root / "Export.cpp").is_file())
+
+    def test_the_two_options_go_together_and_cannot_alias_an_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for extra in (["--inventory-source", "Libs"], ["--inventory-out", str(root / "i.txt")],
+                          ["--inventory-source", "Libs", "--inventory-out", str(root / "Export.cpp")]):
+                with self.subTest(extra=extra), self.assertRaises(SystemExit) as error:
+                    self.run_main(root, *extra)
+                self.assertEqual(error.exception.code, 2)
+            self.assertFalse((root / "i.txt").exists())
+
+
 class ReadOnlyOutputTests(unittest.TestCase):
     def test_later_staging_failure_preserves_original_error_and_cleans_readonly_temporary(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1,0 +1,2 @@
+# NIDs of libSceIme that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+row9sfnYNx4  # manual: reported in PR #8553

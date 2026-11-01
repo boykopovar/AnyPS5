@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - core/libs/prx/**
+      - docs/dev/observed/**
+      - docs/dev/inventory/**
+      - core/shader/recompiler/RdnaDecoder/include/RdnaDecoder/RdnaOpcode.hpp
       - core/shader/recompiler/**
       - tools/progress.py
       - tools/shader_scan.py
@@ -24,17 +27,18 @@ jobs:
   progress:
     if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Deploy Pages if the progress changed
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          python3 tools/progress.py --require-shader-source "$RUNNER_TEMP/progress"
+          python3 tools/progress.py --origins --require-shader-source "$RUNNER_TEMP/progress"
           site=$(gh api "repos/$GH_REPO/pages" --jq .html_url)
           if curl -fsSL "${site%/}/progress.json?$GITHUB_SHA" -o "$RUNNER_TEMP/deployed.json" &&
             cmp -s "$RUNNER_TEMP/deployed.json" "$RUNNER_TEMP/progress/progress.json"; then

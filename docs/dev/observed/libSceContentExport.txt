@@ -1,0 +1,4 @@
+# NIDs of libSceContentExport that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+AOWqIYsgVHs  # manual: reported in issue #10553
+eRJv4xU7pGU  # manual: reported in PR #2740
+uZTQHI50WpY  # manual: reported in PR #2740

@@ -1,0 +1,6 @@
+# NIDs of libSceVideoRecordingP that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+7QoTYzVuzto  # manual: reported in PR #11478
+KHvkPQJDMLk  # manual: reported in PR #11478
+OOFxrMY+mfI  # manual: reported in PR #11478
+ZvWzS2wTIMc  # manual: reported in PR #11478
+tWoe9IlGAhs  # manual: reported in PR #11478

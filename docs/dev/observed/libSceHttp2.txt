@@ -1,0 +1,20 @@
+# NIDs of libSceHttp2 that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+-0wUiGX74GQ  # manual: reported in PR #11470
+-MU9L6S3Fj4  # manual: reported in PR #5771
+-rdXUi2XW90  # manual: reported in comment #12305
+09tk+kIA1Ns  # manual: found in commit 23398893cd
+9XYJwCf3lEA  # manual: reported in PR #11518
+A+NVAFu4eCg  # manual: reported in PR #3925
+BJgi0CH7al4  # manual: reported in comment #11575
+BlZ8niq3nHU  # manual: reported in PR #11470
+EWcwMpbr5F8  # manual: reported in PR #13734
+Gcjh+CisAZM  # manual: reported in PR #11617
+MOp-AUhdfi8  # manual: reported in PR #3925
+WYszaHaIkWs  # manual: reported in PR #11470
+YfaXPnc8PJE  # manual: reported in PR #3319
+bGN-6zbo7ms  # manual: reported in PR #11900
+jrVHsKCXA0g  # manual: reported in PR #11950
+ksn0O9Iilb0  # manual: reported in PR #11470
+nrPfOE8TQu0  # manual: reported in PR #11627
+o0DBQpFE13o  # manual: reported in PR #11518
+rbqZig38AT8  # manual: reported in issue #12089

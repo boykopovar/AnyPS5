@@ -1,0 +1,4 @@
+# NIDs of libSceAmpr that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+S5WbPO54nD0  # manual: reported in comment #11735
+eMnBe5mZFLw  # manual: reported in comment #11735
+touqMEt6qXQ  # manual: reported in PR #4251

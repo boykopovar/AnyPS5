@@ -1,0 +1,2 @@
+# NIDs of libSceVoice that a measured use shows to be needed. One per line, sorted; see docs/dev/PROGRESS.md.
+YeJl6yDlhW0  # manual: reported in PR #6090

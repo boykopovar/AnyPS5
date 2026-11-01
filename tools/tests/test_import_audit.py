@@ -1549,6 +1549,16 @@ class ImportAuditTests(unittest.TestCase):
         self.assertNotIn(("libSceTwin.native.prx", twin), stubs)
         self.assertNotEqual(nid_names.compute_nid("printf"), nid_names.compute_nid("printf_nid_postfix"))
 
+    def test_manifests_do_not_hide_stubs_from_the_title_audit(self):
+        source = self.work.source
+        write_source(source, "libSceOnly", STUB_SOURCE.format(name="sceOnlyPending"))
+        expected = {("libSceOnly.prx", nid_names.compute_nid("sceOnlyPending")): "sceOnlyPending"}
+        with tempfile.TemporaryDirectory() as directory:
+            manifests = Path(directory)
+            (manifests / "libSceOnly.txt").write_text("", encoding="utf-8")
+            with patch.object(import_audit.progress, "OBSERVED", manifests):
+                self.assertEqual(import_audit.source_stubs(source), expected)
+
     def test_source_stubs_decodes_source_with_utf8_bom(self):
         source = self.work.source
         write_source(source, "libSceBom", "\ufeff" + STUB_SOURCE.format(name="sceBomPending"))
