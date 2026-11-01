@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 
@@ -9,13 +11,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-extern "C" {
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelGetdents(int, char*, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI _close_nid_postfix(int);
-}
 
 static void Check(bool value, int line) {
     if (!value) {

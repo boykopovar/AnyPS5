@@ -1,10 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstdio>
 #include <sys/wait.h>
 #include <unistd.h>
 
 extern "C" void CallWithCleanup(void (*function)(), int* count);
 extern "C" void CallAroundCleanup(void (*before)(), void (*within)(), int* count);
-extern "C" void (*_ZSt13set_terminatePFvvE_nid_postfix(void (*)()))();
 
 int cleanups;
 

@@ -1,3 +1,6 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceVisionManager/include/InventoryExports.hpp"
+#include "prx/libSceVisionManager/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -16,8 +19,7 @@ int APS5_VABI sceVisionManagerCancelRequest() {
 }
 
 int APS5_VABI sceVisionManagerClose() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerFinalize() {
@@ -106,23 +108,19 @@ int APS5_VABI sceVisionManagerGetResultOfFindPadCorrespondRegion() {
 }
 
 int APS5_VABI sceVisionManagerGetResultOfFindUser() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerGetResultOfFindUserInRegion() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerGetResultOfFindUserWithoutIdentify() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerGetResultOfRegisterUserInRegion() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerGetStoreCameraImgYPtr() {
@@ -141,13 +139,11 @@ int APS5_VABI sceVisionManagerInitialize() {
 }
 
 int APS5_VABI sceVisionManagerLoadSettings() {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceVisionManagerOpen() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerRegistryClear() {
@@ -191,18 +187,15 @@ int APS5_VABI sceVisionManagerRequestFindPadCorrespondRegion() {
 }
 
 int APS5_VABI sceVisionManagerRequestFindUser() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerRequestFindUserInRegion() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerRequestFindUserWithoutIdentify() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerRequestHeadDetection() {
@@ -231,8 +224,7 @@ int APS5_VABI sceVisionManagerRequestRecogUtility() {
 }
 
 int APS5_VABI sceVisionManagerRequestRegisterUserInRegion() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(0x80e70004);
 }
 
 int APS5_VABI sceVisionManagerRequestStoreCameraImgY() {
@@ -284,5 +276,44 @@ int APS5_VABI sceVisionManagerWaitResponse() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVisionManagerUnknown__minus_R5dI6KjYpY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("-R5dI6KjYpY", libSceVisionManagerUnknown__minus_R5dI6KjYpY_nid_no_patch);
+
+int APS5_VABI libSceVisionManagerUnknown_0chNZ7GKUO0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("0chNZ7GKUO0", libSceVisionManagerUnknown_0chNZ7GKUO0_nid_no_patch);
+
+int APS5_VABI libSceVisionManagerUnknown_9gGQMrf6sWg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9gGQMrf6sWg", libSceVisionManagerUnknown_9gGQMrf6sWg_nid_no_patch);
+
+int APS5_VABI libSceVisionManagerUnknown_ORAn12NcHYs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ORAn12NcHYs", libSceVisionManagerUnknown_ORAn12NcHYs_nid_no_patch);
+
+int APS5_VABI libSceVisionManagerUnknown_YQiB_minus_svtbcc_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("YQiB-svtbcc", libSceVisionManagerUnknown_YQiB_minus_svtbcc_nid_no_patch);
+
+int APS5_VABI libSceVisionManagerUnknown_dzN0VRFvA84_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("dzN0VRFvA84", libSceVisionManagerUnknown_dzN0VRFvA84_nid_no_patch);
+
+int APS5_VABI libSceVisionManagerUnknown_wu4afKNlup4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("wu4afKNlup4", libSceVisionManagerUnknown_wu4afKNlup4_nid_no_patch);
 
 }

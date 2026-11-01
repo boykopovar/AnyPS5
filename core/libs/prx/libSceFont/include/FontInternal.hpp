@@ -34,8 +34,6 @@ struct FontState {
     std::shared_ptr<const std::vector<unsigned char>> faceData;
     FT_Face face = nullptr;
     std::vector<FallbackFace> fallbacks;
-    float scaleW = 16.0f;
-    float scaleH = 16.0f;
     std::map<int, int> scriptLanguages;
     int attribute = 0;
 
@@ -123,6 +121,9 @@ int StyleStateGetSlantRatio(const StyleStateBlock* style, float* slantRatio);
 int StyleStateSetWeightScale(StyleStateBlock* style, float weightXScale, float weightYScale);
 int StyleStateGetWeightScale(const StyleStateBlock* style, float* weightXScale, float* weightYScale, std::uint32_t* mode);
 bool ValidStyleFrame(const FontStyleFrame* frame);
+const FontStyleFrame* SurfaceStyleFrame(const FontRenderSurface* surface);
+const StyleStateBlock* ApplyStyleFrame(const StyleStateBlock* base, const FontStyleFrame* frame, StyleStateBlock& temporary);
+int RenderCodeWithStyle(FontHandle handle, std::uint32_t code, const StyleStateBlock* style, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result);
 
 std::uint8_t CachedStyleCacheFlags(const CachedStyle& style);
 void CachedStyleSetCacheFlags(CachedStyle& style, std::uint8_t flags);
@@ -133,8 +134,11 @@ void CachedStyleSetScalar(CachedStyle& style, float value);
 void ClearRenderOutputs(FontGlyphMetrics* metrics, FontRenderOutput* result);
 int ComputeHorizontalLayout(FontHandle handle, const StyleStateBlock* style, std::uint8_t* outWords);
 int ComputeVerticalLayout(FontHandle handle, const StyleStateBlock* style, std::uint8_t* outWords);
-int GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle);
+int GetCharGlyphMetrics(FontHandle handle, std::uint32_t code, FontGlyphMetrics* metrics, bool useCachedStyle, float* usedScaleW = nullptr, float* usedScaleH = nullptr);
 int RenderCharGlyphImageCore(FontHandle handle, std::uint32_t code, FontRenderSurface* surface, float x, float y, FontGlyphMetrics* metrics, FontRenderOutput* result);
+int ComputeFontMetrics(FontHandle handle, std::uint32_t form, FontMetrics* metrics);
+int ComputeFontStyleInformation(FontHandle handle, FontStyleInformation* information);
+int ComputeFontGlyphsOutlineProfile(FontHandle handle, FontOutlineProfile* profile);
 
 }
 

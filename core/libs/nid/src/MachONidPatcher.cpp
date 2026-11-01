@@ -341,15 +341,6 @@ std::string StripUnderscore(const std::string& name) {
     return !name.empty() && name[0] == '_' ? name.substr(1) : name;
 }
 
-bool IsGuestFacingImport(const std::string& name) {
-    using namespace Internal;
-    const bool hasNidPostfix = name.size() >= kNidPostfixLen && name.compare(name.size() - kNidPostfixLen, kNidPostfixLen, kNidPostfix) == 0;
-    const bool hasScePrefix = name.size() >= 3u &&
-        std::tolower(static_cast<unsigned char>(name[0])) == 's' &&
-        std::tolower(static_cast<unsigned char>(name[1])) == 'c' &&
-        std::tolower(static_cast<unsigned char>(name[2])) == 'e';
-    return hasNidPostfix || hasScePrefix;
-}
 
 std::vector<bool> DylibOrdinalsArePrx(const std::vector<std::uint8_t>& binary, const Image& image) {
     std::vector<bool> result;
@@ -364,11 +355,48 @@ std::vector<bool> DylibOrdinalsArePrx(const std::vector<std::uint8_t>& binary, c
     return result;
 }
 
-void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image) {
+void WriteLinkeditData(std::vector<std::uint8_t>& binary, const Image& image, const TrieLocation& location, const std::vector<std::uint8_t>& trie) {
+    const auto oldOffset = Read<std::uint32_t>(binary, location.OffsetField);
+    const auto oldSize = Read<std::uint32_t>(binary, location.SizeField);
+    if (trie.size() <= oldSize) {
+        std::copy(trie.begin(), trie.end(), binary.begin() + oldOffset);
+        std::fill(binary.begin() + oldOffset + static_cast<std::ptrdiff_t>(trie.size()), binary.begin() + oldOffset + oldSize, 0);
+        Write(binary, location.SizeField, static_cast<std::uint32_t>(trie.size()));
+        return;
+    }
+    std::optional<std::size_t> linkedit;
+    for (const auto offset : image.Commands) {
+        const auto cmd = Read<LoadCommand>(binary, offset).Cmd;
+        if (cmd == kLcCodeSignature) throw std::runtime_error("signed Mach-O images cannot grow linkedit data");
+        if (cmd != kLcSegment64) continue;
+        const auto segment = Read<SegmentCommand64>(binary, offset);
+        if (std::strncmp(segment.Name, "__LINKEDIT", sizeof(segment.Name)) == 0) linkedit = offset;
+    }
+    if (!linkedit) throw std::runtime_error("Mach-O image has no __LINKEDIT segment");
+    auto segment = Read<SegmentCommand64>(binary, *linkedit);
+    if (segment.FileOffset + segment.FileSize != binary.size()) throw std::runtime_error("__LINKEDIT does not end the file");
+    const auto newOffset = (binary.size() + 7) & ~std::size_t{7};
+    if (newOffset + trie.size() > 0xffffffffu) throw std::runtime_error("linkedit data offset overflow");
+    binary.resize(newOffset, 0);
+    binary.insert(binary.end(), trie.begin(), trie.end());
+    std::fill(binary.begin() + oldOffset, binary.begin() + oldOffset + oldSize, 0);
+    segment.FileSize = binary.size() - segment.FileOffset;
+    segment.VmSize = std::max(segment.VmSize, (segment.FileSize + kPageSize - 1) & ~(kPageSize - 1));
+    Write(binary, *linkedit, segment);
+    Write(binary, location.OffsetField, static_cast<std::uint32_t>(newOffset));
+    Write(binary, location.SizeField, static_cast<std::uint32_t>(trie.size()));
+}
+
+void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image, const std::unordered_set<std::string>& excluded, const PatchOptions& options) {
+    std::size_t commandOffset = 0;
     std::optional<LinkeditDataCommand> fixups;
     for (const auto offset : image.Commands) {
         const auto cmd = Read<LoadCommand>(binary, offset).Cmd;
-        if (cmd == kLcDyldChainedFixups) fixups = Read<LinkeditDataCommand>(binary, offset);
+        if (cmd == kLcDyldChainedFixups) {
+            fixups = Read<LinkeditDataCommand>(binary, offset);
+            commandOffset = offset;
+        }
+        if (options.executable && cmd == kLcCodeSignature) throw std::runtime_error("remove the Mach-O code signature before patching and sign again afterwards");
         if ((cmd == kLcDyldInfo || cmd == kLcDyldInfoOnly)) {
             const auto info = Read<DyldInfoCommand>(binary, offset);
             if (info.BindSize != 0 || info.LazyBindSize != 0 || info.WeakBindSize != 0) throw std::runtime_error("Mach-O bind opcodes are not supported; link with chained fixups");
@@ -400,60 +428,73 @@ void PatchChainedImports(std::vector<std::uint8_t>& binary, const Image& image) 
             imports.push_back({raw >> 9, raw & 0xff});
         }
     }
-    std::set<std::uint32_t> nameOffsets;
-    for (const auto& item : imports) nameOffsets.insert(item.NameOffset);
-    std::set<std::uint32_t> rewritten;
+    std::vector<std::string> names;
+    std::vector<std::string> originalNames;
+    std::vector<bool> selected;
     for (const auto& item : imports) {
-        const bool special = header.ImportsFormat == kImportFormatAddend64 ? item.Ordinal >= 0xfff0 : item.Ordinal >= 0xf0;
-        if (item.Ordinal == 0 || special || item.Ordinal > prx.size() || !prx[item.Ordinal - 1]) continue;
-        if (rewritten.contains(item.NameOffset)) continue;
         const auto at = symbols + item.NameOffset;
         if (at >= symbolsEnd) throw std::runtime_error("chained import name out of bounds");
         const auto name = Internal::ReadCStr(binary, at);
         if (at + name.size() >= symbolsEnd) throw std::runtime_error("unterminated chained import name");
         const auto bare = StripUnderscore(name);
-        if (bare == name || !IsGuestFacingImport(bare)) continue;
-        const auto patched = "_" + ResolveOneName(bare);
-        if (patched.size() > name.size()) throw std::runtime_error("import NID longer than original name: " + name);
-        const auto inside = nameOffsets.upper_bound(item.NameOffset);
-        if (inside != nameOffsets.end() && *inside <= item.NameOffset + name.size()) throw std::runtime_error("chained import names share storage: " + name);
-        std::memcpy(binary.data() + at, patched.data(), patched.size());
-        std::fill(binary.begin() + static_cast<std::ptrdiff_t>(at + patched.size()), binary.begin() + static_cast<std::ptrdiff_t>(at + name.size() + 1), 0);
-        rewritten.insert(item.NameOffset);
+        const bool special = header.ImportsFormat == kImportFormatAddend64 ? item.Ordinal >= 0xfff0 : item.Ordinal >= 0xf0;
+        const bool eligible = options.executable || (bare != name && item.Ordinal != 0 && !special && item.Ordinal <= prx.size() && prx[item.Ordinal - 1]);
+        originalNames.push_back(name);
+        selected.push_back(eligible);
+        if (eligible) names.push_back(bare);
     }
-}
-
-void WriteTrie(std::vector<std::uint8_t>& binary, const Image& image, const TrieLocation& location, const std::vector<std::uint8_t>& trie) {
-    const auto oldOffset = Read<std::uint32_t>(binary, location.OffsetField);
-    const auto oldSize = Read<std::uint32_t>(binary, location.SizeField);
-    if (trie.size() <= oldSize) {
-        std::copy(trie.begin(), trie.end(), binary.begin() + oldOffset);
-        std::fill(binary.begin() + oldOffset + static_cast<std::ptrdiff_t>(trie.size()), binary.begin() + oldOffset + oldSize, 0);
-        Write(binary, location.SizeField, static_cast<std::uint32_t>(trie.size()));
+    const auto mapping = ResolveImportNids(names, excluded, options);
+    bool grows = false;
+    for (std::size_t index = 0; index < imports.size(); ++index)
+        grows = grows || (selected[index] && mapping.at(StripUnderscore(originalNames[index])).size() + 1 > originalNames[index].size());
+    if (!options.executable && !grows) {
+        std::set<std::uint32_t> nameOffsets;
+        for (const auto& item : imports) nameOffsets.insert(item.NameOffset);
+        std::set<std::uint32_t> rewritten;
+        for (const auto& item : imports) {
+            const bool special = header.ImportsFormat == kImportFormatAddend64 ? item.Ordinal >= 0xfff0 : item.Ordinal >= 0xf0;
+            if (item.Ordinal == 0 || special || item.Ordinal > prx.size() || !prx[item.Ordinal - 1]) continue;
+            if (rewritten.contains(item.NameOffset)) continue;
+            const auto at = symbols + item.NameOffset;
+            if (at >= symbolsEnd) throw std::runtime_error("chained import name out of bounds");
+            const auto name = Internal::ReadCStr(binary, at);
+            if (at + name.size() >= symbolsEnd) throw std::runtime_error("unterminated chained import name");
+            const auto bare = StripUnderscore(name);
+            if (bare == name) continue;
+            const auto patched = "_" + mapping.at(bare);
+            const auto inside = nameOffsets.upper_bound(item.NameOffset);
+            if (inside != nameOffsets.end() && *inside <= item.NameOffset + name.size()) throw std::runtime_error("chained import names share storage: " + name);
+            std::memcpy(binary.data() + at, patched.data(), patched.size());
+            std::fill(binary.begin() + static_cast<std::ptrdiff_t>(at + patched.size()), binary.begin() + static_cast<std::ptrdiff_t>(at + name.size() + 1), 0);
+            rewritten.insert(item.NameOffset);
+        }
         return;
     }
-    std::optional<std::size_t> linkedit;
-    for (const auto offset : image.Commands) {
-        const auto cmd = Read<LoadCommand>(binary, offset).Cmd;
-        if (cmd == kLcCodeSignature) throw std::runtime_error("signed Mach-O images cannot grow their export trie");
-        if (cmd != kLcSegment64) continue;
-        const auto segment = Read<SegmentCommand64>(binary, offset);
-        if (std::strncmp(segment.Name, "__LINKEDIT", sizeof(segment.Name)) == 0) linkedit = offset;
+    if (imports.empty()) return;
+    std::vector<std::uint8_t> data(binary.begin() + base, binary.begin() + symbolsEnd);
+    const auto newSymbols = data.size();
+    if (newSymbols > 0xffffffffu) throw std::runtime_error("chained symbol offset overflow");
+    Write(data, offsetof(ChainedFixupsHeader, SymbolsOffset), static_cast<std::uint32_t>(newSymbols));
+    for (std::size_t index = 0; index < imports.size(); ++index) {
+        const auto& original = originalNames[index];
+        const auto name = selected[index] ? (original.starts_with("_") ? "_" : "") + mapping.at(StripUnderscore(original)) : original;
+        const auto offset = data.size() - newSymbols;
+        const auto at = header.ImportsOffset + index * entrySize;
+        if (header.ImportsFormat == kImportFormatAddend64) {
+            if (offset > 0xffffffffu) throw std::runtime_error("chained symbol offset overflow");
+            const auto raw = Read<std::uint64_t>(data, at);
+            Write(data, at, (raw & 0xffffffffu) | (std::uint64_t{offset} << 32));
+        } else {
+            if (offset > 0x7fffffu) throw std::runtime_error("chained symbol offset overflow");
+            const auto raw = Read<std::uint32_t>(data, at);
+            Write(data, at, (raw & 0x1ffu) | (static_cast<std::uint32_t>(offset) << 9));
+        }
+        data.insert(data.end(), name.begin(), name.end());
+        data.push_back(0);
     }
-    if (!linkedit) throw std::runtime_error("Mach-O image has no __LINKEDIT segment");
-    auto segment = Read<SegmentCommand64>(binary, *linkedit);
-    if (segment.FileOffset + segment.FileSize != binary.size()) throw std::runtime_error("__LINKEDIT does not end the file");
-    const auto newOffset = (binary.size() + 7) & ~std::size_t{7};
-    if (newOffset + trie.size() > 0xffffffffu) throw std::runtime_error("export trie offset overflow");
-    binary.resize(newOffset, 0);
-    binary.insert(binary.end(), trie.begin(), trie.end());
-    std::fill(binary.begin() + oldOffset, binary.begin() + oldOffset + oldSize, 0);
-    segment.FileSize = binary.size() - segment.FileOffset;
-    segment.VmSize = std::max(segment.VmSize, (segment.FileSize + kPageSize - 1) & ~(kPageSize - 1));
-    Write(binary, *linkedit, segment);
-    Write(binary, location.OffsetField, static_cast<std::uint32_t>(newOffset));
-    Write(binary, location.SizeField, static_cast<std::uint32_t>(trie.size()));
+    WriteLinkeditData(binary, image, {commandOffset + 8, commandOffset + 12}, data);
 }
+
 
 }
 
@@ -464,8 +505,12 @@ std::vector<MachOExport> ReadMachOExports(const std::vector<std::uint8_t>& binar
     return ParseTrie(binary, Read<std::uint32_t>(binary, location->OffsetField), Read<std::uint32_t>(binary, location->SizeField));
 }
 
-void MachONidPatcher::PatchNids(std::vector<std::uint8_t>& binary, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports) const {
+void MachONidPatcher::PatchNids(std::vector<std::uint8_t>& binary, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports, const PatchOptions& options) const {
     const auto image = ParseImage(binary);
+    if (options.executable) {
+        PatchChainedImports(binary, image, excludedExports, options);
+        return;
+    }
     const auto location = FindTrie(binary, image);
     if (!location) throw std::runtime_error("no export trie");
     auto exports = ParseTrie(binary, Read<std::uint32_t>(binary, location->OffsetField), Read<std::uint32_t>(binary, location->SizeField));
@@ -486,8 +531,8 @@ void MachONidPatcher::PatchNids(std::vector<std::uint8_t>& binary, const std::st
         if (found == nidMap.end()) throw std::runtime_error("symbol not in nid map: " + name);
         exports[index].Name = "_" + found->second;
     }
-    WriteTrie(binary, image, *location, TrieBuilder(exports).Build());
-    PatchChainedImports(binary, ParseImage(binary));
+    WriteLinkeditData(binary, image, *location, TrieBuilder(exports).Build());
+    PatchChainedImports(binary, ParseImage(binary), excludedExports, options);
 }
 
 }

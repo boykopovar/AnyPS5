@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -56,11 +57,6 @@ int APS5_VABI DSA_get0_key_nid_postfix(void) {
 }
 
 int APS5_VABI DSA_get0_pqg_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EC_KEY_up_ref_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -180,11 +176,6 @@ int APS5_VABI EVP_PKEY_size_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI EVP_PKEY_up_ref_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_SignFinal_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -271,11 +262,6 @@ int APS5_VABI RSA_get0_key_nid_postfix(void) {
 }
 
 int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI RSA_up_ref_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -391,11 +377,6 @@ int APS5_VABI X509_getm_notBefore_nid_postfix(void) {
 }
 
 int APS5_VABI X509_up_ref_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

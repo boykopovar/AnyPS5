@@ -1,17 +1,10 @@
+#include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceAudioOutSysOpen(int userId, std::uint32_t mode);
-int APS5_VABI sceAudioOutSysConfigureOutput(int type, std::uint64_t flags, std::uint32_t mode, std::uint32_t target, std::uint64_t option);
-int APS5_VABI sceAudioOutSysClose(int handle);
-int APS5_VABI sceAudioOutExOpen(int userId, std::uint32_t mode);
-int APS5_VABI sceAudioOutOutput(int handle, const void* ptr);
-}
 
 static constexpr int SYSTEM_USER = 0xFF;
 
@@ -52,6 +45,10 @@ int main() {
     Require(Throws([] { sceAudioOutSysConfigureOutput(1, 1, 5, 1, 0); }), "nonzero flags throw");
     Require(Throws([] { sceAudioOutSysConfigureOutput(1, 0, 4, 1, 0); }), "another mode throws");
     Require(Throws([] { sceAudioOutSysConfigureOutput(1, 0, 5, 2, 0); }), "another target throws");
+
+    int mainOutput = -1;
+    Require(!Throws([&mainOutput] { mainOutput = sceAudioOutSetMainOutput(); }), "sceAudioOutSetMainOutput does not throw");
+    Require(mainOutput == 0, "sceAudioOutSetMainOutput returns 0");
 
     Require(sceAudioOutSysClose(truehd) == 0, "close the first Sys port");
     Require(Throws([truehd] { sceAudioOutSysClose(truehd); }), "a closed Sys port throws");
