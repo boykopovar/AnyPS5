@@ -1,24 +1,23 @@
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
-set(libreSslSource ${PROJECT_SOURCE_DIR}/3rdparty/libressl-openbsd/src/lib/libcrypto)
-if(NOT EXISTS ${libreSslSource}/err/err.c)
-    message(FATAL_ERROR "Initialize 3rdparty/libressl-openbsd with git submodule update --init")
-endif()
-file(GLOB_RECURSE libreSslStringSources CONFIGURE_DEPENDS ${libreSslSource}/*.h ${libreSslSource}/*.c)
-set(libreSslStrings ${CMAKE_CURRENT_BINARY_DIR}/prx/libSceLibreSsl/ErrorStrings.inc)
-add_custom_command(OUTPUT ${libreSslStrings}
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/GenerateErrorStrings.py ${libreSslSource} ${libreSslStrings}
-    DEPENDS ${CMAKE_CURRENT_LIST_DIR}/GenerateErrorStrings.py ${libreSslStringSources}
-    VERBATIM)
-add_custom_target(libressl_error_strings DEPENDS ${libreSslStrings})
-add_dependencies(libSceLibreSsl libressl_error_strings)
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_LIST_DIR}/ErrorQueue.cpp)
 target_link_libraries(libSceLibreSsl3 PRIVATE libSceLibreSsl)
 
 if(BUILD_TESTING)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    set(libreSslSource ${PROJECT_SOURCE_DIR}/3rdparty/libressl-openbsd/src/lib/libcrypto)
+    if(NOT EXISTS ${libreSslSource}/err/err.c)
+        message(FATAL_ERROR "Initialize 3rdparty/libressl-openbsd with git submodule update --init")
+    endif()
+    file(GLOB_RECURSE libreSslStringSources CONFIGURE_DEPENDS ${libreSslSource}/*.h ${libreSslSource}/*.c)
+    set(libreSslStrings ${CMAKE_CURRENT_BINARY_DIR}/prx/libSceLibreSsl/ErrorStrings.inc)
+    add_custom_command(OUTPUT ${libreSslStrings}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_LIST_DIR}/GenerateErrorStrings.py ${libreSslSource} ${libreSslStrings}
+        DEPENDS ${CMAKE_CURRENT_LIST_DIR}/GenerateErrorStrings.py ${libreSslStringSources}
+        VERBATIM)
+
     add_test_executable(guest_libressl_error_string_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslErrors.cpp)
     target_include_directories(guest_libressl_error_string_tests PRIVATE ${LIBS_INCLUDE_DIR}
         ${CMAKE_CURRENT_BINARY_DIR}/prx/libSceLibreSsl)
-    add_dependencies(guest_libressl_error_string_tests libressl_error_strings)
+    target_sources(guest_libressl_error_string_tests PRIVATE ${libreSslStrings})
     target_link_libraries(guest_libressl_error_string_tests PRIVATE libSceLibreSsl libSceLibreSsl3)
     configure_windows_unwind(guest_libressl_error_string_tests)
     add_test(NAME guest_libressl_errors COMMAND guest_libressl_error_string_tests)
