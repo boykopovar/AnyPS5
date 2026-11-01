@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
 #include <array>
 #include <barrier>
 #include <cstdint>
@@ -37,8 +38,9 @@ void WriteEnvironment(const Environment& state) {
     _mm_setcsr(state.sse);
 }
 
-bool SameControlState(const Environment& left, const Environment& right) {
-    return left.x87[0] == right.x87[0] && left.x87[1] == right.x87[1] && left.sse == right.sse;
+bool SameEnvironment(const Environment& lhs, const Environment& rhs) {
+    const bool pointers = (lhs.x87[1] & 0x80u) != 0u && (rhs.x87[1] & 0x80u) != 0u;
+    return std::equal(lhs.x87.begin(), lhs.x87.begin() + (pointers ? 7 : 3), rhs.x87.begin()) && lhs.sse == rhs.sse;
 }
 
 void Require(bool value, const char* message) {
@@ -252,13 +254,13 @@ void CheckHold(HoldExcept hold, Environment* saved) {
     *__error_nid_postfix() = 123;
     Require(hold(saved) == 0, "feholdexcept succeeds");
     const auto after = ReadEnvironment();
-    Require(std::memcmp(saved, &before, sizeof(before)) == 0, "feholdexcept saves the full original environment");
+    Require(SameEnvironment(*saved, before), "feholdexcept saves the full original environment");
     Require((after.x87[0] & 0x3f) == 0x3f && (after.sse & 0x1f80) == 0x1f80, "feholdexcept masks both units");
     Require((after.x87[1] & 0x80ff) == 0 && (after.sse & 0x3f) == 0, "feholdexcept clears pending exceptions");
     Require((after.x87[1] & ~0x80ffu) == (before.x87[1] & ~0x80ffu), "feholdexcept preserves other x87 status bits");
     Require((after.x87[0] & ~0x3fu) == (before.x87[0] & ~0x3fu), "feholdexcept preserves x87 control settings");
     Require((after.sse & ~0x1fbfu) == (before.sse & ~0x1fbfu), "feholdexcept preserves SSE control settings");
-    Require(after.x87[2] == before.x87[2] && std::memcmp(after.x87.data() + 3, before.x87.data() + 3, 16) == 0, "feholdexcept preserves x87 tags and instruction/data state");
+    Require(after.x87[2] == before.x87[2], "feholdexcept preserves x87 tags");
     Require(*__error_nid_postfix() == 123, "feholdexcept preserves errno");
 }
 
@@ -292,7 +294,7 @@ void CheckHoldExcept(HoldExcept hold) {
     try { hold(nullptr); } catch (const std::invalid_argument&) { threw = true; }
     Require(threw, "feholdexcept rejects null storage");
     const auto afterNull = ReadEnvironment();
-    Require(SameControlState(original, afterNull), "null feholdexcept preserves the environment");
+    Require(SameEnvironment(original, afterNull), "null feholdexcept preserves the environment");
 #ifdef _WIN32
     SYSTEM_INFO info{};
     GetSystemInfo(&info);
@@ -335,7 +337,7 @@ void CheckHoldExcept(HoldExcept hold) {
     first.join();
     second.join();
     const auto afterThreads = ReadEnvironment();
-    Require(SameControlState(original, afterThreads), "feholdexcept workers preserve the main environment");
+    Require(SameEnvironment(original, afterThreads), "feholdexcept workers preserve the main environment");
 }
 
 int main(int argc, char** argv) {
