@@ -125,6 +125,22 @@ void ReportsAndClearsTheConnectError() {
     Require(close_nid_postfix(failing) == 0, "close failed");
 }
 
+void ReconnectAfterARefusalFails() {
+    int closed = -1;
+    auto refused = Listen(&closed);
+    Require(close_nid_postfix(closed) == 0, "close failed");
+    const int failing = socket_nid_postfix(2, Stream, 0);
+    Require(failing >= 0 && fcntl_nid_postfix(failing, 4, 4) == 0, "nonblocking socket setup failed");
+    const int attempt = connect_nid_postfix(failing, refused.data(), refused.size());
+    Require(attempt == -1, "a connect to a closed port must not succeed");
+    if (*__error_nid_postfix() == 36) {
+        WaitUntilSettled(failing);
+        Require(connect_nid_postfix(failing, refused.data(), refused.size()) == -1 && *__error_nid_postfix() == ErrorConnectionRefused,
+            "a connect after a refused nonblocking one must fail with ECONNREFUSED (61), not start another attempt");
+    }
+    Require(close_nid_postfix(failing) == 0, "close failed");
+}
+
 void BooleanOptionsReportTheirBit() {
     const int stream = socket_nid_postfix(2, Stream, 0);
     const int datagram = socket_nid_postfix(2, Datagram, 0);
@@ -411,6 +427,7 @@ int main(int argc, char** argv) {
     }
     ReportsTypeAndListening();
     ReportsAndClearsTheConnectError();
+    ReconnectAfterARefusalFails();
     BooleanOptionsReportTheirBit();
     ReusePortSharesAPort();
     LingerFollowsFreeBsd();

@@ -92,4 +92,16 @@ int main() {
         Require(sceNetSocketClose(descriptor) == 0);
         return connected;
     }));
+    const int nonblocking = sceNetSocket("retry", GuestInet, GuestStream, 0);
+    Require(nonblocking >= 0);
+    const int enabled = 1;
+    Require(sceNetSetsockopt(nonblocking, 0xffff, 0x1200, &enabled, sizeof(enabled)) == 0);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    int result = sceNetConnect(nonblocking, address.data(), address.size());
+    while ((*sceNetErrnoLoc() == 36 || *sceNetErrnoLoc() == 37) && result != 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        result = sceNetConnect(nonblocking, address.data(), address.size());
+    }
+    Require(result == static_cast<int>(0x80410100u | GuestConnectionRefused) && *sceNetErrnoLoc() == GuestConnectionRefused);
+    Require(sceNetSocketClose(nonblocking) == 0);
 }
