@@ -1,3 +1,4 @@
+import re
 import sys
 import tempfile
 import unittest
@@ -39,6 +40,13 @@ class WrapperTests(unittest.TestCase):
 
     def test_static_helper_still_works(self):
         self.assertTodo("static int Helper() " + STUB_BODY + CALLER)
+
+    def test_multi_line_return_type_helper_is_pending(self):
+        self.assertTodo("static const std::string\n&Helper() " + STUB_BODY + CALLER)
+
+    def test_comment_only_lines_leave_no_blank_line_runs(self):
+        text = "int x;\n// first\n\n" + "/* second */\n" * 3 + "int y;\n"
+        self.assertEqual(re.findall(r"\n[ \t]*\n", progress.code(text)), [])
 
     def test_nested_helpers_are_pending_in_either_source_order(self):
         for helpers in (
