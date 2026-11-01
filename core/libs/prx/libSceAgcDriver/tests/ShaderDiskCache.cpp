@@ -360,6 +360,8 @@ CompiledVariant sampleVariant() {
     image.emulatedCompare = 0x1a07u;
     image.table = 0;
     image.tableOperation = TableOperation::Unsupported;
+    image.levelUses = ImageLevelUseQuery | ImageLevelUseMipLoad;
+    image.targetMerge = true;
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
     info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};
@@ -490,6 +492,9 @@ void verifyEntryRoundTrip() {
     auto previousVersion = file;
     previousVersion[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodeEntry(previousVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with the previous format version loads");
+    auto mainImageLayout = file;
+    mainImageLayout[4] = std::byte{49};
+    require(ShaderDiskCache::DecodeEntry(mainImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with main's image record layout loads");
     auto priorStencilVersion = file;
     priorStencilVersion[4] = std::byte{32};
     require(ShaderDiskCache::DecodeEntry(priorStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an artifact with the prior stencil format loads");
@@ -2166,6 +2171,9 @@ void verifyPlanEntryDamage(const std::vector<std::byte>& key, const IrResourcePl
     auto previousFormat = file;
     previousFormat[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
     require(ShaderDiskCache::DecodePlanEntry(previousFormat, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of the previous format loads");
+    auto mainImageLayout = file;
+    mainImageLayout[4] = std::byte{49};
+    require(ShaderDiskCache::DecodePlanEntry(mainImageLayout, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry with main's image record layout loads");
     auto otherSource = file;
     otherSource[8] ^= std::byte{1};
     require(ShaderDiskCache::DecodePlanEntry(otherSource, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of another source version loads");

@@ -220,6 +220,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_storage_split_writeback PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_storage_hole_copy_barrier COMMAND agc_driver_recorder_tests --storage-hole-copy-barrier-only)
+    set_tests_properties(agc_storage_hole_copy_barrier PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_PIN_WAIT_MS=2000")
+    if(WIN32)
+        set_tests_properties(agc_storage_hole_copy_barrier PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_storage_write_back COMMAND agc_driver_recorder_tests --storage-write-back-only)
     set_tests_properties(agc_storage_write_back PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 ENVIRONMENT "APS5_PIN_WAIT_MS=3000")
     if(WIN32)

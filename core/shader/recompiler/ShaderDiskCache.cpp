@@ -141,7 +141,7 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 46, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 47, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
@@ -816,6 +816,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.emulatedCompare);
         out.Value(image.table);
         out.Value(image.tableOperation);
+        out.Value(image.levelUses);
         out.Value(image.targetMerge);
     });
     writer.Value(!info.runtimeImageModes.empty());
@@ -881,7 +882,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(buffer.scalar);
         in.Value(buffer.typedAlignment);
     });
-    reader.List(info.images, 77, [](Reader& in, ImageResource& image) {
+    reader.List(info.images, 95, [](Reader& in, ImageResource& image) {
         in.Value(image.source);
         in.Value(image.firstUsePc);
         in.Value(image.resourceClass);
@@ -927,6 +928,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.emulatedCompare);
         in.Value(image.table);
         in.Value(image.tableOperation);
+        in.Value(image.levelUses);
         in.Value(image.targetMerge);
     });
     bool preparedImageModes = false;

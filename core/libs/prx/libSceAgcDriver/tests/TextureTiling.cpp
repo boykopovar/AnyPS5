@@ -289,9 +289,16 @@ void gcnTilingTests() {
         array.gcnPitch = 16u;
         const auto geometry = DescribeSurface(array);
         Require(geometry.levelMajor && geometry.layers == 3u && geometry.guestBytes == 4608u, "PS4 layered mip chain size changed");
+        Require(geometry.imageLevels == 3u, "a partial PS4 mip chain lost its image levels");
         Require(geometry.mips[1].tiledOffset == 3072u && geometry.mips[2].tiledOffset == 3840u && geometry.mips[1].tiledSize == 256u, "PS4 levels do not follow every slice of the level before");
         Require(geometry.GuestOffset(2u, geometry.mips[1]) == 3584u && geometry.GuestOffset(1u, geometry.mips[0]) == 1024u, "PS4 slice of a level is misplaced");
         Require(geometry.mips[1].linearOffset == 1024u && geometry.mips[2].linearOffset == 1280u, "PS4 linear staging is not per slice");
+        for (const auto levels : {5u, 7u}) {
+            array.mipCount = levels;
+            array.lastLevel = levels - 1u;
+            const auto surface = DescribeSurface(array);
+            Require(surface.imageLevels == 5u && surface.mips.size() == levels, "a PS4 physical mip limit changed the guest chain");
+        }
         array.mipCount = 1u;
         array.lastLevel = 0u;
         Require(!DescribeSurface(array).levelMajor, "a single-level PS4 array is slice-major");

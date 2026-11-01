@@ -241,6 +241,11 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool storage = base.resourceClass == ImageResourceClass::Storage;
     const bool table = base.table != NoTable;
+    const auto past = ResourceMaterializer::LevelsPastChain(descriptor);
+    const auto uses = base.levelUses;
+    if (!storage && (past.levels != 0u || past.base) && ((uses & (ImageLevelUseMipLoad | ImageLevelUseLodQuery)) != 0u || (past.base && (uses & ImageLevelUseLoad) != 0u) || (past.levels != 0u && table && (uses & ImageLevelUseQuery) != 0u))) {
+        return rejectImage(PoisonReason::UnsupportedOperation, "image_load_mip, image_get_lod, an image_load at a base level past the chain or an image_get_resinfo through an image table of a T# whose levels reach " + std::to_string(past.levels) + " past its extent's full mip chain is not implemented");
+    }
     if (decoded.cube && (storage || !base.sampledOnly) && descriptorIsShortCube(descriptor)) {
         return rejectImage(PoisonReason::Dimension, "a cube descriptor with fewer than six slices is implemented only for sampling; loads, stores and dimension queries through it stop at its last slice");
     }
@@ -2303,6 +2308,22 @@ RuntimeImageModeMatch ResourceMaterializer::TryRuntimeImageMode(const ImageResou
         : std::none_of(modes.begin(), modes.end(), [&](const ImageResource& mode) { return mode.dimension == decoded.dimension && mode.cube == decoded.cube; }) ? PoisonReason::Dimension
         : PoisonReason::NumericClass;
     return reject(reason, message + words);
+}
+
+ViewLevelsPastChain ResourceMaterializer::LevelsPastChain(const DescriptorValue& descriptor) {
+    if (descriptor.dwordCount != 8u || nullImageDescriptor(descriptor)) return {};
+    const auto type = rawImageType(descriptor);
+    if (type < ImageType::Color1D || type == ImageType::Color2DMsaa || type == ImageType::Color2DMsaaArray) return {};
+    const auto& words = descriptor.dwords;
+    const auto width = (((words[1] >> 30u) & 0x3u) | ((words[2] & 0xfffu) << 2u)) + 1u;
+    const auto height = ((words[2] >> 14u) & 0x3fffu) + 1u;
+    const auto depth = type == ImageType::Color3D ? (words[4] & 0x1fffu) + 1u : 1u;
+    const auto base = (words[3] >> 12u) & 0xfu;
+    const auto maxMip = (words[5] >> 4u) & 0xfu;
+    const auto last = base <= maxMip ? std::min((words[3] >> 16u) & 0xfu, maxMip) : (words[3] >> 16u) & 0xfu;
+    const auto chainLast = static_cast<std::uint32_t>(std::bit_width(std::max({width, height, depth}))) - 1u;
+    if (last < base || last <= chainLast) return {};
+    return {base <= chainLast ? last - chainLast : last - base, base > chainLast};
 }
 
 std::uint32_t ResourceMaterializer::RuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes) {
