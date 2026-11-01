@@ -95,10 +95,10 @@ int main() {
     copy->base.vtable->retain(&copy->base);
     Require(copy->base.references == 2);
 
-    auto** firstLocale = static_cast<GuestLocale::Implementation**>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation*)));
-    auto** secondLocale = static_cast<GuestLocale::Implementation**>(_Znwm_nid_postfix(sizeof(GuestLocale::Implementation*)));
-    *firstLocale = copy;
-    *secondLocale = copy;
+    GuestLocale::Implementation* firstSlot = copy;
+    GuestLocale::Implementation* secondSlot = copy;
+    auto** firstLocale = &firstSlot;
+    auto** secondLocale = &secondSlot;
 
     alignas(16) unsigned char firstStorage[sizeof(GuestLocale::SceV2IosBase)]{};
     alignas(16) unsigned char secondStorage[sizeof(GuestLocale::SceV2IosBase)]{};

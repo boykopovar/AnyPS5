@@ -801,7 +801,6 @@ void APS5_VABI _ZNSt8__sce_v28ios_base14_Ios_base_dtorEPS0__nid_postfix(GuestLoc
             GuestLocale::Facet* released = vtable != nullptr ? vtable->release(&implementation->base) : nullptr;
             if (released != nullptr && released->vtable != nullptr) released->vtable->deleteObject(released);
         }
-        _ZdlPvm_nid_postfix(locale, sizeof(*locale));
     }
     self->locale = nullptr;
 }
