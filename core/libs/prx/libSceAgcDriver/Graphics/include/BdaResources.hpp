@@ -3,7 +3,10 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "Recompiler.hpp"
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -12,13 +15,33 @@ namespace AgcDriver::Graphics {
 
 bool LoopGuardTripped();
 
+struct BdaFaultChunk;
+
 class BdaResources {
 public:
-    explicit BdaResources(const Context& context);
-    BdaResources(const Context& context, const GuestBufferMemory& memory);
+    explicit BdaResources(const Context& context, bool reportOnly = false);
+    BdaResources(const Context& context, const GuestBufferMemory& memory, bool reportOnly = false);
+    ~BdaResources();
+    BdaResources(const BdaResources&) = delete;
+    BdaResources& operator=(const BdaResources&) = delete;
     VkDescriptorBufferInfo Table() const;
+    std::span<const std::byte> TableBytes() const;
+    bool TableGuardCurrent(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges);
     VkDescriptorBufferInfo Fault() const;
     void CheckFault() const;
+    void CheckUse(const BdaResources* record) const;
+    void NoteUse(std::uint64_t serial);
+    bool TakeFaultSlot(const Context& context);
+    bool HoldsFaultSlot() const { return faultChunk != nullptr; }
+    static void NoteFinished(VkDevice device, std::uint64_t serial);
+    struct FaultSlotCounts {
+        std::uint64_t chunks = 0;
+        std::uint64_t slots = 0;
+        std::uint64_t held = 0;
+        std::uint64_t reclaimed = 0;
+        std::uint64_t retaken = 0;
+    };
+    static FaultSlotCounts FaultSlots(VkDevice device);
     struct ImageTableFaults {
         std::uint32_t stage = 0;
         std::uint64_t shader = 0;
@@ -55,11 +78,18 @@ private:
     // The page table is read-only to the shader, so consecutive builds mapping the same ranges to the
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).
-    void markWrittenPages() const;
-    void checkSrtGuard() const;
+    void checkFault(const BdaResources& record) const;
+    void markWrittenPages(const BdaResources& record) const;
+    void checkSrtGuard(const BdaResources& faults) const;
+    std::span<std::byte> faultBytes() const;
     std::shared_ptr<Buffer> table;
-    std::unique_ptr<Buffer> fault;
+    VkDevice faultDevice = VK_NULL_HANDLE;
+    std::shared_ptr<BdaFaultChunk> faultChunk;
+    VkDeviceSize faultOffset = 0;
+    bool reportOnly = false;
+    std::uint64_t lastUse = 0;
     std::size_t tableBytes = 0;
+    std::uint64_t tableGuardSerial = 0;
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
     std::vector<SrtGuardFaults> srtGuards;

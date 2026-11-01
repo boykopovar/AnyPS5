@@ -1,0 +1,20 @@
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_address_draw_space_reuse_off COMMAND agc_driver_address_draw_space_reuse_tests --off)
+    set_tests_properties(agc_driver_address_draw_space_reuse_off PROPERTIES ENVIRONMENT "APS5_NO_ADDRESS_DRAW_REUSE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_address_draw_space_reuse_off PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_address_draw_space_reuse_transitions COMMAND agc_driver_address_draw_space_reuse_tests --transitions)
+    set_tests_properties(agc_driver_address_draw_space_reuse_transitions PROPERTIES ENVIRONMENT "APS5_DRAW_TRANSITIONS=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_address_draw_space_reuse_transitions PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_address_draw_space_reuse_verify COMMAND agc_driver_address_draw_space_reuse_tests --verify)
+    set_tests_properties(agc_driver_address_draw_space_reuse_verify PROPERTIES ENVIRONMENT "APS5_VERIFY_ADDRESS_DRAW_REUSE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_address_draw_space_reuse_verify PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

@@ -9,6 +9,7 @@
 #include "Recompiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <limits>
 #include <list>
@@ -54,6 +55,7 @@ bool SampledTexturesShareEntry(std::span<const std::uint32_t> first, std::span<c
 bool AnyPendingCpuWrites(const Context& context);
 bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std::size_t bytes);
 bool SpirvStoresThroughAddresses(std::span<const std::uint32_t> words);
+bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t set, std::uint32_t binding);
 bool ShaderStoresThroughAddresses(const ShaderRecompiler::SharedSpirv& spirv);
 void LastRecordIndices(std::span<const void* const> logged, std::span<const void* const> objects, std::vector<std::size_t>& indices);
 
@@ -213,8 +215,20 @@ public:
         std::size_t size;
         std::span<const std::uint32_t> words;
     };
-    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false) const;
-    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target) const;
+    struct DrawUse {
+        DrawUse() = default;
+        DrawUse(const DrawUse&) = delete;
+        DrawUse& operator=(const DrawUse&) = delete;
+        ~DrawUse();
+        std::shared_ptr<BdaResources> record;
+        std::shared_ptr<DrawBindings> bindings;
+        std::shared_ptr<std::atomic<bool>> ownRecord;
+    };
+    std::shared_ptr<DrawUse> BeginDrawUse(Recorder& recorder) const;
+    void CompleteDrawUse(const DrawUse& use) const;
+    void BindDrawUse(VkCommandBuffer commands, VkPipelineLayout layout, const DrawUse* use) const;
+    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false, const BdaResources* faultRecord = nullptr) const;
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, bool* patchedData = nullptr) const;
     static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
     struct MoveProof {
@@ -237,8 +251,18 @@ public:
     // Whether a written buffer was copied (its results reach guest memory by the CPU write-back).
     bool HasCopiedWrites() const { return guestMemory.HasCopiedWrites(); }
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
+    bool SpaceReuse() const { return spaceReuse; }
+    static bool SpaceReuseDisabled();
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
+    bool RetakeSpace() { return guestMemory.RetakeSpace(); }
+    bool SpaceHeld() const { return guestMemory.SpaceHeld(); }
+    SnapshotService SnapshotsServedInPlace(std::span<const GuestMemorySnapshot> snapshots) const { return guestMemory.SnapshotsServedInPlace(snapshots); }
+    std::shared_ptr<const void> ReleaseSpace() { return guestMemory.ReleaseSpace(); }
+    void HoldSpaceThrough(std::uint64_t serial) { guestMemory.HoldSpaceThrough(serial); }
+    bool ReleaseCompletedSpace(std::uint64_t completedThrough) { return guestMemory.ReleaseCompletedSpace(completedThrough); }
     bool UsesAddressTable() const { return usesBda; }
+    std::span<const std::byte> AddressTableBytes() const;
+    bool AddressTableGuardCurrent();
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }
@@ -580,6 +604,8 @@ private:
     std::vector<BdaResources::SrtGuardFaults> srtGuardFaults;
     bool usesBda = false;
     bool bdaReadOnly = true;
+    bool spaceReuse = false;
+    bool faultReportOnly = true;
     std::vector<std::uint64_t> multisampleSources;
     bool usesFaultBuffer = false;
     bool faultChecks = false;
@@ -612,9 +638,18 @@ private:
     std::shared_ptr<const TableDescriptors> keptTable(std::size_t set, std::shared_ptr<const std::vector<std::weak_ptr<Texture>>>& held) noexcept;
     std::uint32_t setOf(const Binding& binding) const;
     std::vector<Allocation> allocations;
-    std::vector<VkDescriptorBufferInfo> descriptorBuffers;
+    mutable std::vector<VkDescriptorBufferInfo> descriptorBuffers;
     std::vector<VkDescriptorImageInfo> descriptorImages;
     std::vector<VkWriteDescriptorSet> descriptorWrites;
+    struct FaultDescriptor {
+        std::size_t write;
+        std::size_t buffer;
+        std::uint32_t element;
+    };
+    std::vector<FaultDescriptor> faultDescriptors;
+    void prepareFaultSlot() const;
+    void writeDrawSets(DrawBindings& result, std::span<const std::size_t> selected, const BdaResources* faultRecord) const;
+    std::shared_ptr<std::atomic<bool>> ownRecordBusy = std::make_shared<std::atomic<bool>>(false);
     mutable std::vector<VkDescriptorPoolSize> drawPoolSizes;
     // Guest buffer elements bound read-only: each use of this object skips that many pending-write
     // notes (counted in MarkGpuWrites for the [buffers] line).
