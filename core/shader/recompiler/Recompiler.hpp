@@ -864,6 +864,16 @@ struct ResourceCapture;
 void SetResultMemoBudget(std::uint64_t bytes);
 [[nodiscard]] std::uint64_t ResultMemoBytes();
 void SetResultMemoTrimHook(std::function<void()> hook);
+struct ResourcePlanCounters {
+    std::uint64_t heldBytes = 0;
+    std::uint64_t heldPlans = 0;
+    std::uint64_t evictions = 0;
+    std::uint64_t reloads = 0;
+};
+[[nodiscard]] std::uint64_t ResourcePlanBudgetFor(std::uint64_t physicalBytes);
+void SizeResourcePlanBudget(std::uint64_t physicalBytes);
+void SetResourcePlanBudget(std::uint64_t bytes);
+[[nodiscard]] ResourcePlanCounters ResourcePlanTotals();
 
 // Debug aid (see DebugProbe in Translation/TranslationContext.hpp): the APS5_PROBE register probe is
 // only applied while a driver has it active, so it can be limited to one dispatch; the recompile

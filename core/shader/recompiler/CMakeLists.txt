@@ -280,6 +280,7 @@ function(add_shader_recompiler target runtimeTarget)
             ResourceMaterializer::EvaluateNanoseconds
             ResourceMaterializer::MaterializeNanoseconds
             ReleaseUndrawnResourcePlan
+            SizeResourcePlanBudget
             ResourceMaterializer::SpecializationNanoseconds
             RuntimeAbi::RequireVersion
             GcnGuestShaders
