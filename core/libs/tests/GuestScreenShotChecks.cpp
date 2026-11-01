@@ -40,7 +40,7 @@ struct Block {
     }
 };
 
-Block<0x28> Param(const char* first, const char* second, const char* third) {
+Block<0x28> ParamBlock(const char* first, const char* second, const char* third) {
     Block<0x28> param;
     param.Set<std::uint32_t>(0x00, 0x28);
     param.Set(0x08, first);
@@ -71,21 +71,21 @@ int main() {
     std::array<std::byte, 0x1000> output{};
 
     Require(setParam(nullptr) == ErrorArgument, "SetParam took a null parameter");
-    auto param = Param(nullptr, nullptr, nullptr);
+    auto param = ParamBlock(nullptr, nullptr, nullptr);
     param.Set<std::uint64_t>(0x20, 1);
     Require(setParam(&param) == ErrorArgument, "SetParam took a nonzero reserved field");
     for (const std::uint32_t size : {0x00u, 0x27u, 0x29u}) {
-        param = Param(nullptr, nullptr, nullptr);
+        param = ParamBlock(nullptr, nullptr, nullptr);
         param.Set<std::uint32_t>(0x00, size);
         Require(setParam(&param) == ErrorArgument, "SetParam took a size other than 0x28");
     }
     const std::string long256(256, 'a');
     const std::string long512(512, 'a');
-    param = Param(long256.c_str(), nullptr, nullptr);
+    param = ParamBlock(long256.c_str(), nullptr, nullptr);
     Require(setParam(&param) == ErrorArgument, "SetParam took a first string of 256 characters");
-    param = Param(nullptr, long256.c_str(), nullptr);
+    param = ParamBlock(nullptr, long256.c_str(), nullptr);
     Require(setParam(&param) == ErrorArgument, "SetParam took a second string of 256 characters");
-    param = Param(nullptr, nullptr, long512.c_str());
+    param = ParamBlock(nullptr, nullptr, long512.c_str());
     Require(setParam(&param) == ErrorArgument, "SetParam took a third string of 512 characters");
 
     Require(capture(2, output.data(), nullptr, nullptr) == ErrorArgument && capture(0xffffffffu, output.data(), nullptr, nullptr) == ErrorArgument, "Capture took a type of 2 or more");
