@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <mutex>
 #include <stdexcept>
 #include "SceTypes.hpp"
@@ -16,6 +17,11 @@
 #include "prx/libkernel/File/include/SharedMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 
+#ifdef ANYPS5_AIO_TESTING
+#include <atomic>
+#include "tests/AioTest.hpp"
+#endif
+
 #ifndef _WIN32
 #include <fcntl.h>
 #include <unistd.h>
@@ -25,7 +31,6 @@ namespace {
 
 constexpr std::int32_t AioProcessing = 2;
 constexpr std::int32_t AioCompleted = 3;
-constexpr std::int32_t AioAborted = 4;
 constexpr std::int32_t AioReported = 0x10000;
 constexpr std::int32_t AioMaxQueues = 512;
 constexpr std::int32_t AioRequestNumMax = 128;
@@ -43,49 +48,112 @@ constexpr std::int32_t AioDefaultDelayedCountLimit = 32;
 constexpr std::uint32_t AioDefaultSplitSize = 0x100000;
 
 std::mutex g_mutex;
-std::array<std::int32_t, AioMaxQueues> g_states{};
-std::int32_t g_nextId = 1;
+struct RequestState {
+    std::int32_t id = 0;
+    std::int32_t state = 0;
+};
+std::array<RequestState, AioMaxQueues - 1> g_requests{};
+std::int64_t g_nextId = 1;
 
-bool ValidId(std::int32_t id) {
-    return id > 0 && id < AioMaxQueues;
+#ifdef ANYPS5_AIO_TESTING
+std::atomic<std::int32_t> g_processingWaiters{0};
+
+class ProcessingWaiter {
+public:
+    ~ProcessingWaiter() {
+        if (observed) g_processingWaiters.fetch_sub(1);
+    }
+
+    void Observe() {
+        if (observed) return;
+        g_processingWaiters.fetch_add(1);
+        observed = true;
+    }
+
+private:
+    bool observed = false;
+};
+#endif
+
+RequestState* FindLocked(std::int32_t id) {
+    if (id <= 0) return nullptr;
+    for (auto& request : g_requests) {
+        if (request.id == id) return &request;
+    }
+    return nullptr;
 }
 
-std::int32_t AllocateId() {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    const std::int32_t id = g_nextId;
-    g_nextId = (g_nextId + 1) % AioMaxQueues;
-    if (g_nextId == 0) g_nextId = 1;
-    g_states[id] = AioProcessing;
-    return id;
-}
+class Reservation {
+public:
+    explicit Reservation(std::int32_t count) : count(count) {
+        std::lock_guard lock(g_mutex);
+        std::array<RequestState*, AioRequestNumMax> slots{};
+        std::int32_t available = 0;
+        for (auto& request : g_requests) {
+            if (request.id == 0) slots[available++] = &request;
+            if (available == count) break;
+        }
+        if (available != count) throw std::runtime_error("AIO: host request registry exhausted");
+        if (g_nextId + count - 1 > std::numeric_limits<std::int32_t>::max())
+            throw std::runtime_error("AIO: host request identities exhausted");
+        for (std::int32_t index = 0; index < count; ++index) {
+            ids[index] = static_cast<std::int32_t>(g_nextId++);
+            *slots[index] = {ids[index], AioProcessing};
+        }
+    }
 
-void SetState(std::int32_t id, std::int32_t state) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    g_states[id] = state;
-}
+    ~Reservation() {
+        if (published) return;
+        std::lock_guard lock(g_mutex);
+        for (std::int32_t index = 0; index < count; ++index) {
+            if (auto* request = FindLocked(ids[index])) *request = {};
+        }
+    }
+
+    Reservation(const Reservation&) = delete;
+    Reservation& operator=(const Reservation&) = delete;
+
+    void Publish(std::int32_t* output) {
+        std::lock_guard lock(g_mutex);
+        for (std::int32_t index = 0; index < count; ++index) {
+            output[index] = ids[index];
+            FindLocked(ids[index])->state = AioCompleted;
+        }
+        published = true;
+    }
+
+private:
+    std::array<std::int32_t, AioRequestNumMax> ids{};
+    std::int32_t count;
+    bool published = false;
+};
 
 std::int32_t StateLocked(std::int32_t id) {
-    return ValidId(id) && g_states[id] != 0 ? g_states[id] : SCE_KERNEL_ERROR_ESRCH;
+    const auto* request = FindLocked(id);
+    return request != nullptr ? request->state : SCE_KERNEL_ERROR_ESRCH;
 }
 
 std::int32_t ReportLocked(std::int32_t id) {
     const std::int32_t state = StateLocked(id);
-    if (state != SCE_KERNEL_ERROR_ESRCH && state != AioProcessing) g_states[id] |= AioReported;
+    if (state != SCE_KERNEL_ERROR_ESRCH && state != AioProcessing) FindLocked(id)->state |= AioReported;
     return state;
 }
 
 std::int32_t CancelLocked(std::int32_t id) {
     const std::int32_t state = StateLocked(id);
     if (state == SCE_KERNEL_ERROR_ESRCH) return state;
-    if (state != AioProcessing) return state & ~AioReported;
-    g_states[id] = AioAborted;
-    return AioAborted;
+    return state & ~AioReported;
 }
 
 std::int32_t DeleteLocked(std::int32_t id) {
-    if (StateLocked(id) == SCE_KERNEL_ERROR_ESRCH) return SCE_KERNEL_ERROR_ESRCH;
-    g_states[id] = 0;
+    auto* request = FindLocked(id);
+    if (request == nullptr) return SCE_KERNEL_ERROR_ESRCH;
+    *request = {};
     return 0;
+}
+
+void RequireFinishedLocked(std::int32_t id, const char* function) {
+    if (StateLocked(id) == AioProcessing) NotImplemented_nid_no_patch(function);
 }
 
 std::int64_t NativePread(std::int32_t fd, void* buf, std::size_t nbyte, std::int64_t offset) {
@@ -161,22 +229,20 @@ int ValidateRequests(KernelAioRwRequest* req, std::int32_t size, std::int32_t pr
 int SubmitCommands(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, bool write, std::int32_t* id) {
     const int error = ValidateRequests(req, size, prio, id);
     if (error != 0) return error;
-    const std::int32_t queue = AllocateId();
+    Reservation reservation(1);
     for (std::int32_t i = 0; i < size; ++i) RunRequest(req[i], write);
-    SetState(queue, AioCompleted);
-    *id = queue;
+    reservation.Publish(id);
     return 0;
 }
 
 int SubmitCommandsMultiple(KernelAioRwRequest* req, std::int32_t size, std::int32_t prio, bool write, std::int32_t* id) {
     const int error = ValidateRequests(req, size, prio, id);
     if (error != 0) return error;
+    Reservation reservation(size);
     for (std::int32_t i = 0; i < size; ++i) {
-        const std::int32_t queue = AllocateId();
         RunRequest(req[i], write);
-        SetState(queue, AioCompleted);
-        id[i] = queue;
     }
+    reservation.Publish(id);
     return 0;
 }
 
@@ -190,9 +256,23 @@ int ValidateIds(const std::int32_t* id, std::int32_t num, const void* out) {
 
 extern "C" {
 
+#ifdef ANYPS5_AIO_TESTING
+std::int32_t AioProcessingWaitersForTest_nid_no_patch() {
+    return g_processingWaiters.load();
+}
+
+void AioAdvanceIdentityForTest_nid_no_patch(std::int64_t next) {
+    std::lock_guard lock(g_mutex);
+    if (next < g_nextId || next > static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max()) + 1)
+        throw std::invalid_argument("AIO: invalid test identity advance");
+    g_nextId = next;
+}
+#endif
+
 int APS5_VABI sceKernelAioDeleteRequest(int32_t id, int32_t* ret) {
     if (ret == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     std::lock_guard<std::mutex> lock(g_mutex);
+    RequireFinishedLocked(id, __func__);
     *ret = DeleteLocked(id);
     return 0;
 }
@@ -201,6 +281,7 @@ int APS5_VABI sceKernelAioDeleteRequests(int32_t* id, int32_t num, int32_t* ret)
     const int error = ValidateIds(id, num, ret);
     if (error != 0) return error;
     std::lock_guard<std::mutex> lock(g_mutex);
+    for (int32_t i = 0; i < num; ++i) RequireFinishedLocked(id[i], __func__);
     for (int32_t i = 0; i < num; ++i) ret[i] = DeleteLocked(id[i]);
     return 0;
 }
@@ -208,6 +289,7 @@ int APS5_VABI sceKernelAioDeleteRequests(int32_t* id, int32_t num, int32_t* ret)
 int APS5_VABI sceKernelAioCancelRequest(int32_t id, int32_t* state) {
     if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     std::lock_guard<std::mutex> lock(g_mutex);
+    RequireFinishedLocked(id, __func__);
     *state = CancelLocked(id);
     return 0;
 }
@@ -216,6 +298,7 @@ int APS5_VABI sceKernelAioCancelRequests(int32_t* id, int32_t num, int32_t* stat
     const int error = ValidateIds(id, num, state);
     if (error != 0) return error;
     std::lock_guard<std::mutex> lock(g_mutex);
+    for (int32_t i = 0; i < num; ++i) RequireFinishedLocked(id[i], __func__);
     for (int32_t i = 0; i < num; ++i) state[i] = CancelLocked(id[i]);
     return 0;
 }
@@ -276,6 +359,9 @@ int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state,
     if (error != 0) return error;
     if (mode != AioWaitAnd && mode != AioWaitOr) return SCE_KERNEL_ERROR_EINVAL;
     const auto start = std::chrono::steady_clock::now();
+#ifdef ANYPS5_AIO_TESTING
+    ProcessingWaiter waiter;
+#endif
     for (;;) {
         bool allDone = true;
         bool anyCompleted = false;
@@ -291,6 +377,9 @@ int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state,
                 return 0;
             }
         }
+#ifdef ANYPS5_AIO_TESTING
+        waiter.Observe();
+#endif
         if (usec != nullptr && *usec != 0) {
             const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
             if (elapsed > static_cast<std::int64_t>(*usec)) {
@@ -306,6 +395,9 @@ int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state,
 int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec) {
     if (state == nullptr) return SCE_KERNEL_ERROR_EFAULT;
     const auto start = std::chrono::steady_clock::now();
+#ifdef ANYPS5_AIO_TESTING
+    ProcessingWaiter waiter;
+#endif
     for (;;) {
         std::int32_t current;
         {
@@ -316,6 +408,9 @@ int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec
             *state = current;
             return 0;
         }
+#ifdef ANYPS5_AIO_TESTING
+        waiter.Observe();
+#endif
         if (usec != nullptr && *usec != 0) {
             const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
             if (elapsed > static_cast<std::int64_t>(*usec)) {

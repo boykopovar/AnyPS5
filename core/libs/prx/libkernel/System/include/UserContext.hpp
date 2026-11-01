@@ -67,4 +67,6 @@ static_assert(offsetof(UserUcontext, stackSize) == 0x340);
 static_assert(offsetof(UserUcontext, flags) == 0x350);
 static_assert(sizeof(UserUcontext) == 0x370);
 
+extern "C" int SigreturnContext_nid_no_patch(const UserUcontext* context);
+
 #endif
