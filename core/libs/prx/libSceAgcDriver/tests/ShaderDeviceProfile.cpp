@@ -4,6 +4,7 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -102,6 +103,8 @@ void CheckProfile() {
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityFragmentBarycentricKHR); }, "fragmentShaderBarycentric");
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityMeshShadingEXT); }, "meshShader");
     invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityDrawParameters); }, "shaderDrawParameters");
+    invalid([](auto& value) { value.capabilities.push_back(spv::CapabilityComputeDerivativeGroupLinearKHR); }, "computeDerivativeGroupLinear");
+    invalid([](auto& value) { value.extensions.push_back("SPV_KHR_compute_shader_derivatives"); }, "computeDerivativeGroupLinear");
     invalid([](auto& value) { value.extensions.push_back("SPV_KHR_terminate_invocation"); }, "shaderTerminateInvocation");
     ProfileInput enabled;
     enabled.capabilities.push_back(spv::CapabilitySampledImageArrayDynamicIndexing);
@@ -116,6 +119,39 @@ void CheckProfile() {
     drawParameters.device.pNext = &drawFeatures;
     const AgcDriver::ShaderDeviceProfile drawParametersAccepted(drawParameters.Target(), drawParameters.device, drawParameters.limits);
     Require(std::ranges::find(drawParametersAccepted.Target().supportedCapabilities, spv::CapabilityDrawParameters) != drawParametersAccepted.Target().supportedCapabilities.end(), "enabled shaderDrawParameters was rejected");
+    ProfileInput derivativeInput;
+    derivativeInput.capabilities.push_back(spv::CapabilityComputeDerivativeGroupLinearKHR);
+    derivativeInput.extensions.push_back("SPV_KHR_compute_shader_derivatives");
+    VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR derivatives{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR, &derivativeInput.bda, VK_FALSE, VK_TRUE};
+    derivativeInput.device.pNext = &derivatives;
+    const std::array<const char*, 1> khrDerivativeExtensions{VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME};
+    derivativeInput.device.enabledExtensionCount = 1u;
+    derivativeInput.device.ppEnabledExtensionNames = khrDerivativeExtensions.data();
+    const AgcDriver::ShaderDeviceProfile derivativeProfile(derivativeInput.Target(), derivativeInput.device, derivativeInput.limits);
+    Require(std::ranges::find(derivativeProfile.Target().supportedCapabilities, spv::CapabilityComputeDerivativeGroupLinearKHR) != derivativeProfile.Target().supportedCapabilities.end(), "enabled linear compute derivatives were rejected");
+    derivatives.computeDerivativeGroupLinear = VK_FALSE;
+    Reject([&] { AgcDriver::ShaderDeviceProfile rejected(derivativeInput.Target(), derivativeInput.device, derivativeInput.limits); }, "computeDerivativeGroupLinear");
+    derivatives.computeDerivativeGroupLinear = VK_TRUE;
+    derivativeInput.device.enabledExtensionCount = 0u;
+    Reject([&] { AgcDriver::ShaderDeviceProfile rejected(derivativeInput.Target(), derivativeInput.device, derivativeInput.limits); }, "computeDerivativeGroupLinear");
+    const std::array<const char*, 1> nvDerivativeExtensions{VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME};
+    derivativeInput.device.enabledExtensionCount = 1u;
+    derivativeInput.device.ppEnabledExtensionNames = nvDerivativeExtensions.data();
+    Reject([&] { AgcDriver::ShaderDeviceProfile rejected(derivativeInput.Target(), derivativeInput.device, derivativeInput.limits); }, "VK_KHR_compute_shader_derivatives");
+    derivativeInput.extensions.back() = "SPV_NV_compute_shader_derivatives";
+    const AgcDriver::ShaderDeviceProfile nvProfile(derivativeInput.Target(), derivativeInput.device, derivativeInput.limits);
+    Require(std::ranges::find(nvProfile.Target().supportedExtensions, "SPV_NV_compute_shader_derivatives") != nvProfile.Target().supportedExtensions.end(), "enabled NV compute derivatives were rejected");
+    derivativeInput.device.ppEnabledExtensionNames = khrDerivativeExtensions.data();
+    Reject([&] { AgcDriver::ShaderDeviceProfile rejected(derivativeInput.Target(), derivativeInput.device, derivativeInput.limits); }, "VK_NV_compute_shader_derivatives");
+    std::array<VkExtensionProperties, 2> derivativeExtensions{};
+    Require(AgcDriver::ShaderDeviceProfile::ComputeDerivativeExtension(derivativeExtensions) == nullptr, "unadvertised compute derivatives were selected");
+    std::strcpy(derivativeExtensions[0].extensionName, VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+    Require(std::string_view(AgcDriver::ShaderDeviceProfile::ComputeDerivativeExtension(derivativeExtensions)) == VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, "KHR-only compute derivatives were not selected");
+    std::strcpy(derivativeExtensions[1].extensionName, VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+    Require(std::string_view(AgcDriver::ShaderDeviceProfile::ComputeDerivativeExtension(derivativeExtensions)) == VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, "compute-compatible NV spelling was not selected");
+    std::swap(derivativeExtensions[0], derivativeExtensions[1]);
+    derivativeExtensions[1] = {};
+    Require(std::string_view(AgcDriver::ShaderDeviceProfile::ComputeDerivativeExtension(derivativeExtensions)) == VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, "NV-only compute derivatives were not selected");
     ProfileInput terminating;
     VkPhysicalDeviceShaderTerminateInvocationFeaturesKHR terminate{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_TERMINATE_INVOCATION_FEATURES_KHR, &terminating.bda, VK_TRUE};
     terminating.device.pNext = &terminate;

@@ -221,10 +221,11 @@ bool readsOnlyWhereActive(IrOpcode opcode) {
 
 bool isExplicitLodSample(const IrProgram& program, const IrValue& value) {
     if (value.Opcode() != IrOpcode::ImageSampleRaw && value.Opcode() != IrOpcode::ImageGatherRaw) return false;
-    if (program.Resources().stage != IrShaderStage::Pixel) return true;
+    const auto stage = program.Resources().stage;
+    if (stage != IrShaderStage::Pixel && (stage != IrShaderStage::Compute || value.Opcode() == IrOpcode::ImageGatherRaw)) return true;
     const auto index = value.Flags<MemoryFlags>().index;
     if (index >= program.Resources().memoryInfo.size()) return false;
-    return (program.Resources().memoryInfo[index].imageSampleFlags & (RdnaImageSampleFlagDerivative | RdnaImageSampleFlagLod | RdnaImageSampleFlagLevelZero)) != 0u;
+    return ImageSampleExplicitLod(program.Resources().memoryInfo[index].imageSampleFlags, stage);
 }
 
 bool isImmediate(const IrValue* value, std::uint32_t immediate) {

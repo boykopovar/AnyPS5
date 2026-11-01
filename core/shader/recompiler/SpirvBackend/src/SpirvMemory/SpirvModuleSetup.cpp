@@ -446,7 +446,7 @@ void DefineModule(SpirvEmitterState& state) {
     }
     if (state.requirements.computeDerivatives && StageOf(state) == IrShaderStage::Compute) {
         state.module.EmitCapability(spv::CapabilityComputeDerivativeGroupLinearKHR);
-        state.module.EmitExtension("SPV_KHR_compute_shader_derivatives");
+        state.module.EmitExtension(std::ranges::find(state.supportedExtensions, "SPV_NV_compute_shader_derivatives") != state.supportedExtensions.end() ? "SPV_NV_compute_shader_derivatives" : "SPV_KHR_compute_shader_derivatives");
     }
     if (std::any_of(state.inputs.begin(), state.inputs.end(), [](const SpirvInputBinding& input) { return input.kind == StageInputKind::BaseInstance; })) {
         state.module.EmitCapability(spv::CapabilityDrawParameters);
