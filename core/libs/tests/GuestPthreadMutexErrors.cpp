@@ -128,6 +128,9 @@ int main() {
     Require(scePthreadMutexattrSettype(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
+    Require(Throws([] { pthread_mutex_destroy_nid_postfix(nullptr); }));
+    Require(Throws([] { scePthreadMutexDestroy(nullptr); }));
+
     PthreadMutex mutex = nullptr;
     Require(scePthreadMutexInit(&mutex, &unset, "unset") == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_OK);
