@@ -12,6 +12,7 @@
 #include "SceTypes.hpp"
 #include <future>
 #include <regex>
+#include <system_error>
 
 #ifdef _LIBCPP_VERSION
 struct GuestExceptionPointer {
@@ -148,6 +149,7 @@ void* APS5_VABI __cxa_demangle_nid_postfix(const char* mangled, char* buf, std::
 int APS5_VABI __cxa_thread_atexit_impl_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso);
 int APS5_VABI __cxa_thread_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dso);
 int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(void (APS5_VABI *destructor)(void*), void* object, void* moduleId);
+const std::error_category* _ZSt17iostream_categoryv_nid_postfix();
 int APS5_VABI _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix( int* flag, int (APS5_VABI *callback)(void*, void*, void**), void* arg );
 void APS5_VABI _Atomic_store_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int);
 void APS5_VABI _Atomic_store_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int);
