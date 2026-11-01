@@ -9,6 +9,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #endif
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstdint>
@@ -60,6 +61,8 @@ constexpr ServiceRecord Services[]{
     {"pop3s", 995, "tcp", {"spop3"}}, {"pop3s", 995, "udp", {"spop3"}},
 };
 
+constexpr std::size_t MaxDomainNameSize = 1025;
+constexpr std::size_t HostEntryAlignment = 8;
 constexpr std::size_t ServiceNameSize = 11;
 constexpr std::size_t ServiceAliasSize = 9;
 constexpr std::size_t ServiceProtocolSize = 5;
@@ -158,10 +161,9 @@ int GuestError(int error) {
 #endif
     return 4;
 }
-}
 
-extern "C" {
-GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) {
+template<typename TLookupTag>
+GuestResolver::HostEntry* ResolveHost(const char* name) {
     if (!name || !Ready()) { *sceNetErrnoLoc() = 3; return nullptr; }
     try {
         std::array<unsigned char, 4> numericAddress{};
@@ -200,9 +202,8 @@ GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) 
             return nullptr;
         }
 #endif
-        struct LookupTag {};
-        auto& lookup = HostThreadLocal<HostLookup, LookupTag>();
-        lookup.name = native->h_name;
+        auto& lookup = HostThreadLocal<HostLookup, TLookupTag>();
+        lookup.name.assign(native->h_name, numeric ? strnlen(native->h_name, MaxDomainNameSize) : std::strlen(native->h_name));
         lookup.aliasNames.clear();
         lookup.aliases.clear();
         lookup.addressBytes.clear();
@@ -223,6 +224,65 @@ GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) 
         errno = ENOMEM;
         return nullptr;
     }
+}
+
+bool CopyHostEntry(const GuestResolver::HostEntry& source, GuestResolver::HostEntry* entry, char* buffer, std::size_t length) {
+    std::size_t addressCount = 0;
+    while (source.addresses[addressCount]) ++addressCount;
+    std::size_t aliasCount = 0;
+    std::size_t aliasBytes = 0;
+    for (; source.aliases[aliasCount]; ++aliasCount) aliasBytes += std::strlen(source.aliases[aliasCount]) + 1;
+    const std::size_t nameBytes = std::strlen(source.name) + 1;
+    const std::size_t padding = (HostEntryAlignment - reinterpret_cast<std::uintptr_t>(buffer) % HostEntryAlignment) % HostEntryAlignment;
+    const std::size_t pointers = (addressCount + aliasCount + 2) * sizeof(char*);
+    const std::size_t addressBytes = addressCount * static_cast<std::size_t>(source.length);
+    if (padding + pointers + addressBytes + nameBytes + aliasBytes > length) return false;
+    if (!buffer || !entry) APS5_INVALID_ARG_EX;
+    auto** pointer = reinterpret_cast<char**>(buffer + padding);
+    char* text = buffer + padding + pointers;
+    const auto copy = [&text](const void* data, std::size_t size) {
+        char* start = text;
+        std::memcpy(start, data, size);
+        text += size;
+        return start;
+    };
+    entry->family = source.family;
+    entry->length = source.length;
+    entry->addresses = pointer;
+    for (std::size_t i = 0; i < addressCount; ++i) *pointer++ = copy(source.addresses[i], source.length);
+    *pointer++ = nullptr;
+    entry->name = copy(source.name, nameBytes);
+    entry->aliases = pointer;
+    for (std::size_t i = 0; i < aliasCount; ++i)
+        *pointer++ = copy(source.aliases[i], std::strlen(source.aliases[i]) + 1);
+    *pointer = nullptr;
+    return true;
+}
+}
+
+extern "C" {
+GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char* name) {
+    struct LookupTag {};
+    return ResolveHost<LookupTag>(name);
+}
+
+int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver::HostEntry* entry, char* buffer,
+    std::size_t length, GuestResolver::HostEntry** result, int* hostError) {
+    if (!name || !result) APS5_INVALID_ARG_EX;
+    *result = nullptr;
+    struct LookupTag {};
+    const auto* source = ResolveHost<LookupTag>(name);
+    if (source && CopyHostEntry(*source, entry, buffer, length)) {
+        *result = entry;
+        return 0;
+    }
+    if (!hostError) APS5_INVALID_ARG_EX;
+    if (source) {
+        *sceNetErrnoLoc() = -1;
+        errno = ERANGE;
+    }
+    *hostError = *sceNetErrnoLoc();
+    return *hostError == -1 && errno != 0 ? errno : -1;
 }
 
 GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol) {
