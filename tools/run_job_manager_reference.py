@@ -134,6 +134,9 @@ def run(args, directory):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Run the CPU JobManager fixtures through native relinker startup using an owned module or the host fallback.")
     provider = parser.add_mutually_exclusive_group(required=True)
     provider.add_argument("--module", type=Path, help="Owned decrypted SELF or ELF libSceJobManager.prx")
