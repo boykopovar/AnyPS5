@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
@@ -70,6 +71,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <deque>
 #include <cctype>
 #include <cmath>
 #include <chrono>
@@ -7277,6 +7279,424 @@ bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+struct GateBlock {
+    void* block = nullptr;
+    std::size_t bytes = 0;
+    std::vector<void*> registered;
+
+    std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(block); }
+
+    GuestAllocations::Mapped Register(std::uint64_t offset, std::size_t length) {
+        auto* at = static_cast<std::byte*>(block) + offset;
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(at, length, true, true, true);
+        }
+        registered.push_back(at);
+        GuestAllocations::Mapped mapped;
+        for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+            if (range->address == reinterpret_cast<std::uint64_t>(at)) mapped.push_back(range);
+        }
+        Require(mapped.size() == 1, "(gate) a mapped range is not registered");
+        return mapped;
+    }
+
+    void Unregister(const Context& context) {
+        for (auto* at : registered) {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(at);
+        }
+        registered.clear();
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        HostImportFor(context, Address(), bytes);
+    }
+};
+
+struct GateFixture {
+    const Context& base;
+    ImportWatch decided;
+    TextureDetiler detiler;
+    Context context;
+    std::deque<GateBlock> blocks;
+
+    explicit GateFixture(const Context& base) : base(base), decided(PrepareImportWatch(base)), detiler(base), context(base) {
+        context.detiler = &detiler;
+        SetImportWatch(base, ImportWatch::Unwatch);
+    }
+
+    ~GateFixture() {
+        AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch);
+        StorageTexture::SetPublishHookForTest(nullptr);
+        MapImportGate::SetUnlockedHookForTest(nullptr);
+        for (auto& block : blocks) {
+            block.Unregister(context);
+            ReleaseWatched(block.block, block.bytes);
+        }
+        SetImportWatch(base, decided);
+    }
+
+    GateBlock* Allocate(std::size_t bytes, std::size_t alignment) {
+        void* block = AllocateWatched(bytes, alignment);
+        if (block == nullptr) return nullptr;
+        std::memset(block, 0x5a, bytes);
+        AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uint64_t>(block), bytes);
+        blocks.push_back({block, bytes, {}});
+        return &blocks.back();
+    }
+
+    bool Adopt() {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        return ImportMappedRanges(context, {}, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
+    }
+
+    std::shared_ptr<StorageTexture> Image(std::uint64_t address, std::uint32_t side) {
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = side;
+        resource.height = side;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == static_cast<std::uint64_t>(side) * side * 4, "(gate) unexpected surface size");
+        return StorageTexture::Create(context, detiler, resource, 0);
+    }
+};
+
+struct GateWatchdog {
+    std::atomic<bool> finished{false};
+    std::thread thread;
+
+    GateWatchdog(const char* what, int seconds) {
+        thread = std::thread([this, what, seconds] {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+            while (!finished.load(std::memory_order_acquire)) {
+                if (std::chrono::steady_clock::now() > deadline) {
+                    std::cerr << what << ": deadlock, a thread did not finish within " << seconds << " s\n";
+                    std::cerr.flush();
+                    std::_Exit(1);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    ~GateWatchdog() {
+        finished.store(true, std::memory_order_release);
+        thread.join();
+    }
+};
+
+bool GateUnavailable(const Context& context, const char* what) {
+    if (context.hostImportAlignment != 0 && AgcDriver::GuestMemory::WriteWatched()) return false;
+    std::cout << "host imports or write watching unavailable: " << what << " not tested\n";
+    return true;
+}
+
+std::atomic<int> gateStage{0};
+
+bool AwaitGate(const std::function<bool()>& done, int seconds = 5) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+    while (!done()) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+void GateUnwatchHook(std::uint64_t address, std::size_t bytes);
+
+void GatePublishHook() {
+    AgcDriver::GuestMemory::SetUnwatchHook(&GateUnwatchHook);
+    gateStage.store(1, std::memory_order_release);
+    Require(AwaitGate([] { return MapImportGate::DrainingImportsForTest() != 0 || gateStage.load(std::memory_order_acquire) >= 2; }), "(g) the map-time import neither waited for the publication nor reached its unwatch hook");
+}
+
+std::function<bool()> gateHookRelease;
+std::atomic<bool> gateHookTimedOut{false};
+
+void GateUnwatchHook(std::uint64_t address, std::size_t bytes) {
+    int expected = 1;
+    if (gateStage.compare_exchange_strong(expected, 2, std::memory_order_acq_rel) && gateHookRelease && !AwaitGate(gateHookRelease)) gateHookTimedOut.store(true, std::memory_order_release);
+    StorageTexture::SaveBeforeUnwatch(address, bytes);
+}
+
+void GateUnlockedHook() {
+    int expected = 1;
+    if (gateStage.compare_exchange_strong(expected, 2, std::memory_order_acq_rel) && gateHookRelease && !AwaitGate(gateHookRelease)) gateHookTimedOut.store(true, std::memory_order_release);
+}
+
+bool mapGatePublicationTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "a publication between the map-time check and the unwatch hook")) return false;
+    GateFixture fixture(base);
+    auto* block = fixture.Allocate(4 << 20, 65536);
+    if (block == nullptr) return false;
+    const auto mapped = block->Register(0, 512 * 1024);
+    Require(fixture.Adopt(), "(g) the device was not adopted");
+    const auto before = MapImportGate::CountersForTest();
+    gateStage.store(0);
+    gateHookTimedOut.store(false);
+    gateHookRelease = [] { return gateStage.load(std::memory_order_acquire) >= 3; };
+    StorageTexture::SetPublishHookForTest(&GatePublishHook);
+    std::atomic<int> deferred{-1};
+    std::shared_ptr<StorageTexture> image;
+    {
+        GateWatchdog watchdog("(g) publication between the check and the hook", 20);
+        std::thread mapping([&] {
+            if (!AwaitGate([] { return gateStage.load(std::memory_order_acquire) >= 1; })) return;
+            deferred.store(ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false) ? 0 : 1, std::memory_order_release);
+        });
+        image = fixture.Image(block->Address(), 1024);
+        StorageTexture::SetPublishHookForTest(nullptr);
+        gateStage.store(3, std::memory_order_release);
+        HostImportFor(fixture.context, block->Address(), 512 * 1024);
+        mapping.join();
+    }
+    recorder.Keep(image);
+    const auto after = MapImportGate::CountersForTest();
+    Require(!gateHookTimedOut.load(), "(g) the unwatch hook was not released");
+    Require(deferred.load() == 1, "(g) the map-time import ran its unwatch hook over a storage image published after its check");
+    Require(after.drainWaits > before.drainWaits && after.fastPublications > before.fastPublications, "(g) the map-time import did not wait for the publication on the fast path");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "(g) the deferred import failed under the GPU lock");
+        Require(HostImportFor(fixture.context, block->Address(), 512 * 1024) != nullptr, "(g) the mapped range was not imported");
+    }
+    std::cout << "map-time import gate: publication between the check and the hook passed\n";
+    return true;
+}
+
+bool mapGatePendingTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "units becoming pending between the map-time check and the unwatch hook")) return false;
+    GateFixture fixture(base);
+    auto* block = fixture.Allocate(2 << 20, 65536);
+    if (block == nullptr) return false;
+    const auto mapped = block->Register(0, 512 * 1024);
+    Require(fixture.Adopt(), "(p) the device was not adopted");
+    auto image = fixture.Image(block->Address(), 512);
+    recorder.Keep(image);
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{block->Address(), block->Address() + (1 << 20)}}};
+    Require(!StorageTexture::UnwatchHookLocksGpu(span), "(p) the clean 1 MiB image already makes the unwatch hook take the GPU lock");
+    const auto before = MapImportGate::CountersForTest();
+    gateStage.store(1);
+    gateHookTimedOut.store(false);
+    gateHookRelease = [&] { return MapImportGate::WaitingPublishersForTest() != 0 || StorageTexture::AnyPendingOverlaps(span); };
+    AgcDriver::GuestMemory::SetUnwatchHook(&GateUnwatchHook);
+    std::atomic<int> deferred{-1};
+    {
+        GateWatchdog watchdog("(p) units pending between the check and the hook", 20);
+        std::thread mapping([&] { deferred.store(ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false) ? 0 : 1, std::memory_order_release); });
+        Require(AwaitGate([] { return gateStage.load(std::memory_order_acquire) >= 2; }), "(p) the map-time import did not reach its unwatch hook");
+        image->MarkDirty();
+        HostImportFor(fixture.context, block->Address(), 512 * 1024);
+        mapping.join();
+    }
+    const auto after = MapImportGate::CountersForTest();
+    Require(!gateHookTimedOut.load(), "(p) the unwatch hook was not released");
+    Require(deferred.load() == 0, "(p) the map-time import was deferred");
+    Require(after.waitedPublications > before.waitedPublications, "(p) the pending transition did not wait for the map-time import");
+    Require(!AgcDriver::GuestMemory::Watched(block->Address(), 512 * 1024), "(p) the mapped range is still watched");
+    Require(StorageTexture::AnyPendingOverlaps(span), "(p) the image's results are not pending");
+    std::cout << "map-time import gate: units pending between the check and the hook passed\n";
+    return true;
+}
+
+bool mapGateFastPathTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "the map-time import gate's fast path")) return false;
+    GateFixture fixture(base);
+    auto* block = fixture.Allocate(4 << 20, 65536);
+    if (block == nullptr) return false;
+    const auto before = MapImportGate::CountersForTest();
+    auto image = fixture.Image(block->Address(), 1024);
+    recorder.Keep(image);
+    image->MarkDirty();
+    image->MarkDirty();
+    const auto after = MapImportGate::CountersForTest();
+    Require(after.fastPublications == before.fastPublications + 2, "(f) a creation and a first pending transition did not take the fast path");
+    Require(after.stripedPublications == before.stripedPublications && after.waitedPublications == before.waitedPublications && after.importHolds == before.importHolds, "(f) a publication took a stripe without a map-time import in flight");
+    std::cout << "map-time import gate: fast path passed\n";
+    return true;
+}
+
+bool mapGateDisjointTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "map-time import gate stripes of disjoint ranges")) return false;
+    GateFixture fixture(base);
+    auto* mappedBlock = fixture.Allocate(2 << 20, 65536);
+    if (mappedBlock == nullptr) return false;
+    GateBlock* other = nullptr;
+    for (int attempt = 0; attempt < 8 && other == nullptr; ++attempt) {
+        auto* candidate = fixture.Allocate(4 << 20, 65536);
+        Require(candidate != nullptr, "(d) no second watched block");
+        if ((MapImportGate::StripesOf(candidate->Address(), candidate->Address() + (4 << 20)) & MapImportGate::StripesOf(mappedBlock->Address(), mappedBlock->Address() + (2 << 20))).none()) other = candidate;
+    }
+    Require(other != nullptr, "(d) no watched block on other stripes");
+    const auto mapped = mappedBlock->Register(0, 512 * 1024);
+    Require(fixture.Adopt(), "(d) the device was not adopted");
+    auto warm = fixture.Image(other->Address() + (3 << 20), 256);
+    recorder.Keep(warm);
+    std::atomic<bool> created{false};
+    gateStage.store(1);
+    gateHookTimedOut.store(false);
+    gateHookRelease = [&] { return created.load(std::memory_order_acquire); };
+    MapImportGate::SetUnlockedHookForTest(&GateUnlockedHook);
+    const auto before = MapImportGate::CountersForTest();
+    std::shared_ptr<StorageTexture> image;
+    {
+        GateWatchdog watchdog("(d) disjoint stripes", 20);
+        std::thread mapping([&] { ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false); });
+        Require(AwaitGate([] { return gateStage.load(std::memory_order_acquire) >= 2; }), "(d) the map-time import did not take its stripes");
+        image = fixture.Image(other->Address(), 1024);
+        created.store(true, std::memory_order_release);
+        mapping.join();
+    }
+    MapImportGate::SetUnlockedHookForTest(nullptr);
+    recorder.Keep(image);
+    const auto after = MapImportGate::CountersForTest();
+    Require(!gateHookTimedOut.load(), "(d) a creation over other stripes did not complete while the map-time import held its own");
+    Require(after.stripedPublications == before.stripedPublications + 1 && after.waitedPublications == before.waitedPublications, "(d) a creation over other stripes waited for the map-time import or skipped its stripes");
+    std::cout << "map-time import gate: disjoint stripes passed\n";
+    return true;
+}
+
+GateBlock* gateRetryBlock = nullptr;
+std::atomic<int> gateRetryHooks{0};
+
+void GateRetryHook() {
+    if (gateRetryHooks.fetch_add(1) == 0) static_cast<void>(gateRetryBlock->Register(2 << 20, 1 << 20));
+}
+
+bool mapGateRetryTests(const Device& device, Recorder& recorder) {
+    static_cast<void>(recorder);
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "a map-time import run growing past its gate stripes")) return false;
+    GateFixture fixture(base);
+    GateBlock* block = nullptr;
+    for (int attempt = 0; attempt < 8 && block == nullptr; ++attempt) {
+        auto* candidate = fixture.Allocate(4 << 20, 1 << 21);
+        if (candidate == nullptr) return false;
+        if (candidate->Address() % (1 << 21) == 0) block = candidate;
+    }
+    Require(block != nullptr, "(r) no watched block aligned to a stripe");
+    auto mapped = block->Register((3 << 20) / 2, 512 * 1024);
+    Require(fixture.Adopt(), "(r) the device was not adopted");
+    gateRetryBlock = block;
+    gateRetryHooks.store(0);
+    MapImportGate::SetUnlockedHookForTest(&GateRetryHook);
+    const auto before = MapImportGate::CountersForTest();
+    bool imported = false;
+    {
+        GateWatchdog watchdog("(r) run growing past its stripes", 20);
+        std::thread mapping([&] { imported = ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false); });
+        mapping.join();
+    }
+    MapImportGate::SetUnlockedHookForTest(nullptr);
+    const auto after = MapImportGate::CountersForTest();
+    Require(imported, "(r) the map-time import was deferred");
+    Require(gateRetryHooks.load() == 2 && after.retries == before.retries + 1, "(r) the grown run did not take the stripes again");
+    Require(HostImportCovers(fixture.context, block->Address() + (3 << 20) / 2, (3 << 20) / 2), "(r) the grown run was not imported whole");
+    std::cout << "map-time import gate: run growing past its stripes passed\n";
+    return true;
+}
+
+bool mapGateStressTests(const Device& device) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "the map-time import gate under load")) return false;
+    GateFixture fixture(base);
+    constexpr int slots = 4;
+    std::array<GateBlock*, slots> blocks{};
+    for (auto& block : blocks) {
+        block = fixture.Allocate(4 << 20, 65536);
+        if (block == nullptr) return false;
+    }
+    Require(fixture.Adopt(), "(s) the device was not adopted");
+    std::array<std::vector<std::shared_ptr<StorageTexture>>, slots> images;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    std::atomic<std::uint64_t> creations{0};
+    std::atomic<std::uint64_t> imports{0};
+    std::atomic<std::uint64_t> deferrals{0};
+    std::exception_ptr failure;
+    std::mutex failureMutex;
+    const auto guard = [&](auto&& body) {
+        try {
+            body();
+        } catch (...) {
+            std::lock_guard lock(failureMutex);
+            if (!failure) failure = std::current_exception();
+        }
+    };
+    const auto before = MapImportGate::CountersForTest();
+    {
+        GateWatchdog watchdog("(s) map-time import gate under load", 40);
+        std::vector<std::thread> threads;
+        for (int worker = 0; worker < 2; ++worker) {
+            threads.emplace_back([&, worker] {
+                guard([&] {
+                    std::minstd_rand random(static_cast<unsigned>(17 + worker));
+                    while (std::chrono::steady_clock::now() < deadline) {
+                        const auto slot = static_cast<int>(random() % slots);
+                        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                        auto& kept = images[static_cast<std::size_t>(slot)];
+                        switch (random() % 4) {
+                        case 0:
+                            kept.push_back(fixture.Image(blocks[static_cast<std::size_t>(slot)]->Address(), random() % 2 == 0 ? 1024 : 512));
+                            creations.fetch_add(1, std::memory_order_relaxed);
+                            if (kept.size() > 2) kept.erase(kept.begin());
+                            break;
+                        case 1:
+                            if (!kept.empty()) kept.back()->MarkDirty();
+                            break;
+                        case 2:
+                            if (!kept.empty()) kept.back()->Flush();
+                            break;
+                        default:
+                            HostImportFor(fixture.context, blocks[static_cast<std::size_t>(slot)]->Address(), 512 * 1024);
+                            break;
+                        }
+                    }
+                });
+            });
+        }
+        for (int mapper = 0; mapper < 2; ++mapper) {
+            threads.emplace_back([&, mapper] {
+                guard([&] {
+                    std::minstd_rand random(static_cast<unsigned>(101 + mapper));
+                    while (std::chrono::steady_clock::now() < deadline) {
+                        auto* block = blocks[static_cast<std::size_t>(mapper + 2 * static_cast<int>(random() % 2))];
+                        const auto mapped = block->Register(0, 512 * 1024);
+                        if (ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false)) {
+                            imports.fetch_add(1, std::memory_order_relaxed);
+                        } else {
+                            deferrals.fetch_add(1, std::memory_order_relaxed);
+                            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                            ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
+                        }
+                        block->Unregister(fixture.context);
+                    }
+                });
+            });
+        }
+        for (auto& thread : threads) thread.join();
+    }
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        for (auto& kept : images) kept.clear();
+    }
+    if (failure) std::rethrow_exception(failure);
+    const auto after = MapImportGate::CountersForTest();
+    std::cout << "map-time import gate under load: " << creations.load() << " creations, " << imports.load() << " map-time imports, " << deferrals.load() << " deferred; publications " << after.fastPublications - before.fastPublications << " fast, " << after.stripedPublications - before.stripedPublications << " striped (" << after.waitedPublications - before.waitedPublications << " waited); " << after.importHolds - before.importHolds << " import holds (" << after.drainWaits - before.drainWaits << " drained, " << after.retries - before.retries << " retried)\n";
+    Require(creations.load() != 0 && imports.load() + deferrals.load() != 0, "(s) the load did not run");
+    std::cout << "map-time import gate under load passed\n";
+    return true;
+}
+
 std::atomic<bool> unwatchHookEntered{false};
 
 void SignalUnwatchHook(std::uint64_t address, std::size_t bytes) {
@@ -12991,6 +13411,7 @@ int main(int argc, char** argv) {
             descriptorPoolTests(device);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-stress-only") return mapGateStressTests(device) ? 0 : 77;
         std::unique_lock gpu(GpuMutex());
 #ifdef _WIN32
         if (argc == 2 && std::string_view(argv[1]) == "--storage-cpu-snapshot-only") {
@@ -13085,6 +13506,11 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--pending-after-unwatch-only") return pendingAfterLeavingWatchTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--unwatch-lock-order-only") return unwatchHookLockOrderTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-publication-only") return mapGatePublicationTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-pending-only") return mapGatePendingTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-fast-path-only") return mapGateFastPathTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-disjoint-only") return mapGateDisjointTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-retry-only") return mapGateRetryTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--command-buffer-release-only") {
             commandBufferReleaseTests(device, recorder);
             return 0;

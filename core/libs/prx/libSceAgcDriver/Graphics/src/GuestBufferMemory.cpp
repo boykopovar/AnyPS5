@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/AdaptiveStaging.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -255,11 +256,7 @@ struct ImportSettle {
 #endif
 };
 
-#ifdef NDEBUG
-const bool importsLockOrderChecked = std::getenv("APS5_ASSERT_GPU_LOCK") != nullptr;
-#else
-const bool importsLockOrderChecked = true;
-#endif
+const bool importsLockOrderChecked = MapImportGate::LockOrderChecked();
 
 thread_local std::uint32_t importsHeld = 0;
 
@@ -4321,6 +4318,10 @@ void RequireGpuLockBeforeImports(const char* where) {
     std::abort();
 }
 
+bool ImportsHeldByThisThread() {
+    return importsHeld != 0;
+}
+
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
     auto& state = Imports();
@@ -4348,8 +4349,9 @@ bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size
 bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
     if (context.hostImportAlignment == 0) return true;
     ensurePinWaiter();
+    const bool withoutGpu = !GuestMemory::GpuMutex().HeldByThisThread();
     auto& state = Imports();
-    std::lock_guard lock(state.mutex);
+    std::unique_lock lock(state.mutex);
     if (!adoptDevice && (state.device != context.device || state.watchDevice != context.device)) return false;
     const bool adopting = state.device != context.device;
     GuestAllocations::Lease current;
@@ -4365,9 +4367,31 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
         if (current.empty()) current = GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch(ranges);
         if (leasedRangeOwner(current, range->address) != range) continue;
         try {
-            const auto run = importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state));
+            auto run = importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state));
+            std::optional<MapImportGate::ImportHold> hold;
+            if (withoutGpu) {
+                auto stripes = MapImportGate::StripesOf(run.base, run.base + run.bytes);
+                bool owned = true;
+                for (;;) {
+                    lock.unlock();
+                    hold.reset();
+                    hold.emplace(stripes);
+                    MapImportGate::RunUnlockedHookForTest();
+                    lock.lock();
+                    if (state.device != context.device || state.watchDevice != context.device) return false;
+                    if (state.refreshedGeneration > generation) return true;
+                    current = GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch(ranges);
+                    owned = leasedRangeOwner(current, range->address) == range;
+                    if (!owned) break;
+                    run = importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state));
+                    if (hold->Covers(run.base, run.base + run.bytes)) break;
+                    MapImportGate::CountRetry();
+                    stripes |= MapImportGate::StripesOf(run.base, run.base + run.bytes);
+                }
+                if (!owned) continue;
+            }
             const bool replacing = wouldRetireImport(state, run);
-            if (!GuestMemory::GpuMutex().HeldByThisThread()) {
+            if (withoutGpu) {
                 const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{run.base, run.base + run.bytes}}};
                 if (replacing || StorageTexture::UnwatchHookLocksGpu(span)) return false;
             } else if (replacing) {

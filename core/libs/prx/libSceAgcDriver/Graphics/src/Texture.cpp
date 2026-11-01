@@ -14,6 +14,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 // For the declaration of PendingStorageOverlaps, defined below.
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ShaderCacheDirectory.hpp"
@@ -220,9 +221,11 @@ void countStorageWriteBack(std::uint64_t bytes, bool direct, bool drawn = false)
 // Every storage image alive, for the fill HLE's cover check (StorageTexture::ClassifyFill): the
 // storage cache indexes surfaces by key, not by address range. Its mutex is a leaf.
 struct LiveImages {
-    AgcDriver::Mutex mutex;
+    MapImportGate::LeafMutex<AgcDriver::Mutex> mutex;
     std::vector<StorageTexture*> textures;
 };
+
+std::atomic<void (*)()> publishHookForTest{nullptr};
 
 LiveImages& Live() {
     static LiveImages live;
@@ -1459,11 +1462,13 @@ std::shared_ptr<StorageTexture> StorageTexture::Create(const Context& context, T
         return true;
     }();
     static_cast<void>(unwatchHooked);
+    const MapImportGate::PublishHold publication(descriptor.baseAddress, DescribeSurface(descriptor).guestBytes);
     auto texture = std::shared_ptr<StorageTexture>(new StorageTexture(context, detiler, descriptor, mipLevel));
     uploadReason = "first";
     texture->upload();
     texture->defaultMip = mipLevel;
     texture->view = texture->createView(mipLevel, false, texture->storageFormat);
+    if (const auto hook = publishHookForTest.load(std::memory_order_acquire)) hook();
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -1627,7 +1632,7 @@ private:
 
 // Storage images whose results have not reached guest memory yet.
 struct PendingWrites {
-    SlimMutex mutex;
+    MapImportGate::LeafMutex<SlimMutex> mutex;
     PendingList textures;
     // Images taken out of `textures` by a FlushPending still storing them (see adjacentPendingUnchanged).
     std::vector<StorageTexture*> flushing;
@@ -4054,6 +4059,8 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     CaptureTrace::Log("image-write image=%llx first=%u count=%u generation=%llu", static_cast<unsigned long long>(descriptor.baseAddress), first, count, static_cast<unsigned long long>(generation));
     ++writes;
     static const bool eager = std::getenv("APS5_EAGER_WRITEBACK") != nullptr || std::getenv("APS5_NO_TEXTURE_CACHE") != nullptr;
+    std::optional<MapImportGate::PublishHold> publication;
+    if (!layerPending.Any()) publication.emplace(descriptor.baseAddress, guestBytes);
     if (!layerPending.AllIn(first, count)) {
         std::vector<bool> unsaved;
         bool anyUnsaved = false;
@@ -4114,6 +4121,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     }
     if (!handedOver.empty() || !handedUnits.empty()) supersedeHandedOver(first, count);
     if (eager) {
+        publication.reset();
         WriteBack();
         return;
     }
@@ -4585,6 +4593,10 @@ bool StorageTexture::WaitForFlushing(std::uint64_t address, std::size_t bytes, c
 
 bool StorageTexture::hashedAtUnwatch(std::uint64_t address, std::size_t bytes) const {
     return guestBytes > GenerationBaselineBytes && overlapsLive(address, bytes);
+}
+
+void StorageTexture::SetPublishHookForTest(void (*hook)()) {
+    publishHookForTest.store(hook, std::memory_order_release);
 }
 
 bool StorageTexture::UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
