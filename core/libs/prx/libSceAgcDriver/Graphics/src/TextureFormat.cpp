@@ -21,15 +21,21 @@ struct FormatEntry {
 constexpr FormatEntry kFormatLookup[] = {
     {1, VK_FORMAT_R8_UNORM, 1, false},
     {2, VK_FORMAT_R8_SNORM, 1, false},
+    {3, VK_FORMAT_R8_USCALED, 1, false},
+    {4, VK_FORMAT_R8_SSCALED, 1, false},
     {5, VK_FORMAT_R8_UINT, 1, false},
     {6, VK_FORMAT_R8_SINT, 1, false},
     {7, VK_FORMAT_R16_UNORM, 2, false},
     {8, VK_FORMAT_R16_SNORM, 2, false},
+    {9, VK_FORMAT_R16_USCALED, 2, false},
+    {10, VK_FORMAT_R16_SSCALED, 2, false},
     {11, VK_FORMAT_R16_UINT, 2, false},
     {12, VK_FORMAT_R16_SINT, 2, false},
     {13, VK_FORMAT_R16_SFLOAT, 2, false},
     {14, VK_FORMAT_R8G8_UNORM, 2, false},
     {15, VK_FORMAT_R8G8_SNORM, 2, false},
+    {16, VK_FORMAT_R8G8_USCALED, 2, false},
+    {17, VK_FORMAT_R8G8_SSCALED, 2, false},
     {18, VK_FORMAT_R8G8_UINT, 2, false},
     {19, VK_FORMAT_R8G8_SINT, 2, false},
     {20, VK_FORMAT_R32_UINT, 4, false},
@@ -37,16 +43,22 @@ constexpr FormatEntry kFormatLookup[] = {
     {22, VK_FORMAT_R32_SFLOAT, 4, false},
     {23, VK_FORMAT_R16G16_UNORM, 4, false},
     {24, VK_FORMAT_R16G16_SNORM, 4, false},
+    {25, VK_FORMAT_R16G16_USCALED, 4, false},
+    {26, VK_FORMAT_R16G16_SSCALED, 4, false},
     {27, VK_FORMAT_R16G16_UINT, 4, false},
     {28, VK_FORMAT_R16G16_SINT, 4, false},
     {29, VK_FORMAT_R16G16_SFLOAT, 4, false},
     {36, VK_FORMAT_B10G11R11_UFLOAT_PACK32, 4, false},
     {50, VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4, false},
     {51, VK_FORMAT_A2B10G10R10_SNORM_PACK32, 4, false},
+    {52, VK_FORMAT_A2B10G10R10_USCALED_PACK32, 4, false},
+    {53, VK_FORMAT_A2B10G10R10_SSCALED_PACK32, 4, false},
     {54, VK_FORMAT_A2B10G10R10_UINT_PACK32, 4, false},
     {55, VK_FORMAT_A2B10G10R10_SINT_PACK32, 4, false},
     {56, VK_FORMAT_R8G8B8A8_UNORM, 4, false},
     {57, VK_FORMAT_R8G8B8A8_SNORM, 4, false},
+    {58, VK_FORMAT_R8G8B8A8_USCALED, 4, false},
+    {59, VK_FORMAT_R8G8B8A8_SSCALED, 4, false},
     {60, VK_FORMAT_R8G8B8A8_UINT, 4, false},
     {61, VK_FORMAT_R8G8B8A8_SINT, 4, false},
     {62, VK_FORMAT_R32G32_UINT, 8, false},
@@ -54,6 +66,8 @@ constexpr FormatEntry kFormatLookup[] = {
     {64, VK_FORMAT_R32G32_SFLOAT, 8, false},
     {65, VK_FORMAT_R16G16B16A16_UNORM, 8, false},
     {66, VK_FORMAT_R16G16B16A16_SNORM, 8, false},
+    {67, VK_FORMAT_R16G16B16A16_USCALED, 8, false},
+    {68, VK_FORMAT_R16G16B16A16_SSCALED, 8, false},
     {69, VK_FORMAT_R16G16B16A16_UINT, 8, false},
     {70, VK_FORMAT_R16G16B16A16_SINT, 8, false},
     {71, VK_FORMAT_R16G16B16A16_SFLOAT, 8, false},
@@ -120,6 +134,25 @@ VkFormat DccClearTextureFormat(std::uint32_t guestFormat) {
     return ResolveTextureFormat(guestFormat);
 }
 
+constexpr std::array<std::uint32_t, 14> kScaledTextureFormats{3u, 4u, 9u, 10u, 16u, 17u, 25u, 26u, 52u, 53u, 58u, 59u, 67u, 68u};
+
+std::uint32_t ScaledSampledBit(std::uint32_t guestFormat) {
+    for (std::uint32_t index = 0; index < kScaledTextureFormats.size(); ++index) {
+        if (kScaledTextureFormats[index] == guestFormat) return 1u << index;
+    }
+    return 0u;
+}
+
+std::uint32_t ScaledSampledFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
+    std::uint32_t formats = 0;
+    for (const auto format : kScaledTextureFormats) {
+        VkFormatProperties properties{};
+        formatProperties(physical, ResolveTextureFormat(format), &properties);
+        if ((properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0) formats |= ScaledSampledBit(format);
+    }
+    return formats;
+}
+
 std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatProperties, VkPhysicalDevice physical) {
     const char* forced = std::getenv("APS5_SRGB_SHADER_DECODE");
     const bool always = forced != nullptr && (std::strcmp(forced, "1") == 0 || std::strcmp(forced, "copy") == 0);
@@ -136,6 +169,8 @@ std::uint32_t SrgbDecodeFormats(PFN_vkGetPhysicalDeviceFormatProperties formatPr
 }
 
 VkFormat SampledTextureFormat(const Context& context, std::uint32_t guestFormat) {
+    const auto scaled = ScaledSampledBit(guestFormat);
+    Require(scaled == 0u || (context.scaledSampledFormats & scaled) != 0u, "unsupported guest texture format " + std::to_string(guestFormat));
     if (IsRepackedTextureFormat(guestFormat) || guestFormat == static_cast<std::uint32_t>(ShaderRecompiler::IrBufferFormat::Format11_11_10Float)) return VK_FORMAT_B10G11R11_UFLOAT_PACK32;
     const auto format = static_cast<ShaderRecompiler::IrBufferFormat>(guestFormat);
     if ((context.srgbDecodeFormats & ShaderRecompiler::SrgbDecodeBit(format)) == 0u) return ResolveTextureFormat(guestFormat);
