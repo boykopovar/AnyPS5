@@ -326,6 +326,32 @@ class AnnotateModuleTests(unittest.TestCase):
                     self.assertNotIn("; GOT ", self.read(".asm"))
                     self.assertNotIn("; -> ", self.read(".asm"))
 
+    def test_lea_ignores_segment_base_when_naming_import_addresses(self):
+        address = 0x100001000
+        for segment in (b"", b"\x64", b"\x65"):
+            for address_prefix in (b"", b"\x67"):
+                with self.subTest(segment=segment, address_prefix=address_prefix):
+                    code = b""
+                    for opcode in (b"\x48\x8d\x05", b"\x48\x8b\x05", b"\xff\x15", b"\xff\x25"):
+                        instruction_bytes = segment + address_prefix + opcode
+                        next_address = address + len(code) + len(instruction_bytes) + 4
+                        code += instruction_bytes + struct.pack("<I", (SLOT - next_address) & 0xFFFFFFFF)
+                    symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+                    module = bytearray(build_module(code=code + b"\xc3", symbols=symbols,
+                                                   relocations=((SLOT, 1), (0x100000000 + SLOT, 3))))
+                    struct.pack_into("<Q", module, 64 + 16, address)
+                    summary = self.annotate(bytes(module))
+                    listing = self.read(".asm").splitlines()
+                    expected = IMPORT_NAME if address_prefix else SECOND_IMPORT_NAME
+                    self.assertTrue(instruction(listing, r"lea[wlq]?").endswith("; GOT " + expected))
+                    for mnemonic in (r"mov[wlq]?", r"callq?", r"jmpq?"):
+                        line = instruction(listing, mnemonic)
+                        if segment:
+                            self.assertNotIn("; GOT ", line)
+                        else:
+                            self.assertTrue(line.endswith("; GOT " + expected), line)
+                    self.assertIn("0 stubs" if segment else "1 stubs", summary)
+
     def test_none_relocation_does_not_annotate_a_stub_or_call(self):
         module = with_relocation(build_module(), 0x2280, 0, SLOT, 1, 0)
         summary = self.annotate(module)
