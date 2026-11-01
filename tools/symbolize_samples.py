@@ -55,25 +55,71 @@ class PeModule:
             entry = optional + optional_size + index * 40
             virtual_size, rva, raw_size, raw_pointer = struct.unpack_from("<IIII", data, entry + 8)
             characteristics = struct.unpack_from("<I", data, entry + 36)[0]
-            self.sections.append((rva, max(virtual_size, raw_size), raw_pointer, characteristics))
+            self.sections.append((rva, max(virtual_size, raw_size), raw_size, raw_pointer, characteristics))
         symbols = self.coff_symbols(data, symbol_table, symbol_count) if symbol_table and symbol_count else []
         self.exported = not symbols
         if self.exported and export_rva:
             symbols = self.export_symbols(data, export_rva, export_size)
         symbols.sort()
         self.code = []
-        for start, size, _, characteristics in self.sections:
+        for start, size, _, _, characteristics in self.sections:
             if not characteristics & IMAGE_SCN_CNT_CODE:
                 continue
             inside = [(address, name) for address, name in symbols if start <= address < start + size]
             self.code.append((start, start + size, [address for address, _ in inside], [name for _, name in inside]))
         self.names = [name for _, name in symbols]
 
-    def offset(self, rva):
-        for start, size, raw, _ in self.sections:
-            if start <= rva < start + size:
-                return raw + rva - start
-        raise ValueError(f"RVA {rva:#x} is in no section")
+    def read_bytes(self, data, rva, count):
+        if rva + count > 0x100000000:
+            raise ValueError("RVA exceeds address space")
+        result = bytearray()
+        while count > 0:
+            for start, size, raw_size, raw_pointer, _ in self.sections:
+                if start <= rva < start + size:
+                    offset = rva - start
+                    chunk = min(count, size - offset)
+                    if offset < raw_size:
+                        raw_chunk = min(chunk, raw_size - offset)
+                        if raw_pointer + raw_size > len(data):
+                            raise ValueError("Truncated section raw data")
+                        result.extend(data[raw_pointer + offset:raw_pointer + offset + raw_chunk])
+                        rva += raw_chunk
+                        count -= raw_chunk
+                    else:
+                        result.extend(b"\0" * chunk)
+                        rva += chunk
+                        count -= chunk
+                    break
+            else:
+                raise ValueError(f"RVA {rva:#x} is in no section")
+        return bytes(result)
+
+    def read_string(self, data, rva):
+        chunks = []
+        while True:
+            if rva >= 0x100000000:
+                raise ValueError("RVA exceeds address space")
+            for start, size, raw_size, raw_pointer, _ in self.sections:
+                if start <= rva < start + size:
+                    offset = rva - start
+                    if offset < raw_size:
+                        if raw_pointer + raw_size > len(data):
+                            raise ValueError("Truncated section raw data")
+                        raw_left = raw_size - offset
+                        scan_len = min(raw_left, 4096, 0x100000000 - rva)
+                        file_offset = raw_pointer + offset
+                        chunk = data[file_offset:file_offset + scan_len]
+                        nul = chunk.find(b"\0")
+                        if nul >= 0:
+                            chunks.append(chunk[:nul])
+                            return b"".join(chunks).decode("utf-8", "replace")
+                        chunks.append(chunk)
+                        rva += scan_len
+                    else:
+                        return b"".join(chunks).decode("utf-8", "replace")
+                    break
+            else:
+                raise ValueError(f"RVA {rva:#x} is in no section")
 
     def coff_symbols(self, data, table, count):
         strings = table + count * 18
@@ -92,7 +138,7 @@ class PeModule:
             index += 1 + aux
             if storage not in (IMAGE_SYM_CLASS_EXTERNAL, IMAGE_SYM_CLASS_STATIC) or not 1 <= section <= len(self.sections):
                 continue
-            start, _, _, characteristics = self.sections[section - 1]
+            start, _, _, _, characteristics = self.sections[section - 1]
             if not characteristics & IMAGE_SCN_CNT_CODE:
                 continue
             if storage == IMAGE_SYM_CLASS_STATIC and (kind >> 4) != 2 and value == 0:
@@ -112,22 +158,22 @@ class PeModule:
         return result
 
     def export_symbols(self, data, rva, size):
-        directory = self.offset(rva)
-        functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", data, directory + 20)
-        function_table = self.offset(function_rva)
+        directory = self.read_bytes(data, rva, 40)
+        functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", directory, 20)
+        if not names:
+            return []
+        if function_rva + functions * 4 > 0x100000000 or name_rva + names * 4 > 0x100000000 or ordinal_rva + names * 2 > 0x100000000:
+            raise ValueError("PE export table exceeds address space")
         result = []
-        if names:
-            name_table = self.offset(name_rva)
-            ordinal_table = self.offset(ordinal_rva)
-            for index in range(names):
-                ordinal = struct.unpack_from("<H", data, ordinal_table + index * 2)[0]
-                if ordinal >= functions:
-                    raise ValueError("PE export ordinal is outside the export address table")
-                address = struct.unpack_from("<I", data, function_table + ordinal * 4)[0]
-                if rva <= address < rva + size:
-                    continue
-                at = self.offset(struct.unpack_from("<I", data, name_table + index * 4)[0])
-                result.append((address, data[at:data.index(b"\0", at)].decode("utf-8", "replace")))
+        for index in range(names):
+            ordinal = struct.unpack("<H", self.read_bytes(data, ordinal_rva + index * 2, 2))[0]
+            if ordinal >= functions:
+                raise ValueError("PE export ordinal is outside the export address table")
+            address = struct.unpack("<I", self.read_bytes(data, function_rva + ordinal * 4, 4))[0]
+            if rva <= address < rva + size:
+                continue
+            entry_name_rva = struct.unpack("<I", self.read_bytes(data, name_rva + index * 4, 4))[0]
+            result.append((address, self.read_string(data, entry_name_rva)))
         return result
 
     def name(self, rva):
