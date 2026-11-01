@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
@@ -5,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 
 static constexpr int SCE_OK = 0;
 
@@ -56,6 +58,45 @@ static void RequireInvalidArguments() {
     Require(sceKernelSignalSema(sem, 3) == SCE_OK);
     Require(sceKernelPollSema(sem, 3) == SCE_OK);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
+
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("/invalid_flags", 0x1) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("/invalid_flags", 0x2) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("/invalid_flags", -1) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("/invalid_flags", 0x200 | 0x1, 0600, 1) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("/invalid_flags", 0x800 | 0x2, 0600, 1) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("/invalid_flags", 0x1000) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("relative", 0) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("relative", 0x200, 0600, 1) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("", 0) == nullptr && *__error_nid_postfix() == 22);
+    *__error_nid_postfix() = 0;
+    Require(sem_open_nid_postfix("", 0x200, 0600, 1) == nullptr && *__error_nid_postfix() == 22);
+    bool threwNullName = false;
+    try {
+        sem_open_nid_postfix(nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        threwNullName = true;
+    }
+    Require(threwNullName);
+    threwNullName = false;
+    try {
+        sem_open_nid_postfix(nullptr, 0x200, 0600, 1);
+    } catch (const std::invalid_argument&) {
+        threwNullName = true;
+    }
+    Require(threwNullName);
+    void* validNamedSem = sem_open_nid_postfix("/valid_test_sem", 0x200, 0600, 1);
+    Require(validNamedSem != nullptr);
+    Require(sem_close_nid_postfix(validNamedSem) == 0);
+    Require(sem_unlink_nid_postfix("/valid_test_sem") == 0);
 }
 
 int main() {
