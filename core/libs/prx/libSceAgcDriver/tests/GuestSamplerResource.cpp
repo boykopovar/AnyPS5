@@ -96,6 +96,9 @@ struct SamplerCapture {
     VkSamplerCreateFlags flags = 0;
     bool anisotropyEnable = false;
     float maxAnisotropy = 0.0f;
+    VkSamplerAddressMode addressModeU = VK_SAMPLER_ADDRESS_MODE_MAX_ENUM;
+    VkSamplerAddressMode addressModeV = VK_SAMPLER_ADDRESS_MODE_MAX_ENUM;
+    VkSamplerAddressMode addressModeW = VK_SAMPLER_ADDRESS_MODE_MAX_ENUM;
 };
 SamplerCapture samplerCapture;
 
@@ -111,6 +114,9 @@ VKAPI_ATTR VkResult VKAPI_CALL captureCreateSampler(VkDevice, const VkSamplerCre
     samplerCapture.flags = info->flags;
     samplerCapture.anisotropyEnable = info->anisotropyEnable == VK_TRUE;
     samplerCapture.maxAnisotropy = info->maxAnisotropy;
+    samplerCapture.addressModeU = info->addressModeU;
+    samplerCapture.addressModeV = info->addressModeV;
+    samplerCapture.addressModeW = info->addressModeW;
     const auto* reduction = static_cast<const VkSamplerReductionModeCreateInfoEXT*>(info->pNext);
     if (reduction != nullptr && reduction->sType == VK_STRUCTURE_TYPE_SAMPLER_REDUCTION_MODE_CREATE_INFO_EXT && reduction->pNext == nullptr) samplerCapture.reductionMode = reduction->reductionMode;
     *sampler = fakeHandle<VkSampler>(0x5a);
@@ -286,6 +292,28 @@ void RunNonSeamlessCubeTests(const Fields& base) {
     RequireNonSeamlessCube(false, 0b11u, unsupported);
     RequireNonSeamlessCube(true, 0b01u, unsupported);
     reject([&] { RequireNonSeamlessCube(true, 0b10u, unsupported); }, "disables seamless cube filtering, which needs VK_EXT_non_seamless_cube_map");
+}
+
+void RunMirrorOnceTests(const Fields& base) {
+    Context context{};
+    context.limits.maxSamplerAnisotropy = 1.0f;
+    context.deviceProc = captureProc;
+    for (const std::uint32_t clamp : {3u, 5u, 7u}) {
+        for (int axis = 0; axis < 3; ++axis) {
+            Fields mirrored = base;
+            (axis == 0 ? mirrored.clampX : axis == 1 ? mirrored.clampY : mirrored.clampZ) = clamp;
+            const auto decoded = DecodeSamplerResource(pack(mirrored));
+            context.samplerMirrorClampToEdge = false;
+            reject([&] { createSampler(context, decoded); }, "mirror-once clamp mode which the device does not support");
+            context.samplerMirrorClampToEdge = true;
+            const auto created = createSampler(context, decoded);
+            Require(created.created, "a mirror-once sampler was rejected on a device with VK_KHR_sampler_mirror_clamp_to_edge");
+            const auto mode = axis == 0 ? created.addressModeU : axis == 1 ? created.addressModeV : created.addressModeW;
+            Require(mode == VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE, "a mirror-once sampler was created with another address mode");
+        }
+    }
+    context.samplerMirrorClampToEdge = false;
+    Require(createSampler(context, DecodeSamplerResource(pack(base))).created, "a sampler without mirror-once modes needs VK_KHR_sampler_mirror_clamp_to_edge");
 }
 
 void RunSamplerCacheDegammaTests(const Fields& base) {
@@ -487,6 +515,7 @@ void RunGuestSamplerResourceTests() {
     static_cast<void>(DecodeSamplerResource(pack(truncated)));
 
     RunNonSeamlessCubeTests(base);
+    RunMirrorOnceTests(base);
     RunSamplerReductionTests(base);
 
     Fields badDegamma = base;
