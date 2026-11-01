@@ -352,6 +352,34 @@ int main() {
             lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaS2Rejected);
-        std::cout << "30 unwind record cases passed\n";
+        std::vector<std::uint8_t> landingPadBytes(0x400, 0);
+        Io::WriteU32(landingPadBytes, 0x200, 25);
+        landingPadBytes[0x208] = 1;
+        std::copy(std::begin(ciePrefix), std::end(ciePrefix), landingPadBytes.begin() + 0x209);
+        landingPadBytes[0x212] = 0;
+        Io::WriteU64(landingPadBytes, 0x213, 0x1000);
+        landingPadBytes[0x21B] = 0x1B;
+        landingPadBytes[0x21C] = 0;
+        Io::WriteU32(landingPadBytes, 0x220, 29);
+        Io::WriteU32(landingPadBytes, 0x224, 0x24);
+        Io::WriteU64(landingPadBytes, 0x228, 0x1000);
+        Io::WriteU64(landingPadBytes, 0x230, 0x20);
+        landingPadBytes[0x238] = 4;
+        Io::WriteU32(landingPadBytes, 0x239, 0x5000);
+        landingPadBytes[0x300] = 1;
+        landingPadBytes[0x302] = 3;
+        Io::WriteU64(landingPadBytes, 0x304, 0x200);
+        Io::WriteU32(landingPadBytes, 0x30C, 1);
+        Io::WriteU64(landingPadBytes, 0x310, 0x1000);
+        Io::WriteU64(landingPadBytes, 0x318, 0x220);
+        Domain::ProgramHeader landingPadLoad{}; landingPadLoad.Type = 1; landingPadLoad.Flags = 4; landingPadLoad.FileSize = landingPadBytes.size(); landingPadLoad.MemorySize = landingPadBytes.size(); landingPadLoad.Alignment = 8; landingPadLoad.MappedAddress = 0x1000;
+        Domain::ProgramHeader landingPadEh = landingPadLoad; landingPadEh.Type = 0x6474E550; landingPadEh.Offset = 0x300; landingPadEh.MappedAddress = 0x1300; landingPadEh.FileSize = 32; landingPadEh.MemorySize = 32; landingPadEh.Alignment = 4;
+        bool landingPadOutOfBoundsRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(landingPadBytes, {landingPadLoad, landingPadEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            landingPadOutOfBoundsRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(landingPadOutOfBoundsRejected);
+        std::cout << "31 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
