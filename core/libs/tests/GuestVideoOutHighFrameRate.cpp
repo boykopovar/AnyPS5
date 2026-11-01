@@ -8,7 +8,7 @@
 #include <fstream>
 #include <stdexcept>
 
-static constexpr int Unsupported = static_cast<int>(0x80290016u);
+static constexpr int Unavailable = static_cast<int>(0x80290019u);
 
 static void Require(bool value, const char* message) {
     if (!value) throw std::runtime_error(message);
@@ -38,8 +38,8 @@ int main(int argc, char** argv) {
         return 77;
     }
     const int supported = sceVideoOutIsOutputSupported(handle, 15, nullptr, nullptr, 0);
-    if (supported == Unsupported && !requireDisplay) {
-        Require(sceVideoOutConfigureOutput(handle, 15, nullptr, nullptr, 0) == Unsupported, "unsupported display accepted high-frame-rate output");
+    if (supported == 0 && !requireDisplay) {
+        Require(sceVideoOutConfigureOutput(handle, 15, nullptr, nullptr, 0) == Unavailable, "an output without 120 Hz accepted high-frame-rate output");
         Require(sceVideoOutClose(handle) == 0, "close failed");
         LibcRunShutdown_nid_postfix();
         std::puts("skipped, current display does not provide 120 Hz");

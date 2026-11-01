@@ -11,7 +11,7 @@ int APS5_VABI scePlayerSelectionDialogClose(void);
 int APS5_VABI scePlayerSelectionDialogUpdateStatus(void);
 int APS5_VABI scePlayerSelectionDialogGetStatus(void);
 int APS5_VABI scePlayerSelectionDialogGetResult(PlayerSelectionDialogResult* result);
-int APS5_VABI scePlayerSelectionDialogParamInitialize(void* param);
+int APS5_VABI scePlayerSelectionDialogParamInitialize(PlayerSelectionDialogParam* param);
 int APS5_VABI scePlayerSelectionDialogTerminate(void);
 
 }

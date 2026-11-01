@@ -39,6 +39,8 @@ inline int NotFoundError_nid_no_patch(const std::filesystem::path& native) {
 
 std::error_code RenameNative_nid_no_patch(const std::filesystem::path& source, const std::filesystem::path& destination, bool replacesExisting);
 
+extern "C" bool ExecutePermission_nid_no_patch(const std::filesystem::path& native);
+
 inline int ResolvePathError_nid_no_patch(const char* path, std::filesystem::path& resolved, bool module = false, bool archived = false) {
     try {
         resolved = archived ? ResolveArchivedPath_nid_no_patch(path, module) : module ? ResolvePathOrRelinkedModule_nid_no_patch(path) : ResolvePath_nid_no_patch(path);

@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cstdarg>
 #include <cstdint>
 #include <cstddef>
@@ -9,14 +10,16 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 #include <sys/stat.h>
+#include <cerrno>
 #include <ctime>
 #ifndef _WIN32
-#include <cerrno>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -25,6 +28,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
@@ -33,6 +37,9 @@
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/File/include/SharedMemory.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -72,7 +79,9 @@ constexpr int GuestEinval = 22;
 constexpr int GuestEexist = 17;
 constexpr int GuestExdev = 18;
 constexpr int GuestEdeadlk = 11;
+constexpr int GuestEopnotsupp = 45;
 constexpr int GuestEagain = 35;
+std::atomic<int> g_gameCpumode{1};
 constexpr int GuestEloop = 62;
 constexpr int GuestEnametoolong = 63;
 constexpr int GuestEnotempty = 66;
@@ -83,14 +92,11 @@ constexpr std::size_t GuestPathMax = 1024;
 constexpr std::size_t GuestNameMax = 255;
 
 constexpr int PcLinkMax = 1;
-constexpr int PcMaxCanon = 2;
-constexpr int PcMaxInput = 3;
 constexpr int PcNameMax = 4;
 constexpr int PcPathMax = 5;
 constexpr int PcPipeBuf = 6;
 constexpr int PcChownRestricted = 7;
 constexpr int PcNoTrunc = 8;
-constexpr int PcVdisable = 9;
 constexpr int PcAllocSizeMin = 10;
 constexpr int PcFileSizeBits = 12;
 constexpr int PcRecIncrXferSize = 14;
@@ -132,7 +138,36 @@ std::int64_t Fail(int error) {
     return -1;
 }
 
-std::int64_t PathConfigurationValue(int name, const char* function) {
+constexpr int KenvGet = 0;
+constexpr int KenvSet = 1;
+constexpr int KenvUnset = 2;
+constexpr int KenvDump = 3;
+constexpr std::size_t KenvNameLength = 128;
+constexpr std::size_t KenvValueLength = 128;
+constexpr std::size_t KenvEntries = 512;
+
+struct KernelEnvironment {
+    std::mutex mutex;
+    std::vector<std::string> entries;
+};
+
+KernelEnvironment& KernelEnv() {
+    static auto* environment = new KernelEnvironment;
+    return *environment;
+}
+
+std::vector<std::string>::iterator FindKernelEnv(std::vector<std::string>& entries, const std::string& name) {
+    return std::find_if(entries.begin(), entries.end(), [&](const std::string& entry) {
+        return entry.size() > name.size() && entry.compare(0, name.size(), name) == 0 && entry[name.size()] == '=';
+    });
+}
+
+int CopyKernelEnvString(const char* source, std::size_t limit, std::string& destination) {
+    if (const int error = CopyGuestPath_nid_no_patch(source, destination)) return error;
+    return destination.size() + 1 > limit ? GuestEnametoolong : 0;
+}
+
+std::int64_t PathConfigurationValue(int name) {
     switch (name) {
     case PcLinkMax: return 32767;
     case PcNameMax: return static_cast<std::int64_t>(GuestNameMax);
@@ -145,20 +180,15 @@ std::int64_t PathConfigurationValue(int name, const char* function) {
     case PcSymlinkMax: return static_cast<std::int64_t>(GuestPathMax);
     case PcPrioIo: return 0;
     case PcSyncIo: return 0;
-    case PcMaxCanon:
-    case PcMaxInput:
-    case PcVdisable:
-    case PcAllocSizeMin:
-    case PcRecIncrXferSize:
-    case PcRecMinXferSize:
-    case PcRecXferAlign:
-    case PcMinHoleSize:
-    case PcAsyncIo:
-    case PcAclExtended:
-    case PcAclPathMax:
-    case PcMacPresent:
-    case PcAclNfs4:
-        throw std::runtime_error(std::string(function) + ": name " + std::to_string(name) + " depends on the console filesystem or kernel configuration");
+    case PcAllocSizeMin: return 65536;
+    case PcRecIncrXferSize: return 65536;
+    case PcRecMinXferSize: return 65536;
+    case PcRecXferAlign: return 16384;
+    case PcMinHoleSize: return 65536;
+    case PcAclExtended: return 0;
+    case PcAclPathMax: return 3;
+    case PcMacPresent: return 0;
+    case PcAclNfs4: return 0;
     default: return Fail(GuestEinval);
     }
 }
@@ -321,7 +351,7 @@ extern "C" {
 int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
     if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
     static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    std::memcpy(version, parameters + 0x10, sizeof(*version));
+    if (!GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -334,6 +364,16 @@ int APS5_VABI setsid_nid_postfix(void) {
     return static_cast<int>(Fail(GuestEperm));
 }
 
+int APS5_VABI profil_nid_postfix(void* samples, std::size_t size, std::size_t offset, unsigned int scale) {
+    (void)samples;
+    (void)size;
+    (void)offset;
+    constexpr unsigned int MaxScale = 1u << 16;
+    if (scale > MaxScale) return static_cast<int>(Fail(GuestEinval));
+    if (scale != 0) NotImplemented_nid_no_patch("profil: the profiling clock");
+    return 0;
+}
+
 std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
     return File::ExchangeCreationMask_nid_no_patch(mask);
 }
@@ -341,6 +381,19 @@ std::uint16_t APS5_VABI umask_nid_postfix(std::uint16_t mask) {
 int APS5_VABI sceKernelGetOpenPsIdForSystem(void* id) {
     if (id == nullptr) return GuestEinval;
     return sceKernelGetOpenPsId(id);
+}
+
+int APS5_VABI sceKernelGetCpumodeGame(int* mode) {
+    if (mode == nullptr) throw std::runtime_error("sceKernelGetCpumodeGame: a null output faults on the console");
+    *mode = g_gameCpumode.load(std::memory_order_relaxed);
+    return 0;
+}
+
+int APS5_VABI sceKernelSetCpumodeGame(int mode) {
+    if (mode < 0 || mode > 7) NotImplemented_nid_no_patch("sceKernelSetCpumodeGame with a mode outside 0 to 7");
+    if (mode > 1) return SCE_KERNEL_ERROR_EINVAL;
+    g_gameCpumode.store(mode, std::memory_order_relaxed);
+    return 0;
 }
 
 int APS5_VABI sceKernelIsCEX(void) {
@@ -351,11 +404,62 @@ int APS5_VABI sceKernelIsDevKit(void) {
     return 0;
 }
 
+int APS5_VABI sceKernelIsGenuineCEX(void) {
+    return 1;
+}
+
+int APS5_VABI sceKernelIsGenuineDevKit(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelIsGenuineTestKit(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelIsTestKit(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelIsProspero(void) {
+    return 1;
+}
+
+int APS5_VABI sceKernelIsKratos(void) {
+    return 0;
+}
+
+bool IsPs4Process() {
+    try {
+        const auto titleId = GetAppTitleId_nid_postfix();
+        const std::string_view id(titleId.value, strnlen(titleId.value, sizeof(titleId.value)));
+        return id.starts_with("CUSA");
+    } catch (const std::runtime_error&) {
+        return false;
+    } catch (const std::length_error&) {
+        return false;
+    }
+}
+
+int APS5_VABI sceKernelIsPs4Process(void) {
+    return IsPs4Process() ? 1 : 0;
+}
+
 int APS5_VABI get_authinfo_nid_postfix(int pid, KernelAuthInfo* info) {
     if (info == nullptr) return static_cast<int>(Fail(GuestEperm));
     if (pid != 0 && pid != getpid_nid_postfix()) return static_cast<int>(Fail(GuestEsrch));
-    *info = {};
-    info->capabilities[0] = 0x2000000000000000;
+    KernelAuthInfo local{};
+    local.capabilities[0] = 0x2000000000000000;
+    if (!GuestCopyOut_nid_no_patch(info, &local, sizeof(local))) return static_cast<int>(Fail(GuestEfault));
+    return 0;
+}
+
+int APS5_VABI setlogin_nid_postfix(const char* name) {
+    constexpr std::size_t MaxLoginName = 33;
+    std::string copy;
+    const int copied = CopyGuestString_nid_no_patch(name, MaxLoginName, copy);
+    if (copied == GuestEnametoolong) return static_cast<int>(Fail(GuestEinval));
+    if (copied != 0) return static_cast<int>(Fail(copied));
+    if (const int error = SetLogin_nid_no_patch(copy.c_str())) return static_cast<int>(Fail(error));
     return 0;
 }
 
@@ -367,6 +471,61 @@ int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
     return _fstatfs_nid_postfix(d, buf);
 }
 
+int APS5_VABI kenv_nid_postfix(int what, const char* name, char* value, int len) {
+    auto& environment = KernelEnv();
+    if (what == KenvDump) {
+        std::size_t capacity = len > 0 ? static_cast<std::size_t>(len) : 0;
+        if (capacity > KenvEntries * (KenvNameLength + KenvValueLength + 2)) capacity = KenvEntries * (KenvNameLength + KenvValueLength + 2);
+        const bool copy = len > 0 && value != nullptr;
+        std::string buffer;
+        std::size_t needed = 0;
+        {
+            const std::lock_guard lock(environment.mutex);
+            for (const auto& entry : environment.entries) {
+                const std::size_t size = entry.size() + 1;
+                needed += size;
+                if (copy) {
+                    const std::size_t taken = std::min(size, capacity - buffer.size());
+                    buffer.append(entry.c_str(), taken);
+                }
+            }
+        }
+        if (copy && !GuestCopyOut_nid_no_patch(value, buffer.data(), buffer.size())) return static_cast<int>(Fail(GuestEfault));
+        return buffer.size() == needed ? 0 : static_cast<int>(needed);
+    }
+    std::string key;
+    if (const int error = CopyKernelEnvString(name, KenvNameLength + 1, key)) return static_cast<int>(Fail(error));
+    const std::lock_guard lock(environment.mutex);
+    auto& entries = environment.entries;
+    switch (what) {
+    case KenvGet: {
+        const auto found = FindKernelEnv(entries, key);
+        if (found == entries.end()) return static_cast<int>(Fail(GuestEnoent));
+        const std::size_t size = found->size() - key.size();
+        const std::size_t limit = static_cast<std::size_t>(static_cast<std::int64_t>(len));
+        const std::size_t taken = std::min(size, limit);
+        if (!GuestCopyOut_nid_no_patch(value, found->c_str() + key.size() + 1, taken)) return static_cast<int>(Fail(GuestEfault));
+        return static_cast<int>(taken);
+    }
+    case KenvSet: {
+        if (len == 0) return static_cast<int>(Fail(GuestEinval));
+        std::string text;
+        if (const int error = CopyKernelEnvString(value, std::min<std::size_t>(len, KenvValueLength + 1), text)) return static_cast<int>(Fail(error));
+        const auto found = FindKernelEnv(entries, key);
+        if (found != entries.end()) *found = key + "=" + text;
+        else if (entries.size() < KenvEntries) entries.push_back(key + "=" + text);
+        return 0;
+    }
+    case KenvUnset: {
+        const auto found = FindKernelEnv(entries, key);
+        if (found == entries.end()) return static_cast<int>(Fail(GuestEnoent));
+        entries.erase(found);
+        return 0;
+    }
+    default: return static_cast<int>(Fail(GuestEinval));
+    }
+}
+
 int GetModuleInfoExByHandle_nid_no_patch(KernelModule handle, ModuleInfoEx* info);
 
 int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule handle, ModuleInfoEx* info) {
@@ -375,6 +534,23 @@ int APS5_VABI sceKernelGetModuleInfoInternal(KernelModule handle, ModuleInfoEx* 
 
 int APS5_VABI sceKernelGetModuleListInternal(KernelModule* handles, std::size_t count, std::size_t* actual) {
     return sceKernelGetModuleList(handles, count, actual);
+}
+
+KernelModule APS5_VABI sceKernelLoadStartModuleForSysmodule(const char* moduleFileName, std::size_t args, const void* argp, std::uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
+    return sceKernelLoadStartModule(moduleFileName, args, argp, flags, opt, res);
+}
+
+int APS5_VABI sceKernelIsModuleLoaded(const char* name) {
+    if (!name) throw std::invalid_argument("sceKernelIsModuleLoaded: null name");
+    KernelModule handles[0x300];
+    std::size_t count = 0;
+    if (const int result = sceKernelGetModuleListInternal(handles, std::size(handles), &count)) return result;
+    for (std::size_t i = 0; i < count; ++i) {
+        ModuleInfo info{};
+        info.st_size = sizeof(info);
+        if (sceKernelGetModuleInfo(handles[i], &info) == 0 && std::strncmp(info.name, name, sizeof(info.name)) == 0) return 0;
+    }
+    return SCE_KERNEL_ERROR_ESRCH;
 }
 
 int APS5_VABI fstat_nid_postfix(int d, FileStat* sb) {
@@ -412,7 +588,7 @@ std::int64_t APS5_VABI pathconf_nid_postfix(const char* path, int name) {
     const auto status = std::filesystem::status(native, error);
     if (error) return Fail(error == std::errc::no_such_file_or_directory && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestError(error));
     if (!std::filesystem::exists(status)) return Fail(HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestEnoent);
-    return PathConfigurationValue(name, "pathconf");
+    return PathConfigurationValue(name);
 }
 
 std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
@@ -427,7 +603,8 @@ std::int64_t APS5_VABI _fpathconf_nid_postfix(int fd, int name) {
 #endif
     if (name == PcAsyncIo) return PosixAsynchronousIo;
     if (withoutVnode) return name == PcPipeBuf ? 512 : Fail(GuestEinval);
-    return PathConfigurationValue(name, "fpathconf");
+    if (IsKqueueDescriptor_nid_no_patch(fd) || File::IsSharedMemoryDescriptor_nid_no_patch(fd)) return Fail(GuestEopnotsupp);
+    return PathConfigurationValue(name);
 }
 
 std::int64_t APS5_VABI fpathconf_nid_postfix(int fd, int name) {
@@ -476,10 +653,16 @@ static int LinkSourceError(const std::filesystem::path& source) {
     return std::filesystem::is_directory(status) ? GuestEperm : 0;
 }
 
-static int LinkNative(const std::filesystem::path& source, const std::filesystem::path& destination) {
+static int LinkDestinationError(const std::filesystem::path& destination) {
     std::error_code error;
-    if (std::filesystem::exists(std::filesystem::symlink_status(destination, error))) return static_cast<int>(Fail(GuestEexist));
-    if (!std::filesystem::is_directory(destination.parent_path(), error)) return static_cast<int>(Fail(HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent));
+    if (std::filesystem::exists(std::filesystem::symlink_status(destination, error))) return GuestEexist;
+    if (!std::filesystem::is_directory(destination.parent_path(), error)) return HasNonDirectoryPrefix(destination) ? GuestEnotdir : GuestEnoent;
+    return 0;
+}
+
+static int LinkNative(const std::filesystem::path& source, const std::filesystem::path& destination) {
+    if (const int destinationError = LinkDestinationError(destination)) return static_cast<int>(Fail(destinationError));
+    std::error_code error;
 #ifdef _WIN32
     std::filesystem::path target;
     if (const int followError = FollowLinkPath(source, target)) return static_cast<int>(Fail(followError));
@@ -490,6 +673,26 @@ static int LinkNative(const std::filesystem::path& source, const std::filesystem
     if (!error) std::filesystem::create_hard_link(target, destination, error);
     if (error == std::errc::cross_device_link) return static_cast<int>(Fail(GuestExdev));
     if (error) throw std::system_error(error, "link");
+    RecordWrittenPath_nid_no_patch(destination);
+    return 0;
+}
+
+static int LinkSymbolicLinkItself(const std::filesystem::path& source, const std::filesystem::path& destination) {
+    if (const int error = LinkDestinationError(destination)) return static_cast<int>(Fail(error));
+#ifdef _WIN32
+    if ((GetFileAttributesW(source.c_str()) & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        NotImplemented_nid_no_patch("linkat: a hard link to a directory symbolic link itself on Windows");
+    if (!CreateHardLinkW(destination.c_str(), source.c_str(), nullptr)) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_NOT_SAME_DEVICE) return static_cast<int>(Fail(GuestExdev));
+        throw std::system_error(static_cast<int>(error), std::system_category(), "linkat");
+    }
+#else
+    if (::linkat(AT_FDCWD, source.c_str(), AT_FDCWD, destination.c_str(), 0) != 0) {
+        if (errno == EXDEV) return static_cast<int>(Fail(GuestExdev));
+        throw std::system_error(errno, std::generic_category(), "linkat");
+    }
+#endif
     RecordWrittenPath_nid_no_patch(destination);
     return 0;
 }
@@ -521,10 +724,12 @@ int APS5_VABI linkat_nid_postfix(int fd1, const char* path1, int fd2, const char
     if (const int error = CopyPath(path1, copy1)) return static_cast<int>(Fail(error));
     std::filesystem::path source, destination;
     if (const int error = ResolveAtPath(fd1, path1, source)) return static_cast<int>(Fail(error));
-    if (flag == 0 && IsSymbolicLink(source)) NotImplemented_nid_no_patch("linkat: a hard link to a symbolic link itself");
-    if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
+    const bool linkItself = flag == 0 && IsSymbolicLink(source);
+    if (!linkItself)
+        if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(path2, copy2)) return static_cast<int>(Fail(error));
     if (const int error = ResolveAtPath(fd2, path2, destination)) return static_cast<int>(Fail(error));
+    if (linkItself) return LinkSymbolicLinkItself(source, destination);
     return LinkNative(source, destination);
 }
 
@@ -562,6 +767,65 @@ int APS5_VABI chroot_nid_postfix(const char* path) {
     if (error) return static_cast<int>(Fail(GuestError(error)));
     if (root) return 0;
     throw std::runtime_error(std::string("chroot: changing the root directory to ") + path + " is not supported, the guest path resolver keeps a fixed root");
+}
+
+int APS5_VABI kldfind_nid_postfix(const char* file) {
+    std::string copy;
+    if (const int error = CopyPath(file, copy)) return static_cast<int>(Fail(error));
+    return static_cast<int>(Fail(GuestEnoent));
+}
+
+int APS5_VABI kldfirstmod_nid_postfix(int fileid) {
+    return static_cast<int>(Fail(GuestEnoent));
+}
+
+int APS5_VABI kldnext_nid_postfix(int fileid) {
+    if (fileid < 0) return static_cast<int>(Fail(GuestEnoent));
+    if (fileid == 0) return 0;
+    return static_cast<int>(Fail(GuestEnoent));
+}
+
+int APS5_VABI kldunload_nid_postfix(int fileid) {
+    (void)fileid;
+    return static_cast<int>(Fail(GuestEperm));
+}
+
+int APS5_VABI kldstat_nid_postfix(int fileid, void* stat) {
+    struct FileStatus {
+        std::int32_t version;
+        char name[GuestPathMax];
+        std::int32_t refs;
+        std::int32_t id;
+        std::uint64_t address;
+        std::uint64_t size;
+        char pathname[GuestPathMax];
+    };
+    constexpr auto Version1 = static_cast<std::int32_t>(offsetof(FileStatus, pathname));
+    constexpr auto Version2 = static_cast<std::int32_t>(sizeof(FileStatus));
+    static_assert(Version1 == 1056 && Version2 == 2080);
+    std::int32_t version = 0;
+    if (!GuestCopyIn_nid_no_patch(&version, stat, sizeof(version))) return static_cast<int>(Fail(GuestEfault));
+    if (version != Version1 && version != Version2) return static_cast<int>(Fail(GuestEinval));
+    (void)fileid;
+    return static_cast<int>(Fail(GuestEnoent));
+}
+
+int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data) {
+    struct SymbolLookup {
+        std::int32_t version;
+        const char* name;
+        std::uint64_t value;
+        std::uint64_t size;
+    };
+    static_assert(sizeof(SymbolLookup) == 32);
+    constexpr int LookupCommand = 1;
+    SymbolLookup lookup{};
+    if (!GuestCopyIn_nid_no_patch(&lookup, data, sizeof(lookup))) return static_cast<int>(Fail(GuestEfault));
+    if (lookup.version != static_cast<std::int32_t>(sizeof(lookup)) || cmd != LookupCommand) return static_cast<int>(Fail(GuestEinval));
+    std::string name;
+    if (const int error = CopyGuestPath_nid_no_patch(lookup.name, name)) return static_cast<int>(Fail(error));
+    if (fileid != 0) return static_cast<int>(Fail(GuestEnoent));
+    throw std::runtime_error("kldsym: looking up the symbol " + name + " in every kernel module is not supported");
 }
 
 int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
@@ -720,11 +984,7 @@ int APS5_VABI fchmodat_nid_postfix(int fd, const char* path, int mode, int flag)
         return 0;
     }
     }
-#ifdef _WIN32
-    if (::_wchmod(native.wstring().c_str(), mode & 07777) != 0) return static_cast<int>(Fail(errno == ENOENT && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestFileError(errno)));
-#else
-    if (::chmod(native.c_str(), static_cast<mode_t>(mode & 07777)) != 0) return static_cast<int>(Fail(errno == ENOENT && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestFileError(errno)));
-#endif
+    if (ChmodNative_nid_no_patch(native, mode & 07777) != 0) return static_cast<int>(Fail(errno == ENOENT && HasNonDirectoryPrefix(native) ? GuestEnotdir : GuestFileError(errno)));
     RecordWrittenPath_nid_no_patch(native);
     return 0;
 }
@@ -765,9 +1025,8 @@ int APS5_VABI sched_rr_get_interval_nid_postfix(int pid, KernelTimespec* interva
     constexpr int GuestEsrch = 3;
     const int self = getpid_nid_postfix();
     if (pid != 0 && pid != self) return static_cast<int>(Fail(GuestEsrch));
-    if (interval == nullptr) return static_cast<int>(Fail(GuestEfault));
-    interval->tv_sec = 0;
-    interval->tv_nsec = 94000000;
+    const KernelTimespec quantum{0, 94000000};
+    if (interval == nullptr || !GuestCopyOut_nid_no_patch(interval, &quantum, sizeof(quantum))) return static_cast<int>(Fail(GuestEfault));
     return 0;
 }
 
@@ -803,6 +1062,12 @@ int APS5_VABI fstatat_nid_postfix(int fd, const char* path, FileStat* sb, int fl
     return 0;
 }
 
+int ChangeFileFlags_nid_no_patch(const char* function, const char* path, std::uint64_t flags, bool follow);
+
+int APS5_VABI lchflags_nid_postfix(const char* path, std::uint64_t flags) {
+    return ChangeFileFlags_nid_no_patch("lchflags", path, flags, false);
+}
+
 int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
     if (flag & ~GuestAtRemovedir) return static_cast<int>(Fail(GuestEinval));
     std::string copy;
@@ -821,6 +1086,13 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
     if (IsDotOrDotDot(path)) return static_cast<int>(Fail(GuestEinval));
     if (flag & GuestAtRemovedir) {
         if (std::filesystem::is_symlink(symlinkStatus)) return static_cast<int>(Fail(GuestEnotdir));
+#ifdef _WIN32
+        const DWORD attributes = GetFileAttributesW(native.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            std::string junctionTarget;
+            if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "unlinkat")) return static_cast<int>(Fail(GuestEnotdir));
+        }
+#endif
         if (!std::filesystem::is_directory(symlinkStatus)) {
             if (HasNonDirectoryPrefix(native) || std::filesystem::exists(symlinkStatus))
                 return static_cast<int>(Fail(GuestEnotdir));
@@ -850,6 +1122,17 @@ int APS5_VABI unlinkat_nid_postfix(int fd, const char* path, int flag) {
                 return static_cast<int>(Fail(GuestEnotdir));
             return static_cast<int>(Fail(GuestEnoent));
         }
+#ifdef _WIN32
+        const DWORD attributes = GetFileAttributesW(native.c_str());
+        if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+            std::string junctionTarget;
+            if (File::WindowsSymbolicLink::ReadJunction(native, junctionTarget, "unlinkat")) {
+                if (RemoveDirectoryW(native.c_str()) == 0) return static_cast<int>(Fail(GuestEperm));
+                RecordWrittenPath_nid_no_patch(native);
+                return 0;
+            }
+        }
+#endif
         if (std::filesystem::is_directory(symlinkStatus)) return static_cast<int>(Fail(GuestEperm));
 #ifdef _WIN32
         struct _stat64 status{};
@@ -959,9 +1242,22 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (static_cast<std::uint32_t>(bit) >= 0x3A) return static_cast<int>(0x80020016);
-    *enabled = static_cast<std::int32_t>((workaround->ids[bit >> 6] >> (bit & 0x3F)) & 1);
+    if (static_cast<std::uint32_t>(bit) > 0x7F) return static_cast<int>(0x80020016);
+    KernelTitleWorkaround localWorkaround{};
+    const int saved = errno;
+    if (!GuestCopyIn_nid_no_patch(&localWorkaround, workaround, sizeof(localWorkaround))) {
+        errno = saved;
+        return static_cast<int>(0x8002000E);
+    }
+    const std::int32_t value = static_cast<std::int32_t>((localWorkaround.ids[bit >> 6] >> (bit & 0x3F)) & 1);
+    const bool copied = GuestCopyOut_nid_no_patch(enabled, &value, sizeof(value));
+    errno = saved;
+    if (!copied) return static_cast<int>(0x8002000E);
     return 0;
+}
+
+int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+    return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {

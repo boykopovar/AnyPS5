@@ -99,6 +99,22 @@ def main():
         needed_json = output_needed_bad.with_suffix(".needed.json")
         if result_needed_bad.returncode != 2 or b"UTF-8" not in result_needed_bad.stderr or needed_json.exists():
             raise AssertionError((result_needed_bad.returncode, result_needed_bad.stdout, result_needed_bad.stderr))
+        for relocation_type, type_name in ((1, "R_X86_64_64"), (2, "R_X86_64_PC32"),
+                                           (6, "R_X86_64_GLOB_DAT"), (10, "R_X86_64_32"),
+                                           (16, "R_X86_64_DTPMOD64"), (17, "R_X86_64_DTPOFF64"),
+                                           (18, "R_X86_64_TPOFF64")):
+            image = make_image(b"\0lib.so\0symbol\0")
+            struct.pack_into("<Q", image, 0x708, (1 << 32) | relocation_type)
+            source = work / ("type-" + str(relocation_type) + ".elf")
+            source.write_bytes(image)
+            output = work / ("type-" + str(relocation_type) + "-linux.out")
+            result = subprocess.run([str(relinker), "--skip-sce-module", "--registry",
+                                     str(source), str(output)], capture_output=True, timeout=20)
+            if result.returncode != 0 or not output.exists():
+                raise AssertionError((relocation_type, result.returncode, result.stdout, result.stderr))
+            entries = json.loads(output.with_suffix(".registry.json").read_text(encoding="utf-8"))
+            if len(entries) != 1 or entries[0]["relocationType"] != type_name:
+                raise AssertionError((relocation_type, type_name, entries))
         strings = b"\0lib.so\0" + names[0].encode("utf-8") + b"\0"
         image = make_image(strings)
         image[0x63C] = 0x20

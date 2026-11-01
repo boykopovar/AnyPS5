@@ -28,6 +28,24 @@ static const std::uint8_t PALETTE_TRNS[] = {
     0x57, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
 };
 
+static const std::uint8_t PALETTE_OPAQUE[] = {
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x03, 0x00, 0x00, 0x00, 0x45, 0x68, 0xFD,
+    0x16, 0x00, 0x00, 0x00, 0x0C, 0x50, 0x4C, 0x54, 0x45, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0x00, 0x00,
+    0x00, 0xFF, 0xFF, 0xFF, 0x00, 0xD6, 0x02, 0x8F, 0x7B, 0x00, 0x00, 0x00, 0x0E, 0x49, 0x44, 0x41,
+    0x54, 0x78, 0xDA, 0x63, 0x60, 0x60, 0x64, 0x60, 0x62, 0x06, 0x00, 0x00, 0x11, 0x00, 0x07, 0x83,
+    0xCA, 0x64, 0x64, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+};
+
+static const std::uint8_t PALETTE_1BIT_ADAM7[] = {
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x01, 0x03, 0x00, 0x00, 0x01, 0x3F, 0x7F, 0xAF,
+    0xF1, 0x00, 0x00, 0x00, 0x06, 0x50, 0x4C, 0x54, 0x45, 0x10, 0x20, 0x30, 0xC0, 0xB0, 0xA0, 0x34,
+    0xE7, 0xF7, 0xE1, 0x00, 0x00, 0x00, 0x0E, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0x68, 0x60,
+    0x60, 0x60, 0x70, 0x00, 0x00, 0x02, 0xC6, 0x00, 0xC1, 0x12, 0x35, 0x36, 0x6C, 0x00, 0x00, 0x00,
+    0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+};
+
 static const std::uint8_t GRAY16[] = {
     0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x10, 0x00, 0x00, 0x00, 0x00, 0x81, 0xD9, 0xFC,
@@ -147,6 +165,70 @@ static void Check16BitImage(void* limitedHandle, void* enabledHandle, std::span<
             }
         }
     }
+}
+
+static void CheckDimensionReporting(std::uint32_t width, std::uint32_t height) {
+    constexpr std::int32_t invalidAddr = static_cast<std::int32_t>(0x80690001);
+    constexpr std::int32_t invalidSize = static_cast<std::int32_t>(0x80690002);
+    constexpr std::int32_t invalidParam = static_cast<std::int32_t>(0x80690003);
+    constexpr std::int32_t invalidData = static_cast<std::int32_t>(0x80690010);
+    std::vector<std::uint8_t> rgb(static_cast<std::size_t>(width) * height * 3);
+    for (std::size_t i = 0; i < rgb.size(); ++i) rgb[i] = static_cast<std::uint8_t>(i * 13 + 7);
+    const auto png = Decoder::Png::Encode(rgb, width, height, 3);
+    const PngDecCreateParam create{sizeof(PngDecCreateParam), 0, width};
+    const auto memorySize = scePngDecQueryMemorySize(&create);
+    Require(memorySize > 0);
+    std::vector<std::uint8_t> memory(memorySize);
+    void* handle = nullptr;
+    Require(scePngDecCreate(&create, memory.data(), memorySize, &handle) == 0);
+    const bool packed = width <= 32767 && height <= 32767;
+    const auto result = packed ? static_cast<std::int32_t>(width << 16 | height) : 0;
+    for (const std::uint16_t format : {0, 1}) {
+        for (const std::uint32_t padding : {0, 8}) {
+            const std::uint32_t pitch = width * 4 + padding;
+            const std::uint32_t size = pitch * height;
+            std::vector<std::uint8_t> image(size + 16, 0xCC);
+            auto decode = DecodeParam(png, image);
+            decode.pixel_format = format;
+            decode.image_pitch = padding == 0 ? 0 : pitch;
+            decode.image_mem_size = size;
+            Require(scePngDecDecode(handle, &decode, nullptr) == (packed ? result : invalidAddr));
+            if (!packed) Require(std::all_of(image.begin(), image.end(), [](auto byte) { return byte == 0xCC; }));
+            PngDecImageInfo info{};
+            Require(scePngDecDecode(handle, &decode, &info) == result);
+            Require(info.image_width == width && info.image_height == height && info.color_space == 3 && info.bit_depth == 8 && info.image_flag == 0);
+            for (std::uint32_t y = 0; y < height; ++y) {
+                for (std::uint32_t x = 0; x < width; ++x) {
+                    for (std::uint32_t channel = 0; channel < 3; ++channel) {
+                        const auto inputChannel = format == 0 ? channel : 2 - channel;
+                        Require(image[y * pitch + x * 4 + channel] == rgb[(static_cast<std::size_t>(y) * width + x) * 3 + inputChannel]);
+                    }
+                    Require(image[y * pitch + x * 4 + 3] == 0x77);
+                }
+                for (std::uint32_t offset = width * 4; offset < pitch; ++offset) Require(image[y * pitch + offset] == 0xCC);
+            }
+            Require(std::all_of(image.begin() + size, image.end(), [](auto byte) { return byte == 0xCC; }));
+            if (packed) continue;
+            std::fill(image.begin(), image.end(), 0xCC);
+            decode.image_mem_size = 1;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidAddr);
+            Require(scePngDecDecode(handle, &decode, &info) == (padding == 0 ? invalidSize : invalidParam));
+            decode.image_mem_size = size;
+            decode.image_pitch = 1;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidAddr);
+            Require(scePngDecDecode(handle, &decode, &info) == invalidParam);
+            decode.image_mem_size = 0;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidSize);
+            decode.image_mem_size = size;
+            decode.pixel_format = 2;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidParam);
+            decode.pixel_format = format;
+            decode.png_mem_size = 8;
+            Require(scePngDecDecode(handle, &decode, nullptr) == invalidData);
+            Require(std::all_of(image.begin(), image.end(), [](auto byte) { return byte == 0xCC; }));
+        }
+    }
+    Require(scePngDecDelete(handle) == 0);
 }
 
 int main() {
@@ -283,6 +365,22 @@ int main() {
     Require(paletteImage == std::vector<std::uint8_t>({255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255, 255, 255, 0, 128}));
     Require(info.image_flag == 2);
 
+    const std::vector<std::uint8_t> opaquePalettePng(PALETTE_OPAQUE, PALETTE_OPAQUE + sizeof(PALETTE_OPAQUE));
+    std::vector<std::uint8_t> opaquePaletteImage(2 * 2 * 4, 0xCC);
+    decode = DecodeParam(opaquePalettePng, opaquePaletteImage);
+    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
+    Require(opaquePaletteImage == std::vector<std::uint8_t>({255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255}));
+    Require(info.color_space == 4 && info.image_flag == 0);
+    decode.pixel_format = 1;
+    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
+    Require(opaquePaletteImage == std::vector<std::uint8_t>({0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 0, 255, 255, 255}));
+
+    const std::vector<std::uint8_t> lowDepthPalettePng(PALETTE_1BIT_ADAM7, PALETTE_1BIT_ADAM7 + sizeof(PALETTE_1BIT_ADAM7));
+    decode = DecodeParam(lowDepthPalettePng, opaquePaletteImage);
+    Require(scePngDecDecode(handle, &decode, &info) == (2 << 16 | 2));
+    Require(opaquePaletteImage == std::vector<std::uint8_t>({192, 176, 160, 255, 16, 32, 48, 255, 16, 32, 48, 255, 192, 176, 160, 255}));
+    Require(info.color_space == 4 && info.bit_depth == 1 && info.image_flag == 1);
+
     const std::vector<std::uint8_t> gray16Png(GRAY16, GRAY16 + sizeof(GRAY16));
     std::vector<std::uint8_t> gray16Image(2 * 4, 0xCC);
     decode = DecodeParam(gray16Png, gray16Image);
@@ -352,5 +450,9 @@ int main() {
     Require(scePngDecDelete(handle) == invalidHandle);
     Require(scePngDecDecode(handle, &decode, &info) == invalidHandle);
 
+    for (const std::uint32_t dimension : {32767, 32768, 65536}) {
+        CheckDimensionReporting(dimension, 1);
+        CheckDimensionReporting(1, dimension);
+    }
     return 0;
 }

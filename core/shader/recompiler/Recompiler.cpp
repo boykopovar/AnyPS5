@@ -22,6 +22,7 @@
 #include <mutex>
 #include <new>
 #include <shared_mutex>
+#include <tuple>
 #include <unordered_map>
 #include "ControlFlow/include/ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/include/ControlFlow/Structurizer.hpp"
@@ -97,6 +98,7 @@ bool MergedHullStage(const RecompileRequest& request) {
 std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     const bool vertexStage = request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::Local;
     if (vertexStage && !request.target.vertexSubgroups) return 1u;
+    if (request.shader.stage == ShaderStage::TessellationEvaluation && !request.target.tessellationEvaluationSubgroups && !(request.graphics && request.graphics->mesh)) return 1u;
     if (request.shader.stage == ShaderStage::TessellationControl && MergedHullStage(request)) return 1u;
     static const std::string list = [] { const char* text = std::getenv("APS5_SINGLE_LANE"); return text ? std::string(text) : std::string(); }();
     if (!list.empty()) {
@@ -108,12 +110,26 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     return request.target.subgroupSize;
 }
 
-RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code, bool mergedHull) {
+bool CapturesGeometryInput(const RecompileRequest& request) {
+    return request.shader.stage == ShaderStage::TessellationEvaluation && request.graphics && request.graphics->mesh;
+}
+
+RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint32_t> code, bool mergedHull, bool vertexHalf) {
     static constexpr std::array<std::uint32_t, 1> EndProgram{0xbf810000u};
     if (stage == ShaderStageKind::Local && mergedHull) {
         RdnaProgram program;
         program.code = EndProgram;
         program.instructions.push_back(DecodeRdnaInstruction(0u, EndProgram, 0u));
+        return program;
+    }
+    if (vertexHalf) {
+        auto program = RdnaInstructionDecoder{}.Decode(code);
+        const auto guard = std::ranges::find_if(program.instructions, [](const RdnaInstruction& instruction) { return instruction.op == RdnaOpcode::SCbranchExecz; });
+        if (guard == program.instructions.end()) throw std::runtime_error("the merged domain and geometry program has no s_cbranch_execz around its vertex half");
+        const auto end = std::ranges::find_if(program.instructions, [&](const RdnaInstruction& instruction) { return instruction.programCounter == guard->branchTarget; });
+        if (end == program.instructions.end() || end <= guard) throw std::runtime_error("the vertex half of the merged domain and geometry program ends outside the program");
+        *end = DecodeRdnaInstruction(end->programCounter, EndProgram, 0u);
+        program.instructions.erase(std::next(end), program.instructions.end());
         return program;
     }
     if (stage != ShaderStageKind::Local) return RdnaInstructionDecoder{}.Decode(code);
@@ -164,7 +180,7 @@ std::atomic<std::uint64_t> frontEndBuilds{0};
 struct PreparedControlFlow {
     PreparedControlFlow(const RecompileRequest& request, const SwappcInfo& swappcInfo)
         : stage(request.shader.stage), mergedHull(MergedHullStage(request)), fallbacks(swappcInfo.linkedCallFallbacks.begin(), swappcInfo.linkedCallFallbacks.end()), swappc(WithFallbacks(swappcInfo, fallbacks)), code(request.shader.code.begin(), request.shader.code.end()),
-          decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, mergedHull)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
+          vertexHalf(CapturesGeometryInput(request)), decoded(DecodeStageProgram(toShaderStageKind(request.shader.stage), code, mergedHull, vertexHalf)), cfg(GraphBuilder{}.Build(decoded, &swappc)) {
         Structurizer{}.Structurize(cfg);
     }
 
@@ -172,7 +188,7 @@ struct PreparedControlFlow {
     PreparedControlFlow& operator=(const PreparedControlFlow&) = delete;
 
     bool Matches(const RecompileRequest& request, const SwappcInfo& swappcInfo) const {
-        return stage == request.shader.stage && mergedHull == MergedHullStage(request) && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
+        return stage == request.shader.stage && mergedHull == MergedHullStage(request) && vertexHalf == CapturesGeometryInput(request) && swappc.fetchCallAllowed == swappcInfo.fetchCallAllowed &&
                swappc.userDataBaseRegister == swappcInfo.userDataBaseRegister && swappc.userDataCount == swappcInfo.userDataCount && swappc.waveSize == swappcInfo.waveSize &&
                std::ranges::equal(fallbacks, swappcInfo.linkedCallFallbacks) && std::ranges::equal(code, request.shader.code);
     }
@@ -187,6 +203,7 @@ struct PreparedControlFlow {
     std::vector<std::uint32_t> fallbacks;
     SwappcInfo swappc;
     std::vector<std::uint32_t> code;
+    bool vertexHalf;
     RdnaProgram decoded;
     ControlFlowGraph cfg;
 };
@@ -245,6 +262,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.interpolationFunctions = supports(spv::CapabilityInterpolationFunction);
     translateOptions.floatMode = request.context.floatMode;
     translateOptions.float32FlushToZero = HardwareFloat32Flush(request);
+    translateOptions.float32FlushDeclared = supports(spv::CapabilityDenormFlushToZero);
     translateOptions.inputInfo = inputInfo;
     translateOptions.float32DenormPreserve = request.target.float32DenormPreserve;
 
@@ -314,7 +332,8 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         }
     };
     simplify();
-    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel)) {
+    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled) program.Metadata().barycentricBuiltinsUnnormalized = request.target.fragmentBarycentricBuiltins;
+    if (stageKind == ShaderStageKind::Pixel && !translateOptions.fragmentShaderBarycentricEnabled && !HostInterpolationChecker{}.Lower(program, *inputInfo.pixel, request.target.fragmentBarycentricBuiltins)) {
         translateOptions.fragmentShaderBarycentricEnabled = true;
         program = translator.Translate(decoded, cfg, translateOptions);
         program.Metadata().barycentricEmulation = true;
@@ -369,6 +388,7 @@ struct ResultMemoEntry {
     std::shared_ptr<const RecompileResult> result;
     std::uint64_t used = 0;
     std::shared_ptr<const MemoPatch> patch;
+    std::uint64_t bytes = 0;
 };
 
 struct EmissionFailure {
@@ -399,7 +419,6 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::vector<EmissionFailure> emissionFailures;
     std::unique_ptr<ResultMemoTable> memo;
     std::unique_ptr<ResultMemoTable> maskedMemo;
-    std::uint64_t memoClock = 0;
 };
 
 namespace {
@@ -461,6 +480,7 @@ bool diskPlans() {
 }
 
 bool sameLayout(const BindingLayout& left, const BindingLayout& right);
+void attachSubstitutes(CompiledVariant& variant);
 
 std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPreparationContext* preparation = nullptr, bool reclaim = true, const SourceHandle* preparedHandle = nullptr) {
     static PrimedSharedMutex mutex;
@@ -519,6 +539,7 @@ std::shared_ptr<SourceEntry> getSource(const RecompileRequest& request, ShaderPr
                     ResourceProgram resource(request, preparation, reclaim);
                     source->plan = std::move(resource.plan);
                     if (!hasPreparedArtifact && std::ranges::none_of(source->variants, [&](const auto& variant) { return sameLayout(variant->layout, request.layout); })) {
+                        resource.program->ReleaseUseArena();
                         source->program = std::move(resource.program);
                     }
                 } catch (...) {
@@ -618,6 +639,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
     targetOptions.spannedWaves = request.target.spannedWaves;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
+    targetOptions.exactRobustLoads = request.target.exactRobustLoads;
     targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
     targetOptions.float32DenormPreserve = request.target.float32DenormPreserve;
     targetOptions.fusedExactArithmetic = request.target.fusedExactArithmetic;
@@ -658,6 +680,8 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
     targetOptions.waveLdsMemoryBarriers = request.target.waveLdsMemoryBarriers;
     targetOptions.deviceScopeLdsMemoryBarriers = request.target.deviceScopeLdsMemoryBarriers;
+    targetOptions.ldsLockFences = request.target.ldsLockFences;
+    targetOptions.meshWindowBuffer = request.target.meshWindowBuffer;
 
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
@@ -689,13 +713,15 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.bdaAbiVersion = program.Info().usesDma || program.Info().usesFaultBuffer ? request.target.bdaAbiVersion : 0u;
     result.windowLaneGuards = 0;
     for (const auto& block : program.Blocks()) result.windowLaneGuards += static_cast<std::uint32_t>(std::ranges::count_if(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::WindowLaneGuard; }));
-    result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
+    result.descriptorFaults = 0;
+    for (const auto& block : program.Blocks()) result.descriptorFaults += static_cast<std::uint32_t>(std::ranges::count_if(block->Instructions(), [](const IrValue* value) { return value->Opcode() == IrOpcode::DescriptorFault; }));    result.memoryOffsetDword = bindings.layout.memoryOffsetDword;
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
     result.hostSubgroupSize = HostSubgroupSize(request);
     result.fullSubgroups = emitted.fullSubgroups;
     result.functionLdsBuffer = emitted.functionLdsBuffer;
+    result.meshWindowBuffer = emitted.meshWindowBuffer;
     result.vertexOffsetSgpr = program.Info().vertexOffsetSgpr;
     result.instanceOffsetSgpr = program.Info().instanceOffsetSgpr;
     result.vertexOffsetShared = program.Info().vertexOffsetShared;
@@ -813,8 +839,9 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
         } else if (op == spv::OpDecorate && count == 4u && words[cursor + 2u] == spv::DecorationSpecId && retained.contains(words[cursor + 1u])) {
             materialized.insert(materialized.end(), words.begin() + cursor, words.begin() + cursor + count);
         } else if (op == spv::OpSpecConstant) {
-            if (count != 4u || !values.contains(words[cursor + 2u])) throw std::runtime_error("invalid prepared specialization constant");
-            materialized.insert(materialized.end(), {(4u << 16u) | spv::OpConstant, words[cursor + 1u], words[cursor + 2u], values.at(words[cursor + 2u])});
+            const auto found = count == 4u ? values.find(words[cursor + 2u]) : values.end();
+            if (found == values.end()) throw std::runtime_error("invalid prepared specialization constant");
+            materialized.insert(materialized.end(), {(4u << 16u) | spv::OpConstant, words[cursor + 1u], words[cursor + 2u], found->second});
         } else if (op == spv::OpMemberDecorate && count == 5u && words[cursor + 3u] == spv::DecorationOffset && pushTypes.contains(words[cursor + 1u])) {
             if (!replaySlotBytes || words[cursor + 2u] != 0u || *replaySlotBytes >= NativePushConstantSize) throw std::runtime_error("invalid stencil replay push constant slot");
             materialized.insert(materialized.end(), words.begin() + cursor, words.begin() + cursor + count - 1u);
@@ -873,7 +900,7 @@ SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, 
         const auto count = materialized[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(materialized[cursor] & 0xffffu);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationBinding) bindingNumbers.emplace(materialized[cursor + 1u], materialized[cursor + 3u]);
-        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet) functionLdsBuffer.insert(materialized[cursor + 1u]);
+        if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && (materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet || materialized[cursor + 3u] == MeshWindowDescriptorSet)) functionLdsBuffer.insert(materialized[cursor + 1u]);
         if (op == spv::OpVariable && count >= 4u && !functionLdsBuffer.contains(materialized[cursor + 2u])) {
             if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
             module->pushData |= materialized[cursor + 3u] == spv::StorageClassPushConstant;
@@ -959,7 +986,12 @@ SpecializedSpirv registrationModule(std::uint64_t variantId, std::span<const std
     return {entry->module, std::move(built)};
 }
 
-std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet) {
+bool bufferSubstitutesEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_BUFFER_SUBSTITUTES") == nullptr;
+    return enabled;
+}
+
+std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& variant, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exports, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes) {
     struct BindingPlanKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, BindingPlanKeyStorage>();
     key.clear();
@@ -967,10 +999,10 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     for (std::size_t index = 0; index < variant.info.info.buffers.size(); ++index) {
         const auto& descriptor = snapshot.buffers.at(index);
         key.push_back(descriptor.dwordCount);
-        key.push_back(descriptor.dwords[1] & 0xffff0000u);
-        key.push_back(descriptor.dwords[3]);
-        const bool present = descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
-        key.push_back(present ? 4u | (descriptor.dwords[0] & 3u) : 0u);
+        const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
+        key.push_back(fields.word1);
+        key.push_back(fields.word3);
+        key.push_back(fields.known ? 4u | fields.misalignment : 0u);
     }
     for (std::size_t index = 0; index < variant.info.info.images.size(); ++index) {
         const auto& descriptor = snapshot.images.at(index);
@@ -1000,12 +1032,16 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
     }
     std::call_once(plan->ready, [&] {
         try {
-            plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet);
+            plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet, substitutes);
         } catch (...) {
             plan->failure = std::current_exception();
         }
     });
     if (plan->failure) std::rethrow_exception(plan->failure);
+    for (std::size_t index = 0; index < substitutes.size(); ++index) {
+        const auto& descriptor = snapshot.buffers.at(index);
+        if (!substitutes[index].known && BufferDescriptorPresent(descriptor)) variant.substitutes->Learn(index, BufferSpecializationFields(descriptor, {}, index));
+    }
     return plan;
 }
 
@@ -1044,16 +1080,20 @@ SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::s
 
 const ResourceSnapshot& mergeTargetImage(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool registrationDefaults, ResourceSnapshot& merged) {
     const auto& images = variant.info.info.images;
-    const auto image = std::ranges::find_if(images, [](const ImageResource& candidate) { return candidate.targetMerge; });
+    const auto mergeImage = [](const ImageResource& candidate) { return candidate.targetMerge; };
+    const auto image = std::ranges::find_if(images, mergeImage);
     if (image == images.end() || registrationDefaults) return snapshot;
-    if (!request.context.pixel || request.context.pixel->targetMerge.mask == 0u) throw std::runtime_error("ShaderRecompiler: a color target merge variant was materialized without the merged target");
-    if (image + 1 != images.end() || snapshot.images.size() + 1u != images.size()) throw std::runtime_error("ShaderRecompiler: the captured images do not precede the color target merge image");
+    if (!request.context.pixel || request.context.pixel->targetMerges.empty()) throw std::runtime_error("ShaderRecompiler: a color target merge variant was materialized without the merged target");
+    const auto& merges = request.context.pixel->targetMerges;
+    if (static_cast<std::size_t>(image - images.begin()) != snapshot.images.size() || snapshot.images.size() + merges.size() != images.size() || !std::all_of(image, images.end(), mergeImage)) throw std::runtime_error("ShaderRecompiler: the captured images do not precede the color target merge images");
     merged = snapshot;
-    DescriptorValue descriptor;
-    std::ranges::copy(request.context.pixel->targetMerge.descriptor, descriptor.dwords.begin());
-    descriptor.dwordCount = 8u;
-    descriptor.availableDwordMask = 0xffu;
-    merged.images.push_back(descriptor);
+    for (const auto& merge : merges) {
+        DescriptorValue descriptor;
+        std::ranges::copy(merge.descriptor, descriptor.dwords.begin());
+        descriptor.dwordCount = 8u;
+        descriptor.availableDwordMask = 0xffu;
+        merged.images.push_back(descriptor);
+    }
     return merged;
 }
 
@@ -1078,7 +1118,9 @@ void recordMemoPatch(MemoPatch& patch, const DescriptorBindingPlan& plan, const 
     patch.valid = layout.userDataRegisters.size() <= layout.DispatchThreadLimitDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
 }
 
-RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& captured, bool registrationDefaults = false, MemoPatch* patch = nullptr) {
+RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& captured, bool registrationDefaults = false, MemoPatch* patch = nullptr, const std::vector<BufferSubstitute>* substituteSnapshot = nullptr) {
+    const auto localSubstitutes = substituteSnapshot == nullptr && bufferSubstitutesEnabled() && variant.substitutes != nullptr ? variant.substitutes->Slots() : std::vector<BufferSubstitute>{};
+    const auto substitutes = substituteSnapshot != nullptr ? std::span<const BufferSubstitute>(*substituteSnapshot) : std::span<const BufferSubstitute>(localSubstitutes);
     ResourceSnapshot merged;
     const auto& snapshot = mergeTargetImage(variant, request, captured, registrationDefaults, merged);
     RecompileResult result;
@@ -1091,6 +1133,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .runtimeImageResources = artifact.runtimeImageResources,
         .registrationModule = artifact.registrationModule,
         .bdaAbiVersion = artifact.bdaAbiVersion,
+        .windowLaneGuards = artifact.windowLaneGuards,
+        .descriptorFaults = artifact.descriptorFaults,
         .runtimeAbiVersion = artifact.runtimeAbiVersion,
         .vertexInputs = artifact.vertexInputs,
         .vertexOffsetSgpr = artifact.vertexOffsetSgpr,
@@ -1102,6 +1146,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         .hostSubgroupSize = artifact.hostSubgroupSize,
         .fullSubgroups = artifact.fullSubgroups,
         .functionLdsBuffer = artifact.functionLdsBuffer,
+        .meshWindowBuffer = artifact.meshWindowBuffer,
         .parameterExports = artifact.parameterExports,
         .fragmentParameters = artifact.fragmentParameters,
         .barycentricEmulation = artifact.barycentricEmulation,
@@ -1116,7 +1161,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         const auto index = reg - request.context.userDataBaseRegister;
         result.userDataRegisterReads |= reg >= request.context.userDataBaseRegister && index < 64u ? std::uint64_t{1} << index : ~std::uint64_t{0};
     }
-    const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules);
+    const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules, substitutes);
     const DescriptorBindingPlan* bindingPlan = &plan->bindings;
     std::shared_ptr<PreparedModuleEntry> entry;
     struct LocalModuleKeyStorage {};
@@ -1131,10 +1176,10 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         if (variant.info.info.rasterPrimitive) moduleKey.push_back(static_cast<std::uint32_t>(request.context.pixel->rasterPrimitive));
         if (variant.info.info.layerExported) moduleKey.push_back(request.context.pixel->layerExported ? 1u : 0u);
     }
-    const bool depthRemap = request.target.depthRangeRemap && request.shader.stage == ShaderStage::Vertex && request.context.vertex.has_value();
+    const bool depthRemap = request.target.depthRangeRemap && (request.shader.stage == ShaderStage::Vertex || request.shader.stage == ShaderStage::TessellationEvaluation) && request.context.vertex.has_value();
     if (depthRemap) {
         if (request.context.vertex->depthRemapMode != 0u && request.layout.pushConstantOffsetBytes % (RuntimeAbi::PushConstantDwords * 4u) + request.layout.pushConstantSizeBytes > DepthRemapPushOffsetBytes) {
-            throw std::runtime_error("a remapped vertex shader's push data must end before the depth remap words");
+            throw std::runtime_error("a remapped raster shader's push data must end before the depth remap words");
         }
         moduleKey.push_back(request.context.vertex->depthRemapMode);
     }
@@ -1284,6 +1329,18 @@ bool sameLayout(const BindingLayout& left, const BindingLayout& right) {
     return left.descriptorSet == right.descriptorSet && left.firstBinding == right.firstBinding && left.pushConstantOffsetBytes == right.pushConstantOffsetBytes && left.pushConstantSizeBytes == right.pushConstantSizeBytes;
 }
 
+void attachSubstitutes(CompiledVariant& variant) {
+    const auto slots = variant.info.info.buffers.size();
+    if (slots == 0u || variant.artifact.spirv.empty()) return;
+    const auto hash = variant.artifact.spirv.ContentHash();
+    static std::mutex mutex;
+    static std::map<std::tuple<std::uint64_t, std::uint64_t, std::size_t>, std::shared_ptr<BufferSubstituteTable>> tables;
+    std::lock_guard lock(mutex);
+    auto& table = tables[{hash.low, hash.high, slots}];
+    if (table == nullptr) table = std::make_shared<BufferSubstituteTable>(std::vector<BufferSubstitute>(slots));
+    variant.substitutes = table;
+}
+
 }
 
 SharedSpirv InternSpirv(std::vector<std::uint32_t> words) {
@@ -1364,6 +1421,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         if (ShaderDiskCache::Load(diskKey, loaded)) {
             loaded.layout = request.layout;
             loaded.artifact.variantId = nextVariantId();
+            attachSubstitutes(loaded);
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
         }
     }
@@ -1371,13 +1429,14 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         static const bool layoutPair = std::getenv("APS5_NO_PERF_LAYOUT_PAIR") == nullptr;
         std::exception_ptr emissionFailure;
         try {
-            if (layoutPair && preparation != nullptr) {
-                variant = std::make_shared<const CompiledVariant>(PreparedInterface::Compile(source, request, *preparation, &emissionFailure));
-            } else {
+            auto compiled = [&] {
+                if (layoutPair && preparation != nullptr) return PreparedInterface::Compile(source, request, *preparation, &emissionFailure);
                 auto program = source.program != nullptr ? std::move(*source.program) : PrepareResourceProgram(request, preparation);
                 source.program.reset();
-                variant = std::make_shared<const CompiledVariant>(compileVariant(request, std::move(program), &emissionFailure));
-            }
+                return compileVariant(request, std::move(program), &emissionFailure);
+            }();
+            attachSubstitutes(compiled);
+            variant = std::make_shared<const CompiledVariant>(std::move(compiled));
         } catch (...) {
             if (emissionFailure != nullptr && FailureMemo()) source.emissionFailures.push_back({request.shader.codeAddress, request.layout, emissionFailure});
             throw;
@@ -1455,8 +1514,9 @@ ResultMemoEntry* memoSet(const std::unique_ptr<ResultMemoTable>& table, std::uin
 }
 
 struct ResultMemoCounters {
-    std::atomic<std::uint64_t> hits{0}, patched{0}, misses{0}, evictions{0}, populateNanoseconds{0}, patchNanoseconds{0}, mismatches{0};
+    std::atomic<std::uint64_t> hits{0}, patched{0}, misses{0}, evictions{0}, trimmed{0}, populateNanoseconds{0}, patchNanoseconds{0}, mismatches{0};
     std::atomic<std::int64_t> lastReport{0};
+    std::atomic<std::uint64_t> clock{0}, heldBytes{0}, heldEntries{0};
 };
 
 void applyMemoPatch(RecompileResult& result, const MemoPatch& patch, const ResourceSnapshot& snapshot) {
@@ -1503,6 +1563,123 @@ ResultMemoCounters& resultMemoCounters() {
     return counters;
 }
 
+std::uint64_t nextMemoUse() {
+    return resultMemoCounters().clock.fetch_add(1, std::memory_order_relaxed) + 1u;
+}
+
+template <typename T>
+std::uint64_t vectorBytes(const std::vector<T>& values) {
+    return static_cast<std::uint64_t>(values.capacity()) * sizeof(T);
+}
+
+std::uint64_t vectorBytes(const std::vector<bool>& values) {
+    return static_cast<std::uint64_t>(values.capacity() + 7u) / 8u;
+}
+
+std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
+    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead);
+}
+
+std::uint64_t resultBytes(const RecompileResult& result) {
+    const auto bytes = [](const auto& values) { return vectorBytes(values); };
+    auto total = static_cast<std::uint64_t>(sizeof(RecompileResult)) + bytes(result.vertexInputPatches) + bytes(result.runtimeImageResources) + bytes(result.vertexInputs) + bytes(result.parameterExports) + bytes(result.fragmentParameters) + bytes(result.stencilReferences) + bytes(result.shaderDataUserWords) + bytes(result.specialization) + bytes(result.bindings) + bytes(result.pushConstants) + bytes(result.vertexAttributes) + bytes(result.imageTablePoison) + bytes(result.imageTableRanges) + bytes(result.imageTableReadRanges);
+    for (const auto& ranges : result.imageTableReadRanges) total += bytes(ranges);
+    for (const auto& binding : result.bindings) total += descriptorBindingBytes(binding);
+    return total;
+}
+
+std::uint64_t patchBytes(const MemoPatch& patch) {
+    auto total = static_cast<std::uint64_t>(sizeof(MemoPatch)) + vectorBytes(patch.buffers) + vectorBytes(patch.userWords);
+    for (const auto& buffer : patch.buffers) total += vectorBytes(buffer.second);
+    return total;
+}
+
+std::atomic<std::uint64_t>& resultMemoBudgetBytes() {
+    static std::atomic<std::uint64_t> budget{[] {
+        const char* value = std::getenv("APS5_RESULT_MEMO_MB");
+        const std::uint64_t megabytes = value == nullptr || *value == '\0' ? 256u : std::strtoull(value, nullptr, 10);
+        return megabytes << 20u;
+    }()};
+    return budget;
+}
+
+std::uint64_t resultMemoBudget() {
+    return resultMemoBudgetBytes().load(std::memory_order_relaxed);
+}
+
+struct ResultMemoRegistry {
+    std::mutex mutex;
+    std::vector<std::weak_ptr<SourceEntry>> sources;
+};
+
+ResultMemoRegistry& resultMemoRegistry() {
+    static ResultMemoRegistry registry;
+    return registry;
+}
+
+std::mutex& resultMemoTrimMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::function<void()>& resultMemoTrimHook() {
+    static std::function<void()> hook;
+    return hook;
+}
+
+void trimResultMemo(std::uint64_t budget) {
+    std::lock_guard trim(resultMemoTrimMutex());
+    auto& counters = resultMemoCounters();
+    for (auto held = counters.heldBytes.load(std::memory_order_relaxed); held > budget; held = counters.heldBytes.load(std::memory_order_relaxed)) {
+        if (auto hook = std::exchange(resultMemoTrimHook(), nullptr)) hook();
+        std::vector<std::shared_ptr<SourceEntry>> sources;
+        {
+            auto& registry = resultMemoRegistry();
+            std::lock_guard lock(registry.mutex);
+            sources.reserve(registry.sources.size());
+            for (const auto& weak : registry.sources) {
+                if (auto source = weak.lock()) sources.push_back(std::move(source));
+            }
+        }
+        std::vector<std::pair<std::uint64_t, std::uint64_t>> stamps;
+        for (const auto& source : sources) {
+            std::lock_guard lock(source->mutex);
+            for (const auto* table : {source->memo.get(), source->maskedMemo.get()}) {
+                if (table == nullptr) continue;
+                for (const auto& entry : *table) {
+                    if (entry.result != nullptr) stamps.emplace_back(entry.used, entry.bytes);
+                }
+            }
+        }
+        if (stamps.empty()) return;
+        std::sort(stamps.begin(), stamps.end());
+        const auto excess = held - budget / 4u * 3u;
+        std::uint64_t freed = 0;
+        std::uint64_t threshold = 0;
+        for (const auto& [used, bytes] : stamps) {
+            threshold = used;
+            freed += bytes;
+            if (freed >= excess) break;
+        }
+        std::uint64_t dropped = 0;
+        for (const auto& source : sources) {
+            std::lock_guard lock(source->mutex);
+            for (auto* table : {source->memo.get(), source->maskedMemo.get()}) {
+                if (table == nullptr) continue;
+                for (auto& entry : *table) {
+                    if (entry.result == nullptr || entry.used > threshold) continue;
+                    counters.heldBytes.fetch_sub(entry.bytes, std::memory_order_relaxed);
+                    counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
+                    counters.trimmed.fetch_add(1, std::memory_order_relaxed);
+                    entry = {};
+                    ++dropped;
+                }
+            }
+        }
+        if (dropped == 0) return;
+    }
+}
+
 void verifyPatchedResult(const RecompileResult& patched, const RecompileResult& full, std::uint64_t variantId) {
     const auto* difference = patchedResultDifference(patched, full);
     if (difference == nullptr) return;
@@ -1526,17 +1703,18 @@ void reportResultMemo() {
     const auto patched = counters.patched.exchange(0, std::memory_order_relaxed);
     const auto misses = counters.misses.exchange(0, std::memory_order_relaxed);
     const auto evictions = counters.evictions.exchange(0, std::memory_order_relaxed);
+    const auto trimmed = counters.trimmed.exchange(0, std::memory_order_relaxed);
     const auto populate = counters.populateNanoseconds.exchange(0, std::memory_order_relaxed);
     const auto patching = counters.patchNanoseconds.exchange(0, std::memory_order_relaxed);
     const auto mismatches = counters.mismatches.exchange(0, std::memory_order_relaxed);
     const auto total = static_cast<double>(hits + patched + misses);
-    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches));
+    std::fprintf(stderr, "[recompile] result memo (10 s): %llu hits, %llu patched, %llu misses (%.1f%% hits, %.1f%% patched), Populate %.1f us per miss / %.1f ms in total, patch %.1f us each / %.1f ms in total, %llu evictions, %llu patch mismatches, %llu trimmed; %llu results held, %.1f MiB\n", static_cast<unsigned long long>(hits), static_cast<unsigned long long>(patched), static_cast<unsigned long long>(misses), total != 0.0 ? 100.0 * static_cast<double>(hits) / total : 0.0, total != 0.0 ? 100.0 * static_cast<double>(patched) / total : 0.0, misses != 0 ? static_cast<double>(populate) / 1000.0 / static_cast<double>(misses) : 0.0, static_cast<double>(populate) / 1e6, patched != 0 ? static_cast<double>(patching) / 1000.0 / static_cast<double>(patched) : 0.0, static_cast<double>(patching) / 1e6, static_cast<unsigned long long>(evictions), static_cast<unsigned long long>(mismatches), static_cast<unsigned long long>(trimmed), static_cast<unsigned long long>(counters.heldEntries.load(std::memory_order_relaxed)), static_cast<double>(counters.heldBytes.load(std::memory_order_relaxed)) / 1048576.0);
 }
 
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
 // flattened SRT, the user data, the uniform fill) and, for the vertex family, the V# table the
 // attributes are resolved from.
-std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, bool masked) {
+std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, bool masked, std::span<const BufferSubstitute> substitutes = {}) {
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {
         hash ^= value;
@@ -1556,16 +1734,24 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     };
     if (masked) {
         mix(snapshot.buffers.size());
-        for (const auto& value : snapshot.buffers) {
+        for (std::size_t index = 0; index < snapshot.buffers.size(); ++index) {
+            const auto& value = snapshot.buffers[index];
             mix(value.dwordCount);
             mix(value.availableDwordMask);
-            const bool present = value.dwords[2] != 0u && (value.dwords[0] != 0u || (value.dwords[1] & 0xffffu) != 0u);
-            mix(present ? 4u | (value.dwords[0] & 3u) : 0u);
-            mix(value.dwords[1] & 0xffff0000u);
-            for (std::uint32_t i = 3; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
+            const auto fields = BufferSpecializationFields(value, substitutes, index);
+            mix(fields.known ? 4u | fields.misalignment : 0u);
+            mix(fields.word1);
+            if (value.dwordCount > 3u) mix(fields.word3);
+            for (std::uint32_t i = 4; i < value.dwordCount && i < value.dwords.size(); ++i) mix(value.dwords[i]);
         }
     } else {
         mixDescriptors(snapshot.buffers);
+        for (std::size_t index = 0; index < substitutes.size() && index < snapshot.buffers.size(); ++index) {
+            const auto fields = BufferSpecializationFields(snapshot.buffers[index], substitutes, index);
+            mix(fields.word1);
+            mix(fields.word3);
+            mix(fields.known ? 4u | fields.misalignment : 0u);
+        }
     }
     mixDescriptors(snapshot.images);
     mixDescriptors(snapshot.samplers);
@@ -1609,11 +1795,23 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         mix(request.context.pixel->reversedBlend);
         mix(static_cast<std::uint64_t>(request.context.pixel->rasterPrimitive));
         mix(request.context.pixel->layerExported);
-        const auto& merge = request.context.pixel->targetMerge;
-        mix(merge.target);
-        mix(merge.mask);
-        mix(merge.samples);
-        for (const auto word : merge.descriptor) mix(word);
+        mix(request.context.pixel->targetMerges.size());
+        for (const auto& merge : request.context.pixel->targetMerges) {
+            mix(merge.target);
+            mix(merge.mask);
+            mix(merge.samples);
+            for (const auto word : merge.descriptor) mix(word);
+            if (!merge.blend.enabled) continue;
+            mix(merge.blend.snorm);
+            mix(merge.blend.colorSource);
+            mix(merge.blend.colorDestination);
+            mix(merge.blend.colorOperation);
+            mix(merge.blend.alphaSource);
+            mix(merge.blend.alphaDestination);
+            mix(merge.blend.alphaOperation);
+            mix(merge.blend.writeMask);
+            for (const auto word : merge.blend.constants) mix(word);
+        }
     }
     if (request.context.vertex) {
         const auto& vertex = *request.context.vertex;
@@ -1635,7 +1833,8 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
 std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& source, const std::shared_ptr<const CompiledVariant>& variant, const RecompileRequest& request, const ResourceSnapshot& snapshot, bool cacheHit, bool* memoHit) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto variantId = variant->artifact.variantId;
-    const auto hash = snapshotHash(request, snapshot, false);
+    const auto substitutes = bufferSubstitutesEnabled() && variant->substitutes != nullptr ? variant->substitutes->Slots() : std::vector<BufferSubstitute>{};
+    const auto hash = snapshotHash(request, snapshot, false, substitutes);
     const auto index = (variantId * 0x9e3779b97f4a7c15ull) ^ hash;
     auto& counters = resultMemoCounters();
     {
@@ -1644,7 +1843,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             for (std::size_t way = 0; way < ResultMemoWays; ++way) {
                 auto& entry = set[way];
                 if (entry.result == nullptr || entry.variantId != variantId || entry.hash != hash) continue;
-                entry.used = ++source.memoClock;
+                entry.used = nextMemoUse();
                 counters.hits.fetch_add(1, std::memory_order_relaxed);
                 if (memoHit != nullptr) *memoHit = true;
                 reportResultMemo();
@@ -1653,7 +1852,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
         }
     }
     const bool masking = MaskedResultMemo();
-    const auto maskedHash = masking ? snapshotHash(request, snapshot, true) : 0u;
+    const auto maskedHash = masking ? snapshotHash(request, snapshot, true, substitutes) : 0u;
     const auto maskedIndex = (variantId * 0x9e3779b97f4a7c15ull) ^ maskedHash;
     std::shared_ptr<const RecompileResult> donor;
     std::shared_ptr<const MemoPatch> donorPatch;
@@ -1663,7 +1862,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
             for (std::size_t way = 0; way < ResultMemoWays; ++way) {
                 auto& entry = set[way];
                 if (entry.result == nullptr || entry.variantId != variantId || entry.hash != maskedHash) continue;
-                entry.used = ++source.memoClock;
+                entry.used = nextMemoUse();
                 donor = entry.result;
                 donorPatch = entry.patch;
                 break;
@@ -1676,31 +1875,46 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     if (donor != nullptr) {
         result = std::make_shared<RecompileResult>(*donor);
         applyMemoPatch(*result, *donorPatch, snapshot);
-        if (VerifyMaskedResultMemo()) verifyPatchedResult(*result, materializeResult(*variant, request, snapshot), variantId);
+        if (VerifyMaskedResultMemo()) verifyPatchedResult(*result, materializeResult(*variant, request, snapshot, false, nullptr, &substitutes), variantId);
         if (profile) counters.patchNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
         counters.patched.fetch_add(1, std::memory_order_relaxed);
     } else {
         if (masking) patch = std::make_shared<MemoPatch>();
-        result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, patch.get()));
+        result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, patch.get(), &substitutes));
         if (profile) counters.populateNanoseconds.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - started).count()), std::memory_order_relaxed);
         counters.misses.fetch_add(1, std::memory_order_relaxed);
     }
     result->cacheHit = cacheHit;
     std::shared_ptr<const RecompileResult> shared = std::move(result);
+    const auto bytes = resultBytes(*shared);
     const auto insert = [&](std::unique_ptr<ResultMemoTable>& table, std::uint64_t at, std::uint64_t key, std::shared_ptr<const MemoPatch> recipe, bool count) {
-        if (table == nullptr) table = std::make_unique<ResultMemoTable>();
+        if (table == nullptr) {
+            table = std::make_unique<ResultMemoTable>();
+            if (source.memo == nullptr || source.maskedMemo == nullptr) {
+                auto& registry = resultMemoRegistry();
+                std::lock_guard registryLock(registry.mutex);
+                registry.sources.push_back(source.weak_from_this());
+            }
+        }
         auto* set = memoSet(table, at);
         auto* victim = set;
         for (std::size_t way = 0; way < ResultMemoWays; ++way) {
             auto& entry = set[way];
             if (entry.result != nullptr && entry.variantId == variantId && entry.hash == key) {
-                entry.used = ++source.memoClock;
+                entry.used = nextMemoUse();
                 return entry.result;
             }
             if (entry.used < victim->used) victim = &entry;
         }
-        if (count && victim->result != nullptr) counters.evictions.fetch_add(1, std::memory_order_relaxed);
-        *victim = {variantId, key, shared, ++source.memoClock, std::move(recipe)};
+        if (victim->result != nullptr) {
+            if (count) counters.evictions.fetch_add(1, std::memory_order_relaxed);
+            counters.heldBytes.fetch_sub(victim->bytes, std::memory_order_relaxed);
+            counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
+        }
+        const auto held = bytes + (recipe != nullptr ? patchBytes(*recipe) : 0u);
+        *victim = {variantId, key, shared, nextMemoUse(), std::move(recipe), held};
+        counters.heldBytes.fetch_add(held, std::memory_order_relaxed);
+        counters.heldEntries.fetch_add(1, std::memory_order_relaxed);
         return shared;
     };
     {
@@ -1708,6 +1922,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
         shared = insert(source.memo, index, hash, nullptr, true);
         if (patch != nullptr && patch->valid) static_cast<void>(insert(source.maskedMemo, maskedIndex, maskedHash, patch, false));
     }
+    if (const auto budget = resultMemoBudget(); budget != 0 && counters.heldBytes.load(std::memory_order_relaxed) > budget) trimResultMemo(budget);
     reportResultMemo();
     return shared;
 }
@@ -1777,8 +1992,10 @@ void materializeCapture(ResourceCapture& capture, const SrtRuntime& runtime) {
     traced.readTrace = &capture.readTrace;
     ResourceMaterializer{}.Materialize(plan, traced, capture.snapshot);
     auto& other = capture.readTrace.otherReads;
-    std::sort(other.begin(), other.end());
-    other.erase(std::unique(other.begin(), other.end()), other.end());
+    if (other.size() > 1) {
+        std::sort(other.begin(), other.end());
+        other.erase(std::unique(other.begin(), other.end()), other.end());
+    }
 }
 
 }
@@ -1938,6 +2155,20 @@ RecompileResult Recompile(const RecompileRequest& request) {
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (memoHit != nullptr) *memoHit = false;
     return recompileReporting(request, [&] { return RecompileImpl(request, capture, memoHit); });
+}
+
+void SetResultMemoBudget(std::uint64_t bytes) {
+    resultMemoBudgetBytes().store(bytes, std::memory_order_relaxed);
+    if (bytes != 0 && resultMemoCounters().heldBytes.load(std::memory_order_relaxed) > bytes) trimResultMemo(bytes);
+}
+
+void SetResultMemoTrimHook(std::function<void()> hook) {
+    std::lock_guard lock(resultMemoTrimMutex());
+    resultMemoTrimHook() = std::move(hook);
+}
+
+std::uint64_t ResultMemoBytes() {
+    return resultMemoCounters().heldBytes.load(std::memory_order_relaxed);
 }
 
 }
