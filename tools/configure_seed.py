@@ -15,7 +15,7 @@ QUOTED_DELIMITER = re.compile(r'":[A-Z]+=')
 
 def checks(cache):
     found, doc = {}, []
-    for line in Path(cache).read_text(encoding="utf-8-sig").splitlines():
+    for line in Path(cache).read_text(encoding="utf-8-sig").split("\n"):
         if line.startswith("//"):
             doc.append(line)
             continue
