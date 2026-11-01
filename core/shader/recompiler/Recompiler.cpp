@@ -454,6 +454,7 @@ struct ResourceProgram {
         clearRegisterState(program->Resources().blockStorage);
         if (reclaim) program->ReclaimUnusedValues();
         plan = std::make_shared<const IrResourcePlan>(ResourceMaterializer{}.ExtractPlan(*program));
+        program->Info() = plan->info;
     }
 
     std::unique_ptr<IrProgram> program;
@@ -621,6 +622,7 @@ void prepareInterface(const RecompileRequest& request, IrProgram& program) {
     deadCodeEliminator.Eliminate(program);
 
     constexpr ShaderInfoCollector shaderInfoCollector;
+    program.Info().maxImageArrayLayers = request.target.maxImageArrayLayers;
     shaderInfoCollector.Collect(program, inputInfo);
 }
 
@@ -1432,6 +1434,7 @@ struct PreparedInterface {
             preparation.interfaceProgram = std::move(program);
         }
         auto& program = *preparation.interfaceProgram;
+        if (source.plan != nullptr) program.Info() = source.plan->info;
         return recordEmissionFailure(emissionFailure, [&] {
             auto variant = emitVariant(request, program);
             variant.info = program.CompiledInfo();
@@ -1509,6 +1512,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
                 if (layoutPair && preparation != nullptr) return CountedCompile([&] { return PreparedInterface::Compile(source, request, *preparation, &emissionFailure); });
                 auto program = source.program != nullptr ? std::move(*source.program) : PrepareResourceProgram(request, preparation);
                 source.program.reset();
+                if (source.plan != nullptr) program.Info() = source.plan->info;
                 return CountedCompile([&] { return compileVariant(request, std::move(program), &emissionFailure); });
             }();
             attachSubstitutes(compiled);
@@ -1548,6 +1552,7 @@ RecompileResult recompileOnce(const RecompileRequest& request) {
     if (!request.useCache) {
         auto program = PrepareResourceProgram(request);
         const auto plan = materializer.ExtractPlan(program);
+        program.Info() = plan.info;
         materializer.Materialize(plan, runtime, snapshot);
         const auto variant = CountedCompile([&] { return compileVariant(request, std::move(program)); });
         return materializeResult(variant, request, snapshot);
