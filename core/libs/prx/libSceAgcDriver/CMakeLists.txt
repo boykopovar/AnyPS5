@@ -56,6 +56,28 @@ add_custom_command(
         DEPENDS "${agcTextureDetileShaderSource}" glslang-standalone
         VERBATIM
 )
+set(agcTextureDetileWordsShaderSpv ${agcTextureDetileGeneratedDir}/TextureDetileWords.spv)
+set(agcTextureDetileWordsShaderHeader ${agcTextureDetileGeneratedDir}/TextureDetileWords_spv.h)
+add_custom_command(
+        OUTPUT "${agcTextureDetileWordsShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -DWORD_GROUPS=1 -o "${agcTextureDetileWordsShaderSpv}" "${agcTextureDetileShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTextureDetileWordsShaderSpv} -DOUTPUT=${agcTextureDetileWordsShaderHeader}
+        -DSYMBOL=TEXTURE_DETILE_WORDS_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcTextureDetileShaderSource}" glslang-standalone
+        VERBATIM
+)
+set(agcTextureDetileImageWordsShaderSpv ${agcTextureDetileGeneratedDir}/TextureDetileImageWords.spv)
+set(agcTextureDetileImageWordsShaderHeader ${agcTextureDetileGeneratedDir}/TextureDetileImageWords_spv.h)
+add_custom_command(
+        OUTPUT "${agcTextureDetileImageWordsShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -DLINEAR_IMAGE=1 -DWORD_GROUPS=1 -o "${agcTextureDetileImageWordsShaderSpv}" "${agcTextureDetileShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTextureDetileImageWordsShaderSpv} -DOUTPUT=${agcTextureDetileImageWordsShaderHeader}
+        -DSYMBOL=TEXTURE_DETILE_IMAGE_WORDS_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcTextureDetileShaderSource}" glslang-standalone
+        VERBATIM
+)
 
 set(agcMeshArgumentsShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/MeshArguments.comp)
 foreach(agcReadbackKind IN ITEMS Uint Depth)
@@ -373,6 +395,8 @@ set(agcDriverSources
         ${agcTextureDetileImageShaderHeader}
         ${agcTextureRepackShaderHeader}
         ${agcDispatchArgumentsShaderHeader}
+        ${agcTextureDetileWordsShaderHeader}
+        ${agcTextureDetileImageWordsShaderHeader}
         ${agcSampleCounterShaderHeader}
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}
