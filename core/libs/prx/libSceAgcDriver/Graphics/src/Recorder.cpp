@@ -3707,8 +3707,8 @@ void Recorder::Submit() {
             if (batch != nullptr && !batch->submitted) recorder.discard(std::move(batch));
         }
     } discardUnsubmitted{*this, batch};
-    if (injectedSubmitFailures.load(std::memory_order_relaxed) != 0 && injectedSubmitFailures.fetch_sub(1, std::memory_order_relaxed) != 0) throw std::runtime_error("vkEndCommandBuffer recorder: injected failure");
     Check(function(endCommandBuffer, "vkEndCommandBuffer")(batch->commands), "vkEndCommandBuffer recorder");
+    if (injectedSubmitFailures.load(std::memory_order_relaxed) != 0 && injectedSubmitFailures.fetch_sub(1, std::memory_order_relaxed) != 0) throw std::runtime_error("vkQueueSubmit recorder: injected failure");
     VkSubmitInfo submission{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     submission.commandBufferCount = 1;
     submission.pCommandBuffers = &batch->commands;
