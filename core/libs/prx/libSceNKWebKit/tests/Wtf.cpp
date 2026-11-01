@@ -2,6 +2,8 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 
 #include <cmath>
+#include <cstdarg>
+#include "prx/libc/include/WindowsFormatting.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -374,9 +376,11 @@ static void TestJscAndPal() {
 }
 
 void TestAdditionalWtf();
+void TestPrintStreams();
 
 int main() {
     TestAdditionalWtf();
+    TestPrintStreams();
     TestMemoryAllocations();
     TestAllocationBoundaries();
     TestTime();
@@ -1045,3 +1049,155 @@ void TestURLsAndReallocation() {
 }
 
 }  // namespace Wtf2Tests
+
+namespace {
+
+using NKWebKit::WtfAbi::PrintStream;
+using NKWebKit::WtfAbi::StringPrintStream;
+
+struct CapturingPrintStream {
+    PrintStream stream;
+    StringPrintStream output;
+    unsigned beginCount{};
+    unsigned endCount{};
+    unsigned printCount{};
+};
+
+void APS5_VABI CapturePrint(PrintStream* stream, const char* format, void* args) {
+    auto& capture = *reinterpret_cast<CapturingPrintStream*>(stream);
+    ++capture.printCount;
+    _ZN3WTF17StringPrintStream7vprintfEPKcP13__va_list_tag(&capture.output, format, args);
+}
+
+PrintStream& APS5_VABI CaptureBegin(PrintStream* stream) {
+    ++reinterpret_cast<CapturingPrintStream*>(stream)->beginCount;
+    return *stream;
+}
+
+void APS5_VABI CaptureEnd(PrintStream* stream) {
+    ++reinterpret_cast<CapturingPrintStream*>(stream)->endCount;
+}
+
+PrintStream& APS5_VABI CaptureRedirect(PrintStream* stream) {
+    auto& capture = *reinterpret_cast<CapturingPrintStream*>(stream);
+    ++capture.beginCount;
+    return capture.output.stream;
+}
+
+}  // namespace
+
+void TestPrintStreams() {
+    using namespace Wtf2Tests;
+    constexpr auto construct = _ZN3WTF17StringPrintStreamC1Ev;
+    constexpr auto destroy = _ZN3WTF17StringPrintStreamD1Ev;
+    constexpr auto reset = _ZN3WTF17StringPrintStream5resetEv;
+    constexpr auto string = _ZN3WTF17StringPrintStream8toStringEv;
+    constexpr auto cstring = _ZN3WTF17StringPrintStream9toCStringEv;
+    constexpr auto print = _ZN3WTF11PrintStream6printfEPKcz;
+    StringPrintStream output{};
+    construct(&output);
+    Check(output.buffer == output.inlineBuffer && output.size == 128 && output.next == 0 && !output.buffer[0]);
+    Check(!output.stream.vtable[-2] && !output.stream.vtable[-1]);
+    Text(string(&output), "");
+    Check(&_ZN3WTF11PrintStream5beginEv(&output.stream) == &output.stream);
+    auto& virtualBegin = reinterpret_cast<PrintStream& (APS5_VABI *)(PrintStream*)>(output.stream.vtable[4])(&output.stream);
+    Check(&virtualBegin == &output.stream);
+    reinterpret_cast<void (APS5_VABI *)(PrintStream*)>(output.stream.vtable[3])(&output.stream);
+    reinterpret_cast<void (APS5_VABI *)(PrintStream*)>(output.stream.vtable[5])(&output.stream);
+    print(&output.stream, "%s:%d:%.2f", "start", -42, 1.25);
+    _ZN3WTF11PrintStream20printfVariableFormatEPKcz(&output.stream, ":%lld", -9223372036854775807LL);
+    Text(string(&output), "start:-42:1.25:-9223372036854775807");
+    reset(&output);
+    print(&output.stream, "%d %d %d %d %d %d %d %d %d %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f",
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0);
+    Text(string(&output), "1 2 3 4 5 6 7 8 9 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 9.0");
+    reset(&output);
+    const std::string large(400, 'x');
+    print(&output.stream, "%s", large.c_str());
+    Check(output.buffer != output.inlineBuffer && output.size >= large.size() + 1 && output.next == 400 && !output.buffer[400]);
+    Check(Bytes(cstring(&output)) == large);
+    auto saved = cstring(&output);
+    print(&output.stream, "%s", large.c_str());
+    Check(Bytes(cstring(&output)) == large + large);
+    Check(output.next == 800 && output.size >= 801 && !output.buffer[800]);
+    auto* allocation = output.buffer;
+    reset(&output);
+    Check(output.buffer == allocation && output.size >= large.size() + 1 && !output.next && !output.buffer[0]);
+    Check(Bytes(saved) == large);
+    print(&output.stream, "%s", "é");
+    Text(string(&output), "é");
+    auto expected = _ZN3WTF17StringPrintStream11tryToStringEv(&output);
+    Check(expected.hasValue && expected.value);
+    String expectedOwner(expected.value);
+    expected.value = nullptr;
+    Text(expectedOwner, "é");
+    reset(&output);
+    print(&output.stream, "%c", 0xE9);
+    Check(!string(&output).impl);
+    auto invalid = _ZN3WTF17StringPrintStream11tryToStringEv(&output);
+    Check(invalid.hasValue && !invalid.value);
+    Text(_ZN3WTF17StringPrintStream26toStringWithLatin1FallbackEv(&output), "é");
+    const auto length = output.next;
+    output.next = 0x80000000ULL;
+    auto tooLong = _ZN3WTF17StringPrintStream11tryToStringEv(&output);
+    Check(!tooLong.hasValue && tooLong.error == 0);
+    output.next = length;
+    destroy(&output);
+    StringPrintStream pointerOutput{};
+    construct(&pointerOutput);
+    print(&pointerOutput.stream, "%s%p", large.c_str(), reinterpret_cast<void*>(std::uintptr_t{0x1234}));
+    Check(pointerOutput.buffer != pointerOutput.inlineBuffer);
+    Check(Bytes(cstring(&pointerOutput)) == large + "1234");
+    destroy(&pointerOutput);
+    StringPrintStream second{};
+    _ZN3WTF17StringPrintStreamC2Ev(&second);
+    _ZN3WTF17StringPrintStreamD2Ev(&second);
+    auto* allocated = static_cast<StringPrintStream*>(_ZN3WTF10fastMallocEm(sizeof(StringPrintStream)));
+    construct(allocated);
+    print(&allocated->stream, "%s", large.c_str());
+    reinterpret_cast<void (APS5_VABI *)(PrintStream*)>(allocated->stream.vtable[1])(&allocated->stream);
+    construct(&second);
+    reinterpret_cast<void (APS5_VABI *)(PrintStream*)>(second.stream.vtable[0])(&second.stream);
+    CapturingPrintStream capture{};
+    void* const vtable[]{nullptr, nullptr, reinterpret_cast<void*>(&CapturePrint), nullptr, reinterpret_cast<void*>(&CaptureBegin), reinterpret_cast<void*>(&CaptureEnd)};
+    capture.stream.vtable = vtable;
+    construct(&capture.output);
+    auto check = [&](const char* text) { Text(string(&capture.output), text); reset(&capture.output); };
+    _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&capture.stream, "hello"); check("hello");
+    _ZN3WTF13printInternalERNS_11PrintStreamEa(&capture.stream, static_cast<signed char>(-128)); check("-128");
+    _ZN3WTF13printInternalERNS_11PrintStreamEh(&capture.stream, static_cast<unsigned char>(255)); check("255");
+    _ZN3WTF13printInternalERNS_11PrintStreamEs(&capture.stream, static_cast<short>(-32768)); check("-32768");
+    _ZN3WTF13printInternalERNS_11PrintStreamEt(&capture.stream, static_cast<unsigned short>(65535)); check("65535");
+    _ZN3WTF13printInternalERNS_11PrintStreamEi(&capture.stream, -2147483647); check("-2147483647");
+    _ZN3WTF13printInternalERNS_11PrintStreamEj(&capture.stream, 4294967295U); check("4294967295");
+    _ZN3WTF13printInternalERNS_11PrintStreamEl(&capture.stream, std::int64_t{-9223372036854775807LL}); check("-9223372036854775807");
+    _ZN3WTF13printInternalERNS_11PrintStreamEm(&capture.stream, std::uint64_t{18446744073709551615ULL}); check("18446744073709551615");
+    _ZN3WTF13printInternalERNS_11PrintStreamEx(&capture.stream, -9223372036854775807LL); check("-9223372036854775807");
+    _ZN3WTF13printInternalERNS_11PrintStreamEy(&capture.stream, 18446744073709551615ULL); check("18446744073709551615");
+    _ZN3WTF13printInternalERNS_11PrintStreamEf(&capture.stream, 1.25F); check("1.250000");
+    _ZN3WTF13printInternalERNS_11PrintStreamEd(&capture.stream, -2.5); check("-2.500000");
+
+    auto text = FromUTF8Z(U8("text é"));
+    _ZN3WTF13printInternalERNS_11PrintStreamERKNS_6StringE(&capture.stream, text); check("text é");
+    auto bytes = UTF8(&text, 0);
+    _ZN3WTF13printInternalERNS_11PrintStreamERKNS_7CStringE(&capture.stream, bytes); check("text é");
+    _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE(&capture.stream, text.impl); check("text é");
+    _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE(&capture.stream, nullptr); check("(null StringImpl*)");
+    _ZN3WTF13dumpCharacterERNS_11PrintStreamEc(&capture.stream, 'Z'); check("Z");
+    _ZN3WTF13printInternalERNS_11PrintStreamENS_10RawPointerE(&capture.stream, {reinterpret_cast<void*>(std::uintptr_t{0x1234})});
+    auto pointerText = Bytes(cstring(&capture.output));
+    Check(pointerText == "1234");
+    reset(&capture.output);
+    Check(capture.beginCount == 0 && capture.endCount == 0 && capture.printCount == 19);
+    _ZN3WTF13printInternalERNS_11PrintStreamEb(&capture.stream, true); check("true");
+    _ZN3WTF13printInternalERNS_11PrintStreamEb(&capture.stream, false); check("false");
+    for (const auto& test : {std::pair{WTF::ClockType::Wall, "Wall"}, std::pair{WTF::ClockType::Monotonic, "Monotonic"}, std::pair{WTF::ClockType::Approximate, "Approximate"}}) {
+        _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE(&capture.stream, test.first); check(test.second);
+    }
+    Check(capture.beginCount == 5 && capture.endCount == 5 && capture.printCount == 24);
+    void* const redirect[]{nullptr, nullptr, reinterpret_cast<void*>(&CapturePrint), nullptr, reinterpret_cast<void*>(&CaptureRedirect), reinterpret_cast<void*>(&CaptureEnd)};
+    capture.stream.vtable = redirect;
+    _ZN3WTF13printInternalERNS_11PrintStreamEb(&capture.stream, true); check("true");
+    Check(capture.beginCount == 6 && capture.endCount == 6 && capture.printCount == 24);
+    destroy(&capture.output);
+}
