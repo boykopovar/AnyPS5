@@ -219,12 +219,20 @@ struct Source {
     std::vector<std::byte> decoded;
 };
 
-Source makeSource(std::uint64_t pixelFormat, VkFormat storage, std::uint32_t width, std::uint32_t height, std::uint32_t salt = 0) {
+Source makeSource(std::uint64_t pixelFormat, VkFormat storage, std::uint32_t width, std::uint32_t height, std::uint32_t salt = 0, bool premultiplied = false) {
     Source source{pixelFormat, storage, width, height, std::vector<std::byte>(static_cast<std::size_t>(width) * height * 4), {}};
     std::uint32_t seed = 0x9e3779b9u ^ static_cast<std::uint32_t>(storage) ^ static_cast<std::uint32_t>(pixelFormat >> 32u) ^ salt;
     for (auto& byte : source.words) {
         seed = seed * 1664525u + 1013904223u;
         byte = static_cast<std::byte>(seed >> 24u);
+    }
+    if (premultiplied) {
+        source.words[3] = std::byte{0};
+        source.words[7] = std::byte{255};
+        for (std::size_t texel = 0; texel < source.words.size(); texel += 4) {
+            const auto alpha = std::to_integer<unsigned>(source.words[texel + 3]);
+            for (std::size_t channel = 0; channel < 3; ++channel) source.words[texel + channel] = static_cast<std::byte>(std::to_integer<unsigned>(source.words[texel + channel]) * alpha / 255u);
+        }
     }
     const ColorTargetLayout layout(width, height, ColorTileMode::RenderTarget);
     std::vector<std::byte> storageBytes(layout.Bytes() + 65536);
@@ -539,6 +547,182 @@ void passConvertsPq(const Context& context, PresentationPass& pass, const Source
     }
 }
 
+std::vector<std::byte> overlayPresent(const Context& context, PresentationPass& pass, PresentationPass& planes, const Source& main, const Image* mainImage, const Source& overlay, const Image* overlayImage, VkExtent2D extent) {
+    Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, extent, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+    const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * 4;
+    Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    {
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        VkImageLayout loaded = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        if (mainImage != nullptr) {
+            pass.Bind(0, mainImage->Handle(), main.width, main.height, main.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+            pass.RecordPresent(commands, 0, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, loaded);
+        } else {
+            loaded = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            transition(context, commands, destination.Handle(), VK_IMAGE_LAYOUT_UNDEFINED, loaded, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+            const VkClearColorValue color{{64.0f / 255.0f, 128.0f / 255.0f, 191.0f / 255.0f, 1.0f}};
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, destination.Handle(), loaded, &color, 1, &range);
+        }
+        if (overlayImage != nullptr) planes.Bind(1, overlayImage->Handle(), overlay.width, overlay.height, overlay.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+        else planes.BindTexels(1, commands, overlay.words, overlay.width, overlay.height, overlay.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+        planes.RecordOverlay(commands, 1, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, loaded, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        readImage(context, commands, destination, readback);
+        batch.SubmitAndWait();
+    }
+    pass.Release(0);
+    planes.Release(1);
+    return bytesOf(readback, bytes);
+}
+
+std::vector<std::byte> clearedFrame(VkExtent2D extent) {
+    std::vector<std::byte> frame(static_cast<std::size_t>(extent.width) * extent.height * 4);
+    for (std::size_t offset = 0; offset < frame.size(); offset += 4) {
+        frame[offset] = std::byte{191};
+        frame[offset + 1] = std::byte{128};
+        frame[offset + 2] = std::byte{64};
+        frame[offset + 3] = std::byte{255};
+    }
+    return frame;
+}
+
+void overlayBlendsPremultiplied(const Context& context, PresentationPass& pass, PresentationPass& planes, const Source& main, const Image& mainImage, const Source& overlay, const Image& overlayImage) {
+    for (const auto extent : {VkExtent2D{overlay.width, overlay.height}, VkExtent2D{overlay.width + 60, overlay.height}, VkExtent2D{overlay.width, overlay.height + 51}, VkExtent2D{117, 76}, VkExtent2D{331, 215}}) {
+        const auto rect = AgcDriver::ComputeContainRect_nid_postfix(overlay.width, overlay.height, extent.width, extent.height);
+        const bool exact = rect.width == overlay.width && rect.height == overlay.height;
+        const auto alone = passPresent(context, pass, overlay, overlayImage, extent, VK_FORMAT_B8G8R8A8_UNORM);
+        for (const bool cleared : {false, true}) {
+            const auto base = cleared ? clearedFrame(extent) : passPresent(context, pass, main, mainImage, extent, VK_FORMAT_B8G8R8A8_UNORM);
+            for (const bool uploaded : {false, true}) {
+                const auto blended = overlayPresent(context, pass, planes, main, cleared ? nullptr : &mainImage, overlay, uploaded ? nullptr : &overlayImage, extent);
+                int worst = 0;
+                for (std::uint32_t y = 0; y < extent.height; ++y) {
+                    for (std::uint32_t x = 0; x < extent.width; ++x) {
+                        const auto offset = (static_cast<std::size_t>(y) * extent.width + x) * 4;
+                        const bool inside = static_cast<std::int32_t>(x) >= rect.x && static_cast<std::int32_t>(x) < rect.x + static_cast<std::int32_t>(rect.width) && static_cast<std::int32_t>(y) >= rect.y && static_cast<std::int32_t>(y) < rect.y + static_cast<std::int32_t>(rect.height);
+                        for (std::size_t channel = 0; channel < 4; ++channel) {
+                            int expected = std::to_integer<int>(base[offset + channel]);
+                            if (inside && channel < 3) {
+                                const double alpha = std::to_integer<int>(alone[offset + 3]) / 255.0;
+                                expected = static_cast<int>(std::min(255.0, std::to_integer<int>(alone[offset + channel]) + expected * (1.0 - alpha)) + 0.5);
+                            }
+                            const int difference = std::abs(expected - std::to_integer<int>(blended[offset + channel]));
+                            Require(inside || difference == 0, "the overlay plane changed the destination outside its rectangle: " + describe(overlay, extent));
+                            worst = std::max(worst, difference);
+                        }
+                    }
+                }
+                std::printf("  overlay %s over %s, %s: by at most %d\n", describe(overlay, extent).c_str(), cleared ? "a cleared destination" : "the main plane", uploaded ? "uploaded texels" : "resident image", worst);
+                Require(worst <= (exact ? 1 : 2), "the overlay plane is not blended with its premultiplied alpha: " + describe(overlay, extent));
+            }
+        }
+    }
+}
+
+int blendedDifference(const std::vector<std::byte>& base, const std::vector<std::byte>& alone, const std::vector<std::byte>& blended) {
+    Require(base.size() == alone.size() && base.size() == blended.size(), "compared frames differ in size");
+    int worst = 0;
+    for (std::size_t offset = 0; offset < base.size(); offset += 4) {
+        const double alpha = std::to_integer<int>(alone[offset + 3]) / 255.0;
+        for (std::size_t channel = 0; channel < 4; ++channel) {
+            int expected = std::to_integer<int>(base[offset + channel]);
+            if (channel < 3) expected = static_cast<int>(std::min(255.0, std::to_integer<int>(alone[offset + channel]) + expected * (1.0 - alpha)) + 0.5);
+            worst = std::max(worst, std::abs(expected - std::to_integer<int>(blended[offset + channel])));
+        }
+    }
+    return worst;
+}
+
+void overlayBlendsIntoDumps(const Context& context, PresentationPass& pass, PresentationPass& planes, const Source& main, const Image& mainImage, const Source& overlay, const Image& overlayImage) {
+    for (const std::uint32_t stride : {1u, 3u}) {
+        const auto extent = PresentationPass::DumpExtent(main.width, main.height, stride);
+        const auto base = passDump(context, pass, main, mainImage, stride);
+        const auto alone = passPresent(context, pass, overlay, overlayImage, extent, VK_FORMAT_B8G8R8A8_UNORM);
+        const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * 4;
+        Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+        pass.Bind(1, mainImage.Handle(), main.width, main.height, main.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+        planes.Bind(1, overlayImage.Handle(), overlay.width, overlay.height, overlay.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+        {
+            CommandBatch batch(context);
+            const auto commands = batch.Handle();
+            pass.RecordDumpImage(commands, 1, stride);
+            Require(pass.DumpImageExtent(1).width == extent.width && pass.DumpImageExtent(1).height == extent.height, "the dump image extent differs from the dump extent");
+            planes.RecordOverlay(commands, 1, pass.DumpImage(1), VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            pass.RecordDumpReadback(commands, 1, readback.Handle());
+            batch.SubmitAndWait();
+        }
+        pass.Release(1);
+        planes.Release(1);
+        const int worst = blendedDifference(base, alone, bytesOf(readback, bytes));
+        std::printf("  overlay %s blended into the presentation dump at stride %u: by at most %d\n", describe(overlay, extent).c_str(), stride, worst);
+        Require(worst <= (stride == 1 ? 1 : 2), "the overlay plane is not blended into the presentation dump: " + describe(overlay, extent));
+    }
+    const VkExtent2D extent{main.width, main.height};
+    PresentationScaler scaler(context, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM);
+    scaler.EnsureSourceImage(main.width, main.height);
+    Buffer upload(context, main.decoded.size(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    std::memcpy(upload.Bytes().data(), main.decoded.data(), main.decoded.size());
+    const auto bytes = main.decoded.size();
+    Buffer readback(context, bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+    const auto alone = passPresent(context, pass, overlay, overlayImage, extent, VK_FORMAT_B8G8R8A8_UNORM);
+    planes.Bind(1, overlayImage.Handle(), overlay.width, overlay.height, overlay.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+    {
+        CommandBatch batch(context);
+        const auto commands = batch.Handle();
+        scaler.RecordUpload(commands, upload.Handle());
+        planes.RecordOverlay(commands, 1, scaler.SourceImage(), scaler.SourceFormat(), VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, extent, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        scaler.RecordReadback(commands, readback.Handle());
+        batch.SubmitAndWait();
+    }
+    planes.Release(1);
+    const int worst = blendedDifference(main.decoded, alone, bytesOf(readback, bytes));
+    std::printf("  overlay %s blended into the scaler source: by at most %d\n", describe(overlay, extent).c_str(), worst);
+    Require(worst <= 1, "the overlay plane is not blended into the scaler source the dump reads back: " + describe(overlay, extent));
+}
+
+void overlayRefusals(const Context& context, PresentationPass& planes, const Image& overlayImage, const Source& overlay) {
+    Image destination(context, VK_FORMAT_B8G8R8A8_UNORM, {overlay.width, overlay.height}, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+    const auto refused = [&](std::uint64_t pixelFormat, VkColorSpaceKHR colorSpace, VkImageLayout initialLayout) {
+        bool threw = false;
+        try {
+            CommandBatch batch(context);
+            planes.Bind(1, overlayImage.Handle(), overlay.width, overlay.height, pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+            planes.RecordOverlay(batch.Handle(), 1, destination.Handle(), VK_FORMAT_B8G8R8A8_UNORM, colorSpace, {overlay.width, overlay.height}, initialLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        } catch (const std::exception&) {
+            threw = true;
+        }
+        planes.Release(1);
+        return threw;
+    };
+    Require(refused(Bgra8 | TenBit, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL), "a 10-bit overlay plane was blended without its 2-bit alpha");
+    Require(refused(Rgb10Pq, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL), "a PQ overlay plane was blended");
+    Require(refused(Bgra8, VK_COLOR_SPACE_HDR10_ST2084_EXT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL), "an overlay plane was blended into an HDR10 destination");
+    Require(refused(Bgra8, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR, VK_IMAGE_LAYOUT_UNDEFINED), "an overlay plane was blended over discarded contents");
+    bool truncated = false;
+    try {
+        CommandBatch batch(context);
+        planes.BindTexels(1, batch.Handle(), std::span(overlay.words).first(overlay.words.size() - 4), overlay.width, overlay.height, overlay.pixelFormat, AgcDriver::SdrToneMapLuminanceNits);
+    } catch (const std::exception&) {
+        truncated = true;
+    }
+    Require(truncated, "overlay texels that do not cover their extent were uploaded");
+}
+
+void overlayPlaneTests(const Context& context) {
+    PresentationPass pass(context, 2);
+    PresentationPass planes(context, 2);
+    const auto main = makeSource(Bgra8, VK_FORMAT_B8G8R8A8_UNORM, 200, 130);
+    const auto mainImage = residentImage(context, main);
+    for (const auto& [pixelFormat, storage] : {std::pair{Bgra8, VK_FORMAT_B8G8R8A8_UNORM}, std::pair{Rgba8, VK_FORMAT_R8G8B8A8_UNORM}}) {
+        const auto overlay = makeSource(pixelFormat, storage, 200, 130, 0x0f0f0f0fu, true);
+        const auto overlayImage = residentImage(context, overlay);
+        overlayBlendsPremultiplied(context, pass, planes, main, *mainImage, overlay, *overlayImage);
+        overlayBlendsIntoDumps(context, pass, planes, main, *mainImage, overlay, *overlayImage);
+        overlayRefusals(context, planes, *overlayImage, overlay);
+    }
+}
+
 void residentPresentTests(const Context& context) {
     PresentationPass pass(context, 2);
     const std::array<std::pair<std::uint64_t, VkFormat>, 5> cases{{
@@ -568,6 +752,64 @@ void residentPresentTests(const Context& context) {
     blitLetterboxMatchesClear(context);
 }
 
+PFN_vkGetDeviceProcAddr realDeviceProc = nullptr;
+PFN_vkAllocateMemory realAllocateMemory = nullptr;
+const VkPhysicalDeviceMemoryProperties* refusingMemory = nullptr;
+std::uint32_t refusedAllocations = 0;
+std::uint32_t lastAllocatedType = UINT32_MAX;
+
+VKAPI_ATTR VkResult VKAPI_CALL refuseDeviceLocalAllocation(VkDevice device, const VkMemoryAllocateInfo* info, const VkAllocationCallbacks* callbacks, VkDeviceMemory* memory) {
+    const auto heap = refusingMemory->memoryTypes[info->memoryTypeIndex].heapIndex;
+    if ((refusingMemory->memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) {
+        ++refusedAllocations;
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
+    lastAllocatedType = info->memoryTypeIndex;
+    return realAllocateMemory(device, info, callbacks, memory);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL refusingDeviceProc(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkAllocateMemory") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&refuseDeviceLocalAllocation);
+    return realDeviceProc(device, name);
+}
+
+void sourceImageOutsideDeviceMemoryTests(const Context& base) {
+    VkImageCreateInfo probeInfo{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    probeInfo.imageType = VK_IMAGE_TYPE_2D;
+    probeInfo.format = VK_FORMAT_B8G8R8A8_UNORM;
+    probeInfo.extent = {64u, 64u, 1u};
+    probeInfo.mipLevels = 1;
+    probeInfo.arrayLayers = 1;
+    probeInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    probeInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    probeInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    VkImage probe = VK_NULL_HANDLE;
+    Check(base.Function<PFN_vkCreateImage>("vkCreateImage")(base.device, &probeInfo, nullptr, &probe), "vkCreateImage probe");
+    VkMemoryRequirements requirements{};
+    base.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(base.device, probe, &requirements);
+    base.Function<PFN_vkDestroyImage>("vkDestroyImage")(base.device, probe, nullptr);
+    if (!base.HostMemoryType(requirements.memoryTypeBits)) {
+        std::printf("presentation source in host memory: skipped, the device offers no host memory type for the image\n");
+        return;
+    }
+    auto context = base;
+    context.bufferPool.reset();
+    realDeviceProc = base.deviceProc;
+    realAllocateMemory = base.Function<PFN_vkAllocateMemory>("vkAllocateMemory");
+    refusingMemory = &context.memory;
+    refusedAllocations = 0;
+    lastAllocatedType = UINT32_MAX;
+    context.deviceProc = refusingDeviceProc;
+    {
+        PresentationScaler scaler(context, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM);
+        scaler.EnsureSourceImage(64u, 64u);
+        Require(refusedAllocations != 0, "the presentation source never asked for device-local memory");
+        Require(lastAllocatedType != UINT32_MAX && (context.memory.memoryHeaps[context.memory.memoryTypes[lastAllocatedType].heapIndex].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) == 0, "the presentation source was not placed in host memory when device-local memory was refused");
+        Require(scaler.SourceWidth() == 64u && scaler.SourceHeight() == 64u, "the presentation source in host memory lost its extent");
+    }
+    context.bufferPool.reset();
+}
+
 }
 
 int main() {
@@ -582,7 +824,9 @@ int main() {
             return VulkanTestSkipped;
         }
         residentPresentTests(device->GetContext());
-        std::cout << "resident present format, presentation pass and letterbox tests passed\n";
+        overlayPlaneTests(device->GetContext());
+        sourceImageOutsideDeviceMemoryTests(device->GetContext());
+        std::cout << "resident present format, presentation pass, overlay plane and letterbox tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

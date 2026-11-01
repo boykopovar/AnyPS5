@@ -37,6 +37,7 @@ struct Push {
     std::uint32_t columnBegin;
     std::uint32_t rowBegin;
     std::uint32_t pipeBankXor;
+    std::uint32_t splitStride;
 };
 
 std::uint32_t BlockBytesFor(TextureTileMode tileMode) {
@@ -148,8 +149,18 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     }
     // Constants 0-3 select element size, block size, addressing family and direction; 4-19 carry the
     // per-bit XOR equation for the equation family (2); 20-21 override the block extent in elements.
-    std::array<std::uint32_t, 22> values{elementBytes, BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
-    if (thick) {
+    const bool gcn = IsGcnTiled(tileMode);
+    std::array<std::uint32_t, 26> values{elementBytes, gcn ? 0u : BlockBytesFor(tileMode), tileMode == TextureTileMode::kLinear ? 0u : 1u, retile ? 1u : 0u};
+    if (gcn) {
+        Require(!thick, "PS4 tiled surfaces are detiled thin");
+        const auto geometry = GcnTiling(tileMode, elementBytes);
+        values[1] = geometry.blockBytes;
+        values[2] = 2u;
+        std::copy(geometry.equation.begin(), geometry.equation.end(), values.begin() + 4);
+        values[20] = geometry.blockWidth;
+        values[21] = geometry.blockHeight;
+        std::copy(geometry.splitMasks.begin(), geometry.splitMasks.end(), values.begin() + 22);
+    } else if (thick) {
         const auto thickMode = tileMode == TextureTileMode::kStandard4KB ? 0x105u : tileMode == TextureTileMode::kS4KBX ? 0x115u : tileMode == TextureTileMode::kStandard64KB ? 0x109u : tileMode == TextureTileMode::kS64KBX ? 0x119u : tileMode == TextureTileMode::kD64KBX ? 0x11au : 0u;
         Require(thickMode != 0, "3D textures are only detiled thick from SW_4KB_S, SW_4KB_S_X, SW_64KB_S, SW_64KB_S_X or SW_64KB_D_X");
         const auto* equation = FindTextureSwizzleEquation(thickMode, elementBytes);
@@ -168,7 +179,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     if (image && imageModule == VK_NULL_HANDLE) {
         imageModule = CreateShaderModule(context, TEXTURE_DETILE_IMAGE_SPV, sizeof(TEXTURE_DETILE_IMAGE_SPV), "vkCreateShaderModule");
     }
-    std::array<VkSpecializationMapEntry, 22> entries{};
+    std::array<VkSpecializationMapEntry, 26> entries{};
     for (std::uint32_t index = 0; index < entries.size(); ++index) entries[index] = {index, index * 4u, 4};
     VkSpecializationInfo specialization{};
     specialization.mapEntryCount = static_cast<std::uint32_t>(entries.size());
@@ -192,6 +203,15 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     return result;
 }
 
+std::uint32_t TextureDetiler::layerBankXor(TextureTileMode tileMode, std::uint32_t elementBytes, const TileMipLayout& layout, std::uint32_t layer) {
+    if (layer == 0 || layout.gcnMicroTiled || !IsGcnMacroTiled(tileMode)) return 0u;
+    const auto key = (static_cast<std::uint32_t>(tileMode) << 8u) | elementBytes;
+    for (const auto& entry : gcnGeometries) {
+        if (entry.first == key) return GcnLayerBankXor(entry.second, layer);
+    }
+    return GcnLayerBankXor(gcnGeometries.emplace_back(key, GcnTiling(tileMode, elementBytes)).second, layer);
+}
+
 void TextureDetiler::checkWindow(const TileMipLayout& layout, const DetileWindow& window, std::uint32_t& columnEnd, std::uint32_t& rowEnd) const {
     Require(layout.width != 0 && layout.height != 0, "texture detiling requires a non-empty mip layout");
     Require(layout.tiledSize != 0 && layout.linearSize != 0, "texture detiling requires a non-empty mip layout");
@@ -206,7 +226,7 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     Require(source != VK_NULL_HANDLE && destination != VK_NULL_HANDLE, "texture detiling requires source and destination buffers");
     std::uint32_t columnEnd = 0, rowEnd = 0;
     checkWindow(layout, window, columnEnd, rowEnd);
-    const auto target = pipeline(tileMode, elementBytes, retile, thick);
+    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, thick);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto sourceDescriptorOffset = sourceOffset - sourceOffset % alignment;
     const auto destinationDescriptorOffset = destinationOffset - destinationOffset % alignment;
@@ -257,7 +277,8 @@ void TextureDetiler::Dispatch(VkCommandBuffer commands, TextureTileMode tileMode
     push.linearBase = window.linearBase;
     push.columnBegin = window.columnBegin;
     push.rowBegin = window.rowBegin;
-    push.pipeBankXor = window.pipeBankXor;
+    push.pipeBankXor = window.pipeBankXor ^ layerBankXor(tileMode, elementBytes, layout, slice);
+    push.splitStride = layout.gcnSplitStride;
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
     const auto groupsX = (columnEnd - window.columnBegin + 7u) / 8u;
     const auto groupsY = (rowEnd - window.rowBegin + 7u) / 8u;
@@ -402,7 +423,7 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     Require(ImageElementFormat(elementBytes) != VK_FORMAT_UNDEFINED, "unsupported element size for texture detiling through an image");
     std::uint32_t columnEnd = 0, rowEnd = 0;
     checkWindow(layout, window, columnEnd, rowEnd);
-    const auto target = pipeline(tileMode, elementBytes, retile, false, true);
+    const auto target = pipeline(MipTileMode(tileMode, layout), elementBytes, retile, false, true);
     const auto alignment = std::max<VkDeviceSize>(context.limits.minStorageBufferOffsetAlignment, 4);
     const auto descriptorOffset = tiledOffset - tiledOffset % alignment;
     const auto base = tiledOffset - descriptorOffset;
@@ -447,7 +468,8 @@ void TextureDetiler::DispatchImage(VkCommandBuffer commands, TextureTileMode til
     push.linearBase = 0;
     push.columnBegin = window.columnBegin;
     push.rowBegin = window.rowBegin;
-    push.pipeBankXor = window.pipeBankXor;
+    push.pipeBankXor = window.pipeBankXor ^ layerBankXor(tileMode, elementBytes, layout, slice);
+    push.splitStride = layout.gcnSplitStride;
     context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, imagePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push), &push);
     const auto groupsX = (columnEnd - window.columnBegin + 7u) / 8u;
     const auto groupsY = (rowEnd - window.rowBegin + 7u) / 8u;

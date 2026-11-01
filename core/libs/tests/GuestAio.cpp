@@ -29,6 +29,12 @@ static void Require(bool value, int line) {
     }
 }
 #define Check(value) Require((value), __LINE__)
+
+static void DeleteAio(std::int32_t id) {
+    std::int32_t removed = -1;
+    Check(sceKernelAioDeleteRequest(id, &removed) == 0 && removed == 0);
+}
+
 #ifdef _WIN32
 static int g_parameterReports = 0;
 static void CountParameterReport(const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, std::uintptr_t) {
@@ -413,6 +419,7 @@ int main(int argc, char** argv) {
                     result.return_value != 16 || std::memcmp(bytes.data(), sharedContents.data() + offset, 16) != 0) {
                     misread = true;
                 }
+                DeleteAio(requestId);
             }
         });
     }

@@ -26,6 +26,8 @@ FORMS = {
 
 NON_MEMORY_FORMS = {
     "gs-nop": bytes.fromhex("65 90"),
+    "gs-nop-memory": bytes.fromhex("65 0f 1f 05 11 11 11 11"),
+    "gs-lea": bytes.fromhex("65 8d 05 11 11 11 11"),
     "gs-register-move": bytes.fromhex("65 48 89 c8"),
     "gs-cpuid": bytes.fromhex("65 0f a2"),
     "gs-mwait": bytes.fromhex("65 0f 01 c9"),

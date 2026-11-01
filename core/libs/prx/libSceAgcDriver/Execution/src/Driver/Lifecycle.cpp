@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -230,6 +231,7 @@ Driver::Driver() {
         gpuMapImportThreads.fetch_add(1, std::memory_order_relaxed);
         host.join();
     });
+    PerformanceOverlay::SetDriverCounters([] { return Driver::Get().OverlayCounters(); });
 }
 
 void Driver::WaitIdle() {

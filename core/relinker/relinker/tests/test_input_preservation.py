@@ -30,7 +30,7 @@ def check_executable_hardlinks(relinker, work):
                     links = protected.stat().st_nlink
                     try:
                         result = subprocess.run([str(relinker), *command], cwd=case,
-                                                capture_output=True, text=True, timeout=20)
+                                                capture_output=True, text=True, encoding="utf-8", timeout=20)
                         assert result.returncode == 2 and "output would overwrite" in result.stderr, (
                             windows, output_name, input_name, readonly, result.stdout, result.stderr)
                         for path, original in inputs.items():
@@ -61,7 +61,7 @@ def check_executable_hardlinks(relinker, work):
                 path.chmod(stat.S_IREAD)
         try:
             result = subprocess.run([str(relinker), *command], cwd=case,
-                                    capture_output=True, text=True, timeout=20)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=20)
             assert result.returncode == 0, (readonly, result.stdout, result.stderr)
             for name in ("executable", "secondary-one", "secondary-two"):
                 assert outputs[name].read_bytes().startswith(b"MZ")
@@ -111,7 +111,7 @@ def check_diagnostic_inputs(relinker, work):
                     options.append("--registry")
                 result = subprocess.run([str(relinker), "--windows", "--windows-diagnostics", *options,
                                          str(source), str(output)], cwd=diagnostics.parent,
-                                        capture_output=True, text=True, timeout=20)
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
                 owner = "an input module" if bundled else "the input executable"
                 assert result.returncode == 2 and f"Windows import diagnostics output would overwrite {owner}" in result.stderr, (result.stdout, result.stderr)
                 assert str(diagnostics) in result.stderr, result.stderr
@@ -134,7 +134,7 @@ def check_diagnostic_inputs(relinker, work):
             options = ["--windows-diagnostics"] if enabled else []
             result = subprocess.run([str(relinker), "--windows", "--skip-sce-module", *options,
                                      str(source), str(output)], cwd=case,
-                                    capture_output=True, text=True, timeout=20)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=20)
             assert result.returncode == 0 and output.read_bytes().startswith(b"MZ"), (result.stdout, result.stderr)
             assert source.read_bytes() == original
             assert diagnostics.read_bytes() == (b"" if enabled else original)
@@ -177,7 +177,7 @@ def check_registry_inputs(relinker, work, windows, needed=False):
                 previous_output = b"previous executable"
                 output.write_bytes(previous_output)
                 result = subprocess.run([str(relinker), *options, "--registry", str(source), str(output)],
-                                        capture_output=True, text=True, timeout=20)
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
                 kind = "Needed libraries" if needed else "Registry"
                 expected = f"{kind} output would overwrite an input module" if bundled else f"{kind} output would overwrite the input executable"
                 assert result.returncode == 2 and expected in result.stderr, (result.returncode, result.stdout, result.stderr)
@@ -204,7 +204,7 @@ def check_registry_after_failed_patch(relinker, work):
     for registry in registries:
         registry.write_bytes(previous_registry)
     result = subprocess.run([str(relinker), "--windows", "--registry", str(source), str(output)],
-                            capture_output=True, text=True, timeout=20)
+                            capture_output=True, text=True, encoding="utf-8", timeout=20)
     assert result.returncode == 2 and "Invalid Windows icon PNG" in result.stderr, (result.stdout, result.stderr)
     assert output.read_bytes() == previous_output
     assert all(registry.read_bytes() == previous_registry for registry in registries)
@@ -225,7 +225,7 @@ def check_output_directory(relinker, work):
             output = str(target) if existing else str(target) + os.sep
             options = ["--windows"] if windows else []
             result = subprocess.run([str(relinker), *options, str(source), output], cwd=case,
-                                    capture_output=True, text=True, timeout=20)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=20)
             assert result.returncode == 2 and "Executable output is a directory" in result.stderr, (result.stdout, result.stderr)
             assert not (case / "app0").exists() and not (target / "app0").exists()
             assert target.exists() == existing
@@ -273,7 +273,7 @@ def check_desktop_inputs(relinker, work):
                     registry_path.write_bytes(previous_registry)
                     options = ["--registry"] if registry else []
                     result = subprocess.run([str(relinker), *options, str(source), str(output)],
-                                            capture_output=True, text=True, timeout=20)
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
                     kind = "Desktop entry" if desktop else "Icon"
                     owner = "an input module" if bundled else "the input executable"
                     assert result.returncode == 2 and f"{kind} output would overwrite {owner}" in result.stderr, (result.stdout, result.stderr)
@@ -332,7 +332,7 @@ def main():
                     arguments = [] if bundled else ["--skip-sce-module"]
                     result = subprocess.run([str(relinker), *options, *arguments, "--registry",
                                              str(source), str(output)],
-                                            capture_output=True, text=True, timeout=20)
+                                            capture_output=True, text=True, encoding="utf-8", timeout=20)
                     expected = "Executable output would overwrite an input module" if bundled else "Executable output would overwrite the input executable"
                     if (result.returncode != 2 or expected not in result.stderr
                             or source.read_bytes() != original
@@ -365,7 +365,7 @@ def main():
                 if existing:
                     output.write_bytes(b"previous output")
                 result = subprocess.run([str(relinker), *options, "--registry", str(source), str(output)],
-                                        capture_output=True, text=True, timeout=20)
+                                        capture_output=True, text=True, encoding="utf-8", timeout=20)
                 converted = case / "app0" / "sce_module" / "sample.prx.guest.prx"
                 magic = b"MZ" if windows else b"\x7fELF"
                 if (result.returncode != 0 or not output.read_bytes().startswith(magic)
@@ -375,7 +375,7 @@ def main():
                     raise AssertionError((windows, existing, result.returncode, result.stdout, result.stderr))
                 if not windows:
                     assert Path(f"{output}.png").read_bytes() == image
-                    assert Path(f"{output}.desktop").read_text().startswith("[Desktop Entry]\n")
+                    assert Path(f"{output}.desktop").read_text(encoding="utf-8").startswith("[Desktop Entry]\n")
     print("Input preservation tests passed")
 
 
