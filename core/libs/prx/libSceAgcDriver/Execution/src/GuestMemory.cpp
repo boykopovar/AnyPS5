@@ -17,6 +17,11 @@
 #include <algorithm>
 #include <bit>
 #include <emmintrin.h>
+#if defined(_MSC_VER) && !defined(__clang__)
+#include <intrin.h>
+#else
+#include <cpuid.h>
+#endif
 #include <functional>
 #include <cstdio>
 #include <cstdlib>
@@ -1111,7 +1116,10 @@ struct WriteTracker {
 
     bool blockPartWatched(std::uint64_t first, std::uint64_t stop) const {
 #ifdef _WIN32
-        return covers(first, 1) || covers(stop - 1, 1);
+        for (auto page = first; page < stop; page = (page / WritePageBytes + 1) * WritePageBytes) {
+            if (covers(page, 1)) return true;
+        }
+        return false;
 #else
         return GuestWriteWatch::GuestWriteWatchOverlaps_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first));
 #endif
@@ -2145,12 +2153,17 @@ thread_local ThreadCollectMemo threadHintMemo;
 bool walkHints(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop) {
     auto cursor = first;
     bool marked = false;
+    StampRuns runs{tracker, StampKind::Cpu};
     while (cursor < stop) {
         std::size_t count = tracker.pages.size();
         if (!GuestArena::GuestArenaCollectWrites_nid_postfix(static_cast<std::uintptr_t>(cursor), static_cast<std::size_t>(stop - cursor), tracker.pages.data(), &count, true)) return false;
         if (count != 0 && !marked) ++tracker.generation;
         marked = marked || count != 0;
-        for (std::size_t i = 0; i < count; ++i) tracker.stampHint(tracker.blockOf(reinterpret_cast<std::uintptr_t>(tracker.pages[i])));
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto page = reinterpret_cast<std::uintptr_t>(tracker.pages[i]);
+            tracker.stampHint(tracker.blockOf(page));
+            if (tracker.coverage.Covers(page, WritePageBytes)) stampWrittenRun(&runs, page, page + WritePageBytes);
+        }
         if (count < tracker.pages.size()) break;
         cursor = reinterpret_cast<std::uintptr_t>(tracker.pages[count - 1]) + WritePageBytes;
     }
@@ -2821,7 +2834,31 @@ void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> cur
     }
 }
 
+static std::uint32_t changedByteCount(__m128i same) {
+    const auto sums = _mm_sad_epu8(_mm_and_si128(same, _mm_set1_epi8(1)), _mm_setzero_si128());
+    return 16u - static_cast<std::uint32_t>(_mm_cvtsi128_si32(_mm_add_epi32(sums, _mm_unpackhi_epi64(sums, sums))));
+}
+
+std::uint32_t ChangedByteStoreLimit() {
+    static const auto limit = [] {
+#if defined(_MSC_VER) && !defined(__clang__)
+        int registers[4]{};
+        __cpuid(registers, 0);
+        const auto ebx = static_cast<unsigned>(registers[1]), ecx = static_cast<unsigned>(registers[2]), edx = static_cast<unsigned>(registers[3]);
+#else
+        unsigned eax = 0, ebx = 0, ecx = 0, edx = 0;
+        if (__get_cpuid(0, &eax, &ebx, &ecx, &edx) == 0) return 4u;
+#endif
+        return ebx == 0x68747541u && edx == 0x69746e65u && ecx == 0x444d4163u ? 16u : 4u;
+    }();
+    return limit;
+}
+
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+    WriteChanged(address, current, original, ChangedByteStoreLimit());
+}
+
+void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs();
     if (current.empty()) return;
@@ -2837,19 +2874,28 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
         CheckRange(destination, size, 1, true);
         std::size_t firstChanged = size;
         std::size_t lastChanged = 0;
+        bool masked = false;
         std::size_t at = 0;
         for (; at + 16 <= size; at += 16) {
             const auto bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(current.data() + at));
             const auto same = _mm_cmpeq_epi8(bytes, _mm_loadu_si128(reinterpret_cast<const __m128i*>(original.data() + at)));
             const auto equal = static_cast<std::uint32_t>(_mm_movemask_epi8(same));
             if (equal == 0xffffu) continue;
-            if (equal == 0) _mm_storeu_si128(reinterpret_cast<__m128i*>(destination + at), bytes);
-            else _mm_maskmoveu_si128(bytes, _mm_xor_si128(same, _mm_set1_epi8(-1)), reinterpret_cast<char*>(destination + at));
             const auto changed = ~equal & 0xffffu;
+            if (equal == 0) _mm_storeu_si128(reinterpret_cast<__m128i*>(destination + at), bytes);
+            else if (byteStoreLimit < 16 && changedByteCount(same) > byteStoreLimit) {
+                _mm_maskmoveu_si128(bytes, _mm_xor_si128(same, _mm_set1_epi8(-1)), reinterpret_cast<char*>(destination + at));
+                masked = true;
+            } else {
+                for (auto bits = changed; bits != 0; bits &= bits - 1) {
+                    const auto index = at + static_cast<std::size_t>(std::countr_zero(bits));
+                    destination[index] = current[index];
+                }
+            }
             firstChanged = std::min(firstChanged, at + static_cast<std::size_t>(std::countr_zero(changed)));
             lastChanged = std::max(lastChanged, at + 32 - static_cast<std::size_t>(std::countl_zero(changed)));
         }
-        _mm_sfence();
+        if (masked) _mm_sfence();
         for (; at < size; ++at) {
             if (current[at] == original[at]) continue;
             destination[at] = current[at];

@@ -239,6 +239,9 @@ bool BasicEvaluator<TNode>::EvaluateRawRead(const TNode& inst, std::uint64_t& re
     } else {
         const auto relative = (immediate & ~std::int64_t {3}) + static_cast<std::int64_t>(static_cast<std::uint32_t>(offset) & ~3u);
         if (!AddSignedAddress(base & ~std::uint64_t {3}, relative, address)) {
+            if (_inaccessible != nullptr && _runtime.accessible != nullptr && LoadedFromMemory(*handle.Value())) {
+                *_inaccessible = {inst.Value(), ((base & ~std::uint64_t {3}) + static_cast<std::uint64_t>(relative)) & AddressMask};
+            }
             return false;
         }
     }
@@ -385,24 +388,25 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
     const auto takesActiveArm = [activeMask](const IrValue* current) {
         return activeMask != nullptr && IsRuntimeSelect(current->Opcode()) && current->ArgumentCount() == 3 && ActiveMaskImplies(activeMask, current->Argument(0));
     };
-    const auto requirements = [&program, &takesActiveArm](IrValue* current) {
-        std::vector<IrValue*> required;
+    std::vector<IrValue*> required;
+    const auto requirements = [&program, &takesActiveArm, &required](IrValue* current) {
+        required.clear();
         if (takesActiveArm(current)) {
             required.push_back(current->Argument(1) != nullptr ? current->Argument(1)->Resolve() : nullptr);
-            return required;
+            return;
         }
         if (current->Opcode() == IrOpcode::ReadConst) {
             required.push_back(program.srtReads[current->Argument(1)->Resolve()->ImmediateU32()].value);
-            return required;
+            return;
         }
         if (current->IsPhi()) {
             required.push_back(ResolveInvariantPhi(program, current));
-            return required;
+            return;
         }
         const auto resolved = [](IrValue* value) { return value != nullptr ? value->Resolve() : nullptr; };
         if (current->Opcode() == IrOpcode::CompositeExtractU64) {
             required.push_back(resolved(current->Argument(0)));
-            return required;
+            return;
         }
         if (current->Opcode() == IrOpcode::CompositeExtractU32x2) {
             auto* source = current->Argument(0)->Resolve();
@@ -412,14 +416,13 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
                 required.push_back(resolved(source->Argument(0)));
                 required.push_back(resolved(source->Argument(1)));
             }
-            return required;
+            return;
         }
         const auto arguments = *evaluatedArguments(current->Opcode());
         for (std::size_t index = 0; index < arguments; ++index) {
             auto* argument = current->Argument(index);
             required.push_back(argument != nullptr ? argument->Resolve() : nullptr);
         }
-        return required;
     };
     std::unordered_set<const IrValue*> expanding;
     std::vector<std::pair<IrValue*, bool>> pending{{value->Resolve(), false}};
@@ -443,7 +446,7 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
             continue;
         }
         if (!expanded && !expanding.insert(current).second) continue;
-        const auto required = requirements(current);
+        requirements(current);
         if (!expanded) {
             pending.emplace_back(current, true);
             for (auto* argument : required) {

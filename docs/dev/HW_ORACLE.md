@@ -2,7 +2,7 @@
 
 `tools/hw-oracle/` runs a few lines of RDNA assembly on a local AMD GPU, one input row per lane, and returns what the
 hardware computed. Use it to settle instruction semantics that the ISA documentation, LLVM or Mesa leave open, then pin the
-measured rows as expected values in `tests/execution/`.
+measured rows as expected values in `core/libs/prx/libSceAgcDriver/tests/execution/`.
 
 The PS5 GPU is gfx1013. Other RDNA2 GPUs (gfx103x) share the VALU, SALU, DS, MUBUF and MIMG encodings, apart from ops that
 exist only on gfx10.1 (`v_mad_legacy_f32`, `v_mac_legacy_f32`, `v_mul_lo_i32`, `s_dcache_discard`, ...). RDNA3 also runs
@@ -19,8 +19,9 @@ the tool, but differs from gfx1013 in more places. Say which GPU you measured on
 - A C compiler, and `clang` + `ld.lld` with the AMDGPU target (`llc --version` lists `amdgcn`). If they aren't in
   `PATH`, they are taken from `$ROCM_PATH/llvm/bin`.
 
-The first run builds `oracle.c` into `~/.cache/anyps5-hw-oracle/` (`HW_ORACLE_CACHE` overrides it). The target is read
-from the GPU (`HW_ORACLE_TARGET` overrides it).
+The first run builds `oracle.c` into `$XDG_CACHE_HOME/anyps5-hw-oracle/`, or `~/.cache/anyps5-hw-oracle/` when
+`XDG_CACHE_HOME` is unset or empty (`HW_ORACLE_CACHE` overrides both). The target is read from the GPU (`HW_ORACLE_TARGET`
+overrides it).
 
 ### Windows
 
