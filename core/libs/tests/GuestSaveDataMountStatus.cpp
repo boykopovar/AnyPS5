@@ -7,12 +7,16 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <map>
 #include <random>
 #include <set>
 #include <string>
 #include <system_error>
 #ifdef _WIN32
 #include <windows.h>
+#include <winioctl.h>
 #endif
 
 namespace {
@@ -25,6 +29,7 @@ constexpr int SaveDataErrorNotInitialized = -2137063423;
 constexpr int SaveDataErrorNotMounted = -2137063420;
 constexpr int SaveDataErrorBusy = -2137063421;
 constexpr int SaveDataErrorNotFound = -2137063416;
+constexpr int SaveDataErrorInternal = -2137063413;
 constexpr int SaveDataErrorMountFull = -2137063412;
 
 int failures = 0;
@@ -89,6 +94,15 @@ void CheckUnmountedCalls() {
     Check(backupEvent.user_id == 0x10000000, "backup event user_id matches");
     Check(std::strcmp(backupEvent.dir_name.data, "valid_backup") == 0, "backup event dir_name matches");
     Check(sceSaveDataGetEventResult(nullptr, &emptyEvent) == SaveDataErrorNotFound, "event queue is empty after retrieving backup event");
+    SceSaveDataDirName dirName{};
+    std::memcpy(dirName.data, "fresh", sizeof("fresh"));
+    SaveDataCheckBackupData check{};
+    check.dir_name = &dirName;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotInitialized, "checkBackupData before initialize is NOT_INITIALIZED");
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &dirName;
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotInitialized, "restoreBackupData before initialize is NOT_INITIALIZED");
+    Check(sceSaveDataUmountWithBackup(&point) == SaveDataErrorNotInitialized, "umountWithBackup before initialize is NOT_INITIALIZED");
 }
 
 void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
@@ -263,6 +277,475 @@ void CheckInvalidNamesAreRejected() {
     MountAndCheck("after", MountReadWrite | MountCreate2, 1u, "CREATE2 after the rejected names");
 }
 
+void WriteText(const std::filesystem::path& path, const std::string& text) {
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    file << text;
+    Check(static_cast<bool>(file), "writes " + path.string());
+}
+
+std::string ReadText(const std::filesystem::path& path) {
+    std::ifstream file(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+bool MountSave(SceSaveDataDirName* dirName, std::uint32_t mode, SaveDataMountResult* result) {
+    SaveDataMount3 mount{};
+    mount.user_id = 7;
+    mount.dir_name = dirName;
+    mount.mount_mode = mode;
+    return sceSaveDataMount3(&mount, result) == 0;
+}
+
+std::map<std::string, std::string> Snapshot(const std::filesystem::path& save) {
+    std::map<std::string, std::string> files;
+    for (const char* side : {".param", ".blocks"}) {
+        std::filesystem::path path = save;
+        path += side;
+        if (std::filesystem::exists(path)) files[side] = ReadText(path);
+    }
+    if (!std::filesystem::is_directory(save)) return files;
+    files["/"] = "";
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(save)) {
+        const std::string relative = std::filesystem::relative(entry.path(), save).generic_string();
+        if (entry.is_directory()) {
+            files[relative + "/"] = "";
+        } else {
+            files[relative] = ReadText(entry.path());
+        }
+    }
+    return files;
+}
+
+int UmountWithBackup(const std::string& name, const SaveDataMountPoint* point) {
+    Check(sceSaveDataUmountWithBackup(point) == 0, name + " unmounts with a backup");
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, name + "'s backup posts an event");
+    return event.error_code;
+}
+
+int BackUp(SceSaveDataDirName* dirName, const std::string& data, const char* title) {
+    const std::string name = dirName->data;
+    SaveDataMountResult mounted{};
+    if (!MountSave(dirName, MountReadWrite | MountCreate2, &mounted)) {
+        Check(false, name + " mounts to be backed up");
+        return SaveDataErrorNotMounted;
+    }
+    WriteText(std::filesystem::path("_sd") / name / "data.bin", data);
+    Check(sceSaveDataSetParam(&mounted.mount_point, 1, title, std::strlen(title) + 1) == 0, name + " takes the title " + title);
+    return UmountWithBackup(name, &mounted.mount_point);
+}
+
+int RemountWithBackup(SceSaveDataDirName* dirName) {
+    const std::string name = dirName->data;
+    SaveDataMountResult mounted{};
+    if (!MountSave(dirName, MountReadWrite, &mounted)) {
+        Check(false, name + " mounts to be backed up again");
+        return SaveDataErrorNotMounted;
+    }
+    return UmountWithBackup(name, &mounted.mount_point);
+}
+
+void CheckBackups() {
+    const auto paramJson = ResolvePath_nid_no_patch("/app0/sce_sys/param.json");
+    std::filesystem::create_directories(paramJson.parent_path());
+    WriteText(paramJson, "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}");
+    SceSaveDataDirName kept{};
+    std::memcpy(kept.data, "kept", sizeof("kept"));
+    SceSaveDataDirName fresh{};
+    std::memcpy(fresh.data, "fresh", sizeof("fresh"));
+    SaveDataCheckBackupData check{};
+    SaveDataRestoreBackupData restore{};
+    Check(sceSaveDataCheckBackupData(nullptr) == SaveDataErrorParameter, "checkBackupData null block is PARAMETER");
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorParameter, "checkBackupData null dir_name is PARAMETER");
+    Check(sceSaveDataRestoreBackupData(nullptr) == SaveDataErrorParameter, "restoreBackupData null block is PARAMETER");
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorParameter, "restoreBackupData null dir_name is PARAMETER");
+    Check(sceSaveDataUmountWithBackup(nullptr) == SaveDataErrorParameter, "umountWithBackup null point is PARAMETER");
+    check.dir_name = &fresh;
+    restore.dir_name = &fresh;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData without a backup is NOT_FOUND");
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotFound, "restoreBackupData without a backup is NOT_FOUND");
+
+    SaveDataMountResult mounted{};
+    Check(MountSave(&kept, MountReadWrite | MountCreate2, &mounted), "the backed-up save mounts");
+    const auto data = std::filesystem::path("_sd") / "kept" / "data.bin";
+    WriteText(data, "first");
+    const char backedUpTitle[] = "Backed Up";
+    Check(sceSaveDataSetParam(&mounted.mount_point, 1, backedUpTitle, sizeof(backedUpTitle)) == 0, "the backed-up save takes a title");
+    check.dir_name = &kept;
+    restore.dir_name = &kept;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorBusy, "checkBackupData of a mounted save is BUSY");
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorBusy, "restoreBackupData of a mounted save is BUSY");
+    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, "umountWithBackup succeeds");
+    SaveDataMountInfo info{};
+    Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, "umountWithBackup unmounts the save");
+
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, "umountWithBackup posts an event");
+    Check(event.type == 1, "the event is UMOUNT_BACKUP, got type " + std::to_string(event.type));
+    Check(event.error_code == 0, "the backup succeeded, error " + std::to_string(event.error_code));
+    Check(event.user_id == 7, "the event names the mounting user");
+    Check(std::strncmp(event.title_id.data, "PPSA00000", sizeof(event.title_id.data)) == 0, "the event names the running title");
+    Check(std::strncmp(event.dir_name.data, "kept", sizeof(event.dir_name.data)) == 0, "the event names the save");
+
+    SaveDataParam param{};
+    check.param = &param;
+    Check(sceSaveDataCheckBackupData(&check) == 0, "checkBackupData finds the backup");
+    Check(std::strcmp(param.title, backedUpTitle) == 0, "checkBackupData fills param from the backup");
+    SceSaveDataTitleId running{};
+    std::memcpy(running.data, "PPSA00000", sizeof("PPSA00000"));
+    check.title_id = &running;
+    Check(sceSaveDataCheckBackupData(&check) == 0, "checkBackupData with the running title's id finds the backup");
+
+    WriteText(data, "second");
+    WriteText(std::filesystem::path("_sd") / "kept" / "added.bin", "added");
+    Check(MountSave(&kept, MountReadWrite, &mounted), "the save mounts again after the backup");
+    const char changedTitle[] = "Changed";
+    Check(sceSaveDataSetParam(&mounted.mount_point, 1, changedTitle, sizeof(changedTitle)) == 0, "the title changes after the backup");
+    Check(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "the changed save unmounts");
+    Check(sceSaveDataRestoreBackupData(&restore) == 0, "restoreBackupData succeeds");
+    Check(ReadText(data) == "first", "restoreBackupData puts back a file changed after the backup");
+    Check(!std::filesystem::exists(std::filesystem::path("_sd") / "kept" / "added.bin"), "restoreBackupData removes a file added after the backup");
+    char title[128]{};
+    Check(MountSave(&kept, MountReadWrite, &mounted), "the restored save mounts");
+    Check(sceSaveDataGetParam(&mounted.mount_point, 1, title, sizeof(title), nullptr) == 0 && std::strcmp(title, backedUpTitle) == 0, "restoreBackupData puts back the backed-up title");
+    Check(sceSaveDataUmount2(0, &mounted.mount_point) == 0, "the restored save unmounts");
+    SaveDataDelete del{};
+    del.dir_name = &kept;
+    Check(sceSaveDataDelete(&del) == 0, "the backed-up save is deleted");
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "deleting a save deletes its backup");
+}
+
+const char* failingStep = nullptr;
+int failingCall = 0;
+int stepCalls = 0;
+
+bool FailingStep(const char* step, const char*) {
+    if (failingStep == nullptr || std::strcmp(step, failingStep) != 0) return true;
+    return ++stepCalls != failingCall;
+}
+
+void FailStep(const char* step, int call) {
+    failingStep = step;
+    failingCall = call;
+    stepCalls = 0;
+    SaveDataSetFileStepHook_nid_no_patch(FailingStep);
+}
+
+void ClearFailingStep() {
+    SaveDataSetFileStepHook_nid_no_patch(nullptr);
+    failingStep = nullptr;
+}
+
+struct FailedStep {
+    const char* step;
+    int call;
+};
+
+bool LeavesCopies(const std::string& name) {
+    for (const char* root : {"_sd_backup_tmp", "_sd_backup_old", "_sd_restore_tmp", "_sd_restore_old"}) {
+        if (std::filesystem::exists(std::filesystem::path(root) / name)) return true;
+    }
+    return false;
+}
+
+template <typename Damage>
+void CheckCorruptBackup(const std::string& label, Damage damage) {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "corrupt", sizeof("corrupt"));
+    Check(BackUp(&name, "backed up", "Corrupt") == 0, label + ": the save is backed up");
+    WriteText(std::filesystem::path("_sd") / "corrupt" / "data.bin", "live");
+    damage(std::filesystem::path("_sd_backup") / "corrupt");
+    const auto live = std::filesystem::path("_sd") / "corrupt";
+    const auto before = Snapshot(live);
+    SaveDataCheckBackupData check{};
+    check.dir_name = &name;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorInternal, label + ": checkBackupData without param is INTERNAL");
+    SaveDataParam param;
+    std::memset(&param, 0xA5, sizeof(param));
+    const SaveDataParam untouched = param;
+    check.param = &param;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorInternal, label + ": checkBackupData with param is INTERNAL");
+    Check(std::memcmp(&param, &untouched, sizeof(param)) == 0, label + ": checkBackupData leaves param as it was");
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorInternal, label + ": restoreBackupData is INTERNAL");
+    Check(Snapshot(live) == before, label + ": restoreBackupData leaves the save byte for byte");
+}
+
+void CheckCorruptBackups() {
+    CheckCorruptBackup("a backup without its .param", [](const std::filesystem::path& entry) { std::filesystem::remove(entry / "save.param"); });
+    CheckCorruptBackup("an empty backup directory", [](const std::filesystem::path& entry) {
+        std::filesystem::remove_all(entry);
+        std::filesystem::create_directory(entry);
+    });
+    CheckCorruptBackup("a backup with a short .param", [](const std::filesystem::path& entry) {
+        const std::string bytes = ReadText(entry / "save.param");
+        WriteText(entry / "save.param", bytes.substr(0, bytes.size() - 1));
+    });
+    CheckCorruptBackup("a backup with a long .param", [](const std::filesystem::path& entry) { WriteText(entry / "save.param", ReadText(entry / "save.param") + "x"); });
+}
+
+void CheckStagedRestore() {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "staged", sizeof("staged"));
+    const auto live = std::filesystem::path("_sd") / "staged";
+    std::filesystem::create_directories(live / "sub");
+    WriteText(live / "sub" / "deep.bin", "deep");
+    WriteText(std::filesystem::path("_sd") / "staged.blocks", "96");
+    Check(BackUp(&name, "backed up", "Staged") == 0, "the staged save is backed up");
+    const auto backup = Snapshot(std::filesystem::path("_sd_backup") / "staged" / "save");
+    WriteText(live / "data.bin", "live");
+    WriteText(live / "added.bin", "added");
+    WriteText(std::filesystem::path("_sd") / "staged.blocks", "128");
+    const auto before = Snapshot(live);
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    const FailedStep failures[] = {{"restore.copy", 1}, {"restore.copy", 3}, {"restore.copy", 6}, {"restore.aside", 1}, {"restore.aside", 2}, {"restore.place", 1}, {"restore.place", 3}};
+    for (const FailedStep& failure : failures) {
+        const std::string what = std::string("a restore whose ") + failure.step + " step " + std::to_string(failure.call) + " fails";
+        FailStep(failure.step, failure.call);
+        Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorInternal, what + " is INTERNAL");
+        ClearFailingStep();
+        Check(Snapshot(live) == before, what + " leaves the save as it was");
+        Check(!LeavesCopies("staged"), what + " leaves no staged or old copy");
+    }
+    Check(sceSaveDataRestoreBackupData(&restore) == 0, "a restore with no failing step succeeds");
+    Check(Snapshot(live) == backup, "the restored save matches its backup byte for byte");
+    Check(!LeavesCopies("staged"), "a restore leaves no staged or old copy");
+    std::filesystem::remove_all(live);
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorInternal, "a restore into a missing save directory is INTERNAL");
+    SaveDataCheckBackupData check{};
+    check.dir_name = &name;
+    Check(sceSaveDataCheckBackupData(&check) == 0, "the backup outlives a restore into a missing save directory");
+}
+
+void CheckBackupSwap() {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "rotated", sizeof("rotated"));
+    const auto backup = std::filesystem::path("_sd_backup") / "rotated" / "save";
+    SaveDataParam param{};
+    SaveDataCheckBackupData check{};
+    check.dir_name = &name;
+    check.param = &param;
+    const char* titles[] = {"First", "Second", "Third"};
+    for (int i = 0; i < 3; ++i) {
+        const std::string what = "backup " + std::to_string(i + 1) + " of three";
+        const std::string data = "rotation " + std::to_string(i + 1);
+        Check(BackUp(&name, data, titles[i]) == 0, what + " succeeds");
+        Check(ReadText(backup / "data.bin") == data, what + " holds the save it was made from");
+        Check(sceSaveDataCheckBackupData(&check) == 0 && std::strcmp(param.title, titles[i]) == 0, what + " replaces the last one's param");
+        Check(!LeavesCopies("rotated"), what + " leaves no staged or old copy");
+    }
+    const auto previous = Snapshot(backup);
+    const FailedStep failures[] = {{"backup.aside", 1}, {"backup.place", 1}};
+    for (const FailedStep& failure : failures) {
+        const std::string what = std::string("a backup whose ") + failure.step + " step fails";
+        FailStep(failure.step, failure.call);
+        const int error = BackUp(&name, "unsaved", "Unsaved");
+        ClearFailingStep();
+        Check(error == SaveDataErrorInternal, what + " gives the event error INTERNAL, got " + std::to_string(error));
+        Check(Snapshot(backup) == previous, what + " keeps the previous backup byte for byte");
+        param = {};
+        Check(sceSaveDataCheckBackupData(&check) == 0 && std::strcmp(param.title, "Third") == 0, what + " leaves the previous backup usable");
+        Check(!LeavesCopies("rotated"), what + " leaves no staged or old copy");
+    }
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    Check(sceSaveDataRestoreBackupData(&restore) == 0, "the backup kept by the failed backups restores");
+    Check(ReadText(std::filesystem::path("_sd") / "rotated" / "data.bin") == "rotation 3", "the restore puts back the third backup");
+}
+
+#ifdef _WIN32
+bool Junction(const std::filesystem::path& link, const std::filesystem::path& target) {
+    std::error_code error;
+    if (!std::filesystem::create_directory(link, error)) return false;
+    const auto printName = std::filesystem::absolute(target).make_preferred().wstring();
+    const auto substituteName = L"\\??\\" + printName;
+    struct MountPoint {
+        ULONG tag;
+        USHORT dataLength;
+        USHORT reserved;
+        USHORT substituteOffset;
+        USHORT substituteLength;
+        USHORT printOffset;
+        USHORT printLength;
+        wchar_t names[2048];
+    } data{};
+    if (substituteName.size() + printName.size() + 2 > std::size(data.names)) return false;
+    data.tag = IO_REPARSE_TAG_MOUNT_POINT;
+    data.substituteLength = static_cast<USHORT>(substituteName.size() * sizeof(wchar_t));
+    data.printOffset = static_cast<USHORT>((substituteName.size() + 1) * sizeof(wchar_t));
+    data.printLength = static_cast<USHORT>(printName.size() * sizeof(wchar_t));
+    data.dataLength = static_cast<USHORT>(8 + data.printOffset + data.printLength + sizeof(wchar_t));
+    std::memcpy(data.names, substituteName.c_str(), data.substituteLength + sizeof(wchar_t));
+    std::memcpy(reinterpret_cast<char*>(data.names) + data.printOffset, printName.c_str(), data.printLength + sizeof(wchar_t));
+    const HANDLE handle = CreateFileW(link.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    bool set = false;
+    if (handle != INVALID_HANDLE_VALUE) {
+        DWORD returned = 0;
+        set = DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, &data, 8 + data.dataLength, nullptr, 0, &returned, nullptr) != 0;
+        CloseHandle(handle);
+    }
+    if (!set) RemoveDirectoryW(link.c_str());
+    return set;
+}
+#endif
+
+bool LinkDirectory(const std::filesystem::path& link, const std::filesystem::path& target) {
+#ifdef _WIN32
+    return Junction(link, target);
+#else
+    std::error_code error;
+    std::filesystem::create_directory_symlink(std::filesystem::absolute(target), link, error);
+    return !error;
+#endif
+}
+
+bool LinkFile(const std::filesystem::path& link, const std::filesystem::path& target) {
+#ifdef _WIN32
+    return CreateSymbolicLinkW(link.c_str(), std::filesystem::absolute(target).c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+#else
+    std::error_code error;
+    std::filesystem::create_symlink(std::filesystem::absolute(target), link, error);
+    return !error;
+#endif
+}
+
+void Unlink(const std::filesystem::path& link) {
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(link.c_str());
+    const bool removed = attributes != INVALID_FILE_ATTRIBUTES && ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 ? RemoveDirectoryW(link.c_str()) != 0 : DeleteFileW(link.c_str()) != 0);
+#else
+    std::error_code error;
+    const bool removed = std::filesystem::remove(link, error);
+#endif
+    Check(removed, "the link " + link.string() + " is removed");
+}
+
+void CheckLinkedPaths() {
+    const auto outside = std::filesystem::absolute("outside");
+    std::filesystem::create_directories(outside / "sentinel");
+    WriteText(outside / "sentinel" / "keep.bin", "sentinel");
+    std::filesystem::create_directories(outside / "old" / "escape");
+    WriteText(outside / "old" / "escape" / "keep.bin", "sentinel");
+    const auto sentinel = Snapshot(outside / "sentinel");
+    const auto oldSentinel = Snapshot(outside / "old" / "escape");
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "escape", sizeof("escape"));
+    Check(BackUp(&name, "inside", "Inside") == 0, "the escape save is backed up");
+    const auto backup = std::filesystem::path("_sd_backup") / "escape" / "save";
+    const auto kept = Snapshot(backup);
+    const auto live = std::filesystem::path("_sd") / "escape";
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    const auto survives = [&](const std::string& what) {
+        Check(Snapshot(outside / "sentinel") == sentinel && Snapshot(outside / "old" / "escape") == oldSentinel, what + ": the outside directory and its files survive");
+        Check(Snapshot(backup) == kept, what + ": the backup is kept");
+    };
+    const auto restoreRefused = [&](const std::string& what) {
+        Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorInternal, what + ": restoreBackupData is INTERNAL");
+        survives(what);
+    };
+    const auto backupRefused = [&](const std::string& what) {
+        Check(RemountWithBackup(&name) == SaveDataErrorInternal, what + ": the backup gives the event error INTERNAL");
+        survives(what);
+    };
+
+    std::filesystem::remove_all(live);
+    if (LinkDirectory(live, outside / "sentinel")) {
+        restoreRefused("a save directory that links outside");
+        backupRefused("a save directory that links outside");
+        Unlink(live);
+    } else {
+        std::fprintf(stderr, "skipped the linked save directory: the link could not be created\n");
+    }
+    std::filesystem::create_directories(live);
+    WriteText(live / "data.bin", "inside");
+
+    if (LinkFile(live / "link.bin", outside / "sentinel" / "keep.bin")) {
+        restoreRefused("a save with a file that links outside");
+        backupRefused("a save with a file that links outside");
+        Unlink(live / "link.bin");
+    } else {
+        std::fprintf(stderr, "skipped the linked file in a save: the link could not be created\n");
+    }
+    const auto inside = Snapshot(live);
+
+    for (const char* root : {"_sd_backup_old", "_sd_restore_old"}) {
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+        const std::string what = std::string("a ") + root + " root that links outside";
+        if (!LinkDirectory(root, outside / "old")) {
+            std::fprintf(stderr, "skipped %s: the link could not be created\n", what.c_str());
+            continue;
+        }
+        if (std::strcmp(root, "_sd_backup_old") == 0) {
+            backupRefused(what);
+        } else {
+            restoreRefused(what);
+        }
+        Unlink(root);
+    }
+
+    Check(Snapshot(live) == inside, "the refused calls leave the save as it was");
+    Check(sceSaveDataRestoreBackupData(&restore) == 0, "the save restores once its paths are plain again");
+    Check(ReadText(live / "data.bin") == "inside", "the restore puts back the kept backup");
+}
+
+void CheckBackupGuestErrors() {
+    SceSaveDataDirName name{};
+    std::memcpy(name.data, "errors", sizeof("errors"));
+    SaveDataParam param{};
+    SaveDataCheckBackupData check{};
+    check.dir_name = &name;
+    check.param = &param;
+    Check(BackUp(&name, "first", "First") == 0, "the first backup of a save succeeds");
+    Check(BackUp(&name, "second", "Second") == 0, "a second sceSaveDataUmountWithBackup succeeds");
+    Check(sceSaveDataCheckBackupData(&check) == 0 && std::strcmp(param.title, "Second") == 0, "the second backup replaces the first one's param");
+    Check(ReadText(std::filesystem::path("_sd_backup") / "errors" / "save" / "data.bin") == "second", "the second backup replaces the first one's files");
+
+    SaveDataMountResult mounted{};
+    Check(MountSave(&name, MountReadWrite, &mounted), "the save mounts for a backup whose copy fails");
+    FailStep("backup.copy", 1);
+    Check(sceSaveDataUmountWithBackup(&mounted.mount_point) == 0, "umountWithBackup returns 0 when the backup copy fails");
+    ClearFailingStep();
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0 && event.error_code == SaveDataErrorInternal, "a failed backup copy gives the event error INTERNAL, got " + std::to_string(event.error_code));
+    SaveDataMountInfo info{};
+    Check(sceSaveDataGetMountInfo(&mounted.mount_point, &info) == SaveDataErrorNotMounted, "a failed backup copy still unmounts the save");
+    param = {};
+    Check(sceSaveDataCheckBackupData(&check) == 0 && std::strcmp(param.title, "Second") == 0, "a failed backup copy keeps the previous backup");
+
+    SceSaveDataTitleId other{};
+    std::memcpy(other.data, "PPSA99999", sizeof("PPSA99999"));
+    check.title_id = &other;
+    Check(sceSaveDataCheckBackupData(&check) == SaveDataErrorNotFound, "checkBackupData with another title's id is NOT_FOUND");
+    SaveDataRestoreBackupData restore{};
+    restore.dir_name = &name;
+    restore.title_id = &other;
+    Check(sceSaveDataRestoreBackupData(&restore) == SaveDataErrorNotFound, "restoreBackupData with another title's id is NOT_FOUND");
+
+    for (const char* invalid : {"..", "a/b"}) {
+        const std::string label = std::string("\"") + invalid + "\"";
+        SceSaveDataDirName bad{};
+        std::memcpy(bad.data, invalid, std::strlen(invalid) + 1);
+        SaveDataCheckBackupData badCheck{};
+        badCheck.dir_name = &bad;
+        Check(sceSaveDataCheckBackupData(&badCheck) == SaveDataErrorParameter, "checkBackupData of " + label + " is PARAMETER");
+        SaveDataRestoreBackupData badRestore{};
+        badRestore.dir_name = &bad;
+        Check(sceSaveDataRestoreBackupData(&badRestore) == SaveDataErrorParameter, "restoreBackupData of " + label + " is PARAMETER");
+        SaveDataMount3 mount{};
+        mount.dir_name = &bad;
+        mount.mount_mode = MountReadWrite | MountCreate2;
+        SaveDataMountResult result{};
+        Check(sceSaveDataMount3(&mount, &result) == SaveDataErrorParameter, "a save named " + label + " cannot be mounted to be backed up");
+        SaveDataMountPoint point{};
+        std::memcpy(point.data, invalid, std::strlen(invalid) + 1);
+        Check(sceSaveDataUmountWithBackup(&point) == SaveDataErrorNotMounted, "umountWithBackup of the mount point " + label + " is NOT_MOUNTED");
+    }
+}
+
 void CheckMountCapacityAndLifecycle() {
     Check(sceSaveDataAbort() == 0, "abort after init succeeds");
     Check(sceSaveDataClearProgress() == 0, "clearProgress after init succeeds");
@@ -396,6 +879,12 @@ int main() {
     CheckFailedMountKeepsResult();
     CheckEquivalentMounts();
     CheckInvalidNamesAreRejected();
+    CheckBackups();
+    CheckCorruptBackups();
+    CheckStagedRestore();
+    CheckBackupSwap();
+    CheckLinkedPaths();
+    CheckBackupGuestErrors();
     Check(sceSaveDataTerminate() == 0, "SaveData terminates");
     Check(sceSaveDataAbort() == SaveDataErrorNotInitialized, "abort post-terminate returns NOT_INITIALIZED");
     Check(sceSaveDataClearProgress() == SaveDataErrorNotInitialized, "clearProgress post-terminate returns NOT_INITIALIZED");
