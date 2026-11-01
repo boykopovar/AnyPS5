@@ -30,7 +30,7 @@ add_library(atrac9_vibration STATIC EXCLUDE_FROM_ALL
 set_target_properties(atrac9_vibration PROPERTIES POSITION_INDEPENDENT_CODE ON C_VISIBILITY_PRESET hidden)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/AjmLibrary.cmake)
-add_sce_ajm_library(libSceAjm.native)
+add_sce_ajm_library(libSceAjm.native ${CMAKE_CURRENT_SOURCE_DIR}/src/DriverQueries.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(atrac9_gradient_tests tests/Atrac9Gradient.c ${LIBATRAC9_DIR}/bit_reader.c)
