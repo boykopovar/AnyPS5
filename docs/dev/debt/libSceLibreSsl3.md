@@ -22,6 +22,7 @@
 - [EVP digest helpers](../../../core/libs/prx/libSceLibreSsl3/src/EvpDigest.cpp) - host fallback differs from [13.42 native-module emulation](https://github.com/boykopovar/AnyPS5/pull/10960#issuecomment-6402692742): independent modules use 48/40-byte contexts and state-size offsets 0x68/0x44. Host ELF lookup instead shares legacy 120/48-byte records with the opaque l3 types. Custom methods require this layout and SysV callbacks; untagged foreign layouts cannot be detected. Our new/init/free helpers follow [4.0 operation order](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_digest.c). Fallback version, error-queue and retry behaviour remain legacy; full 4.0 equivalence is unverified. Windows parent-NID aliases provide legacy forwarders, but mixed Windows execution and native layout/routing interoperability are unverified. macOS execution, physical-console behaviour and other firmware layouts/routing remain unverified.
 - [Common EVP imports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) require implemented legacy providers and retain their version, error-queue and retry semantics; full LibreSSL 4.0.0 API parity is unverified. ELF dependency lookup supplies these providers; Windows uses the parent-NID aliases in `ParentExports.cpp`. `HMAC_Init` has no Windows alias and its firmware 13.42 availability is unknown. Mixed Windows execution and native layout/routing interoperability remain unverified.
 - [EVP_MD_CTX_free and EVP_DigestInit](../../../core/libs/prx/libSceLibreSsl3/src/EvpDigest.cpp) - non-null engine ownership is unknown and throws, including an engine installed by cleanup. Owned non-null `EVP_PKEY_CTX` destruction is unknown and throws after digest cleanup; `KEEP_PKEY_CTX` preserves caller ownership. Digest-state allocation failure and negative initialization sizes throw instead of returning zero with an allocation error. Free accepts a negative-size descriptor when it has no owned data to release; releasing non-null data with a negative size throws after cleanup. Null contexts/types and missing initialization callbacks throw. `EVP_DigestInit` clears the context without freeing previous state, as upstream does; callers must release previous state first to avoid a leak.
+- [RSA_get0_factors and RSA_get0_crt_params](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) - console RSA layout and behaviour are unverified. They read the existing 152-byte RSA layout at offsets 48, 56, 64, 72 and 80, following [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/rsa/rsa_lib.c) `rsa_lib.c` and `rsa_local.h`. A null RSA with any requested output, which upstream dereferences, throws without writing outputs. Closes when: compared with the console.
 
 - [Parent export forwarding](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) exposes 395 parent-library exports on Windows through IAT tail jumps without changing their ABI. Non-Windows hosts use their existing dependency lookup. Static COFF inspection verifies names, parent imports and tail jumps; Windows loading and runtime behavior remain unverified. Parent functions retain their existing implementation limitations.
 - [EVP_MD_CTX_md](../../../core/libs/prx/libSceLibreSsl3/src/DigestContext.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_digest.c) `evp_digest.c`, a null context returns null and any other returns its first field, `digest`. That field is first in 4.0.0's `evp_local.h` and in the [2.5.4 layout](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) of the contexts the forwarded libSceLibreSsl exports handle; the layouts differ after it, so the context and digest are declared opaque. Closes when: compared with the console.
@@ -33,7 +34,7 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 175 callable exports: 165 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 173 callable exports: 163 named and 10 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -111,7 +112,6 @@
 | `EVP_PKEY_base_id` | `OqtHJ7QUZg8` |
 | `unknown` | `PBYz0kpXwg8` |
 | `X509_new` | `PNfwr3s6dEs` |
-| `RSA_get0_factors` | `PcUZS7XHwHk` |
 | `SSL_get0_verified_chain` | `QKIOxHfZLh8` |
 | `RSA_set0_crt_params` | `QTV9Nyi7ryg` |
 | `EVP_PKEY_derive` | `QYEjNnn6PT4` |
@@ -150,7 +150,6 @@
 | `SSL_get_version` | `dL2V0os4TZ4` |
 | `PEM_write_bio_PrivateKey` | `dQE7FIbNsUE` |
 | `i2d_X509` | `e2ReciVG21w` |
-| `RSA_get0_crt_params` | `eyrIagsax0w` |
 | `BIO_set_data` | `f6Pa2rYH-dw` |
 | `SSL_CTX_set_keylog_callback` | `fR2Wat3ssHs` |
 | `d2i_X509_CRL` | `fVos2kAqfMI` |
