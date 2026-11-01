@@ -116,6 +116,10 @@ int main() try {
         input.Headers.push_back({1, 6, 0, address, 0, 0, 0x38, 1});
         input.SetWords({address, 1});
     }, "bitmap address overflow");
+    Reject([](auto& input) {
+        input.Tags[1].Value = 16;
+        input.Bytes.resize(0x1008);
+    }, "RELR table exceeds file-backed");
     std::cout << "RELR address, bitmap, bounds, addend and reachability tests passed\n";
 } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
