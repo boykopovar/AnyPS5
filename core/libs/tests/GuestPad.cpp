@@ -1158,5 +1158,7 @@ int main() {
     Require(!scePadIsValidHandle(handle2, PAD_PORT_TYPE_STANDARD));
     Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_OK);
     Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDisconnectDevice(-1) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadDisconnectDevice(0) == PAD_ERROR_INVALID_HANDLE);
     CheckPortZeroWithdrawn();
 }
