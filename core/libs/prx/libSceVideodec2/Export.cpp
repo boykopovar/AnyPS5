@@ -525,6 +525,14 @@ int APS5_VABI sceVideodec2CreateDecoder_nid_postfix(const DecoderConfigInfo* con
     return 0;
 }
 
+int APS5_VABI sceVideodec2CreateHevcDecoder(const DecoderConfigInfo* config, const DecoderMemoryInfo* memory, std::uint64_t* handle) {
+    return sceVideodec2CreateDecoder_nid_postfix(config, memory, handle);
+}
+
+int APS5_VABI sceVideodec2QueryHevcDecoderMemoryInfo(const DecoderConfigInfo* config, DecoderMemoryInfo* memory) {
+    return sceVideodec2QueryDecoderMemoryInfo_nid_postfix(config, memory);
+}
+
 int APS5_VABI sceVideodec2DeleteDecoder_nid_postfix(std::uint64_t handle) {
     std::lock_guard guard(lock);
     if (decoders.erase(handle) == 0) throw std::runtime_error("Videodec2: invalid decoder handle");
