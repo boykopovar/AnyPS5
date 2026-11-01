@@ -2678,29 +2678,36 @@ void ShaderResources::noteReusable() {
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
     captureValidation();
     reusable = false;
+    importsReconcilable = false;
     directRegions.clear();
     if (htileClear.has_value() || guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled())) return;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
     const auto regions = guestMemory.DirectRegions();
     if (!regions.has_value()) return;
+    bool mirrored = false;
     for (const auto& [begin, end] : *regions) {
         // No reconcile here: the upload just took these imports, and the set is about to be recorded
         // against them.
         auto serial = HostImportSerial(context, begin, static_cast<std::size_t>(end - begin), false);
         // Read-only image mirrors (exe ranges) are as stable as imports; their serials have the top
         // bit set, so the two spaces never collide.
+        const bool imported = serial != 0;
         if (serial == 0) serial = ImageMirrorSerial(context, begin, static_cast<std::size_t>(end - begin));
         if (serial == 0) return;
         directRegions.push_back({begin, end, serial});
+        mirrored = mirrored || !imported;
     }
+    bool bounded = false;
     for (const auto& cut : guestMemory.CutRegions()) {
         for (auto& region : directRegions) {
             if (region.begin != cut.begin) continue;
             region.regionEnd = cut.end;
             region.committedEnd = cut.committedEnd;
+            bounded = true;
         }
     }
+    importsReconcilable = !mirrored && !bounded;
     reusable = true;
 }
 
@@ -3832,7 +3839,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                 if (region.overlaps || AnyShadowedOverlaps(region.begin, static_cast<std::size_t>(region.end - region.begin))) StorageTexture::FlushPending(region.begin, static_cast<std::size_t>(region.end - region.begin), nullptr, "imported buffer region");
             }
         }
-        if (HostImportsUnchanged(context, importsProof)) {
+        if (importsReconcilable ? HostImportsReconciledUnchanged(context, importsProof) : HostImportsUnchanged(context, importsProof)) {
             if (profile) Revalidations().importSkips.fetch_add(1, std::memory_order_relaxed);
         } else {
             if (!serialLoop()) return finish(fast, false, ProofFailure::Imports);
@@ -4534,8 +4541,8 @@ std::uint64_t ShaderResources::guestBufferBytes(std::span<const std::uint32_t> w
 }
 
 std::uint64_t ShaderResources::BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target) {
-    if (target == nullptr || stride == 0 || address >= target->address || address + bytes <= target->address || address + bytes - target->address >= stride) return bytes;
-    return target->address - address;
+    if (target == nullptr || stride == 0 || address >= target->MemoryAddress() || address + bytes <= target->MemoryAddress() || address + bytes - target->MemoryAddress() >= stride) return bytes;
+    return target->MemoryAddress() - address;
 }
 
 std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words, const ColorTarget* target, std::uint64_t indexAddress, std::size_t indexBytes, bool written, bool atomic, bool read, std::uint32_t extent) {
@@ -4551,7 +4558,7 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     Require(byteSize <= context.limits.maxStorageBufferRange, "shader buffer exceeds descriptor range limit");
     Require(byteSize <= std::numeric_limits<std::size_t>::max(), "shader buffer size exceeds host address space");
     const auto size = static_cast<std::size_t>(BytesUpToTarget(address, byteSize, descriptor.Stride(), written ? nullptr : target));
-    Require(target == nullptr || !overlap(address, size, target->address, target->bytes), "shader buffer aliases the render target");
+    Require(target == nullptr || !overlap(address, size, target->MemoryAddress(), target->bytes), "shader buffer aliases the render target");
     // APS5_ALL_BUFFERS_WRITTEN=1: every element is noted as written, as before bufferWritten existed.
     static const bool allWritten = std::getenv("APS5_ALL_BUFFERS_WRITTEN") != nullptr;
     Require(!written || !overlap(address, size, indexAddress, indexBytes), "writable shader buffer aliases the index buffer");

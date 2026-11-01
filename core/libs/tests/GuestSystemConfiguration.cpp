@@ -1125,6 +1125,14 @@ static void CheckSysctlPointerFaults() {
     Require(sysctlbyname_nid_postfix("hw.ncpu", &nameValue, &nameLength, nullptr, 0) == 0 && nameValue > 0);
     Require(fails(sysctlbyname_nid_postfix("hw.ncpu", &nameValue, reinterpret_cast<std::size_t*>(0x10), nullptr, 0)));
     Require(fails(sysctlbyname_nid_postfix("hw.ncpu", reinterpret_cast<void*>(0x10), &nameLength, nullptr, 0)));
+    int parsedMib[2] = {};
+    std::size_t parsedMibLength = 2;
+    Require(fails(sysctlnametomib_nid_postfix(reinterpret_cast<const char*>(0x10), parsedMib, &parsedMibLength)));
+    Require(fails(sysctlnametomib_nid_postfix(crossing, parsedMib, &parsedMibLength)));
+    Require(fails(sysctlnametomib_nid_postfix("hw.ncpu", parsedMib, reinterpret_cast<std::size_t*>(0x10))));
+    Require(fails(sysctlnametomib_nid_postfix("hw.ncpu", reinterpret_cast<int*>(0x10), &parsedMibLength)));
+    Require(fails(sysctlnametomib_nid_postfix("hw.ncpu", parsedMib, readOnlyLength)));
+    Require(sysctlnametomib_nid_postfix("hw.ncpu", parsedMib, &parsedMibLength) == 0 && parsedMibLength == 2);
     const int mib[] = {6, 3};
     const int absent[] = {1, 6};
     const auto unreadable = reinterpret_cast<const int*>(0x10);
