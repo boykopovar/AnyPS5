@@ -86,6 +86,28 @@ class PerformanceCsvTests(unittest.TestCase):
         self.assertEqual(result.stdout, b"")
         self.assertIn(b"recorded configuration differs", result.stderr)
 
+    def test_missing_and_empty_context_values_stay_distinct(self):
+        self.before.pop("cpu", None)
+        self.after["cpu"] = ""
+        self.before["env"]["EMPTY"] = ""
+        self.after["env"].pop("EMPTY", None)
+        rows = self.rows(self.run_csv())
+        cpu = next(row for row in rows if row["kind"] == "configuration" and row["name"] == "cpu")
+        env = next(row for row in rows if row["kind"] == "configuration" and row["name"] == "env.EMPTY")
+        self.assertEqual((cpu["baseline"], cpu["candidate"]), ("<missing>", ""))
+        self.assertEqual((env["baseline"], env["candidate"]), ("", "<missing>"))
+
+    def test_missing_marker_cannot_collide_with_recorded_strings(self):
+        self.before.pop("cpu", None)
+        self.after["cpu"] = "<missing>"
+        self.before["env"]["SLASH"] = r"\<missing>"
+        self.after["env"].pop("SLASH", None)
+        rows = self.rows(self.run_csv())
+        cpu = next(row for row in rows if row["kind"] == "configuration" and row["name"] == "cpu")
+        env = next(row for row in rows if row["kind"] == "configuration" and row["name"] == "env.SLASH")
+        self.assertEqual((cpu["baseline"], cpu["candidate"]), ("<missing>", r"\<missing>"))
+        self.assertEqual((env["baseline"], env["candidate"]), (r"\\<missing>", "<missing>"))
+
     def test_invalid_input_does_not_emit_a_partial_csv(self):
         self.after["frame_ms"]["p50"] = -1
         result = self.run_csv()
