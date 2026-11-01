@@ -110,14 +110,7 @@ Args ParseArgs(int argc, char* argv[]) {
             if (args.windowsFixedBase) throw std::runtime_error("--windows-fixed-base cannot be repeated");
             if (i + 1 >= argc || std::string(argv[i + 1]).empty() || std::string(argv[i + 1]).starts_with("--"))
                 throw std::runtime_error("--windows-fixed-base requires an address");
-            std::string_view value(argv[++i]);
-            const bool hexadecimal = value.starts_with("0x") || value.starts_with("0X");
-            if (hexadecimal) value.remove_prefix(2);
-            std::uint64_t address = 0;
-            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), address, hexadecimal ? 16 : 10);
-            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || address < 0x20000 || address > 0x7fffffff0000 || (address & 0xffff) != 0)
-                throw std::runtime_error("--windows-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000");
-            args.windowsFixedBase = address;
+            args.windowsFixedBase = ParseFixedBase(argv[++i], 0x20000, "--windows-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000");
         } else if (arg == "--linux-fixed-base") {
             if (args.linuxFixedBase) throw std::runtime_error("--linux-fixed-base cannot be repeated");
             if (i + 1 >= argc || std::string_view(argv[i + 1]).empty() || std::string_view(argv[i + 1]).starts_with("--"))
