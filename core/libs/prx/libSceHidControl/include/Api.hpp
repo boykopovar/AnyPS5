@@ -1,6 +1,3 @@
-// Copyright (C) 2026 Boy K. Povar
-// SPDX-License-Identifier: MIT
-//
 #pragma once
 
 #include "SceTypes.hpp"
