@@ -1781,8 +1781,6 @@ double APS5_VABI _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDo
 double APS5_VABI _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKtmPm(const std::uint16_t* buffer, std::size_t length, std::size_t* processedCharactersCount);
 int APS5_VABI _ZN3WTF17languageDidChangeEv();
 int APS5_VABI _ZN3WTF17wordBreakIteratorENS_10StringViewE();
-int APS5_VABI _ZN3WTF18ExternalStringImpl6createEPKDsjONS_8FunctionIFvPS0_PvjEEE();
-int APS5_VABI _ZN3WTF18ExternalStringImpl6createEPKhjONS_8FunctionIFvPS0_PvjEEE();
 int APS5_VABI _ZN3WTF18FunctionDispatcherC2Ev();
 int APS5_VABI _ZN3WTF18FunctionDispatcherD0Ev();
 int APS5_VABI _ZN3WTF18FunctionDispatcherD1Ev();

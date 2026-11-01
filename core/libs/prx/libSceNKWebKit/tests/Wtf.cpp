@@ -637,6 +637,114 @@ void TestUTFConversions() {
     Throws([&] { FromUTF8(U8(""), std::size_t(0x80000000)); });
 }
 
+struct ExternalFreeState {
+    unsigned calls = 0;
+    unsigned deletes = 0;
+    unsigned destroys = 0;
+    NKWebKit::WtfAbi::ExternalStringImpl* string = nullptr;
+    void* data = nullptr;
+    unsigned size = 0;
+    bool atomRemoved = false;
+};
+
+struct ExternalFreeVTable {
+    void (APS5_VABI *destroy)(void*);
+    void (APS5_VABI *deleteWrapper)(void*);
+    void (APS5_VABI *call)(void*, NKWebKit::WtfAbi::ExternalStringImpl*, void*, unsigned);
+};
+
+struct ExternalCallable {
+    const ExternalFreeVTable* vtable;
+    ExternalFreeState* state;
+};
+
+void APS5_VABI ExternalDestroy_nid_no_patch(void* self) {
+    ++static_cast<ExternalCallable*>(self)->state->destroys;
+}
+
+void APS5_VABI ExternalDelete_nid_no_patch(void* self) {
+    auto* wrapper = static_cast<ExternalCallable*>(self);
+    Check(wrapper->state->calls == 1);
+    ++wrapper->state->deletes;
+    delete wrapper;
+}
+
+void APS5_VABI ExternalCall_nid_no_patch(void* self, NKWebKit::WtfAbi::ExternalStringImpl* string, void* data, unsigned size) {
+    auto& state = *static_cast<ExternalCallable*>(self)->state;
+    Check(string->free.callable == self && !state.deletes);
+    ++state.calls;
+    state.string = string;
+    state.data = data;
+    state.size = size;
+    if (string->string.hashAndFlags & 16)
+        state.atomRemoved = !_ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE(string->string).impl;
+}
+
+NKWebKit::WtfAbi::ExternalStringFreeFunction ExternalFunction(ExternalFreeState& state) {
+    static const ExternalFreeVTable vtable{ExternalDestroy_nid_no_patch, ExternalDelete_nid_no_patch, ExternalCall_nid_no_patch};
+    return {new ExternalCallable{&vtable, &state}};
+}
+
+void TestExternalStrings() {
+    const auto Create8 = &_ZN3WTF18ExternalStringImpl6createEPKhjONS_8FunctionIFvPS0_PvjEEE;
+    const auto Create16 = &_ZN3WTF18ExternalStringImpl6createEPKDsjONS_8FunctionIFvPS0_PvjEEE;
+    const unsigned char bytes[] = "external buffer with shared storage";
+    const char16_t wide[] = u"external wide buffer";
+    ExternalFreeState direct;
+    {
+        auto free = ExternalFunction(direct);
+        auto string = Create8(bytes, sizeof(bytes) - 1, std::move(free));
+        Check(!free.callable && string.impl->data == bytes && string.impl->hashAndFlags == 7);
+        auto* expected = reinterpret_cast<NKWebKit::WtfAbi::ExternalStringImpl*>(string.impl);
+        _ZN3WTF10StringImpl7destroyEPS0_(std::exchange(string.impl, nullptr));
+        Check(direct.string == expected && direct.data == bytes && direct.size == 24 + sizeof(bytes) - 1);
+        Check(direct.calls == 1 && direct.deletes == 1 && !direct.destroys);
+    }
+    ExternalFreeState wideState;
+    {
+        auto free = ExternalFunction(wideState);
+        auto string = Create16(wide, std::size(wide) - 1, std::move(free));
+        Check(!free.callable && string.impl->data == wide && string.impl->hashAndFlags == 3);
+    }
+    Check(wideState.calls == 1 && wideState.deletes == 1 && !wideState.destroys);
+    Check(wideState.data == wide && wideState.size == 24 + sizeof(wide) - sizeof(char16_t));
+    ExternalFreeState shared;
+    {
+        auto string = Create8(bytes, sizeof(bytes) - 1, ExternalFunction(shared));
+        auto part = SharedSubstring(&string, 1, 20);
+        Check(string.impl->refCount == 4 && part.impl->data == bytes + 1);
+        auto atom = _ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj(string.impl, 2, 18);
+        Check(string.impl->refCount == 6 && atom.impl->data == bytes + 2);
+        NKWebKit::WtfAbi::Release(std::exchange(string.impl, nullptr));
+        Check(!shared.calls);
+        Text(part, "xternal buffer with ");
+        Text(atom, "ternal buffer with");
+    }
+    Check(shared.calls == 1 && shared.deletes == 1);
+    ExternalFreeState atomState;
+    {
+        auto string = Create8(bytes, sizeof(bytes) - 1, ExternalFunction(atomState));
+        auto atom = _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(*string.impl);
+        Check(atom.impl == string.impl && string.impl->refCount == 4);
+        NKWebKit::WtfAbi::Release(std::exchange(string.impl, nullptr));
+        Check(!atomState.calls);
+        Check(_ZN3WTF14AtomStringImpl6lookUpEPKhj(bytes, sizeof(bytes) - 1).impl == atom.impl);
+    }
+    Check(atomState.calls == 1 && atomState.deletes == 1 && atomState.atomRemoved);
+    ExternalFreeState symbolState;
+    {
+        auto string = Create16(wide, std::size(wide) - 1, ExternalFunction(symbolState));
+        auto symbol = _ZN3WTF10SymbolImpl6createERNS_10StringImplE(*string.impl);
+        auto atom = _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(*symbol.impl);
+        Check(string.impl->refCount == 6 && atom.impl != symbol.impl);
+        NKWebKit::WtfAbi::Release(std::exchange(string.impl, nullptr));
+        NKWebKit::WtfAbi::Release(std::exchange(symbol.impl, nullptr));
+        Check(!symbolState.calls);
+        Text(atom, "external wide buffer");
+    }
+    Check(symbolState.calls == 1 && symbolState.deletes == 1);
+}
+
 void TestSymbols() {
     using NKWebKit::WtfAbi::SymbolImpl;
     const auto Create = &_ZN3WTF10SymbolImpl6createERNS_10StringImplE;
@@ -1009,6 +1117,7 @@ void Run() {
     TestUTFConversions();
     TestSubstrings();
     TestDestroy();
+    TestExternalStrings();
     TestSymbols();
     TestAtoms();
     TestCStrings();

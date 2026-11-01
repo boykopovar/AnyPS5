@@ -257,6 +257,9 @@ WTF::MonotonicTime APS5_VABI _ZNK3WTF7SecondsplENS_13MonotonicTimeE(const WTF::S
 WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* self, WTF::WallTime other);
 WTF::MonotonicTime APS5_VABI _ZNK3WTF8WallTime24approximateMonotonicTimeEv(const WTF::WallTime* self);
 
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF18ExternalStringImpl6createEPKDsjONS_8FunctionIFvPS0_PvjEEE(const char16_t* data, unsigned length, NKWebKit::WtfAbi::ExternalStringFreeFunction&& free);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF18ExternalStringImpl6createEPKhjONS_8FunctionIFvPS0_PvjEEE(const unsigned char* data, unsigned length, NKWebKit::WtfAbi::ExternalStringFreeFunction&& free);
+
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10SymbolImpl16createNullSymbolEv();
 unsigned APS5_VABI _ZN3WTF10SymbolImpl17nextHashForSymbolEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10SymbolImpl6createERNS_10StringImplE(NKWebKit::WtfAbi::StringImpl& impl);

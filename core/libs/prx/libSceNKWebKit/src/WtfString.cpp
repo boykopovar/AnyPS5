@@ -178,9 +178,18 @@ void RemoveAtom(NKWebKit::WtfAbi::StringImpl* impl);
 namespace NKWebKit::WtfAbi {
 
 static bool UnsupportedDestruction(const StringImpl* impl) {
-    return (impl->hashAndFlags & 3) == 3 ||
-        ((impl->hashAndFlags & 32) && (reinterpret_cast<const SymbolImpl*>(impl)->flags & 2));
+    return (impl->hashAndFlags & 32) && (reinterpret_cast<const SymbolImpl*>(impl)->flags & 2);
 }
+
+struct ExternalStringFreeVTable {
+    void (APS5_VABI *destroy)(void*);
+    void (APS5_VABI *deleteWrapper)(void*);
+    void (APS5_VABI *call)(void*, ExternalStringImpl*, void*, unsigned);
+};
+
+static_assert(sizeof(ExternalStringFreeVTable) == 24);
+static_assert(offsetof(ExternalStringFreeVTable, deleteWrapper) == 8);
+static_assert(offsetof(ExternalStringFreeVTable, call) == 16);
 
 static void Destroy(StringImpl* impl) {
     if ((impl->hashAndFlags & 16) && impl->length) RemoveAtom(impl);
@@ -191,6 +200,15 @@ static void Destroy(StringImpl* impl) {
     case 2:
         Release(*reinterpret_cast<StringImpl**>(reinterpret_cast<unsigned char*>(impl) + 24));
         break;
+    case 3: {
+        auto* external = reinterpret_cast<ExternalStringImpl*>(impl);
+        auto* callable = external->free.callable;
+        const auto* vtable = *static_cast<const ExternalStringFreeVTable* const*>(callable);
+        unsigned size = static_cast<unsigned>(_ZNK3WTF10StringImpl11sizeInBytesEv(impl));
+        vtable->call(callable, external, const_cast<void*>(impl->data), size);
+        vtable->deleteWrapper(callable);
+        break;
+    }
     }
     Deallocate(impl);
 }
@@ -374,21 +392,12 @@ String AddStaticAtom(StringView view) {
     });
 }
 
-void RequireAtomStorage(const StringImpl* impl, const char* function) {
-    const auto* owner = impl;
-    if ((impl->hashAndFlags & 3) == 2)
-        owner = *reinterpret_cast<StringImpl* const*>(reinterpret_cast<const unsigned char*>(impl) + 24);
-    if ((owner->hashAndFlags & 3) == 3)
-        throw std::runtime_error(std::string(function) + ": external string storage is not modelled");
-}
-
 String CreateSharedSubstring(StringImpl* impl, unsigned start, unsigned length);
 
-String AddAtom(StringImpl* impl, const char* function) {
+String AddAtom(StringImpl* impl) {
     if (!impl) return String();
     if (!impl->length) return String(EmptyImpl());
     if (impl->refCount & 1) return AddStaticAtom(View(impl));
-    RequireAtomStorage(impl, function);
     if (impl->hashAndFlags & 16) return String(Retain(impl));
     return Intern(View(impl), [&] {
         return impl->hashAndFlags & 32 ? CreateSharedSubstring(impl, 0, impl->length) : String(Retain(impl));
@@ -558,6 +567,13 @@ String CreateSymbol(StringImpl& impl, unsigned flags) {
     return String(&result->string);
 }
 
+String CreateExternalString(StringView view, NKWebKit::WtfAbi::ExternalStringFreeFunction& free) {
+    if (!view.data || !view.length || !free.callable) throw std::invalid_argument("invalid WTF external string");
+    auto* result = new (NKWebKit::Allocate(sizeof(NKWebKit::WtfAbi::ExternalStringImpl))) NKWebKit::WtfAbi::ExternalStringImpl{
+        {2, view.length, view.data, (view.is8Bit ? 4U : 0U) | 3U}, {std::exchange(free.callable, nullptr)}};
+    return String(&result->string);
+}
+
 template<typename T> String IntegerString(T value) {
     char buffer[32];
     auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
@@ -573,7 +589,7 @@ String APS5_VABI _ZN3WTF14AtomStringImpl10addLiteralEPKcj(const char* data, unsi
 }
 
 String APS5_VABI _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(StringImpl& impl) {
-    return AddAtom(&impl, __func__);
+    return AddAtom(&impl);
 }
 
 String APS5_VABI _ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE(StringImpl& impl) {
@@ -600,8 +616,7 @@ String APS5_VABI _ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj(StringImpl* imp
     if (!impl) return String();
     if (!length || start >= impl->length) return String(EmptyImpl());
     length = std::min(length, impl->length - start);
-    if (!start && length == impl->length) return AddAtom(impl, __func__);
-    RequireAtomStorage(impl, __func__);
+    if (!start && length == impl->length) return AddAtom(impl);
     auto view = View(impl);
     view.data = static_cast<const unsigned char*>(view.data) + std::size_t(start) * (view.is8Bit ? 1 : 2);
     view.length = length;
@@ -623,22 +638,22 @@ String APS5_VABI _ZN3WTF14AtomStringImpl6lookUpEPKhj(const unsigned char* data, 
 
 String APS5_VABI _ZN3WTF10AtomString6numberEi(int value) {
     auto string = IntegerString(value);
-    return AddAtom(string.impl, __func__);
+    return AddAtom(string.impl);
 }
 
 String APS5_VABI _ZN3WTF10AtomString6numberEj(unsigned value) {
     auto string = IntegerString(value);
-    return AddAtom(string.impl, __func__);
+    return AddAtom(string.impl);
 }
 
 String APS5_VABI _ZN3WTF10AtomString6numberEm(std::uint64_t value) {
     auto string = IntegerString(value);
-    return AddAtom(string.impl, __func__);
+    return AddAtom(string.impl);
 }
 
 String APS5_VABI _ZN3WTF10AtomString6numberEy(std::uint64_t value) {
     auto string = IntegerString(value);
-    return AddAtom(string.impl, __func__);
+    return AddAtom(string.impl);
 }
 
 String APS5_VABI _ZN3WTF10AtomString16fromUTF8InternalEPKcS2_(const char* start, const char* end) {
@@ -647,20 +662,28 @@ String APS5_VABI _ZN3WTF10AtomString16fromUTF8InternalEPKcS2_(const char* start,
     if (reinterpret_cast<std::uintptr_t>(end) <= reinterpret_cast<std::uintptr_t>(start))
         throw std::invalid_argument("empty WTF atom UTF-8 range");
     auto string = FromUTF8(reinterpret_cast<const unsigned char*>(start), static_cast<std::size_t>(end - start));
-    return AddAtom(string.impl, __func__);
+    return AddAtom(string.impl);
 }
 
 String APS5_VABI _ZNK3WTF10AtomString23convertToASCIIUppercaseEv(const String* self) {
     auto* impl = Checked(self).impl;
     String converted(ConvertCase(View(impl), false, impl));
-    return AddAtom(converted.impl, __func__);
+    return AddAtom(converted.impl);
 }
 
 void APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_(StringImpl* impl) {
     if (!impl || (impl->refCount & 1)) throw std::invalid_argument("invalid WTF string destruction");
     if (NKWebKit::WtfAbi::UnsupportedDestruction(impl))
-        throw std::runtime_error("StringImpl::destroy: registered symbols and external strings are not modelled");
+        throw std::runtime_error("StringImpl::destroy: registered symbols are not modelled");
     NKWebKit::WtfAbi::Destroy(impl);
+}
+
+String APS5_VABI _ZN3WTF18ExternalStringImpl6createEPKDsjONS_8FunctionIFvPS0_PvjEEE(const char16_t* data, unsigned length, NKWebKit::WtfAbi::ExternalStringFreeFunction&& free) {
+    return CreateExternalString({data, length, false}, free);
+}
+
+String APS5_VABI _ZN3WTF18ExternalStringImpl6createEPKhjONS_8FunctionIFvPS0_PvjEEE(const unsigned char* data, unsigned length, NKWebKit::WtfAbi::ExternalStringFreeFunction&& free) {
+    return CreateExternalString({data, length, true}, free);
 }
 
 unsigned APS5_VABI _ZN3WTF10SymbolImpl17nextHashForSymbolEv() {
