@@ -2138,6 +2138,17 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
     return color;
 }
 
+std::uint32_t ColorSliceXor(const ColorTarget& color, std::uint32_t slice) {
+    const auto* equation = FindTextureSwizzleEquation(static_cast<std::uint32_t>(color.tileMode), color.elementBytes);
+    Require(equation != nullptr, "a sliced color target has no swizzle equation");
+    const auto coordinates = slice << 24u;
+    std::uint32_t xorBits = 0;
+    for (std::uint32_t bit = 0; bit < equation->bits.size(); ++bit) {
+        xorBits ^= (std::popcount(equation->bits[bit] & coordinates) & 1u) << bit;
+    }
+    return xorBits;
+}
+
 ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allowMultisampleDcc) {
     if (ShaderRecompiler::GcnGuestShaders()) return DecodeGcnColorBuffer(cx, slot);
     const auto stride = slot * 0xfu;
@@ -2241,14 +2252,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
     color.arrayAddress = color.arrayLastSlice != 0 ? color.surfaceAddress : 0;
     if (slice != 0 && !volume) {
         color.surfaceAddress += slice * ComputeSurfaceSize(ComputeElementMipLayout(ColorTextureTileMode(color.tileMode), color.elementBytes, color.surfaceExtent.width, color.surfaceExtent.height, color.mipCount), 1);
-        if (color.arrayLastSlice == 0 && ColorTileModeIsXor(color.tileMode)) {
-            const auto* equation = FindTextureSwizzleEquation(static_cast<std::uint32_t>(color.tileMode), color.elementBytes);
-            Require(equation != nullptr, "a sliced color target has no swizzle equation");
-            const auto coordinates = slice << 24u;
-            for (std::uint32_t bit = 0; bit < equation->bits.size(); ++bit) {
-                color.pipeBankXor ^= (std::popcount(equation->bits[bit] & coordinates) & 1u) << bit;
-            }
-        }
+        if (color.arrayLastSlice == 0 && ColorTileModeIsXor(color.tileMode)) color.pipeBankXor ^= ColorSliceXor(color, slice);
     }
     color.address = color.surfaceAddress + mipOffset;
     color.bytes = colorLayout.Bytes();
@@ -2265,7 +2269,7 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
         color.clearWords[word] = clear == cx.end() ? 0u : clear->second;
     }
     if (((info & 0x2000u) != 0 || (color.samples > 1 && (info & 0x4000u) != 0)) && (color.samples > 1 || viewMip == 0)) {
-        Require(color.samples > 1 || (!volume && slice == 0 && color.arrayLastSlice == 0), "CMASK fast clears of a 3D or array color target are unsupported");
+        Require(color.samples > 1 || (!volume && (maxMip == 0 || (slice == 0 && color.arrayLastSlice == 0))), "CMASK fast clears of a 3D color target, or of a slice or array of a mipmapped one, are unsupported");
         Require(((attrib3 >> 19u) & 0x1fu) == 0x18u && (attrib3 & 0x4000000u) != 0, "CMASK fast clears need pipe-aligned SW_64KB_Z_X metadata (CB_COLOR_ATTRIB3 FMASK_SW_MODE 24, CMASK_PIPE_ALIGNED)");
         if (color.samples == 1) {
             Require(color.elementBytes <= 8, "CMASK fast clears of texels over 64 bits are unsupported");
@@ -2292,9 +2296,12 @@ ColorTarget DecodeColorBuffer(const Registers& cx, std::uint32_t slot, bool allo
             }
             const auto cmaskMip0Offset = precedingBlocks * CmaskLayout::Alignment;
             const auto totalCmaskBytes = totalBlocks * CmaskLayout::Alignment;
-            color.cmaskAddress = cmask + cmaskMip0Offset;
+            const std::uint64_t cmaskSliceOffset = color.samples == 1 ? static_cast<std::uint64_t>(slice) * totalCmaskBytes : 0u;
+            color.cmaskAddress = cmask + cmaskSliceOffset + cmaskMip0Offset;
             color.cmaskBytes = CmaskBytes(color.extent.width, color.extent.height);
-            if (color.samples == 1) GuestMemory::CheckRange(reinterpret_cast<const void*>(cmask), totalCmaskBytes, CmaskLayout::Alignment, true);
+            color.cmaskSlice = color.samples == 1 ? slice : 0u;
+            color.cmaskSliceBytes = totalCmaskBytes;
+            if (color.samples == 1) GuestMemory::CheckRange(reinterpret_cast<const void*>(cmask + cmaskSliceOffset), static_cast<std::size_t>(totalCmaskBytes) * color.layers, CmaskLayout::Alignment, true);
         }
         color.cmaskFastClear = (info & 0x2000u) != 0;
         if (const auto fmask = find(cx, 0x321 + stride); color.samples > 1u && fmask != cx.end()) {
