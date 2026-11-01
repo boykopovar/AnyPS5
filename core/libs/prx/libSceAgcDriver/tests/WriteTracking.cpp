@@ -117,6 +117,56 @@ void CheckSparseLeafBoundaries() {
     Require(UntrackedHint(base, Block) == changed && UntrackedHint(base + 3 * Block, Block) == changed, "a cross-leaf hint store was missed");
     Require(UntrackedHint(boundary, 2 * Block) == hint, "hint stores changed untouched blocks in the other leaf");
 }
+
+void CheckUntrackedHintAcrossThreads() {
+    constexpr std::size_t bytes = 2 * Block;
+    auto* memory = static_cast<volatile std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, Block));
+    GuestArena::GuestArenaCommit_nid_postfix(const_cast<std::uint8_t*>(memory), bytes, PAGE_READWRITE, bytes);
+    struct Cleanup {
+        void* memory;
+        ~Cleanup() {
+            const auto begin = reinterpret_cast<std::uint64_t>(memory);
+            const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{begin, begin + bytes}}};
+            Rewatch(range);
+            GuestArena::GuestArenaReset_nid_postfix(memory, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(memory, bytes);
+        }
+    } cleanup{const_cast<std::uint8_t*>(memory)};
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    for (std::size_t offset = 0; offset < bytes; offset += 4096) memory[offset] = 0x11;
+    BumpCollectEpoch();
+    Require(CollectWrites(base, bytes) != 0, "the threaded hint range was not collected");
+    Unwatch(base, bytes);
+    BumpCollectEpoch();
+    const auto read = UntrackedHint(base, bytes);
+    Require(read != 0, "the threaded hint range has no untracked hint");
+    std::thread([&] { memory[Block + 8] ^= 1; }).join();
+    std::uint64_t other = 0;
+    std::thread([&] {
+        BumpCollectEpoch();
+        other = UntrackedHint(base, bytes);
+    }).join();
+    Require(other > read, "a thread in its own collect epoch did not see a store another thread made after the hint was read");
+    Require(UntrackedHint(base, bytes) == other, "the reading thread did not see, in its old collect epoch, the hint another thread stamped");
+    BumpCollectEpoch();
+    Require(UntrackedHint(base, bytes) == other, "the reading thread did not read the newer hint in its next collect epoch");
+    std::atomic<bool> stop{false};
+    std::thread writer([&] {
+        while (!stop.load(std::memory_order_acquire)) memory[8] ^= 1;
+        memory[8] ^= 1;
+    });
+    std::uint64_t newest = other;
+    for (unsigned epoch = 0; epoch < 50; ++epoch) {
+        BumpCollectEpoch();
+        const auto hint = UntrackedHint(base, bytes);
+        Require(hint >= newest, "an untracked hint went back while another thread stored");
+        newest = hint;
+    }
+    stop.store(true, std::memory_order_release);
+    writer.join();
+    BumpCollectEpoch();
+    Require(UntrackedHint(base, bytes) > newest, "the last store of a racing thread did not move the hint past every value read before it");
+}
 #endif
 
 void* AllocateWatched(std::size_t bytes, bool crossLeaf = false) {
@@ -2186,6 +2236,7 @@ int main() {
 #endif
         CheckCoarseRuns();
 #ifdef _WIN32
+        CheckUntrackedHintAcrossThreads();
         CheckSparseLeafBoundaries();
         CheckDeferredSharedImports();
         CheckPrivateMappingReuse();
