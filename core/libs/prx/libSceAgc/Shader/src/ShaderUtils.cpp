@@ -1,4 +1,5 @@
 #include <stdexcept>
+#include <string>
 #include "prx/libSceAgc/Shader/include/ShaderUtils.hpp"
 
 using namespace ShaderRegs;

@@ -1,9 +1,9 @@
-"""A minimal PS5-style ELF that imports puts and exit from libc.prx by NID."""
+"""A minimal PS5-style ELF that imports puts and exit by NID from one needed library, libc.prx by default."""
 import struct, sys
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
 from nid import nid
 
-def fixture(message=b"hello from a PS5 ELF on macOS\0"):
+def fixture(message=b"hello from a PS5 ELF on macOS\0", library=b"libc.prx"):
     image = bytearray(0x6000)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16, 3, 62, 1, 0x4000, 64, 0, 0, 64, 56, 3, 64, 0, 0)
@@ -17,7 +17,7 @@ def fixture(message=b"hello from a PS5 ELF on macOS\0"):
     code += b"\x0f\x0b"
     image[0x4000:0x4000 + len(code)] = code
     image[0x5100:0x5100 + len(message)] = message
-    strings = b"\0libc.prx\0" + (nid("puts") + "#A#B").encode() + b"\0" + (nid("exit") + "#A#B").encode() + b"\0"
+    strings = b"\0" + library + b"\0" +(nid("puts") + "#A#B").encode() + b"\0" + (nid("exit") + "#A#B").encode() + b"\0"
     image[0x5A00:0x5A00 + len(strings)] = strings
     puts_name = strings.index(b"\0", 1) + 1
     exit_name = strings.index(b"\0", puts_name) + 1

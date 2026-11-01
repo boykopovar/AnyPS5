@@ -19,6 +19,7 @@ struct Range {
     std::size_t allocationBytes;
     bool releasable = true;
     bool gpu = false;
+    std::uint64_t backingSerial = 0;
 };
 
 class Lease {
@@ -39,6 +40,7 @@ public:
     const value_type& front() const { return held().front(); }
     const value_type& back() const { return held().back(); }
     void clear() { ranges.reset(); }
+    const std::shared_ptr<const Ranges>& Snapshot() const { return ranges; }
 
 private:
     const Ranges& held() const {
@@ -53,15 +55,15 @@ using Mapped = std::vector<std::weak_ptr<const Range>>;
 extern "C" {
 void* GuestAllocationsBegin_nid_postfix();
 void GuestAllocationsRegisterMainImage_nid_postfix(void* mutation);
-#ifdef _WIN32
 void GuestAllocationsRegisterImage_nid_postfix(void* mutation, const void* image);
 void GuestAllocationsUnregisterImage_nid_postfix(void* mutation, const void* image);
-#endif
 void GuestAllocationsEnd_nid_postfix(void* mutation) noexcept;
 void GuestAllocationsAdd_nid_postfix(void* mutation, void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu);
 void GuestAllocationsRequireUnpinned_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 void GuestAllocationsRequireAvailable_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 bool GuestAllocationsCovers_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
+void GuestAllocationsTrimToRegistered_nid_postfix(void* mutation, std::size_t page, const void** pointer, std::size_t* bytes);
+void GuestAllocationsGuestPages_nid_postfix(std::uintptr_t address, std::size_t bytes, std::size_t page, std::uintptr_t* first, std::uintptr_t* end);
 bool GuestAllocationsOverlaps_nid_postfix(void* mutation, const void* pointer, std::size_t bytes);
 bool GuestAllocationsForRegistered_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t)>& visit);
 Range GuestAllocationsFind_nid_postfix(void* mutation, const void* pointer);
@@ -69,6 +71,7 @@ void GuestAllocationsRemove_nid_postfix(void* mutation, const void* pointer);
 void GuestAllocationsProtect_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu, const std::function<void()>& apply);
 void GuestAllocationsUnmap_nid_postfix(void* mutation, const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t, const void*, bool)>& apply);
 Lease GuestAllocationsAcquire_nid_postfix();
+Lease GuestAllocationsAcquireMapped_nid_no_patch(const Mapped& mapped);
 Lease GuestAllocationsAcquireAll_nid_postfix();
 std::shared_ptr<const Range> GuestAllocationsLookup_nid_postfix(std::uintptr_t address, bool next);
 // Changes whenever a mutation ends, so callers can cache facts about guest mappings between changes.
@@ -95,14 +98,13 @@ public:
     Mutation(const Mutation&) = delete;
     Mutation& operator=(const Mutation&) = delete;
     void RegisterMainImage() { GuestAllocationsRegisterMainImage_nid_postfix(handle); }
-#ifdef _WIN32
     void RegisterImage(const void* image) { GuestAllocationsRegisterImage_nid_postfix(handle, image); }
     void UnregisterImage(const void* image) { GuestAllocationsUnregisterImage_nid_postfix(handle, image); }
-#endif
     void Add(void* pointer, std::size_t bytes, bool readable, bool writable, bool gpu) { GuestAllocationsAdd_nid_postfix(handle, pointer, bytes, readable, writable, gpu); }
     void RequireUnpinned(const void* pointer, std::size_t bytes) const { GuestAllocationsRequireUnpinned_nid_postfix(handle, pointer, bytes); }
     void RequireAvailable(const void* pointer, std::size_t bytes) const { GuestAllocationsRequireAvailable_nid_postfix(handle, pointer, bytes); }
     bool Covers(const void* pointer, std::size_t bytes) const { return GuestAllocationsCovers_nid_postfix(handle, pointer, bytes); }
+    void TrimToRegistered(std::size_t page, const void*& pointer, std::size_t& bytes) const { GuestAllocationsTrimToRegistered_nid_postfix(handle, page, &pointer, &bytes); }
     bool Overlaps(const void* pointer, std::size_t bytes) const { return GuestAllocationsOverlaps_nid_postfix(handle, pointer, bytes); }
     bool ForRegistered(const void* pointer, std::size_t bytes, const std::function<void(const void*, std::size_t)>& visit) const { return GuestAllocationsForRegistered_nid_postfix(handle, pointer, bytes, visit); }
     Range Find(const void* pointer) const { return GuestAllocationsFind_nid_postfix(handle, pointer); }

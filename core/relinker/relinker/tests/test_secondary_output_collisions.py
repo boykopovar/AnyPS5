@@ -10,6 +10,46 @@ from test_guest_intel_trampolines import main_fixture
 from test_output_collisions import prepare
 
 
+def unicode_destinations(relinker, work):
+    if os.name != "nt":
+        return
+    for windows in (False, True):
+        for upper, lower in (("\u00c4", "\u00e4"), ("\u03a9", "\u03c9"), ("\u0416", "\u0436"), ("\u00c4", "a")):
+            case = work / f"unicode-{windows}-{ord(upper)}-{ord(lower)}"
+            command, paths, _ = prepare(case, windows)
+            probe = case / (upper + ".probe")
+            probe.write_bytes(b"identity probe")
+            alternate = case / (lower + ".probe")
+            collide = alternate.exists() and os.path.samefile(probe, alternate)
+            probe.unlink()
+            source = case / lower / "b.bin"
+            source.parent.mkdir()
+            image = main_fixture()
+            image[0x4001] = 43
+            source.write_bytes(image)
+            suffix = paths["executable"].suffix
+            output = case / (upper + ".b.bin" + suffix)
+            secondary = case / (lower + ".b.bin" + suffix)
+            inputs = {path: path.read_bytes() for path in case.rglob("*") if path.is_file()}
+            result = subprocess.run([str(relinker), *command[:-2], "--executable", f"{lower}/b.bin",
+                                     command[-2], str(output)], cwd=case,
+                                    capture_output=True, text=True, encoding="utf-8", timeout=20)
+            for path, original in inputs.items():
+                assert path.read_bytes() == original, path
+            if collide:
+                assert result.returncode == 2 and "Output paths collide" in result.stderr, (
+                    windows, upper, lower, result.stdout, result.stderr)
+                assert {path for path in case.rglob("*") if path.is_file()} == set(inputs)
+            else:
+                assert result.returncode == 0 and output.exists() and secondary.exists(), (
+                    windows, upper, lower, result.stdout, result.stderr)
+                assert not os.path.samefile(output, secondary)
+                if windows:
+                    for path, expected in ((output, 42), (secondary, 43)):
+                        assert subprocess.run([str(path)], capture_output=True, timeout=20).returncode == expected
+            assert not list(case.rglob(".anyps5-output-identity-*"))
+
+
 def prepare_secondary(case, windows):
     command, paths, inputs = prepare(case, windows)
     options = []
@@ -20,6 +60,7 @@ def prepare_secondary(case, windows):
         options.extend(["--executable", source.name])
         paths[name] = case / f"{source.name}{paths['executable'].suffix}"
         paths[f"{name}-registry"] = case / f"{source.name}.registry.json"
+        paths[f"{name}-needed"] = case / f"{source.name}.needed.json"
     if not windows:
         icon = case / "sce_sys/icon0.png"
         inputs[icon] = icon.read_bytes()
@@ -32,6 +73,7 @@ def main():
     checked = 0
     with tempfile.TemporaryDirectory(prefix="anyps5-secondary-collisions-") as directory:
         work = Path(directory)
+        unicode_destinations(relinker, work)
         for windows in (False, True):
             case = work / f"{windows}-control"
             command, paths, inputs = prepare_secondary(case, windows)
@@ -46,7 +88,7 @@ def main():
             for name in ("executable", "module", *sorted(secondary)):
                 assert paths[name].read_bytes().startswith(b"MZ" if windows else b"\x7fELF"), paths[name]
             for name, path in paths.items():
-                if "registry" in name:
+                if "registry" in name or "needed" in name:
                     json.loads(path.read_text())
             for path, original in inputs.items():
                 assert path.read_bytes() == original, path

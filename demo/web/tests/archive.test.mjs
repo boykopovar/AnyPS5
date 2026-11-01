@@ -16,6 +16,20 @@ const executable = new Uint8Array(await readFile(path.join(process.argv[3], "mai
 const module = new Uint8Array(await readFile(path.join(process.argv[3], "module.elf")));
 const resource = new Uint8Array(2 * 1024 * 1024).fill(65);
 
+for (const directory of ["sce_modules", "prx"]) {
+  const archive = new Archive([{path: "app/main.elf", file: new Blob([executable])},
+                               {path: `app/${directory}/library.prx`, file: new Blob([module])}]);
+  try {
+    await archive.inspect(() => {});
+    for (const target of ["linux", "windows"]) {
+      const input = await archive.conversionInput(target, false, () => {});
+      const output = native.Convert(input, () => {});
+      assert.equal(output.ok, true, output.error);
+      assert.deepEqual(output.modules.map(item => item.name), [`app0/${directory}/library.prx.guest.prx`]);
+    }
+  } finally { await archive.close(); }
+}
+
 async function zip(entries) {
   const output = new BlobWriter("application/zip");
   const writer = new ZipWriter(output, { zip64: true, level: 9, useWebWorkers: false, useCompressionStream: false });
@@ -110,6 +124,29 @@ for (const target of ["windows", "linux"]) {
   console.log(`${kind}, ${target}: conversion, original files, modules, permissions, streamed ZIP and directory output verified`);
 }
 }
+
+const bundleArchive = new Archive(source);
+await bundleArchive.inspect(() => {});
+const bundleInput = await bundleArchive.conversionInput("linux", false, () => {});
+const bundleConversion = native.Convert(bundleInput, () => {});
+assert.equal(bundleConversion.ok, true, bundleConversion.error);
+const bundleLibraries = await zip([["libs/system.prx", new Uint8Array([1, 2, 3])]]);
+const bundleWriter = new ZipWriter(new BlobWriter("application/zip"), { zip64: true, level: 9, useWebWorkers: false, useCompressionStream: false });
+await packageArchive(bundleArchive, bundleConversion, bundleInput.outputName, bundleLibraries, null, () => {}, false, { prefix: "01-first/", writer: bundleWriter });
+await packageArchive(bundleArchive, bundleConversion, bundleInput.outputName, bundleLibraries, null, () => {}, false, { prefix: "02-second/", writer: bundleWriter });
+const bundle = await bundleWriter.close();
+const bundleReader = new ZipReader(new BlobReader(bundle));
+const bundleEntries = await bundleReader.getEntries();
+const bundleNames = new Set(bundleEntries.map(entry => entry.filename));
+assert(bundleNames.has(`01-first/${bundleInput.outputName}`));
+assert(bundleNames.has("01-first/libs/system.prx"));
+assert(bundleNames.has("01-first/app0/content/resource.bin"));
+assert(bundleNames.has(`02-second/${bundleInput.outputName}`));
+assert(bundleNames.has("02-second/libs/system.prx"));
+assert(bundleNames.has("02-second/app0/content/resource.bin"));
+await bundleReader.close();
+await bundleArchive.close();
+console.log("Multiple app packages append under separate roots in a single ZIP");
 
 for (const [entries, error] of [
   [[["one", executable], ["two", executable]], /exactly one/u],
@@ -210,6 +247,28 @@ try {
   await assert.rejects(worker.downloadLibraries("windows"), /Cannot verify the latest release \(403\)/u);
   latestResponse = new Response(JSON.stringify({ tag_name: "v2" }));
   await assert.rejects(worker.downloadLibraries("windows"), /A new release is being published/u);
+
+  latestResponse = new Response(null, { status: 429 });
+  await self.onmessage({ data: { type: "inspect", inputs: [
+    { name: "First App.zip", file: source },
+    { name: "First App.zip", file: source }
+  ] } });
+  assert.equal(workerMessages.filter(message => message.type === "inspected").length, 2);
+  assert(workerMessages.some(message => message.type === "inspection-complete" && message.count === 2));
+  await self.onmessage({ data: { type: "convert", target: "windows", toIntel: false, mode: "memory" } });
+  const batchComplete = workerMessages.find(message => message.type === "complete");
+  assert(batchComplete, workerMessages.find(message => message.type === "error")?.message);
+  assert.equal(batchComplete.apps, 2);
+  const batchReader = new ZipReader(new BlobReader(batchComplete.blob));
+  const batchNames = new Set((await batchReader.getEntries()).map(entry => entry.filename));
+  assert(batchNames.has("01-First-App/program.exe"));
+  assert(batchNames.has("01-First-App/libs/system.prx"));
+  assert(batchNames.has("01-First-App/app0/content/resource.bin"));
+  assert(batchNames.has("02-First-App/program.exe"));
+  assert(batchNames.has("02-First-App/libs/system.prx"));
+  assert(batchNames.has("02-First-App/app0/content/resource.bin"));
+  await batchReader.close();
+  workerMessages.length = 0;
 } finally {
   globalThis.fetch = originalFetch;
   workerMessages.length = 0;
@@ -218,6 +277,37 @@ await self.onmessage({ data: { type: "convert", target: "windows", mode: "disk" 
 assert.equal(workerMessages.length, 1);
 assert.equal(workerMessages[0].type, "error");
 assert.match(workerMessages[0].message, /browsers block DLL creation/u);
+workerMessages.length = 0;
+await self.onmessage({ data: { type: "inspect", inputs: [
+  { name: "valid.zip", file: source },
+  { name: "invalid.zip", file: new Blob(["not a ZIP"]) }
+] } });
+assert.equal(workerMessages.at(-1).type, "error");
+assert.match(workerMessages.at(-1).message, /invalid\.zip/u);
+assert.equal(workerMessages.some(message => message.type === "inspection-complete"), false);
 delete globalThis.self;
 console.log("Rate-limited release checks use the verified site manifest; other release-check failures remain errors");
 console.log("Windows folder output rejected before conversion or file writes");
+console.log("Multiple ZIP inputs stream into separate app roots; invalid inputs name the failing archive");
+
+for (const compression of [12, 14]) {
+  const stored = await zip([["libs/system.prx", new Uint8Array([1, 2, 3]), { level: 0 }]]);
+  const bytes = new Uint8Array(await stored.arrayBuffer());
+  const view = new DataView(bytes.buffer);
+  for (let offset = 0; offset + 46 <= bytes.length; offset++) {
+    const signature = view.getUint32(offset, true);
+    if (signature === 0x04034b50) view.setUint16(offset + 8, compression, true);
+    if (signature === 0x02014b50) view.setUint16(offset + 10, compression, true);
+  }
+  let writes = 0;
+  await assert.rejects(packageArchive({ files: [] }, { executable: new Uint8Array([1]), modules: [] }, "program.elf",
+    new Blob([bytes]), { async file() { writes++; throw new Error("destination opened"); } }, () => {}, true), /Unsupported ZIP compression/u);
+  assert.equal(writes, 0);
+}
+for (const mode of [0o010644, 0o020644, 0o060644, 0o140644]) {
+  const special = await zip([["libs/special", new Uint8Array([1]), { versionMadeBy: 0x31e, externalFileAttributes: (mode << 16) >>> 0 }]]);
+  let writes = 0;
+  await assert.rejects(packageArchive({ files: [] }, { executable: new Uint8Array([1]), modules: [] }, "program.elf",
+    special, { async file() { writes++; throw new Error("destination opened"); } }, () => {}, true), /special files/u);
+  assert.equal(writes, 0);
+}

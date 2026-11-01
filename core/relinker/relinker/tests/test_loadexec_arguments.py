@@ -5,6 +5,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 
 from test_windows_import_modules import executable
 
@@ -30,6 +31,17 @@ def fixture(symbol):
     return image
 
 
+def remove_tree(path):
+    for attempt in range(50):
+        try:
+            shutil.rmtree(path)
+            return
+        except PermissionError:
+            if attempt == 49:
+                raise
+            time.sleep(0.2)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     host = Path(sys.argv[2]).resolve()
@@ -39,53 +51,56 @@ def main():
     if not windows and sys.platform != 'linux':
         print('LoadExec arguments: unsupported host skipped')
         return
-    with tempfile.TemporaryDirectory(prefix='anyps5-loadexec-') as directory:
-        work = Path(directory) / 'Документы 東京'
-        title = work / 'title'
-        output = work / 'native output'
-        (title / 'picker').mkdir(parents=True)
-        output.mkdir()
-        (title / 'sce_module').mkdir()
-        (title / 'eboot.bin').write_bytes(fixture('LoadExecFirst_nid_no_patch'))
-        (title / 'picker' / 'second.bin').write_bytes(fixture('LoadExecSecond_nid_no_patch'))
-        (title / 'resource.txt').write_text('resource survives\n')
-        app = output / ('app.exe' if windows else 'app.elf')
-        command = [str(relinker), 'unused-filter=0', '--executable', 'picker/second.bin']
-        if windows:
-            command += ['--windows']
-        run = subprocess.run(command + [str(title / 'eboot.bin'), str(app)], capture_output=True, timeout=10)
-        assert run.returncode == 0, (run.stdout, run.stderr)
-        second = output / ('picker.second.bin.exe' if windows else 'picker.second.bin.elf')
-        assert second.is_file(), list(output.iterdir())
-        shutil.copytree(title, output / 'app0')
-        (output / 'app0' / 'working').mkdir()
-        libraries = output / 'libs'
-        libraries.mkdir()
-        for library in [host, *dependencies]:
-            shutil.copy2(library, libraries / library.name)
-        if windows:
-            for name in ('libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll'):
-                shutil.copy2(toolchain / name, libraries / name)
-        else:
-            app.chmod(0o755)
-            second.chmod(0o755)
-        environment = {**os.environ, 'ANYPS5_LOADEXEC_TEST_ROOT': str(output),
-                       'LD_LIBRARY_PATH': str(libraries), 'PATH': str(libraries) + os.pathsep + os.environ['PATH']}
-        for quoted in (False, True):
-            events_path = output / 'events.txt'
-            events_path.unlink(missing_ok=True)
-            (output / 'pids.txt').unlink(missing_ok=True)
-            selected = dict(environment)
-            if quoted:
-                selected['ANYPS5_TEST_QUOTED_ARGV0'] = '1'
-            run = subprocess.run([str(app)], cwd=output, env=selected, capture_output=True, timeout=10)
-            events = (output / 'events.txt').read_text() if (output / 'events.txt').exists() else ''
-            assert events == 'first\nshutdown\nsecond\nshutdown\nreturned\n', (run.returncode, events, run.stdout, run.stderr)
-            assert run.returncode == (0 if windows else 37), (run.returncode, events, run.stdout, run.stderr)
-            pids = (output / 'pids.txt').read_text().splitlines()
-            assert len(pids) == 3 and len(set(pids)) == (3 if windows else 1), pids
-        print('LoadExec arguments: first -> second -> first; entry/getargv arguments, Unicode, cwd/resources, '
-              'rejected targets, shutdown without guest or host exit handlers passed')
+    directory = tempfile.mkdtemp(prefix='anyps5-loadexec-')
+    try:
+            work = Path(directory) / 'Документы 東京'
+            title = work / 'title'
+            output = work / 'native output'
+            (title / 'picker').mkdir(parents=True)
+            output.mkdir()
+            (title / 'sce_module').mkdir()
+            (title / 'eboot.bin').write_bytes(fixture('LoadExecFirst_nid_no_patch'))
+            (title / 'picker' / 'second.bin').write_bytes(fixture('LoadExecSecond_nid_no_patch'))
+            (title / 'resource.txt').write_text('resource survives\n')
+            app = output / ('app.exe' if windows else 'app.elf')
+            command = [str(relinker), 'unused-filter=0', '--executable', 'picker/second.bin']
+            if windows:
+                command += ['--windows']
+            run = subprocess.run(command + [str(title / 'eboot.bin'), str(app)], capture_output=True, timeout=10)
+            assert run.returncode == 0, (run.stdout, run.stderr)
+            second = output / ('picker.second.bin.exe' if windows else 'picker.second.bin.elf')
+            assert second.is_file(), list(output.iterdir())
+            shutil.copytree(title, output / 'app0')
+            (output / 'app0' / 'working').mkdir()
+            libraries = output / 'libs'
+            libraries.mkdir()
+            for library in [host, *dependencies]:
+                shutil.copy2(library, libraries / library.name)
+            if windows:
+                for name in ('libgcc_s_seh-1.dll', 'libstdc++-6.dll', 'libwinpthread-1.dll'):
+                    shutil.copy2(toolchain / name, libraries / name)
+            else:
+                app.chmod(0o755)
+                second.chmod(0o755)
+            environment = {**os.environ, 'ANYPS5_LOADEXEC_TEST_ROOT': str(output),
+                           'LD_LIBRARY_PATH': str(libraries), 'PATH': str(libraries) + os.pathsep + os.environ['PATH']}
+            for quoted in (False, True):
+                events_path = output / 'events.txt'
+                events_path.unlink(missing_ok=True)
+                (output / 'pids.txt').unlink(missing_ok=True)
+                selected = dict(environment)
+                if quoted:
+                    selected['ANYPS5_TEST_QUOTED_ARGV0'] = '1'
+                run = subprocess.run([str(app)], cwd=output, env=selected, capture_output=True, timeout=10)
+                events = (output / 'events.txt').read_text() if (output / 'events.txt').exists() else ''
+                assert events == 'first\nshutdown\nsecond\nshutdown\nreturned\n', (run.returncode, events, run.stdout, run.stderr)
+                assert run.returncode == (0 if windows else 37), (run.returncode, events, run.stdout, run.stderr)
+                pids = (output / 'pids.txt').read_text().splitlines()
+                assert len(pids) == 3 and len(set(pids)) == (3 if windows else 1), pids
+            print('LoadExec arguments: first -> second -> first; entry/getargv arguments, Unicode, cwd/resources, '
+                  'rejected targets, shutdown without guest or host exit handlers passed')
+    finally:
+        remove_tree(directory)
 
 
 if __name__ == '__main__':

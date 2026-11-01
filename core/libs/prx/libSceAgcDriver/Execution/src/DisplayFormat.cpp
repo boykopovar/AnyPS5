@@ -52,8 +52,10 @@ ResidentPresent ResidentPresentPath(VkFormat storage, std::uint64_t pixelFormat,
             return tenBit ? ResidentPresent::Convert : ResidentPresent::None;
         case VK_FORMAT_R8G8B8A8_UNORM:
         case VK_FORMAT_R8G8B8A8_SRGB:
+        case VK_FORMAT_R8G8B8A8_UINT:
         case VK_FORMAT_B8G8R8A8_UNORM:
         case VK_FORMAT_B8G8R8A8_SRGB:
+        case VK_FORMAT_B8G8R8A8_UINT:
             return tenBit ? ResidentPresent::None : ResidentPresent::Convert;
         default:
             return ResidentPresent::None;

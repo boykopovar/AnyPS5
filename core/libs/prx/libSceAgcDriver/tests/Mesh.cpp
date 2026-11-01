@@ -1,9 +1,11 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
+#include "MeshGeometryFixture.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +14,7 @@
 #include <new>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -24,21 +27,7 @@ constexpr std::uint32_t Height = 128;
 constexpr std::array<std::uint8_t, 4> Background{16, 24, 40, 255};
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
 
-alignas(256) constexpr std::array<std::uint32_t, 104> GeometryCode{
-    0x8f6a9003, 0x94fe6ac1, 0xbf88000b, 0xd7650006, 0x000100c1, 0xd7660006, 0x00020cc1, 0x93ebff03,
-    0x00040018, 0xd7460006, 0x04190c6b, 0x340c0c82, 0xd8340000, 0x00000506, 0xbf8cc07f, 0xbefe04c1,
-    0xbf8a0000, 0x938dff02, 0x00090016, 0x9382ff03, 0x00040018, 0x938cff03, 0x00080008, 0xd7650009,
-    0x000100c1, 0xd7660009, 0x000212c1, 0xd746000a, 0x04250c02, 0x7da8120c, 0xbf88002e, 0x361600ff,
-    0x0000ffff, 0x2c180090, 0x361a02ff, 0x0000ffff, 0xd8d80000, 0x0b00000b, 0xd8d80000, 0x0c00000c,
-    0xd8d80000, 0x0d00000d, 0xbf8cc07f, 0xe0382000, 0x8002100b, 0xe0382010, 0x8002140b, 0xe0382000,
-    0x8002180c, 0xe0382010, 0x80021c0c, 0xe0382000, 0x8002200d, 0xe0382010, 0x8002240d, 0x161c1483,
-    0x161e14ff, 0x00000060, 0xbf8c3f70, 0xdb7c0400, 0x0000100f, 0xdb7c0410, 0x0000140f, 0xdb7c0420,
-    0x0000180f, 0xdb7c0430, 0x00001c0f, 0xdb7c0440, 0x0000200f, 0xdb7c0450, 0x0000240f, 0x4a501c81,
-    0x4a521c82, 0x3450508a, 0x34525294, 0xd772002a, 0x04a6510e, 0xbf8cc07f, 0xbefe04c1, 0xbf8a0000,
-    0x930e830d, 0xbf078002, 0xbf850003, 0x8f0f8c0d, 0x887c0f0e, 0xbf900009, 0x7da8140d, 0xbf880002,
-    0xf8000941, 0x0000002a, 0xbefe04c1, 0x7da8140e, 0xbf88000a, 0x34561485, 0xdbfc0400, 0x2c00002b,
-    0xdbfc0410, 0x3000002b, 0xbf8cc07f, 0xf80008cf, 0x2f2e2d2c, 0xf800020f, 0x33323130, 0xbf810000,
-};
+constexpr auto& GeometryCode = AgcDriver::Test::MeshGeometryCode;
 
 alignas(256) constexpr auto Wave32GeometryCode = [] {
     auto code = GeometryCode;
@@ -52,6 +41,13 @@ alignas(256) constexpr std::array<std::uint32_t, 25> FastLaunchCode{
     0x80020601, 0xb07c1003, 0xbf900009, 0xbf8c3f70, 0x7d880083, 0xbefe036a, 0xf80008cf, 0x05040302,
     0xf800020f, 0x09080706, 0x7d840080, 0xbefe036a, 0x7e1402ff, 0x00200400, 0xf8000941, 0x0000000a,
     0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 27> LineStripCode{
+    0xd7650000, 0x000100c1, 0x7e000505, 0x93018300, 0x4a020001, 0xe0382000, 0x80020201, 0xe0382010,
+    0x80020601, 0xb07c2003, 0xbf900009, 0xbf8c3f70, 0x7d880083, 0xbefe036a, 0xf80008cf, 0x05040302,
+    0xf800020f, 0x09080706, 0x7d880082, 0xbefe036a, 0x161400ff, 0x00000401, 0x4a1414ff, 0x00000400,
+    0xf8000941, 0x0000000a, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 7> PixelCode{
@@ -98,6 +94,13 @@ alignas(256) std::array<std::uint16_t, 3 * Triangles> Indices{};
 alignas(256) std::array<Vertex, 3 * Triangles> Ordered{};
 alignas(256) std::array<Vertex, 2 * Columns + 2> Strip{};
 
+constexpr std::uint32_t LineStrips = 4;
+alignas(256) std::array<Vertex, 3 * LineStrips> LineStripVertices{};
+
+std::uint32_t LineStripRow(std::uint32_t strip) {
+    return 16u + 28u * strip;
+}
+
 constexpr std::uint32_t FanRim = 8;
 constexpr float FanStep = 6.28318530718f / FanRim;
 alignas(256) std::array<Vertex, FanRim + 1> Fan{};
@@ -142,6 +145,7 @@ struct MeshDraw {
     VkCullModeFlags cull = VK_CULL_MODE_NONE;
     std::span<const std::uint32_t> code = {};
     std::uint32_t stagesRegister = 0x20u;
+    ShaderRecompiler::ShaderVertexStageInfo vertex{};
 };
 
 bool ReadsNumWorkgroups(std::span<const std::uint32_t> words) {
@@ -174,7 +178,7 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> geometryMemory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(std::span(code))}}};
     ShaderRecompiler::RecompileRequest geometry{
         {ShaderStage::Mesh, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
-        {setup.waveSize, 0, userData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, geometryMemory},
+        {setup.waveSize, 0, userData, std::nullopt, std::nullopt, setup.vertex, geometryMemory},
         target,
         {0, 0, 0, setup.geometryPushBytes},
         ShaderRecompiler::GraphicsCompileContext{0, {}, setup.mesh, std::nullopt, {setup.draw.indexAddress, setup.draw.indexCount, setup.draw.indexSize, setup.draw.instanceCount}}
@@ -205,6 +209,10 @@ void DrawMesh(AgcDriver::VulkanDevice& device, const MeshDraw& setup) {
 
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Geometry, setup.stagesRegister, setup.waveSize, 64, setup.mesh, std::nullopt};
+    state.pointSize = setup.vertex.pointSize;
+    state.pointSizeMin = setup.vertex.pointSizeMin;
+    state.pointSizeMax = setup.vertex.pointSizeMax;
+    state.paClVsOutCntl = setup.vertex.paClVsOutCntl;
     state.color = {reinterpret_cast<std::uintptr_t>(Pixels.data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Pixels.size(), 0xe4u};
     state.colors = {state.color};
     state.hasColorTarget = true;
@@ -292,6 +300,17 @@ int main() {
             const float y = i % 2u == 0u ? -1.0f : 0.0f;
             Strip[i] = {{x, y, 0.5f, 1.0f}, stripColor};
         }
+        for (std::uint32_t strip = 0; strip < LineStrips; ++strip) {
+            const auto color = TriangleColor(strip);
+            const std::array<float, 4> rgba{color[0] / 255.0f, color[1] / 255.0f, color[2] / 255.0f, 1.0f};
+            const float top = 1.0f - (static_cast<float>(LineStripRow(strip)) + 0.5f) / (Height / 2.0f);
+            const float bottom = top - 20.0f / (Height / 2.0f);
+            const float left = 24.5f / (Width / 2.0f) - 1.0f;
+            const float right = 168.5f / (Width / 2.0f) - 1.0f;
+            LineStripVertices[3 * strip] = {{left, top, 0.5f, 1.0f}, rgba};
+            LineStripVertices[3 * strip + 1] = {{right, top, 0.5f, 1.0f}, rgba};
+            LineStripVertices[3 * strip + 2] = {{right, bottom, 0.5f, 1.0f}, rgba};
+        }
         Fan[0] = {{0.0f, 0.0f, 0.5f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}};
         for (std::uint32_t k = 1; k <= FanRim; ++k) {
             const auto color = TriangleColor(k);
@@ -372,6 +391,89 @@ int main() {
             if (!fastLaunchIndexedRefused) throw;
         }
         Require(fastLaunchIndexedRefused, "an indexed fast-launch draw was drawn");
+
+        for (const bool indexed : {true, false}) {
+            ClearPixels();
+            DrawMesh(device, {SmallSubgroup, {indexed ? reinterpret_cast<std::uintptr_t>(Indices.data()) : 0u, 2u, indexed ? 2u : 0u, 1, 0, indexed}, VertexBufferDescriptor(indexed ? Scrambled.data() : Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))});
+            for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+                Require(PixelIs(CellPixel(triangle), Background), std::string(indexed ? "indexed" : "non-indexed") + " triangle-list draw of two vertices drew triangle " + std::to_string(triangle) + ", pixel " + PixelText(CellPixel(triangle)));
+            }
+        }
+
+        ClearPixels();
+        auto pointSubgroup = SmallSubgroup;
+        pointSubgroup.outputPrimitiveSize = 1u;
+        for (const auto pointWave : {32u, 64u}) {
+            ClearPixels();
+            DrawMesh(device, {pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, pointWave});
+            for (std::uint32_t triangle = 0; triangle < Triangles; ++triangle) {
+                const auto& position = Ordered[3u * triangle].position;
+                const auto x = static_cast<std::uint32_t>((position[0] + 1.0f) * 0.5f * Width);
+                const auto y = static_cast<std::uint32_t>((1.0f - position[1]) * 0.5f * Height);
+                const auto offset = (static_cast<std::size_t>(y) * Width + x) * 4u;
+                Require(PixelIs(offset, TriangleColor(triangle)), "mesh point missing at first exported index for primitive " + std::to_string(triangle));
+                Require(PixelIs(CellPixel(triangle), Background), "mesh point output filled the interior of its packed triangle");
+            }
+        }
+
+        for (const auto pointWave : {32u, 64u}) {
+            for (const auto size : {3.0f, 4.0f}) {
+                ClearPixels();
+                MeshDraw points{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
+                points.waveSize = pointWave;
+                points.vertex.pointSize = size;
+                DrawMesh(device, points);
+                for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
+                    std::uint32_t covered = 0;
+                    for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
+                    Require(covered == static_cast<std::uint32_t>(size * size), "mesh point did not cover its register-sized square");
+                }
+            }
+            for (const auto exportedSize : {6.0f, -3.0f}) {
+                ClearPixels();
+                const auto& baseCode = pointWave == 32u ? Wave32GeometryCode : GeometryCode;
+                std::array<std::uint32_t, GeometryCode.size() + 4u> sizedCode{};
+                std::copy_n(baseCode.begin(), 101u, sizedCode.begin());
+                sizedCode[92] = 0xbf88000eu;
+                sizedCode[99] = 0xf80000cfu;
+                sizedCode[101] = 0x7e6802ffu;
+                sizedCode[102] = std::bit_cast<std::uint32_t>(exportedSize);
+                sizedCode[103] = 0xf80008d1u;
+                sizedCode[104] = 0x00000034u;
+                std::copy(baseCode.begin() + 101u, baseCode.end(), sizedCode.begin() + 105u);
+                MeshDraw exported{pointSubgroup, {0, static_cast<std::uint32_t>(Ordered.size()), 0, 1, 0, false}, VertexBufferDescriptor(Ordered.data(), static_cast<std::uint32_t>(Ordered.size()))};
+                exported.waveSize = pointWave;
+                exported.code = sizedCode;
+                exported.vertex.paClVsOutCntl = (1u << 16u) | (1u << 21u);
+                exported.vertex.pointSizeMin = 3.0f;
+                exported.vertex.pointSizeMax = 4.0f;
+                DrawMesh(device, exported);
+                for (std::uint32_t primitive = 0; primitive < Triangles; ++primitive) {
+                    std::uint32_t covered = 0;
+                    for (std::size_t pixel = 0; pixel < Pixels.size(); pixel += 4u) covered += PixelIs(pixel, TriangleColor(primitive));
+                    const auto side = exportedSize < 3.0f ? 3u : 4u;
+                    Require(covered == side * side, "mesh point ignored its exported size or clamp");
+                }
+            }
+        }
+
+        ClearPixels();
+        auto lineSubgroup = FastLaunchSubgroup;
+        lineSubgroup.maxPrimitives = 2u;
+        lineSubgroup.outputPrimitiveSize = 2u;
+        DrawMesh(device, {lineSubgroup, {0, LineStrips, 0, 1, 0, false}, VertexBufferDescriptor(LineStripVertices.data(), static_cast<std::uint32_t>(LineStripVertices.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, false, 32u, VK_CULL_MODE_NONE, LineStripCode, 0x482030u});
+        const auto linePixel = [](std::uint32_t x, std::uint32_t y) { return (static_cast<std::size_t>(y) * Width + x) * 4u; };
+        for (std::uint32_t strip = 0; strip < LineStrips; ++strip) {
+            const auto row = LineStripRow(strip);
+            const auto color = TriangleColor(strip);
+            const auto where = "line strip " + std::to_string(strip) + ": ";
+            for (std::uint32_t x = 32; x <= 160; x += 8) Require(PixelIs(linePixel(x, row), color), where + "horizontal line pixel (" + std::to_string(x) + ", " + std::to_string(row) + ") is " + PixelText(linePixel(x, row)));
+            for (std::uint32_t y = row + 4u; y <= row + 16u; y += 4) Require(PixelIs(linePixel(168, y), color), where + "vertical line pixel (168, " + std::to_string(y) + ") is " + PixelText(linePixel(168, y)));
+            for (const auto& [x, y, what] : {std::tuple{96u, row - 3u, "above the horizontal line"}, std::tuple{96u, row + 3u, "below the horizontal line"}, std::tuple{150u, row + 5u, "inside the triangle of the strip's three vertices"}, std::tuple{96u, row + 10u, "on the edge closing the strip"}, std::tuple{96u, row + 24u, "between this strip and the next"}, std::tuple{8u, row, "left of the strip"}, std::tuple{184u, row + 10u, "right of the strip"}}) {
+                Require(PixelIs(linePixel(x, y), Background), where + "pixel (" + std::to_string(x) + ", " + std::to_string(y) + ") " + what + " is " + PixelText(linePixel(x, y)));
+            }
+        }
+        Require(PixelIs(0, Background) && PixelIs(Pixels.size() - 4u, Background), "line strips: the corners changed");
 
         constexpr std::size_t recordBlockBytes = 65536;
         auto* record = static_cast<std::uint32_t*>(::operator new(recordBlockBytes, std::align_val_t{65536}));

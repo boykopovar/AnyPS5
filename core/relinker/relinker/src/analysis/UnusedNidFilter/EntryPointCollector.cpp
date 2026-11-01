@@ -39,7 +39,7 @@ struct LoadSegment {
 };
 
 bool inText(VirtualAddress va, VirtualAddress textVaddr, std::size_t textSize) {
-    return va >= textVaddr && va < textVaddr + static_cast<VirtualAddress>(textSize);
+    return va >= textVaddr && va - textVaddr < static_cast<VirtualAddress>(textSize);
 }
 
 }
@@ -52,6 +52,9 @@ public:
         std::size_t textSize,
         const IRelativeRelocationIndex& relativeRelocations
     ) const override {
+        if (textSize > std::numeric_limits<VirtualAddress>::max() - textVaddr) {
+            throw RelinkerException("Text section range exceeds the address space");
+        }
         if (elfBytes.size() < 64) throw RelinkerException("ELF too small for header");
         if (elfBytes[0] != 0x7f || elfBytes[1] != 'E' ||
             elfBytes[2] != 'L' || elfBytes[3] != 'F') {
@@ -130,7 +133,10 @@ public:
                     }
                 }
                 if (!container) throw RelinkerException("Init/fini array is not file-backed", arrayVa);
-                std::uint64_t arrayFileOff = container->fileOffset + (arrayVa - container->vaddr);
+                const auto relative = arrayVa - container->vaddr;
+                if (relative > std::numeric_limits<std::uint64_t>::max() - container->fileOffset)
+                    throw RelinkerException("Init/fini array is out of bounds", arrayVa);
+                const std::uint64_t arrayFileOff = container->fileOffset + relative;
                 if (arrayFileOff > elfBytes.size() || arraySz > elfBytes.size() - arrayFileOff)
                     throw RelinkerException("Init/fini array is out of bounds", arrayVa);
                 for (std::uint64_t k = 0; k < arraySz / 8; ++k) {

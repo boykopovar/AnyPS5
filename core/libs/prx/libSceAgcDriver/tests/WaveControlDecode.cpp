@@ -62,7 +62,7 @@ void verifyDecode() {
     require(decoded[11].op == RdnaOpcode::SCodeEnd, "s_code_end");
 }
 
-std::string recompile(std::span<const std::uint32_t> code) {
+std::string recompile(std::span<const std::uint32_t> code, std::uint32_t subgroupSize = 64u) {
     const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
     const std::array<std::uint32_t, 2> capabilities{1u, 61u};
     const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
@@ -74,7 +74,7 @@ std::string recompile(std::span<const std::uint32_t> code) {
     request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
     request.target.vulkanVersion = 0x00403000u;
     request.target.spirvVersion = 0x00010600u;
-    request.target.subgroupSize = 64u;
+    request.target.subgroupSize = subgroupSize;
     request.target.bdaAbiVersion = 1;
     request.target.supportedCapabilities = capabilities;
     request.target.supportedExtensions = extensions;
@@ -104,6 +104,9 @@ void verifyTranslation() {
     require(recompile(trailingLoop).empty(), "a program padded with s_code_end after its last branch is refused: " + recompile(trailingLoop));
     const auto orderedAdd = withStore({0xd8fe0000u, 0x05000001u});
     require(recompile(orderedAdd).empty(), "ds_ordered_count adding to a GDS counter is refused: " + recompile(orderedAdd));
+    require(recompile(orderedAdd, 32u).empty(), "ds_ordered_count of a wave64 on 32-lane subgroups is refused: " + recompile(orderedAdd, 32u));
+    const auto orderedSwap = withStore({0xd8fe1000u, 0x05000001u});
+    require(recompile(orderedSwap).empty(), "ds_ordered_count swapping a GDS counter is refused: " + recompile(orderedSwap));
 
     const std::vector<std::tuple<std::string_view, std::vector<std::uint32_t>, std::string_view>> refused{
         {"s_sethalt 1", withStore({0xbf8d0001u}), "s_sethalt 1 at pc 0 halts the wave"},
@@ -116,7 +119,6 @@ void verifyTranslation() {
         {"ds_gws_sema_p", withStore({0xd8720000u, 0x00000000u}), "ds_gws_sema_p at pc 0: global wave sync"},
         {"ds_gws_sema_release_all", withStore({0xd8620000u, 0x00000000u}), "ds_gws_sema_release_all at pc 0: global wave sync"},
         {"ds_gws_barrier", withStore({0xd8760000u, 0x00000003u}), "ds_gws_barrier at pc 0: global wave sync"},
-        {"ds_ordered_count swap", withStore({0xd8fe1000u, 0x05000001u}), "ds_ordered_count at pc 0: ordered swap is not modeled"},
         {"ds_ordered_count of two dwords", withStore({0xd8fe4000u, 0x05000001u}), "ds_ordered_count at pc 0: counting more than one dword is not modeled"},
     };
     for (const auto& [name, code, message] : refused) {

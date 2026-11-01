@@ -28,6 +28,9 @@ jobs:
           force_label ci            5319e7 '.github'
           force_label agc           1d76db 'libSceAgc*'
           force_label shader        1d76db 'core/shader'
+          force_label 'unblocks title' 0e8a16 'Names a title ID on the Unblocks line'
+          force_label perf          fef2c0 'Performance change'
+          force_label 'perf numbers missing' e99695 'perf pull request without a before and after summary line'
 
           label relinker  5319e7 'core/relinker'
           label libc      fbca04 'libc'
@@ -35,4 +38,5 @@ jobs:
           label prx       c5def5 'Other PRX libraries'
           label build     bfd4f2 'CMake, submodules, 3rdparty'
           label docs      0075ca 'Documentation'
+          label 'fix error' d73a4a 'Closes an issue (Fixes #N)'
           label stale     ededed 'Conflicting with main and no activity for 7 days'
