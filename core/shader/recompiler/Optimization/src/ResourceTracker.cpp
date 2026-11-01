@@ -2080,7 +2080,7 @@ private:
         const auto access = BufferAccessOf(inst.Opcode());
         if (ValidateSource(descriptor, badDword)) {
             const auto source = InternSource(descriptor);
-            const auto resource = AddBuffer(source, memory, inst.Opcode(), inst.Flags<MemoryFlags>().pc);
+            const auto resource = AddBuffer(source, memory, inst, inst.Flags<MemoryFlags>().pc);
             if (resource == std::numeric_limits<std::uint32_t>::max()) fail("buffer resource limit exceeded");
             AddMemoryPatch(memoryIndex, resource, 0u, false);
             memory.gpuDescriptor = false;
@@ -2103,25 +2103,32 @@ private:
         }
     }
 
-    std::uint32_t AddBuffer(std::uint32_t source, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc) {
+    std::uint32_t AddBuffer(std::uint32_t source, const MemoryInfo& memory, const IrValue& inst, std::uint32_t pc) {
         for (std::uint32_t i = 0; i < m_info.buffers.size(); i++) {
             if (m_info.buffers[i].source == source) {
-                Merge(m_info.buffers[i], memory, op, pc);
+                Merge(m_info.buffers[i], memory, inst, pc);
                 return i;
             }
         }
         BufferResource resource;
         resource.source = source;
         resource.firstUsePc = pc;
-        Merge(resource, memory, op, pc);
+        resource.baseFormattedReads = true;
+        Merge(resource, memory, inst, pc);
         m_info.buffers.push_back(resource);
         return static_cast<std::uint32_t>(m_info.buffers.size() - 1);
     }
 
-    static void Merge(BufferResource& resource, const MemoryInfo& memory, IrOpcode op, std::uint32_t pc) {
+    static void Merge(BufferResource& resource, const MemoryInfo& memory, const IrValue& inst, std::uint32_t pc) {
+        const auto op = inst.Opcode();
         const auto access = BufferAccessOf(op);
         const bool atomic = access == BufferAccess::Atomic;
         const bool write = access == BufferAccess::Write || atomic;
+        const auto zero = [](const IrValue* value) {
+            value = value->Resolve();
+            return value->Type() == IrType::U32 && value->HasImmediate() && value->ImmediateU32() == 0u;
+        };
+        resource.baseFormattedReads = resource.baseFormattedReads && memory.kind == ResourceKind::Buffer && access == BufferAccess::Read && memory.formatted && !memory.typed && memory.dataBits == 32u && memory.offset == 0u && inst.ArgumentCount() == 5u && zero(inst.Argument(2u)) && zero(inst.Argument(3u));
         resource.firstUsePc = std::min(resource.firstUsePc, pc);
         resource.maxByteExtent = std::max(resource.maxByteExtent, byteExtent(memory));
         resource.read = resource.read || !write || atomic;

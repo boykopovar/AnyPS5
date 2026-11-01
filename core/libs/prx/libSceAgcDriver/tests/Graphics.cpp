@@ -2,6 +2,7 @@
 #include "BdaTests.hpp"
 #include "GraphicsTests.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
@@ -6516,6 +6517,103 @@ void descriptorSnapshotTests() {
 alignas(16) std::array<std::uint32_t, 8> guestMovedFirst{0x51515151, 0x52525252, 0x53535353, 0x54545454, 0x55555555, 0x56565656, 0x57575757, 0x58585858};
 alignas(16) std::array<std::uint32_t, 8> guestMovedSecond{0x61616161, 0x62626262, 0x63636363, 0x64646464, 0x65656565, 0x66666666, 0x67676767, 0x68686868};
 
+void bufferReadExtentTests(bool allWritten) {
+    using AgcDriver::Graphics::CompiledShader;
+    using AgcDriver::Graphics::DescriptorCache;
+    using AgcDriver::Graphics::Recorder;
+    using AgcDriver::Graphics::ShaderResources;
+    const auto descriptor = [&](const void* address, std::uint32_t records) {
+        auto words = vsharp(address, records);
+        words[1] &= 0xffffu;
+        words[3] = 0x2004a3acu;
+        return words;
+    };
+    auto input = makeBinding(Role::GuestBuffers, 0, 1, descriptor(guestFirst.data(), 1));
+    input.bufferWritten = {false};
+    input.bufferAtomic = {false};
+    input.bufferRead = {true};
+    input.bufferReadExtent = {12};
+    if (allWritten) {
+        Require(ShaderResources::GuestBufferBytes(input, 0) == 1, "forced writable binding gained a read-only extent");
+        return;
+    }
+    Require(ShaderResources::GuestBufferBytes(input, 0) == 12, "proved OOB2 read was bound by its one-byte descriptor");
+    for (const unsigned variant : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u}) {
+        auto excluded = input;
+        if (variant == 0) excluded.bufferWritten.clear();
+        if (variant == 1) excluded.bufferWritten[0] = true;
+        if (variant == 2) excluded.bufferAtomic[0] = true;
+        if (variant == 3) excluded.bufferRead[0] = false;
+        if (variant == 4) excluded.bufferReadExtent.clear();
+        if (variant == 5) excluded.guestDescriptor[1] |= 0x80000000u;
+        if (variant == 6) excluded.guestDescriptor[3] = (excluded.guestDescriptor[3] & ~0x30000000u) | 0x30000000u;
+        if (variant == 7) excluded.guestDescriptor[1] |= 4u << 16u;
+        Require(ShaderResources::GuestBufferBytes(excluded, 0) == (variant == 7 ? 4u : 1u), "an unproved buffer gained the formatted read extent");
+    }
+    auto empty = input;
+    empty.guestDescriptor[2] = 0;
+    Require(ShaderResources::GuestBufferBytes(empty, 0) == 0, "empty OOB2 buffer gained a read extent");
+    empty = input;
+    empty.guestDescriptor[0] = 0;
+    empty.guestDescriptor[1] = 0;
+    Require(ShaderResources::GuestBufferBytes(empty, 0) == 1, "null OOB2 buffer gained a read extent");
+    ShaderRecompiler::RecompileResult program;
+    program.bindings.push_back(input);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    const std::array<CompiledShader, 1> stages{{shader}};
+    const auto key = ShaderResources::ContentKey(shader, false, true);
+    program.bindings[0].bufferReadExtent[0] = 0;
+    const auto changedKey = ShaderResources::ContentKey(shader, false, true);
+    Require(changedKey != key, "resource identity ignored its read extent");
+    AgcDriver::Graphics::ContentKeyDiff difference;
+    Require(ShaderResources::DiffContentKeys(key, changedKey, false, difference), "read-extent resource key could not be classified");
+    Require(difference[static_cast<std::size_t>(AgcDriver::Graphics::ContentKeyComponent::Other)], "read-extent key difference lost its field label");
+    program.bindings[0].bufferReadExtent[0] = 12;
+    AgcDriver::Pm4::DrawParameters draw{};
+    const auto ranges = AgcDriver::DriverDetail::QueuedDrawReadRanges(draw, stages);
+    const auto address = reinterpret_cast<std::uint64_t>(guestFirst.data());
+    Require(std::find(ranges.begin(), ranges.end(), std::pair<std::uint64_t, std::uint64_t>{address, address + 12}) != ranges.end(), "queued read range omitted the Y/Z tail");
+    mock = MockVulkan{};
+    mock.allowCopies = true;
+    auto context = mockContext();
+    {
+        DescriptorCache cache(context);
+        context.descriptorCache = &cache;
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        Recorder recorder(context);
+        ShaderResources resources(context, shader);
+        Require(findWrite(0).buffers[0].range >= 12, "native descriptor omitted the Y/Z tail");
+        ShaderResources::MoveProof proof;
+        auto same = resources.MovedDispatchBuffers(shader, &recorder, 0, proof);
+        Require(same.has_value() && same->empty(), "unchanged expanded dispatch buffer looked moved");
+        const auto sameDraw = resources.MovedReadOnlyBuffers(stages, recorder, nullptr);
+        Require(sameDraw.has_value() && sameDraw->empty(), "unchanged expanded draw buffer looked moved");
+        auto movedProgram = program;
+        movedProgram.bindings[0].guestDescriptor = descriptor(guestMovedFirst.data(), 1);
+        const CompiledShader movedShader{ShaderRecompiler::ShaderStage::Compute, &movedProgram, 0};
+        const std::array<CompiledShader, 1> movedStages{{movedShader}};
+        const auto moved = resources.MovedDispatchBuffers(movedShader, &recorder, 0, proof);
+        Require(moved.has_value() && moved->size() == 1 && moved->front().size == 12, "dispatch move lost the formatted read extent");
+        const auto movedDraw = resources.MovedReadOnlyBuffers(movedStages, recorder, nullptr);
+        Require(movedDraw.has_value() && movedDraw->size() == 1 && movedDraw->front().size == 12, "draw move lost the formatted read extent");
+        recorder.Sync();
+    }
+    Require(mock.live == 0, "formatted read-extent resources leaked Vulkan objects");
+    mock = MockVulkan{};
+    context = mockContext();
+    {
+        DescriptorCache cache(context);
+        context.descriptorCache = &cache;
+        std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+        auto state = AgcDriver::Graphics::DecodeState(makeState());
+        state.color.address = address + 4;
+        state.color.bytes = 16;
+        ShaderRecompiler::RecompileResult fragment;
+        expectFailure([&] { ShaderResources resources(context, program, fragment, state.color, 0, 0); }, "aliases the render target");
+    }
+    Require(mock.live == 0, "tail-alias refusal leaked Vulkan objects");
+}
+
 void dispatchMoveTests() {
     using AgcDriver::Graphics::CompiledShader;
     using AgcDriver::Graphics::DescriptorCache;
@@ -13016,6 +13114,10 @@ int main(int argc, char** argv) {
             std::cout << "Existing undithered alpha-to-coverage states passed\n";
             return 0;
         }
+        if (argc == 2 && (std::string_view(argv[1]) == "--buffer-read-extents" || std::string_view(argv[1]) == "--buffer-read-extents-all-written")) {
+            bufferReadExtentTests(std::string_view(argv[1]) == "--buffer-read-extents-all-written");
+            return 0;
+        }
         if (argc == 2 && (std::string_view(argv[1]) == "--resource-content-key" || std::string_view(argv[1]) == "--benchmark-resource-content-key")) {
             ResourceContentKeyTests(std::string_view(argv[1]) == "--benchmark-resource-content-key");
             return 0;
@@ -13104,6 +13206,7 @@ int main(int argc, char** argv) {
         }
         RunGuestLeaseWaitTests();
         ResourceContentKeyTests(false);
+        bufferReadExtentTests(false);
         stateTests();
         unitFlagsTests();
         pipelineStoreLazyBufferPoolTests();
