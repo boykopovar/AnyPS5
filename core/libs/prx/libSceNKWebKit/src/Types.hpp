@@ -254,4 +254,16 @@ public:
     bool isVisible = false;
 };
 
+class Error final : public ObjectOf<ObjectType::Error> {
+public:
+    Error() = default;
+    Error(Retained<String> domain, int errorCode, Retained<URL> failingURL, Retained<String> localizedDescription = {})
+        : domain(std::move(domain)), errorCode(errorCode), failingURL(std::move(failingURL)), localizedDescription(std::move(localizedDescription)) {}
+
+    Retained<String> domain;
+    int errorCode = 0;
+    Retained<URL> failingURL;
+    Retained<String> localizedDescription;
+};
+
 }  // namespace NKWebKit

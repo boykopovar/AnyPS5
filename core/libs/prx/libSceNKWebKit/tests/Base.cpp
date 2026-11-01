@@ -806,6 +806,80 @@ static void TestError() {
     auto* domain = WKErrorCopyWKErrorDomain();
     Require(WKStringIsEqualToUTF8CString(domain, "WebKitErrorDomain"));
     WKRelease(domain);
+
+    auto domainStr = NKWebKit::String::FromUtf8("CustomDomain");
+    auto failingUrl = NKWebKit::Make<NKWebKit::URL>("https://example.com/failed");
+    auto desc = NKWebKit::String::FromUtf8("Resource failed to load");
+    auto errorObj = NKWebKit::Make<NKWebKit::Error>(domainStr, 404, failingUrl, desc);
+    auto* errorRef = NKWebKit::ToRef(errorObj);
+    Require(WKGetTypeID(errorRef) == WKErrorGetTypeID());
+
+    auto* copiedDomain = WKErrorCopyDomain(errorRef);
+    Require(WKStringIsEqualToUTF8CString(copiedDomain, "CustomDomain"));
+    WKRelease(copiedDomain);
+
+    Require(WKErrorGetErrorCode(errorRef) == 404);
+
+    auto* copiedUrl = WKErrorCopyFailingURL(errorRef);
+    auto* urlStr = WKURLCopyString(copiedUrl);
+    Require(WKStringIsEqualToUTF8CString(urlStr, "https://example.com/failed"));
+    WKRelease(urlStr);
+    WKRelease(copiedUrl);
+
+    auto* copiedDesc = WKErrorCopyLocalizedDescription(errorRef);
+    Require(WKStringIsEqualToUTF8CString(copiedDesc, "Resource failed to load"));
+    WKRelease(copiedDesc);
+
+    WKRelease(errorRef);
+
+    auto emptyError = NKWebKit::Make<NKWebKit::Error>();
+    auto* emptyErrorRef = NKWebKit::ToRef(emptyError);
+    auto* emptyDomain = WKErrorCopyDomain(emptyErrorRef);
+    Require(WKStringIsEmpty(emptyDomain));
+    WKRelease(emptyDomain);
+    Require(WKErrorGetErrorCode(emptyErrorRef) == 0);
+    Require(WKErrorCopyFailingURL(emptyErrorRef) == nullptr);
+    auto emptyUrl = NKWebKit::Make<NKWebKit::URL>("");
+    auto errorWithEmptyUrl = NKWebKit::Make<NKWebKit::Error>(domainStr, 404, emptyUrl, desc);
+    auto* errorWithEmptyUrlRef = NKWebKit::ToRef(errorWithEmptyUrl);
+    Require(WKErrorCopyFailingURL(errorWithEmptyUrlRef) == nullptr);
+    WKRelease(errorWithEmptyUrlRef);
+    auto* emptyDesc = WKErrorCopyLocalizedDescription(emptyErrorRef);
+    Require(WKStringIsEmpty(emptyDesc));
+    WKRelease(emptyDesc);
+    WKRelease(emptyErrorRef);
+
+    bool threw = false;
+    try {
+        WKErrorCopyDomain(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKErrorGetErrorCode(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKErrorCopyFailingURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKErrorCopyLocalizedDescription(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 template<typename Function>

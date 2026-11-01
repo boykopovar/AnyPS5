@@ -391,9 +391,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKCookieManagerSetClient` | `q-Hwxr4yls0` |
 | `WKCookieManagerStartObservingCookieChanges` | `vyOiJyvWOik` |
 | `WKCookieManagerStopObservingCookieChanges` | `ebPeu+4eyj8` |
-| `WKErrorCopyDomain` | `CbWxMDgV5WQ` |
-| `WKErrorCopyFailingURL` | `Rcz4V01xRBo` |
-| `WKErrorGetErrorCode` | `Jx+jaw-BVuE` |
 | `WKFormSubmissionListenerContinue` | `NRF4gBL1p9o` |
 | `WKFrameCanProvideSource` | `pupKRlW6z-w` |
 | `WKFrameCanShowMIMEType` | `K5V0IcHAoOE` |
