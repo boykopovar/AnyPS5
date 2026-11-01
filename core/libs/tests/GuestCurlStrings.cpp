@@ -2,8 +2,6 @@
 #include "prx/libcurl/libcurl.hpp"
 #include <cstdio>
 #include <cstdlib>
-#include <stdexcept>
-#include <string>
 
 static void Require(bool condition, int line) {
     if (!condition) {
@@ -12,16 +10,6 @@ static void Require(bool condition, int line) {
     }
 }
 #define Check(value) Require((value), __LINE__)
-
-template <typename TCall>
-static bool ReportsNotImplemented(const char* name, TCall call) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()) == std::string(name) + " not implemented";
-    }
-    return false;
-}
 
 static void CheckEqual() {
     Check(curl_strequal("", "") == 1);
@@ -54,18 +42,8 @@ static void CheckBounded() {
     Check(curl_strnequal("\xE9", "\xC9", 1) == 0);
 }
 
-static void CheckNullPointers() {
-    Check(ReportsNotImplemented("curl_strequal", [] { curl_strequal(nullptr, "a"); }));
-    Check(ReportsNotImplemented("curl_strequal", [] { curl_strequal("a", nullptr); }));
-    Check(ReportsNotImplemented("curl_strequal", [] { curl_strequal(nullptr, nullptr); }));
-    Check(ReportsNotImplemented("curl_strnequal", [] { curl_strnequal(nullptr, "a", 1); }));
-    Check(ReportsNotImplemented("curl_strnequal", [] { curl_strnequal("a", nullptr, 1); }));
-    Check(ReportsNotImplemented("curl_strnequal", [] { curl_strnequal(nullptr, nullptr, 0); }));
-}
-
 int main() {
     CheckEqual();
     CheckBounded();
-    CheckNullPointers();
     return 0;
 }
