@@ -13,21 +13,6 @@ int APS5_VABI WKURLRequestSetDefaultTimeoutInterval() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKErrorCopyDomain() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKErrorGetErrorCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKErrorCopyFailingURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKErrorCopyLocalizedDescription() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI WKURLRequestCopyURL() {
     NotImplemented_nid_no_patch(__func__);
