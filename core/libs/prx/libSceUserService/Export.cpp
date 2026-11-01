@@ -30,9 +30,17 @@ int UserIndex(int userId) {
     return -1;
 }
 
-int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
- const int index = UserIndex(user_id);
+bool IsUserLoggedIn(int userId) {
+ const int index = UserIndex(userId);
  if (index < 0) {
+  return false;
+ }
+ std::lock_guard lock(userMutex);
+ return userConnected[index];
+}
+
+int ReportAccessibilitySetting(int user_id, int32_t* setting, int32_t value) {
+ if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  if (setting == nullptr) {
@@ -46,7 +54,9 @@ void PopulateInitialLoginEvents() {
  std::lock_guard lock(userMutex);
  eventQueue.clear();
  constexpr std::uint32_t EventTypeLogin = 0;
- eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID});
+ if (userConnected[0]) {
+  eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID});
+ }
  for (int i = 1; i < USER_SERVICE_MAX_USERS; ++i) {
   if (userConnected[i]) {
    eventQueue.push_back({EventTypeLogin, USER_SERVICE_INITIAL_USER_ID + i});
@@ -90,7 +100,7 @@ static int ReportKeyboardSetting(int user_id, int32_t* type, int32_t (*value)())
 extern "C" {
 
 void UserServiceSetUserConnected_nid_postfix(int userIndex, bool connected) {
-    if (userIndex <= 0 || userIndex >= USER_SERVICE_MAX_USERS) return;
+    if (userIndex < 0 || userIndex >= USER_SERVICE_MAX_USERS) return;
     std::lock_guard lock(userMutex);
     if (userConnected[userIndex] != connected) {
         userConnected[userIndex] = connected;
@@ -151,8 +161,7 @@ int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int user_id, int32_t
 }
 
 int APS5_VABI sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level) {
- const int index = UserIndex(user_id);
- if (index < 0) {
+ if (!IsUserLoggedIn(user_id)) {
   return USER_SERVICE_ERROR_NOT_LOGGED_IN;
  }
  if (age_level == nullptr) {
@@ -289,12 +298,15 @@ int APS5_VABI sceUserServiceTerminate(void) {
  return USER_SERVICE_OK;
 }
 
-// No PSN account exists, so the platform privacy setting reports the feature as not permitted.
 int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* value) {
-    (void)user_id;
-    if (!value) return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    if (!IsUserLoggedIn(user_id)) {
+        return USER_SERVICE_ERROR_NOT_LOGGED_IN;
+    }
+    if (value == nullptr) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
     *value = 0;
-    return 0;
+    return USER_SERVICE_OK;
 }
 
 int APS5_VABI sceUserServiceGetForegroundUser(int* user_id) {
@@ -342,8 +354,10 @@ int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t*
 }
 
 int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id) {
- const int index = UserIndex(user_id);
- if (account_id == nullptr || index < 0) {
+ if (!IsUserLoggedIn(user_id)) {
+  return USER_SERVICE_ERROR_UNKNOWN_USER;
+ }
+ if (account_id == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
  *account_id = 0;

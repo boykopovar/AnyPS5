@@ -384,7 +384,7 @@ std::optional<std::pair<std::uint32_t, std::uint32_t>> storedLaneFunction(const 
     bool function = false;
     for (std::size_t offset = 5; offset < words.size(); offset += words[offset] >> spv::WordCountShift) {
         const auto opcode = static_cast<spv::Op>(words[offset] & spv::OpCodeMask);
-        const auto* operands = &words[offset + 1];
+        const auto* operands = words.data() + offset + 1;
         if (opcode == spv::OpFunction) function = true;
         if (opcode == spv::OpConstant) values[operands[1]] = {0u, operands[2]};
         if (opcode == spv::OpVariable && operands[2] == spv::StorageClassInput) inputs.insert(operands[1]);

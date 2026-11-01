@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentMode.hpp"
+#include "prx/libSceAgcDriver/Execution/include/SwapchainImages.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -406,6 +407,19 @@ void testReset(bool compute) {
 
 void testPresentMode() {
     using AgcDriver::SelectPresentMode;
+    VkSurfaceCapabilitiesKHR surface{};
+    surface.minImageCount = 2;
+    surface.maxImageCount = 8;
+    check(AgcDriver::SwapchainImageCount(surface) == 3, "the swapchain has no image beyond the surface minimum");
+    surface.minImageCount = 3;
+    check(AgcDriver::SwapchainImageCount(surface) == 3, "a three-image surface minimum gained an image");
+    surface.minImageCount = 5;
+    check(AgcDriver::SwapchainImageCount(surface) == 5, "the swapchain does not follow a larger surface minimum");
+    surface.minImageCount = 2;
+    surface.maxImageCount = 2;
+    check(AgcDriver::SwapchainImageCount(surface) == 2, "the swapchain exceeds the surface maximum");
+    surface.maxImageCount = 0;
+    check(AgcDriver::SwapchainImageCount(surface) == 3, "an unlimited surface maximum capped the swapchain");
     const std::array wayland{VK_PRESENT_MODE_FIFO_KHR, VK_PRESENT_MODE_IMMEDIATE_KHR};
     const std::array all{VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR};
     check(SelectPresentMode(nullptr, wayland) == VK_PRESENT_MODE_FIFO_KHR, "the default present mode is not FIFO");
@@ -421,6 +435,11 @@ void testPresentMode() {
     check(expectFailure([&] { SelectPresentMode("", all); }).find("must be fifo, fifo_latest_ready, mailbox or immediate") != std::string::npos, "an empty present mode name was accepted");
     const std::array<VkPresentModeKHR, 0> none{};
     check(expectFailure([&] { SelectPresentMode(nullptr, none); }).find("does not support") != std::string::npos, "FIFO was selected on a surface without it");
+    using AgcDriver::SelectPresentQueue;
+    check(SelectPresentQueue(16, 2) == 2u, "the presentation queue does not follow the main and settle queues");
+    check(SelectPresentQueue(16, 1) == 1u, "the presentation queue does not follow the main queue alone");
+    check(!SelectPresentQueue(2, 2).has_value(), "a presentation queue was taken from a family without a free queue");
+    check(!SelectPresentQueue(1, 1).has_value(), "a presentation queue was taken from a family with one queue");
 }
 
 int main(int argc, char** argv) {

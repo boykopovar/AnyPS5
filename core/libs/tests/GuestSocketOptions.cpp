@@ -151,6 +151,13 @@ void BooleanOptionsReportTheirBit() {
         std::uint32_t size = sizeof(value);
         Require(getsockopt_nid_postfix(stream, SolSocket, option, &value, &size) == -1 && *__error_nid_postfix() == ErrorNoProtocolOption, "SO_NO_OFFLOAD and SO_NO_DDP are accepted but cannot be read");
     }
+    for (const int descriptor : {stream, datagram})
+        for (const int setting : {5, 0}) {
+            Require(SetFails(descriptor, SolSocket, 0x1000, &setting, sizeof(setting), ErrorInvalid), "SO_ACCEPTFILTER on a socket that is not listening must fail with EINVAL (22)");
+            std::uint64_t filter = 0xbbbbbbbbbbbbbbbbull;
+            std::uint32_t size = sizeof(filter);
+            Require(getsockopt_nid_postfix(descriptor, SolSocket, 0x1000, &filter, &size) == -1 && *__error_nid_postfix() == ErrorInvalid && filter == 0xbbbbbbbbbbbbbbbbull, "getsockopt of SO_ACCEPTFILTER on a socket that is not listening must fail with EINVAL (22)");
+        }
     const unsigned char narrowFlag = 1;
     Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
@@ -317,6 +324,11 @@ void IpLevelFollowsThePs5() {
     size = sizeof(value);
     Require(getsockopt_nid_postfix(datagram, 99, 1, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "an unknown level must fail with EINVAL (22)");
     Require(SetFails(datagram, 99, 1, &value, sizeof(value), ErrorInvalid), "setsockopt at an unknown level must fail with EINVAL (22)");
+    for (const int option : {7, 20, 65}) {
+        Require(GetIp(datagram, option) == 0, "a receive option starts off");
+        Require(SetIp(datagram, option, 5) && GetIp(datagram, option) == 1, "a receive option reads back as 1");
+        Require(SetIp(datagram, option, 0) && GetIp(datagram, option) == 0, "a receive option turns off");
+    }
     Require(close_nid_postfix(datagram) == 0 && close_nid_postfix(datagram6) == 0, "close failed");
 }
 
