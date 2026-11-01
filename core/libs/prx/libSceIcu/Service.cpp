@@ -61,6 +61,9 @@ void DeleteObject(Object* object) {
     using Delete = void (APS5_VABI *)(Object*);
     if (object) Virtual_nid_no_patch<Delete>(object, 1)(object);
 }
+void APS5_VABI DeleteFactory_nid_no_patch(void* object) {
+    DeleteObject(static_cast<Object*>(object));
+}
 void APS5_VABI DeleteUnicodeStringObj_nid_no_patch(void* obj) {
     if (obj) {
         auto* str = static_cast<UnicodeString*>(obj);
@@ -156,7 +159,7 @@ Vector* CreateFactoryVector(std::int32_t* status) {
     if (*status > 0) return nullptr;
     auto* vector = static_cast<Vector*>(Allocate_nid_no_patch(sizeof(Vector)));
     if (!vector) throw std::invalid_argument("ICU service: null factory vector allocation");
-    _ZN6icu_687UVectorC1EPFvPvEPFa8UElementS4_ER10UErrorCode_nid_postfix(vector, reinterpret_cast<Icu::ObjectDeleter>(DeleteObject), nullptr, status);
+    _ZN6icu_687UVectorC1EPFvPvEPFa8UElementS4_ER10UErrorCode_nid_postfix(vector, DeleteFactory_nid_no_patch, nullptr, status);
     if (*status > 0) {
         _ZN6icu_687UVectorD1Ev_nid_postfix(vector);
         Free_nid_no_patch(vector);
