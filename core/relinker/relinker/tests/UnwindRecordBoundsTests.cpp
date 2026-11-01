@@ -352,6 +352,37 @@ int main() {
             lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaS2Rejected);
-        std::cout << "30 unwind record cases passed\n";
+        Domain::ProgramHeader cieAugLoad{}; cieAugLoad.Type = 1; cieAugLoad.MappedAddress = 0x1000; cieAugLoad.FileSize = 128;
+        Domain::ProgramHeader cieAugEh = cieAugLoad; cieAugEh.Type = 0x6474E550; cieAugEh.FileSize = 32;
+        auto cieAugBytes = Fixture();
+        Io::WriteU32(cieAugBytes, 64, 12);
+        cieAugBytes[73] = 'z';
+        cieAugBytes[74] = 0;
+        cieAugBytes[75] = 1;
+        cieAugBytes[76] = 0x78;
+        cieAugBytes[77] = 16;
+        cieAugBytes[78] = 10;
+        bool cieAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(cieAugBytes, {cieAugLoad, cieAugEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            cieAugRejected = std::string(error.what()).find("CIE augmentation exceeds record") != std::string::npos;
+        }
+        Require(cieAugRejected);
+        auto cieAugMultiByteBytes = Fixture();
+        Io::WriteU32(cieAugMultiByteBytes, 64, 14);
+        cieAugMultiByteBytes[73] = 'z';
+        cieAugMultiByteBytes[74] = 0;
+        cieAugMultiByteBytes[75] = 1;
+        cieAugMultiByteBytes[76] = 0x78;
+        cieAugMultiByteBytes[77] = 16;
+        cieAugMultiByteBytes[78] = 0x80;
+        cieAugMultiByteBytes[79] = 0x01;
+        bool cieAugMultiByteRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(cieAugMultiByteBytes, {cieAugLoad, cieAugEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            cieAugMultiByteRejected = std::string(error.what()).find("CIE augmentation exceeds record") != std::string::npos;
+        }
+        Require(cieAugMultiByteRejected);
+        std::cout << "32 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
