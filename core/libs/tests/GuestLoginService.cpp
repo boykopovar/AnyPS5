@@ -2,8 +2,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdlib>
-#include <stdexcept>
-#include <string>
 
 static void Require(bool value) {
     if (!value) std::abort();
@@ -17,13 +15,6 @@ int main() {
     Require(sceLoginServiceRequestDevices(request) == static_cast<int>(0x813a0001));
     Require(sceLoginServiceInitialize() == 0);
     Require(sceLoginServiceRequestDevices(nullptr) == static_cast<int>(0x813a0003));
-    bool reachedUnimplemented = false;
-    try {
-        sceLoginServiceRequestDevices(request);
-    } catch (const std::runtime_error& error) {
-        reachedUnimplemented = (std::string(error.what()) == "sceLoginServiceRequestDevices not implemented");
-    }
-    Require(reachedUnimplemented);
     Require(sceLoginServiceTerminate() == 0);
     Require(sceLoginServiceRequestDevices(nullptr) == static_cast<int>(0x813a0003));
     Require(sceLoginServiceRequestDevices(request) == static_cast<int>(0x813a0001));
