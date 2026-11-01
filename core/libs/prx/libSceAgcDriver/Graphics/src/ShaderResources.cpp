@@ -3013,6 +3013,23 @@ void countFullWalkTime(FastFail reason, std::chrono::steady_clock::time_point st
     Revalidations().fullNanoseconds[static_cast<std::size_t>(reason)].fetch_add(static_cast<std::uint64_t>(nanoseconds), std::memory_order_relaxed);
 }
 
+struct UntrackedVerification {
+    std::atomic<std::uint64_t> checked{0}, disagreed{0};
+};
+
+UntrackedVerification& UntrackedVerified() {
+    static UntrackedVerification verification;
+    static const bool registered = [] {
+        std::atexit([] {
+            const auto& total = UntrackedVerified();
+            if (total.checked.load() != 0) std::fprintf(stderr, "[verify-untracked] at exit: %llu fast proofs over untracked memory checked by the full walk, %llu disagreed\n", static_cast<unsigned long long>(total.checked.load()), static_cast<unsigned long long>(total.disagreed.load()));
+        });
+        return true;
+    }();
+    (void)registered;
+    return verification;
+}
+
 constexpr std::size_t RefusedSurfaceLimit = 65536;
 
 void countCollectRefusal(bool storage, std::uint64_t address, std::size_t bytes) {
@@ -3140,6 +3157,17 @@ void LastRecordIndices(std::span<const void* const> logged, std::span<const void
     }
 }
 
+namespace {
+
+std::array<std::uint64_t, 4> untrackedRangeStamp(std::uint64_t address, std::size_t bytes) {
+    const auto epoch = GuestMemory::CollectEpoch();
+    if (epoch == 0 || bytes == 0 || (GuestMemory::ForgetSerial() & 1u) != 0) return {};
+    const auto* recorder = Recorder::Active();
+    return {epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetStamp(address, bytes), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+}
+
+}
+
 // Turns the lookups' records into this object's per-texture validation records (see
 // ValidatedSurface); the last record of an object is the freshest.
 void ShaderResources::captureValidation() {
@@ -3160,6 +3188,16 @@ void ShaderResources::captureValidation() {
         if (indices[i] == log.size()) continue;
         const auto& found = log[indices[i]];
         validatedTextures[i] = {found.resource, found.bytes, found.keys, found.generation, 0, found.source, found.depth, true};
+        auto& surface = validatedTextures[i];
+        if (!surface.depth && GuestMemory::CollectWrites(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes)) == 0) surface.untracked = untrackedRangeStamp(surface.resource.baseAddress, static_cast<std::size_t>(surface.bytes));
+    }
+    storageUntracked.assign(storageTextures.size(), {});
+    for (std::size_t i = 0; i < storageTextures.size(); ++i) {
+        const auto* image = storageTextures[i].get();
+        if (image == nullptr) continue;
+        const auto address = image->Descriptor().baseAddress;
+        const auto bytes = static_cast<std::size_t>(image->GuestBytes());
+        if (GuestMemory::CollectWrites(address, bytes) == 0) storageUntracked[i] = untrackedRangeStamp(address, bytes);
     }
     lookupLog().clear();
     const auto trim = [](auto& scratch) {
@@ -3257,9 +3295,13 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         const auto bytes = static_cast<std::size_t>(surface.bytes);
         if (!FlushDepthPlanes(address, bytes).empty()) return fail(FastFail::Changed);
         surface.collected = GuestMemory::CollectWrites(address, bytes);
+        bool untracked = false;
         if (surface.collected == 0) {
-            countCollectRefusal(false, address, bytes);
-            return fail(FastFail::Collect);
+            if (surface.untracked[0] == 0 || untrackedRangeStamp(address, bytes) != surface.untracked) {
+                countCollectRefusal(false, address, bytes);
+                return fail(FastFail::Collect);
+            }
+            untracked = true;
         }
         const auto* source = surface.source;
         if (!keyProofs) {
@@ -3298,9 +3340,9 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         }
         if (source != nullptr) {
             if (!source->Cached()) return fail(FastFail::Evicted);
-            queries.push_back({address, bytes, source->GenerationFor(address, bytes)});
+            if (!untracked) queries.push_back({address, bytes, source->GenerationFor(address, bytes)});
             images.push_back(source);
-        } else {
+        } else if (!untracked) {
             queries.push_back({address, bytes, surface.generation});
         }
     }
@@ -3316,9 +3358,13 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
             depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
             return fail(FastFail::Depth);
         }
+        bool untracked = false;
         if (GuestMemory::CollectWrites(address, bytes) == 0) {
-            countCollectRefusal(true, address, bytes);
-            return fail(FastFail::Collect);
+            if (i >= storageUntracked.size() || storageUntracked[i][0] == 0 || untrackedRangeStamp(address, bytes) != storageUntracked[i]) {
+                countCollectRefusal(true, address, bytes);
+                return fail(FastFail::Collect);
+            }
+            untracked = true;
         }
         if (own.dccAddress != 0) {
             // Refresh's unchanged branch (its key compare against the keys the content was
@@ -3329,7 +3375,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         }
         if (!unchanged) query(address, address + bytes, image, nullptr, {i, true, false});
         if (!image->Cached()) return fail(FastFail::Evicted);
-        queries.push_back({address, bytes, image->GenerationFor(address, bytes)});
+        if (!untracked) queries.push_back({address, bytes, image->GenerationFor(address, bytes)});
         images.push_back(image);
     }
     if (!pending.empty()) {
@@ -3740,6 +3786,19 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     FastFail reason = FastFail::Count;
     bool accepted = false;
     bool fast = !noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted);
+    {
+        static const bool verifyUntracked = std::getenv("APS5_VERIFY_UNTRACKED_PROOFS") != nullptr;
+        const bool anyUntracked = std::any_of(validatedTextures.begin(), validatedTextures.end(), [](const ValidatedSurface& surface) { return surface.untracked[0] != 0; }) || std::any_of(storageUntracked.begin(), storageUntracked.end(), [](const auto& stamp) { return stamp[0] != 0; });
+        if (verifyUntracked && fast && anyUntracked) {
+            auto& [checked, disagreed] = UntrackedVerified();
+            const auto saved = validatedTextures;
+            const auto savedStorage = storageUntracked;
+            if (!fullWalk()) disagreed.fetch_add(1, std::memory_order_relaxed);
+            validatedTextures = saved;
+            storageUntracked = savedStorage;
+            if (checked.fetch_add(1, std::memory_order_relaxed) % 100000 == 99999) std::fprintf(stderr, "[verify-untracked] %llu fast proofs over untracked memory checked by the full walk, %llu disagreed%c", static_cast<unsigned long long>(checked.load()), static_cast<unsigned long long>(disagreed.load()), 10);
+        }
+    }
     // T1 (design_cpu_final M3, rule RT1): a Pending failure whose overlapping images are foreign
     // to the surfaces is resolved by the own objects' refresh (what the walk's lookups would do to
     // them) and the fast proof run again, which is then authoritative (it accepts what stays
