@@ -85,6 +85,8 @@ int main() try {
     Require(fixture.Read().at(0x1ffc) == 0x12345678);
     fixture.SetWords({});
     Require(fixture.Read().empty());
+    fixture.Tags[1].Value = 0;
+    Require(fixture.Read().empty());
     fixture.Tags.clear();
     Require(fixture.Read().empty());
 
