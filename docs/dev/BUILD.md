@@ -2,7 +2,7 @@
 
 ## Relinker only
 
-The relinker can be built without initializing submodules or configuring SDL, Vulkan, FFmpeg, FreeType or the shader recompiler. It requires CMake, a C++20 compiler and a build tool. Python 3.9 or newer enables the Python regression tests.
+The relinker can be built without initializing submodules or configuring SDL, Vulkan, FFmpeg, FreeType or the shader recompiler. It requires CMake, a C++20 compiler and a build tool. Python 3.9 or newer enables the Python regression tests; Python 3.11 or newer also registers `validate_patch_catalog`, which needs `tomllib`.
 
 ```sh
 cmake -S . -B build-relinker -G Ninja -DCMAKE_BUILD_TYPE=Release -DANYPS5_RELINKER_ONLY=ON -DBUILD_TESTING=ON
@@ -150,6 +150,8 @@ Build configuration parameters:
 | `-DCMAKE_C_COMPILER_LAUNCHER=ccache`   | Optional C compiler cache; requires `ccache`.                      |
 | `-DCMAKE_CXX_COMPILER_LAUNCHER=ccache` | Optional C++ compiler cache; requires `ccache`.                    |
 | `-DFFMPEG_PREBUILT_DIR=<path>`         | Unpacked FFmpeg package for the target platform; empty by default. |
+| `-DANYPS5_NODE=<path>`                 | Node.js 26 or newer that runs the memory64 Emscripten tests `guest_long_double` and `emscripten_module_unwind`; `node` by default, Emscripten builds only. |
+| `-DANYPS5_VIDEO_OUT_TEST_DRIVER=<driver>` | SDL video driver for the VideoOut flip tests; `windows` on Windows and `offscreen` elsewhere. |
 | `-DANYPS5_AGC_EXECUTION_TESTS=<names>` | Semicolon-separated file names, without `.cpp`, of the `core/libs/prx/libSceAgcDriver/tests/execution` tests to build. Every other execution test is built from a stub that prints `skipped, this build leaves the test out with ANYPS5_AGC_EXECUTION_TESTS` and exits 77. A name with no source there fails the configure. Empty by default, which builds them all. |
 
 SDL and FreeType settings forced by the root `CMakeLists.txt` cannot be overridden with `-D`.
