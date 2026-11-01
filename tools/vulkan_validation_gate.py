@@ -102,6 +102,8 @@ def artifact_hashes(build, tests, runtime):
 def check_timeouts(tests, limit):
     for test in tests:
         for prop in test.get("properties", []):
+            if prop["name"] == "TIMEOUT_SIGNAL_NAME" and prop["value"]:
+                raise GateError(f"{test['name']}: TIMEOUT_SIGNAL_NAME can extend the requested test timeout")
             if prop["name"] == "TIMEOUT_AFTER_MATCH":
                 raise GateError(f"{test['name']}: TIMEOUT_AFTER_MATCH can restart the requested test timeout")
             if prop["name"] == "TIMEOUT":
