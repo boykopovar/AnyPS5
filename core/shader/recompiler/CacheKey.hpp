@@ -235,6 +235,11 @@ private:
             append(key, merge.target);
             append(key, merge.mask);
             append(key, merge.samples);
+            append(key, merge.packing);
+            append(key, merge.blendControl);
+            append(key, merge.layered);
+            append(key, merge.firstSlice);
+            append(key, merge.lastSlice);
             append(key, merge.depthStencilWrites);
             append(key, merge.depthStencilTests);
             if (!merge.blend.enabled) continue;

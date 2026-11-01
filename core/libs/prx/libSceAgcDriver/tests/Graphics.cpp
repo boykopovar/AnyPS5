@@ -31,6 +31,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "ImageTableAbi.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
+#include <spirv/unified1/GLSL.std.450.h>
 #include <limits>
 #include <spirv/unified1/spirv.hpp>
 #ifdef _WIN32
@@ -10663,15 +10664,30 @@ void unorm10_11_11TargetTests() {
     for (const auto replace : {0x40010001u, 0x60050001u}) {
         changed.context[0x1e0] = replace;
         const auto replaced = AgcDriver::Graphics::DecodeState(changed);
-        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Unorm10_11_11, "a blend that writes the source color into a 10_11_11 unorm target was refused or kept blending");
+        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Unorm10_11_11 && replaced.color.mergeBlend == 0u && replaced.color.partialWriteMask == 0u && replaced.blends[0].colorWriteMask == state.blends[0].colorWriteMask, "a blend that writes the source color into a 10_11_11 unorm target was refused or kept blending");
     }
-    changed.context[0x1e0] = 0x40010101u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into a 10_11_11 unorm color target");
-    changed.context[0x1e0] = 0x40010005u;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into a 10_11_11 unorm color target");
+    changed.context[0x1e0] = 0x40050504u;
+    for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = 0;
+    const auto blended = AgcDriver::Graphics::DecodeState(changed);
+    Require(blended.color.mergeBlend == 0x40000504u && blended.color.partialWriteMask == 0xffffffffu && !blended.blends[0].blendEnable && blended.blends[0].colorWriteMask == 0u, "a source-over blend into a 10_11_11 unorm target did not decode as a blending merge of the whole word");
+    const auto blendedMerges = AgcDriver::Graphics::ExportTargetMerges(blended);
+    Require(blendedMerges.size() == 1u, "the 10_11_11 unorm blend did not produce one target merge");
+    const auto& blendedMerge = blendedMerges.front();
+    Require(blendedMerge.mask == 0xffffffffu && blendedMerge.packing == ColorExportPacking::Unorm10_11_11 && blendedMerge.blendControl == 0x40000504u, "the 10_11_11 unorm blend did not reach the pixel shader's target merge");
+    for (const auto control : {0x40010101u, 0x40010005u}) {
+        auto acceptedQueue = queue;
+        for (std::uint32_t i = 0; i < 4; ++i) acceptedQueue.context[0x105 + i] = 0;
+        acceptedQueue.context[0x1e0] = control;
+        const auto accepted = AgcDriver::Graphics::DecodeState(acceptedQueue);
+        const auto equation = control == 0x40010101u ? 0x40000101u : 0x40000005u;
+        const auto merges = AgcDriver::Graphics::ExportTargetMerges(accepted);
+        Require(accepted.color.mergeBlend == equation && accepted.color.partialWriteMask == 0xffffffffu && !accepted.blends[0].blendEnable && accepted.blends[0].colorWriteMask == 0u && merges.size() == 1u && merges[0].packing == ColorExportPacking::Unorm10_11_11 && merges[0].blendControl == equation && merges[0].mask == 0xffffffffu, "an additive or inverse-source-alpha 10_11_11 unorm blend lost its exact packed merge equation");
+    }
     changed = queue;
     changed.context[0x8e] = 3;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "partial writes of a 10_11_11 unorm color target");
+    const auto partial = AgcDriver::Graphics::DecodeState(changed);
+    Require(partial.color.partialWriteMask == 0x003fffffu && partial.color.mergeBlend == 0u && partial.blends[0].colorWriteMask == 0u, "a red and green write of a 10_11_11 unorm target did not merge into the word's low 22 bits");
+    Require(AgcDriver::Graphics::PackedWriteMask(ColorExportPacking::Unorm10_11_11, 0xe4u, 4u) == 0xffc00000u, "blue of a 10_11_11 unorm target is not the word's top 10 bits");
     changed.context[0x8e] = 7;
     Require(AgcDriver::Graphics::DecodeState(changed).color.packing == ColorExportPacking::Unorm10_11_11, "an RGB write of a 10_11_11 unorm target was refused");
     for (const auto format : {5u, 6u}) {
@@ -11093,15 +11109,88 @@ void float11_11_10TargetTests() {
     for (const auto replace : {0x40010001u, 0x60010001u, 0x60050001u}) {
         changed.context[0x1e0] = replace;
         const auto replaced = AgcDriver::Graphics::DecodeState(changed);
-        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Float11_11_10 && replaced.color.componentMapping == 0xc6u, "a blend that writes the source color into an 11_11_10 float target was refused or kept blending");
+        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Float11_11_10 && replaced.color.componentMapping == 0xc6u && replaced.color.mergeBlend == 0u && replaced.color.partialWriteMask == 0u && replaced.blends[0].colorWriteMask == state.blends[0].colorWriteMask, "a blend that writes the source color into an 11_11_10 float target was refused or kept blending");
     }
-    for (const auto blend : {0x60010101u, 0x40010005u}) {
-        changed.context[0x1e0] = blend;
-        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target");
+    changed.context[0x1e0] = 0x60010101u;
+    const auto additive = AgcDriver::Graphics::DecodeState(changed);
+    Require(additive.color.mergeBlend == 0x40000101u && additive.color.partialWriteMask == 0xffffffffu && !additive.blends[0].blendEnable && additive.blends[0].colorWriteMask == 0u, "an additive blend into an 11_11_10 float target did not decode as a blending merge of the whole word");
+    const auto onlyMerge = [](const AgcDriver::Graphics::State& state) {
+        const auto merges = AgcDriver::Graphics::ExportTargetMerges(state);
+        Require(merges.size() == 1u, "an 11_11_10 float blend did not merge into exactly one color target");
+        return merges.front();
+    };
+    const auto additiveMerge = onlyMerge(additive);
+    Require(additiveMerge.mask == 0xffffffffu && additiveMerge.packing == ColorExportPacking::Float11_11_10 && additiveMerge.blendControl == 0x40000101u, "the additive 11_11_10 float blend did not reach the pixel shader's target merge");
+    AgcDriver::Graphics::GraphicsPipelineRecipe mergeRecipe;
+    mergeRecipe.state = AgcDriver::Graphics::CanonicalPipelineState(additive);
+    const auto mergeBytes = AgcDriver::Graphics::EncodeGraphicsPipelineRecipe(mergeRecipe);
+    AgcDriver::Graphics::GraphicsPipelineRecipe mergeDecoded;
+    Require(AgcDriver::Graphics::DecodeGraphicsPipelineRecipe(mergeBytes, mergeDecoded), "the packed blend pipeline recipe did not decode");
+    Require(mergeDecoded.state.colors.size() == 1u && mergeDecoded.state.colors[0].partialWriteMask == 0xffffffffu && mergeDecoded.state.colors[0].mergeBlend == 0x40000101u, "the pipeline recipe lost the wide packed mask or blend equation");
+    Require(AgcDriver::Graphics::EncodeGraphicsPipelineRecipe(mergeDecoded) == mergeBytes, "the packed blend pipeline recipe did not round trip exactly");
+    auto narrowRecipe = mergeRecipe;
+    narrowRecipe.state.colors[0].partialWriteMask = 0xffffu;
+    auto otherBlendRecipe = mergeRecipe;
+    otherBlendRecipe.state.colors[0].mergeBlend = 0x40000005u;
+    Require(AgcDriver::Graphics::EncodeGraphicsPipelineRecipe(narrowRecipe) != mergeBytes && AgcDriver::Graphics::EncodeGraphicsPipelineRecipe(otherBlendRecipe) != mergeBytes, "the pipeline recipe did not distinguish the upper packed mask bits and blend equation");
+    auto factorQueue = changed;
+    factorQueue.context[0x1e0] = 0x40010005u;
+    const auto factor = AgcDriver::Graphics::DecodeState(factorQueue);
+    const auto factorMerge = onlyMerge(factor);
+    Require(factor.color.mergeBlend == 0x40000005u && factor.color.partialWriteMask == 0xffffffffu && !factor.blends[0].blendEnable && factor.blends[0].colorWriteMask == 0u && factorMerge.packing == ColorExportPacking::Float11_11_10 && factorMerge.blendControl == 0x40000005u && factorMerge.mask == 0xffffffffu, "an inverse-source-alpha float blend did not keep its packed merge equation and whole-word mask");
+    auto cube = additive;
+    auto& face = cube.colors.at(0);
+    face.arrayAddress = face.surfaceAddress;
+    face.surfaceExtent = {128u, 128u};
+    face.mipCount = 8u;
+    face.mip = 3u;
+    face.arrayLastSlice = 5u;
+    face.arraySlice = 2u;
+    face.layers = 4u;
+    cube.color = face;
+    const auto cubeMerge = onlyMerge(cube);
+    const auto cubeSurface = AgcDriver::Graphics::DecodeTextureResource(cubeMerge.descriptor);
+    Require(cubeMerge.layered && cubeMerge.firstSlice == 2u && cubeMerge.lastSlice == 5u && cubeSurface.dimension == AgcDriver::Graphics::TextureDimension::k2DArray && cubeSurface.baseAddress == face.arrayAddress && cubeSurface.width == 128u && cubeSurface.height == 128u && cubeSurface.mipCount == 8u && cubeSurface.baseLevel == 3u && cubeSurface.lastLevel == 3u && cubeSurface.baseArray == 0u && cubeSurface.depthOrLastArray == 5u && cubeSurface.format == AgcDriver::Graphics::SurfaceForTarget(face).format, "the merge of mip 3 of slices 2..5 of a mipmapped 11_11_10 float array does not address its whole array at that mip");
+    Require(!additiveMerge.layered && additiveMerge.firstSlice == 0u && additiveMerge.lastSlice == 0u, "the merge of a one-layer 11_11_10 float target was marked layered");
+    {
+        constexpr std::array<std::uint32_t, 3> mergeCode{0xf800180fu, 0x07060504u, 0xbf810000u};
+        auto merging = packedExportRequest(changed, cube, mergeCode);
+        merging.context.pixel->targetMerges = {cubeMerge};
+        const std::array<std::uint32_t, 4> capabilities{spv::CapabilityShader, spv::CapabilityFragmentShaderPixelInterlockEXT, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityGeometry};
+        merging.target.supportedCapabilities = capabilities;
+        const ShaderRecompiler::RequestSerializer serializer;
+        Require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerges == std::vector{cubeMerge}, "the layered 11_11_10 float target merge was lost in serialization");
+        auto flat = merging;
+        flat.context.pixel->targetMerges = {additiveMerge};
+        auto shifted = merging;
+        shifted.context.pixel->targetMerges.front().firstSlice = 0u;
+        std::vector<std::uint64_t> layeredKey, flatKey, shiftedKey;
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(merging, layeredKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(flat, flatKey);
+        ShaderRecompiler::RecompileCacheKey::BuildInterface(shifted, shiftedKey);
+        Require(layeredKey != flatKey && layeredKey != shiftedKey, "the static shader key does not separate a layered merge from a one-layer merge or from another first slice");
+        const auto words = ShaderRecompiler::Recompile(merging).spirv.Copy();
+        bool arrayed = false, layer = false, geometry = false, clamped = false;
+        for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
+            const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
+            if (op == spv::OpTypeImage && words[at + 3] == spv::Dim2D && words[at + 5] == 1u && words[at + 7] == 2u) arrayed = true;
+            if (op == spv::OpDecorate && words[at + 2] == spv::DecorationBuiltIn && words[at + 3] == spv::BuiltInLayer) layer = true;
+            if (op == spv::OpCapability && words[at + 1] == spv::CapabilityGeometry) geometry = true;
+            if (op == spv::OpExtInst && words[at + 4] == GLSLstd450UMin) clamped = true;
+        }
+        Require(arrayed && layer && geometry && clamped && interlockShape(words) == "capability extension ordered begin end ", "a layered 11_11_10 float merge module does not address an arrayed storage image by gl_Layer, clamped to the view's last slice, inside a pixel interlock");
     }
+    changed.context[0x1e0] = 0x65040504u;
+    Require(AgcDriver::Graphics::DecodeState(changed).color.mergeBlend == 0x40000504u, "a source-over blend into an 11_11_10 float target did not keep its color equation");
+    changed.context[0x1e0] = 0x40000001u;
+    const auto replace = AgcDriver::Graphics::DecodeState(changed);
+    Require(replace.color.mergeBlend == 0u && replace.color.partialWriteMask == 0u && !replace.blends[0].blendEnable && replace.blends[0].colorWriteMask == state.blends[0].colorWriteMask, "a ONE/ZERO/ADD float blend did not remain an ordinary whole-target write");
+    changed.context[0x1e0] = 0x400001a1u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported blend operation 5");
     changed = queue;
     changed.context[0x8e] = 6;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "partial writes of an 11_11_10 float color target");
+    const auto partial = AgcDriver::Graphics::DecodeState(changed);
+    Require(partial.color.partialWriteMask == 0x001fffffu && partial.color.mergeBlend == 0u, "a green and blue write of an 11_11_10 float target did not merge into the word's low 21 bits");
     changed.context[0x8e] = 7;
     Require(AgcDriver::Graphics::DecodeState(changed).color.packing == ColorExportPacking::Float11_11_10, "an RGB write of an 11_11_10 float target was refused");
     for (const auto format : {5u, 6u}) {
