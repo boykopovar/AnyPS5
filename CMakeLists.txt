@@ -293,6 +293,9 @@ if(BUILD_TESTING)
         add_test(NAME check_skips_ctest COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips_ctest.py)
         set_tests_properties(check_skips_ctest PROPERTIES TIMEOUT 30)
+        add_test(NAME pr_intake_reopen COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_intake_workflow.py)
+        set_tests_properties(pr_intake_reopen PROPERTIES TIMEOUT 60)
         add_test(NAME tools_pe_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_pe_symbol_inventory.py)
         set_tests_properties(tools_pe_inventory PROPERTIES TIMEOUT 20)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
