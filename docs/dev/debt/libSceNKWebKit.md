@@ -12,6 +12,7 @@
 - [Dictionary key order](../../../core/libs/prx/libSceNKWebKit/src/Dictionary.cpp) (libSceNKWebKit) - `WKDictionaryCopyKeys` returns keys sorted by UTF-16 code unit, not in the `WTF::HashMap` iteration order of [WKDictionary.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKDictionary.cpp).
 - [Out-of-line colors](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColor.cpp) (libSceNKWebKit) - `WebCore::Color` operations on an out-of-line value (extended color spaces in [Color.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/Color.h)) throw; only inline 8-bit sRGBA values are handled.
 - [WTF host services](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `fastMalloc`, `bmalloc` and Gigacage allocations come from the host allocator, and `numberOfProcessorCores`, `ramSize`, the clocks and random values come from the host, not the console; they throw when the host cannot answer. `WTFCrash` and failed assertions abort the process.
+- [WTF::BitVector](../../../core/libs/prx/libSceNKWebKit/src/WtfBitVector.cpp) (libSceNKWebKit) - `mergeSlow` ORs only the words both out-of-line vectors hold, where [BitVector.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/BitVector.cpp#L126-L142) reads past the other vector's words when this one is longer. `isEmptySlow`, `bitCountSlow` and `hashSlowCase` on an inline, empty or deleted vector, and a null vector anywhere, throw where WebKit reads through an invalid pointer; `equalsSlowCase` on two inline vectors compares their words. `dump` still throws, as `WTF::PrintStream` is not implemented. The one-word layout follows [BitVector.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/BitVector.h#L455-L509) for 64-bit pointers and is not measured on a console.
 
 ### Known export names; ABI prototypes unverified
 
@@ -25,7 +26,7 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7573 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7563 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -2020,13 +2021,7 @@
 | `_ZN3WTF8WordLock10unlockSlowEv` | `MffI7wLS6TM` |
 | `_ZN3WTF8WordLock8lockSlowEv` | `Acl7E8U+V44` |
 | `_ZN3WTF8dataFileEv` | `iZD+UvpXBfg` |
-| `_ZN3WTF9BitVector11excludeSlowERKS0_` | `fVOcX2+6qiI` |
-| `_ZN3WTF9BitVector13OutOfLineBits6createEm` | `x9Et46dq93c` |
 | `_ZN3WTF9BitVector13OutOfLineBits7destroyEPS1_` | `ptecTDe+jIU` |
-| `_ZN3WTF9BitVector6resizeEm` | `wn3UsfmQPbI` |
-| `_ZN3WTF9BitVector7setSlowERKS0_` | `MCCQhElIfYo` |
-| `_ZN3WTF9BitVector8clearAllEv` | `vhJR0H0Mb9Q` |
-| `_ZN3WTF9BitVector9mergeSlowERKS0_` | `rrhx6wXU41g` |
 | `_ZN3WTF9MediaTime11invalidTimeEv` | `NqV8zMoVdAs` |
 | `_ZN3WTF9MediaTime12setTimeScaleEjNS0_13RoundingFlagsE` | `HW0dx8g3GnU` |
 | `_ZN3WTF9MediaTime14indefiniteTimeEv` | `nsc5rBVPrJ8` |
@@ -6191,10 +6186,6 @@
 | `_ZNK3WTF8JSONImpl9ArrayBase5beginEv` | `vDSseQ4HPRc` |
 | `_ZNK3WTF8JSONImpl9ArrayBase9writeJSONERNS_13StringBuilderE` | `T8fOjmwNgOI` |
 | `_ZNK3WTF8WallTime4dumpERNS_11PrintStreamE` | `BXpm0S4olVo` |
-| `_ZNK3WTF9BitVector11isEmptySlowEv` | `aPI3JqrIPEw` |
-| `_ZNK3WTF9BitVector12bitCountSlowEv` | `IzXg6-zWJ5E` |
-| `_ZNK3WTF9BitVector12hashSlowCaseEv` | `zB-63450NPk` |
-| `_ZNK3WTF9BitVector14equalsSlowCaseERKS0_` | `CaW5gixDGFw` |
 | `_ZNK3WTF9BitVector4dumpERNS_11PrintStreamE` | `o2Z-He35x8w` |
 | `_ZNK3WTF9MediaTime11toTimeScaleEjNS0_13RoundingFlagsE` | `lnhZ1Sjisfo` |
 | `_ZNK3WTF9MediaTime12isIndefiniteEv` | `YPSbsFsVzUs` |
