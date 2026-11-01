@@ -106,6 +106,32 @@ static void VerifyPeriodicTimer() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyHRTimerDelete() {
+    using namespace std::chrono_literals;
+    int udata = 0;
+    KernelEvent events[2]{};
+    int count = 0;
+    const KernelUseconds poll = 0;
+    const KernelTimespec far{3600, 0};
+    const KernelTimespec soon{0, 1000000};
+    Require(sceKernelDeleteHRTimerEvent(0, 12) == SCE_KERNEL_ERROR_EBADF);
+
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "hrtimer delete") == SCE_OK);
+    Require(sceKernelDeleteHRTimerEvent(eq, 12) == SCE_KERNEL_ERROR_ENOENT);
+    Require(sceKernelAddHRTimerEvent(eq, 12, &far, &udata) == SCE_OK);
+    Require(sceKernelAddTimerEvent(eq, 12, 3000000000u, &udata) == SCE_OK);
+    Require(sceKernelDeleteHRTimerEvent(eq, 12) == SCE_OK);
+    Require(sceKernelDeleteHRTimerEvent(eq, 12) == SCE_KERNEL_ERROR_ENOENT);
+    Require(sceKernelDeleteTimerEvent(eq, 12) == SCE_OK);
+
+    Require(sceKernelAddHRTimerEvent(eq, 13, &soon, &udata) == SCE_OK);
+    SleepAtLeast(5ms);
+    Require(sceKernelDeleteHRTimerEvent(eq, 13) == SCE_OK);
+    Require(sceKernelWaitEqueue(eq, events, 2, &count, &poll) == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 static void VerifyUserEventReportedOncePerWait() {
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "user") == SCE_OK);
@@ -273,6 +299,7 @@ static void VerifyReportedEventsMoveBehindWaitingOnes() {
 
 int main() {
     VerifyPeriodicTimer();
+    VerifyHRTimerDelete();
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
     VerifyEdgeUserEventReportedOnce();
