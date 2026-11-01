@@ -90,7 +90,7 @@ def blank(match):
 
 
 def code(text):
-    return CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", ""))
+    return re.sub(r"\n(?:[ \t]*\n)+", "\n", CPP_TOKEN.sub(blank, text.replace("\\\n", "").replace("\\\r\n", "")))
 
 def body_end(text, start):
     depth = 0
