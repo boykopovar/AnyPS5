@@ -89,7 +89,7 @@ cmd /c '.\app.exe > run.log 2>&1'
 - Use the title's default settings, and say so. A changed graphics mode makes a number incomparable with everyone else's.
 - Measure the same spot every time: load a save, wait for the scene to settle, then measure a fixed window with no input.
 - Compare builds on the same machine, alternating them (A, B, A, B), at least two runs each. Throw away a run that was disturbed (another program, a sleeping display) and say so.
-- `APS5_TRACE_SUMMARY_EVERY=10` writes one line per 10 s to `aps5-summary.jsonl` without slowing the title; `tools/trace_digest.py` turns it into a table, and `tools/performance_compare.py` compares two captures ([BUILD](BUILD.md#performance-trace)). Pull requests labelled `perf` need a capture of `main` and one with the change.
+- `APS5_TRACE_SUMMARY_EVERY=10` writes one line per 10 s to `aps5-summary.jsonl` without slowing the title; `tools/trace_digest.py` turns it into a table, and `tools/performance_compare.py` compares two captures ([BUILD](BUILD.md#performance-trace)). Pull requests labelled `perf` need a capture of `main` and one with the change, except `perf(tools)`, `perf(ci)` and `perf(build)`.
 - `APS5_DUMP_FRAMES=<n>` with `APS5_DUMP_FRAMES_EVERY=<k>` saves frames as `frame_<index>.bmp` to check what was on screen. A second process of the same title writes to the same names and overwrites the first one's frames. While 64 MiB of frames wait to be written, the presenter waits for the
   writer, so a slow disk or `APS5_DUMP_SCALE=1` slows the title down instead of stopping it.
 
