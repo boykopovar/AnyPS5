@@ -359,6 +359,13 @@ int main() {
             Require(reader.TranslateVirtualAddress(0x101f) == 0x25f);
             RejectAddress(Fixture(), 0x1020);
         }},
+        {"DT_RELASZ not a multiple of Elf64_Rela entry size", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 4);
+            Write<std::uint64_t>(bytes, 224, 25);
+            Write<std::uint32_t>(bytes, 192, 21);
+            RejectSections(std::move(bytes));
+        }},
     };
     std::size_t failures = 0;
     for (const auto& [name, test] : cases) {
