@@ -126,7 +126,23 @@ int main() {
     Require(scePthreadMutexattrSetprotocol(&unset, 0) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrDestroy(&unset) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSettype(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetprotocol(nullptr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexattrSetprotocol(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+
+    Require(scePthreadMutexInit(nullptr, nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexInit(nullptr, &unset, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexInit(nullptr, &attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(Throws([] { scePthreadMutexLock(nullptr); }));
+    Require(Throws([] { scePthreadMutexTrylock(nullptr); }));
+    Require(Throws([] { scePthreadMutexTimedlock(nullptr, 0); }));
+    Require(Throws([] { scePthreadMutexUnlock(nullptr); }));
+    Require(Throws([] { scePthreadMutexDestroy(nullptr); }));
+    Require(Throws([] { scePthreadMutexSetspinloops(nullptr, 0); }));
+    Require(Throws([] { scePthreadMutexSetyieldloops(nullptr, 0); }));
+    int testCount = 0;
+    Require(Throws([&] { scePthreadMutexGetspinloops(nullptr, &testCount); }));
+    Require(Throws([&] { scePthreadMutexGetyieldloops(nullptr, &testCount); }));
 
     PthreadMutex mutex = nullptr;
     Require(scePthreadMutexInit(&mutex, &unset, "unset") == SCE_OK);
