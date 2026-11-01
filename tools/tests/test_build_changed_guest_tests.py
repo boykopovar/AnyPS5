@@ -174,6 +174,21 @@ class Main(unittest.TestCase):
         self.assertEqual(selections, ["0,0,0,1,2,3"])
         self.assertIn("--no-tests=error", run_cmd)
 
+    def test_output_log_reaches_the_ctest_run(self):
+        build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_text("core/libs/tests/Guest.cpp", encoding="utf-8")
+        calls = []
+        def execute(cmd, **_):
+            calls.append(cmd)
+            return run_result(self.listing() if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            code = build_changed_guest_tests.main([str(build), str(changed), "--output-log", "ctest.log"])
+        self.assertEqual(code, 0)
+        run_cmd = [cmd for cmd in calls if cmd[0] == "ctest" and "-I" in cmd]
+        self.assertEqual(len(run_cmd), 1)
+        self.assertEqual(run_cmd[0][run_cmd[0].index("--output-log") + 1], "ctest.log")
+
     def test_large_selection_fits_windows_commands_and_preserves_every_test(self):
         selected = ["guest_" + "long_name_" * 8 + str(index) for index in range(600)]
         tests = [{"name": "unrelated", "command": ["other.exe"]}]

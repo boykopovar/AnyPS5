@@ -108,7 +108,7 @@ def ctest_resolutions(build_dir, targets_by_name):
     return resolutions
 
 
-def run(build_dir, selected, targets_by_name):
+def run(build_dir, selected, targets_by_name, output_log=None):
     subprocess.run(["cmake", "--build", str(build_dir), "--parallel", "3", "--target", "libs"], check=True)
     if selected:
         for batch in chunks(selected):
@@ -121,7 +121,8 @@ def run(build_dir, selected, targets_by_name):
             selection = Path(directory) / "selected-tests.txt"
             selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()), encoding="ascii")
             subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
-                            "--parallel", "4", "--no-tests=error", "-I", str(selection)], check=True)
+                            "--parallel", "4", "--no-tests=error", "-I", str(selection),
+                            *(["--output-log", str(output_log)] if output_log else [])], check=True)
     else:
         print("No guest core/libs test sources changed; the libs build still ran")
 
@@ -130,6 +131,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="build and run changed core/libs tests that link guest libc")
     parser.add_argument("build_dir", type=Path)
     parser.add_argument("changed_paths", nargs="?", type=Path)
+    parser.add_argument("--output-log", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.changed_paths is not None:
@@ -150,7 +152,7 @@ def main(argv=None):
         for name in selected:
             targets_by_name.update(target_artifact_names(by_name[name]))
             targets_by_name[name.casefold()] = name
-        run(args.build_dir, selected, targets_by_name)
+        run(args.build_dir, selected, targets_by_name, args.output_log)
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as error:
         print(f"{parser.prog}: {error}", file=sys.stderr)
         return 1
