@@ -363,7 +363,7 @@ int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* gra
     return 0;
 }
 
-int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height) {
+int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, std::uint32_t format, std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1, std::uint32_t option2, std::uint32_t dimension2, void** output) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
