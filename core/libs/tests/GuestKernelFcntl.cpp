@@ -110,7 +110,7 @@ static void SocketsKeepTheirPath() {
     Require(sceKernelFcntl(socket, SetFlags, 0) == 0);
     Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
     GuestLock lock{};
-    Require(sceKernelFcntl(socket, GetLock, &lock) == SceEinval);
+    Require(sceKernelFcntl(socket, GetLock, &lock) == SceEbadf);
     Require(sceKernelFcntl(socket, GetDescriptorFlags) == 0);
     Require(sceKernelFcntl(socket, SetDescriptorFlags, 1) == 0);
     Require(sceKernelFcntl(socket, GetDescriptorFlags) == 1);
@@ -194,6 +194,17 @@ static void SocketsKeepTheirPath() {
     Require(sceKernelFcntl(socket, GetFlags) == ReadWrite);
     Require(sceKernelFcntl(socket, 5) == SceEinval);
     Require(sceKernelFcntl(socket + 4096, GetFlags) == SceEbadf);
+    GuestLock socketLock{0, 0, 0, WriteLock, FromStart, 0};
+    RequireFailure(fcntl_nid_postfix(socket, SetLock, &socketLock), GuestEbadf);
+    RequireFailure(fcntl_nid_postfix(socket, GetLock, &socketLock), GuestEbadf);
+    RequireFailure(fcntl_nid_postfix(socket, SetLockWait, &socketLock), GuestEbadf);
+    Require(sceKernelFcntl(socket, SetLock, &socketLock) == SceEbadf);
+    Require(sceKernelFcntl(socket, GetLock, &socketLock) == SceEbadf);
+    Require(sceKernelFcntl(socket, SetLockWait, &socketLock) == SceEbadf);
+    RequireFailure(fcntl_nid_postfix(socket, ReadAhead, 1), GuestEbadf);
+    RequireFailure(fcntl_nid_postfix(socket, DarwinReadAhead, 1), GuestEbadf);
+    Require(sceKernelFcntl(socket, ReadAhead, 1) == SceEbadf);
+    Require(sceKernelFcntl(socket, DarwinReadAhead, 1) == SceEbadf);
     int queued = -1;
     Require(ioctl_nid_postfix(socket, ReadableRequest, &queued) == 0 && queued == 0);
     RequireMalformedRequestsFail(socket);
