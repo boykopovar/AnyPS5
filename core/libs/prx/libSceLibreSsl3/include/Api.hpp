@@ -196,7 +196,7 @@ int APS5_VABI X509_set_version_nid_postfix();
 int APS5_VABI DES_set_key_unchecked_nid_postfix();
 int APS5_VABI EVP_PKEY_CTX_new_id_nid_postfix();
 int APS5_VABI RSAPublicKey_dup_nid_postfix();
-int APS5_VABI AES_unwrap_key_nid_postfix();
+int APS5_VABI AES_unwrap_key_nid_postfix(AesKey* key, const unsigned char* iv, unsigned char* out, const unsigned char* in, unsigned int length);
 int APS5_VABI ASN1_OCTET_STRING_cmp_nid_postfix();
 int APS5_VABI X509_print_nid_postfix();
 int APS5_VABI X509_CRL_get0_by_cert_nid_postfix();
