@@ -379,6 +379,92 @@ void testGateSettled(const std::filesystem::path& directory) {
     check(delta == 0, "the replay restored a delta read in flight although the submission it waits for never completed");
 }
 
+void testDepthAfterSubmits(const std::filesystem::path& directory) {
+    auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
+    auto* label = reinterpret_cast<std::uint32_t*>(bytes);
+    auto* commands = reinterpret_cast<std::uint32_t*>(bytes + 4096);
+    *label = 0;
+    const std::array<std::uint32_t, 7> wait{0xc0053c00u, 0x13u, static_cast<std::uint32_t>(address(label)), static_cast<std::uint32_t>(address(label) >> 32u), 1u, 0xffffffffu, 4u};
+    std::copy(wait.begin(), wait.end(), commands);
+    const std::uint32_t ready = 1;
+    FrameCaptureWriter writer(directory);
+    writer.WriteDelta(1, 0, address(label), std::as_bytes(std::span(&ready, 1)));
+    writer.Finish("{}");
+    const FrameCaptureReader reader(directory);
+    Options options;
+    options.release = false;
+    options.paceTimeout = std::chrono::milliseconds(300);
+    options.busyTimeout = std::chrono::milliseconds(5000);
+    Replay replay{options, reader};
+    replay.recording = true;
+    collectGroups(replay);
+    auto output = std::make_shared<ReplayOutput>(replay.frames);
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    FrameCall parked;
+    parked.kind = FrameCallKind::Submit;
+    parked.ordinal = 1;
+    parked.thread = 1;
+    parked.address = address(commands);
+    parked.size = wait.size();
+    auto reservation = reservationCall(AgcDriver::EopFlipTokenBase);
+    reservation.ordinal = 2;
+    reservation.thread = 1;
+    reservation.accepted = 1;
+    auto delta = memoryCall(1, 1);
+    delta.ordinal = 3;
+    const std::array calls{parked, reservation, delta};
+    replay.runWindow(calls);
+    AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
+    check(*label == ready && replay.unfinished == 0, "the parked submission did not complete once the delta restored its label");
+    check(replay.depthSamples.load() == 1 && replay.depthMax.load() == 0, ("the replay sampled the in-flight depth at an EOP flip reservation, while submit_depths counts only submissions: " + std::to_string(replay.depthSamples.load()) + " samples, in_flight_max " + std::to_string(replay.depthMax.load())).c_str());
+}
+
+void testDepthOfTimedPasses(const std::filesystem::path& directory) {
+    auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
+    auto* label = reinterpret_cast<std::uint32_t*>(bytes);
+    auto* commands = reinterpret_cast<std::uint32_t*>(bytes + 4096);
+    auto* nop = reinterpret_cast<std::uint32_t*>(bytes + 8192);
+    *label = 0;
+    const std::array<std::uint32_t, 7> wait{0xc0053c00u, 0x13u, static_cast<std::uint32_t>(address(label)), static_cast<std::uint32_t>(address(label) >> 32u), 1u, 0xffffffffu, 4u};
+    std::copy(wait.begin(), wait.end(), commands);
+    const std::array<std::uint32_t, 2> empty{0xc0001000u, 0u};
+    std::copy(empty.begin(), empty.end(), nop);
+    const std::uint32_t ready = 1;
+    FrameCaptureWriter writer(directory);
+    writer.WriteDelta(1, 0, address(label), std::as_bytes(std::span(&ready, 1)));
+    writer.Finish("{}");
+    const FrameCaptureReader reader(directory);
+    Options options;
+    options.release = false;
+    options.paceTimeout = std::chrono::milliseconds(300);
+    options.busyTimeout = std::chrono::milliseconds(5000);
+    Replay replay{options, reader};
+    collectGroups(replay);
+    FrameCall prologue;
+    prologue.kind = FrameCallKind::Submit;
+    prologue.ordinal = 1;
+    prologue.thread = 1;
+    prologue.address = address(commands);
+    prologue.size = wait.size();
+    replay.execute(prologue);
+    auto submit = prologue;
+    submit.ordinal = 2;
+    submit.address = address(nop);
+    submit.size = empty.size();
+    submit.accepted = 1;
+    auto delta = memoryCall(1, 1);
+    delta.ordinal = 3;
+    const std::array window{submit, delta};
+    replay.recording = true;
+    replay.runWindow(window);
+    check(*label == ready && replay.unfinished == 0 && replay.depthSamples.load() == 1 && replay.depthMax.load() == 1, "the first pass did not sample its submission at depth 1 behind the prologue's submission parked on a label");
+    AgcDriverWaitIdle_nid_postfix();
+    replay.pass = 1;
+    replay.runWindow(window);
+    check(replay.unfinished == 0, "the second pass did not complete");
+    check(replay.depthSamples.load() == 1 && replay.depthMax.load() == 0, ("the in-flight depth of the second pass kept the first pass's sample, which warmed the caches and which frame_ms leaves out: " + std::to_string(replay.depthSamples.load()) + " samples, in_flight_max " + std::to_string(replay.depthMax.load())).c_str());
+}
+
 void testGateFailure(const std::filesystem::path& directory) {
     auto* bytes = allocate(FrameCaptureWriter::BlockBytes);
     auto* label = reinterpret_cast<std::uint32_t*>(bytes);
@@ -842,6 +928,8 @@ int main(int argc, char** argv) {
         else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "gate_settled") testGateSettled(directory);
+        else if (mode == "depth_submits") testDepthAfterSubmits(directory);
+        else if (mode == "depth_passes") testDepthOfTimedPasses(directory);
         else if (mode == "gate_failure") testGateFailure(directory);
         else if (mode == "unverified") testUnverifiedDeltas(directory);
         else if (mode == "environment") testColdPipelines();

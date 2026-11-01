@@ -138,6 +138,8 @@ std::uint64_t contentHash(std::span<const std::byte> bytes) {
     return hash == 0 ? 1 : hash;
 }
 
+constexpr std::array<const char*, 12> HoldReasonNames{"", "unwatched", "late_or_host", "threads", "parked", "driver_page", "label", "snapshot", "storage", "shadow", "queue0", "queued"};
+
 }
 
 FrameRecorder* FrameRecorder::Active() {
@@ -169,35 +171,72 @@ void FrameRecorder::noteDriverStore(std::uint64_t begin, std::uint64_t end, std:
     if (end <= begin) return;
     std::lock_guard lock(storeMutex);
     if (serial == 0) ++unattributedStores;
+    ++driverStores;
     for (auto page = begin & ~std::uint64_t{HostPageBytes - 1}; page < end; page += HostPageBytes) {
-        driverPages.insert(page);
+        driverPages[page] = driverStores;
         if (storeHazard.group != 0 || serial == GuestMemory::TitleCallStoreSerial) continue;
         const auto found = storeOwners.find(page);
         if (found != storeOwners.end() && (serial == 0 || serial <= found->second.accepted)) storeHazard = {found->second.group, page, serial};
     }
 }
 
-std::size_t FrameRecorder::holdReason(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks) {
+std::uint32_t FrameRecorder::holdMask(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks) {
+    std::uint32_t mask = 0;
     for (const auto& wait : DriverDetail::Driver::Get().AwaitedWaits()) {
-        if (wait.address != 0) return 4;
+        if (wait.address != 0) mask |= 1u << 4;
     }
     {
         std::lock_guard lock(storeMutex);
         for (const auto& [begin, end] : blocks) {
-            for (auto page = begin & ~std::uint64_t{HostPageBytes - 1}; page < end; page += HostPageBytes) {
-                if (driverPages.contains(page)) return 5;
+            for (auto page = begin & ~std::uint64_t{HostPageBytes - 1}; page < end && (mask & (1u << 5)) == 0; page += HostPageBytes) {
+                if (driverPages.contains(page)) mask |= 1u << 5;
             }
         }
     }
     auto& driver = DriverDetail::Driver::Get();
     for (const auto& [begin, end] : blocks) {
-        if (driver.UnfinishedLabelOverlaps(begin, end)) return 6;
-        if (Graphics::Recorder::SnapshotWriteOverlaps(begin, static_cast<std::size_t>(end - begin))) return 7;
+        if ((mask & (1u << 6)) == 0 && driver.UnfinishedLabelOverlaps(begin, end)) mask |= 1u << 6;
+        if ((mask & (1u << 7)) == 0 && Graphics::Recorder::SnapshotWriteOverlaps(begin, static_cast<std::size_t>(end - begin))) mask |= 1u << 7;
     }
-    if (Graphics::StorageTexture::AnyPendingOverlaps(blocks)) return 8;
-    if (Graphics::AnyShadowedOverlaps(blocks)) return 9;
-    if (DriverDetail::DrawPipeline::Queue0().OverlapsAny(blocks)) return 10;
-    return 0;
+    if (Graphics::StorageTexture::AnyPendingOverlaps(blocks)) mask |= 1u << 8;
+    if (Graphics::AnyShadowedOverlaps(blocks)) mask |= 1u << 9;
+    if (DriverDetail::DrawPipeline::Queue0().OverlapsAny(blocks)) mask |= 1u << 10;
+    return mask;
+}
+
+void FrameRecorder::countUnwatched(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks) {
+    std::vector<std::byte> bytes;
+    for (const auto& [begin, end] : blocks) {
+        bytes.resize(static_cast<std::size_t>(end - begin));
+        ReadAroundRanges(begin, bytes, Graphics::HostOnlySampleRanges(begin, bytes.size()), GuestMemory::ReadCommittedUnsynced);
+        bool changed = false;
+        for (auto page = begin & ~std::uint64_t{HostPageBytes - 1}; page < end && !changed; page += HostPageBytes) {
+            const auto first = std::max(page, begin);
+            const auto found = unwatchedPages.find(page);
+            changed = found == unwatchedPages.end() || found->second.hash != contentHash(std::span<const std::byte>(bytes).subspan(first - begin, std::min<std::uint64_t>(page + HostPageBytes, end) - first));
+        }
+        bool stored = false;
+        {
+            std::lock_guard lock(storeMutex);
+            for (auto page = begin & ~std::uint64_t{HostPageBytes - 1}; page < end && !stored; page += HostPageBytes) {
+                const auto store = driverPages.find(page);
+                const auto found = unwatchedPages.find(page);
+                stored = store != driverPages.end() && store->second > (found != unwatchedPages.end() ? found->second.stores : startStores);
+            }
+        }
+        auto& counts = unwatchedCounts[{begin, end}];
+        ++counts.deltas;
+        counts.changed += changed ? 1 : 0;
+        counts.stored += stored ? 1 : 0;
+    }
+}
+
+void FrameRecorder::recordUnwatched(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stores) {
+    const auto end = address + bytes.size();
+    for (auto page = address & ~std::uint64_t{HostPageBytes - 1}; page < end; page += HostPageBytes) {
+        const auto first = std::max(page, address);
+        unwatchedPages[page] = {contentHash(bytes.subspan(first - address, std::min<std::uint64_t>(page + HostPageBytes, end) - first)), stores};
+    }
 }
 
 void FrameRecorder::arm(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks, std::uint64_t group, std::uint64_t accepted) {
@@ -534,7 +573,7 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
     auto completed = entry.completed;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
-    bool unwatched = false;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> unwatched;
     for (const auto& span : spans) {
         for (std::uint64_t offset = 0; offset < span.bytes;) {
             const auto at = span.address + offset;
@@ -544,7 +583,7 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
                 blocks.insert(blocks.end(), written.begin(), written.end());
             } else {
                 blocks.emplace_back(at, at + bytes);
-                unwatched = true;
+                unwatched.emplace_back(at, at + bytes);
             }
             offset += bytes;
         }
@@ -553,9 +592,11 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
     std::vector<std::uint64_t> started;
     bool inFlightRead = false;
     if (completed < accepted && (!added.empty() || !blocks.empty() || !hostPages.empty())) {
-        const auto reason = unwatched ? 1 : !added.empty() || !hostPages.empty() ? 2 : callThreads.size() > 1 ? 3 : entry.queued != 0 ? 11 : holdReason(blocks);
-        if (reason != 0) {
-            ++holdReasons[reason];
+        const auto mask = holdMask(blocks) | (unwatched.empty() ? 0u : 1u << 1) | (!added.empty() || !hostPages.empty() ? 1u << 2 : 0u) | (callThreads.size() > 1 ? 1u << 3 : 0u) | (entry.queued != 0 ? 1u << 11 : 0u);
+        ++holdMasks[mask];
+        for (std::size_t reason = 1; reason < holdReasons.size(); ++reason) holdReasons[reason] += (mask >> reason) & 1u;
+        countUnwatched(unwatched);
+        if (mask != 0) {
             driver.ReleaseForRecorder();
             if (!driver.WaitSettledFor(std::chrono::seconds(10))) {
                 stop("stopped: the GPU work submitted before a memory delta neither finished nor waited for the title within 10 s");
@@ -569,6 +610,11 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
             inFlightRead = true;
             ++inFlightDeltas;
         }
+    }
+    std::uint64_t stores = 0;
+    {
+        std::lock_guard lock(storeMutex);
+        stores = driverStores;
     }
     bool any = false;
     std::vector<std::byte> bytes;
@@ -601,6 +647,7 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
             bytes.resize(static_cast<std::size_t>(std::min<std::uint64_t>(FrameCaptureWriter::BlockBytes, range.bytes - at)));
             readGuest(range.address + at, bytes);
             writeTitleWords(range.address + at, std::all_of(bytes.begin(), bytes.end(), [](std::byte value) { return value == std::byte{0}; }));
+            if (!GuestMemory::Watched(range.address + at, bytes.size())) recordUnwatched(range.address + at, bytes, stores);
             at += bytes.size();
         }
     }
@@ -629,6 +676,7 @@ void FrameRecorder::writeDelta(std::span<const Span> spans, std::span<const std:
         } else {
             forget(begin, end);
         }
+        if (!GuestMemory::Watched(begin, bytes.size())) recordUnwatched(begin, bytes, stores);
         writeTitleWords(begin);
     }
     if (!any) return;
@@ -792,6 +840,10 @@ void FrameRecorder::start() {
     for (const auto& range : ranges) {
         if (range.kind == FrameRangeKind::Watched || range.kind == FrameRangeKind::Unwatched) GuestMemory::CollectWrittenBlocks(range.address, static_cast<std::size_t>(range.bytes), std::numeric_limits<std::uint64_t>::max(), written);
     }
+    {
+        std::lock_guard lock(storeMutex);
+        startStores = driverStores;
+    }
     generation = GuestMemory::WriteGeneration();
     for (const auto& range : ranges) {
         snapshot(range);
@@ -874,10 +926,25 @@ std::string FrameRecorder::header() const {
     {
         std::lock_guard lock(storeMutex);
         text += ",\"in_flight_deltas\":" + std::to_string(inFlightDeltas) + ",\"held_deltas\":" + std::to_string(heldDeltas) + ",\"hold_reasons\":{" + [&] {
-            static constexpr std::array<const char*, 12> names{"", "unwatched", "late_or_host", "threads", "parked", "driver_page", "label", "snapshot", "storage", "shadow", "queue0", "queued"};
             std::string reasons;
-            for (std::size_t index = 1; index < names.size(); ++index) reasons += std::string(index == 1 ? "" : ",") + "\"" + names[index] + "\":" + std::to_string(holdReasons[index]);
+            for (std::size_t index = 1; index < HoldReasonNames.size(); ++index) reasons += std::string(index == 1 ? "" : ",") + "\"" + HoldReasonNames[index] + "\":" + std::to_string(holdReasons[index]);
             return reasons + "}";
+        }() + ",\"hold_masks\":{" + [&] {
+            std::string masks;
+            for (const auto& [mask, count] : holdMasks) {
+                std::string names;
+                for (std::size_t index = 1; index < HoldReasonNames.size(); ++index) {
+                    if (((mask >> index) & 1u) != 0) names += std::string(names.empty() ? "" : "+") + HoldReasonNames[index];
+                }
+                masks += std::string(masks.empty() ? "\"" : ",\"") + (names.empty() ? std::string("none") : names) + "\":" + std::to_string(count);
+            }
+            return masks + "}";
+        }() + ",\"unwatched_blocks\":[" + [&] {
+            std::string list;
+            for (const auto& [block, counts] : unwatchedCounts) {
+                list += std::string(list.empty() ? "" : ",") + "{\"address\":" + std::to_string(block.first) + ",\"bytes\":" + std::to_string(block.second - block.first) + ",\"deltas\":" + std::to_string(counts.deltas) + ",\"changed\":" + std::to_string(counts.changed) + ",\"driver_stored\":" + std::to_string(counts.stored) + "}";
+            }
+            return list + "]";
         }() + ",\"stale_delta\":" + std::to_string(storeHazard.group) + ",\"unattributed_stores\":" + std::to_string(unattributedStores);
     }
     text += ",\"env\":{";

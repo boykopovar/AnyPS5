@@ -66,9 +66,20 @@ private:
         std::uint64_t page = 0;
         std::uint64_t serial = 0;
     };
+    struct UnwatchedPage {
+        std::uint64_t hash = 0;
+        std::uint64_t stores = 0;
+    };
+    struct UnwatchedCounts {
+        std::uint64_t deltas = 0;
+        std::uint64_t changed = 0;
+        std::uint64_t stored = 0;
+    };
     static void observeDriverStore(std::uint64_t begin, std::uint64_t end, std::uint64_t serial);
     void noteDriverStore(std::uint64_t begin, std::uint64_t end, std::uint64_t serial);
-    std::size_t holdReason(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks);
+    std::uint32_t holdMask(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks);
+    void countUnwatched(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks);
+    void recordUnwatched(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stores);
     void arm(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks, std::uint64_t group, std::uint64_t accepted);
     bool stopOnHazard();
 
@@ -155,13 +166,18 @@ private:
     std::uint64_t lateRanges = 0;
     std::array<std::uint64_t, 17> submitDepths{};
     mutable std::mutex storeMutex;
-    std::unordered_set<std::uint64_t> driverPages;
+    std::unordered_map<std::uint64_t, std::uint64_t> driverPages;
+    std::uint64_t driverStores = 0;
+    std::uint64_t startStores = 0;
     std::unordered_map<std::uint64_t, StoreOwner> storeOwners;
     StoreHazard storeHazard;
     std::uint64_t unattributedStores = 0;
     std::uint64_t inFlightDeltas = 0;
     std::uint64_t heldDeltas = 0;
     std::array<std::uint64_t, 12> holdReasons{};
+    std::map<std::uint32_t, std::uint64_t> holdMasks;
+    std::unordered_map<std::uint64_t, UnwatchedPage> unwatchedPages;
+    std::map<std::pair<std::uint64_t, std::uint64_t>, UnwatchedCounts> unwatchedCounts;
     std::set<std::uint64_t> callThreads;
     static std::atomic<FrameRecorder*> observing;
     std::vector<std::string> warnings;
