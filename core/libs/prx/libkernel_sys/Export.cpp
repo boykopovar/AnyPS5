@@ -770,6 +770,12 @@ int APS5_VABI kldfind_nid_postfix(const char* file) {
     return static_cast<int>(Fail(GuestEnoent));
 }
 
+int APS5_VABI kldload_nid_postfix(const char* file) {
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(file, copy)) return static_cast<int>(Fail(error));
+    return static_cast<int>(Fail(GuestEperm));
+}
+
 int APS5_VABI kldfirstmod_nid_postfix(int fileid) {
     return static_cast<int>(Fail(GuestEnoent));
 }
