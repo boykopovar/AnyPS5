@@ -73,7 +73,8 @@ BlockLayout GetBlockLayout(TextureTileMode tileMode, std::uint32_t bytesPerEleme
         case TextureTileMode::kGcnDisplayPrt:
         case TextureTileMode::kGcnDisplay2DPrt:
         case TextureTileMode::kGcnThinPrt:
-        case TextureTileMode::kGcnThin2DPrt: {
+        case TextureTileMode::kGcnThin2DPrt:
+        case TextureTileMode::kGcnThick1D: {
             const auto geometry = GcnTiling(tileMode, bytesPerElement);
             return {geometry.blockBytes, geometry.blockWidth, geometry.blockHeight};
         }
@@ -134,7 +135,8 @@ bool GetMipTailLayout(TextureTileMode tileMode, const BlockLayout& block, std::u
         case TextureTileMode::kGcnDisplayPrt:
         case TextureTileMode::kGcnDisplay2DPrt:
         case TextureTileMode::kGcnThinPrt:
-        case TextureTileMode::kGcnThin2DPrt: return false;
+        case TextureTileMode::kGcnThin2DPrt:
+        case TextureTileMode::kGcnThick1D: return false;
         case TextureTileMode::kStandard4KB:
         case TextureTileMode::kD4KB:
         case TextureTileMode::kS4KBX:
@@ -302,6 +304,7 @@ std::array<std::uint32_t, 3> ThickBlockExtent(TextureTileMode tileMode, std::uin
         case TextureTileMode::kStandard64KB:
         case TextureTileMode::kS64KBX:
         case TextureTileMode::kD64KBX: return {1u << thick64KB[index][0], 1u << thick64KB[index][1], 1u << thick64KB[index][2]};
+        case TextureTileMode::kGcnThick1D: return {8u, 8u, 4u};
         default: throw std::runtime_error("AGC graphics: thick 3D textures are only supported in SW_4KB_S, SW_4KB_S_X, SW_64KB_S, SW_64KB_S_X and SW_64KB_D_X, not in swizzle mode " + std::to_string(EquationSwizzleMode(tileMode)) + " at " + std::to_string(bytesPerElement) + " bytes per element");
     }
 }
@@ -496,6 +499,13 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     const auto& order = displayOrder ? display[log2Bytes] : thin;
     const auto microBytes = 64u * bytesPerElement;
     GcnTileGeometry geometry{};
+    if (tileMode == TextureTileMode::kGcnThick1D) {
+        const auto z = [](std::uint32_t bit) { return 1u << (24u + bit); };
+        const std::array<std::uint32_t, 8> thick = log2Bytes <= 1u ? std::array<std::uint32_t, 8>{x(0), y(0), x(1), y(1), z(0), z(1), x(2), y(2)} : log2Bytes == 2u ? std::array<std::uint32_t, 8>{x(0), y(0), x(1), z(0), y(1), z(1), x(2), y(2)} : std::array<std::uint32_t, 8>{x(0), y(0), z(0), x(1), y(1), z(1), x(2), y(2)};
+        geometry = {256u * bytesPerElement, 8u, 8u, {}};
+        for (std::uint32_t bit = 0; bit < thick.size(); ++bit) geometry.equation[log2Bytes + bit] = thick[bit];
+        return geometry;
+    }
     if (IsGcnMicroTiled(tileMode)) {
         geometry = {microBytes, 8u, 8u, {}};
         for (std::uint32_t bit = 0; bit < order.size(); ++bit) geometry.equation[log2Bytes + bit] = order[bit];
@@ -565,7 +575,55 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
 
 namespace {
 
+SurfaceGeometry describeGcnVolume(const GuestTextureResource& descriptor) {
+    Require(descriptor.mipCount != 0 && descriptor.mipCount <= 16u, "texture mip count is out of range");
+    const auto bytes = BytesPerElement(descriptor.format);
+    const auto texelWidth = BlockWidth(descriptor.format);
+    const auto texelHeight = BlockHeight(descriptor.format);
+    Require(texelWidth == 1u && texelHeight == 1u, "PS4 block-compressed volumes are tiled thin, which is not implemented");
+    const auto depth = descriptor.depthOrLastArray + 1u;
+    SurfaceGeometry geometry;
+    geometry.mips.resize(descriptor.mipCount);
+    std::uint64_t offset = 0, linearOffset = 0;
+    for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
+        auto levelWidth = std::max(descriptor.gcnPitch >> level, 1u);
+        auto levelHeight = std::max(descriptor.height >> level, 1u);
+        auto levelDepth = std::max(depth >> level, 1u);
+        if (descriptor.gcnPow2Pad && level != 0) {
+            levelWidth = std::bit_ceil(levelWidth);
+            levelHeight = std::bit_ceil(levelHeight);
+            levelDepth = std::bit_ceil(levelDepth);
+        }
+        const auto rowElements = AlignUp(levelWidth, 8u);
+        const auto rows = AlignUp(levelHeight, 8u);
+        const auto slabs = (levelDepth + 3u) / 4u;
+        if (level == 0) Require(rowElements == descriptor.gcnPitch, "PS4 volume pitch " + std::to_string(descriptor.gcnPitch) + " is not padded to the thick micro tile");
+        auto& mip = geometry.mips[level];
+        mip.width = TexelLevelDimension(descriptor.width, level, texelWidth);
+        mip.height = TexelLevelDimension(descriptor.height, level, texelHeight);
+        mip.blocksPerRow = rowElements / 8u;
+        mip.pitchBytes = rowElements * bytes;
+        mip.tiledSize = static_cast<std::uint64_t>(rowElements) * rows * 4u * bytes;
+        mip.linearSize = static_cast<std::uint64_t>(mip.pitchBytes) * mip.height;
+        mip.tiledOffset = offset;
+        mip.linearOffset = linearOffset;
+        offset += mip.tiledSize * slabs;
+        linearOffset += mip.linearSize;
+    }
+    geometry.layers = depth;
+    geometry.imageDepth = depth;
+    geometry.thick = true;
+    geometry.blockDepth = 4u;
+    geometry.levelMajor = descriptor.mipCount > 1u;
+    geometry.guestBytes = offset;
+    geometry.layerBytes = geometry.mips[0].tiledSize;
+    geometry.sliceLinearBytes = linearOffset;
+    return geometry;
+}
+
 SurfaceGeometry describeGcnSurface(const GuestTextureResource& descriptor) {
+    Require(!IsGcnThick(descriptor.tileMode) || descriptor.dimension == TextureDimension::k3D, "PS4 thick tile modes are only implemented for 3D textures");
+    if (IsGcnThick(descriptor.tileMode)) return describeGcnVolume(descriptor);
     Require(descriptor.dimension != TextureDimension::k3D && descriptor.dimension != TextureDimension::k2DMsaa, "PS4 3D and multisampled textures are not implemented");
     const bool layered = descriptor.dimension == TextureDimension::k2DArray || descriptor.dimension == TextureDimension::k1DArray || descriptor.dimension == TextureDimension::kCube;
     SurfaceGeometry geometry;

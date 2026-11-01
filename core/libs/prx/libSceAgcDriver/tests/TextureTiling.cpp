@@ -8,6 +8,7 @@
 #include <array>
 #include <bit>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -197,6 +198,68 @@ std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std
     return ((total >> 8u) << (8u + 3u + bankBits)) | (static_cast<std::uint64_t>(bank) << 11u) | (static_cast<std::uint64_t>(pipe) << 8u) | (total & 0xffu);
 }
 
+void gcnThickTilingTests() {
+    for (std::uint32_t bytes = 1u; bytes <= 16u; bytes <<= 1u) {
+        const auto geometry = GcnTiling(TextureTileMode::kGcnThick1D, bytes);
+        const auto what = "PS4 thick tile mode at " + std::to_string(bytes) + " bytes";
+        Require(geometry.blockBytes == 256u * bytes && geometry.blockWidth == 8u && geometry.blockHeight == 8u, what + ": a micro tile holds 8x8x4 elements");
+        std::vector<std::uint8_t> seen(256u, 0u);
+        const auto address = [&](std::uint32_t x, std::uint32_t y, std::uint32_t z) {
+            std::uint32_t offset = 0;
+            for (std::uint32_t bit = 0; bit < 16u; ++bit) offset |= static_cast<std::uint32_t>(std::popcount((x & geometry.equation[bit] & 0xfffu) ^ ((y << 12u) & geometry.equation[bit] & 0xfff000u) ^ ((z << 24u) & geometry.equation[bit] & 0xff000000u)) & 1) << bit;
+            return offset;
+        };
+        for (std::uint32_t z = 0; z < 4u; ++z) {
+            for (std::uint32_t y = 0; y < 8u; ++y) {
+                for (std::uint32_t x = 0; x < 8u; ++x) {
+                    const auto offset = address(x, y, z);
+                    Require(offset % bytes == 0 && offset / bytes < 256u && seen[offset / bytes]++ == 0, what + ": two elements share an address or one leaves the micro tile");
+                }
+            }
+        }
+        const std::uint32_t zBit = bytes <= 2u ? 4u : bytes == 4u ? 3u : 2u;
+        Require(address(1u, 0u, 0u) == bytes && address(0u, 1u, 0u) == 2u * bytes && address(0u, 0u, 1u) == (bytes << zBit) && address(4u, 4u, 0u) == 0xc0u * bytes, what + ": element order differs from addrlib's thick micro tile");
+    }
+    GuestTextureResource volume{};
+    volume.width = 16u;
+    volume.height = 8u;
+    volume.depthOrLastArray = 7u;
+    volume.mipCount = 2u;
+    volume.lastLevel = 1u;
+    volume.tileMode = TextureTileMode::kGcnThick1D;
+    volume.dimension = TextureDimension::k3D;
+    volume.format = 20u;
+    volume.gcnPitch = 16u;
+    const auto geometry = DescribeSurface(volume);
+    Require(geometry.thick && geometry.levelMajor && geometry.blockDepth == 4u && geometry.imageDepth == 8u && geometry.guestBytes == 5120u, "PS4 thick volume size changed");
+    Require(geometry.mips[0].tiledSize == 2048u && geometry.mips[1].tiledOffset == 4096u && geometry.mips[1].tiledSize == 1024u && geometry.mips[0].blocksPerRow == 2u, "PS4 thick volume levels are not slabs of four slices");
+    Require(geometry.GuestOffset(5u, geometry.mips[0]) == 2048u && geometry.GuestOffset(3u, geometry.mips[1]) == 4096u, "PS4 thick volume slab offset is misplaced");
+    Require(geometry.mips[0].linearSize == 512u && geometry.mips[1].linearOffset == 512u && geometry.sliceLinearBytes == 640u, "PS4 thick volume linear staging is not per slice");
+    GuestTextureResource deep = volume;
+    deep.width = 32u;
+    deep.height = 32u;
+    deep.depthOrLastArray = 31u;
+    deep.mipCount = 4u;
+    deep.lastLevel = 3u;
+    deep.gcnPitch = 32u;
+    const auto deepGeometry = DescribeSurface(deep);
+    Require(deepGeometry.levelMajor && deepGeometry.mips.size() == 4u, "PS4 thick volume with four levels is not level-major");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> slabs;
+    for (std::uint32_t level = 0; level < 4u; ++level) {
+        const auto& mip = deepGeometry.mips[level];
+        for (std::uint32_t z = 0; z < std::max(32u >> level, 1u); ++z) {
+            const auto begin = deepGeometry.GuestOffset(z, mip);
+            Require(begin == deepGeometry.GuestOffset(z & ~3u, mip), "PS4 thick volume slices of one slab are not at one offset");
+            Require(begin + mip.tiledSize <= deepGeometry.guestBytes, "PS4 thick volume slab lies past the surface");
+            if (z % 4u == 0) slabs.emplace_back(begin, begin + mip.tiledSize);
+        }
+    }
+    std::sort(slabs.begin(), slabs.end());
+    for (std::size_t i = 1; i < slabs.size(); ++i) Require(slabs[i].first >= slabs[i - 1].second, "PS4 thick volume slabs overlap");
+    Require(slabs.size() == 8u + 4u + 2u + 1u && slabs.back().second == deepGeometry.guestBytes, "PS4 thick volume slab count or size changed");
+    Require(deepGeometry.GuestOffset(4u, deepGeometry.mips[1]) == deepGeometry.mips[1].tiledOffset + deepGeometry.mips[1].tiledSize, "PS4 thick volume level 1 slab stride is not its own slab size");
+}
+
 void gcnTilingTests() {
     using enum TextureTileMode;
     for (const auto mode : {kGcnThin1D, kGcnDisplay1D, kGcnDisplay2D, kGcnThin2D, kGcnDepth2D64, kGcnDepth2D128, kGcnDepth2D256, kGcnDepth2D512, kGcnDepth2D1K, kGcnDepthPrt256, kGcnDepthPrt1K, kGcnDisplayPrt, kGcnDisplay2DPrt, kGcnThinPrt, kGcnThin2DPrt}) {
@@ -319,6 +382,7 @@ void gcnTilingTests() {
 
 void RunTextureTilingTests() {
     gcnTilingTests();
+    gcnThickTilingTests();
     {
         const auto mips = ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 2);
         Require(mips.size() == 2, "linear mip chain must contain the requested mip count");

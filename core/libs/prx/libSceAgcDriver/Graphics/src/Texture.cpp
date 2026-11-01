@@ -2893,7 +2893,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 for (std::uint32_t level = 0; level < mips.size(); ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
                     const auto& mip = mips[level];
-                    detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestLayerOffset(layer) + mip.tiledOffset, elementLayerView(level, layer), mip, false, layer, {.pipeBankXor = descriptor.pipeBankXor});
+                    detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestOffset(layer, mip), elementLayerView(level, layer), mip, false, layer, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
             recordDirectUploadDone(commands);
@@ -2912,7 +2912,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             for (std::uint32_t level = 0; level < mips.size(); ++level) {
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
-                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestLayerOffset(layer) + mip.tiledOffset, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import->buffer, importOffset + geometry.GuestOffset(layer, mip), linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
             }
         }
         const auto linearRead = WholeBufferBarrier(linear->Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -2993,7 +2993,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
                 for (std::uint32_t level = 0; level < mips.size(); ++level) {
                     if (!geometry.HasLayer(level, layer)) continue;
                     const auto& mip = mips[level];
-                    detiler.Dispatch(commands, descriptor.tileMode, elementBytes, tiled.Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, linear.Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                    detiler.Dispatch(commands, descriptor.tileMode, elementBytes, tiled.Handle(), geometry.GuestOffset(layer, mip), linear.Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, mip, false, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
                 }
             }
             const auto linearRead = WholeBufferBarrier(linear.Handle(), VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
@@ -3045,7 +3045,7 @@ std::vector<StorageTexture::SliceWindow> StorageTexture::sliceWindows(std::span<
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
                 const auto block = ThinBlockLayout(MipTileMode(descriptor.tileMode, mip), elementBytes);
-                const auto sliceBegin = geometry.GuestLayerOffset(layer) + mip.tiledOffset;
+                const auto sliceBegin = geometry.GuestOffset(layer, mip);
                 const auto sliceEnd = sliceBegin + mip.tiledSize;
                 if (runEnd <= sliceBegin || sliceEnd <= runBegin) continue;
                 SliceWindow window{layer, level, 0, 0, {}, 0, {}};
@@ -3134,7 +3134,7 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> StorageTexture::uncoveredBy
         for (std::uint32_t layer = 0; layer < arrayLayers; ++layer) {
             for (std::uint32_t level = 0; level < descriptor.mipCount; ++level) {
                 if (!geometry.HasLayer(level, layer)) continue;
-                const auto sliceBegin = geometry.GuestLayerOffset(layer) + mips[level].tiledOffset;
+                const auto sliceBegin = geometry.GuestOffset(layer, mips[level]);
                 for (const auto& [begin, end] : CoveredMipBytes(descriptor.tileMode, elementBytes, mips[level])) covered.emplace_back(sliceBegin + begin, sliceBegin + end);
             }
         }
@@ -3306,7 +3306,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
             if (!geometry.HasLayer(level, layer)) continue;
             const auto& mip = mips[level];
             if (!mip.tail) continue;
-            const auto sliceBegin = geometry.GuestLayerOffset(layer) + mip.tiledOffset;
+            const auto sliceBegin = geometry.GuestOffset(layer, mip);
             if (tailBlocks.empty() || tailBlocks.back().first != sliceBegin) tailBlocks.emplace_back(sliceBegin, sliceBegin + mip.tiledSize);
         }
     }
@@ -3381,7 +3381,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
                 detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, source.buffer, source.offset + (window.tiledBegin - source.begin), view, mip, false, window.layer, detile);
             } else {
                 detile.tiledBase = 0;
-                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestLayerOffset(window.layer) + mip.tiledOffset, view, mip, false, window.layer, detile);
+                detiler.DispatchImage(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestOffset(window.layer, mip), view, mip, false, window.layer, detile);
             }
         }
         recordDirectUploadDone(commands);
@@ -3405,7 +3405,7 @@ std::uint64_t StorageTexture::uploadWindows(const HostImport& import, std::span<
         } else {
             // The import holds the whole mip: the window's tiled base is the mip's.
             detile.tiledBase = 0;
-            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestLayerOffset(window.layer) + mip.tiledOffset, linear->Handle(), positions[i], mip, false, window.layer, false, detile);
+            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, import.buffer, importOffset + geometry.GuestOffset(window.layer, mip), linear->Handle(), positions[i], mip, false, window.layer, false, detile);
         }
         for (auto region : window.regions) {
             region.bufferOffset += positions[i];
@@ -6452,7 +6452,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             for (std::uint32_t level = 0; level < mips.size(); ++level) {
                 if (!geometry.HasLayer(level, layer)) continue;
                 const auto& mip = mips[level];
-                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiledScratch->Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+                detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear->Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiledScratch->Handle(), geometry.GuestOffset(layer, mip), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
             }
         }
         {
@@ -6590,7 +6590,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         for (std::uint32_t level = 0; level < mips.size(); ++level) {
             if (!geometry.HasLayer(level, layer)) continue;
             const auto& mip = mips[level];
-            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear.Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiled.Handle(), geometry.GuestLayerOffset(layer) + mip.tiledOffset, mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
+            detiler.Dispatch(commands, descriptor.tileMode, elementBytes, linear.Handle(), geometry.LinearLayerOffset(layer) + mip.linearOffset, tiled.Handle(), geometry.GuestOffset(layer, mip), mip, true, layer, geometry.thick, {.pipeBankXor = descriptor.pipeBankXor});
         }
     }
     const bool dumpSelected = StorageDumpSelects(descriptor) && StorageDumpReady();
