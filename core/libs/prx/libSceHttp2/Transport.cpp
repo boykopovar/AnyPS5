@@ -8,6 +8,8 @@
 #endif
 
 #include "Transport.hpp"
+
+#include "zlib.h"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libc/include/General.hpp"
@@ -36,6 +38,7 @@ using Clock = std::chrono::steady_clock;
 constexpr int WantRead = static_cast<int>(0x8095f013);
 constexpr int WantWrite = static_cast<int>(0x8095f014);
 constexpr int InvalidValue = static_cast<int>(0x817B11FE);
+constexpr std::size_t MaxGzipBytes = 64 * 1024 * 1024;
 
 [[noreturn]] void Unknown(const char* message) {
     NotImplemented_nid_no_patch(message);
@@ -163,6 +166,7 @@ private:
                 hints.ai_family = AF_UNSPEC;
                 addrinfo* raw = nullptr;
                 const auto service = std::to_string(job->port);
+                if (const auto hook = LookupHookSlot().load(std::memory_order_acquire)) Require(hook(job->host.c_str()) == 0, "sceHttp2: DNS failed; console error mapping is unknown");
                 const int result = getaddrinfo(job->host.c_str(), service.c_str(), &hints, &raw);
                 std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> addresses(raw, freeaddrinfo);
                 Require(result == 0, "sceHttp2: DNS failed; console error mapping is unknown");
@@ -253,6 +257,8 @@ struct Request::State {
     bool ready = false;
     bool ended = false;
     int status = 0;
+    std::string contentEncoding;
+    bool inflatedGzip = false;
     int blockStatus = 0;
     int networkResult = 0;
     int socket = -1;
@@ -317,22 +323,78 @@ struct Request::State {
         }
     }
 
+    bool Inflating() const { return settings.inflateGzip && contentEncoding == "gzip"; }
+
+    void InflateGzip() {
+        if (inflatedGzip || !Inflating() || body.empty()) return;
+        inflatedGzip = true;
+        const std::uint8_t* data = body.data();
+        const std::size_t size = body.size();
+        Require(size >= 18 && data[0] == 0x1f && data[1] == 0x8b && data[2] == 8, "sceHttp2: malformed gzip header");
+        const std::uint8_t flags = data[3];
+        Require((flags & 0xe0) == 0, "sceHttp2: unknown gzip header flags");
+        std::size_t offset = 10;
+        const auto skip = [&](std::size_t count) { Require(offset + count <= size - 8, "sceHttp2: truncated gzip header"); offset += count; };
+        if (flags & 4) {
+            Require(offset + 2 <= size - 8, "sceHttp2: truncated gzip extra field");
+            const std::size_t extra = static_cast<std::size_t>(data[offset]) | (static_cast<std::size_t>(data[offset + 1]) << 8);
+            skip(2 + extra);
+        }
+        if (flags & 8) while (skip(1), data[offset - 1] != 0) {}
+        if (flags & 16) while (skip(1), data[offset - 1] != 0) {}
+        if (flags & 2) skip(2);
+        z_stream inflater{};
+        Require(inflateInit2(&inflater, -15) == Z_OK, "sceHttp2: gzip inflate initialization failed");
+        struct End {
+            z_stream* stream;
+            ~End() { inflateEnd(stream); }
+        } end{&inflater};
+        inflater.next_in = const_cast<std::uint8_t*>(data + offset);
+        inflater.avail_in = static_cast<uInt>(size - offset - 8);
+        std::vector<std::uint8_t> output;
+        std::uint8_t chunk[16384];
+        int result = Z_OK;
+        while (result != Z_STREAM_END) {
+            inflater.next_out = chunk;
+            inflater.avail_out = sizeof(chunk);
+            result = inflate(&inflater, Z_NO_FLUSH);
+            Require(result == Z_OK || result == Z_STREAM_END, "sceHttp2: gzip inflate failed");
+            output.insert(output.end(), chunk, chunk + (sizeof(chunk) - inflater.avail_out));
+            Require(result == Z_STREAM_END || inflater.avail_in != 0 || inflater.avail_out == 0, "sceHttp2: truncated gzip stream");
+            Require(output.size() <= MaxGzipBytes, "sceHttp2: inflated response exceeds the host limit");
+        }
+        Require(inflater.avail_in == 0, "sceHttp2: concatenated gzip members are not implemented");
+        const auto readLe32 = [&](std::size_t position) {
+            return static_cast<std::uint32_t>(data[position]) | (static_cast<std::uint32_t>(data[position + 1]) << 8) |
+                (static_cast<std::uint32_t>(data[position + 2]) << 16) | (static_cast<std::uint32_t>(data[position + 3]) << 24);
+        };
+        Require(crc32(0, output.data(), static_cast<uInt>(output.size())) == readLe32(size - 8), "sceHttp2: gzip checksum mismatch");
+        Require(static_cast<std::uint32_t>(output.size()) == readLe32(size - 4), "sceHttp2: gzip size mismatch");
+        body = std::move(output);
+        bodyOffset = 0;
+        contentLength = body.size();
+        hasLength = true;
+        contentEncoding.clear();
+    }
+
     int Connect() {
 #ifdef _WIN32
         const int startup = sceNetSocket("http2-resolver", 2, 1, 0);
         Require(startup >= 0, "sceHttp2: network initialization failed; console error mapping is unknown");
         Require(sceNetSocketClose(startup) == 0, "sceHttp2: network initialization socket close failed");
 #endif
-        const auto deadline = Deadline(settings.resolveTimeout);
-        const auto job = Dns().Submit(url);
-        {
+        std::shared_ptr<Lookup> job;
+        for (std::int32_t attempt = 0;; ++attempt) {
+            const auto deadline = Deadline(settings.resolveTimeout);
+            job = Dns().Submit(url);
             std::unique_lock lock(job->mutex);
             while (!job->complete) {
                 Check(deadline);
                 job->changed.wait_for(lock, std::chrono::milliseconds(5));
             }
             Check(deadline);
-            if (job->failure) std::rethrow_exception(job->failure);
+            if (!job->failure) break;
+            if (attempt >= settings.resolveRetry) std::rethrow_exception(job->failure);
         }
         const auto connectDeadline = Deadline(settings.connectTimeout);
         int result = 0;
@@ -409,6 +471,7 @@ struct Request::State {
                 state.contentLength = Number(text);
                 state.hasLength = true;
             }
+            if (key == "content-encoding") state.contentEncoding = Lower(std::string(text));
         });
     }
 
@@ -430,15 +493,21 @@ struct Request::State {
                 (frame->hd.flags & NGHTTP2_FLAG_END_STREAM)) {
                 Require(state.ready, "sceHttp2: response ended without final headers");
                 state.ended = true;
+                state.InflateGzip();
             }
         });
     }
 
-    static int Data(nghttp2_session*, std::uint8_t, std::int32_t streamId, const std::uint8_t* bytes, std::size_t size, void* data) {
+    static int Data(nghttp2_session* session, std::uint8_t, std::int32_t streamId, const std::uint8_t* bytes, std::size_t size, void* data) {
         auto& state = *static_cast<State*>(data);
         return Callback(state, [&] {
             if (streamId != state.stream) return;
-            Require(state.body.size() + size <= 65535, "sceHttp2: receive flow-control limit exceeded");
+            if (state.Inflating()) {
+                Require(state.body.size() + size <= MaxGzipBytes, "sceHttp2: encoded gzip response exceeds the host limit");
+                CheckNg(nghttp2_session_consume(session, streamId, size));
+            } else {
+                Require(state.body.size() + size <= 65535, "sceHttp2: receive flow-control limit exceeded");
+            }
             state.body.insert(state.body.end(), bytes, bytes + size);
         });
     }
@@ -595,7 +664,7 @@ int Request::Read(void* data, std::size_t size) {
     try {
         const auto deadline = state->Deadline(state->settings.recvTimeout);
         state->Check(deadline);
-        while (state->bodyOffset == state->body.size() && !state->ended) state->Pump(deadline);
+        while (!state->ended && (state->bodyOffset == state->body.size() || state->Inflating())) state->Pump(deadline);
         const auto count = std::min({size, state->body.size() - state->bodyOffset, static_cast<std::size_t>(std::numeric_limits<int>::max())});
         state->Check(deadline);
         if (count) std::memcpy(data, state->body.data() + state->bodyOffset, count);
@@ -619,6 +688,12 @@ int Request::ContentLength(int* kind, std::uint64_t* length) {
     auto lock = state->Lock();
     if (state->networkResult) return state->networkResult;
     Require(kind && length && state->ready, "sceHttp2GetResponseContentLength: null output or response unavailable");
+    if (state->Inflating()) {
+        try {
+            const auto deadline = state->Deadline(state->settings.recvTimeout);
+            while (!state->ended) state->Pump(deadline);
+        } catch (...) { state->Fail(); throw; }
+    }
     *kind = state->hasLength ? 0 : 1;
     *length = state->hasLength ? state->contentLength : 0;
     return 0;

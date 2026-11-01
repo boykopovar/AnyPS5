@@ -79,7 +79,16 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         throw std::runtime_error("unsupported optional header magic");
     }
 
+    const std::size_t fixedOptionalSize = dataDirectoryOffset - optionalHeaderOffset;
+    if (sizeOfOptionalHeader < fixedOptionalSize) throw std::runtime_error("truncated optional header");
+    std::size_t directoryCount = 0u;
+    if (sizeOfOptionalHeader >= fixedOptionalSize + sizeof(std::uint32_t)) {
+        const auto declared = Read<std::uint32_t>(pe, optionalHeaderOffset + fixedOptionalSize - sizeof(std::uint32_t));
+        directoryCount = std::min<std::size_t>(declared, (sizeOfOptionalHeader - fixedOptionalSize) / sizeof(PeDataDirectory));
+    }
+
     if (!options.executable) {
+        if (directoryCount < 1u) throw std::runtime_error("no export directory");
         const auto exportDir = Read<PeDataDirectory>(pe, dataDirectoryOffset);
         if (exportDir.VirtualAddress == 0u) throw std::runtime_error("no export directory");
 
@@ -238,7 +247,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
     }
 
     constexpr std::size_t kImportDirIndex = 1u;
-    if (dataDirectoryOffset + (kImportDirIndex + 1u) * sizeof(PeDataDirectory) > pe.size())
+    if (directoryCount < kImportDirIndex + 1u)
         return;
 
     const auto importDir = Read<PeDataDirectory>(pe, dataDirectoryOffset + kImportDirIndex * sizeof(PeDataDirectory));
@@ -316,6 +325,7 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
         return !fitsInPlace(item) && importMap.at(item.Name) != item.Name;
     });
     for (const auto index : {4u, 11u, 13u}) {
+        if (index >= directoryCount) continue;
         const auto directory = Read<PeDataDirectory>(pe, dataDirectoryOffset + index * sizeof(PeDataDirectory));
         if (growsImports && (directory.VirtualAddress || directory.Size))
             throw std::runtime_error("signed, bound or delay-loaded PE imports are not supported when import names move to a new section");
