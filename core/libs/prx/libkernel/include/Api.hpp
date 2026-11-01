@@ -173,7 +173,7 @@ int APS5_VABI sceKernelUnknown18(void);
 int APS5_VABI sceKernelUnknown19(void);
 int APS5_VABI sceKernelPrintBacktraceWithModuleInfo(void);
 int APS5_VABI sceKernelGetProcessAbiType();
-int APS5_VABI __Ux86_64_setcontext();
+int APS5_VABI __Ux86_64_setcontext(const UserUcontext* context);
 int APS5_VABI sceKernelAioDeleteRequest(int32_t id, int32_t* ret);
 int APS5_VABI sceKernelAioDeleteRequests(int32_t* id, int32_t num, int32_t* ret);
 int APS5_VABI sceKernelAioCancelRequest(int32_t id, int32_t* state);
