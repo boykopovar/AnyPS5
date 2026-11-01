@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
+#include <bit>
 #include "prx/libc/include/ScanQuadLength.hpp"
 #include <algorithm>
 #include <array>
@@ -420,6 +421,68 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     Require(binary == 0 && binaryEnd == 1 && std::strcmp(binaryRest, "b101") == 0);
     Require(ScanList(" -0B11", "%i", &binary) == 1 && binary == 0);
     Require(ScanListS("0b1", "%i", &binary) == 1 && binary == 0);
+    unsigned int hexWrap = 0;
+    unsigned short shortWrap = 0;
+    unsigned char byteWrap = 0;
+    *__error_nid_postfix() = 7;
+    Require(ScanListS("61439ebdf", "%x", &hexWrap) == 1 && hexWrap == 0x1439ebdfu && *__error_nid_postfix() == 7);
+    Require(ScanListS("-eb371ade9", "%hx", &shortWrap) == 1 && shortWrap == 0x5217 && *__error_nid_postfix() == 7);
+    Require(ScanListS("867259ccd", "%hhX", &byteWrap) == 1 && byteWrap == 0xcd && *__error_nid_postfix() == 7);
+    {
+        const struct {
+            const char* input;
+            const char* format;
+            int result;
+        } prefixes[] = {
+            {"0x", "%x", -1}, {" 0X", "%X", -1}, {"0x1", "%2x", -1}, {"0x", "%i", -1}, {"0x", "%p", -1},
+            {"0xg", "%x", 0}, {"-0x", "%x", 0}, {"+0xz", "%x", 0}, {"-0x1", "%3x", 0}, {"0xg", "%i", 0}, {"0xg", "%p", 0},
+            {"0x", "%f", 0}, {"0x.", "%f", 0}, {"0xp1", "%a", 0}, {"0x", "%2f", 0}, {"0x.8", "%3f", 0}, {"-0x", "%g", 0},
+        };
+        for (const auto& item : prefixes) {
+            unsigned char stored[16];
+            std::memset(stored, 0x55, sizeof(stored));
+            int count = -7;
+            const std::string format = std::string(item.format) + "%n";
+            Require(ScanListS(item.input, format.c_str(), stored, &count) == item.result && count == -7 && stored[0] == 0x55);
+        }
+        unsigned int hex = 0;
+        int count = -7;
+        Require(ScanListS("0x1", "%1x%n", &hex, &count) == 1 && hex == 0 && count == 1);
+        Require(ScanListS("0x1f", "%x%n", &hex, &count) == 1 && hex == 0x1f && count == 4);
+        float point = 0;
+        Require(ScanListS("0x.8", "%f%n", &point, &count) == 1 && point == 0.5f && count == 4);
+        int first = 0;
+        Require(ScanListS("5 0x", "%d %x", &first, &hex) == 1 && first == 5);
+        Require(ScanListS("0x 7", "%*x %d", &first) == 0);
+        for (const char* input : {"nan", "-nan", "-NaN", "-nan(0x5)", "+nan"}) {
+            float single = 0;
+            double wide = 0;
+            unsigned char extended[16];
+            std::memset(extended, 0x55, sizeof(extended));
+            Require(ScanListS(input, "%f", &single) == 1 && std::bit_cast<std::uint32_t>(single) == 0x7fc00000u);
+            Require(ScanListS(input, "%lf", &wide) == 1 && std::bit_cast<std::uint64_t>(wide) == 0x7ff8000000000000ull);
+            Require(ScanListS(input, "%Lf", extended) == 1);
+            std::uint64_t mantissa = 0;
+            std::uint16_t exponent = 0;
+            std::memcpy(&mantissa, extended, 8);
+            std::memcpy(&exponent, extended + 8, 2);
+            Require(mantissa == 0xc000000000000000ull && exponent == 0x7fff);
+            Require(std::all_of(extended + 10, extended + 16, [](unsigned char byte) { return byte == 0x55; }));
+        }
+        const struct {
+            const char* input;
+            const char* format;
+            int expected;
+        } ranges[] = {
+            {"1e40", "%e", 7}, {"1e-50", "%e", 7}, {"0x1p200", "%a", 7}, {"1e400", "%le", 7}, {"1e-320", "%le", 7},
+            {"0x1p20000", "%La", 7}, {"1e5000", "%Le", 34}, {"1e-5000", "%Lg", 34},
+        };
+        for (const auto& item : ranges) {
+            unsigned char stored[16];
+            *__error_nid_postfix() = 7;
+            Require(ScanListS(item.input, item.format, stored) == 1 && *__error_nid_postfix() == item.expected);
+        }
+    }
     Require(sscanf_nid_postfix("0x1f", "%i", &binary) == 1 && binary == 31);
 #ifdef _WIN32
     int scanned = -1;
