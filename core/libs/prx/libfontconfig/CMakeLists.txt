@@ -1,5 +1,7 @@
 set(fontconfigSource "${PROJECT_SOURCE_DIR}/3rdparty/fontconfig")
 set(fontconfigData "${CMAKE_CURRENT_BINARY_DIR}/FontconfigData.hpp")
+install(FILES "${fontconfigSource}/COPYING" "${CMAKE_CURRENT_SOURCE_DIR}/Unicode-LICENSE.txt"
+    DESTINATION licenses/fontconfig)
 add_custom_command(OUTPUT "${fontconfigData}"
     COMMAND ${CMAKE_COMMAND} "-DFONTCONFIG_SOURCE=${fontconfigSource}" "-DOUTPUT=${fontconfigData}"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/GenerateData.cmake"
