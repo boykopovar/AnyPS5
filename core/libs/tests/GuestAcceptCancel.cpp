@@ -11,6 +11,12 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition, const char* message) {
     if (condition) return;
@@ -28,10 +34,28 @@ static bool Observe(TPredicate predicate) {
     return true;
 }
 
+static std::size_t NativeDescriptorCount() {
+#ifdef _WIN32
+    DWORD count = 0;
+    Require(GetProcessHandleCount(GetCurrentProcess(), &count) != 0, "count native handles");
+    return count;
+#else
+    std::size_t count = 0;
+    const auto limit = ::sysconf(_SC_OPEN_MAX);
+    Require(limit > 0, "native descriptor limit");
+    for (int descriptor = 0; descriptor < limit; ++descriptor)
+        if (::fcntl(descriptor, F_GETFD) >= 0) ++count;
+    return count;
+#endif
+}
+
 struct State {
     int listener = -1;
     int accepted = -1;
     int error = 0;
+    int installFault = 0;
+    std::size_t nativeBefore = 0;
+    bool countDisposal = false;
     PthreadKey key = -1;
     bool disabled = false;
     bool pending = false;
@@ -56,12 +80,14 @@ struct State {
 
 static void APS5_VABI Cleanup(void* opaque) {
     auto& state = *static_cast<State*>(opaque);
+    if (state.countDisposal) Require(NativeDescriptorCount() == state.nativeBefore, "accepted native resource survived until cleanup");
     Require(state.cleanups.fetch_add(1) == 0 && state.destructors.load() == 0, "cleanup ordering/count");
     if (state.accepted >= 0) Require(close_nid_postfix(state.accepted) == 0, "close accepted socket");
 }
 
 static void APS5_VABI Destroy(void* opaque) {
     auto& state = *static_cast<State*>(opaque);
+    if (state.countDisposal) Require(NativeDescriptorCount() == state.nativeBefore, "accepted native resource survived until TSD");
     Require(state.cleanups.load() == 1 && state.destructors.fetch_add(1) == 0, "TSD ordering/count");
 }
 
@@ -86,6 +112,10 @@ static void LeaveHandoff() {
 
 static void ObserveHandoff() {
     accepting->observed.store(true);
+    if (accepting->installFault) {
+        GuestSocketAcceptInstallFaultForTest_nid_no_patch(accepting->installFault);
+        return;
+    }
     Require(ThreadCancel::DeferIoCallback(LeaveHandoff, nullptr), "defer accepted handoff");
 }
 
@@ -97,6 +127,14 @@ static void* APS5_VABI Acceptor(void* opaque) {
     __pthread_cleanup_push_imp_nid_postfix(Cleanup, &state, &cleanup);
     accepting = &state;
     if (state.handoff) GuestSocketAcceptObserverForTest_nid_no_patch(ObserveHandoff);
+    if (state.countDisposal) {
+        GuestSockets::CurrentWaker();
+        {
+            ThreadCancel::IoRestart warmup(false);
+            ThreadCancel::IoPoint point(warmup);
+        }
+        state.nativeBefore = NativeDescriptorCount();
+    }
     state.ready.store(true);
     if (state.pending) Require(Observe([&] { return state.release.load(); }), "pending release");
     if (!state.jump || setjmp_nid_postfix(state.jumpBuffer.data()) == 0)
@@ -130,6 +168,9 @@ int main(int argc, char** argv) {
     state.handoffReuse = scenario == "handoff_reuse";
     state.jump = scenario == "handoff_jump";
     state.flags = scenario == "flags";
+    state.installFault = scenario == "install_reserve_failure" ? 1 : scenario == "install_map_failure" ? 2 : 0;
+    state.countDisposal = state.installFault || scenario == "handoff_cancel" || scenario == "handoff_jump";
+    state.handoff = state.handoff || state.installFault;
     state.listener = socket_nid_postfix(2, 1, 0);
     Require(state.listener >= 0, "create listener");
     std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
@@ -166,7 +207,7 @@ int main(int argc, char** argv) {
     Require(Observe([&] { return state.destructors.load() == 1; }), "accept did not finish");
     void* result = nullptr;
     Require(scePthreadJoin(thread, &result) == 0, "join");
-    Require(result == ((cancel || (state.handoff && !state.jump && !state.handoffPending)) ? GUEST_CANCELED : reinterpret_cast<void*>(std::uintptr_t{7})), "thread result");
+    Require(result == ((cancel || (state.handoff && !state.installFault && !state.jump && !state.handoffPending)) ? GUEST_CANCELED : reinterpret_cast<void*>(std::uintptr_t{7})), "thread result");
     Require(state.cleanups.load() == 1 && state.destructors.load() == 1, "cleanup counts");
     if (scenario == "nonblocking") Require(state.accepted == -1 && state.error == 35, "nonblocking errno");
     if (scenario == "complete" || state.flags) {
@@ -174,6 +215,7 @@ int main(int argc, char** argv) {
         Require(state.acceptedDescriptorFlags == 0, "accepted close-on-exec inherited");
         Require((state.acceptedFlags & 4) == (state.flags ? 4 : 0), "accepted nonblocking flags");
     }
+    if (state.installFault) Require(state.accepted == -1 && state.error == (state.installFault == 1 ? 24 : 12), "accepted installation failure errno");
     if (state.handoff) {
         Require(state.observed.load() && (state.handoffPending ? state.accepted >= 0 : state.accepted == -1), "accepted ownership handoff not reached");
         if (state.handoffReuse) Require(fcntl_nid_postfix(state.listener, 3) >= 0, "disposal closed replacement");

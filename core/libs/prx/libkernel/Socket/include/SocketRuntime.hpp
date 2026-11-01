@@ -45,3 +45,5 @@ extern "C" bool GuestSocketReadGuest_nid_no_patch(void* destination, const void*
 
 extern "C" std::uint64_t GuestSocketWakerCreationsForTest_nid_no_patch();
 extern "C" void GuestSocketAcceptObserverForTest_nid_no_patch(void (*observer)());
+
+extern "C" void GuestSocketAcceptInstallFaultForTest_nid_no_patch(int stage);

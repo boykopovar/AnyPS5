@@ -79,6 +79,7 @@ constexpr auto Invalid = -1;
 int Fail(int error) { *__error_nid_postfix() = error; return -1; }
 constexpr int GuestSocketDescriptorLimit = 1024;
 thread_local void (*acceptObserver)() = nullptr;
+thread_local int acceptInstallFault = 0;
 constexpr int GuestPeek = 0x2;
 constexpr int GuestWaitAll = 0x40;
 constexpr int GuestDontWait = 0x80;
@@ -420,6 +421,7 @@ int Install(std::shared_ptr<Socket> socket) {
     const int number = ReserveNumber(socket->value);
     if (number < 0) return -1;
     try {
+        if (acceptInstallFault == 2) { acceptInstallFault = 0; throw std::bad_alloc(); }
         std::lock_guard lock(socketsMutex);
         sockets.insert_or_assign(number, std::move(socket));
     } catch (const std::bad_alloc&) {
@@ -2863,4 +2865,8 @@ extern "C" std::uint64_t GuestSocketWakerCreationsForTest_nid_no_patch() {
 
 extern "C" void GuestSocketAcceptObserverForTest_nid_no_patch(void (*observer)()) {
     acceptObserver = observer;
+}
+
+extern "C" void GuestSocketAcceptInstallFaultForTest_nid_no_patch(int stage) {
+    acceptInstallFault = stage;
 }
