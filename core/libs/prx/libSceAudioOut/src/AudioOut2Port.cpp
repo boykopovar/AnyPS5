@@ -116,7 +116,7 @@ AudioOut2Grain AudioOut2CaptureGrain(const AudioOut2Context& context, bool snaps
             queued = std::move(port.queuedData.front());
             port.queuedData.pop_front();
             data = queued.data;
-            setPcm = queued.reused ? &queued.pcm : nullptr;
+            setPcm = queued.reused || snapshot ? &queued.pcm : nullptr;
         }
         if (data != nullptr) {
             AudioOut2CapturedPort captured{index, port.generation, data};
@@ -296,12 +296,12 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
             std::memcpy(&entry->data, attribute.value, sizeof(entry->data));
             MarkBufferReused(*entry);
             AudioOut2QueuedData queued{entry->data, CopyGrain(*entry)};
-            entry->repeatedData = entry->data != nullptr && (entry->lastBuffer == nullptr || entry->lastBuffer == entry->data) ? entry->data : nullptr;
+            entry->repeatedData = entry->data != nullptr && entry->lastBuffer == nullptr ? entry->data : nullptr;
             entry->repeatedPcm = queued.pcm;
             entry->repeatedReused = false;
             entry->queuedData.push_back(std::move(queued));
             if (entry->queuedData.size() > QUEUED_DATA_MAX) entry->queuedData.pop_front();
-            if (entry->data != nullptr) entry->lastBuffer = entry->data;
+            entry->lastBuffer = entry->data;
             entry->dataSets++;
             verdict = "pcm data pointer";
         } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && entry->channels != 0 && attribute.value_size == entry->channels * sizeof(float)) {
