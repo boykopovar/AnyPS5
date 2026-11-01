@@ -2,6 +2,7 @@ add_library(libSceAudioOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOutSdl.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOutShutdown.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPause.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Context.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2Low.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AudioOut2PadMix.cpp
@@ -66,7 +67,18 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 
-    add_test_executable(audio_out_vibration_device_tests tests/AudioOutVibrationDevice.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp ../libScePad/src/HostVolumeState.cpp)
+    add_test_executable(audio_out_host_pause_tests tests/HostPause.cpp src/HostPause.cpp)
+    target_include_directories(audio_out_host_pause_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out_host_pause_tests PRIVATE libc)
+    configure_windows_unwind(audio_out_host_pause_tests)
+    add_test(NAME audio_out_host_pause COMMAND audio_out_host_pause_tests)
+    set_tests_properties(audio_out_host_pause PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(audio_out_host_pause PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
+    add_test_executable(audio_out_vibration_device_tests tests/AudioOutVibrationDevice.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp ../libScePad/src/HostVolumeState.cpp src/HostPause.cpp)
     target_compile_definitions(audio_out_vibration_device_tests PRIVATE SDL_MAIN_HANDLED)
     target_include_directories(audio_out_vibration_device_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_link_libraries(audio_out_vibration_device_tests PRIVATE libc libkernel libScePad)
@@ -81,7 +93,7 @@ if(BUILD_TESTING)
         endif()
     endforeach()
 
-    add_test_executable(audio_out_default_open_tests tests/AudioOutDefaultOpen.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp ../libScePad/src/HostVolumeState.cpp)
+    add_test_executable(audio_out_default_open_tests tests/AudioOutDefaultOpen.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp ../libScePad/src/HostVolumeState.cpp src/HostPause.cpp)
     target_compile_definitions(audio_out_default_open_tests PRIVATE SDL_MAIN_HANDLED)
     target_include_directories(audio_out_default_open_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_link_libraries(audio_out_default_open_tests PRIVATE libc libkernel libScePad)
@@ -96,12 +108,12 @@ if(BUILD_TESTING)
         endif()
     endforeach()
 
-    add_test_executable(audio_out_buffer_size_tests tests/AudioOutBufferSize.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp ../libScePad/src/HostVolumeState.cpp)
+    add_test_executable(audio_out_buffer_size_tests tests/AudioOutBufferSize.cpp src/AudioOut.cpp src/AudioOut2PadMix.cpp src/AudioOutShutdown.cpp ../libScePad/src/HostVolumeState.cpp src/HostPause.cpp)
     target_compile_definitions(audio_out_buffer_size_tests PRIVATE SDL_MAIN_HANDLED)
     target_include_directories(audio_out_buffer_size_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
     target_link_libraries(audio_out_buffer_size_tests PRIVATE libc libkernel libScePad)
     configure_windows_unwind(audio_out_buffer_size_tests)
-    foreach(bufferSizeMode IN ITEMS pass_through wrap mix threshold virtual_overflow invalid_format)
+    foreach(bufferSizeMode IN ITEMS pass_through wrap mix threshold virtual_overflow invalid_format paused)
         set(bufferSizeTest "audio_out_buffer_size_${bufferSizeMode}")
         add_test(NAME ${bufferSizeTest} COMMAND audio_out_buffer_size_tests ${bufferSizeMode})
         set_tests_properties(${bufferSizeTest} PROPERTIES TIMEOUT 5)

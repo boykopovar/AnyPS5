@@ -284,6 +284,12 @@ The game chooses its video-output resolution; AnyPS5 uses that mode for renderin
 
 `ANYPS5_DISPLAY_INDEX=<n>` opens the window centred on display `n`, counted from 0 in the order SDL lists the displays. Unset, the first display is used. A value that is not the index of a connected display, including an empty value, stops the game at start with an error that names the variable.
 
+### Pausing the display
+
+Set `ANYPS5_PAUSE_KEY` to an SDL key name such as `F9` or `Pause` (the names `anyps5-input.ini` uses) to hold the game with that key: press it in the display window to pause and again to resume. Set `ANYPS5_PAUSE_ON_FOCUS_LOSS=1` to pause while the display window has lost focus or is minimized and resume when it regains focus; the two can be combined, and a pause from the key survives a focus round trip. Both are off when unset. Pick a key no pad action uses, since the key still reaches the pad mapping. An invalid value stops the game at its first video-out use with an error that names the variable. Each change prints one line on stderr, with the paused time on resume.
+
+This is a host-side hold, not a freeze of the title. While paused AnyPS5 stops taking flips off the queue, so a title that waits on its flips stops once the queue is full (`sceVideoOutSubmitFlip` returns the queue-full error, as it does for a slow display), and the main audio output and the AudioOut2 main mix play silence in place of the title's samples. The title's threads keep running: one that does not depend on flips, such as a simulation or loading thread, keeps working, vblank events keep arriving, and the title's clocks keep advancing, so a title that measures elapsed time sees the whole pause as one long frame on resume. The controller's own speaker and haptics and the microphone are not touched. `APS5_STALL_WATCHDOG_SECS`, when set, can fire during a long pause, because a GPU wait that only a held flip would release does not progress. A window that starts without focus is not paused until its first focus event. These limits are in the [libSceVideoOut technical debt](../dev/debt/libSceVideoOut.md).
+
 ### VR compatibility
 
 AnyPS5 does not currently support PS VR2 headsets or PC VR headsets connected through an OpenXR runtime. It does not provide headset tracking, stereoscopic output or reprojection. A VR title may skip its headset setup when no device is detected, but that does not mean its VR gameplay is supported.

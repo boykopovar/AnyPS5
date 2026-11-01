@@ -19,6 +19,7 @@
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libSceAudioOut/include/HostGain.hpp"
 #include "prx/libScePad/include/HostVolumeControl.hpp"
+#include "prx/libSceAudioOut/include/HostPause.hpp"
 #include "AudioOutShutdown.hpp"
 #include "AudioOut2PadMix.hpp"
 #include "prx/libScePad/include/PadState.hpp"
@@ -335,6 +336,8 @@ static void queueAudio(Port& port, const void* data, std::unique_lock<std::mutex
         sleepUs(lock, DRAIN_SLEEP_US);
     }
 
+    std::vector<std::uint8_t> silence;
+    if (port.type != PORT_TYPE_VIBRATION) queueData = AudioOutSilenceWhilePaused(queueData, queueSize, silence);
     if (SDL_QueueAudio(port.device, queueData, queueSize) < 0) {
         throw std::runtime_error(std::string("SDL_QueueAudio: ") + SDL_GetError());
     }

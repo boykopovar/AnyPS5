@@ -16,6 +16,8 @@ add_library(libSceVideoOut SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/src/InputMapping.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/KeyboardMouse.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostHdrProbe.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPauseSettings.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/HostPause.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libkernel/Time/TimedWait.cpp
 )
 
@@ -26,7 +28,7 @@ target_include_directories(libSceVideoOut PRIVATE
         ${CMAKE_BINARY_DIR}/core/libs/prx/libSceAgcDriver/generated
 )
 add_dependencies(libSceVideoOut agc_trace_revision)
-target_link_libraries(libSceVideoOut PRIVATE libSceAgcDriver libScePad libSceUserService libSceMouse libSceKeyboard libSceIme libc libkernel decoder_png SDL2-static)
+target_link_libraries(libSceVideoOut PRIVATE libSceAgcDriver libSceAudioOut libScePad libSceUserService libSceMouse libSceKeyboard libSceIme libc libkernel decoder_png SDL2-static)
 if(WIN32)
     target_link_libraries(libSceVideoOut PRIVATE comctl32 dxgi)
 endif()
@@ -66,7 +68,7 @@ endif()
 
 add_test_executable(video_out_flip_tests EXCLUDE_FROM_ALL tests/Flip.cpp)
 target_include_directories(video_out_flip_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/core/shader/recompiler ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
-target_link_libraries(video_out_flip_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)
+target_link_libraries(video_out_flip_tests PRIVATE libSceVideoOut libSceAudioOut libSceAgcDriver libkernel libc)
 set_target_properties(video_out_flip_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(video_out_flip_tests)
 if(BUILD_TESTING)
@@ -140,6 +142,12 @@ if(BUILD_TESTING)
     set_tests_properties(video_out_flip_unavailable PROPERTIES TIMEOUT 30 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=dummy")
     if(WIN32)
         set_tests_properties(video_out_flip_unavailable PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME video_out_flip_host_pause COMMAND video_out_flip_tests hostpause)
+    set_tests_properties(video_out_flip_host_pause PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};ANYPS5_PAUSE_KEY=F9")
+    if(WIN32)
+        set_tests_properties(video_out_flip_host_pause PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -218,6 +226,16 @@ if(BUILD_TESTING)
         target_link_options(pad_host_volume_tests PRIVATE -static -static-libgcc -static-libstdc++)
     endif()
     add_test(NAME pad_host_volume COMMAND pad_host_volume_tests)
+
+    add_test_executable(video_out_host_pause_tests tests/HostPause.cpp src/HostPauseSettings.cpp src/HostPause.cpp)
+    target_include_directories(video_out_host_pause_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_SOURCE_DIR}/3rdparty/SDL2/include)
+    target_link_libraries(video_out_host_pause_tests PRIVATE SDL2-static)
+    if(MINGW)
+        target_compile_options(video_out_host_pause_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(video_out_host_pause_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME video_out_host_pause COMMAND video_out_host_pause_tests)
+    set_tests_properties(video_out_host_pause PROPERTIES TIMEOUT 10)
 endif()
 
 if(BUILD_TESTING)
