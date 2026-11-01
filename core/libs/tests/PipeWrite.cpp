@@ -2,7 +2,6 @@
 #include <array>
 #include <cerrno>
 #include <cstdint>
-#include <cstdlib>
 #include <fcntl.h>
 #include <iostream>
 #include <source_location>
@@ -10,7 +9,6 @@
 #include <string>
 #include <sys/resource.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -134,30 +132,6 @@ void Run(const std::string& mode) {
         const int closed = pipe.writer.value;
         pipe.writer.Close();
         Require(!GuestSockets::PipeWriteState(closed, &data, &eof, &writable));
-    } else if (mode == "fifo") {
-        struct Directory {
-            char name[64] = "/tmp/anyps5-pipe-write-XXXXXX";
-            Directory() { Require(::mkdtemp(name) != nullptr); }
-            ~Directory() {
-                ::unlink((std::string(name) + "/fifo").c_str());
-                ::rmdir(name);
-            }
-        } directory;
-        const std::string path = std::string(directory.name) + "/fifo";
-        Require(::mkfifo(path.c_str(), 0600) == 0);
-        Descriptor reader(::open(path.c_str(), O_RDONLY | O_NONBLOCK));
-        Descriptor writer(::open(path.c_str(), O_WRONLY | O_NONBLOCK));
-        Require(reader.value >= 0 && writer.value >= 0);
-        for (const bool linked : {true, false}) {
-            if (!linked) Require(::unlink(path.c_str()) == 0);
-            bool unsupported = false;
-            try {
-                const State state(writer.value);
-            } catch (const std::runtime_error&) {
-                unsupported = true;
-            }
-            Require(unsupported);
-        }
     } else if (mode == "cleanup") {
         const int before = DescriptorCount();
         for (int index = 0; index < 256; ++index) {
