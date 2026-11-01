@@ -3,7 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
+#include <filesystem>
 #include <string>
 #include <utility>
 
@@ -25,8 +25,19 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceVideoOut/include/HostVolumeInput.hpp"
 #include "prx/libScePad/include/HostVolumeSettings.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 
-PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
+namespace {
+
+std::string appTitleId() {
+    if (!std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.json")) && !std::filesystem::exists(ResolvePath_nid_no_patch("/app0/sce_sys/param.sfo"))) return {};
+    const auto titleId = GetAppTitleId_nid_postfix();
+    return std::string(titleId.value, std::find(titleId.value, titleId.value + sizeof(titleId.value), '\0'));
+}
+
+}
+
+PadInput::PadInput() : PadInput(Pad::LoadInputMapping(appTitleId())) {
     HostVolumeConfigureFromEnvironment_nid_no_patch();
 }
 
