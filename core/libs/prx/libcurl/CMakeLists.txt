@@ -15,7 +15,7 @@ if(NOT curlMbedDefinitions)
 endif()
 get_target_property(curlNgBinaryDir nghttp2_static BINARY_DIR)
 file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/BackendOptions.cmake CONTENT
-    "add_compile_definitions([=[${curlMbedDefinitions}]=] MBEDTLS_ALLOW_PRIVATE_ACCESS NGHTTP2_STATICLIB curl_strequal=host_curl_strequal curl_strnequal=host_curl_strnequal)\ninclude_directories([=[${curlNgBinaryDir}/includes]=])\nset(CMAKE_POSITION_INDEPENDENT_CODE ON)\n")
+    "add_compile_definitions([=[${curlMbedDefinitions}]=] MBEDTLS_ALLOW_PRIVATE_ACCESS NGHTTP2_STATICLIB curl_strequal=host_curl_strequal curl_strnequal=host_curl_strnequal)\ninclude_directories([=[${curlNgBinaryDir}/includes]=])\nset(CMAKE_POSITION_INDEPENDENT_CODE ON)\nif(CMAKE_C_COMPILER_ID MATCHES \"GNU|Clang\")\n    string(APPEND CMAKE_C_FLAGS \" -Wno-error=incompatible-pointer-types -Wno-error=int-conversion -Wno-error=implicit-function-declaration\")\nendif()\n")
 
 set(curlBackendOptions
     -DCMAKE_C_COMPILER:FILEPATH=${CMAKE_C_COMPILER}
