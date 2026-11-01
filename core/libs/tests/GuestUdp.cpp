@@ -10,6 +10,13 @@
 #include <initializer_list>
 #include <thread>
 #include <chrono>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -332,7 +339,159 @@ static void CheckArrivalTimestamps(int family) {
     Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        memory = static_cast<char*>(VirtualAlloc(nullptr, 3 * Size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(memory + Size, Size, PAGE_NOACCESS, &previous) != 0);
+        Require(VirtualProtect(memory + 2 * Size, Size, PAGE_READONLY, &previous) != 0);
+#else
+        memory = static_cast<char*>(mmap(nullptr, 4 * Size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(memory != MAP_FAILED);
+        Require(mprotect(memory + Size, Size, PROT_NONE) == 0);
+        Require(mprotect(memory + 2 * Size, Size, PROT_READ) == 0);
+        Require(mprotect(memory + 3 * Size, Size, PROT_WRITE) == 0);
+#endif
+    }
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, 4 * Size);
+#endif
+    }
+    char* Readable() const { return memory; }
+    char* Unreadable() const { return memory + Size; }
+    char* Crossing() const { return memory + Size - 4; }
+    char* ReadOnly() const { return memory + 2 * Size; }
+    char* LastWritable() const { return memory + Size - 1; }
+#ifdef _WIN32
+    char* WriteOnly() const { return nullptr; }
+    void Reveal() const {}
+#else
+    char* WriteOnly() const { return memory + 3 * Size; }
+    void Reveal() const { Require(mprotect(memory + 3 * Size, Size, PROT_READ | PROT_WRITE) == 0); }
+#endif
+
+private:
+    static constexpr std::size_t Size = 0x10000;
+    char* memory = nullptr;
+};
+
+static void CheckPointerFaults() {
+    constexpr int Fault = 14;
+    GuardedPage page;
+    const auto fails = [](std::int64_t result) { return result == -1 && *__error_nid_postfix() == Fault; };
+    for (const int type : {1, 2}) {
+        const int receiver = socket_nid_postfix(2, type | 0x20000000, 0);
+        const int sender = socket_nid_postfix(2, type, 0);
+        Require(receiver >= 0 && sender >= 0);
+        std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+        Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+        std::uint32_t size = address.size();
+        Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+        int connected = receiver;
+        if (type == 1) {
+            Require(listen_nid_postfix(receiver, 1) == 0);
+            Require(connect_nid_postfix(sender, address.data(), address.size()) == 0);
+            connected = -1;
+            for (int attempt = 0; attempt < 200 && connected < 0; ++attempt) {
+                connected = accept_nid_postfix(receiver, nullptr, nullptr);
+                if (connected < 0) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            Require(connected >= 0);
+        }
+        const auto destination = type == 2 ? address.data() : nullptr;
+        const std::uint32_t destinationSize = type == 2 ? address.size() : 0;
+
+        Require(fails(sendto_nid_postfix(sender, nullptr, 1, 0, destination, destinationSize)));
+        Require(fails(sendto_nid_postfix(sender, reinterpret_cast<void*>(0x10), 1, 0, destination, destinationSize)));
+        Require(fails(sendto_nid_postfix(sender, page.Unreadable(), 1, 0, destination, destinationSize)));
+        Require(fails(sendto_nid_postfix(sender, page.Crossing(), 8, 0, destination, destinationSize)));
+        if (type == 2) {
+            Require(fails(sendto_nid_postfix(sender, reinterpret_cast<void*>(0x10), 1, 0, address.data(), 4)));
+            Require(fails(sendto_nid_postfix(sender, "x", 1, 0, reinterpret_cast<void*>(0x10), address.size())));
+            Require(fails(sendto_nid_postfix(sender, "x", 1, 0, page.Unreadable(), address.size())));
+            Require(fails(sendto_nid_postfix(sender, "x", 1, 0, page.Crossing(), address.size())));
+        }
+        Require(sendto_nid_postfix(sender, page.Crossing(), 4, 0, destination, destinationSize) == 4);
+        for (int i = 0; i < 7; ++i) Require(sendto_nid_postfix(sender, "ok", 2, 0, destination, destinationSize) == 2);
+        char peeked[1];
+        for (int attempt = 0; attempt < 400 && recvfrom_nid_postfix(connected, peeked, 1, 2, nullptr, nullptr) < 0; ++attempt)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        Require(recvfrom_nid_postfix(connected, peeked, 1, 2, nullptr, nullptr) == 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+        std::uint32_t length = 16;
+        std::array<unsigned char, 16> name{};
+        Require(fails(recvfrom_nid_postfix(connected, name.data(), 2, 0, name.data(), reinterpret_cast<std::uint32_t*>(0x10))));
+        Require(fails(recvfrom_nid_postfix(connected, name.data(), 2, 0, name.data(), reinterpret_cast<std::uint32_t*>(page.Unreadable()))));
+        Require(fails(recvfrom_nid_postfix(connected, name.data(), 2, 0, name.data(), reinterpret_cast<std::uint32_t*>(page.Crossing() + 2))));
+        Require(fails(recvfrom_nid_postfix(connected, reinterpret_cast<void*>(0x10), 2, 0, nullptr, nullptr)));
+        Require(fails(recvfrom_nid_postfix(connected, page.Unreadable(), 2, 0, nullptr, nullptr)));
+        Require(fails(recvfrom_nid_postfix(connected, page.ReadOnly(), 2, 0, nullptr, nullptr)));
+        Require(sendto_nid_postfix(sender, page.ReadOnly(), 2, 0, destination, destinationSize) == 2);
+        if (type == 2) {
+            Require(fails(recvfrom_nid_postfix(connected, name.data(), 2, 0, reinterpret_cast<void*>(0x10), &length)));
+            Require(fails(recvfrom_nid_postfix(connected, name.data(), 2, 0, page.Unreadable(), &length)));
+            Require(fails(recvfrom_nid_postfix(connected, name.data(), 2, 0, page.Crossing(), &length)));
+        }
+        char received[8]{};
+        length = 16;
+        const auto taken = recvfrom_nid_postfix(connected, received, sizeof(received), 0, type == 2 ? name.data() : nullptr,
+            type == 2 ? &length : nullptr);
+        Require(taken >= 0);
+        if (type == 2) Require(length == 16 && name[1] == 2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        while (recvfrom_nid_postfix(connected, received, sizeof(received), 0, nullptr, nullptr) >= 0) {
+        }
+        Require(*__error_nid_postfix() == 35);
+        Require(recvfrom_nid_postfix(connected, reinterpret_cast<void*>(0x10), 2, 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+        const auto arrive = [&] {
+            Require(sendto_nid_postfix(sender, "ok", 2, 0, destination, destinationSize) == 2);
+            for (int attempt = 0; attempt < 400 && recvfrom_nid_postfix(connected, peeked, 1, 2, nullptr, nullptr) < 0; ++attempt)
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        };
+        arrive();
+        std::uint32_t before = 7;
+        Require(recvfrom_nid_postfix(connected, received, 2, 0, nullptr, &before) == 2 && before == 7);
+        const auto settle = [&] {
+            for (int attempt = 0; attempt < 400 && recvfrom_nid_postfix(connected, peeked, 1, 2, nullptr, nullptr) < 0; ++attempt)
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        };
+        Require(sendto_nid_postfix(sender, "z", 1, 0, destination, destinationSize) == 1);
+        settle();
+        *page.LastWritable() = 0;
+        Require(recvfrom_nid_postfix(connected, page.LastWritable(), 2, 0, nullptr, nullptr) == 1 && *page.LastWritable() == 'z');
+        Require(recvfrom_nid_postfix(connected, received, 2, 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+        if (type == 2) {
+            Require(sendto_nid_postfix(sender, "ok", 2, 0, destination, destinationSize) == 2);
+            settle();
+            Require(fails(recvfrom_nid_postfix(connected, page.LastWritable(), 2, 0, nullptr, nullptr)));
+            Require(sendto_nid_postfix(sender, "y", 1, 0, destination, destinationSize) == 1);
+            settle();
+            Require(recvfrom_nid_postfix(connected, received, 2, 0, nullptr, nullptr) == 1 && received[0] == 'y');
+        }
+        if (page.WriteOnly() != nullptr) {
+            Require(sendto_nid_postfix(sender, "wo", 2, 0, destination, destinationSize) == 2);
+            settle();
+            Require(recvfrom_nid_postfix(connected, page.WriteOnly(), 2, 0, nullptr, nullptr) == 2);
+            page.Reveal();
+            Require(page.WriteOnly()[0] == 'w' && page.WriteOnly()[1] == 'o');
+            Require(recvfrom_nid_postfix(connected, received, 2, 0, nullptr, nullptr) == -1 && *__error_nid_postfix() == 35);
+        }
+        arrive();
+        Require(fails(recvfrom_nid_postfix(connected, received, 2, 0, nullptr, reinterpret_cast<std::uint32_t*>(page.ReadOnly()))));
+        if (type == 1) Require(close_nid_postfix(connected) == 0);
+        Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
+    }
+}
+
 int main() {
+    CheckPointerFaults();
     CheckAddressLengths(2);
     CheckAddressLengths(28);
     for (const int family : {2, 28})
