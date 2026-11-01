@@ -226,7 +226,7 @@ int APS5_VABI sceCesIso2022StrToUtf8Str(void* context, const uint8_t* iso, uint3
 int APS5_VABI sceCesIso2022UcsContextInit(void* context, const void* profile);
 int APS5_VABI sceCesIso2022UcsContextInitCopy(void* context, const void* source);
 int APS5_VABI sceCesJisGetLevel(void);
-int APS5_VABI sceCesJiscsToUcs(void);
+int APS5_VABI sceCesJiscsToUcs(const void* profile, uint32_t jiscs, uint32_t* ucs);
 int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharCode(void);
 int APS5_VABI sceCesMbcsUcsSetMbcsReplacementCharUCode(void);
 const uint8_t* APS5_VABI sceCesRefersUcsProfileAscii(void);
@@ -262,7 +262,7 @@ void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50221(void* sheet);
 void* APS5_VABI sceCesUcsProfileInitIso2022JpCp50222(void* sheet);
 void* APS5_VABI sceCesUcsProfileInitIso2022JpRfc1468(void* sheet);
 void* APS5_VABI sceCesUcsProfileInitSJis2004X0213(void* sheet);
-int APS5_VABI sceCesUcsToJiscs(void);
+int APS5_VABI sceCesUcsToJiscs(uint32_t ucs, const void* profile, uint32_t* jiscs);
 int APS5_VABI sceCesUhcUcsProfileSetSbcs(void);
 int APS5_VABI sceCesUtf16StrGetIso2022Len(void* context, const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, uint32_t* isoLen);
 int APS5_VABI sceCesUtf16StrToIso2022Str(void* context, const uint16_t* utf16, uint32_t utf16max, uint32_t* utf16Len, uint8_t* iso, uint32_t isoMax, uint32_t* isoLen);
