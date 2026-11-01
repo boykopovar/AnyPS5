@@ -228,7 +228,7 @@ void testDeferredBuffer() {
 }
 
 void testCpuFlipOrder() {
-    const bool inOrder = std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr;
+    const bool inOrder = APS5_ENABLE_TIMING_LOG || std::getenv("APS5_CPU_FLIP_IN_ORDER") != nullptr;
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     std::vector<std::byte> allocation(65536 + 65535);
@@ -255,7 +255,7 @@ void testCpuFlipOrder() {
     std::thread flipThread([&] { check(sceVideoOutSubmitFlip(handle, 0, 1, 5) == 0, "the flip thread's flip was not accepted"); });
     flipThread.join();
     const bool ahead = flipsWithin(1, std::chrono::milliseconds(inOrder ? 1000 : 8000));
-    if (inOrder) check(!ahead, "with APS5_CPU_FLIP_IN_ORDER a flip completed while a queue-0 submission ahead of it was held");
+    if (inOrder) check(!ahead, "with CPU flips in order a flip completed while a queue-0 submission ahead of it was held");
     else check(ahead, "a flip from a thread that never submitted queue-0 work waited for a held queue-0 submission");
     first->Release();
     check(flipsWithin(1, std::chrono::seconds(30)), "the flip thread's flip did not complete");
