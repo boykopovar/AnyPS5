@@ -60,3 +60,5 @@
 #include "UnicodeStringHash.hpp"
 #include "UnicodeStringSink.hpp"
 #include "TrieEnumeration.hpp"
+#include "TrieBuilder.hpp"
+#include "DataSwapper.hpp"

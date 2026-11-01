@@ -39,7 +39,7 @@
 
 - [Locale IDs](../../../core/libs/prx/libSceIcu/LocaleId.cpp) have no console ABI or behavior verification. ISO language/country lists, ISO3 lookup and parent extraction follow ICU 68.2 `uloc.cpp`, including its embedded obsolete codes, parsing and termination. Accessed null pointers, negative copy sizes and overlapping parent copies throw `std::invalid_argument` instead of undefined behavior. Null locale IDs still throw through `NotImplemented_nid_no_patch` because the initial console default is unknown. Name/variant normalization, keywords, BCP 47, key/type mapping and LCID exports remain stubs pending complete parsers and resource-independent mapping proof; display, available-locale and likely-subtag exports require data. Closes when: compared with the console.
 
-- [Trie builders](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) have no console verification. All assigned StringTrieBuilder and UCharsTrieBuilder exports remain throwing stubs: node ownership, compact-builder equivalence and byte-identical ICU 68.2 trie output have not been reimplemented or differential-proven. Closes when: compared with the console.
+- [Trie builders](../../../core/libs/prx/libSceIcu/TrieBuilder.cpp) have no console verification. StringTrieBuilder and UCharsTrieBuilder follow ICU 68.2 `stringtriebuilder.cpp` and `ucharstriebuilder.cpp`, and their serialized tries are compared byte for byte with it. Builder nodes are host objects, not ICU's `StringTrieBuilder::Node` layout: the exports that take or return a node (`registerNode`, `registerFinalValue`, `makeNode`, `makeBranchSubNode`, `createLinearMatchNode`, `hashNode`, `equalNodes`) work only with nodes this library created, and a guest `Node` subclass is not supported. Null pointers and out-of-range indices throw `std::invalid_argument` where ICU has undefined behaviour. Closes when: compared with the console.
 
 
 
@@ -51,11 +51,11 @@
 
 
 
-- [Data swappers and data memory](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) have no console verification. Assigned `udata_*` exports remain throwing stubs: ICU 68.2 swapper validation, endian and invariant-string callbacks, diagnostics, UDataMemory layout, ownership and data-file loading have not been reimplemented or differential-proven. Closes when: compared with the console.
+- [Data swappers and data memory](../../../core/libs/prx/libSceIcu/DataSwapper.cpp) have no console verification. Swapper creation, header and invariant-string swapping and diagnostics follow ICU 68.2 `udataswp.cpp`; `udata_printError` passes the guest `va_list` to the guest `printError`. A null `UErrorCode` passed to `utrie2_swap`, `ucptrie_swap` or `utrie_swapAnyVersion`, and a null swapper passed to `udata_printError`, throw `std::invalid_argument` where ICU dereferences them. `udata_open`, `udata_openChoice`, `udata_setAppData`, `udata_close`, `udata_getMemory`, `udata_getRawMemory`, `udata_getLength` and `udata_getInfo` remain throwing stubs because no ICU data package is available. Closes when: compared with the console.
 
 
 
-- [Format swappers](../../../core/libs/prx/libSceIcu/LegacyExports.cpp) have no console verification. Assigned break, resource, dictionary, character-name, converter, alias, code-point trie, Trie2, older trie, collation, inverse-UCA and normalization swappers remain throwing stubs pending complete ICU 68.2 format validation, round trips and byte-identical output. Closes when: compared with the console.
+- [Format swappers](../../../core/libs/prx/libSceIcu/DataSwapper.cpp) have no console verification. `utrie_swapAnyVersion`, `utrie2_swap` and `ucptrie_swap` follow ICU 68.2 `utrie_swap.cpp`. `ubrk_swap`, `ures_swap`, `udict_swap`, `uchar_swapNames`, `ucnv_swap`, `ucnv_swapAliases`, `ucol_swap`, `ucol_swapInverseUCA` and `unorm2_swap` remain throwing stubs: their format validation and swapping are not reimplemented. Closes when: compared with the console.
 
 
 
@@ -79,7 +79,7 @@
 
 
 
-- [Vector objects](../../../core/libs/prx/libSceIcu/VectorObjects.cpp) have no console verification. Assigned UVector, UVector32 and UStack constructors, destructors, guest vtables and RTTI follow ICU 68.2 `uvector.cpp`, `uvectr32.cpp` and `ustack.cpp`, including UVector32 allocation with an incoming failure, vector callback deletion order and nulling freed arrays. Accessed null pointers throw `std::invalid_argument` instead of undefined behavior. Integer UVector `indexOf` and `sortedInsert` remain stubs because upstream exposes uninitialized upper union bytes to callbacks. Closes when: compared with the console.
+- [Vector objects](../../../core/libs/prx/libSceIcu/VectorObjects.cpp) have no console verification. Assigned UVector, UVector32 and UStack constructors, destructors, guest vtables and RTTI follow ICU 68.2 `uvector.cpp`, `uvectr32.cpp` and `ustack.cpp`, including UVector32 allocation with an incoming failure, vector callback deletion order and nulling freed arrays. Integer UVector `indexOf` and `sortedInsert` initialize full union storage before comparator dispatch. Accessed null pointers throw `std::invalid_argument` instead of undefined behavior. Closes when: compared with the console.
 
 
 

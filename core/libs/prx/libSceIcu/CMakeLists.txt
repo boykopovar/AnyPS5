@@ -870,3 +870,31 @@ if(BUILD_TESTING)
     endif()
 
 endif()
+
+target_sources(libSceIcu PRIVATE TrieBuilder.cpp)
+target_sources(libSceIcu PRIVATE DataSwapper.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_trie_builder_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/TrieBuilder.cpp)
+    target_include_directories(guest_icu_trie_builder_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_trie_builder_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_trie_builder_tests)
+    add_test(NAME guest_icu_trie_builder COMMAND guest_icu_trie_builder_tests)
+    set_tests_properties(guest_icu_trie_builder PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_trie_builder PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+
+    add_test_executable(guest_icu_data_swapper_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DataSwapper.cpp)
+    target_include_directories(guest_icu_data_swapper_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_data_swapper_tests PRIVATE libSceIcu libc)
+    configure_windows_unwind(guest_icu_data_swapper_tests)
+    add_test(NAME guest_icu_data_swapper COMMAND guest_icu_data_swapper_tests)
+    set_tests_properties(guest_icu_data_swapper PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_data_swapper PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
+
