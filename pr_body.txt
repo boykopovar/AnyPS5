@@ -1,0 +1,19 @@
+### What
+Add test coverage for RELR parsing when DT_RELRSZ is present but DT_RELR address is null or 0.
+
+### Tested
+Verified via unit test execution and convention checks.
+
+### Checklist
+- [x] Based on current main; no other open PR implements the same functions
+- [x] One topic per PR; follow-ups go in a new PR
+- [x] No comments in code except [technical debt](https://github.com/boykopovar/AnyPS5/blob/main/docs/dev/CONVENTIONS.md)
+- [x] Unimplemented paths throw (`NotImplemented_nid_no_patch`); silent stubs are listed under Silent stubs in their library's [technical debt](https://github.com/boykopovar/AnyPS5/tree/main/docs/dev/debt) file
+- [x] No notes, investigation `.md` files or images added to the repository (attach them to this PR)
+- [x] New third-party code is a submodule built from source
+- [x] Generic behaviour, not specific to one title
+- [x] Depends on: none
+- [x] Fixes: none
+- [x] Unblocks: none
+- [x] GPUs tested: n/a
+- [x] AI-assisted: yes
