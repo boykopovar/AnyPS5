@@ -91,6 +91,8 @@ private:
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize memoryBytes = 0;
+    std::uint32_t memoryType = 0;
 };
 
 class CommandBatch {
