@@ -130,6 +130,19 @@ class ParallelPageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-array page"):
             pr_overlap.json_pages('{"message": "Not Found"}')
 
+    def test_a_malformed_unicode_escape_in_a_pull_request_body_is_read(self):
+        page = r'[{"number": 14172, "body": "lowercase `\\\u00XX`, unpaired"}]'
+        try:
+            pages = pr_overlap.json_pages(page)
+        except ValueError as error:
+            self.fail(f"a page with a malformed escape was rejected: {error}")
+        self.assertEqual([[pull["number"] for pull in found] for found in pages], [[14172]])
+
+    def test_valid_escapes_are_decoded_unchanged(self):
+        page = r'[{"title": "café \\ \"quoted\" \\u0041", "number": 1}]'
+        pages = pr_overlap.json_pages(page)
+        self.assertEqual(pages[0][0]["title"], 'café \\ "quoted" \\u0041')
+
 
 if __name__ == "__main__":
     unittest.main()

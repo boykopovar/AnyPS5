@@ -43,3 +43,5 @@
 | `sceNpTrophy2SystemRemoveUserDataWithServerData` | `w2Uq3rRtT9I` |
 | `sceNpTrophy2SystemUnregisterTitleSyncedCallback` | `Gqf-wNaD-mM` |
 | `sceNpTrophy2SystemUnregisterTitleUpdateCallback` | `-LSu4NCj2p4` |
+
+- [Older callable NIDs](../../../core/libs/prx/libSceNpTrophy2/Export.cpp): 5 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory.
