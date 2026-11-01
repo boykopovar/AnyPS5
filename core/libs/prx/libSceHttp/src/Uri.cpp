@@ -165,10 +165,12 @@ size_t poolSize(const UriParts& parts) {
 }
 
 int copyOut(const std::string& value, char* out, size_t* require, size_t prepare) {
+    if (out && prepare < value.size() + 1) {
+        std::memcpy(out, value.data(), prepare);
+        return ERROR_OUT_OF_MEMORY;
+    }
     if (require) *require = value.size() + 1;
-    if (!out) return 0;
-    if (prepare < value.size() + 1) return ERROR_OUT_OF_MEMORY;
-    std::memcpy(out, value.c_str(), value.size() + 1);
+    if (out) std::memcpy(out, value.c_str(), value.size() + 1);
     return 0;
 }
 
