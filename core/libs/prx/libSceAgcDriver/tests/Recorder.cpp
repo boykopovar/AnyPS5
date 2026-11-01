@@ -10146,6 +10146,8 @@ void oneFragmentFmaskGuardTests(const Device& device) {
     refused([&] { AgcDriver::GuestMemory::Read(address + 256u, words); }, "a CPU read");
     refused([&] { RequireNoMultisampleTarget(address + 65535u, 1u, "a DMA copy"); }, "a DMA copy of the last guarded byte");
     RequireNoMultisampleTarget(address + 65536u, 64u, "a DMA copy");
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> stored{{{address, address + 65536u}}};
+    refused([&] { RequireNoMultisampleTarget(address, 65536u, "a storage image store", stored); }, "a write-only storage store over every guarded byte");
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
     binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
