@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libkernel/Time/include/SleepWake.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
@@ -1190,6 +1191,7 @@ Recorder::~Recorder() {
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[gpu] recorder teardown: %s\n", error.what());
     }
+    ForgetHtileMasks_nid_no_patch(id);
     progressWatcher.reset();
     holdKept.clear();
     if (activeRecorder == this) {
@@ -1318,6 +1320,27 @@ bool Recorder::wideLabelInLocked(std::uint64_t address, std::size_t bytes) const
         if (it->second > address) return true;
     }
     return false;
+}
+
+Recorder::OwnLabel Recorder::UnlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue) {
+    std::lock_guard tableLock(labelTableMutex);
+    if (labelTableOwner == nullptr) return {};
+    return labelTableOwner->unlandedOwnLabel(address, bytes, queue);
+}
+
+Recorder::OwnLabel Recorder::unlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue) const {
+    OwnLabel own;
+    if ((labels.empty() && queuedLabels.empty()) || (bytes != 4 && bytes != 8) || address % 4 != 0) return own;
+    for (std::size_t offset = 0; offset < bytes; offset += 4) {
+        const auto dword = address + offset;
+        const LabelEntry* entry = nullptr;
+        if (const auto found = labels.find(dword); found != labels.end()) entry = &found->second;
+        if (const auto queued = queuedLabels.find(dword); queued != queuedLabels.end() && (entry == nullptr || queued->second.stamp > entry->stamp)) entry = &queued->second;
+        if (entry == nullptr || entry->queue != queue || entry->overwritten) continue;
+        own.value |= static_cast<std::uint64_t>(entry->value) << (offset * 8u);
+        own.mask |= 0xffffffffull << (offset * 8u);
+    }
+    return own;
 }
 
 std::optional<std::uint64_t> Recorder::LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp) {
@@ -1854,6 +1877,9 @@ std::atomic<std::int64_t> traceBarriersLeft{[] {
 }()};
 std::atomic<std::uint64_t> timingPresents{0};
 std::atomic<std::uint64_t> presentSerial{0};
+std::atomic<std::uint64_t> settledFrames{0};
+std::atomic<std::uint64_t> settledFrameBusyNs{0};
+std::atomic<bool> batchStampsRequested{false};
 std::atomic<std::uint64_t> timingDropped{0};
 struct TimingTotals { std::uint64_t count = 0; double ms = 0; std::uint64_t bytes = 0; };
 AgcDriver::Mutex timingMutex;
@@ -1919,7 +1945,7 @@ bool Recorder::GpuTimingEnabled() {
 }
 
 bool Recorder::BatchStampsEnabled() {
-    return GpuTimingEnabled() || DrawProfiled() || PerformanceTrace::Configured();
+    return GpuTimingEnabled() || DrawProfiled() || PerformanceTrace::Configured() || batchStampsRequested.load(std::memory_order_relaxed);
 }
 
 void Recorder::CountBarriers(CommandClass which, std::uint32_t count) {
@@ -2002,6 +2028,20 @@ void Recorder::CountPresent() {
 
 std::uint64_t Recorder::Presents() {
     return presentSerial.load(std::memory_order_relaxed);
+}
+
+void Recorder::NoteFrameGpuBusy(double milliseconds) {
+    settledFrameBusyNs.fetch_add(static_cast<std::uint64_t>(milliseconds * 1e6), std::memory_order_relaxed);
+    settledFrames.fetch_add(1, std::memory_order_release);
+}
+
+std::pair<std::uint64_t, double> Recorder::FrameGpuBusy() {
+    const auto frames = settledFrames.load(std::memory_order_acquire);
+    return {frames, static_cast<double>(settledFrameBusyNs.load(std::memory_order_relaxed)) / 1e6};
+}
+
+void Recorder::RequestBatchStamps() {
+    batchStampsRequested.store(true, std::memory_order_relaxed);
 }
 
 void Recorder::AddGpuTiming(CommandClass which, double nanoseconds, std::uint64_t bytes) {

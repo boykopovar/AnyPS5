@@ -506,7 +506,7 @@ bool ShaderMemory::readWords(void* context, std::uint64_t address, std::uint32_t
 std::uint64_t ShaderMemory::descriptorScope(void* context, std::size_t bytes) {
     auto& self = *static_cast<ShaderMemory*>(context);
     if (bytes == ShaderRecompiler::SrtDescriptorForceSync) {
-        ++self.forceSync;
+        if (self.forceSync++ == 0u && self.invalidateRawPages()) ++self.rawInvalidations;
         self.descriptorSpanBytes = 0;
         return self.rawInvalidations;
     }
