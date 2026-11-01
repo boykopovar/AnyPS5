@@ -171,6 +171,20 @@ class HostOnlyTargets(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no CMake File API index"):
                 build_mingw_host_only_tests.read_reply(Path(directory))
 
+    def test_symbolic_link_loop_build_directory_is_reported_cleanly(self):
+        root = Path(self.temporary.name)
+        loop = root / "build"
+        try:
+            loop.symlink_to(root / "other")
+            (root / "other").symlink_to(loop)
+        except (NotImplementedError, OSError) as error:
+            self.skipTest(f"symbolic links are unavailable: {error}")
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            self.assertEqual(build_mingw_host_only_tests.main([str(loop), "--list-only"]), 1)
+        self.assertIn("no CMake File API index", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+
     def test_wrong_shaped_file_api_documents_are_reported_cleanly(self):
         cases = (
             ("index", [], "CMake File API index"),
