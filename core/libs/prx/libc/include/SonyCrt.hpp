@@ -13,6 +13,7 @@
 #include <ctime>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestTime.hpp"
@@ -40,6 +41,57 @@ inline SonyConstraintHandler& SonyConstraintHandlerSlot() {
 }
 
 namespace {
+
+struct SonyHostTimeZone {
+    std::int64_t standardEast;
+    std::int64_t daylight;
+};
+
+#ifdef _WIN32
+inline void SonyRefreshHostZone_nid_no_patch() {
+    _tzset();
+    const char* zone = std::getenv("TZ");
+    if (zone != nullptr && zone[0] != 0) {
+        int daylight = 0;
+        _get_daylight(&daylight);
+        if (daylight != 0) _dstbias = -3600;
+    }
+}
+#endif
+
+inline SonyHostTimeZone SonyHostZoneAt_nid_no_patch(std::int64_t utcTime) {
+    std::tm local{};
+#ifdef _WIN32
+    constexpr std::int64_t cycleSeconds = 146097LL * 86400LL;
+    constexpr std::int64_t lastHostSecond = 32535215999LL;
+    const std::int64_t cycles = utcTime >= 0 && utcTime <= lastHostSecond ? 0 : (utcTime >= 0 ? utcTime / cycleSeconds : -((-(utcTime + 1)) / cycleSeconds + 1));
+    const std::time_t t = static_cast<std::time_t>(utcTime - cycles * cycleSeconds);
+    SonyRefreshHostZone_nid_no_patch();
+    if (localtime_s(&local, &t) != 0) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
+    long standardBias = 0;
+    long daylightBias = 0;
+    _get_timezone(&standardBias);
+    _get_dstbias(&daylightBias);
+    return {-static_cast<std::int64_t>(standardBias), local.tm_isdst > 0 ? -static_cast<std::int64_t>(daylightBias) : 0};
+#else
+    const std::time_t t = static_cast<std::time_t>(utcTime);
+    ::tzset();
+    if (localtime_r(&t, &local) == nullptr) throw std::runtime_error(std::string(__func__) + ": no host local time for " + std::to_string(utcTime));
+    const std::int64_t daylight = local.tm_isdst > 0 ? static_cast<std::int64_t>(local.tm_gmtoff) + ::timezone : 0;
+    return {static_cast<std::int64_t>(local.tm_gmtoff) - daylight, daylight};
+#endif
+}
+
+inline std::int64_t SonyHostDaylightAmount_nid_no_patch(std::int64_t utcTime) {
+    constexpr std::int64_t monthSeconds = 2629746;
+    for (int month = 0; month <= 11; ++month) {
+        for (const int direction : {1, -1}) {
+            const SonyHostTimeZone zone = SonyHostZoneAt_nid_no_patch(utcTime + direction * month * monthSeconds);
+            if (zone.daylight != 0) return zone.daylight;
+        }
+    }
+    return 0;
+}
 
 template<typename TInteger>
 inline TInteger ParseInteger(const char* text, char** end, int base, TInteger (*parse)(const char*, char**, int)) {
