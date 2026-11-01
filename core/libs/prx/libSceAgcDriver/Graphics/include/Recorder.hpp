@@ -349,6 +349,11 @@ public:
     static std::optional<LabelHit> LookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal = nullptr);
     // The value alone, for callers asking whether any label is pending in a dword (afterStamp 0).
     static std::optional<std::uint64_t> LookupLabelValue(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp);
+    struct OwnLabel {
+        std::uint64_t value = 0;
+        std::uint64_t mask = 0;
+    };
+    static OwnLabel UnlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue);
     static bool WideLabelIn(std::uint64_t address, std::size_t bytes);
     // A label a queue worker decoded but has not recorded yet (Driver.cpp DeferredLabels): it
     // enters the table with no batch, and only a lookup made on the noting thread (a WAIT_REG_MEM
@@ -826,6 +831,7 @@ private:
     std::uint64_t writtenBackSequence = 0;
     // PendingLabel without the table mutex (the caller holds it, or the GPU mutex).
     std::optional<LabelHit> lookupLabel(std::uint64_t address, std::size_t bytes, std::uint64_t afterStamp, LabelRefusal* refusal) const;
+    OwnLabel unlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue) const;
     // Whether the in-flight batch with that serial has not signaled its fence (false when it is
     // not in flight any more): what makes a wait for it a real GPU wait (ThreadHookWaits).
     bool unsignaled(std::uint64_t serial) const;

@@ -324,6 +324,34 @@ int main() {
             lsdaUdata8Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaUdata8Rejected);
-        std::cout << "29 unwind record cases passed\n";
+        std::vector<std::uint8_t> lsdaS2Bytes(0x400, 0);
+        Io::WriteU32(lsdaS2Bytes, 0x200, 25);
+        lsdaS2Bytes[0x208] = 1;
+        std::copy(std::begin(ciePrefix), std::end(ciePrefix), lsdaS2Bytes.begin() + 0x209);
+        lsdaS2Bytes[0x212] = 0;
+        Io::WriteU64(lsdaS2Bytes, 0x213, 0x1000);
+        lsdaS2Bytes[0x21B] = 0x4A;
+        lsdaS2Bytes[0x21C] = 0;
+        Io::WriteU32(lsdaS2Bytes, 0x220, 29);
+        Io::WriteU32(lsdaS2Bytes, 0x224, 0x24);
+        Io::WriteU64(lsdaS2Bytes, 0x228, 0x1000);
+        Io::WriteU64(lsdaS2Bytes, 0x230, 0x20);
+        lsdaS2Bytes[0x238] = 2;
+        Io::WriteU16(lsdaS2Bytes, 0x239, 0xEFFF);
+        lsdaS2Bytes[0x300] = 1;
+        lsdaS2Bytes[0x302] = 3;
+        Io::WriteU64(lsdaS2Bytes, 0x304, 0x200);
+        Io::WriteU32(lsdaS2Bytes, 0x30C, 1);
+        Io::WriteU64(lsdaS2Bytes, 0x310, 0x1000);
+        Io::WriteU64(lsdaS2Bytes, 0x318, 0x220);
+        Domain::ProgramHeader lsdaS2Load{}; lsdaS2Load.Type = 1; lsdaS2Load.Flags = 4; lsdaS2Load.FileSize = lsdaS2Bytes.size(); lsdaS2Load.MemorySize = lsdaS2Bytes.size(); lsdaS2Load.Alignment = 8;
+        Domain::ProgramHeader lsdaS2Eh = lsdaS2Load; lsdaS2Eh.Type = 0x6474E550; lsdaS2Eh.Offset = 0x300; lsdaS2Eh.MappedAddress = 0x300; lsdaS2Eh.FileSize = 32; lsdaS2Eh.MemorySize = 32; lsdaS2Eh.Alignment = 4;
+        bool lsdaS2Rejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaS2Bytes, {lsdaS2Load, lsdaS2Eh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(lsdaS2Rejected);
+        std::cout << "30 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
