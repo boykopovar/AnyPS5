@@ -12,7 +12,10 @@ BASH = shutil.which("bash")
 
 def run(path, slot_dir, command):
     env = {"PATH": path, "ANYPS5_COMPILE_SLOT_DIR": str(slot_dir), "ANYPS5_COMPILE_SLOTS": "1"}
-    return subprocess.run([BASH, str(SCRIPT), *command], env=env, capture_output=True, text=True, timeout=10)
+    try:
+        return subprocess.run([BASH, str(SCRIPT), *command], env=env, capture_output=True, text=True, timeout=10)
+    except subprocess.TimeoutExpired:
+        raise AssertionError("compile_slot.sh did not exit within 10 seconds")
 
 
 @unittest.skipUnless(BASH and sys.platform.startswith("linux"), "needs bash on Linux")
