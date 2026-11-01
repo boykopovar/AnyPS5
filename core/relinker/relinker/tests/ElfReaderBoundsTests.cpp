@@ -194,6 +194,21 @@ int main() {
             const auto sections = Relinker::ElfReader(Fixture()).ReadSectionHeaders();
             Require(sections.size() == 3 && sections[1].Name == ".text" && sections[1].EntrySize == 24);
         }},
+        {"SHT_SYMTAB section entry size mismatch", [] {
+            for (const std::uint64_t entrySize : {0ULL, 1ULL, 16ULL, 20ULL, 23ULL, 25ULL, 32ULL, 64ULL, 0xffffffffffffffffULL}) {
+                auto bytes = Fixture();
+                Write<std::uint32_t>(bytes, 196, 2);
+                Write<std::uint64_t>(bytes, 248, entrySize);
+                RejectSections(std::move(bytes));
+            }
+        }},
+        {"SHT_SYMTAB section entry size valid", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 2);
+            Write<std::uint64_t>(bytes, 248, 24);
+            const auto sections = Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
+            Require(sections.size() == 3 && sections[1].Type == 2 && sections[1].EntrySize == 24);
+        }},
         {"section header stride", [] {
             for (const std::uint16_t stride : {0, 56, 65}) {
                 auto bytes = Fixture();
