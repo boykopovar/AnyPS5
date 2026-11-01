@@ -111,13 +111,13 @@ std::uint32_t findUndecodableWord() {
 void verifyUndecodableTrailingWordIsNotReported() {
     const auto word = findUndecodableWord();
     require(word != 0, "no word that the decoder rejects was found to place after a program");
-    const std::array<std::uint32_t, 6> code{0x7e020300u, 0xe0700000u, 0x80000100u, 0xbf810000u, word, 0xbf810000u};
+    const std::array<std::uint32_t, 3> code{0xbf820001u, word, 0xbf810000u};
     static const DiagnosticSink sink{.shader = Shader, .unsupportedInstruction = Unsupported};
     SetDiagnosticSink(&sink);
     unsupported = 0;
     RdnaProgram program;
     DecodeRdnaProgram(code, program);
-    require(!program.instructions.empty(), "the program before the undecodable word was not decoded");
+    require(program.instructions.size() == 2, "the branch over the undecodable word and the program end were not both decoded");
     require(unsupported == 0, "the decoder reported a word after the end of the program that it skipped");
     SetDiagnosticSink(nullptr);
 }
