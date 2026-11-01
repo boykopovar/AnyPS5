@@ -1005,7 +1005,9 @@ void RunCpuWriteAfterWritebackPresent(AgcDriver::VulkanDevice& device, std::uint
 
     std::memset(texels, 0x77, SurfaceBytes);
     AgcDriver::GuestMemory::BumpCollectEpoch();
-    AgcDriver::GuestMemory::CollectWritesUncached(surface, SurfaceBytes);
+    const auto cpuWrite = AgcDriver::GuestMemory::CollectWritesUncached(surface, SurfaceBytes);
+    const bool watched = AgcDriver::GuestMemory::Watched(surface, SurfaceBytes);
+    Require(!watched || (cpuWrite != 0 && image->Generation() < cpuWrite), "write-watched resident was not behind the CPU write after writeback");
 
     AgcDriver::DisplayBuffer buffer{surface, 0x8000000000000000ull, Side, Side};
     buffer.dccAddress = meta;
@@ -1016,6 +1018,10 @@ void RunCpuWriteAfterWritebackPresent(AgcDriver::VulkanDevice& device, std::uint
         Require(what.find("swapchain") != std::string::npos, "unexpected presentation failure: " + what);
     }
 
+    if (watched) {
+        Require(image->Generation() >= cpuWrite, "presented write-watched resident did not take the CPU write after writeback");
+        return;
+    }
     const auto snapshot = image->Original();
     Require(snapshot.size() == SurfaceBytes, "resident snapshot size mismatch");
     Require(snapshot[0] == std::byte{0x77}, "presented resident did not reflect CPU write after writeback");
