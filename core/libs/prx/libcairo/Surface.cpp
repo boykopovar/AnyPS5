@@ -78,6 +78,8 @@ struct CairoSurfaceState {
     double scaleX{1};
     double scaleY{1};
 
+    CairoSurfaceState() = default;
+    explicit CairoSurfaceState(int failure) : status(failure) {}
     ~CairoSurfaceState();
 };
 
@@ -100,19 +102,30 @@ CairoSurfaceState::~CairoSurfaceState() {
 namespace {
 
 void ReleaseSurface(CairoSurface* surface) {
-    if (surface &&
-        State(surface)->references.fetch_sub(1, std::memory_order_acq_rel) == 1)
+    if (!surface || State(surface)->status != kSuccess) return;
+    if (State(surface)->references.fetch_sub(1, std::memory_order_acq_rel) == 1)
         delete State(surface);
 }
 
-CairoSurfaceState* NewSurface(int status = kSuccess) {
-    auto* surface = new (std::nothrow) CairoSurfaceState;
-    if (surface) surface->status = status;
-    return surface;
+CairoSurfaceState* NewSurface() {
+    return new (std::nothrow) CairoSurfaceState;
 }
 
 CairoSurface* ErrorSurface(int status) {
-    return Handle(NewSurface(status));
+    static CairoSurfaceState noMemory{kNoMemory};
+    static CairoSurfaceState nullPointer{kNullPointer};
+    static CairoSurfaceState invalidContent{kInvalidContent};
+    static CairoSurfaceState invalidFormat{kInvalidFormat};
+    static CairoSurfaceState invalidStride{kInvalidStride};
+    static CairoSurfaceState invalidSize{kInvalidSize};
+    switch (status) {
+    case kNullPointer: return Handle(&nullPointer);
+    case kInvalidContent: return Handle(&invalidContent);
+    case kInvalidFormat: return Handle(&invalidFormat);
+    case kInvalidStride: return Handle(&invalidStride);
+    case kInvalidSize: return Handle(&invalidSize);
+    default: return Handle(&noMemory);
+    }
 }
 
 CairoSurface* MakeImage(int format, int width, int height,
@@ -194,7 +207,7 @@ int APS5_VABI cairo_image_surface_get_stride(CairoSurface* surface) {
 }
 
 CairoSurface* APS5_VABI cairo_surface_reference(CairoSurface* surface) {
-    if (surface)
+    if (surface && State(surface)->status == kSuccess)
         State(surface)->references.fetch_add(1, std::memory_order_relaxed);
     return surface;
 }
