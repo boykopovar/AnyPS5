@@ -606,6 +606,29 @@ bool AnyShadowedOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>
     return false;
 }
 
+std::vector<std::pair<std::uint64_t, std::uint64_t>> LiveShadowedRanges(std::uint64_t address, std::size_t bytes, PublishScope scope) {
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+    if (!UnitShadowEnabled() || scope == PublishScope::None || bytes == 0) return ranges;
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    for (const auto& shadow : overlapping(registry, address, end)) {
+        if (shadow->liveUnits == 0) continue;
+        const auto begin = std::max(address, shadow->importBase);
+        const auto stop = std::min(end, shadow->ImportEnd());
+        if (stop <= begin) continue;
+        for (auto unit = shadow->UnitOf(begin); unit <= shadow->UnitOf(stop - 1); ++unit) {
+            if (!shadow->Live(unit)) continue;
+            const auto [unitBegin, unitEnd] = shadow->UnitRange(unit);
+            if (unitEnd <= unitBegin || (scope == PublishScope::PartialUnits && address <= unitBegin && end >= unitEnd)) continue;
+            if (!ranges.empty() && ranges.back().second == unitBegin) ranges.back().second = unitEnd;
+            else ranges.emplace_back(unitBegin, unitEnd);
+        }
+    }
+    if (ranges.size() > 8) ranges.assign(1, {ranges.front().first, ranges.back().second});
+    return ranges;
+}
+
 std::uint64_t SlabBoundary(const HostImport& import, std::uint64_t address) {
     const auto base = import.base & ~(UnitBytes - 1);
     const auto unit = (address - base) / UnitBytes;
