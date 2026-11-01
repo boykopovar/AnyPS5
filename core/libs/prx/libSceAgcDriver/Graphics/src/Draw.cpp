@@ -388,8 +388,15 @@ GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color) {
 
 namespace {
 
+bool writesStencilTarget(const State& state) {
+    const auto keeps = [](const VkStencilOpState& face) {
+        return face.writeMask == 0u || (face.failOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP);
+    };
+    return state.stencilTest && (!keeps(state.stencilFront) || !keeps(state.stencilBack));
+}
+
 bool writesDepthTarget(const State& state) {
-    return state.depthWrite || (state.stencilTest && (state.stencilFront.writeMask != 0u || state.stencilBack.writeMask != 0u));
+    return state.depthWrite || writesStencilTarget(state);
 }
 
 std::size_t colorKeyCount(const ColorTarget& color, std::size_t bytes) {
@@ -3065,7 +3072,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         targetViews.push_back(binding.target->View());
     }
     if (state.depth) {
-        targetViews.push_back(DepthSurfaceView(context, *state.depth, state.depthWrite));
+        targetViews.push_back(DepthSurfaceView(context, *state.depth, state.depthWrite, writesStencilTarget(state)));
         if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
     }
     timer.phase(PhasePrepare);
@@ -3812,7 +3819,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     }
     if (recipe.hasDepth) {
         timer.phase(PhaseSetup);
-        const auto depthView = DepthSurfaceView(context, *state.depth, state.depthWrite);
+        const auto depthView = DepthSurfaceView(context, *state.depth, state.depthWrite, writesStencilTarget(state));
         if (writesDepthTarget(state)) NoteDepthSurfaceWrite(context, *state.depth);
         timer.phase(PhaseReadTarget);
         if (recipe.targetViews.back() != depthView) return miss(DrawRecipeMiss::TargetGone);

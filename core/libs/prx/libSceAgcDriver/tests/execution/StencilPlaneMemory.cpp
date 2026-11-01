@@ -98,6 +98,16 @@ int main() {
         Require(Holding(stencilPlane, 0x18u) == StencilBytes, "a read of the stencil plane after a draw wrote stencil 0x18 does not see it in guest memory");
         Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a second read of the stored stencil plane stored it again");
 
+        Require(draw({.depthTest = false, .stencilTest = false}) == PlaneTexels, "the stencil-disabled draw did not cover the plane");
+        Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a stencil-disabled draw dirtied the stored stencil plane");
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_KEEP, 0x18u)}) == PlaneTexels, "the all-KEEP stencil draw did not cover the plane");
+        Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "an all-KEEP draw with a nonzero stencil write mask dirtied the stored plane");
+        auto maskedStencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x99u);
+        maskedStencil.writeMask = 0u;
+        Require(draw({.depthTest = false, .stencilTest = true, .stencil = maskedStencil}) == PlaneTexels, "the zero-mask stencil draw did not cover the plane");
+        Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a zero-mask stencil draw dirtied the stored plane");
+        Require(Holding(stencilPlane, 0x18u) == StencilBytes, "the read-only draws changed the stored stencil bytes");
+
         Require(draw({.depthTest = false, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x2au)}) == PlaneTexels, "the draw writing stencil 0x2a did not cover the plane");
         AgcDriver::Graphics::RetireDepthSurfaces(device->graphicsContext().device, reinterpret_cast<std::uintptr_t>(depthPlane), DepthBytes);
         device->WaitIdle();
