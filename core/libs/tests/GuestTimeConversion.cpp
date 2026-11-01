@@ -245,7 +245,6 @@ static void CheckLocalRange() {
 }
 
 #ifdef _WIN32
-extern "C" long* __cdecl __dstbias(void);
 
 struct DaylightBiasFixture {
     long saved = *__dstbias();
