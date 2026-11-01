@@ -45,7 +45,7 @@ void QueuedCode(bool cached) {
     const auto after = ReadRawShader(address);
     finished.store(true, std::memory_order_release);
     DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Submission);
-    if (after->code.front() != 0x7e0002f2u || (before != nullptr && (before->code.front() != 0x7e000200u || before == after))) {
+    if (after->code[0] != 0x7e0002f2u || (before != nullptr && (before->code[0] != 0x7e000200u || before == after))) {
         throw std::runtime_error(std::string(cached ? "cached" : "fresh") + " raw shader read ignored a queued write to its code");
     }
 }

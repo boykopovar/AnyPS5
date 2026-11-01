@@ -84,7 +84,8 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     fragment.Initialize(1u);
     const std::array<std::uint32_t, 7> pixelCode{0xc8020002u, 0xc8060102u, 0xc80a0202u, 0xc80e0302u, 0xf800180fu, 0x03020100u, 0xbf810000u};
     fragment.snapshot->code.resize(64);
-    fragment.snapshot->code.insert(fragment.snapshot->code.end(), pixelCode.begin(), pixelCode.end());
+    auto& fragmentCode = fragment.snapshot->code.Mutable();
+    fragmentCode.insert(fragmentCode.end(), pixelCode.begin(), pixelCode.end());
     ShaderRegistry registry;
     for (const auto* fixture : {&front, &back, &domain, &fragment}) registry.emplace(fixture->snapshot->codeAddress, std::vector<std::shared_ptr<const ShaderSnapshot>>{fixture->snapshot});
     AgcDriver::QueueState queue{};
