@@ -174,6 +174,18 @@ class ScanTests(unittest.TestCase):
                                    ("VOP1", "base"): (1, 1, 1), ("VOP1", "vop3"): (2, 2, 1), ("VOP1", "dpp16"): (1, 0, 0),
                                    ("VOPC", "vop3"): (2, 1, 1), ("EXP", "base"): (1, 1, 1)})
 
+    def test_fallthrough_case_labels_decode_to_the_opcode_their_group_returns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            write_tree(directory)
+            tables = Path(directory) / f"{DECODER}Tables.cpp"
+            text = tables.read_text(encoding="utf-8")
+            tables.write_text(text.replace("        case 0x03: return RdnaOpcode::SMovB32;\n",
+                                           "        case 0x03:\n        case 0x09: return RdnaOpcode::SMovB32;\n"), encoding="utf-8")
+            result = shader_scan.measure(directory, ISA)
+        by_form = {(f["encoding"], f["form"]): (f["total"], f["decoded"], f["translated"]) for f in result["forms"]}
+        self.assertEqual(by_form[("SOP1", "base")], (2, 2, 2))
+        self.assertNotIn("SOP1 base", {f["encoding"] + " " + f["form"] for f in result["forms"] if f["missing"]})
+
     def test_unsupported_throws_skip_comments_rethrows_other_messages_and_tests(self):
         with tempfile.TemporaryDirectory() as directory:
             write_tree(directory)
