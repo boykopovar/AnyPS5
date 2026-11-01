@@ -315,7 +315,7 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "COFF short name"):
                     symbolize_samples.PeModule(path)
 
-    def test_coff_full_width_and_padded_utf8_names_remain_supported(self):
+    def test_coff_exact_eight_bytes_and_padded_utf8_names_remain_supported(self):
         path = self.libs / "libSceAgcDriver.prx"
         original = path.read_bytes()
         table = struct.unpack_from("<I", original, 0x4C)[0]
