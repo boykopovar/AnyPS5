@@ -54,6 +54,16 @@ int main() {
     Require(sched_rr_get_interval_nid_postfix(self + 1, &interval) == -1 && *__error_nid_postfix() == 3);
     *__error_nid_postfix() = 0;
     Require(sched_rr_get_interval_nid_postfix(0, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sched_rr_get_interval_nid_postfix(0, reinterpret_cast<KernelTimespec*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sched_rr_get_interval_nid_postfix(-1, reinterpret_cast<KernelTimespec*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 3);
+    void* page = nullptr;
+    Require(sceKernelMapFlexibleMemory(&page, 0x4000, 3, 0) == 0 && page != nullptr);
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(sched_rr_get_interval_nid_postfix(0, static_cast<KernelTimespec*>(page)) == -1 && *__error_nid_postfix() == 14);
+    Require(static_cast<KernelTimespec*>(page)->tv_nsec == 0);
     for (int policy : {1, 3}) {
         Require(sched_get_priority_max_nid_postfix(policy) == 767);
         Require(sched_get_priority_min_nid_postfix(policy) == 256);

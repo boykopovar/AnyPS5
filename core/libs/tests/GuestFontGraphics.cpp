@@ -6,8 +6,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <type_traits>
 
 namespace {
+
+using FontDrawupSignature = int (APS5_VABI *)(FontGraphicsFrame*, const void*, std::uint32_t, void**, float, float, float, float);
+using FontDrawupPatternSignature = int (APS5_VABI *)(FontGraphicsFrame*, const void*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, void**);
+static_assert(std::is_same_v<decltype(&sceFontGraphicsDrawupFillTextureImageObject), FontDrawupSignature>);
+static_assert(std::is_same_v<decltype(&sceFontGraphicsDrawupFillTexturePatternObject), FontDrawupPatternSignature>);
 
 constexpr int InvalidParameter = static_cast<int>(0x80460002);
 constexpr int InvalidFill = static_cast<int>(0x80460086);

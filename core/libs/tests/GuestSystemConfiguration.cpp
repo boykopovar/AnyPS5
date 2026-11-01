@@ -347,6 +347,37 @@ static void CheckProcessSysctl() {
     length = 100;
     Require(sysctl_nid_postfix(mibPid, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12 && length == 100);
 }
+static void CheckProcessListSysctl() {
+    const int callerPid = getpid_nid_postfix();
+    const int mib[] = {1, 14, 8};
+    std::size_t length = 0;
+    Require(sysctl_nid_postfix(mib, 3, nullptr, &length, nullptr, 0) == 0);
+
+    unsigned char buffer[1100];
+    std::memset(buffer, 0xaa, sizeof(buffer));
+    length = sizeof(buffer);
+    Require(sysctl_nid_postfix(mib, 3, buffer, &length, nullptr, 0) == 0 && length == 1088);
+    std::int32_t structSize = 0;
+    std::int32_t pid = 0;
+    std::memcpy(&structSize, buffer, sizeof(structSize));
+    std::memcpy(&pid, buffer + 72, sizeof(pid));
+    Require(structSize == 1088 && pid == callerPid);
+    Require(std::strcmp(reinterpret_cast<const char*>(buffer + 447), "eboot.bin") == 0);
+    Require(buffer[1088] == 0xaa);
+
+    const int mibWithPid[] = {1, 14, 8, 0};
+    length = sizeof(buffer);
+    Require(sysctl_nid_postfix(mibWithPid, 4, buffer, &length, nullptr, 0) == 0 && length == 1088);
+
+    const int mibTooLong[] = {1, 14, 8, 0, 0};
+    Require(sysctl_nid_postfix(mibTooLong, 5, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
+
+    length = 100;
+    Require(sysctl_nid_postfix(mib, 3, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 12);
+
+    length = sizeof(buffer);
+    Require(sysctl_nid_postfix(mib, 3, buffer, &length, buffer, sizeof(buffer)) == -1 && *__error_nid_postfix() == 1);
+}
 struct SystemString {
     int mib[2];
     const char* name;
@@ -513,8 +544,51 @@ static void CheckBootTimeSysctl() {
     Require(sysctl_nid_postfix(mib, 2, &first, &length, &first, sizeof(first)) == -1 && *__error_nid_postfix() == 1);
     Require(sysctlbyname_nid_postfix("kern.boottime", &first, &length, &first, sizeof(first)) == -1 && *__error_nid_postfix() == 1);
 }
+struct LoadAverage {
+    std::uint32_t ldavg[3];
+    std::int64_t fscale;
+};
+static_assert(sizeof(LoadAverage) == 24);
+
+static void CheckLoadAverageSysctl() {
+    const int mib[] = {2, 2};
+    *__error_nid_postfix() = 13;
+    std::size_t length = 0;
+    Require(sysctl_nid_postfix(mib, 2, nullptr, &length, nullptr, 0) == 0 && length == sizeof(LoadAverage));
+    length = 0;
+    Require(sysctlbyname_nid_postfix("vm.loadavg", nullptr, &length, nullptr, 0) == 0 && length == sizeof(LoadAverage));
+    LoadAverage load;
+    std::memset(&load, 0xaa, sizeof(load));
+    length = sizeof(load);
+#ifndef _WIN32
+    double before[3]{};
+    Require(getloadavg(before, 3) == 3);
+#endif
+    Require(sysctl_nid_postfix(mib, 2, &load, &length, nullptr, 0) == 0 && length == sizeof(load) && load.fscale == 2048);
+    std::uint8_t padding[4];
+    std::memcpy(padding, reinterpret_cast<const std::uint8_t*>(&load) + 12, sizeof(padding));
+    Require(padding[0] == 0 && padding[1] == 0 && padding[2] == 0 && padding[3] == 0);
+#ifndef _WIN32
+    double after[3]{};
+    Require(getloadavg(after, 3) == 3);
+    const auto scaled = [](double average) { return static_cast<std::uint32_t>(average * 2048.0 + 0.5); };
+    for (int index = 0; index < 3; ++index) Require(load.ldavg[index] == scaled(before[index]) || load.ldavg[index] == scaled(after[index]));
+#endif
+    LoadAverage named{};
+    length = sizeof(named);
+    Require(sysctlbyname_nid_postfix("vm.loadavg", &named, &length, nullptr, 0) == 0 && length == sizeof(named) && named.fscale == 2048);
+    Require(*__error_nid_postfix() == 13);
+
+    int namedMib[3] = {0x5a5a5a5a, 0x5a5a5a5a, 0x5a5a5a5a};
+    std::size_t mibLength = 3;
+    Require(sysctlnametomib_nid_postfix("vm.loadavg", namedMib, &mibLength) == 0 && mibLength == 2);
+    Require(namedMib[0] == 2 && namedMib[1] == 2 && namedMib[2] == 0x5a5a5a5a);
+
+    length = sizeof(load);
+    Require(sysctl_nid_postfix(mib, 2, &load, &length, &load, sizeof(load)) == -1 && *__error_nid_postfix() == 1);
+}
 static void CheckLeafWithTrailingComponent() {
-    const int leaves[][2] = {{6, 3}, {6, 2}, {6, 5}, {6, 7}, {1, 21}, {1, 24}, {1, 37}, {1, 50}};
+    const int leaves[][2] = {{6, 3}, {6, 2}, {6, 5}, {6, 7}, {1, 21}, {1, 24}, {1, 37}, {1, 50}, {2, 2}};
     for (const auto& leaf : leaves) {
         const int mib[] = {leaf[0], leaf[1], 0};
         char buffer[8] = {};
@@ -593,6 +667,24 @@ static void CheckVersionLimits() {
     } update{0xaaaaaaaau, 0xaaaaaaaau};
     Require(sysKernelGetLowerLimitUpdVersion_nid_postfix(&update.version) == 0 && update.version == 0 && update.after == 0xaaaaaaaau);
     Require(sysKernelGetLowerLimitUpdVersion_nid_postfix(nullptr) == SCE_KERNEL_ERROR_EINVAL && *__error_nid_postfix() == 13);
+    Require(sceKernelGetSystemExVersion(reinterpret_cast<char*>(0x10), reinterpret_cast<char*>(first)) == 14);
+    Require(sceKernelGetSystemExVersion(reinterpret_cast<char*>(first), reinterpret_cast<char*>(0x10)) == 14);
+    Require(sysKernelGetLowerLimitSysexVersion_nid_postfix(reinterpret_cast<char*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sysKernelGetLowerLimitUpdVersion_nid_postfix(reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetSystemSwVersion_nid_postfix(reinterpret_cast<SceKernelSystemSwVersion*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    *__error_nid_postfix() = 13;
+
+    constexpr std::size_t GuardPage = 0x4000;
+    void* guard = mmap_nid_postfix(nullptr, 2 * GuardPage, 3, 0x1002, -1, 0);
+    Require(guard != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    Require(mprotect_nid_postfix(guard, GuardPage, 1) == 0);
+    auto* record = reinterpret_cast<SceKernelSystemSwVersion*>(static_cast<unsigned char*>(guard) + GuardPage - offsetof(SceKernelSystemSwVersion, versionString));
+    Require(sceKernelGetSystemSwVersion_nid_postfix(record) == 0);
+    Require(std::memcmp(record->versionString, "01.000.000", sizeof("01.000.000")) == 0 && record->version == 0x01000000);
+    Require(mprotect_nid_postfix(guard, GuardPage, 3) == 0);
+    Require(record->size == 0);
+    Require(munmap_nid_postfix(guard, 2 * GuardPage) == 0);
+    *__error_nid_postfix() = 13;
 
     update = {0xaaaaaaaau, 0xaaaaaaaau};
     Require(sysKernelGetUpdVersion_nid_postfix(&update.version) == 0 && update.version == 0 && update.after == 0xaaaaaaaau);
@@ -1060,6 +1152,42 @@ static void CheckSysctlPointerFaults() {
     Require(sysctl_nid_postfix(arandom, 2, bytes, &length, nullptr, 0) == 0 && length == sizeof(bytes));
 }
 
+static void CheckSysconfMeasuredNames() {
+    struct Entry {
+        int name;
+        std::int64_t value;
+    };
+    static constexpr Entry constants[] = {
+        {6, 1}, {7, -1}, {8, 200112}, {9, 99}, {10, 2048}, {11, 99}, {12, 1000}, {13, 0}, {14, 32},
+        {15, 2048}, {16, 255}, {17, 199212}, {18, 200112}, {19, -1}, {20, 1}, {21, -1}, {22, 200112},
+        {23, -1}, {24, -1}, {25, 200112}, {28, 200112}, {29, 200112}, {30, -1}, {31, 200112}, {32, 200112},
+        {33, 200112}, {34, -1}, {35, 200112}, {36, 200112}, {37, 200112}, {38, 200112}, {39, 200112},
+        {40, -1}, {41, 200112}, {42, 16}, {43, 1024}, {44, 0}, {45, 2147483647}, {46, -1}, {48, 62},
+        {49, 30}, {50, 2147483647}, {51, 128}, {52, 32}, {59, -1}, {60, -1}, {61, -1}, {62, -1}, {63, -1},
+        {64, -1}, {65, 200112}, {66, 200112}, {67, -1}, {68, 200112}, {74, 200112}, {75, 64}, {76, 200112},
+        {77, 1}, {78, 1}, {79, 200112}, {80, 200112}, {81, -1}, {82, 200112}, {83, 200112}, {84, 200112},
+        {85, 4}, {86, 256}, {87, 200112}, {88, 200112}, {89, 200112}, {90, -1}, {91, -1}, {93, 16384},
+        {94, -1}, {95, 200112}, {96, 200112}, {97, -1}, {101, 255}, {102, -1}, {103, -1}, {104, -1},
+        {105, 1}, {106, -1}, {107, 64}, {108, -1}, {109, -1}, {110, -1}, {111, -1}, {112, -1}, {113, -1},
+        {114, -1}, {115, -1}, {118, 200112}, {119, 200112}, {120, 32}, {122, 8},
+        {1, 262144}, {3, 128}, {4, 1023}, {47, 16384}, {56, 1024}, {72, 255}, {73, 33},
+    };
+    for (const Entry& entry : constants) {
+        *__error_nid_postfix() = 77;
+        Require(sysconf_nid_postfix(entry.name) == entry.value);
+        Require(*__error_nid_postfix() == 77);
+    }
+    *__error_nid_postfix() = 77;
+    Require(sysconf_nid_postfix(27) == -1);
+    Require(*__error_nid_postfix() == 2);
+    static constexpr int rejected[] = {-1, 0, 53, 54, 55, 69, 70, 71, 92, 98, 99, 100, 116, 117, 123, 124, 125, 126, 127, 128, 129, 130, 150, 200, 201, 1000};
+    for (int name : rejected) {
+        *__error_nid_postfix() = 77;
+        Require(sysconf_nid_postfix(name) == -1);
+        Require(*__error_nid_postfix() == 22);
+    }
+}
+
 int main() {
     CheckUnknownRootsAndTopLevelNames();
     CheckProcessorCountSysctl();
@@ -1074,10 +1202,12 @@ int main() {
     CheckUnknownSysctlName();
     CheckPathnameSysctl();
     CheckProcessSysctl();
+    CheckProcessListSysctl();
     CheckSystemStringSysctl();
     CheckSystemStringNames();
     CheckOsReleaseDateSysctl();
     CheckBootTimeSysctl();
+    CheckLoadAverageSysctl();
     CheckLeafWithTrailingComponent();
     CheckMeasuredAbsentSysctlMibs();
     CheckSystemSwVersion();
@@ -1090,6 +1220,7 @@ int main() {
     CheckEnvSysctl();
     CheckPseudoRandomMibSysctl();
     CheckNameToMib();
+    CheckSysconfMeasuredNames();
     *__error_nid_postfix() = 13;
     Require(sysconf_nid_postfix(1) == 262144);
     Require(sysconf_nid_postfix(3) == 128);

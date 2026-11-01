@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceVrTracker/include/InventoryExports.hpp"
 #include "prx/libSceVrTracker/include/Api.hpp"
 #include <atomic>
 #include <mutex>
@@ -226,5 +228,54 @@ int APS5_VABI sceVrTrackerUpdateMotionSensorData(const void* param) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceVrTrackerUnknown_5ucmy8hcSPk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("5ucmy8hcSPk", libSceVrTrackerUnknown_5ucmy8hcSPk_nid_no_patch);
+
+int APS5_VABI libSceVrTrackerUnknown_9kB_plus_RsZt84M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9kB+RsZt84M", libSceVrTrackerUnknown_9kB_plus_RsZt84M_nid_no_patch);
+
+int APS5_VABI libSceVrTrackerUnknown_D6TJSfjTAk4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("D6TJSfjTAk4", libSceVrTrackerUnknown_D6TJSfjTAk4_nid_no_patch);
+
+int APS5_VABI libSceVrTrackerUnknown_ERmwvjmfN_plus_c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ERmwvjmfN+c", libSceVrTrackerUnknown_ERmwvjmfN_plus_c_nid_no_patch);
+
+int APS5_VABI libSceVrTrackerUnknown_KFxq_minus_AnEL34_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("KFxq-AnEL34", libSceVrTrackerUnknown_KFxq_minus_AnEL34_nid_no_patch);
+
+int APS5_VABI libSceVrTrackerUnknown_SSi0OBa8RA0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("SSi0OBa8RA0", libSceVrTrackerUnknown_SSi0OBa8RA0_nid_no_patch);
+
+int APS5_VABI libSceVrTrackerUnknown_hj7zLvyw_plus_pw_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("hj7zLvyw+pw", libSceVrTrackerUnknown_hj7zLvyw_plus_pw_nid_no_patch);
+
+int APS5_VABI libSceVrTrackerUnknown_mmzbIQNmT4o_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mmzbIQNmT4o", libSceVrTrackerUnknown_mmzbIQNmT4o_nid_no_patch);
+
+int APS5_VABI libSceVrTrackerUnknown_tNJrfYsY3wY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tNJrfYsY3wY", libSceVrTrackerUnknown_tNJrfYsY3wY_nid_no_patch);
 
 }

@@ -9,6 +9,7 @@
 - [sceNetCtlGetResult](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - `(int eventType, int* errorCode)` reports no error: event types 1-3 (disconnected to IP obtained, the numbering `sceNetCtlCheckCallback` delivers) write 0 to `errorCode`, as `sceNetCtlGetResultV6` does. The error code a console reports for each event, a disconnection's cause in particular, is unconfirmed. Callers found: PPSA20052 (Worms Armageddon: Anniversary Edition 01.003.000) calls it 2 s into boot, and PPSA24191 (Monster Hunter Wilds) without a network, with event 1 (disconnected) as its first call. A null `errorCode` answers `INVALID_ADDR` and other event types throw, as their error code on a console is unknown
 - [sceNetCtlGetResultV6](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl, NID `H5yARg37U5g`) - `(int eventType, int* errorCode)` comes only from [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Net/NetCtl.cs#L246-L251), whose source is unknown; shadPS4 only stubs it. The host backend has no IPv6 service errors, so event types 1-3 write 0 to `errorCode`; what a console writes before the first event is unmeasured. A null `errorCode` answers `INVALID_ADDR`, as `sceNetCtlGetResult` does, and other event types throw, as their error code on a console is unknown
 - [sceNetCtlRegisterCallbackForNpToolkit, sceNetCtlUnregisterCallbackForNpToolkit, sceNetCtlCheckCallbackForNpToolkit](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - a table of eight callbacks apart from the IPv4 and IPv6 ones, with the `(int eventType, void* arg)` callback, follows [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/network/net_ctl_obj.h), whose NpToolkit check delivers the same events to that table. The three share the register, unregister and dispatch of `sceNetCtlRegisterCallback`, `sceNetCtlUnregisterCallback` and `sceNetCtlCheckCallback`, so they return the same initialization, address, slot-limit and ID errors, and the check reports the state `sceNetCtlCheckCallback` does. Whether the console keeps this table apart, and what `sceNetCtlCheckCallback` does with it, is unverified on hardware
+- [sceNetCtlRegisterCallbackForLibIpcInt, sceNetCtlUnregisterCallbackForLibIpcInt, sceNetCtlCheckCallbackForLibIpcInt](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - the `(callback, argument, callbackId)` signature and separate eight-slot table are inferred by analogy with their NpToolkit and IpcInt siblings; shadPS4 only stubs them. They share the register, unregister and dispatch of the other callback helpers. Whether the console keeps a separate table for ForLib, and what `sceNetCtlCheckCallback` does with it, is unverified on hardware
 - [sceNetCtlGetStateIpcInt, sceNetCtlGetStateV6IpcInt, sceNetCtlGetResultIpcInt, sceNetCtlGetResultV6IpcInt, sceNetCtlGetInfoIpcInt, sceNetCtlGetInfoV6IpcInt, sceNetCtlRegisterCallbackIpcInt, sceNetCtlUnregisterCallbackIpcInt, sceNetCtlRegisterCallbackV6IpcInt and sceNetCtlUnregisterCallbackV6IpcInt](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - answer as their public twins, whose recovered argument registers they share: the getters return and write what `sceNetCtlGetState`, `GetStateV6`, `GetResult`, `GetResultV6`, `GetInfo` and `GetInfoV6` do, throws included, and the callback forms use the IPv4 and IPv6 tables, as no IpcInt check is exported to deliver a table of their own. This rests on the matching call shapes, not on a measurement; whether the internal client answers a null pointer or a bad code before its service does is unknown
 - [ApRp exports](../../../core/libs/prx/libSceNetCtl/Export.cpp) are constant-success functions in the supplied native module and consume no arguments. No callers were found in the supplied system-library decompilations, so unused callback, output and configuration argument types remain unresolved.
 
@@ -20,3 +21,32 @@
 - [sceNetCtlGetIfStat](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) throws on macOS: an unprivileged process reads the interface byte counters (`getifaddrs` and `sysctl(NET_RT_IFLIST2)` alike) reduced to their low 32 bits, so a total would wrap every 4 GiB
 - [Host interface cache](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - on Windows, `sceNetCtlGetState`, `sceNetCtlGetStateV6`, `sceNetCtlCheckCallback`, `sceNetCtlGetIfStat` and `sceNetCtlGetInfo` reuse the last host interface query until `NotifyUnicastIpAddressChange`, `NotifyIpInterfaceChange` or `NotifyRouteChange2` reports a change, instead of calling `GetAdaptersAddresses` on every call. A DNS server change with no address, interface or route change is seen only at the next such change. If the notifications cannot be registered, every call queries the host as before.
 - [sceNetCtlGetNatInfo](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - performs RFC 5389 STUN binding probes from the active host IPv4 interface against `stun.playstation.net` and fallback third-party STUN servers (`stun.cloudflare.com`, `stun.l.google.com`, `stun1.l.google.com`) instead of reading cached state from the console's background `netctl` service, which probes `*.np.stun.playstation.net` with authenticated Classic STUN (RFC 3489); those third-party hosts receive the host's IPv4 address when an uncached call resolves or probes them. Each discovery call has a 1000 ms total time budget (DNS resolution included, 300 ms per UDP probe), and successful results are cached for 60 s per local IPv4 address while failures re-probe on the next call. Console captures confirm NAT type 2, NAT type 3, and STUN failure; NAT type 1 when the mapped endpoint matches the local socket is not measured on a console with a direct public IP.
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceNetCtl/Export.cpp) - 20 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+[Version-pinned selected ELF export records](https://gist.github.com/kyon-eth/3fbb1a4a6f95a936b4cd58e9c3d8c50c/5e3af709224ed8235af11337309af0725e5685cb) list every NID below with its image label, decoded export module and library, raw qualified symbol, ELF function type, value and size for each inspected version-labelled image. The extract SHA-256 is `02ab27f12bcd0cc9fa03fa33f55fc201110f0d54a86bbbaa093d55d0a8cf262d`; its full-module sorted-function-NID digests and raw module-parameter words permit independent comparison. This is an analyst-produced metadata record, not independent authentication of the original images or proof of prototypes or behavior.
+
+| Name | NID |
+| --- | --- |
+| `sceInetStatInit` | `0NRuAY4RRLc` |
+| `sceInetStatTerm` | `W4wSTmiI4+0` |
+| `sceNetConnSwitcherStop` | `xCPBfQsndCs` |
+| `Unknown` | `09YMz3Vp5us` |
+| `Unknown` | `1PGApDf96ao` |
+| `Unknown` | `1mrTXfVGn+g` |
+| `Unknown` | `2Ny2lzU3o9w` |
+| `Unknown` | `3cNKxJXXYYk` |
+| `Unknown` | `AIu-tRC-mSM` |
+| `Unknown` | `BSERkV-a9e8` |
+| `Unknown` | `FwX+Js8qXNA` |
+| `Unknown` | `I14Npt-awQg` |
+| `Unknown` | `KUdWtCC6w-0` |
+| `Unknown` | `QnQ4RBu546Y` |
+| `Unknown` | `e5-Xj0wEzbI` |
+| `Unknown` | `lScJhO3Rnpk` |
+| `Unknown` | `mfWDyuk-M0I` |
+| `Unknown` | `on7RqSRy8pU` |
+| `Unknown` | `sngJX5nUjVM` |
+| `Unknown` | `wVXoAlD7Fsg` |
