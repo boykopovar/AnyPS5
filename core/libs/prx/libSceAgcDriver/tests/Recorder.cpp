@@ -11938,39 +11938,58 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
     constexpr std::array<std::uint8_t, 8> green{0, 0, 0x00, 0x3c, 0, 0, 0x00, 0x3c};
     constexpr std::array<std::uint8_t, 8> cleared{};
     enum class Order { Superseded, ReadFirst, Rewritten, CpuStore };
+    enum class Path { Refresh, Creation, Detached };
     struct Outcome {
         std::vector<std::byte> bytes;
         std::vector<std::byte> imageB;
         std::uint64_t handOvers = 0;
         std::uint64_t superseded = 0;
     };
-    const auto run = [&](bool on, Order order) {
-        const std::string where = what + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote") + (on ? ", on" : ", off");
+    const auto pathName = [](Path path) { return std::string(path == Path::Refresh ? ", at B's refresh" : path == Path::Creation ? ", at B's creation" : ", at B's creation after A left the cache"); };
+    const auto run = [&](bool on, Order order, Path path) {
+        const std::string where = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote") + (on ? ", on" : ", off");
         StorageTexture::SetClearHandOver(on);
         recorder.Sync();
         std::memset(memory, 0x55, surfaceA);
         std::memset(memory + surfaceA, 0x00, keyCount);
         Outcome outcome{};
-        const auto handOvers = StorageTexture::ClearHandOvers();
+        const auto handOvers = StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers();
         const auto superseded = StorageTexture::HandedOverSuperseded();
         {
             auto imageA = StorageTexture::Create(context, detiler, resourceA, 0);
-            auto imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+            std::shared_ptr<StorageTexture> imageB;
+            if (path == Path::Refresh) imageB = StorageTexture::Create(context, detiler, resourceB, 0);
             draw(imageA, {{1.0f, 0.0f, 0.0f, 1.0f}});
-            imageB->Refresh();
-            if (on && watched) {
-                Require(StorageTexture::ClearHandOvers() == handOvers + 1, where + ": B's refresh under clear keys did not hand A's results over");
-                Require(StorageTexture::FindPending(address, surfaceA) == imageA, where + ": A's results did not stay pending");
-                Require(std::all_of(memory, memory + 2 * 65536, [](std::uint8_t value) { return value == 0x55; }), where + ": B's refresh stored A's results over B");
+            const std::weak_ptr<StorageTexture> weakA = imageA;
+            if (path == Path::Refresh) {
+                imageB->Refresh();
             } else {
-                Require(StorageTexture::ClearHandOvers() == handOvers, where + ": the hand-over ran while off");
+                std::shared_ptr<StorageTexture> detached;
+                if (path == Path::Detached) {
+                    imageA->Detach();
+                    detached = std::move(imageA);
+                }
+                bool flushed = false;
+                auto handOver = StorageTexture::PrepareCreation(context, resourceB, surfaceB, std::move(detached), flushed);
+                Require(flushed != (on && watched), where + (flushed ? ": B's creation stored A's results although they were handed over" : ": B's creation did not store A's results although they were not handed over"));
+                imageB = StorageTexture::Create(context, detiler, resourceB, 0);
+                imageB->AdoptHandOver(std::move(handOver));
+            }
+            if (on && watched) {
+                Require(StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() == handOvers + 1, where + ": B under clear keys did not take A's results over");
+                Require(StorageTexture::FindPending(address, surfaceA) == weakA.lock() && !weakA.expired(), where + ": A's results did not stay pending");
+                Require(std::all_of(memory, memory + 2 * 65536, [](std::uint8_t value) { return value == 0x55; }), where + ": B stored A's results over B");
+            } else {
+                Require(StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() == handOvers, where + ": the hand-over ran while off");
             }
             outcome.imageB = readImage(imageB, 128, 128, 8);
             Require(filled(outcome.imageB, cleared), where + ": B does not hold its keys' clear");
             if (order == Order::ReadFirst) {
                 Require(filled(readMemory(address, 65536), red), where + ": a read of A's memory before B wrote it did not see A's results");
-                imageA->Refresh();
-                Require(filled(readImage(imageA, 256, 256, 4), red), where + ": A read again as A lost its results");
+                if (imageA != nullptr) {
+                    imageA->Refresh();
+                    Require(filled(readImage(imageA, 256, 256, 4), red), where + ": A read again as A lost its results");
+                }
             }
             if (order == Order::Rewritten) {
                 draw(imageA, {{0.0f, 0.0f, 1.0f, 1.0f}});
@@ -11989,15 +12008,17 @@ bool clearHandOverTests(const Device& device, Recorder& recorder, bool watched) 
             outcome.bytes = readMemory(address, surfaceA);
             Require(filled(readImage(imageB, 128, 128, 8), green), where + ": B lost its results");
         }
-        outcome.handOvers = StorageTexture::ClearHandOvers() - handOvers;
+        outcome.handOvers = StorageTexture::ClearHandOvers() + StorageTexture::CreationHandOvers() - handOvers;
         outcome.superseded = StorageTexture::HandedOverSuperseded() - superseded;
         recorder.Sync();
         return outcome;
     };
+    for (const auto path : {Path::Refresh, Path::Creation, Path::Detached})
     for (const auto order : {Order::Superseded, Order::ReadFirst, Order::Rewritten, Order::CpuStore}) {
-        const std::string name = what + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote");
-        const auto off = run(false, order);
-        const auto on = run(true, order);
+        if (path == Path::Detached && order == Order::Rewritten) continue;
+        const std::string name = what + pathName(path) + (order == Order::Superseded ? ", A never read again" : order == Order::ReadFirst ? ", A read before B wrote" : order == Order::Rewritten ? ", A written again after the hand-over" : ", a CPU store before B wrote");
+        const auto off = run(false, order, path);
+        const auto on = run(true, order, path);
         const auto& lastA = order == Order::Rewritten ? blue : red;
         if (order != Order::CpuStore) Require(filled(std::span(off.bytes).first(2 * 65536), green), name + ": B's results did not reach guest memory with the hand-over off");
         Require(filled(std::span(off.bytes).subspan(2 * 65536), lastA), name + ": A's results did not reach guest memory with the hand-over off");

@@ -255,7 +255,19 @@ private:
 // or it leaves the cache. Dispatches reusing the image meanwhile skip the round trip entirely.
 class StorageTexture : public std::enable_shared_from_this<StorageTexture> {
 public:
+    struct CreationHandOver {
+        DccKeys keys = DccKeys::Uncompressed;
+        std::vector<std::shared_ptr<StorageTexture>> sources;
+        std::shared_ptr<StorageTexture> detached;
+        bool handed = false;
+        CreationHandOver() = default;
+        CreationHandOver(CreationHandOver&&) = default;
+        CreationHandOver& operator=(CreationHandOver&&) = default;
+        ~CreationHandOver();
+    };
     static std::shared_ptr<StorageTexture> Create(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, std::uint32_t mipLevel);
+    static CreationHandOver PrepareCreation(const Context& context, const GuestTextureResource& descriptor, std::uint64_t guestBytes, std::shared_ptr<StorageTexture> detached, bool& flushed);
+    void AdoptHandOver(CreationHandOver handOver);
     ~StorageTexture();
     StorageTexture(const StorageTexture&) = delete;
     StorageTexture& operator=(const StorageTexture&) = delete;
@@ -287,6 +299,7 @@ public:
     void MarkSliceDirty(std::uint32_t slice, std::uint32_t count = 1);
     bool MarkDrawn(std::uint32_t slice, std::uint32_t count, VkRect2D scissor);
     void Flush();
+    void Detach();
     bool Dirty() const;
     // Stores every pending image overlapping the range, except `except`; returns whether any was.
     // Stores into host-imported memory are recorded (not waited for): a CPU reader syncs afterwards.
@@ -466,6 +479,7 @@ public:
     static std::uint64_t PaddingSeedCopies();
     static std::uint64_t RefreshesProved();
     static std::uint64_t ClearHandOvers();
+    static std::uint64_t CreationHandOvers();
     static std::uint64_t HandedOverSuperseded();
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
@@ -731,6 +745,8 @@ private:
     UnitFlags borrowedUnits;
     std::vector<std::pair<std::weak_ptr<StorageTexture>, std::uint64_t>> handedOver;
     std::vector<bool> handedUnits;
+    std::vector<std::shared_ptr<StorageTexture>> adoptedSources;
+    void pruneAdoptedSources();
     // Units of this image were borrowed since it was last written: the borrower's proofs
     // (the resource cache's serial memo) hold only while this image's version does, so the next
     // write here bumps the pending serial although the image was pending already.
