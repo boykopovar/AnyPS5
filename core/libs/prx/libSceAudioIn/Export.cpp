@@ -289,11 +289,13 @@ int APS5_VABI sceAudioInSetSparkSideTone(void) {
     return 0;
 }
 
-int APS5_VABI sceAudioInSetCompressorPreGain(void) {
+int32_t APS5_VABI sceAudioInSetCompressorPreGain(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceAudioInSetNoiseGateThreshold(void) {
+int32_t APS5_VABI sceAudioInSetNoiseGateThreshold(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
