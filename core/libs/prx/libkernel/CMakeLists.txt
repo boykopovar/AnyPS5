@@ -1558,15 +1558,29 @@ if(BUILD_TESTING)
         target_include_directories(guest_named_shm_windows_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
         target_link_libraries(guest_named_shm_windows_tests PRIVATE libkernel libc advapi32)
         configure_windows_unwind(guest_named_shm_windows_tests)
-        add_test(NAME guest_named_shm_windows COMMAND guest_named_shm_windows_tests)
-        set_tests_properties(guest_named_shm_windows PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-        add_test(NAME guest_named_shm_windows_short_temp COMMAND guest_named_shm_windows_tests --short-temp)
-        set_tests_properties(guest_named_shm_windows_short_temp PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
-        add_test(NAME guest_named_shm_windows_long_short_temp COMMAND guest_named_shm_windows_tests --long-short-temp)
-        set_tests_properties(guest_named_shm_windows_long_short_temp PROPERTIES TIMEOUT 20 SKIP_RETURN_CODE 77 ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        foreach(part IN ITEMS basic reuse resize_read resize_write)
+            set(named_shm_suffix "_${part}")
+            if(part STREQUAL "basic")
+                set(named_shm_suffix "")
+            endif()
+            add_test(NAME guest_named_shm_windows${named_shm_suffix} COMMAND guest_named_shm_windows_tests --case ${part})
+            add_test(NAME guest_named_shm_windows_short_temp${named_shm_suffix} COMMAND guest_named_shm_windows_tests --short-temp ${part})
+            add_test(NAME guest_named_shm_windows_long_short_temp${named_shm_suffix} COMMAND guest_named_shm_windows_tests --long-short-temp ${part})
+            set_tests_properties(guest_named_shm_windows${named_shm_suffix}
+                guest_named_shm_windows_short_temp${named_shm_suffix} guest_named_shm_windows_long_short_temp${named_shm_suffix}
+                PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+            set_tests_properties(guest_named_shm_windows_short_temp${named_shm_suffix} guest_named_shm_windows_long_short_temp${named_shm_suffix}
+                PROPERTIES SKIP_RETURN_CODE 77)
+            if(part STREQUAL "resize_write")
+                set_tests_properties(guest_named_shm_windows${named_shm_suffix}
+                    guest_named_shm_windows_short_temp${named_shm_suffix} guest_named_shm_windows_long_short_temp${named_shm_suffix}
+                    PROPERTIES PROCESSORS 3)
+            elseif(part STREQUAL "reuse" OR part STREQUAL "resize_read")
+                set_tests_properties(guest_named_shm_windows${named_shm_suffix}
+                    guest_named_shm_windows_short_temp${named_shm_suffix} guest_named_shm_windows_long_short_temp${named_shm_suffix}
+                    PROPERTIES PROCESSORS 2)
+            endif()
+        endforeach()
         set_tests_properties(guest_shm_open PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         add_test_executable(guest_named_shm_windows_mapping_tests ${LIBS_INCLUDE_DIR}/tests/GuestNamedShmWindowsMapping.cpp)
