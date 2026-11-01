@@ -383,12 +383,12 @@ std::string DescribeInterval(std::chrono::microseconds interval) {
 }
 
 void ExpireAlarm(std::chrono::microseconds interval) {
-    KqueueSignalSent(GuestSigalrm);
     std::uintptr_t handler = 0;
     {
         std::lock_guard lock(registration);
         handler = dispositions[GuestSigalrm].handler;
     }
+    KqueueSignalSent(GuestSigalrm);
     if (handler == 1) return;
     if (SignalBlocked(GuestSigalrm)) {
         MarkPending(GuestSigalrm);
@@ -700,8 +700,8 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
     if (thread == scePthreadSelf()) return guest == 0 || raise_nid_postfix(guest) == 0 ? 0 : *__error_nid_postfix();
     if (!GuestThreadIsLive(thread)) return PosixThread::GUEST_ESRCH;
     if (guest == 0) return 0;
-    KqueueSignalSent(guest);
     if (Disposition(guest).handler != 1) MarkPending(guest);
+    KqueueSignalSent(guest);
     return 0;
 }
 int APS5_VABI sigaltstack_nid_postfix(const GuestStack* stack, GuestStack* previous) {
