@@ -35,9 +35,17 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+#ifdef __linux__
+#include <sys/uio.h>
+#endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 
 namespace {
 
+constexpr int GuestEsrch = 3;
 constexpr int GuestEintr = 4;
 constexpr int GuestEbadf = 9;
 constexpr int GuestEdeadlk = 11;
@@ -95,6 +103,10 @@ constexpr std::uint32_t CloseOnExecRequest = 0x20006601;
 constexpr std::uint32_t KeepOnExecRequest = 0x20006602;
 constexpr std::uint32_t NonblockingRequest = 0x8004667e;
 constexpr std::uint32_t ReadableRequest = 0x4004667f;
+constexpr std::uint32_t SetOwnerRequest = 0x8004667c;
+constexpr std::uint32_t GetOwnerRequest = 0x4004667b;
+constexpr std::uint32_t SetGroupRequest = 0x80047476;
+constexpr std::uint32_t GetGroupRequest = 0x40047477;
 constexpr std::uint32_t RequestIn = 0x80000000u;
 constexpr std::uint32_t RequestOut = 0x40000000u;
 constexpr std::uint32_t RequestVoid = 0x20000000u;
@@ -412,6 +424,30 @@ void SetCloseOnExec(int fd, bool value) {
     Materialize(fd).closeOnExec = value;
 }
 
+std::map<std::weak_ptr<int>, int, std::owner_less<std::weak_ptr<int>>> g_owners;
+
+int& Owner(int fd) {
+    std::erase_if(g_owners, [](const auto& item) { return item.first.expired(); });
+    return g_owners[Materialize(fd).status];
+}
+
+int GetSigioOwner(int fd, Kind kind, const char* function, const char* name) {
+    if (kind == Kind::File || kind == Kind::Directory || kind == Kind::ArchivedFile) return Fail(GuestEnotty);
+    if (kind != Kind::Pipe) Unsupported(function, name, kind, fd);
+    std::lock_guard lock(g_mutex);
+    return Owner(fd);
+}
+
+int SetSigioOwner(int fd, Kind kind, int owner, const char* function, const char* name) {
+    if (kind == Kind::File || kind == Kind::Directory || kind == Kind::ArchivedFile) return Fail(GuestEnotty);
+    if (kind != Kind::Pipe) Unsupported(function, name, kind, fd);
+    const int process = getpid_nid_postfix();
+    if (owner != 0 && owner != process && owner != -process) return Fail(GuestEsrch);
+    std::lock_guard lock(g_mutex);
+    Owner(fd) = owner;
+    return 0;
+}
+
 int RecordLock(int fd, int command, std::intptr_t argument) {
     if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const bool old = command <= OldSetLockWait;
@@ -471,6 +507,19 @@ int ReadAheadControl(int fd, int command, std::intptr_t argument) {
     return 0;
 }
 
+}
+
+int File::PipeProcessGroup(int fd) {
+    return -GetSigioOwner(fd, Kind::Pipe, "tcgetpgrp", "TIOCGPGRP");
+}
+
+static int SetProcessGroup(int fd, Kind kind, int group, const char* function, const char* request) {
+    if (group == std::numeric_limits<int>::min()) return Fail(GuestEsrch);
+    return SetSigioOwner(fd, kind, -group, function, request);
+}
+
+int File::SetPipeProcessGroup(int fd, int group) {
+    return SetProcessGroup(fd, Kind::Pipe, group, "tcsetpgrp", "TIOCSPGRP");
 }
 
 namespace File {
@@ -535,11 +584,15 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
             if (!kind) return Fail(GuestEbadf);
             return ChangeStatus(fd, *kind, SettableStatusFlags, static_cast<int>(argument), "fcntl");
         }
-        case GetOwner:
+        case GetOwner: {
+            const auto kind = Classify(fd, "fcntl");
+            if (!kind) return Fail(GuestEbadf);
+            return GetSigioOwner(fd, *kind, "fcntl", "F_GETOWN");
+        }
         case SetOwner: {
             const auto kind = Classify(fd, "fcntl");
             if (!kind) return Fail(GuestEbadf);
-            Unsupported("fcntl", command == GetOwner ? "F_GETOWN" : "F_SETOWN", *kind, fd);
+            return SetSigioOwner(fd, *kind, static_cast<int>(argument), "fcntl", "F_SETOWN");
         }
         case OldGetLock:
         case OldSetLock:
@@ -556,6 +609,28 @@ int Fcntl(int fd, int command, std::intptr_t argument) {
         default:
             return Fail(GuestEinval);
     }
+}
+
+static bool ReadGuestInt(const void* source, int* value) {
+    const auto address = reinterpret_cast<std::uintptr_t>(source);
+    if (address == 0 || sizeof(int) > UINTPTR_MAX - address) return false;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, sizeof(int));
+#ifdef _WIN32
+    SIZE_T copied = 0;
+    return ReadProcessMemory(GetCurrentProcess(), source, value, sizeof(int), &copied) && copied == sizeof(int);
+#elif defined(__linux__)
+    iovec local{value, sizeof(int)};
+    iovec remote{const_cast<void*>(source), sizeof(int)};
+    const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
+    if (copied < 0 && errno != EFAULT) throw std::runtime_error("ioctl: process_vm_readv failed with errno " + std::to_string(errno));
+    return copied == static_cast<ssize_t>(sizeof(int));
+#elif defined(__APPLE__)
+    mach_vm_size_t copied = 0;
+    return ::mach_vm_read_overwrite(::mach_task_self(), static_cast<mach_vm_address_t>(address), sizeof(int),
+               reinterpret_cast<mach_vm_address_t>(value), &copied) == KERN_SUCCESS && copied == sizeof(int);
+#else
+    throw std::runtime_error("ioctl: checked guest copies are not implemented on this host");
+#endif
 }
 
 bool IoctlRequestMalformed(std::uint64_t request) {
@@ -580,7 +655,7 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
     }
     if (command == NonblockingRequest) {
         int enable = 0;
-        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
+        if (!ReadGuestInt(argument, &enable)) return Fail(GuestEfault);
         return ChangeStatus(fd, *kind, Nonblocking, enable != 0 ? Nonblocking : 0, "ioctl");
     }
     if (command == ReadableRequest) {
@@ -589,6 +664,33 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         const auto archived = File::ArchivedFileRemaining(fd);
         const int available = archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max())) : Readable(fd, *kind, "ioctl");
         if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
+        return 0;
+    }
+    if (command == SetOwnerRequest) {
+        int owner = 0;
+        if (!ReadGuestInt(argument, &owner)) return Fail(GuestEfault);
+        return SetSigioOwner(fd, *kind, owner, "ioctl", "FIOSETOWN");
+    }
+    if (command == GetOwnerRequest) {
+        const int owner = GetSigioOwner(fd, *kind, "ioctl", "FIOGETOWN");
+        if (owner == -1 && *kind != Kind::Pipe) return -1;
+        if (argument == nullptr) return Fail(GuestEfault);
+        const GuestArena::HostWrite destination(argument, sizeof(owner));
+        if (!destination.Open()) return Fail(GuestEfault);
+        std::memcpy(argument, &owner, sizeof(owner));
+        return 0;
+    }
+    if ((command == SetGroupRequest || command == GetGroupRequest) && *kind == Kind::Pipe && fd > 2) {
+        if (command == SetGroupRequest) {
+            int group = 0;
+            if (!ReadGuestInt(argument, &group)) return Fail(GuestEfault);
+            return SetProcessGroup(fd, *kind, group, "ioctl", "TIOCSPGRP");
+        }
+        const int group = -GetSigioOwner(fd, *kind, "ioctl", "TIOCGPGRP");
+        if (argument == nullptr) return Fail(GuestEfault);
+        const GuestArena::HostWrite destination(argument, sizeof(group));
+        if (!destination.Open()) return Fail(GuestEfault);
+        std::memcpy(argument, &group, sizeof(group));
         return 0;
     }
     if (((command >> 8) & 0xff) == TerminalGroup) return Fail(GuestEnotty);

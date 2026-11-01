@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include <cstddef>
 #include <cstdint>
@@ -77,10 +78,8 @@ int TerminalError(int descriptor) {
     return NotTerminal;
 }
 
-int ProcessGroupError(int descriptor, const char* pipeMessage) {
-    const int error = TerminalError(descriptor);
-    if (error == NotTerminal && descriptor >= StandardStreams && HostPipe(descriptor)) throw std::runtime_error(pipeMessage);
-    return error;
+bool GuestPipe(int descriptor) {
+    return TerminalError(descriptor) == NotTerminal && descriptor >= StandardStreams && HostPipe(descriptor);
 }
 }
 
@@ -124,11 +123,12 @@ int APS5_VABI tcflow_nid_postfix(int descriptor, int action) {
 }
 
 int APS5_VABI tcgetpgrp_nid_postfix(int descriptor) {
-    return Fail(ProcessGroupError(descriptor, "tcgetpgrp: the SIGIO owner of a pipe is not supported"));
+    if (GuestPipe(descriptor)) return File::PipeProcessGroup(descriptor);
+    return Fail(TerminalError(descriptor));
 }
 
 int APS5_VABI tcsetpgrp_nid_postfix(int descriptor, int group) {
-    static_cast<void>(group);
-    return Fail(ProcessGroupError(descriptor, "tcsetpgrp: the SIGIO owner of a pipe is not supported"));
+    if (GuestPipe(descriptor)) return File::SetPipeProcessGroup(descriptor, group);
+    return Fail(TerminalError(descriptor));
 }
 }

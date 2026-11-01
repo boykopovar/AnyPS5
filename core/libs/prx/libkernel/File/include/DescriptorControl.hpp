@@ -17,6 +17,8 @@ void RememberDescriptor(int fd, int openFlags);
 void RememberPipe(int fd);
 void ShareDescriptor(int from, int to);
 void ForgetDescriptor(int fd);
+int PipeProcessGroup(int fd);
+int SetPipeProcessGroup(int fd, int group);
 bool Appends(int fd);
 void SyncWrites(int fd);
 
