@@ -971,6 +971,8 @@ static void CheckProcessQueries() {
         std::int32_t enabled = -1;
         Require(query(nullptr, 3, &enabled) == static_cast<int>(0x8002000E));
         Require(query(&workaround, 3, nullptr) == static_cast<int>(0x8002000E));
+        Require(query(reinterpret_cast<const KernelTitleWorkaround*>(0x10), 3, &enabled) == static_cast<int>(0x8002000E));
+        Require(query(&workaround, 3, reinterpret_cast<std::int32_t*>(0x10)) == static_cast<int>(0x8002000E));
         Require(query(nullptr, 0x80, &enabled) == static_cast<int>(0x8002000E));
         Require(query(&workaround, 0x80, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
         Require(query(&workaround, -1, &enabled) == static_cast<int>(0x80020016) && enabled == -1);
