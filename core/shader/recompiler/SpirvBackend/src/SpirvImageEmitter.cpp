@@ -287,6 +287,15 @@ std::uint32_t SampledComponentZero(SpirvEmitterState& state, IrTextureNumericCla
     throw std::runtime_error("invalid sampled image numeric class");
 }
 
+bool ConvertedFloatTexel(const ImageEmitAccess& access) {
+    const auto format = access.image.conversionFormat;
+    if (format == IrBufferFormat::Invalid || format == FmaskExpansion || access.image.srgbDecode) {
+        return false;
+    }
+    const auto type = GetFormatInfo(format).type;
+    return type == SpirvFormatComponentType::Unorm || type == SpirvFormatComponentType::Float;
+}
+
 std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, std::uint32_t value, IrTextureNumericClass numericClass, bool dref, bool gather) {
     auto& state = ctx.state;
     const auto& mem = access.mem;
@@ -295,6 +304,7 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
         valueClass = IrTextureNumericClass::Float;
     }
     const bool integer = valueClass == IrTextureNumericClass::Uint || valueClass == IrTextureNumericClass::Sint;
+    const bool floatTexel = mem.dataBits == 16u && ConvertedFloatTexel(access);
     if (mem.dataBits == 16u && access.image.depthBits) {
         ctx.Fail(access.inst, "reads the bits of a depth plane as 16-bit results");
     }
@@ -318,14 +328,16 @@ std::uint32_t ResultVector(SpirvValueEmitContext& ctx, const ImageEmitAccess& ac
             const auto highIndex = lowIndex + 1u;
             const auto low = scalar(lowIndex);
             const auto high = highIndex < mem.componentCount ? scalar(highIndex) : SampledComponentZero(state, valueClass);
-            if (integer) {
+            if (integer && !floatTexel) {
                 const auto lowBits = SampledComponentBits(ctx, low, valueClass);
                 const auto highBits = SampledComponentBits(ctx, high, valueClass);
                 const auto mask = ConstantU32(state, 0xffffu);
                 packed[word] = Binary(state, spv::OpBitwiseOr, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), lowBits, mask), Binary(state, spv::OpShiftLeftLogical, TypeU32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), highBits, mask), ConstantU32(state, 16u)));
             } else {
+                const auto lowValue = integer ? Unary(state, spv::OpBitcast, TypeF32(state), low) : low;
+                const auto highValue = integer ? Unary(state, spv::OpBitcast, TypeF32(state), high) : high;
                 const auto pair = state.module.AllocateId();
-                state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), pair, low, high);
+                state.module.AddFunction(spv::OpCompositeConstruct, TypeF32Vector(state, 2), pair, lowValue, highValue);
                 packed[word] = EmitPackHalf2x16(state, pair);
             }
         }
@@ -558,9 +570,6 @@ SpirvBufferFormatInfo ImageConversionFormat(const ImageResource& image) {
 }
 
 void RequireConvertedUnormAccess(SpirvValueEmitContext& ctx, const ImageEmitAccess& access, const SpirvBufferFormatInfo& info) {
-    if (access.mem.dataBits == 16u && info.byteSize != 2u) {
-        ctx.Fail(access.inst, info.type == SpirvFormatComponentType::Float ? "reads or writes a converted float image with 16-bit data, which is not implemented" : "reads or writes a converted unorm image with 16-bit data, which is not implemented");
-    }
     for (std::uint32_t component = 0; component < 4u; component++) {
         const auto selector = (access.image.shaderSwizzle >> (component * 3u)) & 7u;
         if (selector >= 4u && selector - 4u >= info.componentCount && info.byteSize != 2u) {
