@@ -854,6 +854,29 @@ void testWriteChangedStoresExactlyTheChangedRuns() {
     }
 }
 
+void testWriteChangedKeepingGuestKeepsCpuWrites() {
+    alignas(256) static std::uint8_t guest[1024 + 13];
+    std::vector<std::byte> original(sizeof(guest)), current(sizeof(guest));
+    std::uint32_t seed = 777;
+    const auto next = [&] { return seed = seed * 1103515245u + 12345u, seed >> 16u; };
+    std::vector<std::uint8_t> cpu(sizeof(guest));
+    for (std::size_t i = 0; i < sizeof(guest); ++i) {
+        original[i] = static_cast<std::byte>(next());
+        const auto kind = next() % 4;
+        current[i] = kind >= 2 ? static_cast<std::byte>(static_cast<std::uint8_t>(original[i]) ^ (1u + next() % 255u)) : original[i];
+        cpu[i] = kind % 2 == 1 ? static_cast<std::uint8_t>(static_cast<std::uint8_t>(original[i]) ^ (1u + next() % 255u)) : static_cast<std::uint8_t>(original[i]);
+        guest[i] = cpu[i];
+    }
+    AgcDriver::GuestMemory::WriteChangedKeepingGuest(reinterpret_cast<std::uintptr_t>(guest), current, original);
+    for (std::size_t i = 0; i < sizeof(guest); ++i) {
+        const auto expected = cpu[i] != static_cast<std::uint8_t>(original[i]) ? cpu[i] : static_cast<std::uint8_t>(current[i]);
+        check(guest[i] == expected, "write-back overwrote a byte the CPU changed since the upload, or skipped one it did not");
+    }
+    for (std::size_t i = 0; i < sizeof(guest); ++i) guest[i] = static_cast<std::uint8_t>(original[i]);
+    AgcDriver::GuestMemory::WriteChangedKeepingGuest(reinterpret_cast<std::uintptr_t>(guest), current, original);
+    for (std::size_t i = 0; i < sizeof(guest); ++i) check(guest[i] == static_cast<std::uint8_t>(current[i]), "write-back skipped a changed byte although the guest still held the upload");
+}
+
 void testWriteChangedChunksOfEveryDensity() {
     alignas(64) static std::uint8_t guest[128];
     constexpr std::size_t Tail = 5;
@@ -2145,6 +2168,7 @@ int main(int argc, char** argv) {
         testWriteChangedKeepsUntouchedBytes();
         testWriteChangedChunksOfEveryDensity();
         testWriteChangedStoresExactlyTheChangedRuns();
+        testWriteChangedKeepingGuestKeepsCpuWrites();
         testRegisters();
         testRegisterFile();
         testContextAndBases();

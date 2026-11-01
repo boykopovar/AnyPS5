@@ -983,6 +983,166 @@ void copiedDirectOrderingTests(const Device& device, Recorder& recorder) {
     std::cout << "Copied producers precede fresh and reused direct consumers\n";
 }
 
+void copiedWriteBackTests(const Device& device, Recorder& recorder) {
+    auto context = device.GetContext();
+    context.hostImportAlignment = 0;
+    context.dmaBufImport = false;
+    recorder.Sync();
+    alignas(4096) static std::uint32_t block[1024];
+    std::memset(block, 0, sizeof(block));
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    ShaderRecompiler::RecompileResult program;
+    ShaderRecompiler::DescriptorBinding binding;
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+    binding.descriptorSet = 0;
+    binding.binding = 0;
+    binding.count = 1;
+    binding.guestDescriptor = {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) & 0xffffu, 1024, 0x31000000u};
+    binding.bufferWritten = {true};
+    program.bindings.push_back(binding);
+    const CompiledShader compute{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    struct Release {
+        const Context& context;
+        Recorder& recorder;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkShaderModule module = VK_NULL_HANDLE;
+        std::shared_ptr<ShaderResources> layoutOwner;
+        ~Release() {
+            recorder.Sync();
+            if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+            if (layout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
+            if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+        }
+    } release{context, recorder};
+    release.layoutOwner = std::make_shared<ShaderResources>(context, compute);
+    Require(release.layoutOwner->HasCopiedWrites(), "the written buffer did not take the copied path");
+    const auto setLayout = release.layoutOwner->Layout();
+    const VkPushConstantRange push{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(std::uint32_t)};
+    VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &setLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges = &push;
+    Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &release.layout), "copied write-back pipeline layout");
+    VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    moduleInfo.codeSize = sizeof(BUFFER_UPDATE_SPV);
+    moduleInfo.pCode = BUFFER_UPDATE_SPV;
+    Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &release.module), "copied write-back shader module");
+    VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, release.module, "main", nullptr};
+    pipelineInfo.layout = release.layout;
+    Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &release.pipeline), "copied write-back pipeline");
+    const auto run = [&](std::uint32_t delta) {
+        auto copied = std::make_shared<ShaderResources>(context, compute);
+        Require(copied->HasCopiedWrites(), "a use of the written buffer did not take the copied path");
+        const auto commands = recorder.Commands();
+        recorder.Keep(copied);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, release.pipeline);
+        copied->Bind(commands, VK_PIPELINE_BIND_POINT_COMPUTE, release.layout);
+        context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, release.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(delta), &delta);
+        context.Function<PFN_vkCmdDispatch>("vkCmdDispatch")(commands, 1, 1, 1);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+        copied->MarkGpuWrites(recorder);
+        recorder.Sync();
+        return copied;
+    };
+    block[0] = 0x10;
+    block[1] = 0x20;
+    const auto first = run(1);
+    block[0] = 0x70;
+    block[1] = 0x25;
+    first->WriteBackBuffers();
+    Require(block[0] == 0x70, "a copied write-back stored the shader's dword over the one the CPU wrote after the upload");
+    Require(block[1] == 0x25, "a copied write-back rolled back a dword the shader never touched");
+    const auto second = run(2);
+    second->WriteBackBuffers();
+    Require(block[0] == 0x72, "the next use of the copied buffer did not read the dword the CPU wrote");
+    block[0] = 0x10;
+    const auto third = run(1);
+    block[0] = 0x00aa0010u;
+    third->WriteBackBuffers();
+    Require(block[0] == 0x00aa0011u, "a copied write-back did not merge the shader's byte with the CPU's byte of the same dword");
+    std::cout << "Copied write-backs keep the bytes the CPU wrote after the upload\n";
+}
+
+void changedCopyTests(const Device& device, Recorder& recorder) {
+    Require(recorder.Idle(), "the changed copy test needs an idle recorder");
+    constexpr std::uint32_t words = 70000;
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    auto result = std::make_shared<Buffer>(device.GetContext(), words * 4u, usage);
+    auto snapshot = std::make_shared<Buffer>(device.GetContext(), words * 4u, usage);
+    auto target = std::make_shared<Buffer>(device.GetContext(), words * 4u, usage);
+    if (result->DeviceAddress() == 0 || snapshot->DeviceAddress() == 0 || target->DeviceAddress() == 0) {
+        std::cout << "changed copy tests skipped: no buffer device addresses\n";
+        return;
+    }
+    constexpr std::uint32_t byteMasks[] = {0xffffffffu, 0x000000ffu, 0x0000ff00u, 0x00ff0000u, 0xff000000u, 0x00ffff00u};
+    std::vector<std::uint32_t> uploaded(words), shader(words), held(words), expected(words);
+    std::uint32_t contested = 0;
+    std::uint32_t mixed = 0;
+    for (std::uint32_t i = 0; i < words; ++i) {
+        uploaded[i] = i * 2654435761u;
+        shader[i] = i % 7 == 0 ? uploaded[i] ^ (0x5a5a5a5au & byteMasks[(i / 7) % 6]) : uploaded[i];
+        held[i] = i % 5 == 0 ? uploaded[i] ^ (0xc3c3c3c3u & byteMasks[(i / 5 + 1) % 6]) : uploaded[i];
+        bool overlap = false;
+        for (std::uint32_t shift = 0; shift < 32; shift += 8) {
+            const auto mask = 0xffu << shift;
+            const bool byShader = (shader[i] & mask) != (uploaded[i] & mask);
+            const bool byCpu = (held[i] & mask) != (uploaded[i] & mask);
+            expected[i] |= (byShader && !byCpu ? shader[i] : held[i]) & mask;
+            overlap = overlap || (byShader && byCpu);
+        }
+        contested += overlap ? 1u : 0u;
+        mixed += expected[i] != shader[i] && expected[i] != held[i] ? 1u : 0u;
+    }
+    Require(contested != 0 && mixed != 0, "the changed copy data lacks words both sides changed or words that mix their bytes");
+    auto counter = std::make_shared<Buffer>(device.GetContext(), 16, usage);
+    std::memset(counter->Bytes().data(), 0, 16);
+    std::memcpy(snapshot->Bytes().data(), uploaded.data(), words * 4u);
+    std::memcpy(result->Bytes().data(), shader.data(), words * 4u);
+    std::memcpy(target->Bytes().data(), held.data(), words * 4u);
+    Require(recorder.RecordChangedCopy(recorder.Commands(), result->DeviceAddress(), snapshot->DeviceAddress(), target->DeviceAddress(), words, counter->DeviceAddress()), "the changed copy kernel is unavailable");
+    recorder.Keep(result);
+    recorder.Keep(snapshot);
+    recorder.Keep(target);
+    recorder.Keep(counter);
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    std::vector<std::uint32_t> stored(words);
+    std::memcpy(stored.data(), target->Bytes().data(), words * 4u);
+    for (std::uint32_t i = 0; i < words; ++i) {
+        Require(stored[i] == expected[i], "changed copy word " + std::to_string(i) + ": " + std::to_string(stored[i]) + ", expected " + std::to_string(expected[i]) + " (the shader's changed bytes over the target's own)");
+    }
+    std::uint32_t counted = 0;
+    std::memcpy(&counted, counter->Bytes().data(), sizeof(counted));
+    Require(counted == contested, "the changed copy counted " + std::to_string(counted) + " words with bytes both sides changed, expected " + std::to_string(contested));
+    constexpr std::uint64_t lead = 0x1000;
+    auto imported = std::make_shared<Buffer>(device.GetContext(), lead + words * 4u, usage);
+    std::memset(imported->Bytes().data(), 0xa5, lead);
+    std::memcpy(imported->Bytes().data() + lead, held.data(), words * 4u);
+    HostImport import{};
+    import.base = 0x7f0000011000ull;
+    import.bytes = words * 4u;
+    import.address = imported->DeviceAddress() + lead;
+    import.lead = lead;
+    const auto start = HostImportBufferStart(import);
+    Require(start.guest == import.base - lead && start.device == imported->DeviceAddress() && HostImportOffset(import, import.base) == lead, "the copy source of an import with a lead does not start at the import's buffer");
+    Require(recorder.RecordChangedCopy(recorder.Commands(), result->DeviceAddress(), snapshot->DeviceAddress(), start.device + (import.base - start.guest), words), "the changed copy kernel is unavailable");
+    recorder.Keep(imported);
+    recorder.Submit();
+    device.WaitQueue();
+    recorder.Sync();
+    for (std::uint64_t i = 0; i < lead; ++i) Require(imported->Bytes()[i] == std::byte{0xa5}, "the changed copy into an import with a lead wrote byte " + std::to_string(i) + " of the lead");
+    std::memcpy(stored.data(), imported->Bytes().data() + lead, words * 4u);
+    for (std::uint32_t i = 0; i < words; ++i) {
+        Require(stored[i] == expected[i], "changed copy word " + std::to_string(i) + " after a lead: " + std::to_string(stored[i]) + ", expected " + std::to_string(expected[i]));
+    }
+}
+
 void readTrackingTests(const Device& device, Recorder& recorder) {
     Require(Recorder::ReadTracking(), "read tracking is off (APS5_COPY_READ_TRACKING=0 set?)");
     Require(recorder.Idle() && !recorder.PendingReadOverlaps(0x10000, 16), "a fresh recorder reports a read");
@@ -4052,6 +4212,11 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
         std::uint32_t innerAdjustment = 0;
         Require(memory.Descriptor(element + 16, 64, innerAdjustment).buffer == view.buffer, "a read inside the staged element does not read its shadow");
         recorder.Sync();
+        const bool changedCopy = std::getenv("APS5_NO_CHANGED_COPY_BACK") == nullptr;
+        auto* contested = static_cast<volatile std::uint32_t*>(words + first + 70);
+        auto* untouched = static_cast<volatile std::uint32_t*>(words + first + 100);
+        *contested = 0x11111133u;
+        *untouched = 0x44444444u;
         auto commands = recorder.Commands();
         fill(commands, view.buffer, view.offset + adjustment + 64u * 4u, 64, 0x22222222u);
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
@@ -4061,7 +4226,9 @@ bool bdaStagingTests(const Device& device, Recorder& recorder) {
         std::size_t wrong = 0;
         for (std::size_t index = 0; index < bytes / 4u; ++index) {
             const auto at = index >= first ? index - first : bytes;
-            const auto expected = at >= 64 && at < 80 ? 0x22222222u : 0x11111111u;
+            auto expected = at >= 64 && at < 80 ? 0x22222222u : 0x11111111u;
+            if (at == 70 && changedCopy) expected = 0x22222233u;
+            if (at == 100 && changedCopy) expected = 0x44444444u;
             if (words[index] != expected && wrong++ < 8) std::cout << "address-based staging copy-back dword " << index << " holds 0x" << std::hex << words[index] << ", expected 0x" << expected << std::dec << "\n";
         }
         Require(wrong == 0, "an address-based staged copy-back left the wrong guest bytes");
@@ -12681,6 +12848,10 @@ int main(int argc, char** argv) {
             copiedDirectOrderingTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--copied-write-back-only") {
+            copiedWriteBackTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--pending-write-snapshot-only") {
             pendingWriteSnapshotTests(device, recorder);
             return 0;
@@ -12804,6 +12975,10 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--parked-import-unmap-only") {
             gpu.unlock();
             parkedImportUnmapTests(device);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--changed-copy-only") {
+            changedCopyTests(device, recorder);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--idle-publish-wait-only") {
@@ -12975,6 +13150,7 @@ int main(int argc, char** argv) {
         readListTests(device, recorder);
         overlappedRangeTests(recorder);
         spaceWriteSyncTests(device, recorder);
+        changedCopyTests(device, recorder);
         writeSettledTests(device, recorder);
         completionCountTests(device, recorder);
         afterRecordedWorkTests(device, recorder);
@@ -13058,6 +13234,7 @@ int main(int argc, char** argv) {
         shadowedKeyStoreTests(device, recorder);
         sampleDumpTests(device, recorder);
         copiedDirectOrderingTests(device, recorder);
+        copiedWriteBackTests(device, recorder);
         gpu.unlock();
         hostImportUnmapTests(device, recorder);
         drawSnapshotPatchTests(device);
