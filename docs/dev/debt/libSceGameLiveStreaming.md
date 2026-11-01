@@ -10,6 +10,7 @@
 
 ### Silent stubs
 
+- [sceGameLiveStreamingGetSocialFeedbackMessages, sceGameLiveStreamingGetSocialFeedbackMessagesCount](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) - returning `0x80A00002` for unwritable output pointers is a host-safety fallback with console behavior unmeasured.
 - [sceGameLiveStreamingPermitLiveStreaming](../../../core/libs/prx/libSceGameLiveStreaming/Export.cpp) - this and fifteen related setting, feedback and message calls (see `Api.hpp`) validate their arguments and store nothing, as no broadcast is ever on air. The checks (not initialized, null pointers, feedback type 1-3, string lengths 240/720/45/360, at most 16 spoiler tags and 5 preset commands, zero reserved tails in the 224-byte spoiler tag, 228-byte preset command and camera setting) come from a report on #9524 that ran each function of the firmware 13.42 module with the service call stubbed. The order between argument checks, the camera setting size and the other struct fields are not measured, nor what the service returns after validation: the calls return 0 and queries report zero messages.
 
 ### Unknown function info
