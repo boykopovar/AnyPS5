@@ -1,0 +1,32 @@
+name: Run report schema
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/run-report-schema.yml
+      - docs/run-report.schema.json
+      - docs/run-report-fixtures/**
+      - tools/requirements-run-report.txt
+      - tools/tests/test_run_report_schema.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: run-report-schema-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  schema:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install the pinned validator
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --require-virtualenv -r tools/requirements-run-report.txt
+      - name: Validate the fixtures against the schema
+        run: '"$RUNNER_TEMP/venv/bin/python" tools/tests/test_run_report_schema.py'

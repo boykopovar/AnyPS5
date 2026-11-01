@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from package_headers import public_headers
+from package_headers import public_headers, resolved_path
 
 
 def main(argv=None):
@@ -16,7 +16,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         root = args.root.resolve()
-        libs = root / "core/libs"
+        libs = resolved_path(root / "core/libs")
         headers = public_headers(root)
         license_file = root / "LICENSE"
         if not license_file.is_file() or license_file.stat().st_size == 0:

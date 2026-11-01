@@ -31,22 +31,37 @@ private:
 
 namespace {
 
-void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, const std::vector<StrictDataRegion>* data, bool followCodeAddresses, std::unordered_set<VirtualAddress>& reachable, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData) {
+constexpr std::uint8_t Reached = 1;
+constexpr std::uint8_t Queued = 2;
+
+void walkGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, const std::vector<StrictDataRegion>* data, bool followCodeAddresses, std::vector<std::uint8_t>& state, const std::unordered_set<VirtualAddress>* outside, std::size_t reachedCount, std::vector<VirtualAddress>& added, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData) {
     if (text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr)
         throw RelinkerException("Text section range exceeds the address space");
     std::size_t codeSize = text.size();
     while (codeSize > 0 && text[codeSize - 1] == 0) --codeSize;
     const Codegen::X64InstructionDecoder decoder;
-    std::unordered_set<VirtualAddress> visited;
+    std::vector<std::size_t> queued;
+    struct ClearQueued {
+        std::vector<std::uint8_t>& state;
+        std::vector<std::size_t>& queued;
+        ~ClearQueued() {
+            for (const auto offset : queued)
+                if (state[offset] == Queued) state[offset] = 0;
+        }
+    } clearQueued{state, queued};
     std::queue<VirtualAddress> worklist;
     std::vector<VirtualAddress> addressTaken;
     bool speculative = false;
 
     auto enqueue = [&](VirtualAddress va) {
-        if (reachable.count(va) > 0) return;
+        const bool inText = va >= textVaddr && va - textVaddr < text.size();
+        if (inText ? state[static_cast<std::size_t>(va - textVaddr)] == Reached : outside != nullptr && outside->count(va) > 0) return;
         if (isData && isData(va)) return;
-        if (va < textVaddr || va - textVaddr >= text.size()) return;
-        if (!visited.insert(va).second) return;
+        if (!inText) return;
+        const auto offset = static_cast<std::size_t>(va - textVaddr);
+        if (state[offset] == Queued) return;
+        state[offset] = Queued;
+        queued.push_back(offset);
         worklist.push(va);
     };
 
@@ -79,7 +94,7 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
         worklist.pop();
         const VirtualAddress blockEntry = va;
 
-        while (va >= textVaddr && va - textVaddr < text.size() && (va == blockEntry || va - textVaddr < codeSize) && !reachable.contains(va) && !(isData && isData(va))) {
+        while (va >= textVaddr && va - textVaddr < text.size() && (va == blockEntry || va - textVaddr < codeSize) && state[static_cast<std::size_t>(va - textVaddr)] != Reached && !(isData && isData(va))) {
             std::size_t bufOff = static_cast<std::size_t>(va - textVaddr);
             std::size_t available = text.size() - bufOff;
             if (available == 0) throw RelinkerException("CFG: zero available bytes at target", va);
@@ -94,9 +109,10 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
             } else {
                 info = decoder.DecodeInstruction(text.data() + bufOff, available);
             }
-            reachable.insert(va);
-            if (progress && reachable.size() % 4096 == 0) progress(reachable.size());
-            visited.erase(va);
+            state[bufOff] = Reached;
+            added.push_back(va);
+            ++reachedCount;
+            if (progress && reachedCount % 4096 == 0) progress(reachedCount);
 
             VirtualAddress nextVaddr = va + static_cast<VirtualAddress>(info.Length);
 
@@ -169,11 +185,37 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
     }
 }
 
+void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, const std::vector<StrictDataRegion>* data, bool followCodeAddresses, std::unordered_set<VirtualAddress>& reachable, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData) {
+    if (text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr)
+        throw RelinkerException("Text section range exceeds the address space");
+    std::vector<std::uint8_t> state(text.size(), 0);
+    for (const VirtualAddress va : reachable)
+        if (va >= textVaddr && va - textVaddr < text.size()) state[static_cast<std::size_t>(va - textVaddr)] = Reached;
+    std::vector<VirtualAddress> added;
+    try {
+        walkGraph(text, textVaddr, entryVaddr, extraEntries, relativeRelocations, data, followCodeAddresses, state, &reachable, reachable.size(), added, progress, isData);
+    } catch (...) {
+        reachable.insert(added.begin(), added.end());
+        throw;
+    }
+    reachable.insert(added.begin(), added.end());
+}
+
 }
 
 std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, bool followCodeAddresses, std::unordered_set<VirtualAddress>& reachable, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData) {
     buildGraph(text, textVaddr, entryVaddr, extraEntries, relativeRelocations, nullptr, followCodeAddresses, reachable, progress, isData);
     return std::make_unique<ControlFlowGraph>(&reachable);
+}
+
+std::vector<VirtualAddress> ExtendControlFlowGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, VirtualAddress entryVaddr, const std::vector<VirtualAddress>& extraEntries, const IRelativeRelocationIndex& relativeRelocations, bool followCodeAddresses, std::vector<std::uint8_t>& reached, const std::function<void(std::uint64_t)>& progress, const std::function<bool(VirtualAddress)>& isData) {
+    if (text.size() > std::numeric_limits<VirtualAddress>::max() - textVaddr)
+        throw RelinkerException("Text section range exceeds the address space");
+    if (reached.size() != text.size()) throw RelinkerException("CFG: the reached map does not cover the text", textVaddr);
+    std::vector<VirtualAddress> added;
+    walkGraph(text, textVaddr, entryVaddr, extraEntries, relativeRelocations, nullptr, followCodeAddresses, reached, nullptr, static_cast<std::size_t>(std::count(reached.begin(), reached.end(), Reached)), added, progress, isData);
+    std::sort(added.begin(), added.end());
+    return added;
 }
 
 std::unique_ptr<IControlFlowGraph> BuildControlFlowGraph(

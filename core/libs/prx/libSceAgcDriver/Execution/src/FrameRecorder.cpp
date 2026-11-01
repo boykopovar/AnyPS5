@@ -494,7 +494,8 @@ void FrameRecorder::readGuest(std::uint64_t address, std::span<std::byte> bytes,
 bool FrameRecorder::abandonIfDiskLow() {
     std::error_code error;
     const auto space = std::filesystem::space(directory, error);
-    if (error || space.available >= MinimumFreeBytes) return false;
+    static const auto minimumFree = readNumber(std::getenv("APS5_FRAME_CAPTURE_MIN_FREE_BYTES"), MinimumFreeBytes);
+    if (error || space.available >= minimumFree) return false;
     stop("stopped: less than 4 GiB free on the capture volume");
     return true;
 }
