@@ -1,8 +1,10 @@
+import os
 import runpy
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -55,6 +57,27 @@ class ErrorReportTests(unittest.TestCase):
                 pr_overlap.merge("--merge-base=refs/pr/base", "a", "b")
             with self.assertRaisesRegex(RuntimeError, r"failed: error: unknown option$"):
                 pr_overlap.merge("refs/pr/base", "a")
+
+    def test_parent_pathspec_symlink_loop_exits_without_traceback(self):
+        with TemporaryDirectory() as directory:
+            repo = Path(directory)
+            nested = repo / "nested"
+            nested.mkdir()
+            loop = repo / "loop"
+            try:
+                loop.symlink_to(loop)
+            except OSError as error:
+                self.skipTest(f"symlinks unavailable: {error}")
+            old = os.getcwd()
+            os.chdir(nested)
+            try:
+                with patch.dict(pr_overlap._REPO_ROOTS, {Path.cwd(): str(repo)}, clear=False):
+                    with self.assertRaises(ValueError) as raised:
+                        pr_overlap.git("diff", "--", "../loop")
+            finally:
+                os.chdir(old)
+            self.assertIn("cannot resolve path '../loop'", str(raised.exception))
+            self.assertRegex(str(raised.exception), r"Too many levels of symbolic links|Symlink loop|cannot be resolved by the system")
 
     def test_main_reconfigures_streams(self):
         class Stream:
