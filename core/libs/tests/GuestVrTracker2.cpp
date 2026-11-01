@@ -173,6 +173,16 @@ int main() {
     Require(VrTracker2NotInitialized() == NotInitialized, "plain export");
     Require(sceVrTracker2Finalize() == NotInitialized, "named export");
 
+    auto coordinate = Filled();
+    Require(sceVrTracker2GetCoordinateSystem(nullptr) == NotInitialized, "get coordinate system null");
+    Require(sceVrTracker2GetCoordinateSystem(reinterpret_cast<std::uint32_t*>(coordinate.data())) == NotInitialized, "get coordinate system return");
+    Require(AllEqual(coordinate.data(), coordinate.data() + coordinate.size(), 0xAA), "get coordinate system untouched");
+
+    auto location = Filled();
+    Require(sceVrTracker2LocateCoordinateSystem(0, nullptr) == NotInitialized, "locate coordinate system null");
+    Require(sceVrTracker2LocateCoordinateSystem(0, reinterpret_cast<VrTracker2CoordinateLocation*>(location.data())) == NotInitialized, "locate coordinate system return");
+    Require(AllEqual(location.data(), location.data() + location.size(), 0xAA), "locate coordinate system untouched");
+
     auto wide = Filled();
     Require(VrTracker2ClearWideResult(wide.data()) == NotInitialized, "wide result return");
     Require(AllEqual(wide.data(), wide.data() + 24, 0) && AllEqual(wide.data() + 24, wide.data() + 32, 0xAA), "wide result clears 24 bytes");
