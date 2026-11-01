@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
@@ -163,10 +164,33 @@ static void RequireWithinBoundsInOneOfAttempts(bool (*test)(), int attempts) {
     std::abort();
 }
 
+static bool TestKsemTimedwait500us() {
+    std::array<std::uint64_t, 64> samples{};
+    std::intptr_t id = -1;
+    Require(ksem_init_nid_postfix(&id, 0) == 0);
+    for (auto& sample : samples) {
+        const auto start = std::chrono::steady_clock::now();
+        KernelTimespec deadline{};
+        Require(clock_gettime_nid_postfix(0, &deadline) == 0);
+        deadline.tv_nsec += 500000;
+        if (deadline.tv_nsec >= 1000000000) {
+            ++deadline.tv_sec;
+            deadline.tv_nsec -= 1000000000;
+        }
+        Require(ksem_timedwait_nid_postfix(id, &deadline) == -1 && *__error_nid_postfix() == 60);
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        Require(elapsed >= std::chrono::microseconds(500));
+        sample = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+    }
+    Require(ksem_destroy_nid_postfix(id) == 0);
+    return LatencyWithinBounds(samples, 500000ULL, "ksem_timedwait(500 us)");
+}
+
 int main() {
     constexpr int ATTEMPTS = 3;
     RequireWithinBoundsInOneOfAttempts(TestUsleep100us, ATTEMPTS);
     RequireWithinBoundsInOneOfAttempts(TestUsleep500us, ATTEMPTS);
     RequireWithinBoundsInOneOfAttempts(TestCondTimedwait500us, ATTEMPTS);
+    RequireWithinBoundsInOneOfAttempts(TestKsemTimedwait500us, ATTEMPTS);
     return 0;
 }
