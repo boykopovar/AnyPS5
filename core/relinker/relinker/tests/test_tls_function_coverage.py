@@ -532,7 +532,7 @@ def add_alias(image, size, begin=0x1200):
 def main():
     groups = ("metadata", "padding", "register_loads", "displacement_bounds", "alu_execution",
               "register_address_loads", "moved_branch", "rejected", "gs_traps", "gs_traps_implicit",
-              "gs_non_memory")
+              "gs_non_memory", "pointer_target_data")
     groups += tuple(f"displacement_r{register}" for register in range(16) if register != 4)
     groups += tuple(f"alu_{name}" for name in ALU_READ)
     parser = argparse.ArgumentParser(description="Run Windows guest TLS function coverage fixtures")
@@ -795,6 +795,14 @@ def main():
             convert("conflicting-function-extents", conflicting, "Code analysis: conflicting function ranges")
             convert("branch-into-gs", make_image("register", "unwind", body=bytes.fromhex("74 01 65 48 8b 0c 25 78 03 00 00 c3")),
                     "Branch enters a guest GS instruction", error_offset=0x11243)
+
+        if args.group in ("all", "pointer_target_data"):
+            data = 0x1300
+            load = TLS_LOAD + bytes.fromhex("8b 40 f0")
+            lea = bytes.fromhex("4c 8d 1d") + struct.pack("<i", data - (0x1240 + len(load) + 7))
+            image = make_image("register", "unwind", body=load + lea + bytes.fromhex("c3"))
+            image[data:data + 3] = bytes.fromhex("64 20 00")
+            convert("pointer-target-data", image)
 
         def check_gs_traps(cases):
             for name, instruction, trapped in cases:
