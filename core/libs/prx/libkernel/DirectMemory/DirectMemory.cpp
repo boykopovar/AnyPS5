@@ -1691,6 +1691,21 @@ bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uint
     return true;
 }
 
+bool DirectMemoryAliased(std::uintptr_t address, std::size_t bytes) {
+    const auto end = address + bytes;
+    std::lock_guard lock(g_directLock);
+    auto it = g_directMappings.upper_bound(address);
+    if (it != g_directMappings.begin()) --it;
+    for (; it != g_directMappings.end() && it->first < end; ++it) {
+        if (it->second.end <= address) continue;
+        const auto first = std::max<std::uintptr_t>(address, it->first);
+        const auto last = std::min<std::uintptr_t>(end, it->second.end);
+        const auto phys = it->second.phys + (first - it->first);
+        if (MappingsSharingPhys(phys, phys + (last - first)).size() > 1) return true;
+    }
+    return false;
+}
+
 std::vector<DirectMemoryView> DirectMemoryViews(int64_t start, size_t len) {
     const auto first = static_cast<std::uint64_t>(start);
     const auto last = first + len;
