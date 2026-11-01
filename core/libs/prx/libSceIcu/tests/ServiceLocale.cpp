@@ -25,4 +25,18 @@ int main() {
     Check(out.Flags() & UnicodeString::IsBogus);
     _ZN6icu_689LocaleKeyD0Ev_nid_postfix(key);
     _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&id); _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&fallback); _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&out);
+    ICUResourceBundleFactory factory{};
+    _ZN6icu_6824ICUResourceBundleFactoryC1Ev_nid_postfix(&factory);
+    Check(factory.coverage == 0 && factory.name.Length() == 0 && factory.bundleName.Length() == 0);
+    Check(_ZNK6icu_6824ICUResourceBundleFactory17getDynamicClassIDEv_nid_postfix(&factory) == _ZN6icu_6824ICUResourceBundleFactory16getStaticClassIDEv_nid_postfix());
+    _ZN6icu_6824ICUResourceBundleFactoryD2Ev_nid_postfix(&factory);
+    UnicodeString name{}; name.Init();
+    _ZN6icu_6813LocaleUtility18initNameFromLocaleERKNS_6LocaleERNS_13UnicodeStringE_nid_postfix(_ZN6icu_686Locale5getUSEv_nid_postfix(), &name);
+    Check(std::u16string(name.Buffer(), name.Length()) == u"en_US");
+    SimpleLocaleKeyFactory simple{};
+    _ZN6icu_6822SimpleLocaleKeyFactoryC2EPNS_7UObjectERKNS_6LocaleEii_nid_postfix(&simple, nullptr, _ZN6icu_686Locale5getUSEv_nid_postfix(), 7, 1);
+    Check(simple.kind == 7 && simple.coverage == 1 && !simple.object);
+    Check(_ZNK6icu_6813UnicodeStringeqERKS0__nid_postfix(&simple.id, &name));
+    _ZN6icu_6822SimpleLocaleKeyFactoryD1Ev_nid_postfix(&simple);
+    _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&name);
 }
