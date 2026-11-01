@@ -131,7 +131,10 @@ static void CheckSceAccessors() {
     Require(scePthreadMutexattrGetprotocol(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSetprioceiling(&attr, 300) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrGetprioceiling(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
-    Require(scePthreadMutexattrSetpshared(nullptr, 0) == SCE_KERNEL_ERROR_EINVAL);
+    for (const int invalid : {-1, 0, 1, 2}) {
+        Require(scePthreadMutexattrSetpshared(nullptr, invalid) == SCE_KERNEL_ERROR_EINVAL);
+        Require(scePthreadMutexattrSetpshared(&attr, invalid) == SCE_KERNEL_ERROR_EINVAL);
+    }
     Require(scePthreadMutexattrGetpshared(&attr, &value) == SCE_KERNEL_ERROR_EINVAL);
     Require(value == -1);
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);
@@ -154,7 +157,8 @@ static void CheckSceAccessors() {
     int protocol = -1;
     Require(pthread_mutexattr_getprotocol_nid_postfix(&attr, &protocol) == 0 && protocol == PRIO_PROTECT);
     Require(scePthreadMutexattrGetpshared(&attr, &value) == SCE_OK && value == 0);
-    Require(scePthreadMutexattrSetpshared(&attr, 1) == SCE_KERNEL_ERROR_EINVAL);
+    for (const int invalid : {-2, -1, 1, 2, 100, 2147483647})
+        Require(scePthreadMutexattrSetpshared(&attr, invalid) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrSetpshared(&attr, 0) == SCE_OK);
     Require(scePthreadMutexattrGetpshared(&attr, &value) == SCE_OK && value == 0);
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
@@ -166,13 +170,15 @@ static void CheckProcessSharing() {
     int sharing = -1;
     Require(pthread_mutexattr_getpshared_nid_postfix(nullptr, &sharing) == GUEST_EINVAL && sharing == -1);
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == GUEST_EINVAL && sharing == -1);
-    Require(pthread_mutexattr_setpshared_nid_postfix(nullptr, 0) == GUEST_EINVAL);
-    Require(pthread_mutexattr_setpshared_nid_postfix(&attr, 0) == GUEST_EINVAL);
+    for (const int invalid : {-1, 0, 1, 2}) {
+        Require(pthread_mutexattr_setpshared_nid_postfix(nullptr, invalid) == GUEST_EINVAL);
+        Require(pthread_mutexattr_setpshared_nid_postfix(&attr, invalid) == GUEST_EINVAL);
+    }
     Require(pthread_mutexattr_init_nid_postfix(&attr) == 0);
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
     Require(pthread_mutexattr_settype_nid_postfix(&attr, 2) == 0);
     Require(pthread_mutexattr_setpshared_nid_postfix(&attr, 0) == 0);
-    for (const int invalid : {1, -1, 2, 2147483647})
+    for (const int invalid : {-2, -1, 1, 2, 100, 2147483647})
         Require(pthread_mutexattr_setpshared_nid_postfix(&attr, invalid) == GUEST_EINVAL);
     sharing = -1;
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == 0 && sharing == 0);
@@ -191,7 +197,8 @@ static void CheckProcessSharing() {
     Require(pthread_mutexattr_destroy_nid_postfix(&attr) == 0);
     sharing = -1;
     Require(pthread_mutexattr_getpshared_nid_postfix(&attr, &sharing) == GUEST_EINVAL && sharing == -1);
-    Require(pthread_mutexattr_setpshared_nid_postfix(&attr, 0) == GUEST_EINVAL);
+    for (const int invalid : {-1, 0, 1, 2})
+        Require(pthread_mutexattr_setpshared_nid_postfix(&attr, invalid) == GUEST_EINVAL);
 }
 
 static void CheckInvalidPriorityAttribute(PthreadMutexattr* attr) {
