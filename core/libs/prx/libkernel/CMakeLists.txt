@@ -143,7 +143,7 @@ if(BUILD_TESTING)
     endforeach()
     add_library(guest_exec_host SHARED ${LIBS_INCLUDE_DIR}/tests/GuestExecHost.cpp)
     target_include_directories(guest_exec_host PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_exec_host PRIVATE libkernel libc libSceAgcDriver)
+    target_link_libraries(guest_exec_host PRIVATE libkernel libkernel_sys libc libSceAgcDriver)
     set_target_properties(guest_exec_host PROPERTIES PREFIX "" SUFFIX ".prx" BUILD_RPATH "$ORIGIN")
     configure_windows_unwind(guest_exec_host)
     find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -151,9 +151,17 @@ if(BUILD_TESTING)
         add_test(NAME exec_arguments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests/test_exec_arguments.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_exec_host>
-            $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel> ${CMAKE_CXX_COMPILER})
+            $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel> $<TARGET_FILE:libkernel_sys> ${CMAKE_CXX_COMPILER})
         set_tests_properties(exec_arguments PROPERTIES TIMEOUT 30)
         add_asan_test_options(exec_arguments verify_asan_link_order=0)
+        foreach(mode IN ITEMS ve vpe)
+            add_test(NAME exec_sys_${mode}_arguments COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/core/relinker/relinker/tests/test_exec_arguments.py
+                $<TARGET_FILE:relinker> $<TARGET_FILE:guest_exec_host>
+                $<TARGET_FILE:libSceAgcDriver> $<TARGET_FILE:libc> $<TARGET_FILE:libkernel> $<TARGET_FILE:libkernel_sys> ${CMAKE_CXX_COMPILER})
+            set_tests_properties(exec_sys_${mode}_arguments PROPERTIES TIMEOUT 30 ENVIRONMENT "ANYPS5_KERNEL_SYS_EXEC_MODE=${mode}")
+            add_asan_test_options(exec_sys_${mode}_arguments verify_asan_link_order=0)
+        endforeach()
     endif()
     if(NOT WIN32)
         add_library(guest_memory_lifetime_module MODULE ${LIBS_INCLUDE_DIR}/tests/GuestMemoryLifetimeModule.cpp)
