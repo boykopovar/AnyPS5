@@ -996,6 +996,16 @@ class ImportAuditTests(unittest.TestCase):
         code, out, err = work.run(registry, "--modules", str(elsewhere))
         self.assertNotIn("libSceMissing.prx is in", out)
 
+    def test_locate_search_root_rejects_registry_symlink_loop(self):
+        loop = self.work.root / "loop.json"
+        try:
+            loop.symlink_to(loop.name)
+        except (OSError, NotImplementedError):
+            self.skipTest("symbolic links are unavailable")
+        with self.assertRaises(import_audit.AuditError) as context:
+            import_audit.locate_search_root(loop)
+        self.assertIn("symbolic link loop", str(context.exception))
+
     def test_conflicting_module_files_preserve_or_leave_no_json_report(self):
         work = self.work
         first, second = work.modules, work.root / "other-modules"

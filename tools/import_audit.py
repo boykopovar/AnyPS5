@@ -926,6 +926,13 @@ def label(record):
     return f"{text}  (imported by {record['module']})" if record.get("module") else text
 
 
+def locate_search_root(path):
+    resolved = Path(os.path.realpath(path))
+    if resolved.is_symlink():
+        raise AuditError(f"{path}: registry path is a symbolic link loop")
+    return resolved.parent
+
+
 def locate_missing(names, roots, depth=4):
     wanted = {name.lower(): name for name in names}
     found = {}
@@ -1040,13 +1047,13 @@ def main(argv=None):
                            "name": entry["stop"]["name"] if entry["stop"] else None} for entry in stops]
             result = {"source_commit": commit, "source_dirty": dirty, "registries": [str(path) for path in args.registries], "dependency_registries": [str(path) for path in dependency_registries], "needed_libraries": needed, **summary, "stops": json_stops, "imports": records}
             write_json(args.json, result)
+        located = locate_missing(missing, {locate_search_root(path) for path in args.registries}) if missing else None
     except AuditError as error:
         print(f"FAIL: {error}", file=sys.stderr)
         return 2
     except OSError as error:
         print(f"FAIL: {error.strerror}: {error.filename}" if error.filename else f"FAIL: {error}", file=sys.stderr)
         return 2
-    located = locate_missing(missing, {path.resolve().parent for path in args.registries}) if missing else None
     print(render(summary, records, missing, stops, missing_hosts, located))
     return 1 if summary["unique_by_class"]["absent"] or summary["symbol_mismatch"] or missing or missing_hosts or (args.strict_providers and summary["library_mismatch"]) or (args.strict_stubs and summary["unique_by_class"]["stub"]) else 0
 
