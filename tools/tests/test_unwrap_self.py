@@ -1412,6 +1412,23 @@ class UnwrapTest(unittest.TestCase):
         _, _, headers = unwrap_self.parse_elf(container)
         self.assertEqual(headers[2]["align"], 3)
 
+    def test_null_segment_fields_do_not_affect_conversion(self):
+        segments = default_segments()
+        segments[2] = (PT_NULL, 0, 0, 0, 0, 0)
+        original = build_container(segments, default_records(), default_payloads())
+        result, output = self.convert(original)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = output.read_bytes()
+        for field, format in ((4, "<I"), (8, "<Q"), (16, "<Q"), (24, "<Q"),
+                              (32, "<Q"), (40, "<Q"), (48, "<Q")):
+            with self.subTest(field=field):
+                container = bytearray(original)
+                value = (1 << (struct.calcsize(format) * 8)) - 1
+                struct.pack_into(format, container, ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + 2 * 56 + field, value)
+                result, output = self.convert(container)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_bytes(), expected)
+
     def test_load_alignment_zero_and_one_remain_supported(self):
         for alignment in (0, 1):
             with self.subTest(alignment=alignment):
