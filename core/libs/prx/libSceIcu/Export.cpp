@@ -69,10 +69,6 @@ int APS5_VABI res_getIntVectorNoTrace_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI res_getPublicType_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI res_getResource_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <stdexcept>
 
 namespace {
 
@@ -371,7 +372,7 @@ bool APS5_VABI sceLncUtilIsShellUiFgAndGameBgCpuMode() {
 
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
     if (speculative == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
-    if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) NotImplemented_nid_no_patch("sceLncUtilIsSpeculativeLaunch: application other than the running title");
+    if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) throw std::runtime_error("sceLncUtilIsSpeculativeLaunch: application other than the running title");
     *speculative = false;
     return 0;
 }
@@ -1767,8 +1768,7 @@ int APS5_VABI sceSystemServiceChangeVceClock() {
 }
 
 int APS5_VABI sceSystemServiceDeclareReadyForSuspend() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceLncUtilDeclareReadyForSuspend();
 }
 
 int APS5_VABI sceSystemServiceDisablePartyVoice() {
@@ -1977,8 +1977,7 @@ bool APS5_VABI sceSystemServiceIsShellUiFgAndGameBgCpuMode() {
 }
 
 int APS5_VABI sceSystemServiceKillLocalProcess(std::int32_t appId, std::int32_t processId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceLncUtilKillLocalProcess(appId, processId);
 }
 
 int APS5_VABI sceSystemServiceKillLocalProcessForJvm(std::int32_t processId) {
@@ -2050,8 +2049,7 @@ int APS5_VABI sceSystemServiceNotifyBgmCoreTermination() {
 }
 
 int APS5_VABI sceSystemServiceRaiseExceptionLocalProcess(std::int32_t appId, std::int32_t processId, std::uint64_t exception) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceLncUtilRaiseExceptionLocalProcess(appId, processId, exception);
 }
 
 int APS5_VABI sceSystemServiceReenablePartyVoice() {
@@ -2096,8 +2094,7 @@ int APS5_VABI sceSystemServiceRequestToChangeRenderingMode() {
 }
 
 int APS5_VABI sceSystemServiceResumeLocalProcess(std::int32_t processId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceLncUtilResumeLocalProcess(processId);
 }
 
 int APS5_VABI sceSystemServiceSaveVideoToken(std::int32_t userId, const char* token) {
@@ -2155,13 +2152,11 @@ int APS5_VABI sceSystemServiceShowImposeMenuForPs2Emu(std::uint8_t enabled, std:
 }
 
 int APS5_VABI sceSystemServiceSuspendBackgroundApp(std::int32_t first, std::int32_t second) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceLncUtilSuspendBackgroundApp(first, second);
 }
 
 int APS5_VABI sceSystemServiceSuspendLocalProcess(std::int32_t processId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return sceLncUtilSuspendLocalProcess(processId);
 }
 
 int APS5_VABI sceSystemServiceTelemetrySetData(const char* key, const void* data, std::size_t size) {
