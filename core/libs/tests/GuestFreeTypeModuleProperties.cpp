@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 
 #ifdef _WIN32
@@ -67,8 +68,8 @@ static void Query(const Api& api, GuestLibrary* library, FT_Library native, cons
     }
 }
 
-template <typename TValue>
-static void Change(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+template <typename TResult, typename TValue>
+static void ChangeAs(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
     FT_Library nativeOther, const char* module, const char* property, TValue value) {
     std::array<unsigned char, 64> input{};
     input.fill(0xCC);
@@ -77,8 +78,80 @@ static void Change(const Api& api, GuestLibrary* library, FT_Library native, Gue
     const int expectedError = FT_Property_Set(native, module, property, NativePointer(value));
     Require(api.set(library, module, property, input.data() + 5) == expectedError);
     Require(input == before);
-    Query<TValue>(api, library, native, module, property);
-    Query<TValue>(api, other, nativeOther, module, property);
+    Query<TResult>(api, library, native, module, property);
+    Query<TResult>(api, other, nativeOther, module, property);
+}
+
+template <typename TValue>
+static void Change(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+    FT_Library nativeOther, const char* module, const char* property, TValue value) {
+    ChangeAs<TValue>(api, library, native, other, nativeOther, module, property, value);
+}
+
+static void DistanceFieldProperties(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+    FT_Library nativeOther) {
+    const std::array<std::int32_t, 9> integers{0, 1, 2, 8, 32, 33, -1, std::numeric_limits<std::int32_t>::min(),
+        std::numeric_limits<std::int32_t>::max()};
+    for (const char* module : {"sdf", "bsdf"}) {
+        Query<std::uint32_t>(api, library, native, module, "spread");
+        for (const auto value : integers) {
+            ChangeAs<std::uint32_t>(api, library, native, other, nativeOther, module, "spread", value);
+        }
+        for (const char* property : {"flip_sign", "flip_y"}) {
+            Query<std::int32_t>(api, library, native, module, property);
+            for (const auto value : integers) Change(api, library, native, other, nativeOther, module, property, value);
+        }
+        Query<std::int32_t>(api, library, native, module, "overlaps");
+        for (const auto value : {0u, 1u, 2u, 255u}) {
+            ChangeAs<std::int32_t>(api, library, native, other, nativeOther, module, "overlaps", static_cast<std::uint8_t>(value));
+        }
+    }
+}
+
+static void RendererHooks(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+    FT_Library nativeOther) {
+    using Hooks = std::array<std::uint64_t, 4>;
+    Query<Hooks>(api, library, native, "ot-svg", "svg-hooks");
+    for (const auto& hooks : {Hooks{}, Hooks{1, 1, 1, 0}, Hooks{0, 1, 1, 1}, Hooks{1, 0, 1, 1}, Hooks{1, 1, 0, 1}}) {
+        Change(api, library, native, other, nativeOther, "ot-svg", "svg-hooks", hooks);
+    }
+    Hooks current{};
+    const bool supported = FT_Property_Get(native, "ot-svg", "svg-hooks", current.data()) == 0;
+    std::array<unsigned char, 64> input{};
+    input.fill(0xCC);
+    const Hooks installed{1, 1, 1, 1};
+    std::memcpy(input.data() + 5, installed.data(), sizeof(installed));
+    const auto before = input;
+    bool threw = false;
+    int error = 0;
+    try {
+        error = api.set(library, "ot-svg", "svg-hooks", input.data() + 5);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    if (supported) Require(threw);
+    else Require(!threw && error == FT_Property_Set(native, "ot-svg", "svg-hooks", installed.data()));
+    Require(input == before);
+    Query<Hooks>(api, library, native, "ot-svg", "svg-hooks");
+    Query<Hooks>(api, other, nativeOther, "ot-svg", "svg-hooks");
+}
+
+static void UnknownProperties(const Api& api, GuestLibrary* library, FT_Library native, GuestLibrary* other,
+    FT_Library nativeOther) {
+    using Bytes = std::array<std::uint8_t, 32>;
+    Bytes value{};
+    value.fill(0x5A);
+    const std::array<std::array<const char*, 2>, 14> pairs{{
+        {"pcf", "no-long-family-names"}, {"pcf", "spread"}, {"sdf", "no-stem-darkening"}, {"bsdf", "svg-hooks"},
+        {"ot-svg", "spread"}, {"truetype", "hinting-engine"}, {"cff", "fallback-script"}, {"autofitter", "random-seed"},
+        {"autofitter", "spread"}, {"smooth", "spread"}, {"pfr", "no-stem-darkening"}, {"missing", "spread"},
+        {"", ""}, {"truetype", ""}
+    }};
+    for (const auto& pair : pairs) {
+        Query<Bytes>(api, library, native, pair[0], pair[1]);
+        Change(api, library, native, other, nativeOther, pair[0], pair[1], value);
+    }
+    Change(api, library, native, other, nativeOther, "pcf", "no-long-family-names", static_cast<std::uint8_t>(1));
 }
 
 static void QueryIncreaseXHeight(const Api& api, GuestLibrary* library, FT_Library native,
@@ -164,6 +237,9 @@ static void Run(const Api& api) {
             Change(api, library, native, other, nativeOther, "autofitter", property, script);
         }
     }
+    DistanceFieldProperties(api, library, native, other, nativeOther);
+    RendererHooks(api, library, native, other, nativeOther);
+    UnknownProperties(api, library, native, other, nativeOther);
     std::array<unsigned char, 64> output{};
     output.fill(0xA5);
     const auto before = output;
