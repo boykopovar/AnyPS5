@@ -268,6 +268,14 @@ static void SettimeValidatesLikeFreebsd() {
     RequireSettimeError(GUEST_CLOCK_REALTIME, &wholeSecondOfNanoseconds, 22);
     RequireSettimeError(GUEST_CLOCK_REALTIME, &negativeSeconds, 22);
     RequireSettimeError(GUEST_CLOCK_MONOTONIC, &negativeSeconds, 22);
+    for (const std::int64_t invalidNsec : {-1, -2, -100, -NANOS_PER_SECOND, INT64_MIN, NANOS_PER_SECOND, NANOS_PER_SECOND + 1, 2 * NANOS_PER_SECOND, INT64_MAX}) {
+        const KernelTimespec invalidZeroSec{0, invalidNsec};
+        RequireSettimeError(GUEST_CLOCK_REALTIME, &invalidZeroSec, 22);
+        const KernelTimespec invalidPositiveSec{valid.tv_sec, invalidNsec};
+        RequireSettimeError(GUEST_CLOCK_REALTIME, &invalidPositiveSec, 22);
+        RequireSettimeError(GUEST_CLOCK_MONOTONIC, &invalidZeroSec, 22);
+        RequireSettimeError(GUEST_CLOCK_MONOTONIC, &invalidPositiveSec, 22);
+    }
     Require(SettimeThrows(valid, "1767225600.000000005"));
     Require(SettimeThrows(KernelTimespec{0, 0}, "0.000000000"));
     Require(SettimeThrows(KernelTimespec{1, NANOS_PER_SECOND - 1}, "1.999999999"));
