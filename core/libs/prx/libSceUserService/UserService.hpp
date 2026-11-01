@@ -23,6 +23,7 @@ constexpr int USER_SERVICE_THREAD_PRIORITY_MIN = 0x100;
 constexpr int USER_SERVICE_THREAD_PRIORITY_MAX = 0x2FF;
 constexpr int USER_SERVICE_ERROR_BUFFER_TOO_SHORT = -2137653238;
 constexpr int USER_SERVICE_ERROR_UNKNOWN_USER = static_cast<int>(0x80960105u);
+constexpr int USER_SERVICE_ERROR_NOT_SUPPORTED = static_cast<int>(0x80960006u);
 constexpr std::size_t USER_SERVICE_MAX_USER_NAME_LENGTH = 16;
 constexpr const char* USER_SERVICE_INITIAL_USER_NAME = "Player";
 constexpr int USER_SERVICE_MAX_USERS = 4;
