@@ -816,9 +816,9 @@ int main(int argc, char** argv) {
     CheckExclusiveCppOpen(argv[1]);
     CheckShortCharacterScans();
     CheckZeroSizedTransfers(argv[1]);
+    CheckReadErrnoAndStatus(argv[1]);
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
-    CheckReadErrnoAndStatus(argv[1]);
     Require(_Stdout_nid_postfix.GetHandle() == stdout);
     Require(_Stderr_nid_postfix.GetHandle() == stderr);
     Require(fputs_nid_postfix("stdout object works\n", &_Stdout_nid_postfix) >= 0);
