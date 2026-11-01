@@ -342,24 +342,30 @@ int APS5_VABI sceAvSettingAddCallbacksForSocialScreen() {
     return 0;
 }
 
-int APS5_VABI sceAvSettingCallbackFuncsInit() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+namespace {
+
+void InitializeCallbackFuncs_nid_no_patch(void* callbacks, std::uint32_t size) {
+    if (callbacks == nullptr) return;
+    auto* bytes = static_cast<std::uint8_t*>(callbacks);
+    for (std::uint32_t i = 0; i < size; ++i) bytes[i] = i < sizeof(size) ? static_cast<std::uint8_t>(size >> (8 * i)) : 0;
 }
 
-int APS5_VABI sceAvSettingCallbackFuncsInitForLnc() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
-int APS5_VABI sceAvSettingCallbackFuncsInitForLnc_() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceAvSettingCallbackFuncsInit(void* callbacks) {
+    InitializeCallbackFuncs_nid_no_patch(callbacks, 0x20);
 }
 
-int APS5_VABI sceAvSettingCallbackFuncsInit_() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceAvSettingCallbackFuncsInitForLnc(void* callbacks) {
+    InitializeCallbackFuncs_nid_no_patch(callbacks, 0x10);
+}
+
+void APS5_VABI sceAvSettingCallbackFuncsInitForLnc_(void* callbacks) {
+    InitializeCallbackFuncs_nid_no_patch(callbacks, 0x10);
+}
+
+void APS5_VABI sceAvSettingCallbackFuncsInit_(void* callbacks) {
+    InitializeCallbackFuncs_nid_no_patch(callbacks, 0x20);
 }
 
 int APS5_VABI sceAvSettingChangeOutputMode() {

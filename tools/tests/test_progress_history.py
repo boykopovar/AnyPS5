@@ -222,6 +222,34 @@ class ProgressHistoryTests(unittest.TestCase):
         self.assertIn("Declared 1,166", svg)
         self.assertIn("Implemented 1,166 (100%)", svg)
 
+    def test_weekly_gain_starts_at_the_newest_point_a_week_old(self):
+        def point(day, done):
+            return {"date": day, "libraries": {"done": done, "total": 900, "percent": round(100 * done / 900, 2)},
+                    "shaders": {"done": 1, "total": 1, "percent": 100.0}}
+        points = [point("2026-01-01", 100), point("2026-01-03", 150), point("2026-01-05", 170),
+                  point("2026-01-09", 400), point("2026-01-11", 430)]
+        self.assertEqual(progress_history.gained(points, 7), 280)
+        self.assertEqual(progress_history.gained(points, 30), 330)
+        self.assertEqual(progress_history.gained(points[:1], 7), 0)
+        badge = progress_history.weekly_badge(points)
+        self.assertIn('aria-label="implemented in 7 days: +280 functions"', badge)
+        ET.fromstring(badge)
+
+    def test_daily_bars_show_gains_and_drops(self):
+        def point(day, done):
+            return {"date": day, "libraries": {"done": done, "total": 900, "percent": round(100 * done / 900, 2)},
+                    "shaders": {"done": 1, "total": 1, "percent": 100.0}}
+        points = [point("2026-01-01", 100), point("2026-01-02", 1505), point("2026-01-03", 1490)]
+        svg = progress_history.daily(points)
+        ET.fromstring(svg)
+        self.assertIn("2026-01-02: +1,405 implemented", svg)
+        self.assertIn("2026-01-03: -15 implemented", svg)
+        self.assertIn("Last 7 days +1,390", svg)
+        self.assertIn("Last day -15", svg)
+        self.assertEqual(svg.count("<rect x="), 2)
+        self.assertEqual(progress_history.daily(points[:1]), "")
+        self.assertIn("implemented per day", progress_history.page(points))
+
     def test_axis_labels_fall_on_calendar_days_without_commits(self):
         start = date(2026, 8, 3).toordinal()
         skipped = {date(2026, 8, 10), date(2026, 8, 17), date(2026, 8, 31)}
@@ -246,6 +274,8 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertIn("<!DOCTYPE html>", html)
             data = json.loads((output / "history.json").read_text(encoding="utf-8"))
             self.assertEqual(data, [point])
+            badge = (output / "badge-week.svg").read_text(encoding="utf-8")
+            self.assertIn("+0 functions", badge)
 
     def test_main_rejects_aliased_output_reports(self):
         point = {"date": "2026-01-01", "commit": "abc1234",
