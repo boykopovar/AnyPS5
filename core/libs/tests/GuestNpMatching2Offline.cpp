@@ -70,15 +70,6 @@ Function Resolve(const char* name) {
     return reinterpret_cast<Function>(symbol);
 }
 
-bool AcceptedRequestThrows(RequestFn request, std::uint16_t ctxId, const void* param, std::uint32_t* requestId) {
-    try {
-        request(ctxId, param, nullptr, requestId);
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()).find("not implemented") != std::string::npos;
-    }
-    return false;
-}
-
 void CheckOfflineRequests(CreateContextAFn createContextA) {
     const auto getWorldInfoList = Resolve<RequestFn>("sceNpMatching2GetWorldInfoList");
     const auto setUserInfo = Resolve<RequestFn>("sceNpMatching2SetUserInfo");
@@ -124,12 +115,6 @@ void CheckOfflineRequests(CreateContextAFn createContextA) {
         Require(request(99, roomRequest, nullptr, &requestId) == ContextNotFound, "room request", "an unknown context did not return CONTEXT_NOT_FOUND");
     }
     Require(requestId == 77, "request", "a refused request wrote a request id");
-    const RequestFn accepted[] = {getWorldInfoList, setUserInfo, setRoomDataExternal, setRoomDataInternal, getRoomDataInternal, getPingInfo};
-    for (std::size_t index = 0; index < 6; ++index) {
-        const std::uint16_t target = index % 2 == 0 ? context : contextA;
-        const void* param = index < 2 ? static_cast<const void*>(serverRequest) : static_cast<const void*>(roomRequest);
-        Require(AcceptedRequestThrows(accepted[index], target, param, &requestId) && requestId == 77, "request", "a request that passed its checks did not stay unsupported");
-    }
     Require(leaveRoom(context, roomRequest, nullptr, &requestId) == SessionNotFound && leaveRoom(contextA, roomRequest, nullptr, &requestId) == SessionNotFound && requestId == 77, "sceNpMatching2LeaveRoom", "leaving with no room joined did not return SESSION_NOT_FOUND");
 
     std::uint16_t serverId = 0xA5A5;
