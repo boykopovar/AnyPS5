@@ -83,15 +83,20 @@ On Windows, a relinked game run with `APS5_MIMALLOC` set (to any value) allocate
   - After the redirection these calls would enter mimalloc again, before the calling thread's mimalloc state exists.
   - Linker wraps send them to [`RuntimeHeap.c`](../../core/libs/allocator/RuntimeHeap.c), which allocates from the process heap (`HeapAlloc` on `GetProcessHeap()`). The same code frees these blocks through the same wraps.
 
-## macOS allocator
+## macOS and Linux allocator
 
-On macOS, a relinked game run with `APS5_MIMALLOC` set (to any value) allocates through [mimalloc](../../3rdparty/mimalloc) instead of the system allocator: its libraries, the C and C++ runtime and the system frameworks they call. Without the variable the game keeps the system allocator.
+On macOS and Linux, a relinked game run with `APS5_MIMALLOC` set (to any value) allocates through [mimalloc](../../3rdparty/mimalloc) instead of the system allocator: its libraries, the C and C++ runtime and the system libraries and frameworks they call, the Vulkan driver among them. Without the variable the game keeps the system allocator.
 
-- The build copies `libmimalloc.dylib` beside the libraries ([`core/libs/CMakeLists.txt`](../../core/libs/CMakeLists.txt)). It keeps mimalloc's macOS defaults: it interposes the C allocation functions and `operator new` and `operator delete`, and replaces the default malloc zone. As on Windows, `mi_free` checks the pointers it gets.
-- dyld interposes only for libraries loaded at launch, so mimalloc has to be in `DYLD_INSERT_LIBRARIES` when the process starts. When `APS5_MIMALLOC` is set and mimalloc is not loaded, a constructor in libkernel ([`MimallocMacOs.cpp`](../../core/libs/prx/libkernel/System/src/MimallocMacOs.cpp)) puts the `libmimalloc.dylib` beside libkernel first in `DYLD_INSERT_LIBRARIES`, sets `APS5_MIMALLOC_RESTARTED` and runs the same executable again with `execv`, with the same arguments and the same process ID. The restarted process removes `APS5_MIMALLOC_RESTARTED` from its environment.
-  - Without `libmimalloc.dylib` beside libkernel the title does not restart and keeps the system allocator.
-  - When dyld ignores `DYLD_INSERT_LIBRARIES`, as for an executable with the hardened runtime, the restarted process prints one line and keeps the system allocator instead of restarting again.
-  - `DYLD_INSERT_LIBRARIES` stays set, so a process the title starts also allocates through mimalloc.
+- The build copies `libmimalloc.dylib` (macOS) or `libmimalloc.so` (Linux) beside the libraries ([`core/libs/CMakeLists.txt`](../../core/libs/CMakeLists.txt)). It keeps mimalloc's defaults: it interposes the C allocation functions and `operator new` and `operator delete`, on macOS also the default malloc zone and on Linux also glibc's `__libc_malloc` family. As on Windows, `mi_free` checks the pointers it gets.
+  - On Linux, glibc's `malloc_trim`, which the shader registry calls, then has nothing to trim; mimalloc returns freed memory to the system itself.
+  - A Linux build with `ANYPS5_ENABLE_ASAN` or `ANYPS5_ENABLE_TSAN` has no mimalloc: the sanitizer's runtime replaces the allocation functions itself and has to be the first library loaded.
+- The dynamic linker binds the allocation functions to mimalloc only when it loads mimalloc at launch, from `DYLD_INSERT_LIBRARIES` (macOS) or `LD_PRELOAD` (Linux). When `APS5_MIMALLOC` is set and mimalloc is not loaded, a constructor in libkernel ([`MimallocRestart.cpp`](../../core/libs/prx/libkernel/System/src/MimallocRestart.cpp)) puts the mimalloc library beside libkernel first in that variable, sets `APS5_MIMALLOC_RESTARTED` and runs the same executable again with `execv`, with the same arguments and the same process ID. On Linux the executable is the target of `/proc/self/exe` and the arguments are those of `/proc/self/cmdline`, so a title started through `ld.so` starts through it again. The restarted process removes `APS5_MIMALLOC_RESTARTED` from its environment.
+  - The constructor has priority 101, so it runs before libkernel's other initializers, which have no priority, and none of their work is done twice or carried into the restarted process. It calls only the host C and C++ runtimes and libc, separate libraries that libkernel depends on, so they have initialized before it.
+  - libc's `ANYPS5_LOG_FILE` copy has taken the standard streams by then. libkernel gives them back before `execv`, as LoadExec does, and the restarted process starts the copy again.
+  - Without the mimalloc library beside libkernel the title does not restart and keeps the system allocator.
+  - The variable cannot list a path that has its separator, a colon (and on Linux a space): the title prints one line and keeps the system allocator.
+  - When the dynamic linker ignores the variable, as for an executable with the hardened runtime on macOS or one that runs in secure-execution mode on Linux (set-user-ID or with file capabilities), the restarted process prints one line and keeps the system allocator instead of restarting again.
+  - The variable stays set, so a process the title starts also allocates through mimalloc.
 - mimalloc asks for its arenas at addresses from 2 TiB up, above the guest arena's range; the few blocks it maps without that hint come from the system like any other host mapping. Guest code allocates through libc's guest heap, as on Windows.
 
 ## Thread cancellation

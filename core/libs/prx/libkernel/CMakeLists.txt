@@ -73,7 +73,7 @@ add_library(libkernel SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformance.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformanceProcess.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/HostPerformanceStartup.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MimallocMacOs.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/System/src/MimallocRestart.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/SystemConfiguration.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Login.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/System/src/Getlogin.cpp
@@ -1604,17 +1604,21 @@ if(BUILD_TESTING)
         set_tests_properties(guest_system_configuration PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
-    if(APPLE AND TARGET mimalloc)
+    if(NOT WIN32 AND TARGET mimalloc)
         add_test_executable(mimalloc_restart_tests ${LIBS_INCLUDE_DIR}/tests/MimallocRestart.cpp)
         target_link_libraries(mimalloc_restart_tests PRIVATE libkernel libc)
         add_custom_command(TARGET mimalloc_restart_tests POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> $<TARGET_FILE_DIR:libkernel>/libmimalloc.dylib)
+                COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:mimalloc> $<TARGET_FILE_DIR:libkernel>/${CMAKE_SHARED_LIBRARY_PREFIX}mimalloc${CMAKE_SHARED_LIBRARY_SUFFIX})
         add_test(NAME mimalloc_restart_off COMMAND mimalloc_restart_tests off)
         set_tests_properties(mimalloc_restart_off PROPERTIES ENVIRONMENT_MODIFICATION "APS5_MIMALLOC=unset:")
         add_test(NAME mimalloc_restart_on COMMAND mimalloc_restart_tests on)
         set_tests_properties(mimalloc_restart_on PROPERTIES ENVIRONMENT "APS5_MIMALLOC=1")
         add_test(NAME mimalloc_restart_once COMMAND mimalloc_restart_tests once)
         set_tests_properties(mimalloc_restart_once PROPERTIES ENVIRONMENT "APS5_MIMALLOC=1;APS5_MIMALLOC_RESTARTED=1")
+        add_test(NAME mimalloc_restart_log COMMAND mimalloc_restart_tests log)
+        set_tests_properties(mimalloc_restart_log PROPERTIES
+            ENVIRONMENT "APS5_MIMALLOC=1;ANYPS5_LOG_FILE=${CMAKE_CURRENT_BINARY_DIR}/mimalloc_restart_log.txt"
+            PASS_REGULAR_EXPRESSION "mimalloc_restart_tests: the restarted process writes to its standard output")
     endif()
     add_test_executable(guest_software_version_tests ${LIBS_INCLUDE_DIR}/tests/GuestSoftwareVersion.cpp)
     target_include_directories(guest_software_version_tests PRIVATE ${LIBS_INCLUDE_DIR})
