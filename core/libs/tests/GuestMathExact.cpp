@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <bit>
 #include <cerrno>
 #include <cfenv>
 #include <climits>
@@ -188,6 +189,10 @@ static void CheckClassification() {
     Require(__isnormall_nid_postfix(1.0L) == 1 && __isnormall_nid_postfix(denormal) == 0);
     Require(_Dclass_nid_postfix(5e-324) == -2 && _Dclass_nid_postfix(-0.0) == 0);
     Require(_LDsign_nid_postfix(-2.0L) == -32768 && _LDsign_nid_postfix(2.0L) == 0);
+    Require(_Dsign_nid_postfix(-2.0) == -32768 && _Dsign_nid_postfix(2.0) == 0);
+    Require(_Dsign_nid_postfix(-0.0) == -32768 && _Dsign_nid_postfix(0.0) == 0);
+    Require(_Dsign_nid_postfix(-INFINITY) == -32768 && _Dsign_nid_postfix(INFINITY) == 0);
+    Require(_Dsign_nid_postfix(std::bit_cast<double>(0xfff8000000000000ull)) == -32768 && _Dsign_nid_postfix(std::bit_cast<double>(0x7ff8000000000000ull)) == 0);
 }
 
 int main() {

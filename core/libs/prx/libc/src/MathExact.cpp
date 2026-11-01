@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include <algorithm>
+#include <bit>
 #include <cerrno>
 #include <climits>
 #include <cmath>
@@ -249,6 +250,7 @@ short APS5_VABI _LDtest_nid_postfix(const long double* value) { return TestExten
 int APS5_VABI _Dclass_nid_postfix(double x) { return TestFloat(x); }
 int APS5_VABI _FDclass_nid_postfix(float x) { return TestFloat(x); }
 int APS5_VABI _LDclass_nid_postfix(long double x) { return TestExtended(Bits(x)); }
+short APS5_VABI _Dsign_nid_postfix(double x) { return static_cast<short>((std::bit_cast<std::uint64_t>(x) >> 48u) & 0x8000u); }
 short APS5_VABI _LDsign_nid_postfix(long double x) { return static_cast<short>(Bits(x).signExponent & 0x8000); }
 
 }
