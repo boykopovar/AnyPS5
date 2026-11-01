@@ -69,6 +69,7 @@ constexpr FormatEntry kFormatLookup[] = {
     {132, VK_FORMAT_E5B9G9R9_UFLOAT_PACK32, 4, false},
     {133, VK_FORMAT_R5G6B5_UNORM_PACK16, 2, false},
     {134, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 2, false},
+    {135, VK_FORMAT_R5G5B5A1_UNORM_PACK16, 2, false},
     {136, VK_FORMAT_B4G4R4A4_UNORM_PACK16, 2, false},
     {169, VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 8, true},
     {170, VK_FORMAT_BC1_RGBA_SRGB_BLOCK, 8, true},
@@ -195,10 +196,12 @@ VkComponentSwizzle TextureComponentChannel(std::uint32_t guestFormat, VkComponen
     const auto index = static_cast<std::size_t>(component - VK_COMPONENT_SWIZZLE_R);
     constexpr std::array<VkComponentSwizzle, 4> bgrb{VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_B};
     constexpr std::array<VkComponentSwizzle, 4> bgra{VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_A};
+    constexpr std::array<VkComponentSwizzle, 4> abgr{VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_R};
     constexpr std::array<VkComponentSwizzle, 4> argb{VK_COMPONENT_SWIZZLE_A, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B};
     switch (guestFormat) {
         case 133: return bgrb[index];
         case 134: return bgra[index];
+        case 135: return abgr[index];
         case 136: return argb[index];
         case 43: return bgra[index];
         default: return component;

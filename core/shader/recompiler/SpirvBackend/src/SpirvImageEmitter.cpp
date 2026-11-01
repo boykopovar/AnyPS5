@@ -549,7 +549,7 @@ SpirvBufferFormatInfo ImageConversionFormat(const ImageResource& image) {
     if (format == IrBufferFormat::Invalid) {
         return {};
     }
-    const auto info = GetFormatInfo(format);
+    const auto info = GetImageFormatInfo(format);
     const auto remapped = image.resourceClass == ImageResourceClass::Storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
     if (SampledTextureNumericClass(remapped) != IrTextureNumericClass::Uint || remapped == format || (info.type != SpirvFormatComponentType::Uint && info.type != SpirvFormatComponentType::Unorm && info.type != SpirvFormatComponentType::Float) || !info.packedBitfield || (info.byteSize != 2u && info.byteSize != 4u) || info.componentCount == 0u || info.componentCount > 4u) {
         throw std::runtime_error("image conversion format is not a packed 16-bit or 32-bit unsigned integer, unorm or float format");
@@ -647,7 +647,7 @@ SpirvBufferFormatInfo PackedTexelFormat(SpirvValueEmitContext& ctx, const ImageE
     if (format == IrBufferFormat::Invalid || access.image.table != NoTable || access.image.depthBits || access.image.conversionFormat != IrBufferFormat::Invalid) {
         ctx.Fail(access.inst, "accesses packed texels of an image without a packed format");
     }
-    const auto info = GetFormatInfo(format);
+    const auto info = GetImageFormatInfo(format);
     if (info.packedBitfield) {
         ctx.Fail(access.inst, "accesses packed texels of a bitfield format");
     }
@@ -809,7 +809,7 @@ SpirvBufferFormatInfo SintStorageFormat(const ImageResource& image) {
     if (image.resourceClass != ImageResourceClass::Storage || format == IrBufferFormat::Invalid || SampledTextureNumericClass(format) != IrTextureNumericClass::Sint) {
         return {};
     }
-    const auto info = GetFormatInfo(format);
+    const auto info = GetImageFormatInfo(format);
     if (image.numericClass != IrTextureNumericClass::Uint || info.type != SpirvFormatComponentType::Sint || info.packedBitfield || info.componentCount == 0u || info.byteSize == 12u) {
         throw std::runtime_error("storage image conversion format is not a SINT format written through a UINT view");
     }
@@ -820,7 +820,7 @@ std::uint32_t StoreTexel(SpirvValueEmitContext& ctx, const ImageEmitAccess& acce
     auto& state = ctx.state;
     const auto& mem = access.mem;
     const auto sint = SintStorageFormat(access.image);
-    const auto storageFormat = GetFormatInfo(access.image.conversionFormat);
+    const auto storageFormat = GetImageFormatInfo(access.image.conversionFormat);
     const auto float16 = access.image.resourceClass == ImageResourceClass::Storage && access.image.numericClass == IrTextureNumericClass::Uint &&
         (access.image.conversionFormat == IrBufferFormat::Format16Float || access.image.conversionFormat == IrBufferFormat::Format16_16Float || access.image.conversionFormat == IrBufferFormat::Format16_16_16_16Float);
     std::uint32_t values[4] = {};

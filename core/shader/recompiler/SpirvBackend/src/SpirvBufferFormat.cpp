@@ -215,6 +215,13 @@ SpirvBufferFormatInfo GetFormatInfo(IrBufferFormat format) {
     }
 }
 
+SpirvBufferFormatInfo GetImageFormatInfo(IrBufferFormat format) {
+    if (format == IrBufferFormat::Format1_5_5_5UNorm) {
+        return {format, SpirvFormatComponentType::Unorm, 4u, 2u, {1u, 5u, 5u, 5u}, {0u, 1u, 6u, 11u}, true};
+    }
+    return GetFormatInfo(format);
+}
+
 SpirvFormattedSource ResolveFormattedSource(const SpirvBufferFormatInfo& info, std::uint32_t selector) {
     if (selector == 0u) {
         return {SpirvFormattedSourceKind::Zero, 0u};
