@@ -1,4 +1,6 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/FileStream.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -100,10 +102,12 @@ void TestStringConversionAndFileLoading() {
     AssertTrue(psl_suffix_wildcard_count_nid_postfix(loadedPsl) == 1, "loaded psl wildcard count mismatch");
     psl_free_nid_postfix(loadedPsl);
 
-    FILE* fp = std::fopen(datPath, "r");
-    AssertTrue(fp != nullptr, "cannot reopen the test list");
+    FileStream* fp = fopen_nid_postfix(datPath, "r");
+    AssertTrue(fp != nullptr, "cannot reopen the test list through the guest stdio");
     NKWebKit::GuestPslCtx* fpPsl = psl_load_fp_nid_postfix(fp);
-    std::fclose(fp);
+    AssertTrue(feof_nid_postfix(fp) != 0, "psl_load_fp should read the guest stream to its end");
+    AssertTrue(fclose_nid_postfix(fp) == 0, "guest fclose failed");
+    AssertTrue(psl_load_fp_nid_postfix(nullptr) == nullptr, "psl_load_fp of a null stream should fail");
     AssertTrue(fpPsl != nullptr, "psl_load_fp failed");
     AssertTrue(psl_is_public_suffix_nid_postfix(fpPsl, "org") == 1, "fp psl 'org' failed");
     psl_free_nid_postfix(fpPsl);

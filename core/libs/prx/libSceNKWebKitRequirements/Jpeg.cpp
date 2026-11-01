@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -150,9 +151,12 @@ static void HostTermSource(j_decompress_ptr cinfo) {
 }
 
 static void APS5_VABI DefaultGuestErrorExit_nid_no_patch(NKWebKit::GuestCommonPtr cinfo) {
-    if (cinfo && cinfo->err && cinfo->err->output_message) {
-        cinfo->err->output_message(cinfo);
+    char buffer[JMSG_LENGTH_MAX]{};
+    if (cinfo && cinfo->err) {
+        if (cinfo->err->output_message) cinfo->err->output_message(cinfo);
+        if (cinfo->err->format_message) cinfo->err->format_message(cinfo, buffer);
     }
+    throw std::runtime_error(std::string("libjpeg: ") + buffer);
 }
 
 static void APS5_VABI DefaultGuestEmitMessage_nid_no_patch(NKWebKit::GuestCommonPtr cinfo, int32_t msg_level) {

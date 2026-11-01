@@ -414,6 +414,36 @@ void TestFailedRegistrations() {
     AssertTrue(RegisterOutput<5>() == -1, "an output registration into a full table should fail");
 }
 
+void TestDocumentOutlivesContext() {
+    const char docXml[] = "<!DOCTYPE r [<!ENTITY kept \"kept value\">]><r>&kept;</r>";
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "kept.xml");
+    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    AssertTrue(xmlParseChunk_nid_postfix(ctxt, docXml, static_cast<int>(std::strlen(docXml)), 1) == 0, "the document should parse");
+    NKWebKit::GuestDoc* doc = ctxt->myDoc;
+    AssertTrue(doc != nullptr, "the parser should build a document");
+    ctxt->myDoc = nullptr;
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+
+    const char otherXml[] = "<!DOCTYPE o [<!ENTITY other \"other value\">]><o>&other;</o>";
+    NKWebKit::GuestParserCtxt* other = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "other.xml");
+    AssertTrue(other != nullptr, "xmlCreatePushParserCtxt returned null");
+    AssertTrue(xmlParseChunk_nid_postfix(other, otherXml, static_cast<int>(std::strlen(otherXml)), 1) == 0, "the second document should parse");
+    NKWebKit::GuestDoc* otherDoc = other->myDoc;
+    AssertTrue(otherDoc != nullptr && otherDoc != doc, "a later context must not reuse a document that is still alive");
+    other->myDoc = nullptr;
+    xmlFreeParserCtxt_nid_postfix(other);
+    AssertTrue(xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("other")) == nullptr, "the first document must not see the second document's entities");
+    xmlFreeDoc_nid_postfix(otherDoc);
+
+    AssertTrue(doc->type == 9, "the document should keep its type after the context is freed");
+    AssertTrue(doc->doc == doc, "the document should still point to itself");
+    AssertTrue(doc->version != nullptr && std::strcmp(reinterpret_cast<const char*>(doc->version), "1.0") == 0, "the document version should survive the context");
+    NKWebKit::GuestEntity* kept = xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("kept"));
+    AssertTrue(kept != nullptr && kept->content != nullptr, "the document entity should be found after the context is freed");
+    AssertTrue(std::strcmp(reinterpret_cast<const char*>(kept->content), "kept value") == 0, "the document entity content mismatch");
+    xmlFreeDoc_nid_postfix(doc);
+}
+
 } // namespace
 
 int main() {
@@ -421,6 +451,7 @@ int main() {
     TestPushParserChunks();
     TestErrorHandling();
     TestMemoryParserAndEntities();
+    TestDocumentOutlivesContext();
     TestInputHandlersAndOpenContexts();
     TestFailedRegistrations();
     std::printf("Xml tests passed.\n");

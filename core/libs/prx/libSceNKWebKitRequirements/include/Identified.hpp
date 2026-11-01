@@ -4,6 +4,7 @@
 #include "prx/libSceNKWebKitRequirements/include/GuestJpeg.hpp"
 #include "prx/libSceNKWebKitRequirements/include/GuestXml.hpp"
 #include "prx/libSceNKWebKitRequirements/include/GuestPsl.hpp"
+#include "prx/libc/include/FileStream.hpp"
 #include <cstdio>
 #include <cstdint>
 
@@ -49,7 +50,7 @@ int APS5_VABI psl_is_public_suffix_nid_postfix(const NKWebKit::GuestPslCtx* psl,
 int APS5_VABI psl_is_public_suffix2_nid_postfix(const NKWebKit::GuestPslCtx* psl, const char* domain, int type);
 NKWebKit::GuestPslCtx* APS5_VABI psl_latest_nid_postfix(const char* fname);
 NKWebKit::GuestPslCtx* APS5_VABI psl_load_file_nid_postfix(const char* fname);
-NKWebKit::GuestPslCtx* APS5_VABI psl_load_fp_nid_postfix(FILE* fp);
+NKWebKit::GuestPslCtx* APS5_VABI psl_load_fp_nid_postfix(FileStream* fp);
 const char* APS5_VABI psl_registrable_domain_nid_postfix(const NKWebKit::GuestPslCtx* psl, const char* domain);
 int APS5_VABI psl_str_to_utf8lower_nid_postfix(const char* str, const char* encoding, const char* locale, char** lower);
 int APS5_VABI psl_suffix_count_nid_postfix(const NKWebKit::GuestPslCtx* psl);

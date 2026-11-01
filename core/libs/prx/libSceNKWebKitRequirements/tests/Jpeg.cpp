@@ -1,6 +1,7 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
 
 #include <cstdint>
+#include <stdexcept>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -261,10 +262,41 @@ void TestGuestErrorExit() {
     jpeg_destroy_decompress_nid_postfix(&guest_cinfo);
 }
 
+void TestDefaultErrorExitThrows() {
+    const uint8_t notJpeg[] = {'N', 'O', 'T', ' ', 'J', 'P', 'E', 'G', 0, 0, 0, 0};
+    NKWebKit::GuestJpegErrorMgr jerr{};
+    jpeg_std_error_nid_postfix(&jerr);
+
+    NKWebKit::GuestJpegDecompress guest_cinfo{};
+    guest_cinfo.err = &jerr;
+    jpeg_CreateDecompress_nid_postfix(&guest_cinfo, 62, sizeof(NKWebKit::GuestJpegDecompress));
+
+    NKWebKit::GuestJpegSourceMgr srcMgr{};
+    srcMgr.next_input_byte = notJpeg;
+    srcMgr.bytes_in_buffer = sizeof(notJpeg);
+    srcMgr.init_source = GuestInitSource;
+    srcMgr.fill_input_buffer = GuestFillInputBuffer;
+    srcMgr.skip_input_data = GuestSkipInputData;
+    srcMgr.resync_to_restart = GuestResyncToRestart;
+    srcMgr.term_source = GuestTermSource;
+    guest_cinfo.src = &srcMgr;
+
+    bool threw = false;
+    try {
+        jpeg_read_header_nid_postfix(&guest_cinfo, 1);
+    } catch (const std::runtime_error& error) {
+        threw = std::strstr(error.what(), "libjpeg: ") == error.what() && std::strlen(error.what()) > std::strlen("libjpeg: ");
+    }
+    AssertTrue(threw, "the default error_exit should throw the formatted libjpeg message");
+    AssertTrue(jerr.msg_code == JERR_NO_SOI, "the default error_exit should see JERR_NO_SOI");
+    jpeg_destroy_decompress_nid_postfix(&guest_cinfo);
+}
+
 } // namespace
 
 int main() {
     TestGuestErrorExit();
+    TestDefaultErrorExitThrows();
     std::vector<uint8_t> baselineJpeg;
     const uint8_t app1Data[] = "EXIF_TEST_MARKER_PAYLOAD";
     GenerateJpeg(baselineJpeg, 16, 16, 3, JCS_RGB, false, 0, app1Data, sizeof(app1Data));

@@ -73,8 +73,11 @@ NKWebKit::GuestPslCtx* APS5_VABI psl_load_file_nid_postfix(const char* fname) {
     return const_cast<NKWebKit::GuestPslCtx*>(reinterpret_cast<const NKWebKit::GuestPslCtx*>(psl_load_file(fname)));
 }
 
-NKWebKit::GuestPslCtx* APS5_VABI psl_load_fp_nid_postfix(FILE* fp) {
-    return const_cast<NKWebKit::GuestPslCtx*>(reinterpret_cast<const NKWebKit::GuestPslCtx*>(psl_load_fp(fp)));
+NKWebKit::GuestPslCtx* APS5_VABI psl_load_fp_nid_postfix(FileStream* fp) {
+    if (!fp) return nullptr;
+    const psl_ctx_t* psl = psl_load_fp(GetNativeStream(fp));
+    fp->SyncStatus();
+    return const_cast<NKWebKit::GuestPslCtx*>(reinterpret_cast<const NKWebKit::GuestPslCtx*>(psl));
 }
 
 const char* APS5_VABI psl_registrable_domain_nid_postfix(const NKWebKit::GuestPslCtx* psl, const char* domain) {

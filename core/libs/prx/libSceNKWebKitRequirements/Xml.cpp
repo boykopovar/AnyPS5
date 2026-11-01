@@ -34,13 +34,13 @@ struct XmlBinding {
     std::string error_message;
     std::string error_file;
     std::string error_str1, error_str2, error_str3;
-    NKWebKit::GuestDoc guest_doc{};
     NKWebKit::GuestParserInput guest_input{};
 };
 
 static std::mutex g_xmlMutex;
 static std::unordered_map<NKWebKit::GuestParserCtxt*, std::unique_ptr<XmlBinding>> g_xmlBindings;
 static std::unordered_map<const NKWebKit::GuestDoc*, xmlDocPtr> g_docMap;
+static std::unordered_map<xmlDocPtr, std::unique_ptr<NKWebKit::GuestDoc>> g_guestDocs;
 
 constexpr std::size_t XmlInputSlotCount = 15;
 constexpr std::size_t XmlOutputSlotCount = 15;
@@ -137,6 +137,13 @@ static void SyncHostDocToGuest(xmlDocPtr h, NKWebKit::GuestDoc* g) {
     g_docMap[g] = h;
 }
 
+static NKWebKit::GuestDoc* GuestDocFor(xmlDocPtr h) {
+    std::lock_guard<std::mutex> lock(g_xmlMutex);
+    auto& doc = g_guestDocs[h];
+    if (!doc) doc = std::make_unique<NKWebKit::GuestDoc>();
+    return doc.get();
+}
+
 static void SyncHostInputToGuest(xmlParserInputPtr h, NKWebKit::GuestParserInput* g) {
     if (!h || !g) return;
     g->buf = h->buf;
@@ -186,8 +193,9 @@ static void SyncHostToGuest(XmlBinding* b) {
     g->_private = h->_private;
 
     if (h->myDoc) {
-        SyncHostDocToGuest(h->myDoc, &b->guest_doc);
-        g->myDoc = &b->guest_doc;
+        auto* doc = GuestDocFor(h->myDoc);
+        SyncHostDocToGuest(h->myDoc, doc);
+        g->myDoc = doc;
     } else {
         g->myDoc = nullptr;
     }
@@ -673,12 +681,18 @@ const uint8_t* APS5_VABI xmlDictLookup_nid_postfix(void* dict, const uint8_t* na
 void APS5_VABI xmlFreeDoc_nid_postfix(NKWebKit::GuestDoc* cur) {
     if (!cur) return;
     xmlDocPtr host_doc = nullptr;
+    std::unique_ptr<NKWebKit::GuestDoc> guest_doc;
     {
         std::lock_guard<std::mutex> lock(g_xmlMutex);
         auto it = g_docMap.find(cur);
         if (it != g_docMap.end()) {
             host_doc = it->second;
             g_docMap.erase(it);
+            auto owned = g_guestDocs.find(host_doc);
+            if (owned != g_guestDocs.end()) {
+                guest_doc = std::move(owned->second);
+                g_guestDocs.erase(owned);
+            }
         }
     }
     if (host_doc) {
