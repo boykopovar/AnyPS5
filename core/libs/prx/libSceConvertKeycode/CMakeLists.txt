@@ -32,7 +32,7 @@ if(BUILD_TESTING)
         elseif(titleCase STREQUAL "malformed-json")
             file(WRITE ${titleRun}/app0/sce_sys/param.json "{")
         endif()
-        add_test(NAME guest_convert_keycode_title_${titleCase} COMMAND guest_convert_keycode_title_tests WORKING_DIRECTORY ${titleRun})
+        add_test(NAME guest_convert_keycode_title_${titleCase} COMMAND guest_convert_keycode_title_tests $<IF:$<STREQUAL:${titleCase},cusa>,ps4,ps5> WORKING_DIRECTORY ${titleRun})
         if(WIN32)
             set_tests_properties(guest_convert_keycode_title_${titleCase} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceConvertKeycode>")

@@ -24,6 +24,8 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/WaitMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderMemory.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -46,8 +48,12 @@
 #include "VertexRangeProducer_frag_spv.h"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "BdaAbi.hpp"
-#include "ShaderCacheSourceVersion.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineBinaryStore.hpp"
 #include <SDL_loadso.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -409,7 +415,7 @@ void deviceSelectionTests() {
 // them, as the driver creates its own; the recorder's batches need a real queue and real fences.
 class Device {
 public:
-    explicit Device(bool settleOnOtherFamily = false) {
+    explicit Device(bool settleOnOtherFamily = false, bool pipelineBinaries = false) {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
 #elif defined(__APPLE__)
@@ -595,6 +601,35 @@ public:
                 robustness.pNext = address.pNext;
                 address.pNext = &robustness;
             }
+            VkPhysicalDeviceMaintenance5FeaturesKHR maintenance{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
+            VkPhysicalDevicePipelineBinaryFeaturesKHR binaryFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_FEATURES_KHR};
+            VkDevicePipelineBinaryInternalCacheControlKHR internalCache{VK_STRUCTURE_TYPE_DEVICE_PIPELINE_BINARY_INTERNAL_CACHE_CONTROL_KHR};
+            const std::array binaryDependencies{VK_KHR_MAINTENANCE_5_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME};
+            const bool wantPipelineBinaries = pipelineBinaries && hasExtension(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME) && std::ranges::all_of(binaryDependencies, hasExtension) &&
+                PipelineBinaryStore::LayersCompatible(context.physical, function<PFN_vkEnumerateDeviceLayerProperties>("vkEnumerateDeviceLayerProperties"));
+            if (wantPipelineBinaries) {
+                maintenance.pNext = &binaryFeatures;
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &maintenance};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+                binaryEnabled = maintenance.maintenance5 == VK_TRUE && binaryFeatures.pipelineBinaries == VK_TRUE;
+                if (binaryEnabled) {
+                    for (const auto* extension : binaryDependencies) {
+                        if (std::ranges::none_of(extensionsEnabled, [&](const char* enabled) { return std::strcmp(enabled, extension) == 0; })) extensionsEnabled.push_back(extension);
+                    }
+                    extensionsEnabled.push_back(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
+                    binaryFeatures.pNext = address.pNext;
+                    address.pNext = &maintenance;
+                    VkPhysicalDevicePipelineBinaryPropertiesKHR properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_PROPERTIES_KHR};
+                    VkPhysicalDeviceProperties2 queried{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &properties};
+                    function<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(context.physical, &queried);
+                    if (properties.pipelineBinaryInternalCacheControl == VK_TRUE) {
+                        internalCache.disableInternalCache = VK_TRUE;
+                        internalCache.pNext = address.pNext;
+                        address.pNext = &internalCache;
+                    }
+                    std::cout << "pipeline binary internal_cache_disabled=" << internalCache.disableInternalCache << " driver=" << queried.properties.driverVersion << '\n';
+                }
+            }
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
             const std::array<VkDeviceQueueCreateInfo, 2> queueInfos{queue, settle};
             device.queueCreateInfoCount = settleFamily != noSettleFamily && settleFamily != family ? 2 : 1;
@@ -636,6 +671,7 @@ public:
 
     ~Device() { release(); }
     bool NullDescriptors() const { return nullDescriptors; }
+    bool PipelineBinaries() const { return binaryEnabled; }
     const Context& GetContext() const { return context; }
     bool Graphics() const { return graphics; }
     bool Timestamps() const {
@@ -694,6 +730,7 @@ private:
     VkInstance instance = VK_NULL_HANDLE;
     Context context{};
     bool graphics = false;
+    bool binaryEnabled = false;
     std::mutex settleMutex;
     bool nullDescriptors = false;
     bool memoryBudget = false;
@@ -1714,6 +1751,123 @@ void lateLabelTests(Recorder& recorder) {
     // (7) Entries leave the table with their batch.
     recorder.Sync();
     Require(!Recorder::LookupLabel(a, 4, 5).has_value() && !Recorder::LookupLabel(b, 8, 5).has_value() && !recorder.PendingLabelIn(0x70000, 0x400), "(7) entries outlived their batch");
+}
+
+void unlandedOwnLabelTests(Recorder& recorder) {
+    const std::array<std::byte, 4> zero{};
+    const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    const std::array<std::byte, 8> pair{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}, std::byte{2}, std::byte{0}, std::byte{0}, std::byte{0}};
+    const auto tag = AgcDriver::GuestMemory::GpuLockThreadTag();
+    constexpr std::uint64_t reset = 0x73000, wide = 0x73100, queued = 0x73200, covered = 0x73300;
+    constexpr std::uint32_t consumer = 0x28, producer = 0;
+    using Own = std::pair<std::uint64_t, std::uint64_t>;
+    const auto own = [](std::uint64_t address, std::size_t bytes, std::uint32_t queue) {
+        const auto found = Recorder::UnlandedOwnLabel(address, bytes, queue);
+        return Own{found.value, found.mask};
+    };
+    constexpr Own none{0, 0};
+    Require(own(reset, 4, consumer) == none, "an empty table reports an unlanded store");
+    recorder.NoteLabel(reset, zero, 80, consumer);
+    Require(own(reset, 4, consumer) == Own{0, 0xffffffffull}, "a queue's recorded reset is not its unlanded store");
+    Require(own(reset, 4, producer) == none, "another queue's recorded store is reported as the caller's own");
+    recorder.NoteLabel(reset, one, 81, producer);
+    Require(own(reset, 4, consumer) == none, "a reset another queue's newer store replaced is still reported");
+    Require(own(reset, 4, producer) == Own{1, 0xffffffffull}, "the newest store is not reported to its queue");
+    recorder.NoteLabel(wide, pair, 90, consumer);
+    Require(own(wide, 8, consumer) == Own{0x200000001ull, ~0ull}, "an 8-byte own store is not composed");
+    recorder.NoteLabel(wide + 4, one, 91, producer);
+    Require(own(wide, 8, consumer) == Own{1, 0xffffffffull} && own(wide, 4, consumer) == Own{1, 0xffffffffull}, "a high dword another queue stored later is reported as own, or the own low dword is lost");
+    Require(own(wide + 4, 4, producer) == Own{1, 0xffffffffull} && own(wide, 8, producer) == Own{0x100000000ull, 0xffffffff00000000ull}, "another queue's newer high dword is not reported to it alone");
+    recorder.NoteLabel(covered, zero, 92, consumer);
+    recorder.NotePendingWrite(covered, 16);
+    Require(own(covered, 4, consumer) == none, "an overwritten own store is reported");
+    Recorder::NoteQueuedLabel(queued, one, 95, tag);
+    Require(own(queued, 4, tag) == Own{1, 0xffffffffull}, "a queued own store is not reported");
+    Recorder::ForgetQueuedLabels();
+    Require(own(queued, 4, tag) == none, "a forgotten queued store is still reported");
+    recorder.Sync();
+    Require(own(reset, 4, producer) == none && own(wide, 4, consumer) == none, "a store outlived its batch as unlanded");
+}
+
+std::array<std::uint32_t, 7> waitPacket(const volatile std::uint32_t* address, std::uint32_t reference, std::uint32_t mask) {
+    const auto target = reinterpret_cast<std::uintptr_t>(address);
+    return {0xc0053c00, 0x13, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(static_cast<std::uint64_t>(target) >> 32u), reference, mask, 0x19};
+}
+
+std::array<std::uint32_t, 9> waitPacket64(const volatile std::uint32_t* address, std::uint64_t reference, std::uint64_t mask) {
+    const auto target = reinterpret_cast<std::uintptr_t>(address);
+    return {0xc0079300, 0x13, static_cast<std::uint32_t>(target), static_cast<std::uint32_t>(static_cast<std::uint64_t>(target) >> 32u), static_cast<std::uint32_t>(reference), static_cast<std::uint32_t>(reference >> 32u), static_cast<std::uint32_t>(mask), static_cast<std::uint32_t>(mask >> 32u), 0x19};
+}
+
+void unlandedOwnStoreWaitTests(Recorder& recorder) {
+    using AgcDriver::GuestMemory::TagGpuLockThread;
+    const std::array<std::byte, 4> zero{};
+    const std::array<std::byte, 4> one{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+    const std::array<std::byte, 4> highBit{std::byte{0}, std::byte{1}, std::byte{0}, std::byte{0}};
+    const std::array<std::byte, 4> lowAndHighBit{std::byte{1}, std::byte{1}, std::byte{0}, std::byte{0}};
+    const std::array<std::byte, 8> zeros{};
+    const auto tag = AgcDriver::GuestMemory::GpuLockThreadTag();
+    constexpr std::uint32_t consumer = 0x28, producer = 0, other = 0x29;
+    alignas(8) static volatile std::uint32_t memory[18]{};
+    const auto at = [](std::size_t word) { return reinterpret_cast<std::uint64_t>(&memory[word]); };
+    const auto passes = [](std::span<const std::uint32_t> packet, std::uint32_t queue) {
+        const auto bytes = AgcDriver::Pm4::WaitAwaitedBytes(packet);
+        const auto awaited = (packet[2] & (bytes == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u);
+        return AgcDriver::Pm4::WaitSatisfiedUnchecked(packet) && !AgcDriver::DriverDetail::OwnStoreRejects(packet, awaited, bytes, queue);
+    };
+    const auto ownMask = [](std::uint64_t address, std::size_t bytes, std::uint32_t queue) { return Recorder::UnlandedOwnLabel(address, bytes, queue).mask; };
+    memory[0] = 1;
+    recorder.NoteLabel(at(0), zero, 200, consumer);
+    Require(!passes(waitPacket(&memory[0], 1, ~0u), consumer), "a wait passed on memory its own queue's unlanded reset changes");
+    recorder.NoteLabel(at(0), one, 201, consumer);
+    Require(passes(waitPacket(&memory[0], 1, ~0u), consumer), "a wait was held by an own unlanded store that leaves the awaited value");
+    memory[2] = 1;
+    recorder.NoteLabel(at(2), zero, 202, consumer);
+    TagGpuLockThread(other);
+    Recorder::NoteQueuedLabel(at(2), one, 203, other);
+    Require(ownMask(at(2), 4, consumer) == 0 && passes(waitPacket(&memory[2], 1, ~0u), consumer), "an own recorded reset held a wait although another queue's queued store of the dword is newer");
+    Recorder::ForgetQueuedLabels();
+    memory[4] = 1;
+    TagGpuLockThread(consumer);
+    Recorder::NoteQueuedLabel(at(4), zero, 204, consumer);
+    recorder.NoteLabel(at(4), one, 205, other);
+    Require(ownMask(at(4), 4, consumer) == 0 && passes(waitPacket(&memory[4], 1, ~0u), consumer), "an own queued reset held a wait although another queue's recorded store of the dword is newer");
+    Recorder::ForgetQueuedLabels();
+    TagGpuLockThread(tag);
+    memory[6] = 1;
+    memory[7] = 0;
+    recorder.NoteLabel(at(6), zero, 206, consumer);
+    Require(!passes(waitPacket64(&memory[6], 1, ~0ull), consumer), "an 8-byte wait passed on memory its own queue's unlanded reset of the low dword changes");
+    Require(passes(waitPacket64(&memory[6], 0, 0xffffffff00000000ull), consumer) && passes(waitPacket(&memory[7], 0, ~0u), consumer), "a reset of a dword the wait's mask ignores held the wait");
+    recorder.NoteLabel(at(6), one, 207, producer);
+    Require(passes(waitPacket64(&memory[6], 1, ~0ull), consumer), "a later store of another queue over the reset dword did not release the wait");
+    memory[8] = 0;
+    memory[9] = 1;
+    recorder.NoteLabel(at(9), zero, 208, consumer);
+    Require(!passes(waitPacket64(&memory[8], 0x100000000ull, ~0ull), consumer), "an 8-byte wait passed on memory its own queue's unlanded reset of the high dword changes");
+    Require(passes(waitPacket64(&memory[8], 0, 0xffffffffull), consumer), "a reset of the high dword held a wait whose mask covers only the low dword");
+    recorder.NoteLabel(at(9), one, 209, producer);
+    Require(passes(waitPacket64(&memory[8], 0x100000000ull, ~0ull), consumer), "a later store of another queue over the reset high dword did not release the wait");
+    memory[10] = 1;
+    memory[11] = 0;
+    recorder.NoteLabel(at(11), zero, 210, producer);
+    recorder.NoteLabel(at(10), zero, 211, consumer);
+    Require(ownMask(at(10), 8, consumer) == 0xffffffffull && !passes(waitPacket64(&memory[10], 1, ~0ull), consumer), "an 8-byte wait passed on memory its own queue's unlanded low reset changes because another queue stored the high dword");
+    memory[12] = 1;
+    memory[13] = 0;
+    recorder.NoteLabel(at(12), zeros, 212, consumer);
+    recorder.NoteLabel(at(13), zero, 213, other);
+    Require(ownMask(at(12), 8, consumer) == 0xffffffffull && !passes(waitPacket64(&memory[12], 1, ~0ull), consumer), "an own 8-byte reset whose high dword another queue stored later stopped holding the low dword");
+    memory[14] = 0x101;
+    recorder.NoteLabel(at(14), one, 214, consumer);
+    Require(passes(waitPacket(&memory[14], 1, 0xff), consumer), "an own store that changes only bits the mask ignores held the wait");
+    recorder.NoteLabel(at(14), highBit, 215, consumer);
+    Require(!passes(waitPacket(&memory[14], 1, 0xff), consumer), "an own store that clears a bit the mask compares did not hold the wait");
+    memory[16] = 0x101;
+    recorder.NoteLabel(at(16), lowAndHighBit, 216, consumer);
+    Require(passes(waitPacket(&memory[16], 0x101, ~0u), consumer), "an own store of the value memory already holds held the wait");
+    recorder.Sync();
+    Require(passes(waitPacket(&memory[0], 1, ~0u), consumer) && passes(waitPacket64(&memory[6], 1, ~0ull), consumer) && passes(waitPacket64(&memory[10], 1, ~0ull), consumer), "an own store held a wait after its batch was reaped");
 }
 
 void largeLabelTests(Recorder& recorder) {
@@ -6040,6 +6194,18 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+#ifdef __APPLE__
+vm_prot_t HostPageProtection(const void* page) {
+    mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(page);
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info{};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    Require(mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) == KERN_SUCCESS && address <= reinterpret_cast<mach_vm_address_t>(page), "cannot read the protection of a page");
+    return info.protection & (VM_PROT_READ | VM_PROT_WRITE);
+}
+#endif
+
 bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t unit = 65536;
@@ -6163,6 +6329,146 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
     settle();
     const auto held = static_cast<std::size_t>(std::count(memory + offset, memory + offset + layout.guestBytes, std::uint8_t{0x3c}));
     Require(held == 32u * 32u * 4u, "the label readback did not publish the small tiled image");
+#ifdef __APPLE__
+    if (std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr) {
+        const auto rewriteImage = [&](const std::shared_ptr<StorageTexture>& target, std::uint32_t extent, std::uint8_t value) {
+            auto source = std::make_shared<Buffer>(context, extent * extent * 4u, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            std::fill(source->Bytes().begin(), source->Bytes().end(), std::byte{value});
+            const auto commands = recorder.Commands();
+            recorder.Keep(target);
+            recorder.Keep(source);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            copy.imageExtent = {extent, extent, 1};
+            context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, source->Handle(), target->Image(), VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+            target->MarkDirty();
+        };
+        const auto rewrite = [&](std::uint8_t value) { rewriteImage(image, 32u, value); };
+        const auto readUnlocked = [&](const std::function<bool()>& read) {
+            bool seen = false;
+            Require(GpuMutex().DepthOnThisThread() == 1, "the test thread holds the GPU mutex more than once");
+            GpuMutex().unlock();
+            std::thread reader([&] { seen = read(); });
+            reader.join();
+            GpuMutex().lock();
+            return seen;
+        };
+        const auto holds = [&](std::uint8_t value) { return static_cast<std::size_t>(std::count(memory + offset, memory + offset + layout.guestBytes, value)) == 32u * 32u * 4u; };
+        rewrite(0x4b);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a label stored a pending small tiled image instead of trapping its reads");
+        Require(readUnlocked([&] { return holds(0x4b); }), "a read of a trapped image did not see its pending results");
+        Require(HostPageProtection(memory + offset) != VM_PROT_NONE, "a resolved trap did not give back the image's pages");
+        rewrite(0x2d);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a second label did not trap the small tiled image's reads");
+        Require(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(layout.guestBytes), nullptr, "memory access", PublishScope::None), "storing a trapped image stored nothing");
+        settle();
+        Require(HostPageProtection(memory + offset) != VM_PROT_NONE, "storing a trapped image did not release its trap");
+        Require(holds(0x2d), "storing a trapped image did not publish it");
+
+        rewrite(0x5e);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        std::thread flusher([&] { static_cast<void>(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(layout.guestBytes), nullptr, "memory access", PublishScope::None)); });
+        while (StorageTexture::AnyPending()) std::this_thread::yield();
+        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a trapped image taken for a store gave back its pages before the store");
+        bool fresh = false;
+        std::thread waiting([&] { fresh = holds(0x5e); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        GpuMutex().unlock();
+        flusher.join();
+        waiting.join();
+        GpuMutex().lock();
+        Require(fresh, "a read while a trapped image waited for its store did not see the stored results");
+
+        const auto page = static_cast<std::uint64_t>(::getpagesize());
+        auto linearA = resource;
+        linearA.baseAddress = address + 0xd0000;
+        linearA.width = 8;
+        linearA.height = 8;
+        linearA.tileMode = TextureTileMode::kLinear;
+        const auto layoutA = DescribeSurface(linearA);
+        auto linearB = linearA;
+        linearB.baseAddress = linearA.baseAddress + ((layoutA.guestBytes + 255u) & ~std::uint64_t{255});
+        const auto layoutB = DescribeSurface(linearB);
+        Require(linearA.baseAddress / page == (linearB.baseAddress + layoutB.guestBytes - 1) / page && linearB.baseAddress + layoutB.guestBytes <= address + 0xe0000, "the two small linear surfaces do not share a page");
+        auto imageA = StorageTexture::Create(context, detiler, linearA, 0);
+        auto imageB = StorageTexture::Create(context, detiler, linearB, 0);
+        imageA->Refresh();
+        imageB->Refresh();
+        settle();
+        auto* pageBytes = memory + (linearA.baseAddress - address);
+        const auto holdsIn = [&](const GuestTextureResource& surface, std::size_t bytes, std::uint8_t value) { return static_cast<std::size_t>(std::count(memory + (surface.baseAddress - address), memory + (surface.baseAddress - address) + bytes, value)) >= 8u * 8u * 4u; };
+        rewriteImage(imageA, 8u, 0x61);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap a lone pending linear image");
+        rewriteImage(imageB, 8u, 0x62);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        settle();
+        Require(HostPageProtection(pageBytes) != VM_PROT_NONE, "a label left a trap on a page it stored another image on");
+        Require(holdsIn(linearA, static_cast<std::size_t>(layoutA.guestBytes), 0x61) && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x62), "a label did not store both images on a shared page");
+        rewriteImage(imageA, 8u, 0x63);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap a lone pending linear image again");
+        rewriteImage(imageB, 8u, 0x64);
+        Require(StorageTexture::FlushPending(linearB.baseAddress, static_cast<std::size_t>(layoutB.guestBytes), nullptr, "idle", PublishScope::None), "a CPU store next to a trapped image stored nothing");
+        settle();
+        Require(HostPageProtection(pageBytes) != VM_PROT_NONE && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x64), "a CPU store next to a trapped image did not store through its page");
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap the image a neighbouring CPU store left pending");
+        Require(readUnlocked([&] { return holdsIn(linearA, static_cast<std::size_t>(layoutA.guestBytes), 0x63); }), "a read of the re-trapped image did not see its pending results");
+
+        auto outer = resource;
+        outer.baseAddress = address;
+        outer.width = 256;
+        outer.height = 256;
+        outer.tileMode = TextureTileMode::kR64KBX;
+        const auto outerLayout = DescribeSurface(outer);
+        Require(outerLayout.guestBytes > StorageTexture::SmallStoreBytes && outer.baseAddress + outerLayout.guestBytes <= resource.baseAddress, "the large tiled surface does not fit below the small one");
+        auto inner = linearA;
+        inner.baseAddress = address + 0x20000;
+        const auto innerLayout = DescribeSurface(inner);
+        auto outerImage = StorageTexture::Create(context, detiler, outer, 0);
+        auto innerImage = StorageTexture::Create(context, detiler, inner, 0);
+        outerImage->Refresh();
+        innerImage->Refresh();
+        settle();
+        auto* innerBytes = memory + (inner.baseAddress - address);
+        const auto innerHolds = [&](std::uint8_t value) { return holdsIn(inner, static_cast<std::size_t>(innerLayout.guestBytes), value); };
+        const auto storeOuterBlock = [&] {
+            Require(StorageTexture::FlushPending(address + 0x28000, 256, nullptr, "memory access", PublishScope::None), "a store of the large image's block stored nothing");
+            settle();
+        };
+        rewriteImage(outerImage, 256u, 0x71);
+        rewriteImage(innerImage, 8u, 0x72);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label stored a small image inside a pending large tiled one instead of trapping its reads");
+        storeOuterBlock();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE, "a store of a large image's block left a trapped image inside it trapped");
+        Require(innerHolds(0x72), "a store of a large image's block over a trapped image did not leave the bytes a label store leaves");
+        rewriteImage(outerImage, 256u, 0x73);
+        rewriteImage(innerImage, 8u, 0x75);
+        rewriteImage(outerImage, 256u, 0x74);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image again");
+        storeOuterBlock();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x75), "a large image written again after a trapped one was stored before it");
+        rewriteImage(outerImage, 256u, 0x76);
+        rewriteImage(innerImage, 8u, 0x77);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image a third time");
+        outerImage->Flush();
+        settle();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x77), "evicting a large image did not store the trapped image inside it first");
+        rewriteImage(innerImage, 8u, 0x78);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image after the large one was evicted");
+        Require(readUnlocked([&] { return innerHolds(0x78); }), "a read of a trapped image inside an evicted large one did not see its results");
+    }
+#endif
     auto large = resource;
     large.baseAddress = address + 0x80000;
     large.width = 256;
@@ -11098,8 +11404,7 @@ void pipelineCacheHeaderTests(const Device& device) {
         }
     } removeDirectory{cleanupRoot};
     auto directory = root;
-    char version[17];
-    std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::Generated::SourceVersion));
+    const std::string version = "driver";
     while ((directory / version).native().size() < 220) {
         const auto length = (directory / version).native().size();
         const auto remaining = 245 > length ? 245 - length : 1;
@@ -11110,7 +11415,7 @@ void pipelineCacheHeaderTests(const Device& device) {
     Require(versionDirectory.native().size() >= 220 && versionDirectory.native().size() <= 249, "the pipeline cache directory is not between 220 and 249 characters");
 #ifdef _WIN32
     _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
-    _putenv_s("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str());
+    _wputenv_s(L"ANYPS5_SHADER_CACHE_DIR", directory.c_str());
 #else
     setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
     setenv("ANYPS5_SHADER_CACHE_DIR", directory.string().c_str(), 1);
@@ -11157,6 +11462,50 @@ void pipelineCacheHeaderTests(const Device& device) {
     Require(ShaderRecompiler::ReadWholeFile(files.front(), retained) && retained == stored, "an unreadable long pipeline cache file was overwritten");
 #endif
     std::cout << "long-path pipeline cache header reused without reloading\n";
+}
+
+int pipelineBinaryTests(const Device& device) {
+    if (!device.PipelineBinaries()) {
+        std::cout << "skipped, the device lacks VK_KHR_pipeline_binary\n";
+        return 77;
+    }
+    const auto& context = device.GetContext();
+    struct Objects {
+        const Context& context;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkShaderModule module = VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        ~Objects() {
+            if (pipeline != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
+            if (module != VK_NULL_HANDLE) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
+            if (layout != VK_NULL_HANDLE) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
+        }
+    } objects{context};
+    VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &objects.layout), "vkCreatePipelineLayout");
+    const std::array<std::uint32_t, 2> layoutKey{0, 0};
+    PipelineBinaryStore store(context, device.Properties());
+    for (const auto width : {4u, 8u}) {
+        const std::array spirv{0x07230203u, 0x00010000u, 0u, 6u, 0u,
+            0x00020011u, 1u, 0x0003000eu, 0u, 1u,
+            0x0005000fu, 5u, 4u, 0x6e69616du, 0u,
+            0x00060010u, 4u, 17u, width, 1u, 1u,
+            0x00020013u, 1u, 0x00030021u, 2u, 1u,
+            0x00050036u, 1u, 4u, 0u, 2u, 0x000200f8u, 5u, 0x000100fdu, 0x00010038u};
+        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        moduleInfo.codeSize = spirv.size() * sizeof(std::uint32_t);
+        moduleInfo.pCode = spirv.data();
+        Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &objects.module), "vkCreateShaderModule");
+        VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, objects.module, "main", nullptr};
+        info.layout = objects.layout;
+        store.CreateComputePipeline(info, spirv, layoutKey, &objects.pipeline);
+        context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, objects.pipeline, nullptr);
+        objects.pipeline = VK_NULL_HANDLE;
+        context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, objects.module, nullptr);
+        objects.module = VK_NULL_HANDLE;
+    }
+    return 0;
 }
 
 int pipelineCacheFileTests(const Device& device) {
@@ -11241,8 +11590,7 @@ int pipelineCacheFileTests(const Device& device) {
     };
     const auto cacheFile = [&] {
         for (const auto& entry : std::filesystem::directory_iterator(directory)) Require(entry.is_directory(), "a pipeline cache file lives in the shader cache root");
-        char version[17];
-        std::snprintf(version, sizeof(version), "%016llx", static_cast<unsigned long long>(ShaderRecompiler::ShaderDiskCache::Generated::SourceVersion));
+        const std::string version = "driver";
         const auto versionDirectory = directory / version;
         Require(std::filesystem::is_directory(versionDirectory), "the current shader cache version has no directory");
         std::vector<std::filesystem::path> found;
@@ -12288,15 +12636,32 @@ int main(int argc, char** argv) {
             std::cout << "queued write group tests passed\n";
             return 0;
         }
+        const bool binaryTest = argc == 3 && std::string_view(argv[1]) == "--pipeline-binary-only";
+        if (binaryTest) {
+#ifdef _WIN32
+            _putenv_s("ANYPS5_SHADER_CACHE_DIR", argv[2]);
+            _putenv_s("ANYPS5_NO_SHADER_CACHE", "0");
+            _putenv_s("APS5_PIPELINE_BINARY_MIN_WORDS", "0");
+            _putenv_s("APS5_PIPELINE_BINARY_MIN_MS", "0");
+            _putenv_s("APS5_NO_PIPELINE_BINARIES", "");
+#else
+            setenv("ANYPS5_SHADER_CACHE_DIR", argv[2], 1);
+            setenv("ANYPS5_NO_SHADER_CACHE", "0", 1);
+            setenv("APS5_PIPELINE_BINARY_MIN_WORDS", "0", 1);
+            setenv("APS5_PIPELINE_BINARY_MIN_MS", "0", 1);
+            unsetenv("APS5_NO_PIPELINE_BINARIES");
+#endif
+        }
         std::unique_ptr<Device> created;
         try {
-            created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only" || std::string_view(argv[1]) == "--host-import-lifetime-other-family-only" || std::string_view(argv[1]) == "--settle-write-order-other-family-only"));
+            created = std::make_unique<Device>(argc == 2 && (std::string_view(argv[1]) == "--import-watch-other-family-only" || std::string_view(argv[1]) == "--deferred-settle-other-family-only" || std::string_view(argv[1]) == "--host-import-lifetime-other-family-only" || std::string_view(argv[1]) == "--settle-write-order-other-family-only"), binaryTest);
         } catch (const std::exception& error) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::cout << "skipped, no usable Vulkan device: " << error.what() << '\n';
             return 77;
         }
         Device& device = *created;
+        if (binaryTest) return pipelineBinaryTests(device);
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-lifetime-only") return RunHostImportLifetimeTests(device.GetContext());
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-mutation-race-only") return RunHostImportMutationRaceTests(device.GetContext());
         if (argc == 2 && (std::string_view(argv[1]) == "--gpu-timing-complete-only" || std::string_view(argv[1]) == "--gpu-timing-incomplete-only")) {
@@ -12507,6 +12872,8 @@ int main(int argc, char** argv) {
             labelTests(recorder);
             lateLabelTests(recorder);
             largeLabelTests(recorder);
+            unlandedOwnLabelTests(recorder);
+            unlandedOwnStoreWaitTests(recorder);
             std::cout << "Completion label storage and ordering tests passed\n";
             return 0;
         }
@@ -12731,6 +13098,8 @@ int main(int argc, char** argv) {
         labelTests(recorder);
         lateLabelTests(recorder);
         largeLabelTests(recorder);
+        unlandedOwnLabelTests(recorder);
+        unlandedOwnStoreWaitTests(recorder);
         unchangedSinceTests();
         closeRaceTests(device, recorder);
         keyProofTests(device, recorder);
