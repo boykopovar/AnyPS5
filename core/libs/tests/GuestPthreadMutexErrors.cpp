@@ -128,6 +128,15 @@ int main() {
     Require(scePthreadMutexattrSettype(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
+    Require(pthread_mutex_init_nid_postfix(nullptr, nullptr) == POSIX_EINVAL);
+    Require(pthread_mutex_init_nid_postfix(nullptr, &unset) == POSIX_EINVAL);
+    Require(pthread_mutex_init_nid_postfix(nullptr, &attr) == POSIX_EINVAL);
+    Require(scePthreadMutexInit(nullptr, nullptr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexInit(nullptr, &unset, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexInit(nullptr, &attr, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexInit(nullptr, nullptr, "test") == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadMutexInit(nullptr, &attr, "test") == SCE_KERNEL_ERROR_EINVAL);
+
     PthreadMutex mutex = nullptr;
     Require(scePthreadMutexInit(&mutex, &unset, "unset") == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_OK);
