@@ -2,9 +2,11 @@
 
 #include "SceTypes.hpp"
 
+struct Ngs2JobSchedulerOption;
+
 extern "C" {
 
-int APS5_VABI sceNgs2JobSchedulerResetOption(void);
+int APS5_VABI sceNgs2JobSchedulerResetOption(Ngs2JobSchedulerOption*);
 int APS5_VABI sceNgs2ModuleArrayEnumItems(void);
 int APS5_VABI sceNgs2ModuleEnumConfigs(void);
 int APS5_VABI sceNgs2ModuleQueueEnumItems(void);
