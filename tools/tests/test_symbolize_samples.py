@@ -42,6 +42,7 @@ def build_pe(path, with_symbols=True, with_exports=False, second_code=False, tim
     struct.pack_into("<H", image, optional, 0x20B)
     struct.pack_into("<Q", image, optional + 24, 0x140000000)
     struct.pack_into("<I", image, optional + 56, SIZE_OF_IMAGE)
+    struct.pack_into("<I", image, optional + 108, 16)
     if with_exports:
         struct.pack_into("<II", image, optional + 112, 0x2000, 0x100)
     sections = optional + 240
@@ -317,6 +318,48 @@ class SymbolizeSamplesTests(unittest.TestCase):
         self.assertTrue(module.exported)
         self.assertEqual(module.name(0x1030), "~first_func")
         self.assertEqual(module.name(0x1070), "~second_func")
+
+    def test_undeclared_export_directory_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "module.dll"
+            build_pe(path, with_symbols=False, with_exports=True)
+            image = bytearray(path.read_bytes())
+            struct.pack_into("<I", image, 0x58 + 108, 0)
+            path.write_bytes(image)
+            module = symbolize_samples.PeModule(path)
+            self.assertEqual(module.names, [])
+            self.assertIsNone(module.name(0x1020))
+
+    def test_short_optional_headers_with_complete_directories(self):
+        for count in (0, 1):
+            with self.subTest(count=count), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "module.dll"
+                build_pe(path, with_symbols=False, with_exports=count == 1)
+                image = bytearray(path.read_bytes())
+                size = 112 + count * 8
+                image[0x58 + size:0x58 + size + 80] = image[0x58 + 240:0x58 + 320]
+                struct.pack_into("<H", image, 0x54, size)
+                struct.pack_into("<I", image, 0x58 + 108, count)
+                path.write_bytes(image)
+                module = symbolize_samples.PeModule(path)
+                self.assertEqual(module.name(0x1020), "~first_func" if count else None)
+
+    def test_optional_header_bounds_are_enforced(self):
+        for size, count in ((0, 0), (111, 0), (112, 1), (119, 1), (240, 17), (0xFFFF, 0)):
+            with self.subTest(size=size, count=count), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "module.dll"
+                build_pe(path, with_symbols=False, with_exports=True)
+                image = bytearray(path.read_bytes())
+                struct.pack_into("<H", image, 0x54, size)
+                struct.pack_into("<I", image, 0x58 + 108, count)
+                path.write_bytes(image)
+                with self.assertRaisesRegex(ValueError, "optional header|director"):
+                    symbolize_samples.PeModule(path)
+                warnings = []
+                symbolizer = symbolize_samples.Symbolizer([path.parent], {"module.dll": (SIZE_OF_IMAGE, TIMESTAMP)},
+                                                          warn=warnings.append)
+                self.assertEqual(symbolizer.frame("module.dll+0x1020"), "module.dll+0x1020")
+                self.assertRegex("\n".join(warnings), "optional header|director")
 
     def test_export_ordinals_stay_inside_the_declared_address_table(self):
         path = self.libs / "libwinpthread-1.dll"
