@@ -21,7 +21,7 @@ public:
         declaredFloatMode = mode;
         floatMode = mode;
         ieeeMode = mode.has_value() && mode->ieeeMode;
-        rounding = RoundingState{static_cast<std::uint8_t>(mode.has_value() ? mode->floatMode & ModeRoundBits : 0u), 0u};
+        rounding = RoundingState{static_cast<std::uint8_t>(mode.has_value() ? mode->floatMode & ModeTrackedBits : ModeUndeclaredSeed), 0u};
     }
     void SetEntryRounding(const RoundingState& state) { setRounding(state); }
     void SetNativeFloat16(bool enabled) { nativeFloat16 = enabled; }
