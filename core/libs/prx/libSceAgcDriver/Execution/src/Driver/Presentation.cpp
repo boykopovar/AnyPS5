@@ -70,6 +70,10 @@ void Driver::AttachWindow(const PresentationWindow& window) {
     device = std::make_shared<VulkanDevice>(&window);
 }
 
+void Driver::TracePresent(std::uint32_t width, std::uint32_t height) {
+    if (PerformanceTrace::Configured()) PerformanceTrace::Present(width, height, device.Load().get());
+}
+
 void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context) {
     if (PerformanceTrace::Configured()) PerformanceTrace::Present(window.width, window.height, device.Load().get());
     PerformanceContext timingContext(window.timing.get());
