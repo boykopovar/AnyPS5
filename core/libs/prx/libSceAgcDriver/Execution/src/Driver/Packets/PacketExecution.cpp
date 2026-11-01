@@ -63,12 +63,12 @@ bool keepsDrawPipeline(std::span<const std::uint32_t> packet, std::uint32_t head
             if (packet.size() < 7) return false;
             const auto destination = Pm4::DmaDestination(packet);
             if (destination == Pm4::DmaDestinationNowhere) return true;
-            if (destination == Pm4::DmaSelectGds) return true;
             const auto bytes = Pm4::DmaBytes(packet);
             if (bytes == 0) return true;
             const auto source = Pm4::DmaSource(packet);
             if ((source == 0 || source == 3) && DrawPipeline::Queue0().Overlaps(packet[2] | (static_cast<std::uint64_t>(packet[3]) << 32u), bytes)) return false;
-            const auto address = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
+            if (source == Pm4::DmaSelectGds && DrawPipeline::Queue0().Overlaps(Pm4::GdsAddress() + packet[2], bytes)) return false;
+            const auto address = destination == Pm4::DmaSelectGds ? Pm4::GdsAddress() + packet[4] : packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
             return !DrawPipeline::Queue0().Overlaps(address, bytes);
         }
         case 0x3c: case 0x93: {
