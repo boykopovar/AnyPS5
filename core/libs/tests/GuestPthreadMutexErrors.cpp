@@ -142,4 +142,6 @@ int main() {
     CheckLoops(&attr);
     CheckOwnershipAndRelativeLock();
     Require(scePthreadMutexattrDestroy(&attr) == SCE_OK);
+    Require(pthread_mutex_lock_nid_postfix(nullptr) == POSIX_EINVAL);
 }
+
