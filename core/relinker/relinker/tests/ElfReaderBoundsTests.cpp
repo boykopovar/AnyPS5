@@ -359,6 +359,13 @@ int main() {
             Require(reader.TranslateVirtualAddress(0x101f) == 0x25f);
             RejectAddress(Fixture(), 0x1020);
         }},
+        {"sh_link section header index out of bounds", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 2);
+            Write<std::uint32_t>(bytes, 232, 3);
+            Write<std::uint32_t>(bytes, 192, 21);
+            RejectSections(std::move(bytes));
+        }},
     };
     std::size_t failures = 0;
     for (const auto& [name, test] : cases) {
