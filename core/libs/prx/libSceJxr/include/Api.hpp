@@ -4,6 +4,11 @@
 #include "prx/libSceJxr/GuestPixelInfo.h"
 #include "prx/libSceJxr/Stream.hpp"
 
+struct CWMImageStrCodec;
+struct tagPKImageEncode;
+struct tagPKFormatConverter;
+struct tagPKRect;
+
 extern "C" {
 
 std::int64_t APS5_VABI PKFree_nid_postfix(void** memory);
@@ -24,7 +29,7 @@ int APS5_VABI GetPixelFormatFromHash_nid_postfix();
 int APS5_VABI GetPosWS_File_nid_postfix();
 int APS5_VABI GetPosWS_List_nid_postfix();
 int APS5_VABI GetPosWS_Memory_nid_postfix();
-int APS5_VABI IDPEmpty_nid_postfix();
+int APS5_VABI IDPEmpty_nid_postfix(CWMImageStrCodec* codec);
 int APS5_VABI InitZigzagScan_nid_postfix();
 int APS5_VABI PKAllocAligned_nid_postfix();
 int APS5_VABI PKAlloc_nid_postfix();
@@ -36,7 +41,11 @@ int APS5_VABI PKCreateCodecFactory_nid_postfix();
 int APS5_VABI PKCreateFactory_CreateStream_nid_postfix();
 int APS5_VABI PKCreateFactory_Release_nid_postfix();
 int APS5_VABI PKCreateFactory_nid_postfix();
-int APS5_VABI PKFormatConverter_Convert_nid_postfix();
+std::int64_t APS5_VABI PKFormatConverter_Convert_nid_postfix(
+    tagPKFormatConverter* converter,
+    const tagPKRect* rectangle,
+    std::uint8_t* pixels,
+    std::uint32_t stride);
 int APS5_VABI PKFormatConverter_Copy_nid_postfix();
 int APS5_VABI PKFormatConverter_EnumConversions_nid_postfix();
 int APS5_VABI PKFormatConverter_GetPixelFormat_nid_postfix();
@@ -74,7 +83,7 @@ int APS5_VABI PKImageEncode_SetPixelFormat_nid_postfix();
 int APS5_VABI PKImageEncode_SetResolution_nid_postfix();
 int APS5_VABI PKImageEncode_SetSize_nid_postfix();
 int APS5_VABI PKImageEncode_SetXMPMetadata_WMP_nid_postfix();
-int APS5_VABI PKImageEncode_Terminate_nid_postfix();
+std::int64_t APS5_VABI PKImageEncode_Terminate_nid_postfix(tagPKImageEncode* encoder);
 int APS5_VABI PKImageEncode_Transcode_nid_postfix();
 int APS5_VABI PKImageEncode_WritePixels_nid_postfix();
 int APS5_VABI PKImageEncode_WriteSource_nid_postfix();

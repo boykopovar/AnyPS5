@@ -60,6 +60,28 @@ void InitializeHeap() {
 
 int main() {
     InitializeHeap();
+    alignas(std::max_align_t) std::array<std::byte, 64> codecStorage{};
+    const auto codecBefore = codecStorage;
+    Require(IDPEmpty_nid_postfix(reinterpret_cast<CWMImageStrCodec*>(codecStorage.data())) == 0);
+    Require(codecStorage == codecBefore);
+
+    alignas(std::max_align_t) std::array<std::byte, 64> encoderStorage{};
+    const auto encoderBefore = encoderStorage;
+    Require(PKImageEncode_Terminate_nid_postfix(reinterpret_cast<tagPKImageEncode*>(encoderStorage.data())) == 0);
+    Require(encoderStorage == encoderBefore);
+
+    alignas(std::max_align_t) std::array<std::byte, 64> converterStorage{};
+    std::array<std::int32_t, 4> rectangle{0, 0, 2, 2};
+    std::array<std::byte, 16> pixels{};
+    pixels.fill(std::byte{0x5a});
+    const auto pixelsBefore = pixels;
+    Require(PKFormatConverter_Convert_nid_postfix(
+        reinterpret_cast<tagPKFormatConverter*>(converterStorage.data()),
+        reinterpret_cast<const tagPKRect*>(rectangle.data()),
+        reinterpret_cast<std::uint8_t*>(pixels.data()),
+        8) == 0);
+    Require(pixels == pixelsBefore);
+
     void* memory = malloc_nid_postfix(64);
     Require(memory != nullptr);
     void* const allocated = memory;
