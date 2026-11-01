@@ -9,6 +9,17 @@
 
 namespace NKWebKit::WtfAbi {
 
+struct BinarySemaphore {
+    bool isSet{false};
+    std::uint8_t lock{0};
+    bool hasWaiters{false};
+};
+
+static_assert(sizeof(BinarySemaphore) == 3 && alignof(BinarySemaphore) == 1);
+static_assert(offsetof(BinarySemaphore, isSet) == 0);
+static_assert(offsetof(BinarySemaphore, lock) == 1);
+static_assert(offsetof(BinarySemaphore, hasWaiters) == 2);
+
 struct ParkResult {
     bool wasUnparked{false};
     std::intptr_t token{0};
@@ -272,5 +283,8 @@ WTF::TimeWithDynamicClockType APS5_VABI _ZNK3WTF7SecondsmiERKNS_24TimeWithDynami
 WTF::MonotonicTime APS5_VABI _ZNK3WTF7SecondsplENS_13MonotonicTimeE(const WTF::Seconds* self, WTF::MonotonicTime other);
 WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* self, WTF::WallTime other);
 WTF::MonotonicTime APS5_VABI _ZNK3WTF8WallTime24approximateMonotonicTimeEv(const WTF::WallTime* self);
+
+void APS5_VABI _ZN3WTF15BinarySemaphore6signalEv(NKWebKit::WtfAbi::BinarySemaphore* self);
+bool APS5_VABI _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockTypeE(NKWebKit::WtfAbi::BinarySemaphore* self, const WTF::TimeWithDynamicClockType& timeout);
 
 }

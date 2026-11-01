@@ -12096,10 +12096,6 @@ int APS5_VABI _ZN3JSC6JSLock12DropAllLocksC2ERNS_2VME() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF15BinarySemaphore6signalEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal11isUnderTestEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19173,10 +19169,6 @@ int APS5_VABI _ZN3WTF15AutomaticThreadD1Ev() {
 }
 
 int APS5_VABI _ZN3WTF15AutomaticThreadD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 

@@ -383,9 +383,11 @@ static void TestJscAndPal() {
 void TestAdditionalWtf();
 
 void TestParkingLot();
+void TestBinarySemaphore();
 
 int main() {
     TestParkingLot();
+    TestBinarySemaphore();
     TestAdditionalWtf();
     TestMemoryAllocations();
     TestAllocationBoundaries();
@@ -1163,4 +1165,50 @@ void TestParkingLot() {
     Require(UnparkCount(&address, 20) == 0);
     UnparkAll(&address);
     TestLockContention();
+}
+
+void TestBinarySemaphore() {
+    using NKWebKit::WtfAbi::BinarySemaphore;
+    constexpr auto signal = _ZN3WTF15BinarySemaphore6signalEv;
+    constexpr auto wait = _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockTypeE;
+    BinarySemaphore semaphore{};
+    for (auto clock : {ClockType::Monotonic, ClockType::Wall, ClockType::Approximate}) {
+        const auto past = Deadline(-1, clock);
+        Require(!wait(&semaphore, past));
+        signal(&semaphore);
+        signal(&semaphore);
+        Require(wait(&semaphore, past));
+        Require(!wait(&semaphore, past));
+        Require(!wait(&semaphore, Deadline(0.002, clock)));
+    }
+    auto until = [](auto predicate) {
+        const auto limit = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < limit) std::this_thread::yield();
+        Require(predicate());
+    };
+    for (unsigned i = 0; i < 24; ++i) {
+        BinarySemaphore shared{};
+        std::promise<bool> completed;
+        auto result = completed.get_future();
+        std::thread worker([&] { completed.set_value(wait(&shared, Deadline(5))); });
+        until([&] { return std::atomic_ref(shared.hasWaiters).load(); });
+        signal(&shared);
+        Require(result.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+        Require(result.get());
+        worker.join();
+        Require(!wait(&shared, Deadline(-1)));
+        Require(!shared.isSet && !shared.lock && !shared.hasWaiters);
+    }
+    BinarySemaphore contended{};
+    InlineLock(contended.lock);
+    std::promise<bool> completed;
+    auto result = completed.get_future();
+    std::thread worker([&] { completed.set_value(wait(&contended, Deadline(5))); });
+    until([&] { return std::atomic_ref(contended.lock).load() & 2; });
+    contended.isSet = true;
+    InlineUnlock(contended.lock);
+    Require(result.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+    Require(result.get());
+    worker.join();
+    Require(!wait(&contended, Deadline(-1)));
 }

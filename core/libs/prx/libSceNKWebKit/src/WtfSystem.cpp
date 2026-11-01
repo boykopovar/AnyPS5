@@ -174,6 +174,13 @@ void UnlockSlow(std::uint8_t* self, bool fair) {
         return;
     }
 }
+
+struct LockAdapter {
+    std::uint8_t* storage;
+    void lock() { LockSlow(storage); }
+    void unlock() { UnlockSlow(storage, false); }
+};
+
 }  // namespace
 
 extern "C" {
@@ -274,6 +281,46 @@ void APS5_VABI _ZN3WTF4Lock10unlockSlowEv(std::uint8_t* self) {
 void APS5_VABI _ZN3WTF4Lock13safepointSlowEv(std::uint8_t* self) {
     UnlockSlow(self, true);
     LockSlow(self);
+}
+
+}
+
+extern "C" {
+
+void APS5_VABI _ZN3WTF15BinarySemaphore6signalEv(NKWebKit::WtfAbi::BinarySemaphore* self) {
+    CheckAddress(self);
+    LockAdapter adapter{&self->lock};
+    std::unique_lock lock(adapter);
+    self->isSet = true;
+    std::atomic_ref hasWaiters(self->hasWaiters);
+    if (hasWaiters.load()) {
+        UnparkOne(&self->hasWaiters, [&](UnparkResult result) -> std::intptr_t {
+            if (!result.mayHaveMoreThreads) hasWaiters.store(false);
+            return 0;
+        });
+    }
+}
+
+bool APS5_VABI _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockTypeE(NKWebKit::WtfAbi::BinarySemaphore* self, const WTF::TimeWithDynamicClockType& timeout) {
+    CheckAddress(self);
+    LockAdapter adapter{&self->lock};
+    std::unique_lock lock(adapter);
+    while (!self->isSet) {
+        bool notified = false;
+        if (timeout.m_value < _ZNK3WTF24TimeWithDynamicClockType16nowWithSameClockEv(&timeout).m_value) {
+            lock.unlock();
+        } else {
+            notified = Park(&self->hasWaiters, [&] {
+                std::atomic_ref(self->hasWaiters).store(true);
+                return true;
+            }, [&] { lock.unlock(); }, timeout).wasUnparked;
+        }
+        lock.lock();
+        if (!notified) break;
+    }
+    const bool satisfied = self->isSet;
+    if (satisfied) self->isSet = false;
+    return satisfied;
 }
 
 }

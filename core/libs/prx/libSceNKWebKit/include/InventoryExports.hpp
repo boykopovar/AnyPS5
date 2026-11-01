@@ -1753,7 +1753,6 @@ int APS5_VABI _ZN3WTF15AutomaticThread9isWaitingERKNS_14AbstractLockerE();
 int APS5_VABI _ZN3WTF15AutomaticThreadD0Ev();
 int APS5_VABI _ZN3WTF15AutomaticThreadD1Ev();
 int APS5_VABI _ZN3WTF15AutomaticThreadD2Ev();
-int APS5_VABI _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockTypeE();
 int APS5_VABI _ZN3WTF15FilePrintStreamD0Ev();
 int APS5_VABI _ZN3WTF15FilePrintStreamD1Ev();
 int APS5_VABI _ZN3WTF15FilePrintStreamD2Ev();
