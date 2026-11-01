@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -84,8 +85,8 @@ public:
 
     ~ResidentMemory() {
         const auto freeMemory = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
-        for (auto& slab : slabs) freeMemory(context.device, slab->memory, nullptr);
-        freeMemory(context.device, zero, nullptr);
+        for (auto& slab : slabs) MemoryAccounting::Free(freeMemory, context.device, slab->memory);
+        MemoryAccounting::Free(freeMemory, context.device, zero);
     }
 
     ResidentMemory(const ResidentMemory&) = delete;
@@ -132,7 +133,7 @@ public:
         slab->free.push_back(index);
         if (slab->free.size() != SlabBlocks) return;
         const auto found = std::find_if(slabs.begin(), slabs.end(), [&](const auto& held) { return held.get() == slab; });
-        context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, slab->memory, nullptr);
+        MemoryAccounting::Free(context, slab->memory);
         slabs.erase(found);
     }
 
@@ -144,7 +145,7 @@ private:
         info.memoryTypeIndex = type;
         if (context.bufferPool != nullptr) return context.bufferPool->AllocateMemory(info, operation);
         VkDeviceMemory memory = VK_NULL_HANDLE;
-        if (const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &info, nullptr, &memory); result != VK_SUCCESS) fail(operation, result);
+        if (const auto result = MemoryAccounting::Allocate(context, info, "heap mirror", &memory); result != VK_SUCCESS) fail(operation, result);
         return memory;
     }
 
