@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import performance_compare
 
 UNBLOCKS = re.compile(r'Unblocks:[ \t]*([^\r\n]*(?:\r?\n[ \t]*[-*][ \t]+(?!\[[ xX]\])[^\r\n]*)*)')
+CHECKLIST_UNBLOCKS = re.compile(r"^[ \t]*-[ \t]*\[[ xX]\][ \t]*Unblocks:[ \t]*([^\r\n]*)", re.M)
 TITLE_ID = re.compile(r"(?<![A-Za-z0-9])[A-Z]{4}\d{5}(?!\d)")
 NONE = re.compile(r"[-*_ \t\r\n]*none\b", re.I)
 PERF = re.compile(r"perf(\(|!?:)")
@@ -39,7 +40,9 @@ def strip_comments(body):
 
 
 def title_ids(body):
-    match = UNBLOCKS.search(strip_comments(body))
+    body = strip_comments(body)
+    checklist = CHECKLIST_UNBLOCKS.search(body)
+    match = checklist if checklist and checklist.group(1).strip() else UNBLOCKS.search(body)
     return set(TITLE_ID.findall(match.group(1))) if match and not NONE.match(match.group(1)) else set()
 
 
