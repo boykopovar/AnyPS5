@@ -175,6 +175,27 @@ class EnvReferenceTests(unittest.TestCase):
                     self.assertIn(f"| `{name}` | {kind} |", output.getvalue())
                     self.assertIn(f"| {default} |", output.getvalue())
 
+    def test_partial_concatenated_literal_names_are_not_invented(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        for reader in ("EnvInt", "kibSetting", "configured", "PipelineSwitch", "environmentCount"):
+            with self.subTest(reader=reader):
+                source.write_text(f'auto count = {reader}("APS5_BASE" "_COUNT", 16);', encoding="utf-8")
+                self.assertEqual(env_reference.reads([root / "core"]), {})
+
+    def test_numeric_defaults_never_report_partial_literals(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        cases = (("EnvInt", "0x40", "0x40"), ("configured", "1'024u", "1'024"),
+                 ("kibSetting", "0b1000", "0b1000"), ("environmentCount", "64 + 2", ""),
+                 ("EnvInt", "-17LL", "-17"), ("EnvInt", "DEFAULT_COUNT", ""),
+                 ("EnvInt", "flag ? 64 : 2", ""))
+        for reader, value, expected in cases:
+            with self.subTest(reader=reader, value=value):
+                source.write_text(f'auto count = {reader}("APS5_COUNT", {value});\n', encoding="utf-8")
+                found = env_reference.reads([root / "core"])
+                self.assertEqual(found["APS5_COUNT"][0][2:], ("integer", expected))
+
     def test_whitespace_before_parentheses_preserves_names_kinds_and_defaults(self):
         root = self.fixture()
         source = root / "core" / "Sample.cpp"
