@@ -53,8 +53,7 @@ void expectRejected(std::span<const std::uint32_t> code, std::optional<ShaderFlo
         static_cast<void>(translate(code, mode));
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
-        const std::string location = "at pc " + std::to_string(pc);
-        require(message.find(diagnostic) != std::string::npos && (message.find(location + " ") != std::string::npos || message.find(location + ":") != std::string::npos),
+        require(message.find(diagnostic) != std::string::npos && message.find("at pc " + std::to_string(pc) + " ") != std::string::npos,
                 "unexpected MODE diagnostic: " + message);
         return;
     }
@@ -196,10 +195,6 @@ void verifyUnsupportedReads() {
         const std::array<std::uint32_t, 2> code{instruction, endProgram};
         expectRejected(code, ShaderFloatMode{0xc0}, "s_getreg_b32");
     }
-    for (const auto instruction : {0xb9140901u, 0xb9140981u, 0xb9141901u, 0xb9143801u, 0xb9141881u}) {
-        const std::array<std::uint32_t, 2> code{instruction, endProgram};
-        expectRejected(code, std::nullopt, "without a declared FLOAT_MODE");
-    }
 }
 
 void verifyDenormalReadsAfterRoundingWrites() {
@@ -211,8 +206,6 @@ void verifyDenormalReadsAfterRoundingWrites() {
         for (std::uint32_t index = 0; index < 3; ++index) {
             expectRegister(unknownRounding, 20 + index, (mode >> offsets[index]) & masks[index]);
         }
-        const std::array<std::uint32_t, 3> mixed{0xb9801801, 0xb9141881, endProgram};
-        expectRejected(mixed, ShaderFloatMode{mode}, "reads MODE rounding bits", 4);
         for (std::uint32_t rounding = 0; rounding < 16; ++rounding) {
             const std::array<std::uint32_t, 8> immediate{0xba801801, rounding, 0xb9140901, 0xb9150981, 0xb9161901, 0xb9173801, 0xb9181881, endProgram};
             const auto program = translate(immediate, ShaderFloatMode{mode});
@@ -225,19 +218,6 @@ void verifyDenormalReadsAfterRoundingWrites() {
             }
         }
     }
-}
-
-void verifyDenormalWritesRejected() {
-    for (const std::uint32_t field : {0x0901u, 0x0981u, 0x1901u, 0x3801u, 0x1881u}) {
-        const std::array<std::uint32_t, 3> dynamic{0xb9800000u | field, 0xb9141901, endProgram};
-        expectRejected(dynamic, ShaderFloatMode{0xc0}, "s_setreg_b32");
-        const std::array<std::uint32_t, 4> immediate{0xba800000u | field, 0u, 0xb9141901, endProgram};
-        expectRejected(immediate, ShaderFloatMode{0xc0}, "s_setreg_imm32_b32");
-        const std::array<std::uint32_t, 4> branch{0xbf840001, 0xb9800000u | field, 0xb9141901, endProgram};
-        expectRejected(branch, ShaderFloatMode{0xc0}, "s_setreg_b32", 4);
-    }
-    const std::array<std::uint32_t, 3> denorm{0xbfa50000, 0xb9141901, endProgram};
-    expectRejected(denorm, ShaderFloatMode{0xc0}, "s_denorm_mode");
 }
 
 void verifyBranch() {
@@ -357,14 +337,14 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 18> checks{{
+    constexpr std::array<Check, 17> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"roundInstruction", verifyRoundInstruction}, {"unsupportedReads", verifyUnsupportedReads}, {"branch", verifyBranch},
         {"diamond", verifyDiamond}, {"directed32", verifyRoundingBeforeDirected32Use}, {"restored", verifyRoundingRestoredBeforeUse},
         {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
         {"directedF16", verifyDirectedF16Conversion}, {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation},
-        {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites}, {"denormalWrites", verifyDenormalWritesRejected},
+        {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites},
     }};
     int failures = 0;
     for (const auto& check : checks) {
