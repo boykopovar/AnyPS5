@@ -2170,7 +2170,7 @@ DinkumwareFloatCharacteristics _Ldbl_nid_postfix {18, 64, 4932, 16384, -4931, -1
     {0, 0, 0, 0x8000, 0x3fc0}, {0xffff, 0xffff, 0xffff, 0xffff, 0x7ffe}, {0, 0, 0, 0x8000, 0x0001}};
 
 static std::mutex g_randLock;
-static std::uint64_t g_randState = 1;
+std::uint64_t _Randseed_nid_postfix = 1;
 
 static std::uint32_t MinimalStandardNext(std::int32_t state) {
     if (state == 0) return 0x2ae1b767u;
@@ -2184,8 +2184,8 @@ static std::uint32_t MinimalStandardNext(std::int32_t state) {
 
 int APS5_VABI rand_nid_postfix() {
     std::lock_guard lock(g_randLock);
-    g_randState = g_randState * 0x5851f42d4c957f2dull + 1u;
-    return static_cast<int>((g_randState >> 32u) & 0x3fffffffu);
+    _Randseed_nid_postfix = _Randseed_nid_postfix * 0x5851f42d4c957f2dull + 1u;
+    return static_cast<int>((_Randseed_nid_postfix >> 32u) & 0x3fffffffu);
 }
 
 int APS5_VABI rand_r_nid_postfix(unsigned int* state) {
@@ -2196,7 +2196,7 @@ int APS5_VABI rand_r_nid_postfix(unsigned int* state) {
 
 void APS5_VABI srand_nid_postfix(unsigned int seed) {
     std::lock_guard lock(g_randLock);
-    g_randState = seed;
+    _Randseed_nid_postfix = seed;
 }
 
 int APS5_VABI __fpclassifyd_nid_postfix(double value) {
