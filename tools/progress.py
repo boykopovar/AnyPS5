@@ -342,10 +342,10 @@ def render(libraries, shaders):
     return "\n".join(parts)
 
 
-def badge(label, data):
+def badge(label, data, value=None, color=None):
     percent = data["percent"]
-    color = "#4c1" if percent >= 90 else "#97ca00" if percent >= 60 else "#dfb317" if percent >= 30 else "#fe7d37"
-    value = f"{percent}%"
+    color = color or ("#4c1" if percent >= 90 else "#97ca00" if percent >= 60 else "#dfb317" if percent >= 30 else "#fe7d37")
+    value = value or f"{percent}%"
     left, right = 10 + 7 * len(label), 10 + 7 * len(value)
     width = left + right
     return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="20" role="img" aria-label="{label}: {value}">'
