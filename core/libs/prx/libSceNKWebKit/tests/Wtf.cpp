@@ -1007,6 +1007,43 @@ void TestURLParsing() {
         Case{"http://bad%zz/", "", nullptr},
         Case{"http://%FF/", "", nullptr},
         Case{"http://%65xample.com/", "", "http://example.com/"},
+        Case{"http://[::]/", "", "http://[::]/"},
+        Case{"http://[0:0:0:0:0:0:0:1]/", "", "http://[::1]/"},
+        Case{"ws://[2001:0DB8:0:0:1:0:0:1]:8080/a?b#c", "", "ws://[2001:db8::1:0:0:1]:8080/a?b#c"},
+        Case{"https://u:p@[2001:db8::1]:443/", "", "https://u:p@[2001:db8::1]/"},
+        Case{"http://[1:2:3:4:5:6:7:8]/", "", "http://[1:2:3:4:5:6:7:8]/"},
+        Case{"http://[1:2:3:4:0:6:7:8]/", "", "http://[1:2:3:4:0:6:7:8]/"},
+        Case{"ftp://[1:2:3:4:5:6:0:0]:21", "", "ftp://[1:2:3:4:5:6::]/"},
+        Case{"http://[::ffff:192.0.2.128]/", "", "http://[::ffff:c000:280]/"},
+        Case{"http://[1:2:3:4:5:6:192.0.2.1]/", "", "http://[1:2:3:4:5:6:c000:201]/"},
+        Case{"http://[::192.0.2.1]:65535/", "", "http://[::c000:201]:65535/"},
+        Case{"http://[1::2:]/", "", "http://[1::2]/"},
+        Case{"../c", "http://[::1]:81/a/b", "http://[::1]:81/c"},
+        Case{"//[::2]:80", "http://[::1]/", "http://[::2]/"},
+        Case{"http://[]/", "", nullptr},
+        Case{"http://[1]/", "", nullptr},
+        Case{"http://[:::]/", "", nullptr},
+        Case{"http://[1::2::3]/", "", nullptr},
+        Case{"http://[:1:2:3:4:5:6:7]/", "", nullptr},
+        Case{"http://[1:2:3:4:5:6:7:]/", "", nullptr},
+        Case{"http://[1:2:3:4:5:6:7:8:]/", "", nullptr},
+        Case{"http://[1:2:3:4:5:6:7:8:9]/", "", nullptr},
+        Case{"http://[1:2:3:4:5:6:7::8]/", "", nullptr},
+        Case{"http://[12345::]/", "", nullptr},
+        Case{"http://[gg::]/", "", nullptr},
+        Case{"http://[fe80::1%25eth0]/", "", nullptr},
+        Case{"http://[::ffff:192.00.2.1]/", "", nullptr},
+        Case{"http://[::ffff:256.0.2.1]/", "", nullptr},
+        Case{"http://[::ffff:192.2.1]/", "", nullptr},
+        Case{"http://[::ffff:192.0.2.1.3]/", "", nullptr},
+        Case{"http://[::ffff:0x7f.0.0.1]/", "", nullptr},
+        Case{"http://[::ffff:192.0.2.1:]/", "", nullptr},
+        Case{"http://[1:2:3:4::192.0.2.1]/", "", nullptr},
+        Case{"http://[::1", "", nullptr},
+        Case{"http://[::1]extra/", "", nullptr},
+        Case{"http://[::1]:65536/", "", nullptr},
+        Case{"http://[::1]:x/", "", nullptr},
+        Case{"http://[::1]]/", "", nullptr},
         Case{"http://127.1/", "", "http://127.0.0.1/"},
         Case{"http://0x7f.01/", "", "http://127.0.0.1/"},
         Case{"http://2130706433/", "", "http://127.0.0.1/"},
@@ -1061,6 +1098,9 @@ void TestURLParsing() {
         const auto scheme = href.find(':');
         Check((result.bits >> 6) == scheme);
         Check(ViewText(URLProtocol(&result)) == href.substr(0, scheme));
+        const auto bracket = href.find('[');
+        if (bracket != std::string::npos && href[scheme + 1] == '/' && bracket < href.find('/', scheme + 3))
+            Check(ViewText(URLHost(&result)) == href.substr(bracket, href.find(']', bracket) - bracket + 1));
         const auto pathStart = result.hostEnd + ((result.bits >> 3) & 7);
         Check(ViewText(URLPath(&result)) == href.substr(pathStart, result.pathEnd - pathStart));
         Check(ViewText(URLQuery(&result)) == href.substr(result.pathEnd, result.queryEnd - result.pathEnd));

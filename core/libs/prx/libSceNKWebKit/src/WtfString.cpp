@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <vector>
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstring>
 #include <limits>
@@ -1132,6 +1133,88 @@ bool URLHost(std::u16string_view input, std::string& host) {
     return true;
 }
 
+bool URLIPv6(std::u16string_view text, std::string& host) {
+    if (text.empty()) return false;
+    std::array<std::uint16_t, 8> pieces{};
+    std::size_t count = 0;
+    std::optional<std::size_t> compression;
+    if (text.starts_with(u":") && !text.starts_with(u"::")) return false;
+    if (text.starts_with(u"::")) {
+        text.remove_prefix(2);
+        compression = ++count;
+    }
+    while (!text.empty()) {
+        if (count == pieces.size()) return false;
+        if (text.front() == ':') {
+            if (compression) return false;
+            text.remove_prefix(1);
+            compression = ++count;
+            continue;
+        }
+        if (text.find('.') != std::u16string_view::npos && text.find(':') == std::u16string_view::npos) {
+            if (count != 6 && !(compression && count < 5)) return false;
+            std::uint32_t address = 0;
+            for (unsigned i = 0; i < 4; ++i) {
+                const auto dot = text.find('.');
+                const auto part = text.substr(0, dot);
+                if (part.empty() || part.size() > 3 || (part.size() > 1 && part.front() == '0')) return false;
+                unsigned number = 0;
+                for (char16_t unit : part) {
+                    if (unit < '0' || unit > '9') return false;
+                    number = number * 10 + unit - '0';
+                }
+                if (number > 255 || (i == 3) != (dot == std::u16string_view::npos)) return false;
+                address = (address << 8) | number;
+                text.remove_prefix(part.size() + (i < 3));
+            }
+            pieces[count++] = static_cast<std::uint16_t>(address >> 16);
+            pieces[count++] = static_cast<std::uint16_t>(address);
+            break;
+        }
+        const auto colon = text.find(':');
+        const auto part = text.substr(0, colon);
+        if (part.empty() || part.size() > 4) return false;
+        unsigned number = 0;
+        for (char16_t unit : part) {
+            const int digit = unit < 128 ? URLHex(static_cast<char>(unit)) : -1;
+            if (digit < 0) return false;
+            number = number * 16 + digit;
+        }
+        pieces[count++] = static_cast<std::uint16_t>(number);
+        text.remove_prefix(part.size());
+        if (!text.empty()) {
+            if (count == pieces.size()) return false;
+            text.remove_prefix(1);
+        }
+    }
+    if (compression) {
+        auto destination = pieces.size();
+        while (count > *compression) std::swap(pieces[--destination], pieces[--count]);
+    } else if (count != pieces.size()) return false;
+    std::size_t longest = 0;
+    std::size_t start = pieces.size();
+    for (std::size_t i = 0; i < pieces.size();) {
+        if (pieces[i]) { ++i; continue; }
+        const auto begin = i;
+        while (i < pieces.size() && !pieces[i]) ++i;
+        if (i - begin > 1 && i - begin > longest) { start = begin; longest = i - begin; }
+    }
+    host = "[";
+    for (std::size_t i = 0; i < pieces.size();) {
+        if (i == start) {
+            host += "::";
+            i += longest;
+            continue;
+        }
+        if (i && host.back() != ':') host.push_back(':');
+        char buffer[4];
+        const auto converted = std::to_chars(buffer, buffer + sizeof(buffer), pieces[i++], 16);
+        host.append(buffer, converted.ptr);
+    }
+    host.push_back(']');
+    return true;
+}
+
 struct ParsedURL {
     std::string scheme;
     std::string user;
@@ -1153,9 +1236,14 @@ bool URLAuthority(std::u16string_view text, ParsedURL& value) {
         if (colon != std::u16string_view::npos) value.password = EncodeURL(credentials.substr(colon + 1), 2);
         text.remove_prefix(at + 1);
     }
-    if (text.starts_with(u"[")) throw std::runtime_error("WTF::URL: IPv6 host parsing is not implemented");
     auto colon = text.find(':');
-    if (!URLHost(text.substr(0, colon), value.host)) return false;
+    if (text.starts_with(u"[")) {
+        const auto end = text.find(']');
+        if (end == std::u16string_view::npos || !URLIPv6(text.substr(1, end - 1), value.host)) return false;
+        colon = end + 1;
+        if (colon == text.size()) colon = std::u16string_view::npos;
+        else if (text[colon] != ':') return false;
+    } else if (!URLHost(text.substr(0, colon), value.host)) return false;
     if (colon != std::u16string_view::npos && colon + 1 < text.size()) {
         unsigned port = 0;
         for (char16_t unit : text.substr(colon + 1)) {
