@@ -175,6 +175,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_FRAME_CAPTURE` | string | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` |  | directory in which the driver records a few frames of the title's driver calls and guest memory for `agc_frame_replay` |
 | `APS5_FRAME_CAPTURE_AT_FLIP` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` | 0 | frame boundary (CPU flip or submission that flips) at which the frame capture starts when no trigger file is set; 0 and 1 both start at the first boundary; a value that is not a number fails |
 | `APS5_FRAME_CAPTURE_FRAMES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` | 10 | number of frame boundaries the frame capture records |
+| `APS5_FRAME_CAPTURE_MIN_FREE_BYTES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` | 4294967296 | free bytes the capture volume must keep or the frame capture stops with a warning; the tests set 0 so a nearly full runner disk cannot fail them |
 | `APS5_FRAME_CAPTURE_TRIGGER` | string | `core/libs/prx/libSceAgcDriver/Execution/src/FrameRecorder.cpp` |  | file whose appearance starts the frame capture at the next frame boundary; a number in it replaces the frame count |
 | `APS5_FULL_BARRIERS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | records every barrier instead of merging redundant ones |
 | `APS5_GPU_CHECKPOINTS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | attaches device diagnostic checkpoints through VK_NV_device_diagnostic_checkpoints, or buffer markers through VK_AMD_buffer_marker on a device without it |
@@ -458,6 +459,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_TRACE_HOST_IMPORT` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/GuestBufferMemory.cpp` |  | traces host-import mapping failures |
 | `APS5_TRACE_INDIRECT_DRAWS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPrecheck.cpp` |  | prints indirect draw packets that reach the precheck |
 | `APS5_TRACE_LATE_LABELS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | prints how late labels were trusted or refused |
+| `APS5_TRACE_MEMORY_BUDGET` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/MemoryAccounting.cpp` |  | tracks Vulkan allocation bytes by heap and category, separates active and retained memory, and reports dynamic storage-cache budget terms at most every 10 seconds |
 | `APS5_TRACE_PREPARATION_WAIT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderRegistry.cpp` |  | prints where a demanded shader preparation sat in the queue |
 | `APS5_TRACE_QUERY` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/GuestMemory.cpp` |  | on Windows, prints every 16th page query with its cost |
 | `APS5_TRACE_RESOURCE_KEY_MISSES` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | reports shader-resource cache key misses |

@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -19,7 +20,7 @@ PresentationScaler::PresentationScaler(const Graphics::Context& context, VkForma
 PresentationScaler::~PresentationScaler() {
     release();
     if (blackImage != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, blackImage, nullptr);
-    if (blackMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, blackMemory, nullptr);
+    if (blackMemory != VK_NULL_HANDLE) Graphics::MemoryAccounting::Free(context, blackMemory);
 }
 
 void PresentationScaler::release() noexcept {
@@ -198,11 +199,11 @@ void PresentationScaler::RecordLetterbox(VkCommandBuffer commands, std::uint32_t
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Graphics::Check(context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &memory), "vkAllocateMemory letterbox");
+            Graphics::Check(Graphics::MemoryAccounting::Allocate(context, allocation, "presentation image", &memory), "vkAllocateMemory letterbox");
             Graphics::Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory letterbox");
         } catch (...) {
             context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-            if (memory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+            if (memory != VK_NULL_HANDLE) Graphics::MemoryAccounting::Free(context, memory);
             throw;
         }
         blackImage = image;
