@@ -307,6 +307,12 @@ void* APS5_VABI memset_nid_postfix(void* s, int c, size_t n) {
     return std::memset(s, c, n);
 }
 
+void* APS5_VABI memset_explicit_nid_postfix(void* destination, int value, size_t count) {
+    auto* bytes = static_cast<volatile unsigned char*>(destination);
+    for (size_t index = 0; index < count; ++index) bytes[index] = static_cast<unsigned char>(value);
+    return destination;
+}
+
 void APS5_VABI bzero_nid_postfix(void* destination, size_t count) {
     std::memset(destination, 0, count);
 }
