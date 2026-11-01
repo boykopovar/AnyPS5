@@ -74,6 +74,7 @@ private:
         std::vector<Range> reads;
         bool draw = false;
         bool store = false;
+        std::uint64_t storeSerial = 0;
     };
     DrawPipeline() = default;
     void enqueue(Item item);
@@ -156,6 +157,7 @@ private:
     std::condition_variable idle;
     std::deque<Job> jobs;
     std::deque<Pending> pending;
+    std::deque<std::uint64_t> storeSerials;
     std::vector<Job> ran;
     std::exception_ptr failure;
     bool running = false;
