@@ -17,6 +17,7 @@
 #include <mach/mach_vm.h>
 #endif
 #include <cstdio>
+#include <cstdlib>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -55,6 +56,11 @@ constexpr std::uintptr_t ArenaStart = GuestArenaOffset == 0 ? 0x10000ull : Defau
 constexpr std::uintptr_t SystemReservedStart = 0x00000007FFFFC000ull + GuestArenaOffset;
 constexpr std::uintptr_t SystemReservedEnd = 0x0000001000000000ull + GuestArenaOffset;
 constexpr std::uintptr_t ApplicationAreaEnd = 0x000000FC00000000ull + GuestArenaOffset;
+
+#ifdef __EMSCRIPTEN__
+constexpr std::size_t EmscriptenArenaAlignment = std::size_t{1} << 32;
+constexpr std::size_t EmscriptenArenaBytes = std::size_t{8} << 30;
+#endif
 
 std::uintptr_t alignUp(std::uintptr_t value, std::size_t alignment) {
     return (value + alignment - 1) & ~(static_cast<std::uintptr_t>(alignment) - 1);
@@ -152,6 +158,11 @@ public:
         std::lock_guard lock(_lock);
         const auto start = reinterpret_cast<std::uintptr_t>(pointer);
         const auto end = start + bytes;
+#ifdef __EMSCRIPTEN__
+        NoteDirtyLocked(start, end);
+#endif
+        _occupiedPrefixEnd = std::min(_occupiedPrefixEnd, std::max(_base, start));
+        _occupiedDefaultPrefixEnd = std::min(_occupiedDefaultPrefixEnd, std::max(DefaultAllocationStart, start));
         auto it = _used.upper_bound(start);
         if (it != _used.begin()) --it;
         while (it != _used.end() && it->first < end) {
@@ -172,7 +183,12 @@ public:
 
 private:
     Arena() {
-#if defined(__linux__) || defined(__APPLE__)
+#if defined(__EMSCRIPTEN__)
+        void* const region = std::aligned_alloc(EmscriptenArenaAlignment, EmscriptenArenaBytes);
+        if (region == nullptr) throw std::runtime_error("guest arena: cannot reserve the guest range in WebAssembly memory");
+        _base = reinterpret_cast<std::uintptr_t>(region);
+        _end = _base + EmscriptenArenaBytes;
+#elif defined(__linux__) || defined(__APPLE__)
         SeedHostUsedRanges();
 #elif defined(_WIN32)
         _writeWatched = std::getenv("APS5_NO_WRITE_WATCH") == nullptr;
@@ -308,6 +324,46 @@ private:
     }
 #endif
 
+#ifdef __EMSCRIPTEN__
+    void NoteDirtyLocked(std::uintptr_t start, std::uintptr_t end) {
+        auto it = _dirty.upper_bound(start);
+        if (it != _dirty.begin() && std::prev(it)->second >= start) --it;
+        while (it != _dirty.end() && it->first <= end) {
+            start = std::min(start, it->first);
+            end = std::max(end, it->second);
+            it = _dirty.erase(it);
+        }
+        _dirty.emplace(start, end);
+    }
+
+public:
+    void NoteDirty(const void* pointer, std::size_t bytes) {
+        std::lock_guard lock(_lock);
+        const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+        NoteDirtyLocked(start, start + bytes);
+    }
+
+    void ZeroDirty(void* pointer, std::size_t bytes) {
+        std::lock_guard lock(_lock);
+        const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+        const auto end = start + bytes;
+        auto it = _dirty.upper_bound(start);
+        if (it != _dirty.begin() && std::prev(it)->second > start) --it;
+        while (it != _dirty.end() && it->first < end) {
+            const auto [dirtyStart, dirtyEnd] = *it;
+            const auto first = std::max(dirtyStart, start);
+            const auto last = std::min(dirtyEnd, end);
+            std::memset(reinterpret_cast<void*>(first), 0, last - first);
+            it = _dirty.erase(it);
+            if (dirtyStart < first) _dirty.emplace(dirtyStart, first);
+            if (dirtyEnd > last) it = _dirty.emplace(last, dirtyEnd).first;
+        }
+    }
+
+private:
+    std::map<std::uintptr_t, std::uintptr_t> _dirty;
+#endif
+
     std::mutex _lock;
     std::map<std::uintptr_t, std::uintptr_t> _used;
     std::vector<std::pair<std::uintptr_t, std::uintptr_t>> _holes;
@@ -317,13 +373,16 @@ private:
         if (alignment == 0 || (alignment & (alignment - 1)) != 0) throw std::invalid_argument("invalid guest arena alignment");
     }
 
-    std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) const {
-        std::uintptr_t candidate = alignUp(hint == 0 ? DefaultAllocationStart : std::max(_base, hint), alignment);
+    std::uintptr_t FindAtOrAbove(std::uintptr_t hint, std::size_t bytes, std::size_t alignment) {
+        const auto first = hint == 0 ? DefaultAllocationStart : std::max(_base, hint);
+        auto& prefixEnd = first >= DefaultAllocationStart ? _occupiedDefaultPrefixEnd : _occupiedPrefixEnd;
+        std::uintptr_t candidate = alignUp(bytes == 0 ? first : std::max(prefixEnd, first), alignment);
         auto it = _used.upper_bound(candidate);
         if (it != _used.begin() && std::prev(it)->second > candidate) --it;
         for (; it != _used.end(); ++it) {
             const auto& [start, end] = *it;
             if (candidate <= _end && bytes <= _end - candidate && candidate + bytes <= start) break;
+            if (start <= prefixEnd) prefixEnd = std::max(prefixEnd, end);
             candidate = std::max(candidate, alignUp(end, alignment));
         }
         if (candidate > _end || bytes > _end - candidate) return 0;
@@ -338,6 +397,8 @@ private:
 
     std::uintptr_t _base = 0;
     std::uintptr_t _end = 0;
+    std::uintptr_t _occupiedPrefixEnd = ArenaStart;
+    std::uintptr_t _occupiedDefaultPrefixEnd = DefaultAllocationStart;
     bool _writeWatched = false;
 
 public:
@@ -353,6 +414,9 @@ public:
 
 #ifndef _WIN32
     void ReleaseHostRegion(const void* pointer, std::size_t bytes) {
+#ifdef __EMSCRIPTEN__
+        throw std::runtime_error("guest arena: host region release is unsupported in WebAssembly");
+#else
         Release(pointer, bytes);
         std::lock_guard lock(_lock);
         const auto start = reinterpret_cast<std::uintptr_t>(pointer);
@@ -368,6 +432,7 @@ public:
         }
         _hostRegions = std::move(kept);
         static_cast<void>(ReserveNoReplace(start, bytes));
+#endif
     }
 #endif
 };
@@ -614,6 +679,24 @@ void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_
 void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
     if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
     if (PlaceAt(pointer, bytes, 0x01) == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "guest arena reset failed");
+}
+#elif defined(__EMSCRIPTEN__)
+void GuestArenaSetProtection_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uint32_t protection) {
+    static_cast<void>(protection);
+    if (!Arena::Get().Contains(reinterpret_cast<void*>(address), bytes)) throw OutsideArena("set protection", reinterpret_cast<void*>(address), bytes);
+}
+
+void GuestArenaCommit_nid_postfix(void* pointer, std::size_t bytes, std::uint32_t protection, std::size_t granule) {
+    static_cast<void>(protection);
+    static_cast<void>(granule);
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("commit", pointer, bytes);
+    Arena::Get().MarkUsedForCommit(pointer, bytes);
+    Arena::Get().ZeroDirty(pointer, bytes);
+}
+
+void GuestArenaReset_nid_postfix(void* pointer, std::size_t bytes) {
+    if (!Arena::Get().Contains(pointer, bytes)) throw OutsideArena("reset", pointer, bytes);
+    Arena::Get().NoteDirty(pointer, bytes);
 }
 #endif
 

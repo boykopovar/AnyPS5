@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -98,6 +99,12 @@ int main(int argc, char** argv) {
     std::memset(expected + 0x50, 0xff, 4);
     Require(std::memcmp(wide, expected, sizeof(wide)) == 0);
     Require(sceKernelGetAppInfo(self, nullptr) == 0);
+    errno = 71;
+    Require(sceKernelGetAppInfo(self, reinterpret_cast<void*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceKernelGetAppInfo(0, reinterpret_cast<void*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 71);
     std::filesystem::current_path(previous);
     std::filesystem::remove_all(root);
     const auto empty = std::filesystem::temp_directory_path() / ("guest_app_info_empty_" + std::to_string(self));
@@ -113,6 +120,7 @@ int main(int argc, char** argv) {
     std::filesystem::remove_all(sfo);
 
     Require(sceKernelUuidCreate(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelUuidCreate(reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::uint32_t first[4]{};
     std::uint32_t second[4]{};
     Require(sceKernelUuidCreate(first) == 0 && sceKernelUuidCreate(second) == 0);
@@ -120,6 +128,7 @@ int main(int argc, char** argv) {
     Require(std::memcmp(first, second, sizeof(first)) != 0);
 
     Require(sceKernelCreateUuidV4(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateUuidV4(reinterpret_cast<std::uint8_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::uint8_t third[16]{};
     std::uint8_t fourth[16]{};
     Require(sceKernelCreateUuidV4(third) == 0 && sceKernelCreateUuidV4(fourth) == 0);

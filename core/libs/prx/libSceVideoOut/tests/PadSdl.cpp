@@ -7,15 +7,24 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include <array>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <source_location>
+#include <string>
+#include <thread>
 #include <vector>
 #undef main
 
 namespace {
 
-static void Require(bool condition) {
+static void Require(bool condition, std::source_location where = std::source_location::current()) {
     if (!condition) {
+        std::fprintf(stderr, "pad_sdl: check failed at line %u\n", static_cast<unsigned>(where.line()));
         std::abort();
     }
 }
@@ -113,6 +122,89 @@ void HandOff(PadInput& padInput, const DisplayWindow& window, int device) {
     ModalDialogSetPresenter_nid_postfix(false);
 }
 
+void InjectedAnswer(PadInput& padInput, const DisplayWindow& window, const std::filesystem::path& commandPath) {
+    constexpr std::uint32_t Cross = 0x4000;
+    constexpr std::uint32_t Intercepted = 0x80000000;
+    ModalDialogSetPresenter_nid_postfix(true);
+    ModalDialogRequest request;
+    request.message = u"Create new data?";
+    request.buttons = {u"OK"};
+    Require(ModalDialogOpen_nid_postfix(request));
+    padInput.Update(window);
+    Require(Pad::ReadState(0).buttons == Intercepted);
+    std::ofstream(commandPath) << "1 16384 400\n";
+    std::size_t chosen = 9;
+    ModalDialogState state = ModalDialogState::Showing;
+    for (int frame = 0; frame < 200 && state == ModalDialogState::Showing; ++frame) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        padInput.Update(window);
+        Require(Pad::ReadState(0).buttons == Intercepted);
+        state = ModalDialogPoll_nid_postfix(chosen);
+    }
+    Require(state == ModalDialogState::Answered && chosen == 0);
+    padInput.Update(window);
+    Require(Pad::ReadState(0).buttons == 0);
+    for (int frame = 0; frame < 50; ++frame) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        padInput.Update(window);
+        Require(Pad::ReadState(0).buttons == 0);
+    }
+    std::ofstream(commandPath) << "2 16384 400\n";
+    bool reached = false;
+    for (int frame = 0; frame < 200 && !reached; ++frame) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        padInput.Update(window);
+        reached = Pad::ReadState(0).buttons == Cross;
+    }
+    Require(reached);
+    ModalDialogReset_nid_postfix();
+    ModalDialogSetPresenter_nid_postfix(false);
+}
+
+std::uint32_t TitleButtons(bool useRead) {
+    if (!useRead) return Pad::ReadState(0).buttons;
+    std::array<PadData, 8> data{};
+    const int count = Pad::Read(data.data(), static_cast<int>(data.size()), 0);
+    Require(count > 0);
+    return data[static_cast<std::size_t>(count - 1)].buttons;
+}
+
+void InjectedPressAfterUnreadRelease(PadInput& padInput, const DisplayWindow& window, const std::filesystem::path& commandPath, std::uint64_t sequence, bool useRead) {
+    constexpr std::uint32_t Cross = 0x4000;
+    constexpr std::uint32_t Intercepted = 0x80000000;
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    padInput.Update(window);
+    Require(TitleButtons(useRead) == 0);
+    ModalDialogSetPresenter_nid_postfix(true);
+    ModalDialogRequest request;
+    request.message = u"Create new data?";
+    request.buttons = {u"OK"};
+    Require(ModalDialogOpen_nid_postfix(request));
+    padInput.Update(window);
+    Require(TitleButtons(useRead) == Intercepted);
+    std::ofstream(commandPath) << "APS5_PAD_TIMELINE 1 " << sequence << " 2\n0 400 16384\n1000 400 16384\n";
+    const auto written = std::chrono::steady_clock::now();
+    std::size_t chosen = 9;
+    ModalDialogState state = ModalDialogState::Showing;
+    for (int frame = 0; frame < 30 && state == ModalDialogState::Showing; ++frame) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        padInput.Update(window);
+        state = ModalDialogPoll_nid_postfix(chosen);
+    }
+    Require(state == ModalDialogState::Answered && chosen == 0);
+    padInput.Update(window);
+    Require(TitleButtons(useRead) == 0);
+    Require(std::chrono::steady_clock::now() - written < std::chrono::milliseconds(350));
+    std::this_thread::sleep_until(written + std::chrono::milliseconds(1150));
+    padInput.Update(window);
+    Require(TitleButtons(useRead) == Cross);
+    std::this_thread::sleep_until(written + std::chrono::milliseconds(1700));
+    padInput.Update(window);
+    Require(TitleButtons(useRead) == 0);
+    ModalDialogReset_nid_postfix();
+    ModalDialogSetPresenter_nid_postfix(false);
+}
+
 }
 
 int main() {
@@ -121,6 +213,17 @@ int main() {
 #else
     std::fputs("pad_sdl: SDL is built without HIDAPI, so a DualSense gets no light bar, touchpad or trigger effects\n", stderr);
     return 1;
+#endif
+
+    const auto commandPath = std::filesystem::temp_directory_path() / ("anyps5-pad-sdl-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code error; std::filesystem::remove(path, error); }
+    } cleanup{commandPath};
+#ifdef _WIN32
+    Require(_wputenv_s(L"APS5_PAD_INPUT_FILE", commandPath.c_str()) == 0);
+#else
+    Require(setenv("APS5_PAD_INPUT_FILE", commandPath.string().c_str(), 1) == 0);
 #endif
 
     Require(SDL_Init(SDL_INIT_GAMECONTROLLER | SDL_INIT_JOYSTICK) == 0);
@@ -199,6 +302,9 @@ int main() {
     padInput.HandleEvent(rem0, window);
     Require(!padInput.SlotOccupied(0));
     Require(!padInput.SlotOccupied(1));
+    InjectedAnswer(padInput, window, commandPath);
+    InjectedPressAfterUnreadRelease(padInput, window, commandPath, 3, false);
+    InjectedPressAfterUnreadRelease(padInput, window, commandPath, 4, true);
 
     Require(SDL_JoystickDetachVirtual(dev1) == 0);
     Require(SDL_JoystickDetachVirtual(dev0) == 0);
