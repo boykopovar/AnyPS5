@@ -106,6 +106,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
+    add_test_executable(guest_libressl_general_name_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslGeneralName.cpp)
+    target_include_directories(guest_libressl_general_name_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_general_name_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_general_name_tests)
+    add_test(NAME guest_libressl_general_name COMMAND guest_libressl_general_name_tests)
+    set_tests_properties(guest_libressl_general_name PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_general_name PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
     add_test_executable(guest_libressl_ui_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslUi.cpp)
     target_include_directories(guest_libressl_ui_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_ui_tests PRIVATE libSceLibreSsl libc)
@@ -253,6 +264,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509VerifyParam.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/GeneralName.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_x509_verify_param_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509VerifyParam.cpp)

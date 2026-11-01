@@ -28,11 +28,7 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
  if ((attr & ~0x103u) != 0 || (attr & 3u) == 3u || name == nullptr || init < 0 || max <= 0 || init > max) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
- if ((attr & 0x100u) != 0) {
-  NotImplemented_nid_no_patch("sceKernelCreateSema with attribute bit 0x100");
- }
-
- *sem = new KernelSemaPrivate(init, max, std::string(name), attr == 1);
+ *sem = new KernelSemaPrivate(init, max, std::string(name), (attr & 3u) == 1u);
  if (TraceSync()) std::fprintf(stderr, "[sema] create %p '%s' attr=0x%x init=%d max=%d\n", static_cast<void*>(*sem), name, attr, init, max);
  return KERNEL_SEMA_OK;
 }

@@ -63,6 +63,8 @@ PthreadMutex resolveMutex(PthreadMutex* mutex, bool initialize) {
     return created;
 }
 
+std::atomic<std::uint64_t> g_mutexYields{0};
+
 template<typename TNative>
 bool spinAcquire(PthreadMutex mutex, TNative& native) {
     static const bool multiprocessor = std::thread::hardware_concurrency() > 1;
@@ -73,7 +75,10 @@ bool spinAcquire(PthreadMutex mutex, TNative& native) {
 #if defined(__x86_64__) || defined(_M_X64)
         _mm_pause();
 #endif
-    }, [] { std::this_thread::yield(); });
+    }, [] {
+        g_mutexYields.fetch_add(1, std::memory_order_relaxed);
+        std::this_thread::yield();
+    });
 }
 
 template<typename TAcquire>
@@ -106,6 +111,14 @@ int acquireMutex(PthreadMutex mutex, TAcquire acquire, int unavailable, bool try
     return 0;
 }
 
+}
+
+bool MutexOperations::SpinAcquire(PthreadMutex mutex, std::timed_mutex& native) {
+    return spinAcquire(mutex, native);
+}
+
+bool MutexOperations::SpinAcquire(PthreadMutex mutex, std::recursive_timed_mutex& native) {
+    return spinAcquire(mutex, native);
 }
 
 bool MutexOperations::IsOwned(const PthreadMutex* mutex) {
@@ -301,6 +314,10 @@ int APS5_VABI scePthreadMutexSetyieldloops(PthreadMutex* mutex, int count) {
         return SCE_KERNEL_ERROR_EINVAL;
     current->_yieldloops = count;
     return 0;
+}
+
+std::uint64_t MutexYieldsForTest_nid_no_patch() {
+    return g_mutexYields.load(std::memory_order_relaxed);
 }
 
 int APS5_VABI pthread_mutex_setname_np_nid_postfix(PthreadMutex* mutex, const char* name) {

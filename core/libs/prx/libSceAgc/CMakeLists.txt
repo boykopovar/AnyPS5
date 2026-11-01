@@ -60,12 +60,6 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
 target_include_directories(libSceAgc PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceAgc PRIVATE libSceAgcDriver libc)
 
-option(APS5_AGC_CREATE_LOG "Logging sceAgcCreateShader Ok status" ON)
-
-target_compile_definitions(libSceAgc PRIVATE
-        APS5_AGC_CREATE_LOG=$<BOOL:${APS5_AGC_CREATE_LOG}>
-)
-
 foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
     string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
 endforeach()

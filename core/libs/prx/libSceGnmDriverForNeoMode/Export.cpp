@@ -4,9 +4,11 @@
 #include <cstdint>
 #include <algorithm>
 #include <cstddef>
+#include <cstring>
 #include <initializer_list>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/EmbeddedShaders.hpp"
 
@@ -30,6 +32,15 @@ int WriteContextState(std::uint32_t* cmdbuf, std::uint32_t size, std::uint32_t p
     if (size != packetWords) return 0;
     std::copy(state.begin(), state.end(), cmdbuf);
     return static_cast<int>(packetWords);
+}
+
+constexpr std::uint32_t ContextState400SdkVersion = 0x04000000;
+
+std::uint32_t CompiledSdkVersion() {
+    const auto* process = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
+    std::uint32_t version;
+    std::memcpy(&version, process + 0x10, sizeof(version));
+    return version;
 }
 
 constexpr std::uint32_t OpSetContextReg = 0x69;
@@ -332,8 +343,8 @@ int APS5_VABI sceGnmDrawInitToDefaultContextState400(std::uint32_t* cmdbuf, std:
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalCommand(std::uint32_t* cmdbuf, std::uint32_t size) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    if (CompiledSdkVersion() < ContextState400SdkVersion) return sceGnmDrawInitToDefaultContextState(cmdbuf, size);
+    return sceGnmDrawInitToDefaultContextState400(cmdbuf, size);
 }
 
 int APS5_VABI sceGnmDrawInitToDefaultContextStateInternalSize(void) {

@@ -52,6 +52,21 @@ class PerformanceCsvTests(unittest.TestCase):
                 expected = report["metrics_ms"][row["name"]][field]
                 self.assertEqual(None if row[field] == "" else float(row[field]), expected)
 
+    def test_worker_rows_keep_percentage_points_and_missing_values(self):
+        name = 'queue, "worker"\n\u6e2c\u8a66'
+        self.before["worker_busy_pct"] = {name: 50, "gone": 10, "idle": 0}
+        self.after["worker_busy_pct"] = {name: 75, "new": 20, "idle": 5}
+        rows = {row["name"]: row for row in self.rows(self.run_csv()) if row["kind"] == "worker"}
+        self.assertEqual(set(rows), {name, "gone", "new", "idle"})
+        self.assertEqual(rows[name]["unit"], "%")
+        self.assertEqual([float(rows[name][key]) for key in ("baseline", "candidate", "change", "change_pct")],
+                         [50, 75, 25, 50])
+        self.assertEqual(rows["idle"]["change_pct"], "")
+        self.assertEqual(rows["new"]["baseline"], "")
+        self.assertEqual(rows["gone"]["candidate"], "")
+        for key in ("new", "gone"):
+            self.assertEqual((rows[key]["change"], rows[key]["change_pct"]), ("", ""))
+
     def test_unicode_commas_quotes_and_newlines_round_trip_as_csv(self):
         name = 'Driver, "phase"\r\n\u6e2c\u8a66'
         self.before["top_phases_ms_per_frame"] = {name: 12}
