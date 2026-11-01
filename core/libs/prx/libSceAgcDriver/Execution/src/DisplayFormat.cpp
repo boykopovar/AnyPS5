@@ -45,6 +45,7 @@ VkFormat DisplayTexelFormat(std::uint64_t pixelFormat) {
 ResidentPresent ResidentPresentPath(VkFormat storage, std::uint64_t pixelFormat, bool blitSource) {
     if (DisplayHalfFloat(pixelFormat)) return storage == VK_FORMAT_R16G16B16A16_SFLOAT ? ResidentPresent::Convert : ResidentPresent::None;
     const bool tenBit = DisplayTenBit(pixelFormat);
+    const bool pq = DisplayPq(pixelFormat);
     if (!tenBit && blitSource && storage == DisplayTexelFormat(pixelFormat)) return ResidentPresent::Blit;
     switch (storage) {
         case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
@@ -56,7 +57,7 @@ ResidentPresent ResidentPresentPath(VkFormat storage, std::uint64_t pixelFormat,
         case VK_FORMAT_B8G8R8A8_UNORM:
         case VK_FORMAT_B8G8R8A8_SRGB:
         case VK_FORMAT_B8G8R8A8_UINT:
-            return tenBit ? ResidentPresent::None : ResidentPresent::Convert;
+            return (tenBit && pq) ? ResidentPresent::None : ResidentPresent::Convert;
         default:
             return ResidentPresent::None;
     }
