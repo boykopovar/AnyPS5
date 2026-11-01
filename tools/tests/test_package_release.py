@@ -474,6 +474,7 @@ class ReleasePackageTests(unittest.TestCase):
         target.write_bytes(b"original linked target")
         self.file_link(self.output / names[0], target)
         self.file_link(self.output / names[1], "missing.tar.gz")
+        original_target = (self.output / names[0]).readlink()
         for name in names[2:]:
             (self.output / name).write_bytes(b"old " + name.encode())
         original_replace = Path.replace
@@ -489,7 +490,7 @@ class ReleasePackageTests(unittest.TestCase):
         with patch.object(Path, "replace", replace), self.assertRaisesRegex(OSError, "simulated native promotion failure"):
             package_release.package("linux", self.build, self.output, "v1")
         self.assertEqual({path.name for path in self.output.iterdir()}, set(names))
-        self.assertEqual((self.output / names[0]).readlink(), target)
+        self.assertEqual((self.output / names[0]).readlink(), original_target)
         self.assertEqual((self.output / names[1]).readlink(), Path("missing.tar.gz"))
         self.assertEqual(target.read_bytes(), b"original linked target")
         self.assertFalse((self.output / "missing.tar.gz").exists())
