@@ -156,14 +156,10 @@ void* MapPrivateFileCopy(void* address, std::size_t rounded, int protection, int
     return mapped;
 }
 #endif
-}
-
-extern "C" {
-
-void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection,
-                                int flags, int descriptor, std::int64_t offset) noexcept {
-    const auto failed = [](int error) -> void* {
-        SetError(error);
+void* Map(void* address, std::size_t length, int protection,
+          int flags, int descriptor, std::int64_t offset, int& mappingError) noexcept {
+    const auto failed = [&mappingError](int error) -> void* {
+        mappingError = error;
         return reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1));
     };
     std::size_t rounded;
@@ -292,6 +288,18 @@ void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protecti
     } catch (const std::exception&) {
         return failed(GuestNoMemory);
     }
+}
+
+}
+
+extern "C" {
+
+void* APS5_VABI mmap_nid_postfix(void* address, std::size_t length, int protection,
+                                int flags, int descriptor, std::int64_t offset) noexcept {
+    int error = 0;
+    void* mapped = Map(address, length, protection, flags, descriptor, offset, error);
+    if (error != 0) SetError(error);
+    return mapped;
 }
 
 int APS5_VABI munmap_nid_postfix(void* address, std::size_t length) noexcept {

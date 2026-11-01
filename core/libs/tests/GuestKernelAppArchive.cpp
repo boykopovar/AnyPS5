@@ -924,6 +924,21 @@ void MappingFailures(const std::filesystem::path& root, bool damaged) {
 #endif
     const auto initialFailure = failedMapping();
     Check(initialFailure.address == MapFailed && initialFailure.error == expectedError);
+    const auto checkKernelFailure = [&] {
+        void* output = reinterpret_cast<void*>(MapPage);
+        Check(sceKernelMmap(nullptr, MapPage, 1, 2, fd, 0, &output) == SceKernelError(expectedError));
+        Check(output == reinterpret_cast<void*>(MapPage));
+    };
+#if defined(__linux__)
+    if (!damaged) {
+        MappingDescriptorLimit limit;
+        checkKernelFailure();
+    } else {
+        checkKernelFailure();
+    }
+#else
+    checkKernelFailure();
+#endif
     Check(std::filesystem::is_empty(directory));
     const auto before = MappingHandleCount();
     for (int iteration = 0; iteration < 8; ++iteration) {
