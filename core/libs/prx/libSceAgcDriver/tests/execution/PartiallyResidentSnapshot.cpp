@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
@@ -11,7 +12,9 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Recompiler.hpp"
 #include "SpirvBackend/SpirvModule.hpp"
+#include "VulkanTestDevice.hpp"
 #include <SDL_loadso.h>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -24,15 +27,20 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -53,6 +61,50 @@ constexpr std::size_t SurfaceBytes = std::size_t{Side} * Side * 4u;
 constexpr std::uint32_t LargeSide = 512;
 constexpr std::size_t LargeSurfaceBytes = std::size_t{LargeSide} * LargeSide * 4u;
 constexpr int Skipped = 77;
+constexpr std::uint32_t Format16x4Float = 71;
+constexpr std::uint32_t FormatBc1UNorm = 169;
+constexpr std::uint32_t TileLinear = 0;
+constexpr std::uint32_t TileS64KBX = 0x19;
+constexpr std::uint32_t Type3D = 10;
+constexpr std::uint32_t Type2DArray = 13;
+constexpr std::uint32_t VolumeSide = 64;
+constexpr std::uint32_t VolumeDepth = 64;
+constexpr std::uint32_t CommittedSlabs = 23;
+constexpr std::size_t PartialSlabBytes = 16384;
+constexpr std::uint32_t AddedSlab = 30;
+constexpr std::uint32_t RemovedSlab = 5;
+constexpr std::uint32_t LanesPerSlice = 32;
+constexpr std::array<std::uint32_t, 8> SampledSlices{0, 5, 21, 22, 23, 30, 40, 63};
+constexpr std::uint32_t SampleThreads = LanesPerSlice * SampledSlices.size();
+constexpr std::uint32_t SampleWords = 32;
+constexpr std::uint32_t SampleResult = 8;
+constexpr std::uint32_t LoadResult = 12;
+constexpr std::uint64_t ElementSpan = 1024;
+constexpr std::size_t PageBytes = 4096;
+constexpr std::array<std::uint64_t, 2> KeptSlabs{21, 22};
+alignas(256) std::array<std::uint32_t, SampleThreads * SampleWords> Samples{};
+
+alignas(256) constexpr std::array<std::uint32_t, 36> VolumeSampleCode{
+    0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
+    0x80000501, 0xe0301010, 0x80000601, 0xe0301014, 0x80000701, 0xbf8c3f70, 0xf09c0f10, 0x00610c02,
+    0xf0001f10, 0x00011005, 0xbf8c3f70, 0xe0701020, 0x80000c01, 0xe0701024, 0x80000d01, 0xe0701028,
+    0x80000e01, 0xe070102c, 0x80000f01, 0xe0701030, 0x80001001, 0xe0701034, 0x80001101, 0xe0701038,
+    0x80001201, 0xe070103c, 0x80001301, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 22> VolumeExplicitLodCode{
+    0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
+    0x80000501, 0xbf8c3f70, 0xf0900f10, 0x00610c02, 0xbf8c3f70, 0xe0701020, 0x80000c01, 0xe0701024,
+    0x80000d01, 0xe0701028, 0x80000e01, 0xe070102c, 0x80000f01, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 36> ArraySampleCode{
+    0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
+    0x80000501, 0xe0301010, 0x80000601, 0xe0301014, 0x80000701, 0xbf8c3f70, 0xf09c0f28, 0x00610c02,
+    0xf0001f28, 0x00011005, 0xbf8c3f70, 0xe0701020, 0x80000c01, 0xe0701024, 0x80000d01, 0xe0701028,
+    0x80000e01, 0xe070102c, 0x80000f01, 0xe0701030, 0x80001001, 0xe0701034, 0x80001101, 0xe0701038,
+    0x80001201, 0xe070103c, 0x80001301, 0xbf810000,
+};
 
 class Device {
 public:
@@ -104,8 +156,11 @@ public:
             queue.queueFamilyIndex = family;
             queue.queueCount = 1;
             queue.pQueuePriorities = &priority;
+            VkPhysicalDeviceFeatures supported{};
+            function<PFN_vkGetPhysicalDeviceFeatures>("vkGetPhysicalDeviceFeatures")(context.physical, &supported);
             VkPhysicalDeviceFeatures enabled{};
             enabled.shaderInt64 = VK_TRUE;
+            enabled.textureCompressionBC = supported.textureCompressionBC;
             address.pNext = &bytes;
             const std::array<const char*, 2> extensionsEnabled{VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME};
             VkDeviceCreateInfo device{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &address};
@@ -121,6 +176,7 @@ public:
             function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
             context.limits = properties.limits;
             context.bufferDeviceAddress = true;
+            context.textureCompressionBC = supported.textureCompressionBC == VK_TRUE;
             context.formatProperties = function<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties");
             context.imageFormatProperties = function<PFN_vkGetPhysicalDeviceImageFormatProperties>("vkGetPhysicalDeviceImageFormatProperties");
             context.Function<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(context.device, family, 0, &context.queue);
@@ -211,22 +267,30 @@ private:
 std::atomic<std::uint64_t> surfaceBegin{0};
 std::atomic<std::uint64_t> surfaceEnd{0};
 std::atomic<std::uint32_t> surfaceReads{0};
+std::atomic<std::uint64_t> surfaceReadBytes{0};
 
 void CountReads(std::uint64_t address, std::size_t bytes) {
-    if (address < surfaceEnd.load() && address + bytes > surfaceBegin.load()) surfaceReads.fetch_add(1);
+    if (address < surfaceEnd.load() && address + bytes > surfaceBegin.load()) {
+        surfaceReads.fetch_add(1);
+        surfaceReadBytes.fetch_add(std::min<std::uint64_t>(address + bytes, surfaceEnd.load()) - std::max<std::uint64_t>(address, surfaceBegin.load()));
+    }
 }
 
-std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side) {
+std::array<std::uint32_t, 8> SurfaceDescriptor(std::uint64_t address, std::uint32_t format, std::uint32_t tile, std::uint32_t type, std::uint32_t side, std::uint32_t depth) {
     return {
         static_cast<std::uint32_t>(address >> 8u),
-        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((side - 1u) & 3u) << 30u),
+        static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((side - 1u) & 3u) << 30u),
         ((side - 1u) >> 2u) | ((side - 1u) << 14u),
-        0xfacu | (TileR64KBX << 20u) | (Type2D << 28u),
-        0u,
+        0xfacu | (tile << 20u) | (type << 28u),
+        depth - 1u,
         0u,
         0u,
         0u,
     };
+}
+
+std::array<std::uint32_t, 8> Descriptor(std::uint64_t address, std::uint32_t side = Side) {
+    return SurfaceDescriptor(address, Format32UInt, TileR64KBX, Type2D, side, 1u);
 }
 
 void Run(const Context& context, ReservedSurface& surface) {
@@ -602,6 +666,377 @@ void PendingStores(const Context& context, ReservedSurface& surface) {
     Require(*unrelated, "the unrelated pending completion did not run when synchronized");
 }
 
+struct CommittedCase {
+    std::string name;
+    std::uint32_t format = Format16x4Float;
+    std::uint32_t tile = TileR64KBX;
+    std::uint32_t type = Type3D;
+    bool whole = false;
+    std::uint32_t side = VolumeSide;
+    std::uint32_t committed = CommittedSlabs;
+    std::uint32_t levels = 1;
+};
+
+std::optional<CommittedCase> CommittedCaseFor(std::string_view mode) {
+    if (mode.ends_with("-samples")) mode.remove_suffix(std::string_view("-samples").size());
+    if (mode == "--committed-volume") return CommittedCase{"the partially committed volume"};
+    if (mode == "--committed-volume-whole") return CommittedCase{"the committed volume", Format16x4Float, TileR64KBX, Type3D, true};
+    if (mode == "--committed-volume-thick") return CommittedCase{"the partially committed thick volume", Format16x4Float, TileS64KBX, Type3D, false, VolumeSide, 2u};
+    if (mode == "--committed-volume-linear") return CommittedCase{"the partially committed linear volume", Format16x4Float, TileLinear};
+    if (mode == "--committed-volume-compare") return CommittedCase{"the partially committed small volume", Format16x4Float, TileR64KBX, Type3D, false, VolumeSide, 3u};
+    if (mode == "--committed-volume-mips") return CommittedCase{"the partially committed mipmapped volume", Format16x4Float, TileR64KBX, Type3D, false, 2u * VolumeSide, CommittedSlabs, 2u};
+    if (mode == "--committed-volume-bc") return CommittedCase{"the partially committed BC1 volume", FormatBc1UNorm, TileR64KBX, Type3D, false, 4u * VolumeSide};
+    if (mode == "--committed-array") return CommittedCase{"the partially committed 2D array", Format16x4Float, TileR64KBX, Type2DArray};
+    if (mode == "--committed-volume-empty") return CommittedCase{"the uncommitted volume", Format16x4Float, TileR64KBX, Type3D, false, VolumeSide, 0u};
+    return std::nullopt;
+}
+
+std::array<std::uint32_t, 8> CaseDescriptor(const CommittedCase& surface, std::uint64_t address) {
+    auto words = SurfaceDescriptor(address, surface.format, surface.tile, surface.type, surface.side, VolumeDepth);
+    words[3] |= (surface.levels - 1u) << 16u;
+    words[5] = (surface.levels - 1u) << 4u;
+    return words;
+}
+
+SurfaceGeometry DescribeCase(const CommittedCase& surface, std::uint64_t address) {
+    return DescribeSurface(DecodeTextureResource(CaseDescriptor(surface, address)));
+}
+
+std::uint16_t HalfOf(std::uint32_t value) {
+    const auto exponent = static_cast<std::uint32_t>(std::bit_width(value)) - 1u;
+    return static_cast<std::uint16_t>(((exponent + 15u) << 10u) | ((value << (10u - exponent)) & 0x3ffu));
+}
+
+std::array<std::uint32_t, 3> Bc1Color(std::uint64_t slab) {
+    return {static_cast<std::uint32_t>(slab % 31u) + 1u, 63u - static_cast<std::uint32_t>(slab % 64u), 31u};
+}
+
+std::array<std::byte, 8> PatternElement(std::uint32_t format, std::uint64_t slab, std::uint64_t element) {
+    const auto color = Bc1Color(slab);
+    const auto mixed = static_cast<std::uint32_t>((element * 0x9e3779b1ull) >> 21u) & 0x7ffu;
+    const auto words = format == FormatBc1UNorm ? std::array<std::uint16_t, 4>{static_cast<std::uint16_t>((color[0] << 11u) | mixed), 0u, 0u, 0u}
+                                                : std::array<std::uint16_t, 4>{HalfOf(static_cast<std::uint32_t>(slab) + 1u), HalfOf(static_cast<std::uint32_t>(element % ElementSpan) + 1u), HalfOf(static_cast<std::uint32_t>(element / ElementSpan) + 1u), HalfOf(1u)};
+    return std::bit_cast<std::array<std::byte, 8>>(words);
+}
+
+std::uint64_t ElementOffset(const std::array<float, 4>& value) {
+    return (static_cast<std::uint64_t>(value[1]) - 1u + (static_cast<std::uint64_t>(value[2]) - 1u) * ElementSpan) * 8u;
+}
+
+bool SameSlab(std::uint32_t format, const std::array<float, 4>& value, std::uint64_t slab) {
+    if (format != FormatBc1UNorm) return value[0] == static_cast<float>(slab + 1u) && value[3] == 1.0f;
+    return std::fabs(value[0] - static_cast<float>(Bc1Color(slab)[0]) / 31.0f) <= 1.0f / 128.0f && value[3] == 1.0f;
+}
+
+std::array<float, 4> ZeroTexel(std::uint32_t format) {
+    return {0.0f, 0.0f, 0.0f, format == FormatBc1UNorm ? 1.0f : 0.0f};
+}
+
+void CommitSlab(ReservedSurface& surface, const SurfaceGeometry& geometry, std::uint32_t format, std::uint64_t slab, std::size_t bytes) {
+    const auto offset = static_cast<std::size_t>(slab * geometry.layerBytes);
+    surface.Commit(offset, bytes);
+    for (std::size_t at = 0; at < bytes; at += 8u) {
+        const auto element = PatternElement(format, slab, at / 8u);
+        std::memcpy(surface.Data() + offset + at, element.data(), element.size());
+    }
+}
+
+struct Commitment {
+    std::uint64_t slabs = 0;
+    std::set<std::uint64_t> full;
+    std::optional<std::uint64_t> partial;
+    std::size_t partialBytes = 0;
+    std::optional<std::pair<std::uint64_t, std::uint64_t>> hole;
+};
+
+Commitment CommitCase(ReservedSurface& surface, const SurfaceGeometry& geometry, const CommittedCase& layout) {
+    const auto thick = geometry.blockDepth > 1u;
+    Commitment result{geometry.guestBytes / geometry.layerBytes, {}, std::nullopt, static_cast<std::size_t>(thick ? geometry.layerBytes / 2u : geometry.mips.front().tiledOffset + PartialSlabBytes)};
+    const auto committed = layout.whole ? result.slabs : layout.committed;
+    for (std::uint64_t slab = 0; slab < committed; ++slab) {
+        const bool partial = !layout.whole && slab + 1u == committed;
+        CommitSlab(surface, geometry, layout.format, slab, partial ? result.partialBytes : static_cast<std::size_t>(geometry.layerBytes));
+        if (partial) result.partial = slab;
+        else result.full.insert(slab);
+    }
+    return result;
+}
+
+std::uint64_t UploadedLayers(const SurfaceGeometry& geometry, const std::set<std::uint64_t>& slabs) {
+    std::uint64_t layers = 0;
+    for (std::uint32_t layer = 0; layer < geometry.layers; ++layer) layers += slabs.contains(geometry.GuestLayerOffset(layer) / geometry.layerBytes) ? 1u : 0u;
+    return layers;
+}
+
+struct Lookup {
+    std::shared_ptr<Texture> texture;
+    std::uint64_t readBytes = 0;
+};
+
+Lookup LookUp(const Context& context, std::span<const std::uint32_t> words, const std::string& name, const std::string& when) {
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    surfaceReads = 0;
+    surfaceReadBytes = 0;
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr && !texture->ViewsStorageImage(), name + " was not sampled through a snapshot " + when);
+    return {std::move(texture), surfaceReadBytes.load()};
+}
+
+void RequireRead(const std::string& name, const std::string& when, const Lookup& lookup, std::uint64_t expected, std::uint64_t guestBytes) {
+    if (lookup.readBytes == expected) return;
+    throw std::runtime_error(name + " read " + std::to_string(lookup.readBytes) + " bytes of guest memory " + when + ", expected " + std::to_string(expected) + " of its " + std::to_string(guestBytes));
+}
+
+void CommittedSurface(const Context& context, const CommittedCase& layout, bool changes, bool compare) {
+    const auto probe = DescribeCase(layout, BlockBytes);
+    Require(probe.layerBytes != 0 && probe.guestBytes % probe.layerBytes == 0 && probe.GuestLayerOffset(probe.layers - 1u) + probe.layerBytes == probe.guestBytes, layout.name + ": the test descriptor does not split into whole slabs");
+    ReservedSurface surface(static_cast<std::size_t>(probe.guestBytes));
+    const auto words = CaseDescriptor(layout, surface.Address());
+    const auto geometry = DescribeCase(layout, surface.Address());
+    auto commitment = CommitCase(surface, geometry, layout);
+    const bool sliced = layout.type == Type3D && !layout.whole;
+    const auto uploaded = [&] {
+        auto slabs = commitment.full;
+        if (commitment.partial.has_value()) slabs.insert(*commitment.partial);
+        return slabs;
+    };
+    const auto expectedRead = [&] { return sliced ? uploaded().size() * geometry.layerBytes : geometry.guestBytes; };
+    surfaceBegin = surface.Address();
+    surfaceEnd = surface.Address() + geometry.guestBytes;
+    AgcDriver::GuestMemory::SetFlushHook(&CountReads);
+    try {
+        auto previous = LookUp(context, words, layout.name, "at its first use");
+        RequireRead(layout.name, "at its first use", previous, expectedRead(), geometry.guestBytes);
+        const auto expectKept = [&](const std::string& when) {
+            const auto next = LookUp(context, words, layout.name, when);
+            Require(next.texture == previous.texture && next.readBytes == 0, layout.name + " was rebuilt or compared " + when + " although its memory did not change");
+        };
+        const auto expectRebuilt = [&](const std::string& when) {
+            const auto next = LookUp(context, words, layout.name, when);
+            Require(next.texture != previous.texture, layout.name + " kept its texture " + when);
+            RequireRead(layout.name, when, next, expectedRead(), geometry.guestBytes);
+            previous = next;
+        };
+        expectKept("again");
+        if (changes) {
+            CommitSlab(surface, geometry, layout.format, AddedSlab, static_cast<std::size_t>(geometry.layerBytes));
+            commitment.full.insert(AddedSlab);
+            expectRebuilt("after an uncommitted slice was committed");
+            expectKept("again after the commit");
+            surface.Decommit(static_cast<std::size_t>(RemovedSlab * geometry.layerBytes), static_cast<std::size_t>(geometry.layerBytes));
+            commitment.full.erase(RemovedSlab);
+            expectRebuilt("after a committed slice was decommitted");
+            expectKept("again after the decommit");
+            const auto partial = static_cast<std::size_t>(*commitment.partial * geometry.layerBytes);
+            surface.Commit(partial + commitment.partialBytes, static_cast<std::size_t>(geometry.layerBytes) - commitment.partialBytes);
+            expectRebuilt("after the rest of its partially committed slice was committed");
+            expectKept("again after the rest was committed");
+        }
+        if (compare) {
+            const auto packed = uploaded().size() * geometry.layerBytes;
+            const auto partial = static_cast<std::size_t>(*commitment.partial * geometry.layerBytes);
+            surface.Commit(partial + commitment.partialBytes, static_cast<std::size_t>(geometry.layerBytes) - commitment.partialBytes);
+            auto next = LookUp(context, words, layout.name, "after zero pages were committed in it");
+            Require(next.texture == previous.texture && next.readBytes == packed, layout.name + " was not kept by a compare of its committed slices after zero pages were committed in them (" + std::to_string(next.readBytes) + " bytes read)");
+            expectKept("again after the zero pages were committed");
+            surface.Data()[geometry.layerBytes + 0x100] ^= 0xffu;
+            next = LookUp(context, words, layout.name, "after a CPU write to a committed slice");
+            Require(next.texture != previous.texture && next.readBytes == 2u * packed, layout.name + " was not compared and rebuilt after a CPU write to a committed slice (" + std::to_string(next.readBytes) + " bytes read)");
+            previous = next;
+            expectKept("again after the CPU write");
+        }
+    } catch (...) {
+        AgcDriver::GuestMemory::SetFlushHook(nullptr);
+        throw;
+    }
+    AgcDriver::GuestMemory::SetFlushHook(nullptr);
+    ClearCachedTextures(context.device);
+    const auto slabs = uploaded();
+    const auto layers = sliced ? UploadedLayers(geometry, slabs) : geometry.layers;
+    const auto staged = sliced ? slabs.size() * geometry.layerBytes : geometry.guestBytes;
+    const auto expected = 2u * staged + layers * geometry.sliceLinearBytes + (layers < geometry.layers ? geometry.sliceLinearBytes : 0u);
+    Recorder recorder(context);
+    recorder.Activate();
+    const auto before = recorder.OpenKeptBytes();
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(CachedSampledTexture(context, words) != nullptr, layout.name + " was not sampled with a recorder");
+    const auto kept = recorder.OpenKeptBytes() - before;
+    if (kept != expected) throw std::runtime_error(layout.name + " kept " + std::to_string(kept) + " bytes of upload buffers, expected " + std::to_string(expected) + " (staging and tiled bytes of " + std::to_string(staged) + " guest bytes and " + std::to_string(layers) + " linear slices)");
+    recorder.Sync();
+    std::printf("%s read %llu of its %llu guest bytes and kept %llu bytes of upload buffers\n", layout.name.c_str(), static_cast<unsigned long long>(expectedRead()), static_cast<unsigned long long>(geometry.guestBytes), static_cast<unsigned long long>(kept));
+}
+
+std::uint32_t Bits(float value) {
+    return std::bit_cast<std::uint32_t>(value);
+}
+
+std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
+    const auto address = reinterpret_cast<std::uintptr_t>(data);
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
+}
+
+std::array<std::uint32_t, 4> SamplerDescriptor() {
+    return {0u, 0xfffu << 12u, 1u << 26u, 0u};
+}
+
+void Sample(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 8>& texture, bool volume, std::uint32_t side, std::uint32_t lod) {
+    Samples.fill(0xdeadbeefu);
+    const auto width = side >> lod;
+    for (std::uint32_t tid = 0; tid < SampleThreads; ++tid) {
+        const auto slice = SampledSlices[tid / LanesPerSlice] >> lod;
+        const auto lane = tid % LanesPerSlice;
+        const auto x = (lane * 7u + 3u) % width;
+        const auto y = (lane * 13u + 5u) % width;
+        const auto r = volume ? (static_cast<float>(slice) + 0.5f) / static_cast<float>(VolumeDepth >> lod) : static_cast<float>(slice);
+        const std::array<std::uint32_t, 6> words{Bits((static_cast<float>(x) + 0.5f) / static_cast<float>(width)), Bits((static_cast<float>(y) + 0.5f) / static_cast<float>(width)), Bits(r), lod != 0 ? Bits(static_cast<float>(lod)) : x, y, slice};
+        std::copy(words.begin(), words.end(), &Samples[tid * SampleWords]);
+    }
+    const std::span<const std::uint32_t> code = lod != 0 ? std::span<const std::uint32_t>(VolumeExplicitLodCode) : volume ? std::span<const std::uint32_t>(VolumeSampleCode) : std::span<const std::uint32_t>(ArraySampleCode);
+    std::vector<std::uint32_t> userData(16, 0u);
+    const auto buffer = BufferDescriptor(Samples.data(), static_cast<std::uint32_t>(Samples.size() * 4u));
+    const auto sampler = SamplerDescriptor();
+    std::copy(buffer.begin(), buffer.end(), userData.begin());
+    std::copy(texture.begin(), texture.end(), userData.begin() + 4);
+    std::copy(sampler.begin(), sampler.end(), userData.begin() + 12);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{SampleThreads, 1, 1}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    const auto result = ShaderRecompiler::Recompile(request);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+}
+
+bool SameTexel(std::uint32_t format, const std::array<float, 4>& value, const std::array<float, 4>& expected) {
+    for (std::size_t component = 0; component < value.size(); ++component) {
+        if (format == FormatBc1UNorm ? std::fabs(value[component] - expected[component]) > 1.0f / 128.0f : value[component] != expected[component]) return false;
+    }
+    return true;
+}
+
+std::string TexelText(const std::array<float, 4>& value) {
+    return "(" + std::to_string(value[0]) + ", " + std::to_string(value[1]) + ", " + std::to_string(value[2]) + ", " + std::to_string(value[3]) + ")";
+}
+
+std::array<float, 4> SampledTexel(const std::vector<std::uint32_t>& samples, std::uint32_t tid, std::uint32_t result) {
+    std::array<float, 4> value{};
+    for (std::uint32_t component = 0; component < 4u; ++component) value[component] = std::bit_cast<float>(samples[tid * SampleWords + result + component]);
+    return value;
+}
+
+void CheckSamples(const std::string& name, const SurfaceGeometry& geometry, std::uint32_t format, const Commitment& commitment, std::uint32_t lod, const std::vector<std::uint32_t>& reference) {
+    std::map<std::uint64_t, std::array<std::uint32_t, 2>> partial;
+    std::array<std::uint32_t, 2> holed{};
+    std::uint64_t hash = 0xcbf29ce484222325ull;
+    const auto results = lod != 0 ? std::vector<std::uint32_t>{SampleResult} : std::vector<std::uint32_t>{SampleResult, LoadResult};
+    for (std::uint32_t tid = 0; tid < SampleThreads; ++tid) {
+        const auto slice = SampledSlices[tid / LanesPerSlice] >> lod;
+        const auto slab = geometry.GuestLayerOffset(slice) / geometry.layerBytes;
+        for (const auto result : results) {
+            std::array<float, 4> value{};
+            for (std::uint32_t component = 0; component < 4u; ++component) {
+                const auto word = Samples[tid * SampleWords + result + component];
+                value[component] = std::bit_cast<float>(word);
+                hash = (hash ^ word) * 0x100000001b3ull;
+            }
+            const auto expected = SampledTexel(reference, tid, result);
+            Require(SameSlab(format, expected, slab), name + ": the fully committed reference reads " + TexelText(expected) + " at level " + std::to_string(lod) + " slice " + std::to_string(slice) + " (thread " + std::to_string(tid) + "), not a texel of slab " + std::to_string(slab));
+            const bool texels = SameTexel(format, value, expected);
+            const bool zeros = SameTexel(format, value, ZeroTexel(format));
+            const auto where = name + ": " + (result == SampleResult ? "sample" : "load") + " of level " + std::to_string(lod) + " slice " + std::to_string(slice) + " (thread " + std::to_string(tid) + ") reads " + TexelText(value);
+            if (commitment.hole.has_value() && commitment.hole->first == slab) {
+                const bool inHole = ElementOffset(expected) / PageBytes * PageBytes == commitment.hole->second;
+                Require(inHole ? zeros : texels, where + (inHole ? ", expected the zeros of its decommitted page " + TexelText(ZeroTexel(format)) : ", expected its texel " + TexelText(expected)));
+                ++holed[inHole ? 1u : 0u];
+            } else if (commitment.partial == slab) {
+                Require(texels || zeros, where + ", neither its texels nor zeros");
+                ++partial[slab][texels ? 0u : 1u];
+            } else if (commitment.full.contains(slab)) {
+                Require(texels, where + ", expected its texel " + TexelText(expected));
+            } else {
+                Require(zeros, where + ", expected the zeros of uncommitted memory " + TexelText(ZeroTexel(format)));
+            }
+        }
+    }
+    if (commitment.hole.has_value()) Require(holed[0] != 0 && holed[1] != 0, name + ": slab " + std::to_string(commitment.hole->first) + " was not sampled both inside and outside its decommitted page (" + std::to_string(holed[1]) + " inside, " + std::to_string(holed[0]) + " outside)");
+    for (const auto& [slab, counts] : partial) Require(lod != 0 || (counts[0] != 0 && counts[1] != 0), name + ": the partially committed slab " + std::to_string(slab) + " did not read both its texels and zeros (" + std::to_string(counts[0]) + " texels, " + std::to_string(counts[1]) + " zeros)");
+    std::printf("%s: level %u sample results hash %016llx\n", name.c_str(), lod, static_cast<unsigned long long>(hash));
+}
+
+std::vector<std::vector<std::uint32_t>> ReferenceSamples(AgcDriver::VulkanDevice& device, const CommittedCase& layout) {
+    const auto probe = DescribeCase(layout, BlockBytes);
+    ReservedSurface surface(static_cast<std::size_t>(probe.guestBytes));
+    const auto words = CaseDescriptor(layout, surface.Address());
+    const auto geometry = DescribeCase(layout, surface.Address());
+    for (std::uint64_t slab = 0; slab < geometry.guestBytes / geometry.layerBytes; ++slab) CommitSlab(surface, geometry, layout.format, slab, static_cast<std::size_t>(geometry.layerBytes));
+    std::vector<std::vector<std::uint32_t>> reference;
+    for (std::uint32_t lod = 0; lod < layout.levels; ++lod) {
+        Sample(device, words, layout.type == Type3D, layout.side, lod);
+        reference.emplace_back(Samples.begin(), Samples.end());
+    }
+    return reference;
+}
+
+int SampleDecommittedPage() {
+    const auto device = OpenVulkanTestDevice();
+    if (!device) return Skipped;
+    const CommittedCase layout{"the volume with a page decommitted in a committed slab"};
+    const auto reference = ReferenceSamples(*device, layout);
+    const auto probe = DescribeCase(layout, BlockBytes);
+    ReservedSurface surface(static_cast<std::size_t>(probe.guestBytes));
+    const auto words = CaseDescriptor(layout, surface.Address());
+    const auto geometry = DescribeCase(layout, surface.Address());
+    Commitment commitment{geometry.guestBytes / geometry.layerBytes};
+    for (const auto slab : KeptSlabs) {
+        CommitSlab(surface, geometry, layout.format, slab, static_cast<std::size_t>(geometry.layerBytes));
+        commitment.full.insert(slab);
+    }
+    Sample(*device, words, true, layout.side, 0u);
+    CheckSamples(layout.name, geometry, layout.format, commitment, 0u, reference[0]);
+    const auto holeSlab = KeptSlabs.back();
+    std::uint32_t first = 0;
+    while (first < SampleThreads && geometry.GuestLayerOffset(SampledSlices[first / LanesPerSlice]) / geometry.layerBytes != holeSlab) ++first;
+    Require(first < SampleThreads, layout.name + ": no sampled slice lies in slab " + std::to_string(holeSlab));
+    const auto page = ElementOffset(SampledTexel(reference[0], first, SampleResult)) / PageBytes * PageBytes;
+    surface.Decommit(static_cast<std::size_t>(holeSlab * geometry.layerBytes + page), PageBytes);
+    commitment.hole = std::pair{holeSlab, page};
+    Sample(*device, words, true, layout.side, 0u);
+    CheckSamples(layout.name + " after the page at byte " + std::to_string(page) + " of slab " + std::to_string(holeSlab) + " was decommitted", geometry, layout.format, commitment, 0u, reference[0]);
+    return 0;
+}
+
+int SampleCommittedSurface(const CommittedCase& layout, bool changes) {
+    const auto device = OpenVulkanTestDevice();
+    if (!device) return Skipped;
+    const auto reference = ReferenceSamples(*device, layout);
+    const auto probe = DescribeCase(layout, BlockBytes);
+    ReservedSurface surface(static_cast<std::size_t>(probe.guestBytes));
+    const auto words = CaseDescriptor(layout, surface.Address());
+    const auto geometry = DescribeCase(layout, surface.Address());
+    auto commitment = CommitCase(surface, geometry, layout);
+    const bool volume = layout.type == Type3D;
+    for (std::uint32_t lod = 0; lod < layout.levels; ++lod) {
+        Sample(*device, words, volume, layout.side, lod);
+        CheckSamples(layout.name, geometry, layout.format, commitment, lod, reference[lod]);
+    }
+    if (changes) {
+        CommitSlab(surface, geometry, layout.format, AddedSlab, static_cast<std::size_t>(geometry.layerBytes));
+        commitment.full.insert(AddedSlab);
+        Sample(*device, words, volume, layout.side, 0u);
+        CheckSamples(layout.name + " after slice " + std::to_string(AddedSlab) + " was committed", geometry, layout.format, commitment, 0u, reference[0]);
+        surface.Decommit(static_cast<std::size_t>(RemovedSlab * geometry.layerBytes), static_cast<std::size_t>(geometry.layerBytes));
+        commitment.full.erase(RemovedSlab);
+        Sample(*device, words, volume, layout.side, 0u);
+        CheckSamples(layout.name + " after slice " + std::to_string(RemovedSlab) + " was decommitted", geometry, layout.format, commitment, 0u, reference[0]);
+    }
+    return 0;
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -609,6 +1044,18 @@ int main(int argc, char** argv) {
         if (!AgcDriver::GuestMemory::WriteWatched()) {
             std::puts("skipped, guest memory has no write watch");
             return Skipped;
+        }
+        const std::string_view mode = argc == 2 ? std::string_view(argv[1]) : std::string_view();
+        if (mode == "--committed-volume-page-samples") {
+            const auto status = SampleDecommittedPage();
+            if (status == 0) std::puts("partially resident snapshot tests passed");
+            return status;
+        }
+        const auto committed = CommittedCaseFor(mode);
+        if (committed.has_value() && mode.ends_with("-samples")) {
+            const auto status = SampleCommittedSurface(*committed, mode == "--committed-volume-samples");
+            if (status == 0) std::puts("partially resident snapshot tests passed");
+            return status;
         }
         std::optional<Device> device;
         try {
@@ -625,7 +1072,12 @@ int main(int argc, char** argv) {
             const bool large = argc == 2 && std::string_view(argv[1]) == "--large-tracked";
             ReservedSurface surface(large ? LargeSurfaceBytes : SurfaceBytes);
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-            if (large) {
+            if (committed.has_value() && committed->format == FormatBc1UNorm && !context.textureCompressionBC) {
+                std::puts("skipped, the device has no BC texture compression");
+                return Skipped;
+            }
+            if (committed.has_value()) CommittedSurface(context, *committed, mode == "--committed-volume", mode == "--committed-volume-compare");
+            else if (large) {
                 LargeTracked(context, surface, LargeSurfaceBytes);
                 LargeTracked(context, surface, BlockBytes);
             } else if (argc == 2 && std::string_view(argv[1]) == "--pending-stores") PendingStores(context, surface);
