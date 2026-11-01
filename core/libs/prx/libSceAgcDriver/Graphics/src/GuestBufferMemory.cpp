@@ -497,6 +497,8 @@ const GuestAllocations::Range* containingRange(const GuestAllocations::Lease& le
 bool runCovers(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end);
 bool joinedCovers(const GuestAllocations::Lease& lease, std::uint64_t begin, std::uint64_t end);
 
+std::atomic<std::uint64_t> retiredImports{0};
+
 void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, HostImport>::iterator it, const GuestAllocations::Lease& lease, bool hold = true) {
 #ifdef _WIN32
     auto* reading = forgetSettle(state, it->first);
@@ -507,6 +509,7 @@ void retireImport(VkDevice device, HostImports& state, std::map<std::uint64_t, H
     // size); the holder below outlives the batch that copies them.
     RetireShadow(device, it->second, [&lease, joined = it->second.joined](std::uint64_t begin, std::uint64_t end) { return runCovers(lease, begin, end) || (joined && joinedCovers(lease, begin, end)); });
     ++state.epoch;
+    retiredImports.fetch_add(1, std::memory_order_release);
     state.liveBytes -= it->second.pinnedBytes;
     auto holder = std::make_shared<RetiredImport>(state.device, state.destroyBuffer, state.freeMemory, state.imports.extract(it));
 #ifdef _WIN32
@@ -6933,6 +6936,10 @@ bool HostImportsReconciledUnchanged(const Context& context, const HostImportsPro
     if (state.device != proof.device) return false;
     if (GuestAllocations::GuestAllocationsGeneration_nid_postfix() != state.refreshedGeneration) refreshImports(context, state, GuestAllocations::GuestAllocationsAcquire_nid_postfix());
     return state.device == proof.device && state.epoch == proof.epoch && state.inserted == proof.inserted;
+}
+
+std::uint64_t RetiredImportSerial() {
+    return retiredImports.load(std::memory_order_acquire);
 }
 
 HostImportsProof HostImportsIdentity(const Context& context) {
