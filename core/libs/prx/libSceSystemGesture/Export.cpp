@@ -1,3 +1,4 @@
+#include "prx/libSceSystemGesture/include/InventoryExports.hpp"
 #include "prx/libSceSystemGesture/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -368,6 +369,14 @@ int APS5_VABI sceSystemGestureUpdateTouchRecognizerRectangle(int32_t gestureHand
 
 int APS5_VABI sceSystemGestureDebugGetVersion() {
     return 0x6a00;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceSystemGestureSetTouchAreaInformation() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }
