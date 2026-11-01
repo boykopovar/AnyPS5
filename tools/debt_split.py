@@ -10,7 +10,7 @@ from check_conventions import DEBT as INDEX, debt_name
 
 DEBT_DIR = "docs/dev/debt"
 HEADING = re.compile(r"^(#{1,6}) (.+?)\s*$")
-LINK = re.compile(r"\]\(([^)\s]+)\)")
+LINK = re.compile(r"\]\((?:<((?:[^<>\n\\]|\\.)*)>|([^)\s<][^)\s]*))\)")
 
 
 def parse(text):
@@ -46,13 +46,14 @@ def key(kind, text):
 
 def relink_unfenced(text, source, destination):
     def replace(match):
-        target = match.group(1)
+        angled = match.group(1) is not None
+        target = match.group(1) if angled else match.group(2)
         if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:|/", target):
             return match.group(0)
         path, _, anchor = target.partition("#")
         resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), path)) if path else source
-        moved = posixpath.relpath(resolved, posixpath.dirname(destination))
-        return "](" + moved + ("#" + anchor if anchor else "") + ")"
+        moved = posixpath.relpath(resolved, posixpath.dirname(destination)) + ("#" + anchor if anchor else "")
+        return "](<" + moved + ">)" if angled else "](" + moved + ")"
 
     runs = list(re.finditer(r"`+", text))
     result = []
@@ -332,12 +333,15 @@ def command_resolve(root):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=f"Split {INDEX} into one file per library or component, and move entries of a change made before the split")
     parser.add_argument("command", choices=("split", "resolve"),
                         help=f"split: move the entries of {INDEX} into {DEBT_DIR}/; resolve: during a rebase stopped on {INDEX}, apply the stopped commit's entry changes to {DEBT_DIR}/ and stage them")
     args = parser.parse_args(argv)
-    root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+    try:
+        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+    except subprocess.CalledProcessError as error:
+        parser.error(f"not a git repository: {error}")
     command_split(root) if args.command == "split" else command_resolve(root)
 
 

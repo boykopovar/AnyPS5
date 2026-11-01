@@ -1,6 +1,7 @@
 from pathlib import Path
 import contextlib
 import io
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,6 +25,7 @@ LIMITATIONS = [
     "skipped, no usable Vulkan device: ErrorInitializationFailed",
     "skipped, unit shadows or host imports are unavailable",
     "skipped, the device has no compute queue",
+    "skipped, not enough free disk space for a file of more than 2 GiB",
     "skipped, the device reports 4 lanes",
     "skipped, subgroup size 8",
     "skipped, no display",
@@ -386,6 +388,30 @@ class SkipReportTests(unittest.TestCase):
             path.write_text(content, encoding="utf-8")
             return list(check_skips.skips(path))
 
+    def test_a_test_listed_twice_is_rejected(self):
+        reason = ('<skipped message="SKIP_RETURN_CODE=77"/>'
+                  '<system-out>skipped, the device lacks geometryShader</system-out>')
+        flaky = ('<skipped message="SKIP_RETURN_CODE=77"/>'
+                 '<system-out>skipped, flaky</system-out>')
+        for content in (
+            f'<testsuite><testcase name="t">{reason}</testcase><testcase name="t">{reason}</testcase></testsuite>',
+            f'<testsuite><testcase name="t">{flaky}</testcase><testcase name="t">{reason}</testcase></testsuite>',
+            f'<testsuite><testcase name="t">{reason}</testcase><testcase name="t">{flaky}</testcase></testsuite>',
+        ):
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, "listed more than once"):
+                self.skipped(content)
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            junit.write_text(
+                f'<testsuite><testcase name="t">{reason}</testcase><testcase name="t">{reason}</testcase></testsuite>',
+                encoding="utf-8",
+            )
+            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            self.assertIn("listed more than once", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
     def test_non_junit_roots_are_rejected_even_with_testcases(self):
         for content in ('<report/>', '<testcase name="passed"/>',
                         '<report><testcase name="passed"/></report>',
@@ -434,6 +460,27 @@ class SkipReportTests(unittest.TestCase):
     def test_message_and_element_text_are_both_retained(self):
         found = self.skipped('<testsuite><testcase name="gpu"><skipped message="unsupported">the device has no required extension</skipped></testcase></testsuite>')
         self.assertRegex(found[0][1], check_skips.DEVICE_LIMITATION)
+
+
+class NotRunTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ctest"), "CTest is required to write a real JUnit report")
+    def test_real_notrun_case_is_rejected_before_windows_agc_exemption(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "CTestTestfile.cmake").write_text('add_test(agc_missing "' + (root / "missing-program").as_posix() + '")\n', encoding="utf-8")
+            report = root / "report.xml"
+            generated = subprocess.run(["ctest", "--test-dir", str(root), "--output-junit", str(report)],
+                                       capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(generated.returncode, 0)
+            self.assertIn('status="notrun"', report.read_text(encoding="utf-8"))
+            for job in ("windows", "linux"):
+                with self.subTest(job=job):
+                    checked = subprocess.run([sys.executable, str(TOOL), str(report), "--job", job, "--require-tests"],
+                                             capture_output=True, text=True, timeout=10)
+                    self.assertEqual(checked.returncode, 2, checked.stdout + checked.stderr)
+                    self.assertIn("notrun", checked.stderr)
+                    self.assertIn("agc_missing", checked.stderr)
+                    self.assertNotIn("Traceback", checked.stderr)
 
 
 if __name__ == "__main__":

@@ -137,7 +137,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     } epochPoint;
     const auto storedByOwnLabel = [&] {
         std::uint32_t writer = queue;
-        return !requireMemory && storedSince(packet, awaited, awaitedBytes, received, &writer) && writer == queue;
+        return !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer) && writer == queue;
     };
     GuestMemory::CheckRange(reinterpret_cast<const void*>(awaited), awaitedBytes, awaitedBytes);
     if (Pm4::WaitSatisfiedUnchecked(packet)) {
@@ -146,7 +146,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         return;
     }
     if (heldAtSubmit) return;
-    if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, &writer)) {
+    if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
         if (writer != queue) notePendingWait(packet, queue, received);
         else epochPoint.bump = false;
         return;
@@ -342,7 +342,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
     std::uint32_t polls = 0;
     StallWatch stall(queue);
     while (!Pm4::WaitSatisfiedUnchecked(packet)) {
-        if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, &writer)) {
+        if (std::uint32_t writer = queue; !requireMemory && storedSince(packet, awaited, awaitedBytes, received, queue, &writer)) {
             if (writer != queue) notePendingWait(packet, queue, received);
             else epochPoint.bump = false;
             return;
