@@ -5,3 +5,4 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
+#include "prx/libSceVideoOut/include/LegacyExports.hpp"

@@ -100,9 +100,9 @@ const char* PlainWhat(const ExceptionObject* object) {
     if (std::strcmp(name, "St9exception") == 0) return "std::exception";
     if (std::strcmp(name, "St8bad_cast") == 0) return "std::bad_cast";
     if (std::strcmp(name, "St10bad_typeid") == 0) return "std::bad_typeid";
-    if (std::strcmp(name, "St9bad_alloc") == 0) return "std::bad_alloc";
-    if (std::strcmp(name, "St20bad_array_new_length") == 0) return "std::bad_array_new_length";
-    if (std::strcmp(name, "St17bad_function_call") == 0) return "std::bad_function_call";
+    if (std::strcmp(name, "St9bad_alloc") == 0) return "bad allocation";
+    if (std::strcmp(name, "St20bad_array_new_length") == 0) return "bad allocation";
+    if (std::strcmp(name, "St17bad_function_call") == 0) return "bad function call";
     if (std::strcmp(name, "St12bad_weak_ptr") == 0) return "bad_weak_ptr";
     if (std::strcmp(name, "St18bad_variant_access") == 0) return "bad_variant_access";
     if (std::strcmp(name, "St19bad_optional_access") == 0) return "bad_optional_access";

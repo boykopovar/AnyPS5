@@ -111,10 +111,11 @@ bool Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, b
     if (withoutComputeDerivatives) {
         std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR));
         std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+        std::erase(extensions, std::string_view("SPV_NV_compute_shader_derivatives"));
         target.supportedCapabilities = capabilities;
         target.supportedExtensions = extensions;
     }
-    const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
+    const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && (std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end() || std::ranges::find(target.supportedExtensions, "SPV_NV_compute_shader_derivatives") != target.supportedExtensions.end());
     std::vector<std::uint32_t> userData(16, 0u);
     const auto buffer = BufferDescriptor(Buffer.data(), static_cast<std::uint32_t>(Buffer.size() * 4u));
     const auto texture = LineDescriptor();

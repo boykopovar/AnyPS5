@@ -277,7 +277,6 @@ int APS5_VABI sceKernelGetPs4CompiledSdkVersionByPid();
 int APS5_VABI sceKernelGetResidentFmemCount2();
 int APS5_VABI sceKernelGetToolMemoryRange();
 int APS5_VABI sceKernelGetUpdatemode();
-int APS5_VABI sceKernelHasTrinityMode();
 int APS5_VABI sceKernelIccClearEmcCrashReport();
 int APS5_VABI sceKernelIccDisableExtBDDriveOperation();
 int APS5_VABI sceKernelIccGetBDDriveChuckingState();

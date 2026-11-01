@@ -834,8 +834,10 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
         library = record["library"]
         if library and not available(library):
             missing[library] += 1
-    for _, needed in (module_imports or {}).values():
+    for module, (_, needed) in (module_imports or {}).items():
         for library in needed:
+            if module.endswith(".guest.prx") and library == "ld-linux-x86-64.so.2":
+                continue
             if not available(library):
                 missing[library] += 1
     return ordered, dict(sorted(missing.items()))

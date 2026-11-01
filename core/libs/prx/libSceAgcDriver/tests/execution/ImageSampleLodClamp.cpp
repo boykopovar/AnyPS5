@@ -165,7 +165,7 @@ bool Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
         result = ShaderRecompiler::Recompile(request);
     } catch (const std::exception& error) {
         const auto& target = device.Target();
-        const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
+        const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && (std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end() || std::ranges::find(target.supportedExtensions, "SPV_NV_compute_shader_derivatives") != target.supportedExtensions.end());
         if (!derivatives && std::string(error.what()).find("require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives") != std::string::npos) {
             std::printf("skipped image_sample_cl, compute derivatives are unavailable: %s\n", error.what());
             return false;

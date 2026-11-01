@@ -235,10 +235,11 @@ bool Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> co
     if (withoutComputeDerivatives) {
         std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR));
         std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+        std::erase(extensions, std::string_view("SPV_NV_compute_shader_derivatives"));
         target.supportedCapabilities = capabilities;
         target.supportedExtensions = extensions;
     }
-    const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
+    const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && (std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end() || std::ranges::find(target.supportedExtensions, "SPV_NV_compute_shader_derivatives") != target.supportedExtensions.end());
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
     const ShaderRecompiler::ShaderComputeStageInfo compute{{Threads, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{

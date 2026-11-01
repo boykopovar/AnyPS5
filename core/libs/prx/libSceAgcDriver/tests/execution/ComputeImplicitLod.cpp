@@ -202,7 +202,7 @@ bool Run(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::uint32_t 
         compiled = ShaderRecompiler::Recompile(request);
     } catch (const std::exception& error) {
         const std::string refusal = error.what();
-        const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
+        const bool derivatives = TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && (std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end() || std::ranges::find(target.supportedExtensions, "SPV_NV_compute_shader_derivatives") != target.supportedExtensions.end());
         if (!derivatives && refusal.find("ComputeDerivativeGroupLinearKHR") != std::string::npos) {
             std::printf("skipped, compute derivatives are unavailable: %s\n", error.what());
             return false;
@@ -263,6 +263,7 @@ void CheckRefusals(const ShaderRecompiler::SpirvTarget& target) {
     request.target = target;
     std::vector<std::string_view> extensions(target.supportedExtensions.begin(), target.supportedExtensions.end());
     std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+    std::erase(extensions, std::string_view("SPV_NV_compute_shader_derivatives"));
     request.target.supportedExtensions = extensions;
     refused("missing extension", "require enabled ComputeDerivativeGroupLinearKHR and SPV_KHR_compute_shader_derivatives");
 }

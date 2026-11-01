@@ -145,7 +145,7 @@ std::array<std::uint32_t, 4> SamplerDescriptor() {
 }
 
 bool HasComputeDerivatives(const ShaderRecompiler::SpirvTarget& target) {
-    return TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end();
+    return TargetHasCapability(target, spv::CapabilityComputeDerivativeGroupLinearKHR) && (std::ranges::find(target.supportedExtensions, "SPV_KHR_compute_shader_derivatives") != target.supportedExtensions.end() || std::ranges::find(target.supportedExtensions, "SPV_NV_compute_shader_derivatives") != target.supportedExtensions.end());
 }
 
 bool Run(AgcDriver::VulkanDevice& device, const ShaderRecompiler::SpirvTarget& target, std::span<const std::uint32_t> code, const std::array<std::uint32_t, 8>& texture, bool implicit = false) {
@@ -236,6 +236,7 @@ int main(int argc, char** argv) {
         if (forced) {
             std::erase(capabilities, static_cast<std::uint32_t>(spv::CapabilityComputeDerivativeGroupLinearKHR));
             std::erase(extensions, std::string_view("SPV_KHR_compute_shader_derivatives"));
+            std::erase(extensions, std::string_view("SPV_NV_compute_shader_derivatives"));
         }
         target.supportedCapabilities = capabilities;
         target.supportedExtensions = extensions;

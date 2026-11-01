@@ -18,6 +18,13 @@ const TFeatures* findFeatures(const void* chain, VkStructureType type) {
 
 }
 
+const char* ShaderDeviceProfile::ComputeDerivativeExtension(std::span<const VkExtensionProperties> extensions) {
+    for (const auto* name : {VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME, VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME}) {
+        if (std::ranges::any_of(extensions, [&](const auto& extension) { return std::string_view(extension.extensionName) == name; })) return name;
+    }
+    return nullptr;
+}
+
 ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& target, const VkDeviceCreateInfo& deviceInfo, const VkPhysicalDeviceLimits& limits) : target(target), limits(limits), capabilities(target.supportedCapabilities.begin(), target.supportedCapabilities.end()) {
     using Graphics::Require;
     Require(deviceInfo.pEnabledFeatures != nullptr, "shader device profile requires enabled core features");
@@ -71,7 +78,16 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     checkFeature(spv::CapabilityMeshShadingEXT, meshEnabled, "meshShader");
     checkFeature(spv::CapabilityDrawParameters, drawParameters != nullptr && drawParameters->shaderDrawParameters == VK_TRUE, "shaderDrawParameters");
     checkFeature(spv::CapabilityShaderClockKHR, clock != nullptr && clock->shaderSubgroupClock == VK_TRUE && clock->shaderDeviceClock == VK_TRUE, "shader clock");
-    const bool linearDerivatives = derivatives != nullptr && derivatives->computeDerivativeGroupLinear == VK_TRUE;
+    const auto enabledExtension = [&](std::string_view name) {
+        for (std::uint32_t index = 0; deviceInfo.ppEnabledExtensionNames != nullptr && index < deviceInfo.enabledExtensionCount; ++index) {
+            const auto* enabled = deviceInfo.ppEnabledExtensionNames[index];
+            if (enabled != nullptr && name == enabled) return true;
+        }
+        return false;
+    };
+    const bool khrDerivatives = enabledExtension(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+    const bool nvDerivatives = enabledExtension(VK_NV_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+    const bool linearDerivatives = derivatives != nullptr && derivatives->computeDerivativeGroupLinear == VK_TRUE && (khrDerivatives || nvDerivatives);
     checkFeature(spv::CapabilityComputeDerivativeGroupLinearKHR, linearDerivatives, "computeDerivativeGroupLinear");
     Require(!target.fragmentShaderBarycentricEnabled || barycentricEnabled, "shader device profile exposes disabled barycentrics");
     Require(!target.fragmentBarycentricBuiltins || barycentricEnabled, "shader device profile exposes disabled barycentric built-ins");
@@ -84,7 +100,8 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     for (const auto& extension : extensions) extensionViews.emplace_back(extension);
     Require(std::ranges::find(extensionViews, "SPV_KHR_physical_storage_buffer") != extensionViews.end() && std::ranges::find(extensionViews, "SPV_KHR_8bit_storage") != extensionViews.end(), "shader device profile is missing runtime extensions");
     Require(std::ranges::find(extensionViews, "SPV_KHR_terminate_invocation") == extensionViews.end() || (terminate != nullptr && terminate->shaderTerminateInvocation == VK_TRUE), "shader device profile advertises a disabled feature: shaderTerminateInvocation");
-    Require(std::ranges::find(extensionViews, "SPV_KHR_compute_shader_derivatives") == extensionViews.end() || linearDerivatives, "shader device profile advertises a disabled feature: computeDerivativeGroupLinear");
+    Require(std::ranges::find(extensionViews, "SPV_KHR_compute_shader_derivatives") == extensionViews.end() || (linearDerivatives && khrDerivatives), "shader device profile requires enabled computeDerivativeGroupLinear and VK_KHR_compute_shader_derivatives");
+    Require(std::ranges::find(extensionViews, "SPV_NV_compute_shader_derivatives") == extensionViews.end() || (linearDerivatives && nvDerivatives), "shader device profile requires enabled computeDerivativeGroupLinear and VK_NV_compute_shader_derivatives");
     this->target.supportedCapabilities = capabilities;
     this->target.supportedExtensions = extensionViews;
 }
