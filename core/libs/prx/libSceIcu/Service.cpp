@@ -61,14 +61,14 @@ void DeleteObject(Object* object) {
     using Delete = void (APS5_VABI *)(Object*);
     if (object) Virtual_nid_no_patch<Delete>(object, 1)(object);
 }
-void APS5_VABI DeleteUnicodeStringObj(void* obj) {
+void APS5_VABI DeleteUnicodeStringObj_nid_no_patch(void* obj) {
     if (obj) {
         auto* str = static_cast<UnicodeString*>(obj);
         _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(str);
         Free_nid_no_patch(str);
     }
 }
-void APS5_VABI DeleteStringPair(void* obj) {
+void APS5_VABI DeleteStringPair_nid_no_patch(void* obj) {
     if (obj) {
         auto* pair = static_cast<StringPair*>(obj);
         _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&pair->id);
@@ -107,7 +107,7 @@ struct CacheEntry {
         return this;
     }
 };
-void APS5_VABI CacheDeleter(void* obj) {
+void APS5_VABI CacheDeleter_nid_no_patch(void* obj) {
     if (obj) static_cast<CacheEntry*>(obj)->Unref();
 }
 static_assert(sizeof(CacheEntry) == 80 && alignof(CacheEntry) == 8);
@@ -149,7 +149,7 @@ Hashtable* CreateHashtable(std::int32_t* status) {
     uhash_init_nid_postfix(&table->hashObject, reinterpret_cast<Icu::HashFunction>(uhash_hashUnicodeString_nid_postfix), reinterpret_cast<Icu::HashComparator>(uhash_compareUnicodeString_nid_postfix), nullptr, status);
     if (*status > 0) { Free_nid_no_patch(table); return nullptr; }
     table->hash = &table->hashObject;
-    uhash_setKeyDeleter_nid_postfix(table->hash, DeleteUnicodeStringObj);
+    uhash_setKeyDeleter_nid_postfix(table->hash, DeleteUnicodeStringObj_nid_no_patch);
     return table;
 }
 Vector* CreateFactoryVector(std::int32_t* status) {
@@ -178,7 +178,7 @@ struct LocalVector {
         if (!vector) {
             vector = static_cast<Vector*>(Allocate_nid_no_patch(sizeof(Vector)));
             if (!vector) throw std::invalid_argument("ICU service: null cache vector allocation");
-            _ZN6icu_687UVectorC1EPFvPvEPFa8UElementS4_EiR10UErrorCode_nid_postfix(vector, DeleteUnicodeStringObj, nullptr, 5, status);
+            _ZN6icu_687UVectorC1EPFvPvEPFa8UElementS4_EiR10UErrorCode_nid_postfix(vector, DeleteUnicodeStringObj_nid_no_patch, nullptr, 5, status);
             if (*status > 0) return;
         }
         _ZN6icu_687UVector10addElementEPvR10UErrorCode_nid_postfix(vector, str, status);
@@ -428,7 +428,7 @@ Object* APS5_VABI _ZNK6icu_6810ICUService6getKeyERNS_13ICUServiceKeyEPNS_13Unico
         if (!ncthis->serviceCache) {
             ncthis->serviceCache = CreateHashtable(status);
             if (!ncthis->serviceCache) return nullptr;
-            uhash_setValueDeleter_nid_postfix(ncthis->serviceCache->hash, CacheDeleter);
+            uhash_setValueDeleter_nid_postfix(ncthis->serviceCache->hash, CacheDeleter_nid_no_patch);
         }
         LocalString currentDescriptor;
         LocalVector cacheDescriptorList;
@@ -554,7 +554,7 @@ Vector* APS5_VABI _ZNK6icu_6810ICUService15getDisplayNamesERNS_7UVectorERKNS_6Lo
 Vector* APS5_VABI _ZNK6icu_6810ICUService15getDisplayNamesERNS_7UVectorERKNS_6LocaleEPKNS_13UnicodeStringER10UErrorCode_nid_postfix(const ICUService* self, Vector* result, const Locale* locale, const UnicodeString* matchID, std::int32_t* status) {
     Require(result); Require(locale);
     _ZN6icu_687UVector17removeAllElementsEv_nid_postfix(result);
-    _ZN6icu_687UVector10setDeleterEPFvPvE_nid_postfix(result, reinterpret_cast<Icu::ObjectDeleter>(DeleteStringPair));
+    _ZN6icu_687UVector10setDeleterEPFvPvE_nid_postfix(result, reinterpret_cast<Icu::ObjectDeleter>(DeleteStringPair_nid_no_patch));
     Require(status);
     auto* ncthis = const_cast<ICUService*>(self);
     Require(ncthis);
@@ -574,7 +574,7 @@ Vector* APS5_VABI _ZNK6icu_6810ICUService15getDisplayNamesERNS_7UVectorERKNS_6Lo
         std::int32_t cacheStatus = 0;
         uhash_init_nid_postfix(&dn->cache.hashObject, reinterpret_cast<Icu::HashFunction>(uhash_hashUnicodeString_nid_postfix), reinterpret_cast<Icu::HashComparator>(uhash_compareUnicodeString_nid_postfix), nullptr, &cacheStatus);
         dn->cache.hash = cacheStatus <= 0 ? &dn->cache.hashObject : nullptr;
-        if (dn->cache.hash) uhash_setKeyDeleter_nid_postfix(dn->cache.hash, DeleteUnicodeStringObj);
+        if (dn->cache.hash) uhash_setKeyDeleter_nid_postfix(dn->cache.hash, DeleteUnicodeStringObj_nid_no_patch);
         ncthis->displayNameCache = dn;
         std::int32_t pos = -1;
         const Icu::UHashElement* entry = nullptr;
@@ -612,7 +612,7 @@ Vector* APS5_VABI _ZNK6icu_6810ICUService15getDisplayNamesERNS_7UVectorERKNS_6Lo
         if (*status > 0) { _ZN6icu_687UVector17removeAllElementsEv_nid_postfix(result); break; }
         _ZN6icu_687UVector10addElementEPvR10UErrorCode_nid_postfix(result, pair, status);
         if (*status > 0) {
-            DeleteStringPair(pair);
+            DeleteStringPair_nid_no_patch(pair);
             _ZN6icu_687UVector17removeAllElementsEv_nid_postfix(result);
             break;
         }

@@ -69,7 +69,7 @@ inline bool IsInvariant(std::uint8_t c) {
     return c <= 0x7f && (InvariantChars[c >> 5] & (static_cast<std::uint32_t>(1) << (c & 0x1f))) != 0;
 }
 
-std::int32_t APS5_VABI SwapArray16(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI SwapArray16_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length & 1) != 0 || !outData) {
         *errorCode = 1;
@@ -85,7 +85,7 @@ std::int32_t APS5_VABI SwapArray16(const DataSwapper* ds, const void* inData, st
     return length;
 }
 
-std::int32_t APS5_VABI CopyArray16(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI CopyArray16_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length & 1) != 0 || !outData) {
         *errorCode = 1;
@@ -95,7 +95,7 @@ std::int32_t APS5_VABI CopyArray16(const DataSwapper* ds, const void* inData, st
     return length;
 }
 
-std::int32_t APS5_VABI SwapArray32(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI SwapArray32_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length & 3) != 0 || !outData) {
         *errorCode = 1;
@@ -111,7 +111,7 @@ std::int32_t APS5_VABI SwapArray32(const DataSwapper* ds, const void* inData, st
     return length;
 }
 
-std::int32_t APS5_VABI CopyArray32(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI CopyArray32_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length & 3) != 0 || !outData) {
         *errorCode = 1;
@@ -121,7 +121,7 @@ std::int32_t APS5_VABI CopyArray32(const DataSwapper* ds, const void* inData, st
     return length;
 }
 
-std::int32_t APS5_VABI SwapArray64(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI SwapArray64_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length & 7) != 0 || !outData) {
         *errorCode = 1;
@@ -139,7 +139,7 @@ std::int32_t APS5_VABI SwapArray64(const DataSwapper* ds, const void* inData, st
     return length;
 }
 
-std::int32_t APS5_VABI CopyArray64(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI CopyArray64_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length & 7) != 0 || !outData) {
         *errorCode = 1;
@@ -149,39 +149,39 @@ std::int32_t APS5_VABI CopyArray64(const DataSwapper* ds, const void* inData, st
     return length;
 }
 
-std::uint16_t APS5_VABI ReadSwapUInt16(std::uint16_t x) {
+std::uint16_t APS5_VABI ReadSwapUInt16_nid_no_patch(std::uint16_t x) {
     return static_cast<std::uint16_t>((x << 8) | (x >> 8));
 }
 
-std::uint16_t APS5_VABI ReadDirectUInt16(std::uint16_t x) {
+std::uint16_t APS5_VABI ReadDirectUInt16_nid_no_patch(std::uint16_t x) {
     return x;
 }
 
-std::uint32_t APS5_VABI ReadSwapUInt32(std::uint32_t x) {
+std::uint32_t APS5_VABI ReadSwapUInt32_nid_no_patch(std::uint32_t x) {
     return (x << 24) | ((x << 8) & 0xff0000u) | ((x >> 8) & 0xff00u) | (x >> 24);
 }
 
-std::uint32_t APS5_VABI ReadDirectUInt32(std::uint32_t x) {
+std::uint32_t APS5_VABI ReadDirectUInt32_nid_no_patch(std::uint32_t x) {
     return x;
 }
 
-void APS5_VABI WriteSwapUInt16(std::uint16_t* p, std::uint16_t x) {
+void APS5_VABI WriteSwapUInt16_nid_no_patch(std::uint16_t* p, std::uint16_t x) {
     *p = static_cast<std::uint16_t>((x << 8) | (x >> 8));
 }
 
-void APS5_VABI WriteDirectUInt16(std::uint16_t* p, std::uint16_t x) {
+void APS5_VABI WriteDirectUInt16_nid_no_patch(std::uint16_t* p, std::uint16_t x) {
     *p = x;
 }
 
-void APS5_VABI WriteSwapUInt32(std::uint32_t* p, std::uint32_t x) {
+void APS5_VABI WriteSwapUInt32_nid_no_patch(std::uint32_t* p, std::uint32_t x) {
     *p = (x << 24) | ((x << 8) & 0xff0000u) | ((x >> 8) & 0xff00u) | (x >> 24);
 }
 
-void APS5_VABI WriteDirectUInt32(std::uint32_t* p, std::uint32_t x) {
+void APS5_VABI WriteDirectUInt32_nid_no_patch(std::uint32_t* p, std::uint32_t x) {
     *p = x;
 }
 
-std::int32_t APS5_VABI CompareInvAscii(const DataSwapper*, const char* outString, std::int32_t outLength, const char16_t* localString, std::int32_t localLength) {
+std::int32_t APS5_VABI CompareInvAscii_nid_no_patch(const DataSwapper*, const char* outString, std::int32_t outLength, const char16_t* localString, std::int32_t localLength) {
     if (!outString || outLength < -1 || !localString || localLength < -1) return 0;
     if (outLength < 0) outLength = static_cast<std::int32_t>(std::strlen(outString));
     if (localLength < 0) {
@@ -199,7 +199,7 @@ std::int32_t APS5_VABI CompareInvAscii(const DataSwapper*, const char* outString
     return outLength - localLength;
 }
 
-std::int32_t APS5_VABI CompareInvEbcdic(const DataSwapper*, const char* outString, std::int32_t outLength, const char16_t* localString, std::int32_t localLength) {
+std::int32_t APS5_VABI CompareInvEbcdic_nid_no_patch(const DataSwapper*, const char* outString, std::int32_t outLength, const char16_t* localString, std::int32_t localLength) {
     if (!outString || outLength < -1 || !localString || localLength < -1) return 0;
     if (outLength < 0) outLength = static_cast<std::int32_t>(std::strlen(outString));
     if (localLength < 0) {
@@ -220,7 +220,7 @@ std::int32_t APS5_VABI CompareInvEbcdic(const DataSwapper*, const char* outStrin
     return outLength - localLength;
 }
 
-std::int32_t APS5_VABI CopyAscii(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI CopyAscii_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length > 0 && !outData)) {
         *errorCode = 1;
@@ -238,7 +238,7 @@ std::int32_t APS5_VABI CopyAscii(const DataSwapper* ds, const void* inData, std:
     return length;
 }
 
-std::int32_t APS5_VABI CopyEbcdic(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI CopyEbcdic_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length > 0 && !outData)) {
         *errorCode = 1;
@@ -257,7 +257,7 @@ std::int32_t APS5_VABI CopyEbcdic(const DataSwapper* ds, const void* inData, std
     return length;
 }
 
-std::int32_t APS5_VABI AsciiFromEbcdicSwap(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI AsciiFromEbcdicSwap_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length > 0 && !outData)) {
         *errorCode = 1;
@@ -277,7 +277,7 @@ std::int32_t APS5_VABI AsciiFromEbcdicSwap(const DataSwapper* ds, const void* in
     return length;
 }
 
-std::int32_t APS5_VABI EbcdicFromAsciiSwap(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
+std::int32_t APS5_VABI EbcdicFromAsciiSwap_nid_no_patch(const DataSwapper* ds, const void* inData, std::int32_t length, void* outData, std::int32_t* errorCode) {
     if (!errorCode || *errorCode > 0) return 0;
     if (!ds || !inData || length < 0 || (length > 0 && !outData)) {
         *errorCode = 1;
@@ -425,27 +425,27 @@ DataSwapper* APS5_VABI udata_openSwapper_nid_postfix(std::int8_t inIsBigEndian, 
     swapper->outIsBigEndian = outIsBigEndian;
     swapper->outCharset = outCharset;
 
-    swapper->readUInt16 = inIsBigEndian ? ReadSwapUInt16 : ReadDirectUInt16;
-    swapper->readUInt32 = inIsBigEndian ? ReadSwapUInt32 : ReadDirectUInt32;
-    swapper->writeUInt16 = outIsBigEndian ? WriteSwapUInt16 : WriteDirectUInt16;
-    swapper->writeUInt32 = outIsBigEndian ? WriteSwapUInt32 : WriteDirectUInt32;
+    swapper->readUInt16 = inIsBigEndian ? ReadSwapUInt16_nid_no_patch : ReadDirectUInt16_nid_no_patch;
+    swapper->readUInt32 = inIsBigEndian ? ReadSwapUInt32_nid_no_patch : ReadDirectUInt32_nid_no_patch;
+    swapper->writeUInt16 = outIsBigEndian ? WriteSwapUInt16_nid_no_patch : WriteDirectUInt16_nid_no_patch;
+    swapper->writeUInt32 = outIsBigEndian ? WriteSwapUInt32_nid_no_patch : WriteDirectUInt32_nid_no_patch;
 
-    swapper->compareInvChars = (outCharset == AsciiFamily) ? CompareInvAscii : CompareInvEbcdic;
+    swapper->compareInvChars = (outCharset == AsciiFamily) ? CompareInvAscii_nid_no_patch : CompareInvEbcdic_nid_no_patch;
 
     if (inIsBigEndian == outIsBigEndian) {
-        swapper->swapArray16 = CopyArray16;
-        swapper->swapArray32 = CopyArray32;
-        swapper->swapArray64 = CopyArray64;
+        swapper->swapArray16 = CopyArray16_nid_no_patch;
+        swapper->swapArray32 = CopyArray32_nid_no_patch;
+        swapper->swapArray64 = CopyArray64_nid_no_patch;
     } else {
-        swapper->swapArray16 = SwapArray16;
-        swapper->swapArray32 = SwapArray32;
-        swapper->swapArray64 = SwapArray64;
+        swapper->swapArray16 = SwapArray16_nid_no_patch;
+        swapper->swapArray32 = SwapArray32_nid_no_patch;
+        swapper->swapArray64 = SwapArray64_nid_no_patch;
     }
 
     if (inCharset == AsciiFamily) {
-        swapper->swapInvChars = (outCharset == AsciiFamily) ? CopyAscii : EbcdicFromAsciiSwap;
+        swapper->swapInvChars = (outCharset == AsciiFamily) ? CopyAscii_nid_no_patch : EbcdicFromAsciiSwap_nid_no_patch;
     } else {
-        swapper->swapInvChars = (outCharset == EbcdicFamily) ? CopyEbcdic : AsciiFromEbcdicSwap;
+        swapper->swapInvChars = (outCharset == EbcdicFamily) ? CopyEbcdic_nid_no_patch : AsciiFromEbcdicSwap_nid_no_patch;
     }
     return swapper;
 }
@@ -472,8 +472,8 @@ DataSwapper* APS5_VABI udata_openSwapperForInputData_nid_postfix(const void* dat
         headerSize = pHeader->dataHeader.headerSize;
         infoSize = pHeader->info.size;
     } else {
-        headerSize = ReadSwapUInt16(pHeader->dataHeader.headerSize);
-        infoSize = ReadSwapUInt16(pHeader->info.size);
+        headerSize = ReadSwapUInt16_nid_no_patch(pHeader->dataHeader.headerSize);
+        infoSize = ReadSwapUInt16_nid_no_patch(pHeader->info.size);
     }
     if (headerSize < sizeof(DataHeader) ||
         infoSize < sizeof(DataInfo) ||
