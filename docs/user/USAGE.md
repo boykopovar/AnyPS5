@@ -620,7 +620,7 @@ python3 tools/import_audit.py app.registry.json app.libc.prx.guest.prx.registry.
 | `partial` | Exported, but the function throws for inputs whose behaviour is unknown. |
 | `stub` | Exported, but the whole function calls `NotImplemented_nid_no_patch`: the game loads and throws when it calls it. |
 | `absent` | No built library exports the NID: the loader fails. |
-| `module` | The import names a file found in `--modules` (the title's own library), which is trusted to provide it. |
+| `module` | The import names a title library found in `--modules` that exports the symbol or its NID. |
 
 An import that names a library requires the literal export name. If its implementation is found only by hashing the import name, it still counts as `implemented` or `stub`, but the report lists the name mismatch, sets `symbol_mismatch` on the JSON import record and counts it in the summary, and exits with code 1. A strong import with a name mismatch is a current stop. Imports without a library retain the audit's name-to-NID fallback.
 
