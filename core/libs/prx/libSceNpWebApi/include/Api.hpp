@@ -28,15 +28,24 @@ struct NpWebApiContentParameter {
 
 static_assert(sizeof(NpWebApiContentParameter) == 32);
 
+struct NpWebApiMemoryPoolStats {
+    std::size_t poolSize;
+    std::size_t maxInuseSize;
+    std::size_t currentInuseSize;
+};
+
 extern "C" {
 
 int APS5_VABI sceNpWebApiAbortRequest(std::int64_t requestId);
 int APS5_VABI sceNpWebApiCreateContext(int libCtxId, const void* onlineId);
+int APS5_VABI sceNpWebApiCreateContextA(int libCtxId, int userId);
+int APS5_VABI sceNpWebApiCreateExtdPushEventFilter(int libCtxId, int handleId, const char* npServiceName, std::uint32_t npServiceLabel, const void* filterParam, std::size_t filterParamNum);
 int APS5_VABI sceNpWebApiCreateHandle(int libCtxId);
 int APS5_VABI sceNpWebApiCreatePushEventFilter(int libCtxId, const void* filterParam, std::size_t filterParamNum);
 int APS5_VABI sceNpWebApiCreateRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, const NpWebApiContentParameter* contentParameter, std::int64_t* requestId);
 int APS5_VABI sceNpWebApiCreateServicePushEventFilter(int libCtxId, int handleId, const char* npServiceName, std::uint32_t npServiceLabel, const void* filterParam, std::size_t filterParamNum);
 int APS5_VABI sceNpWebApiDeleteContext(int titleUserCtxId);
+int APS5_VABI sceNpWebApiDeleteExtdPushEventFilter(int libCtxId, int filterId);
 int APS5_VABI sceNpWebApiDeleteHandle(int libCtxId, int handleId);
 int APS5_VABI sceNpWebApiDeletePushEventFilter(int libCtxId, int filterId);
 int APS5_VABI sceNpWebApiDeleteRequest(std::int64_t requestId);
@@ -44,12 +53,15 @@ int APS5_VABI sceNpWebApiDeleteServicePushEventFilter(int libCtxId, int filterId
 int APS5_VABI sceNpWebApiGetHttpResponseHeaderValue();
 int APS5_VABI sceNpWebApiGetHttpResponseHeaderValueLength();
 int APS5_VABI sceNpWebApiGetHttpStatusCode(std::int64_t requestId, int* statusCode);
+int APS5_VABI sceNpWebApiGetMemoryPoolStats(int libCtxId, NpWebApiMemoryPoolStats* stats);
 int APS5_VABI sceNpWebApiInitialize(int libHttpCtxId, std::size_t poolSize);
 int APS5_VABI sceNpWebApiReadData(std::int64_t requestId, void* data, std::size_t size);
+int APS5_VABI sceNpWebApiRegisterExtdPushEventCallbackA(int titleUserCtxId, int filterId, const void* callback, void* userArg);
 int APS5_VABI sceNpWebApiRegisterPushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg);
 int APS5_VABI sceNpWebApiRegisterServicePushEventCallback(int titleUserCtxId, int filterId, void* callback, void* userArg);
 int APS5_VABI sceNpWebApiSendRequest(std::int64_t requestId, const void* data, std::size_t dataSize);
 int APS5_VABI sceNpWebApiTerminate(int libCtxId);
+int APS5_VABI sceNpWebApiUnregisterExtdPushEventCallback(int titleUserCtxId, int callbackId);
 int APS5_VABI sceNpWebApiUnregisterPushEventCallback(int titleUserCtxId, int callbackId);
 int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback(int titleUserCtxId, int callbackId);
 int APS5_VABI sceNpWebApiUtilityParseNpId();

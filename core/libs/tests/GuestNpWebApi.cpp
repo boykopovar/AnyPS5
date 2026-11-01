@@ -27,6 +27,10 @@ constexpr int HandleNotFound = static_cast<int>(0x8055290Du);
 constexpr int ServicePushEventFilterNotFound = static_cast<int>(0x8055290Eu);
 constexpr int ServicePushEventCallbackNotFound = static_cast<int>(0x8055290Fu);
 constexpr int SignedInUserNotFound = static_cast<int>(0x80552910u);
+constexpr int ExtdPushEventFilterNotFound = static_cast<int>(0x8055291Cu);
+constexpr int ExtdPushEventCallbackNotFound = static_cast<int>(0x8055291Du);
+constexpr int NpUserNotFound = static_cast<int>(0x80960105u);
+constexpr int InitialUser = 0x10000000;
 
 constexpr int MethodGet = 0;
 constexpr int MethodPost = 1;
@@ -207,6 +211,42 @@ void TestPushEventCallbacks() {
     Require(sceNpWebApiUnregisterServicePushEventCallback(user, 1) == ServicePushEventCallbackNotFound, "no service callback exists");
 
     Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the callback library contexts");
+}
+
+void TestConsoleMeasuredExports() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    Require(context > 0, "library context for the console-measured exports");
+    NpWebApiMemoryPoolStats stats{1, 1, 1};
+    Require(sceNpWebApiGetMemoryPoolStats(context, &stats) == 0 && stats.poolSize == 0x10000 && stats.maxInuseSize == 0 && stats.currentInuseSize == 0, "memory pool stats of a fresh context");
+    Require(sceNpWebApiGetMemoryPoolStats(0x7fff + 1, &stats) == LibContextNotFound, "memory pool stats of an unknown context");
+    Require(sceNpWebApiGetMemoryPoolStats(context, nullptr) == InvalidArgument, "memory pool stats without a buffer");
+
+    Require(sceNpWebApiCreateContextA(context, -1) == InvalidArgument, "user context for a negative user");
+    Require(sceNpWebApiCreateContextA(0x7fff + 1, InitialUser) == InvalidLibContextId, "user context of an unknown library context by user id");
+    Require(sceNpWebApiCreateContextA(context, 0) == NpUserNotFound, "user context for a user that is not logged in");
+    const int user = sceNpWebApiCreateContextA(context, InitialUser);
+    Require(user > 0 && (user >> 16) == context && (user & 0xffff) != 0, "user context by user id holds its library context");
+    Require(sceNpWebApiCreateContextA(context, InitialUser) == UserContextAlreadyExist, "second user context for the same user id");
+    Require(sceNpWebApiCreateContext(context, onlineId) == UserContextAlreadyExist, "the online id variant shares the user context");
+
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(handle > 0, "handle for the extended filters");
+    Require(sceNpWebApiCreateExtdPushEventFilter(context, handle, "service", 0, filterParam, 0) == InvalidArgument, "extended filter with no parameters");
+    Require(sceNpWebApiCreateExtdPushEventFilter(context, -1, "service", 0, filterParam, 1) == HandleNotFound, "extended filter with an unknown handle");
+    Require(sceNpWebApiCreateExtdPushEventFilter(0x7fff + 1, handle, "service", 0, filterParam, 1) == LibContextNotFound, "extended filter of an unknown context");
+    Require(sceNpWebApiCreateExtdPushEventFilter(context, handle, "service", 0, filterParam, 1) == SignedInUserNotFound, "extended filter without a signed-in user");
+    int argument = 0;
+    Require(sceNpWebApiRegisterExtdPushEventCallbackA(user, 1, PushEventCallback(), &argument) == ExtdPushEventFilterNotFound, "extended callback on a filter that does not exist");
+    Require(sceNpWebApiRegisterExtdPushEventCallbackA(-1, 1, PushEventCallback(), &argument) == LibContextNotFound, "extended callback through an unknown user context");
+    Require(sceNpWebApiUnregisterExtdPushEventCallback(user, 1) == ExtdPushEventCallbackNotFound, "unregister an extended callback that does not exist");
+    Require(sceNpWebApiDeleteExtdPushEventFilter(context, 1) == ExtdPushEventFilterNotFound, "delete an extended filter that does not exist");
+    Require(sceNpWebApiDeleteExtdPushEventFilter(0x7fff + 1, 1) == LibContextNotFound, "delete an extended filter of an unknown context");
+
+    Require(sceNpWebApiDeleteContext(user) == 0, "delete the user context made by user id");
+    Require(sceNpWebApiDeleteContext(user) == UserContextNotFound, "user context made by user id deleted twice");
+    Require(sceNpWebApiRegisterExtdPushEventCallbackA(user, 1, PushEventCallback(), &argument) == UserContextNotFound, "extended callback through a deleted user context");
+    Require(sceNpWebApiDeleteHandle(context, handle) == 0, "delete the handle of the extended filters");
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the console-measured library context");
 }
 
 void TestOlderSdks() {
@@ -390,6 +430,7 @@ int main() {
     TestUserContexts();
     TestRequests();
     TestPushEventCallbacks();
+    TestConsoleMeasuredExports();
     TestOlderSdks();
     TestHandleOperations();
     TestRequestOptions();
