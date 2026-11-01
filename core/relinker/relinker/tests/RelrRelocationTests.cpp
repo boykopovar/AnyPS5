@@ -102,7 +102,7 @@ int main() try {
     }
     Reject([](auto& input) { input.SetWords({3}); }, "bitmap precedes address");
     Reject([](auto& input) { input.SetWords({0x200, 0x200}); }, "Overlapping RELR targets");
-    Reject([](auto& input) { input.SetWords({0x200, 0x206}); }, "Overlapping RELR targets");
+    Reject([](auto& input) { input.SetWords({0x200, 0x202}); }, "unaligned RELR bitmap entry displacement");
     Reject([](auto& input) { input.SetWords({0x3000}); }, "target exceeds load");
     Reject([](auto& input) { input.SetWords({0x2ffc}); }, "target exceeds load");
     Reject([](auto& input) { input.Tags[0].Value = 0x2000; }, "table exceeds file-backed");
