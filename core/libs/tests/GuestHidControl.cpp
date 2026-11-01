@@ -1,4 +1,5 @@
 #include "prx/libSceHidControl/include/Api.hpp"
+#include "prx/libSceHidControl/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
