@@ -866,6 +866,9 @@ void TestHexAndCopies() {
     Require(sceNpStrcpyToBuf(copy, 5, "Hello") == NpBufferTooSmall, "a string without room for its terminator is refused");
     Require(sceNpStrncpyToBuf(copy, 6, "Hello World", 5) == 0 && Equals(copy, "Hello"), "the length limit sizes the copy");
     Require(sceNpStrncpyToBuf(copy, 5, "Hello World", 5) == NpBufferTooSmall, "the limited string still needs a terminator");
+    const char unterminated[] = {'A', 'B', 'C', 'D', 'E', 'F', '\0'};
+    Require(sceNpStrncpyToBuf(copy, 8, unterminated, 4) == 0 && Equals(copy, "ABCD"),
+        "a source without a terminator within the limit is cut at the limit");
 }
 
 }
