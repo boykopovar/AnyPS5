@@ -43,6 +43,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_safe_errors PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_radix64_tests ${LIBS_INCLUDE_DIR}/tests/GuestRadix64.cpp)
+    target_include_directories(guest_radix64_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_radix64_tests PRIVATE libc)
+    configure_windows_unwind(guest_radix64_tests)
+    add_test(NAME guest_radix64 COMMAND guest_radix64_tests)
+    set_tests_properties(guest_radix64 PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_radix64 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 target_sources(libc PRIVATE
@@ -117,6 +127,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Threads.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Backtrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/exception/Exports.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Radix64.cpp
 )
 
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
@@ -504,6 +515,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_float_builtins PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_wide_length_protected_tests ${LIBS_INCLUDE_DIR}/tests/GuestWideLengthProtected.cpp)
+    target_include_directories(guest_wide_length_protected_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_wide_length_protected_tests PRIVATE libc)
+    configure_windows_unwind(guest_wide_length_protected_tests)
+    add_test(NAME guest_wide_length_protected COMMAND guest_wide_length_protected_tests)
+    set_tests_properties(guest_wide_length_protected PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_wide_length_protected PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_character_tests ${LIBS_INCLUDE_DIR}/tests/GuestCharacter.cpp)
     target_include_directories(guest_character_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_character_tests PRIVATE libc)
@@ -511,6 +532,23 @@ if(BUILD_TESTING)
     add_test(NAME guest_character COMMAND guest_character_tests)
     if(WIN32)
         set_tests_properties(guest_character PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_set_env_tests ${LIBS_INCLUDE_DIR}/tests/GuestSetEnv.cpp)
+    target_include_directories(guest_set_env_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_set_env_tests PRIVATE libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_set_env_tests)
+    add_test(NAME guest_set_env COMMAND guest_set_env_tests $<TARGET_FILE:libc>)
+    foreach(bit RANGE 0 5)
+        add_test(NAME guest_set_env_pending_${bit} COMMAND guest_set_env_tests $<TARGET_FILE:libc> ${bit})
+        set_tests_properties(guest_set_env_pending_${bit} PROPERTIES TIMEOUT 10)
+        if(WIN32)
+            set_tests_properties(guest_set_env_pending_${bit} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    if(WIN32)
+        set_tests_properties(guest_set_env PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_math_tests ${LIBS_INCLUDE_DIR}/tests/GuestMath.cpp)
