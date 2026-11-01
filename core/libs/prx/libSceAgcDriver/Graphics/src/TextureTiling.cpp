@@ -518,6 +518,7 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     const bool prt = IsGcnPrtTiled(tileMode);
     const bool splitRotation = tileMode != TextureTileMode::kGcnDisplayPrt && tileMode != TextureTileMode::kGcnThinPrt;
     const bool pipe8x16 = tileMode == TextureTileMode::kGcnDisplayPrt || tileMode == TextureTileMode::kGcnThinPrt;
+    const bool insideMacroTile = pipe8x16;
     const auto tileBytes = std::min(tileSplit, microBytes);
     const auto log2TileBytes = static_cast<std::uint32_t>(std::countr_zero(tileBytes));
     const auto& mode = (prt ? prtMacroModes : macroModes)[log2TileBytes - 6u];
@@ -538,8 +539,8 @@ GcnTileGeometry GcnTiling(TextureTileMode tileMode, std::uint32_t bytesPerElemen
     for (std::uint32_t bit = 0; bit < log2BankHeight; ++bit) inner[innerBits++] = y(3u + bit);
     const auto pipe = pipe8x16 ? std::array<std::uint32_t, 3>{x(4) | y(3) | x(5), x(3) | y(4), x(5) | y(5)} : std::array<std::uint32_t, 3>{x(3) | y(3) | x(4), x(4) | y(4), x(5) | y(5)};
     const auto log2Aspect = static_cast<std::uint32_t>(std::countr_zero(mode.aspect));
-    const auto tx = [&](std::uint32_t bit) { return prt && bit >= log2Aspect ? 0u : x(3u + log2Pipes + bit); };
-    const auto ty = [&](std::uint32_t bit) { return prt && bit >= bankBits - log2Aspect ? 0u : y(3u + log2BankHeight + bit); };
+    const auto tx = [&](std::uint32_t bit) { return insideMacroTile && bit >= log2Aspect ? 0u : x(3u + log2Pipes + bit); };
+    const auto ty = [&](std::uint32_t bit) { return insideMacroTile && bit >= bankBits - log2Aspect ? 0u : y(3u + log2BankHeight + bit); };
     std::array<std::uint32_t, 4> bank{};
     switch (mode.banks) {
         case 16u: bank = {tx(0) | ty(3), tx(1) | ty(2) | ty(3), tx(2) | ty(1), tx(3) | ty(0)}; break;
