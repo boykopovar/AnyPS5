@@ -9,6 +9,11 @@ struct Asn1String {
     std::int64_t flags;
 };
 
+struct LibreSslGeneralName {
+    std::int32_t type;
+    void* value;
+};
+
 struct LibreSslX509VerifyParamId {
     void* hosts;
     std::uint32_t hostFlags;
@@ -395,8 +400,8 @@ int APS5_VABI EVP_md5_nid_postfix(void);
 int APS5_VABI EVP_sha256_nid_postfix(void);
 int APS5_VABI EVP_sha384_nid_postfix(void);
 int APS5_VABI EVP_sha512_nid_postfix(void);
-int APS5_VABI GENERAL_NAMES_free_nid_postfix(void);
-int APS5_VABI GENERAL_NAME_free_nid_postfix(void);
+void APS5_VABI GENERAL_NAMES_free_nid_postfix(LibreSslStack* names);
+void APS5_VABI GENERAL_NAME_free_nid_postfix(LibreSslGeneralName* name);
 int APS5_VABI HMAC_nid_postfix(void);
 int APS5_VABI HMAC_CTX_cleanup_nid_postfix(void);
 int APS5_VABI HMAC_CTX_init_nid_postfix(void);
