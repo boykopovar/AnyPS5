@@ -11,7 +11,7 @@ from test_guest_none_relocations import TARGET, module
 
 TARGETS = (("linux", []), ("pie", ["--lazy-binding"]), ("windows", ["--windows"]), ("macos", ["--macos"]))
 ERROR = "Undefined non-weak symbol has non-default visibility: "
-DEFINED_ERROR = "Relocation names a locally bound defined symbol: "
+DEFINED_ERROR = "Relocation names a defined symbol that is local, hidden or internal: "
 
 
 def executable(relocation, visibility, binding=1, referenced=True, defined=False):
