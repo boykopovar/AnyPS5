@@ -574,6 +574,12 @@ int APS5_VABI sceVideoOutSetGlobalBlendSpace(int handle, uint32_t space, uint32_
     LibcAwaitExit_nid_postfix();
 }
 
+int APS5_VABI sceVideoOutSetColorimetry(int handle, uint32_t colorimetry) {
+    (void)handle;
+    (void)colorimetry;
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceVideoOutVrrUnpegFromFixedRate(int handle) try {
     if (handle == -1) return VIDEO_OUT_ERROR_INVALID_HANDLE;
     if (VideoOutDriver::Get().GetConfig(handle) == nullptr) {

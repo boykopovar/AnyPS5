@@ -35,6 +35,7 @@ int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversio
 int APS5_VABI sceVideoOutColorSpaceConversionSettingsSetSdrToHdrConversion_(VideoOutColorSpaceConversionSettings* settings, float lumaScale, uint32_t option, uint32_t settingsSize);
 int APS5_VABI sceVideoOutAdjustColorSpaceConversion_(int handle, const VideoOutColorSpaceConversionSettings* settings, uint32_t settingsSize);
 int APS5_VABI sceVideoOutSetGlobalBlendSpace(int handle, uint32_t space, uint32_t option);
+int APS5_VABI sceVideoOutSetColorimetry(int handle, uint32_t colorimetry);
 int APS5_VABI sceVideoOutVrrPegToFixedRate(int handle, uint64_t arg1, uint64_t arg2);
 int APS5_VABI sceVideoOutVrrUnpegFromFixedRate(int handle);
 
