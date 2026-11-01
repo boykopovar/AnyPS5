@@ -260,6 +260,29 @@ class ProgressHistoryTests(unittest.TestCase):
         for label in ("Aug 3", "Aug 10", "Aug 17", "Aug 24", "Aug 31"):
             self.assertIn(f">{label}<", svg)
 
+    def test_history_table_shows_net_implemented_functions(self):
+        def point(day, done, total):
+            return {"date": day, "libraries": {"done": done, "total": total, "percent": round(100 * done / total, 2)},
+                    "shaders": {"done": 1, "total": 1, "percent": 100.0}}
+        points = [point("2026-01-01", 100, 200), point("2026-01-02", 1505, 4000),
+                  point("2026-01-04", 1505, 5000), point("2026-01-05", 1490, 5000),
+                  point("2026-01-06", 1490, 5000)]
+        for series in (points, points[:1]):
+            with self.subTest(days=len(series)):
+                html = progress_history.page(series)
+                table = ET.fromstring(html[html.index("<table>"):html.index("</table>") + len("</table>")])
+                rows = [[cell.text for cell in row] for row in table]
+                self.assertEqual(rows[0], ["Date", "System library functions", "%", "Functions implemented",
+                                           "GPU shader instructions", "%"])
+                expected = [
+                    ["2026-01-01", "100/200", "50.0%", "n/a", "1/1", "100.0%"],
+                    ["2026-01-02", "1505/4000", "37.62%", "+1,405", "1/1", "100.0%"],
+                    ["2026-01-04", "1505/5000", "30.1%", "+0", "1/1", "100.0%"],
+                    ["2026-01-05", "1490/5000", "29.8%", "-15", "1/1", "100.0%"],
+                    ["2026-01-06", "1490/5000", "29.8%", "+0", "1/1", "100.0%"],
+                ]
+                self.assertEqual(rows[1:], list(reversed(expected[:len(series)])))
+
     def test_main_writes_utf8_output_files(self):
         point = {"date": "2026-01-01", "commit": "abc1234",
                  "libraries": {"done": 1, "total": 2, "percent": 50.0},

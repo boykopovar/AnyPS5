@@ -250,9 +250,11 @@ def daily(points):
 
 
 def page(points):
+    changes = ["n/a"] + [f'{p["libraries"]["done"] - q["libraries"]["done"]:+,}' for q, p in zip(points, points[1:])]
     rows = "\n".join(f'<tr><td>{p["date"]}</td>' + "".join(
-        f'<td>{p[name]["done"]}/{p[name]["total"]}</td><td>{p[name]["percent"]}%</td>' for name, _, _ in SERIES) + "</tr>"
-        for p in reversed(points))
+        f'<td>{p[name]["done"]}/{p[name]["total"]}</td><td>{p[name]["percent"]}%</td>' +
+        (f'<td>{change}</td>' if name == "libraries" else "") for name, _, _ in SERIES) + "</tr>"
+        for p, change in reversed(list(zip(points, changes))))
     return "\n".join([
         '<!DOCTYPE html>',
         '<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">',
@@ -268,9 +270,10 @@ def page(points):
         f'(<a href="{progress.SOURCE}/tools/rdna_isa.txt">tools/rdna_isa.txt</a>). '
         'One point per UTC day with commits on <code>main</code>, taken at the last commit of the day. Every point is measured '
         f'with the current <a href="{progress.SOURCE}/tools/progress.py">tools/progress.py</a> rules and instruction list, '
-        'so the series is comparable across days. The bars are the change in implemented library functions from one point to the next. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
+        'so the series is comparable across days. The bars and the Functions implemented column show the net change in implemented library functions from one point to the next; the first point is n/a. Hover a day for the exact numbers. Raw numbers: <a href="history.json">history.json</a>. '
         '<a href="progress.html">Back to the current progress</a>.</p>',
-        '<table><tr><th>Date</th>' + "".join(f'<th>{escape(label)}</th><th>%</th>' for _, label, _ in SERIES) + '</tr>',
+        '<table><tr><th>Date</th>' + "".join(f'<th>{escape(label)}</th><th>%</th>' +
+            ('<th>Functions implemented</th>' if name == "libraries" else "") for name, label, _ in SERIES) + '</tr>',
         rows,
         '</table>',
         '</body></html>',
