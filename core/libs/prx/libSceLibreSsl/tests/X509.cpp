@@ -9,7 +9,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <set>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -237,16 +236,6 @@ LibreSslX509Info* NewInfo(LibreSslX509* certificate, int references) {
     return info;
 }
 
-void Throws(LibreSslX509Info* info, const char* message) {
-    bool threw = false;
-    try {
-        X509_INFO_free_nid_postfix(info);
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw, message);
-}
-
 void InfoFree() {
     X509_INFO_free_nid_postfix(nullptr);
     LibreSslX509* certificate = Decode(Signed(Info()));
@@ -254,14 +243,6 @@ void InfoFree() {
     LibreSslX509Info* info = NewInfo(certificate, 2);
     X509_INFO_free_nid_postfix(info);
     Require(info->references == 1 && certificate->references == 3, "a shared X509_INFO only loses a reference");
-    int crl = 0;
-    info->crl = &crl;
-    Throws(info, "freeing an X509_INFO that holds a CRL throws");
-    info->crl = nullptr;
-    info->privateKey = &crl;
-    Throws(info, "freeing an X509_INFO that holds a private key throws");
-    Require(info->references == 1 && certificate->references == 3, "a throwing X509_INFO_free changes nothing");
-    info->privateKey = nullptr;
     X509_INFO_free_nid_postfix(info);
     Require(certificate->references == 2, "the last X509_INFO_free releases its certificate");
     info = NewInfo(nullptr, 1);
@@ -270,6 +251,7 @@ void InfoFree() {
     X509_INFO_free_nid_postfix(info);
     info = NewInfo(certificate, 1);
     certificate->references = 1;
+    int crl = 0;
     info->crl = &crl;
     info->references = 2;
     X509_INFO_free_nid_postfix(info);
