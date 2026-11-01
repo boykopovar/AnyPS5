@@ -58,7 +58,7 @@
  *
  * Developed at SunSoft, a Sun Microsystems, Inc. business.
  * Permission to use, copy, modify, and distribute this
- * software is freely granted, provided that this notice 
+ * software is freely granted, provided that this notice
  * is preserved.
  * ====================================================
  */
@@ -742,7 +742,84 @@ long double APS5_VABI frexpl_nid_postfix(long double x, int* exponent) {
     if (!std::isfinite(x)) return x;
     return std::frexp(x, exponent);
 }
-double APS5_VABI exp_nid_postfix(double x) { return std::exp(x); }
+/*
+ * ====================================================
+ * Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_exp.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_exp.c */
+double APS5_VABI exp_nid_postfix(double x) {
+    static constexpr double halF[2] = {0.5, -0.5};
+    static constexpr double ln2HI[2] = {6.93147180369123816490e-01, -6.93147180369123816490e-01};
+    static constexpr double ln2LO[2] = {1.90821492927058770002e-10, -1.90821492927058770002e-10};
+    static volatile double huge = 1.0e+300;
+    static volatile double twom1000 = 9.33263618503218878990e-302;
+    const double invln2 = 1.44269504088896338700e+00;
+    const double P1 = 1.66666666666666019037e-01;
+    const double P2 = -2.77777777770155933842e-03;
+    const double P3 = 6.61375632143793436117e-05;
+    const double P4 = -1.65339022054652515390e-06;
+    const double P5 = 4.13813679705723846039e-08;
+    double hi = 0.0;
+    double lo = 0.0;
+    std::int32_t k = 0;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    std::uint32_t hx = static_cast<std::uint32_t>(bits >> 32);
+    const std::int32_t xsb = (hx >> 31) & 1;
+    hx &= 0x7fffffff;
+    if (hx >= 0x40862e42) {
+        if (hx >= 0x7ff00000) {
+            if (((hx & 0xfffff) | static_cast<std::uint32_t>(bits)) != 0) {
+                return x + x;
+            }
+            return xsb == 0 ? x : 0.0;
+        }
+        if (x > 7.09782712893383973096e+02) {
+            errno = ERANGE;
+            return huge * huge;
+        }
+        if (x < -7.45133219101941108420e+02) {
+            errno = ERANGE;
+            return twom1000 * twom1000;
+        }
+    }
+    if (x == 1.0) {
+        return std::bit_cast<double>(std::uint64_t{0x4005bf0a8b145769});
+    }
+    if (hx > 0x3fd62e42) {
+        if (hx < 0x3ff0a2b2) {
+            hi = x - ln2HI[xsb];
+            lo = ln2LO[xsb];
+            k = 1 - xsb - xsb;
+        } else {
+            k = static_cast<std::int32_t>(invln2 * x + halF[xsb]);
+            const double t = k;
+            hi = x - t * ln2HI[0];
+            lo = t * ln2LO[0];
+        }
+        x = hi - lo;
+    } else if (hx < 0x3e300000) {
+        return 1.0 + x;
+    }
+    const double t = x * x;
+    const double twopk = std::bit_cast<double>(static_cast<std::uint64_t>(0x3ff + (k >= -1021 ? k : k + 1000)) << 52);
+    const double c = x - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+    if (k == 0) {
+        return 1.0 - ((x * c) / (c - 2.0) - x);
+    }
+    const double y = 1.0 - ((lo - (x * c) / (2.0 - c)) - hi);
+    if (k >= -1021) {
+        if (k == 1024) {
+            return y * 2.0 * 0x1p1023;
+        }
+        return y * twopk;
+    }
+    return y * twopk * twom1000;
+}
 double APS5_VABI atan_nid_postfix(double x) { return std::atan(x); }
 double APS5_VABI tan_nid_postfix(double x) { return std::tan(x); }
 double APS5_VABI log2_nid_postfix(double x) { return std::log2(x); }
@@ -1352,7 +1429,7 @@ static double SinhLdexpExpHalf(double x) {
  *
  * Developed at SunSoft, a Sun Microsystems, Inc. business.
  * Permission to use, copy, modify, and distribute this
- * software is freely granted, provided that this notice 
+ * software is freely granted, provided that this notice
  * is preserved.
  * ====================================================
  */
