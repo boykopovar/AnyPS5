@@ -105,6 +105,8 @@ def main():
                                            (18, "R_X86_64_TPOFF64")):
             image = make_image(b"\0lib.so\0symbol\0")
             struct.pack_into("<Q", image, 0x708, (1 << 32) | relocation_type)
+            if relocation_type in (16, 17, 18):
+                image[0x63C] = 0x06
             source = work / ("type-" + str(relocation_type) + ".elf")
             source.write_bytes(image)
             output = work / ("type-" + str(relocation_type) + "-linux.out")
