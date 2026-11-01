@@ -1,6 +1,9 @@
-add_library(libSceHttp SHARED EXCLUDE_FROM_ALL Export.cpp src/Options.cpp src/Parse.cpp src/Uri.cpp)
+add_library(libSceHttp SHARED EXCLUDE_FROM_ALL Export.cpp src/Options.cpp src/Parse.cpp src/Uri.cpp src/Client.cpp)
 target_include_directories(libSceHttp PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceHttp)
+if(WIN32)
+    target_link_libraries(libSceHttp PRIVATE ws2_32)
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_http_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttp.cpp)
@@ -44,6 +47,22 @@ if(BUILD_TESTING)
     target_link_libraries(guest_http_options_tests PRIVATE libSceHttp libc)
     configure_windows_unwind(guest_http_options_tests)
     add_test(NAME guest_http_options COMMAND guest_http_options_tests)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test_executable(guest_http_client_tests ${LIBS_INCLUDE_DIR}/tests/GuestHttpClient.cpp)
+        target_include_directories(guest_http_client_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_http_client_tests PRIVATE libSceHttp libc)
+        configure_windows_unwind(guest_http_client_tests)
+        file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_http_client)
+        add_test(NAME guest_http_client COMMAND ${Python3_EXECUTABLE}
+            ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpServer.py $<TARGET_FILE:guest_http_client_tests> client)
+        set_tests_properties(guest_http_client PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_http_client TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_http_client PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
+        endif()
+    endif()
     if(WIN32)
         set_tests_properties(guest_http guest_http_uri_locale guest_http_response_header guest_http_options PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttp>")
