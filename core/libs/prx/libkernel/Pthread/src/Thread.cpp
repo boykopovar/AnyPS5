@@ -501,6 +501,17 @@ PthreadPrivate::PthreadPrivate(const PthreadAttrPrivate* attr) : _finished(false
     registry.threads.emplace(cpuClockThread, this);
 }
 
+std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& thread) {
+    auto& registry = CpuClocks();
+    std::unique_lock lock(registry.lock);
+    for (const auto& [id, candidate] : registry.threads) {
+        if (!candidate->initialThread.load(std::memory_order_acquire) || candidate->_finished.load(std::memory_order_acquire)) continue;
+        thread = candidate;
+        return lock;
+    }
+    return {};
+}
+
 PthreadPrivate::~PthreadPrivate() {
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
@@ -801,7 +812,9 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 #endif
     args.reset();
     self->suspended.wait(true, std::memory_order_acquire);
-#ifndef _WIN32
+#ifdef _WIN32
+    DeliverPendingException_nid_no_patch(self);
+#else
     pthread_sigmask(SIG_SETMASK, &signalMask, nullptr);
 #endif
     finishThread(self, Aps5CallGuestEntry_nid_no_patch(entry, arg));
@@ -947,7 +960,7 @@ static void* StartNativeThread(void* opaque) {
         }
     } guard{self};
     std::jmp_buf exitJump;
-    if (setjmp(exitJump) == 0) {
+    if (_setjmp(exitJump) == 0) {
         threadExitJump = &exitJump;
         RunThread(std::unique_ptr<ThreadArgs>(guest));
     }
@@ -981,6 +994,7 @@ int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, Pthread
     if (name) p->name = name;
     p->createdSuspended = attr && (*attr)->_createSuspended;
     p->suspended.store(p->createdSuspended, std::memory_order_relaxed);
+    p->pendingException.store(0, std::memory_order_relaxed);
     std::promise<bool> start;
     auto args = std::make_unique<ThreadArgs>(ThreadArgs{entry, arg, p.get()});
 #ifdef _WIN32
@@ -1162,7 +1176,7 @@ void APS5_VABI scePthreadExit(void* retval) {
     _endthreadex(0);
 #else
     if (threadExitJump)
-        std::longjmp(*threadExitJump, 1);
+        _longjmp(*threadExitJump, 1);
     pthread_exit(retval);
 #endif
     throw std::runtime_error("Native thread exit returned");
@@ -1176,6 +1190,7 @@ Pthread APS5_VABI scePthreadSelf() {
         if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &handle, 0, FALSE, DUPLICATE_SAME_ACCESS))
             throw std::system_error(GetLastError(), std::system_category(), "Adopting guest thread");
         adopted->nativeHandle = handle;
+        adopted->initialThread.store(IsInitialPthread_nid_no_patch(), std::memory_order_release);
         adopted->threadId = std::this_thread::get_id();
         adopted->_detached = true;
         adopted->references.store(1, std::memory_order_relaxed);
@@ -1188,6 +1203,7 @@ Pthread APS5_VABI scePthreadSelf() {
         adoptedThread = std::make_unique<PthreadPrivate>();
         adoptedThread->_detached = true;
         adoptedThread->_adopted = true;
+        adoptedThread->initialThread.store(IsInitialPthread_nid_no_patch(), std::memory_order_release);
         BindHostCpuClock(adoptedThread.get());
         adoptedThread->threadId = std::this_thread::get_id();
         adoptedThread->hostThread = pthread_self();
