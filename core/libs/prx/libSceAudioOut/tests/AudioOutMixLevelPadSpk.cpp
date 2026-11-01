@@ -164,6 +164,32 @@ void TestRejectedLevels() {
     Require(sceAudioOutSetMixLevelPadSpk(closed, unity) == invalidPort);
 }
 
+void TestPadSpkVolume() {
+    const auto block = Ramp();
+    Require(Play(portTypePadSpeaker, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetPadSpkVolume(handle, 127) == 0);
+    }) == block);
+    Require(Play(portTypePadSpeaker, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetPadSpkVolume(handle, 127 / 2) == 0);
+    }) == Scaled(block, unity * 63 / 127));
+    Require(Play(portTypePadSpeaker, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetPadSpkVolume(handle, 127) == 0);
+        Require(sceAudioOutSetPadSpkVolume(handle, 0) == 0);
+    }).empty());
+
+    Require(Play(portTypePadSpeaker, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetMixLevelPadSpk(handle, unity / 2) == 0);
+        Require(sceAudioOutSetPadSpkVolume(handle, 127 / 2) == 0);
+    }) == Scaled(block, (unity / 2) * 63 / 127));
+
+    // Error cases
+    Require(Play(portTypeMain, formatS16Mono, block, [](int handle) {
+        Require(sceAudioOutSetPadSpkVolume(handle, 127) == invalidPortType);
+        Require(sceAudioOutSetPadSpkVolume(handle, 256) == invalidMixLevel);
+        Require(sceAudioOutSetPadSpkVolume(handle, -1) == invalidMixLevel);
+    }) == block);
+}
+
 }
 
 int main() {
@@ -173,5 +199,6 @@ int main() {
     TestLevelWithVolume();
     TestOtherPortType();
     TestRejectedLevels();
+    TestPadSpkVolume();
     return 0;
 }
