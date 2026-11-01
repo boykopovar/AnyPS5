@@ -285,13 +285,7 @@ static void CheckSecureFormat() {
     buffer[0] = 'x';
     Require(FormatListS(buffer, sizeof(buffer), "%2$s%1$S", static_cast<const char16_t*>(nullptr), "a") < 0 && buffer[0] == 0);
     Require(snprintf_s_nid_postfix(buffer, sizeof(buffer), "%.0s|%c", "", 'z') == 2 && std::strcmp(buffer, "|z") == 0);
-    bool threw = false;
-    try {
-        FormatListS(buffer, sizeof(buffer), "%y", 1);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
+    Require(FormatListS(buffer, sizeof(buffer), "[%y][%-4k]", 1) == 10 && std::strcmp(buffer, "[%y][%k  ]") == 0);
 }
 
 static void CheckScanInputFailureErrno() {
@@ -347,10 +341,11 @@ __attribute__((noinline)) static void APS5_VABI RunChecks() {
     snprintf_nid_postfix(buffer, sizeof(buffer), "%.3Lf %d %.1f", 1.125L, 7, 2.5);
 
     Require(std::strcmp(buffer, "1.125 7 2.5") == 0);
-    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%'d|%'u|%'.2f|%'-8ld|%'+05d|%'g", 1234567, 4000000000u, 1234567.891, 1234567LL, 42, 1e6) == 50);
-    Require(std::strcmp(buffer, "1234567|4000000000|1234567.89|1234567 |+0042|1e+06") == 0);
-    Require(FormatList(buffer, sizeof(buffer), "%'lld %'zu", 1234567890123LL, static_cast<std::size_t>(9876543210)) == 24 && std::strcmp(buffer, "1234567890123 9876543210") == 0);
-    Require(FormatList(buffer, sizeof(buffer), "%'d %ls", 1234567, u"x") == 9 && std::strcmp(buffer, "1234567 x") == 0);
+    Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%'d|%'u|%'.2f|%'-8ld|%'+05d|%'g") == 31);
+    Require(std::strcmp(buffer, "%'d|%'u|%'.2f|%'-8ld|%'+05d|%'g") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "[%6'd][%-6'd]") == 18 && std::strcmp(buffer, "[    %'d][%'    d]") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "%'d %ls|%d", u"x", 7) == 7 && std::strcmp(buffer, "%'d x|7") == 0);
+    Require(FormatList(buffer, sizeof(buffer), "[%5k][%-4y][% +#0-7k][%.2k][%*k]", 11) == 39 && std::strcmp(buffer, "[   %k][%y  ][%k     ][%k][         %k]") == 0);
     Require(sprintf_nid_postfix(buffer, "%2$s %1$d %2$s", 7, "x") == 5 && std::strcmp(buffer, "x 7 x") == 0);
     Require(snprintf_nid_postfix(buffer, sizeof(buffer), "%3$.1Lf|%2$.2f|%1$hhd|%4$s", 257, 2.5, 1.5L, "end") == 14);
     Require(std::strcmp(buffer, "1.5|2.50|1|end") == 0);

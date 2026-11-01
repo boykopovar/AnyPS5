@@ -136,9 +136,9 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
         bool left = false;
         int width = 0;
         int precision = -1;
-        while (In(*format, "-+ #0'")) {
+        while (In(*format, "-+ #0")) {
             if (*format == u'-') left = true;
-            if (*format != u'\'') spec += static_cast<char>(*format);
+            spec += static_cast<char>(*format);
             ++format;
         }
         if (*format == u'*') {
@@ -251,6 +251,10 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             else if (length == "h") *static_cast<short*>(pointer) = static_cast<short>(count);
             else if (length.empty()) *static_cast<int*>(pointer) = count;
             else *static_cast<long long*>(pointer) = count;
+        } else if (conversion < 0x80 && !std::strchr(LibcDetail::KnownConversions, static_cast<char>(conversion))) {
+            std::u16string text = u"%";
+            if (conversion != u'%') text.push_back(conversion);
+            AppendPadded(out, text, left, width);
         } else {
             throw std::invalid_argument("Unsupported format conversion");
         }
