@@ -496,10 +496,12 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             const auto destination = (packet[1] >> 8u) & 0xfu;
             if (destination == 0) {
                 const auto count = (packet[1] & 0x10000u) != 0 ? 1u : packet.size() - 4;
-                require(packet[3] == 0 && packet[2] >= 0xc340u && packet[2] <= 0xc347u && count <= 0xc348u - packet[2], "WRITE_DATA register destination outside the thread-trace user-data registers is not implemented");
+                require(packet[3] == 0 && packet[2] < 0x10000u && count <= 0x10000u - packet[2], "WRITE_DATA register destination outside the register space");
+                require(packet[2] >= 0xc340u && packet[2] <= 0xc347u && count <= 0xc348u - packet[2], "WRITE_DATA register destination outside the thread-trace user-data registers is not implemented");
                 break;
             }
-            require(destination == 1 || destination == 2 || destination == 3 || destination == 5, "WRITE_DATA register destination is not implemented");
+            require(destination <= 5, "invalid WRITE_DATA destination");
+            require(destination != 4, "reserved WRITE_DATA destination");
             require((packet[2] & 3u) == 0, "misaligned WRITE_DATA destination");
             break;
         }
@@ -511,9 +513,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             if (CopyDataToRegister(packet)) {
                 require(source == 2 || source == 4, "COPY_DATA to a register from a register, GDS, immediate or clock source is not implemented");
                 require((packet[2] & 3u) == 0, "misaligned COPY_DATA source");
-                require(packet[5] == 0 && packet[4] >= ContextRegisterBase && packet[4] - ContextRegisterBase <= 0x400u - copyDataCount(packet), "COPY_DATA to a register outside the context registers is not implemented");
+                require(packet[5] == 0 && packet[4] < 0x10000u && copyDataCount(packet) <= 0x10000u - packet[4], "COPY_DATA register destination outside the register space");
+                require(packet[4] >= ContextRegisterBase && packet[4] - ContextRegisterBase <= 0x400u - copyDataCount(packet), "COPY_DATA to a register outside the context registers is not implemented");
                 break;
             }
+            require(destination <= 10, "invalid COPY_DATA destination");
             require(destination == 2 || destination == 4 || destination == 10, "COPY_DATA GDS or performance-counter destination is not implemented");
             require(source == 2 || source == 4 || source == 5 || source == 10 || source == 11 || source == CopyDataGpuClockSource || source == CopyDataRegisterSource, "COPY_DATA GDS or reference-clock source is not implemented");
             require(source != CopyDataRegisterSource || (packet[3] == 0 && registerBankBase(packet[2]) != 0 && registerBankBase(packet[2]) == registerBankBase(packet[2] + copyDataCount(packet) - 1)), "COPY_DATA from a register outside the shader, context and user config registers is not implemented");
@@ -625,7 +629,8 @@ std::optional<LabelWrite> DecodeLabelWrite(std::span<const std::uint32_t> packet
         return label;
     }
     if (opcode == 0x37 && packet.size() > 4) {
-        if (((packet[1] >> 8u) & 0xfu) == 0) return std::nullopt;
+        const auto destinationSelect = (packet[1] >> 8u) & 0xfu;
+        if (destinationSelect == 0 || destinationSelect == 4 || destinationSelect > 5) return std::nullopt;
         const auto destination = address(packet[2], packet[3]);
         if (destination == 0) return std::nullopt;
         // WR_ONE_ADDR stores every value at the same address: the last one remains.
@@ -643,6 +648,8 @@ std::optional<StoreWrite> ResolveStore(std::span<const std::uint32_t> packet, co
     switch ((packet[0] >> 8u) & 0xffu) {
         case 0x40: {
             if (packet.size() < 6 || CopyDataToRegister(packet)) return std::nullopt;
+            const auto dstSelect = (packet[1] >> 8u) & 0xfu;
+            if (dstSelect != 1 && dstSelect != 2 && dstSelect != 5) return std::nullopt;
             if (CopyDataSource(packet) == CopyDataRegisterSource) return std::nullopt;
             const std::size_t bytes = CopyDataBytes(packet);
             const auto destination = address(packet[4], packet[5]);
@@ -724,6 +731,8 @@ std::vector<PacketStore> DecodeStores(std::span<const std::uint32_t> packet) {
         case 0x40: {
             require(packet.size() == 6, "invalid COPY_DATA size");
             if (CopyDataToRegister(packet)) return {};
+            const auto dstSelect = (packet[1] >> 8u) & 0xfu;
+            if (dstSelect != 1 && dstSelect != 2 && dstSelect != 5) return {};
             const auto destination = address(packet[4], packet[5]);
             if (CopyDataImmediate(CopyDataSource(packet))) return {pattern(destination, CopyDataBytes(packet), packet[2])};
             return {runTime(destination, CopyDataBytes(packet))};

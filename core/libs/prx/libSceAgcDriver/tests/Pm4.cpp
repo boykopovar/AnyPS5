@@ -557,6 +557,11 @@ void testMemory() {
     const auto fenceLabel = AgcDriver::Pm4::DecodeLabelWrite(fence);
     check(fenceLabel.has_value() && fenceLabel->address == reinterpret_cast<std::uint64_t>(data.data()), "WRITE_DATA with destination 3 did not resolve as a label");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x100000, low(data.data()), high(data.data()), 1}), 0); }, "register destination");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x400, low(data.data()), high(data.data()), 1}), 0); }, "reserved WRITE_DATA destination");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x600, low(data.data()), high(data.data()), 1}), 0); }, "invalid WRITE_DATA destination");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0xf00, low(data.data()), high(data.data()), 1}), 0); }, "invalid WRITE_DATA destination");
+    check(!AgcDriver::Pm4::DecodeLabelWrite(makePacket(0x37, {0x400, low(data.data()), high(data.data()), 1})).has_value(), "reserved WRITE_DATA destination decoded as label");
+    check(!AgcDriver::Pm4::DecodeLabelWrite(makePacket(0x37, {0x600, low(data.data()), high(data.data()), 1})).has_value(), "invalid WRITE_DATA destination decoded as label");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x08000100, low(data.data()), high(data.data()), 71}), 0); }, "reserved");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x80000100, low(data.data()), high(data.data()), 51}), 0); }, "engine");
     execute(state, makePacket(0x83, {0xbff8, 2, low(data.data()), high(data.data())}));
@@ -585,6 +590,14 @@ void testCopies() {
     execute(state, makePacket(0x40, {0x110509, 0, 0, low(stamp.data()), high(stamp.data())}));
     check(stamp[0] != 0, "GPU timestamp COPY_DATA to DST_SEL 5 memory failed");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x305, 1, 0, 0, 0}), 0); }, "GDS or performance-counter destination");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x605, 1, 0, 0, 0}), 0); }, "invalid COPY_DATA destination");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0xf05, 1, 0, 0, 0}), 0); }, "invalid COPY_DATA destination");
+    check(!AgcDriver::Pm4::ResolveStore(makePacket(0x40, {0x305, 1, 0, low(destination.data()), high(destination.data())}), state, 64).has_value(), "GDS COPY_DATA resolved as memory store");
+    check(!AgcDriver::Pm4::ResolveStore(makePacket(0x40, {0x405, 1, 0, low(destination.data()), high(destination.data())}), state, 64).has_value(), "performance-counter COPY_DATA resolved as memory store");
+    check(!AgcDriver::Pm4::ResolveStore(makePacket(0x40, {0x605, 1, 0, low(destination.data()), high(destination.data())}), state, 64).has_value(), "invalid destination COPY_DATA resolved as memory store");
+    check(AgcDriver::Pm4::DecodeStores(makePacket(0x40, {0x305, 1, 0, low(destination.data()), high(destination.data())})).empty(), "GDS COPY_DATA decoded as memory store");
+    check(AgcDriver::Pm4::DecodeStores(makePacket(0x40, {0x405, 1, 0, low(destination.data()), high(destination.data())})).empty(), "performance-counter COPY_DATA decoded as memory store");
+    check(AgcDriver::Pm4::DecodeStores(makePacket(0x40, {0x605, 1, 0, low(destination.data()), high(destination.data())})).empty(), "invalid destination COPY_DATA decoded as memory store");
     alignas(8) std::array<std::uint32_t, 2> clearValues{0x55, 0x3f800000};
     execute(state, makePacket(0x40, {0x10001, low(clearValues.data()), high(clearValues.data()), 0xa00a, 0}));
     check(state.context.at(0x0a) == 0x55 && state.context.at(0x0b) == 0x3f800000, "COPY_DATA to two context registers failed");
@@ -595,6 +608,10 @@ void testCopies() {
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x1, low(clearValues.data()), high(clearValues.data()), 0x2e40, 0}), 0); }, "outside the context registers");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x10001, low(clearValues.data()), high(clearValues.data()), 0xa3ff, 0}), 0); }, "outside the context registers");
     expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x1, low(clearValues.data()) + 2, high(clearValues.data()), 0xa00a, 0}), 0); }, "misaligned COPY_DATA source");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x1, low(clearValues.data()), high(clearValues.data()), 0x10000u, 0}), 0); }, "COPY_DATA register destination outside the register space");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x10001, low(clearValues.data()), high(clearValues.data()), 0xffffu, 0}), 0); }, "COPY_DATA register destination outside the register space");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x1, low(clearValues.data()), high(clearValues.data()), 0xffffffffu, 0}), 0); }, "COPY_DATA register destination outside the register space");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x40, {0x1, low(clearValues.data()), high(clearValues.data()), 0xa000u, 1}), 0); }, "COPY_DATA register destination outside the register space");
     alignas(8) std::array<std::uint64_t, 2> clock{};
     const auto clockCopy = [&](std::uint64_t* target) { return makePacket(0x40, {0x06016209, 0, 0, low(target), high(target)}); };
     execute(state, clockCopy(&clock[0]));
@@ -686,6 +703,10 @@ void testTraceRegisterWrites() {
     check(state.userConfig.at(0x340u) == 1u && state.userConfig.at(0x341u) == 2u && state.userConfig.at(0x342u) == 3u, "sequential trace write did not advance the register address");
     execute(state, makePacket(0x37, {0x06010000u, 0xc347u, 0u, 4u, 5u}));
     check(state.userConfig.at(0x347u) == 5u, "one-address trace write crossed the register range");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x06000000u, 0x10000u, 0u, 1u}), 0); }, "WRITE_DATA register destination outside the register space");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x06000000u, 0xffffu, 0u, 1u, 2u}), 0); }, "WRITE_DATA register destination outside the register space");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x06000000u, 0xffffffffu, 0u, 1u}), 0); }, "WRITE_DATA register destination outside the register space");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x37, {0x06000000u, 0xc340u, 1u, 1u}), 0); }, "WRITE_DATA register destination outside the register space");
     for (const auto& invalid : {makePacket(0x37, {0x06000000u, 0xc347u, 0u, 1u, 2u}), makePacket(0x37, {0x06010000u, 0xc348u, 0u, 1u}), makePacket(0x37, {0x06010000u, 0xc343u, 1u, 1u})}) {
         expectFailure([&] { execute(state, invalid); }, "register destination outside");
     }
