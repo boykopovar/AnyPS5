@@ -304,27 +304,7 @@ std::size_t APS5_VABI CodecvtLength(GuestLocale::Facet*, std::uint64_t*, const c
 
 const GuestLocale::CodecvtVtable g_codecvtVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, CodecvtAlwaysNoconv, CodecvtConstantOne, CodecvtConstantOne, CodecvtNoConversion, CodecvtNoConversion, CodecvtUnshift, CodecvtLength};
 
-char APS5_VABI NumpunctDecimalPoint(const GuestLocale::NumpunctFacet* self) {
-    return self->decimalPoint;
-}
-
-char APS5_VABI NumpunctThousandsSep(const GuestLocale::NumpunctFacet* self) {
-    return self->thousandsSep;
-}
-
-GuestLocale::String* APS5_VABI NumpunctGrouping(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
-    return AssignCString(result, self->grouping);
-}
-
-GuestLocale::String* APS5_VABI NumpunctFalsename(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
-    return AssignCString(result, self->falsename);
-}
-
-GuestLocale::String* APS5_VABI NumpunctTruename(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
-    return AssignCString(result, self->truename);
-}
-
-const GuestLocale::NumpunctVtable g_numpunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, NumpunctDecimalPoint, NumpunctThousandsSep, NumpunctGrouping, NumpunctFalsename, NumpunctTruename};
+const GuestLocale::NumpunctVtable g_numpunctVtable{{DestroyCollate, DeleteCollate, RetainFacet, ReleaseFacet}, _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix, _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix, _ZNKSt8numpunctIcE11do_groupingEv_nid_postfix, _ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix, _ZNKSt8numpunctIcE11do_truenameEv_nid_postfix};
 
 void PutCharacter(GuestLocale::OutputIterator& out, char character) {
     GuestLocale::Streambuf* buffer = out.buffer;
@@ -399,6 +379,11 @@ const GuestLocale::NumpunctVtable& Punctuation(const GuestLocale::Facet* facet) 
 
 const GuestLocale::NumpunctFacet* AsNumpunct(const GuestLocale::Facet* facet) {
     return reinterpret_cast<const GuestLocale::NumpunctFacet*>(facet);
+}
+
+const GuestLocale::NumpunctFacet* RequireNumpunct(const GuestLocale::NumpunctFacet* self, const char* function) {
+    if (self == nullptr || self->base.vtable == nullptr) throw std::invalid_argument(std::string(function) + ": null facet");
+    return self;
 }
 
 std::string TakeString(GuestLocale::String* (APS5_VABI* method)(GuestLocale::String*, const GuestLocale::NumpunctFacet*), const GuestLocale::Facet* facet) {
@@ -812,6 +797,46 @@ std::size_t APS5_VABI _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_po
         *facet = &punct->base;
     }
     return 4;
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return RequireNumpunct(self, "numpunct::do_decimal_point")->decimalPoint;
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return RequireNumpunct(self, "numpunct::do_thousands_sep")->thousandsSep;
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignCString(result, RequireNumpunct(self, "numpunct::do_grouping")->grouping);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignCString(result, RequireNumpunct(self, "numpunct::do_falsename")->falsename);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return AssignCString(result, RequireNumpunct(self, "numpunct::do_truename")->truename);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE13decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::decimal_point")->base).decimalPoint(self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE13thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::thousands_sep")->base).thousandsSep(self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::grouping")->base).grouping(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::falsename")->base).falsename(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return Punctuation(&RequireNumpunct(self, "numpunct::truename")->base).truename(result, self);
 }
 
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
