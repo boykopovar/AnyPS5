@@ -366,7 +366,11 @@ int APS5_VABI sceAppContentTemporaryDataGetAvailableSpaceKb(const AppContentMoun
     auto& state = Temporary();
     std::lock_guard lock(state.mutex);
     if (!state.mounted || !IsTemporaryMountPoint(*mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    *availableSpaceKb = static_cast<size_t>(std::filesystem::space(state.directory).available / 1024);
+    const std::size_t space = static_cast<size_t>(std::filesystem::space(state.directory).available / 1024);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(availableSpaceKb, &space, sizeof(space));
+    errno = savedErrno;
+    if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return 0;
 }
 
@@ -521,7 +525,13 @@ int APS5_VABI sceAppContentGetAddcontInfoListByIroTag(uint32_t iroTag, AppConten
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     (void)iroTag;
     if ((!list || listNum == 0) && !hitNum) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    if (hitNum) *hitNum = 0;
+    if (hitNum) {
+        const uint32_t val = 0;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(hitNum, &val, sizeof(val));
+        errno = savedErrno;
+        if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
+    }
     return 0;
 }
 
@@ -546,7 +556,11 @@ int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnif
 int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!pftFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    *pftFlag = 0;
+    const uint32_t val = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(pftFlag, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return SCE_APP_CONTENT_ERROR_PARAMETER;
     return 0;
 }
 

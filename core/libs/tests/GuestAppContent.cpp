@@ -289,6 +289,9 @@ int main() {
     Require(sceAppContentTemporaryDataUnmount(&second) == ErrorNotMounted);
     Require(access_nid_postfix("/temp0/keep.txt", 0) == 0);
     size_t available = 0;
+    errno = 71;
+    Require(sceAppContentTemporaryDataGetAvailableSpaceKb(&mountPoint, reinterpret_cast<size_t*>(0x10)) == ErrorParameter);
+    Require(errno == 71);
     Require(sceAppContentTemporaryDataGetAvailableSpaceKb(&mountPoint, &available) == 0 && available > 0);
     Require(sceAppContentTemporaryDataUnmount(&mountPoint) == 0);
     Require(std::filesystem::exists(backing / "keep.txt"));
@@ -363,6 +366,17 @@ int main() {
     Require(sceAppContentGetPftFlag(&pftFlag) == 0);
     Require(pftFlag == 0);
     Require(sceAppContentGetPftFlag(nullptr) == ErrorParameter);
+    errno = 0;
+    Require(sceAppContentAppParamGetInt(0, reinterpret_cast<int32_t*>(0x10)) == ErrorParameter);
+    Require(errno == 0);
+    Require(sceAppContentGetPftFlag(reinterpret_cast<uint32_t*>(0x10)) == ErrorParameter);
+    Require(errno == 0);
+    Require(sceAppContentGetGameTrialsFlag(reinterpret_cast<uint32_t*>(0x10)) == ErrorParameter);
+    Require(errno == 0);
+    Require(sceAppContentGetAddcontInfoList(0, nullptr, 0, reinterpret_cast<uint32_t*>(0x10)) == ErrorParameter);
+    Require(errno == 0);
+    Require(sceAppContentGetAddcontInfoListByIroTag(1, nullptr, 0, reinterpret_cast<uint32_t*>(0x10)) == ErrorParameter);
+    Require(errno == 0);
     AppContentEntitlementKey key;
     std::memset(&key, 0x5a, sizeof(key));
     const AppContentEntitlementKey untouchedKey = key;
