@@ -218,6 +218,14 @@ struct NativeSocketHandle : KernelSocketPoll::NativeOwner {
     }
 };
 
+int ReadGuestAddress(const void* address, std::uint32_t length,
+                     std::array<std::uint8_t, sizeof(sockaddr_storage)>& snapshot) {
+    if (!address || length < 2) return NET_EINVAL;
+    if (!GuestSocketReadGuest_nid_no_patch(snapshot.data(), address, std::min<std::size_t>(length, snapshot.size())))
+        return NET_EFAULT;
+    return 0;
+}
+
 bool guest_to_native_address(const void* address, std::uint32_t length,
                              sockaddr_storage& native, NativeLength& native_length) {
     if (!address || length < 2) return false;
@@ -1039,9 +1047,11 @@ int APS5_VABI sceNetBind_nid_postfix(int s, const void* addr, uint32_t addrlen) 
         socket = it->second;
         if (it->second.bound) return fail(NET_EINVAL);
     }
+    std::array<std::uint8_t, sizeof(sockaddr_storage)> address{};
+    if (const int error = ReadGuestAddress(addr, addrlen, address)) return fail(error);
     sockaddr_storage native{};
     NativeLength native_length = 0;
-    if (!guest_to_native_address(addr, addrlen, native, native_length)) return fail(NET_EINVAL);
+    if (!guest_to_native_address(address.data(), addrlen, native, native_length)) return fail(NET_EINVAL);
     if (native.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
     if (::bind(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length) != 0)
         return fail(native_error());
@@ -1172,13 +1182,15 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
         it->second.reported_error = 0;
         socket = it->second;
     }
-    if (socket.type == NET_SOCK_DGRAM && addr && addrlen >= 2 && static_cast<const std::uint8_t*>(addr)[1] == 0) {
+    std::array<std::uint8_t, sizeof(sockaddr_storage)> address{};
+    if (const int error = ReadGuestAddress(addr, addrlen, address)) return fail(error);
+    if (socket.type == NET_SOCK_DGRAM && address[1] == 0) {
         if (const int error = disconnect_datagram(socket)) return error;
         return fail(NET_EAFNOSUPPORT);
     }
     sockaddr_storage native{};
     NativeLength native_length = 0;
-    if (!guest_to_native_address(addr, addrlen, native, native_length)) return fail(NET_EINVAL);
+    if (!guest_to_native_address(address.data(), addrlen, native, native_length)) return fail(NET_EINVAL);
 #ifdef _WIN32
     if (socket.type == NET_SOCK_STREAM) RefuseClosedLoopbackAtOnce_nid_no_patch(socket.native->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
