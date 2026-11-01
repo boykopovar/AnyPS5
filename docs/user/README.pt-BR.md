@@ -1,4 +1,5 @@
 [English](../../README.md) | **Português (Brasil)** | [Español](README.es.md) | [简体中文](README.zh-CN.md) | [Русский](README.ru.md)
+[فارسی](README.fa.md)
 
 # Sobre
 
