@@ -172,6 +172,11 @@ int main(int argc, char** argv) {
     Require(argc == 1);
     int pair[2] = {-1, -1};
     Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    int optType = 0;
+    std::uint32_t optLen = sizeof(optType);
+    Require(getsockopt_nid_postfix(pair[0], 0xffff, 0x1008, &optType, &optLen) == 0 && optLen == sizeof(optType) && optType == Stream);
+    optLen = sizeof(int);
+    Require(getsockopt_nid_postfix(pair[0], 0xffff, 0x1008, nullptr, &optLen) == 0 && optLen == 0);
     Require(pair[0] >= 0 && pair[0] < DescriptorSetSize && pair[1] >= 0 && pair[1] < DescriptorSetSize && pair[0] != pair[1]);
     Require(Exchange(pair[0], pair[1], "one way"));
     Require(Exchange(pair[1], pair[0], "other way"));
