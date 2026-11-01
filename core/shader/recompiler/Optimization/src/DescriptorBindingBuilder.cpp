@@ -351,6 +351,14 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (std::uint32_t index = 0; index < info.samplers.size(); ++index) {
         if (FoldsTexelOffsets(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::FoldOffsetBase + index, unnormalized.samplers[index] ? 1u : 0u});
         if (SamplesBaseLevelIfUnnormalized(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::UnnormalizedBaseLevelBase + index, unnormalized.samplers[index] ? 1u : 0u});
+        if (info.samplers[index].table != NoTable) continue;
+        const auto bias = unnormalized.samplers[index] ? 0.0f : static_cast<float>(static_cast<std::int32_t>((snapshot.samplers.at(index).dwords[2] & 0x3fffu) ^ 0x2000u) - 0x2000) / 256.0f;
+        const bool beyondThreshold = bias < -PipelineSpecialization::SamplerLodBiasShaderThreshold || bias > PipelineSpecialization::SamplerLodBiasShaderThreshold;
+        if (beyondThreshold && (!AppliesLodBiasInShader(info.samplers[index]) || (info.samplers[index].uses & (SamplerUseQueryLod | SamplerUseAdjust)) != 0u)) fail("a guest sampler LOD bias beyond the sampler limit reaches a shader use that cannot apply it, which is not implemented");
+        for (const auto& pair : info.sampledPairs) {
+            if (beyondThreshold && pair.sampler == index && info.images.at(pair.image).cube) fail("a guest sampler LOD bias beyond the sampler limit on a cube image is not implemented");
+        }
+        if (AppliesLodBiasInShader(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::SamplerLodBiasBase + index, beyondThreshold ? std::bit_cast<std::uint32_t>(bias) : 0u});
     }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
