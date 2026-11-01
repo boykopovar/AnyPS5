@@ -1,6 +1,9 @@
 [submodule "3rdparty/jxrlib"]
 	path = 3rdparty/jxrlib
 	url = https://github.com/4creators/jxrlib.git
+[submodule "3rdparty/libfvad"]
+	path = 3rdparty/libfvad
+	url = https://github.com/dpirch/libfvad.git
 [submodule "3rdparty/SDL2"]
 	path = 3rdparty/SDL2
 	url = https://github.com/libsdl-org/SDL.git

@@ -909,6 +909,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_output_collisions.py $<TARGET_FILE:relinker>)
         add_test(NAME secondary_output_collisions COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_secondary_output_collisions.py $<TARGET_FILE:relinker>)
+        foreach(dryRunCase IN ITEMS formats modules patches failures)
+            add_test(NAME dry_run_${dryRunCase} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_dry_run.py $<TARGET_FILE:relinker> ${dryRunCase})
+            set_tests_properties(dry_run_${dryRunCase} PROPERTIES TIMEOUT 20)
+        endforeach()
         add_test(NAME input_file COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_file.py $<TARGET_FILE:relinker>)
         add_test(NAME null_symbol_relocations COMMAND ${Python3_EXECUTABLE}

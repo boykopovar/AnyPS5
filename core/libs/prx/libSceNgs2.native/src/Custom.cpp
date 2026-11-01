@@ -100,9 +100,6 @@ int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option
         const auto moduleId = option.module[m].module_id;
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_GAIN && option.module[m].option != nullptr) throw std::runtime_error("NGS2: an option for the custom Gain module is not implemented");
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) continue;
-        if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_GAIN && rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
-            throw std::runtime_error("NGS2: custom sampler Gain initialization and lifecycle are not implemented");
-        }
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_GAIN) continue;
         const char* name = BuiltInModuleName(moduleId);
         if (name != nullptr) throw std::runtime_error(std::string("NGS2: the custom ") + name + " module is not implemented");
@@ -246,7 +243,11 @@ static void SetCustomUserFxParam(Ngs2Voice& voice, std::uint32_t index, const Ng
 }
 
 int Ngs2ApplyCustomGainParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& header) {
-    const auto index = header.id & 0xff;
+    auto index = header.id & 0xff;
+    if (voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
+        if (index == 0) return SCE_NGS2_ERROR_INVALID_PARAM_ID;
+        index--;
+    }
     if (index >= voice.rack->customModuleIds.size()) return SCE_NGS2_ERROR_INVALID_PARAM_ID;
     if (voice.rack->customModuleIds[index] != SCE_NGS2_CUSTOM_MODULE_ID_GAIN) return SCE_NGS2_ERROR_INVALID_PARAM_ID;
     const auto& param = ParamAs<Ngs2CustomVoiceGainParam>(header);

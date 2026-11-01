@@ -37,6 +37,34 @@ struct BufferWrittenCounts {
 };
 BufferWrittenCounts bufferWrittenCounts;
 
+std::uint32_t ConstantImageComponents(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::size_t index, const ImageResource& mode) {
+    if (mode.resourceClass != ImageResourceClass::Sampled || mode.packed || mode.r128 || mode.depthCompare || mode.depthBits || mode.depthUnorm16 || mode.srgbDecode || (mode.emulatedCompare & EmulatedCompare::Enabled) != 0u || mode.byElements != 0u || mode.byComponents != 0u || mode.conversionFormat != IrBufferFormat::Invalid || mode.packedFormat != IrBufferFormat::Invalid) return 0u;
+    if (mode.numericClass != IrTextureNumericClass::Float && mode.numericClass != IrTextureNumericClass::Uint && mode.numericClass != IrTextureNumericClass::Sint) return 0u;
+    const auto& descriptor = snapshot.images.at(index);
+    if (descriptor.dwords[0] == 0u && (descriptor.dwords[1] & 0xffu) == 0u) return 0u;
+    using Component = PipelineSpecialization::ImageComponentConstant;
+    std::uint32_t components = 0u;
+    for (std::uint32_t component = 0u; component < 4u; ++component) {
+        const auto selector = (descriptor.dwords[3] >> (component * 3u)) & 7u;
+        const auto constant = selector == 0u ? Component::Zero : selector == 1u ? mode.numericClass == IrTextureNumericClass::Float ? Component::FloatOne : Component::IntegerOne : Component::None;
+        components |= static_cast<std::uint32_t>(constant) << (component * PipelineSpecialization::ImageComponentBits);
+    }
+    if (components == 0u) return 0u;
+    bool sampled = false;
+    constexpr std::uint32_t ClampLastTexel = 2u;
+    for (const auto& pair : info.sampledPairs) {
+        if (pair.image != index) continue;
+        sampled = true;
+        if (info.samplers.at(pair.sampler).table != NoTable) return 0u;
+        const auto sampler = snapshot.samplers.at(pair.sampler).dwords[0];
+        if ((sampler & (1u << 15u)) != 0u) return 0u;
+        for (std::uint32_t axis = 0u; axis < 3u; ++axis) {
+            if (((sampler >> (axis * 3u)) & 7u) > ClampLastTexel) return 0u;
+        }
+    }
+    return sampled ? components : 0u;
+}
+
 DescriptorKind PhysicalKindFor(DescriptorBindingKind kind) {
     if (kind == DescriptorBindingKind::Samplers || kind == DescriptorBindingKind::SamplerTable) {
         return DescriptorKind::Sampler;
@@ -415,6 +443,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         }
     }
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {
+        if (info.images[index].table == NoTable) {
+            const auto& mode = info.runtimeImageModes.at(index).at(imageModes[index]);
+            plan.specialization.push_back({PipelineSpecialization::ImageComponentBase + index, ConstantImageComponents(info, snapshot, index, mode)});
+        }
         if (info.images[index].mipMode != ImageMipMode::DynamicStorage) continue;
         const auto word = snapshot.images.at(index).dwords[3];
         const auto first = (word >> 12u) & 0xfu;
