@@ -6,7 +6,7 @@ target_include_directories(libSceAddressSanitizer PUBLIC ${CMAKE_SOURCE_DIR}/3rd
 target_include_directories(libSceAddressSanitizer PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAddressSanitizer)
 
-if(BUILD_TESTING)
+if(BUILD_TESTING AND (WIN32 OR CMAKE_SYSTEM_NAME STREQUAL "Linux"))
     add_test_executable(guest_addresssanitizer_shadow_tests ${LIBS_INCLUDE_DIR}/tests/GuestAddressSanitizerShadow.cpp)
     target_include_directories(guest_addresssanitizer_shadow_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_addresssanitizer_shadow_tests PRIVATE libSceAddressSanitizer libc)
