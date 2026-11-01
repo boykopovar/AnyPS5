@@ -9,6 +9,9 @@
 #include "prx/libkernel/File/include/NativeStat.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "tests/TemporaryFile.hpp"
+#ifndef _WIN32
+#include <sys/stat.h>
+#endif
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -675,7 +678,11 @@ int main() {
     Require(chflags_nid_postfix(file.string().c_str(), ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(chflags_nid_postfix(file.string().c_str(), 0x200000) == -1 && *__error_nid_postfix() == 1);
     Require(ChflagsThrows(file, 0x2, "UF_IMMUTABLE"));
-    Require(ChflagsThrows(file, 0x1000 | 0x40000, "UF_READONLY|SF_APPEND"));
+    for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x370000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
+        Require(chflags_nid_postfix(file.string().c_str(), system) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix(file.string().c_str(), 0x40000 | 0x20) == -1 && *__error_nid_postfix() == 45);
+    Require(chflags_nid_postfix(root.string().c_str(), 0x20000) == -1 && *__error_nid_postfix() == 1);
+    Require(chflags_nid_postfix((root / "missing").string().c_str(), 0x20000) == -1 && *__error_nid_postfix() == 2);
     const auto chflagsDangling = root / "dangling.link";
     const auto chflagsPointing = root / "file.link";
 #ifdef _WIN32
@@ -704,7 +711,10 @@ int main() {
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 45);
     Require(fchflags_nid_postfix(flagged, 0x200000) == -1 && *__error_nid_postfix() == 1);
     Require(FchflagsThrows(flagged, 0x2, "UF_IMMUTABLE"));
-    Require(FchflagsThrows(flagged, 0x1000 | 0x40000, "UF_READONLY|SF_APPEND"));
+    for (const std::uint64_t system : {0x10000ULL, 0x20000ULL, 0x40000ULL, 0x100000ULL, 0x200000ULL, 0x1000ULL | 0x40000ULL, 0x2ULL | 0x20000ULL})
+        Require(fchflags_nid_postfix(flagged, system) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x370000) == -1 && *__error_nid_postfix() == 1);
+    Require(fchflags_nid_postfix(flagged, 0x40000 | 0x20) == -1 && *__error_nid_postfix() == 45);
     Require(close_nid_postfix(flagged) == 0);
     Require(fchflags_nid_postfix(flagged, 0) == -1 && *__error_nid_postfix() == 9);
     Require(fchflags_nid_postfix(flagged, ~0ULL) == -1 && *__error_nid_postfix() == 9);
@@ -1434,7 +1444,18 @@ int main() {
     Require(close_nid_postfix(plainFile) == 0);
     Require(close_nid_postfix(directoryDescriptor) == 0);
     const int flaggedDirectory = sceKernelOpen(rootName.c_str(), 0x20000, 0);
-    Require(flaggedDirectory >= 0 && sceKernelClose(flaggedDirectory) == 0);
+    FileStat directoryStatus{};
+    Require(flaggedDirectory >= 0 && sceKernelFstat(flaggedDirectory, &directoryStatus) == 0 && directoryStatus.st_blksize == 0x10000);
+    Require(sceKernelStat(rootName.c_str(), &directoryStatus) == 0 && directoryStatus.st_blksize == 0x10000);
+    FileStat fileStatus{};
+#ifdef _WIN32
+    Require(sceKernelStat(presentName.c_str(), &fileStatus) == 0 && fileStatus.st_blksize == 512);
+#else
+    struct stat presentHostStat {};
+    Require(::stat(presentName.c_str(), &presentHostStat) == 0);
+    Require(sceKernelStat(presentName.c_str(), &fileStatus) == 0 && fileStatus.st_blksize == static_cast<decltype(fileStatus.st_blksize)>(presentHostStat.st_blksize));
+#endif
+    Require(sceKernelClose(flaggedDirectory) == 0);
     std::vector<char> entries(4096);
     for (const auto& directoryName : {std::string("/"), std::string("."), rootName + "/", rootName + "/.."}) {
         const int listed = sceKernelOpen(directoryName.c_str(), 0x20000, 0);
