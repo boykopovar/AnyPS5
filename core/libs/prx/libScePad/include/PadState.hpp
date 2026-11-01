@@ -74,6 +74,9 @@ void SetTiltCorrection(int port, bool enabled);
 void SetTiltCorrection(bool enabled);
 void SetAngularVelocityDeadband(int port, bool enabled);
 void SetAngularVelocityDeadband(bool enabled);
+void SetForceIntercepted(bool enabled);
+void SetAngularVelocityBiasCorrection(int port, bool enabled);
+std::array<float, 3> AngularVelocityBiasIntegral(int port);
 void SetConnected(int port, bool connected);
 bool IsConnected(int port);
 }

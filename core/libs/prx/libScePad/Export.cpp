@@ -454,7 +454,8 @@ int APS5_VABI scePadIsRemoteController(int handle, bool* remote) {
 
 int APS5_VABI scePadSetAngularVelocityBiasCorrectionState(int handle, bool enabled) {
  if (!KnownHandle(handle)) return PAD_ERROR_INVALID_HANDLE;
- if (enabled) NotImplemented_nid_no_patch(__func__);
+ if (SpecialHandle(handle)) return PAD_OK;
+ Pad::SetAngularVelocityBiasCorrection(PortOf(handle), enabled);
  return PAD_OK;
 }
 
@@ -654,8 +655,8 @@ int APS5_VABI scePadSetProcessPrivilegeOfButtonRemapping(bool enabled) {
 }
 
 int APS5_VABI scePadSetForceIntercepted(bool enabled) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    Pad::SetForceIntercepted(enabled);
+    return PAD_OK;
 }
 
 int APS5_VABI scePadIsLightBarBaseBrightnessControllable(std::int32_t handle) {

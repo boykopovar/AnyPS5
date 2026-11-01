@@ -148,6 +148,81 @@ static void CheckAngularVelocityDeadband(int handle) {
     PadPublishInput_nid_postfix(PadInputState{});
 }
 
+static void CheckForceIntercepted(int handle) {
+    constexpr std::uint32_t intercepted = 0x80000000u;
+    PadData drained[64]{};
+    Pad::Read(drained, 64, 0);
+    PadInputState active;
+    active.buttons = static_cast<std::uint32_t>(Pad::PadButton::Cross) | static_cast<std::uint32_t>(Pad::PadButton::R2);
+    active.sticks = {10, 20, 30, 40};
+    active.analogButtonsL2 = 25;
+    active.analogButtonsR2 = 200;
+    active.touch[0] = {true, 960, 471, 3};
+    PadPublishInput_nid_postfix(active);
+    Require(scePadSetForceIntercepted(true) == PAD_OK);
+    Require(scePadSetForceIntercepted(true) == PAD_OK);
+    PadData data{};
+    Require(scePadReadState(handle, &data) == PAD_OK);
+    Require(data.buttons == intercepted);
+    Require(data.left_stick_x == 128 && data.left_stick_y == 128 && data.right_stick_x == 128 && data.right_stick_y == 128);
+    Require(data.analog_buttons_l2 == 0 && data.analog_buttons_r2 == 0);
+    Require(data.touch_data_touch_num == 0);
+    PadData queued[4]{};
+    Require(scePadRead_nid_postfix(handle, queued, 4) == 1);
+    Require(queued[0].buttons == intercepted);
+    Require(scePadSetForceIntercepted(false) == PAD_OK);
+    Require(scePadReadState(handle, &data) == PAD_OK);
+    Require((data.buttons & active.buttons) == active.buttons);
+    Require(data.left_stick_x == 10 && data.left_stick_y == 20 && data.right_stick_x == 30 && data.right_stick_y == 40);
+    Require(data.analog_buttons_l2 == 25 && data.analog_buttons_r2 == 200);
+    Require(data.touch_data_touch_num == 1 && data.touch_data_touch0_x == 960 && data.touch_data_touch0_y == 471);
+    PadInputState pressed;
+    pressed.buttons = static_cast<std::uint32_t>(Pad::PadButton::Cross);
+    PadPublishInput_nid_postfix(PadInputState{});
+    PadPublishInput_nid_postfix(pressed);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Require(scePadSetForceIntercepted(true) == PAD_OK);
+    Require(scePadReadState(handle, &data) == PAD_OK && data.buttons == intercepted);
+    Require(scePadSetForceIntercepted(false) == PAD_OK);
+    Require(scePadReadState(handle, &data) == PAD_OK && data.buttons == 0);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::ReadState(0);
+    Pad::Read(drained, 64, 0);
+}
+
+static void CheckBiasCorrection(int user, int handle) {
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle + 99, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle + 99, true) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle, true) == PAD_OK);
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle, false) == PAD_OK);
+    const int special = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(special > 0);
+    Require(scePadSetAngularVelocityBiasCorrectionState(special, true) == PAD_OK);
+    Require(scePadSetAngularVelocityBiasCorrectionState(special, false) == PAD_OK);
+    Require(scePadClose_nid_postfix(special) == PAD_OK);
+    Require(scePadSetTiltCorrectionState(handle, true) == PAD_OK);
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle, true) == PAD_OK);
+    Require(scePadResetOrientation(handle) == PAD_OK);
+    PadInputState tilted;
+    tilted.hasMotion = true;
+    tilted.accel = {9.80665f, 0.0f, 0.0f};
+    PadPublishInput_nid_postfix(tilted);
+    for (int i = 0; i < 10; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Pad::ReadState(0);
+    }
+    const auto accumulated = Pad::AngularVelocityBiasIntegral(0);
+    Require(accumulated[0] != 0.0f || accumulated[1] != 0.0f || accumulated[2] != 0.0f);
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle, false) == PAD_OK);
+    const auto cleared = Pad::AngularVelocityBiasIntegral(0);
+    Require(cleared[0] == 0.0f && cleared[1] == 0.0f && cleared[2] == 0.0f);
+    Require(scePadSetAngularVelocityBiasCorrectionState(handle, true) == PAD_OK);
+    const auto restarted = Pad::AngularVelocityBiasIntegral(0);
+    Require(restarted[0] == 0.0f && restarted[1] == 0.0f && restarted[2] == 0.0f);
+    PadPublishInput_nid_postfix(PadInputState{});
+    Pad::ReadState(0);
+}
+
 static void CheckStickDeadZones(int handle) {
     PadControllerInformation info{};
     Require(scePadGetControllerInformation(handle, &info) == PAD_OK);
@@ -970,6 +1045,8 @@ int main() {
     CheckSpecialPort(user, handle);
     CheckTiltCorrection(handle);
     CheckAngularVelocityDeadband(handle);
+    CheckForceIntercepted(handle);
+    CheckBiasCorrection(user, handle);
     CheckTouchContact();
     CheckHandleQueries(user, handle);
     CheckVirtualTouchContact();

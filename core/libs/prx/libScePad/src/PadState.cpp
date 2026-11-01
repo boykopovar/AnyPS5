@@ -35,6 +35,7 @@ namespace {
         std::uint64_t lastFuseTime = 0;
         float biasIntegral[3] = {0.0f, 0.0f, 0.0f};
         bool tiltCorrection = true;
+        bool angularVelocityBiasCorrection = true;
         bool angularVelocityDeadband = false;
         std::uint8_t nextTouchId = 0;
         bool prevTouchActive[2] = {false, false};
@@ -59,6 +60,7 @@ namespace {
         return initialSlots;
     }();
     std::exception_ptr failure;
+    bool forceIntercepted = false;
     bool initialized = false;
     constexpr float kAngularVelocityDeadband = 0.017453292f;
 
@@ -92,12 +94,17 @@ namespace {
             const float ez = ax * vy - ay * vx;
             constexpr float kp = 1.5f;
             constexpr float ki = 0.02f;
-            slot.biasIntegral[0] += ki * ex * dt;
-            slot.biasIntegral[1] += ki * ey * dt;
-            slot.biasIntegral[2] += ki * ez * dt;
-            gx += kp * ex + slot.biasIntegral[0];
-            gy += kp * ey + slot.biasIntegral[1];
-            gz += kp * ez + slot.biasIntegral[2];
+            if (slot.angularVelocityBiasCorrection) {
+                slot.biasIntegral[0] += ki * ex * dt;
+                slot.biasIntegral[1] += ki * ey * dt;
+                slot.biasIntegral[2] += ki * ez * dt;
+            }
+            const float biasX = slot.angularVelocityBiasCorrection ? slot.biasIntegral[0] : 0.0f;
+            const float biasY = slot.angularVelocityBiasCorrection ? slot.biasIntegral[1] : 0.0f;
+            const float biasZ = slot.angularVelocityBiasCorrection ? slot.biasIntegral[2] : 0.0f;
+            gx += kp * ex + biasX;
+            gy += kp * ey + biasY;
+            gz += kp * ez + biasZ;
         }
         const float hx = 0.5f * gx * dt, hy = 0.5f * gy * dt, hz = 0.5f * gz * dt;
         const Quat q = slot.orientation;
@@ -161,9 +168,10 @@ bool Pad::IsInitialized() {
 namespace {
 PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t changeTime, std::uint64_t now, const Pad::InputCommandFile::Input& injected, int port) {
     PadData data{};
-    const bool intercepted = state.intercepted;
+    const bool intercepted = state.intercepted || forceIntercepted;
+    constexpr std::array<std::uint8_t, 4> neutralSticks{128, 128, 128, 128};
     data.buttons = intercepted ? kInterceptedButton : state.buttons | injected.buttons;
-    const auto& sticks = !intercepted && injected.hasSticks ? injected.sticks : state.sticks;
+    const auto& sticks = !intercepted && injected.hasSticks ? injected.sticks : (intercepted ? neutralSticks : state.sticks);
     data.left_stick_x = sticks[0];
     data.left_stick_y = sticks[1];
     data.right_stick_x = sticks[2];
@@ -171,10 +179,10 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
     const auto trigger = [&](std::uint8_t analog, std::uint32_t bit) -> std::uint8_t {
         return (!intercepted && (injected.buttons & bit) != 0) || (analog == 0 && (state.buttons & bit) != 0) ? 255 : analog;
     };
-    data.analog_buttons_l2 = trigger(state.analogButtonsL2, 0x100);
-    data.analog_buttons_r2 = trigger(state.analogButtonsR2, 0x200);
+    data.analog_buttons_l2 = intercepted ? 0 : trigger(state.analogButtonsL2, 0x100);
+    data.analog_buttons_r2 = intercepted ? 0 : trigger(state.analogButtonsR2, 0x200);
 
-    const bool live = state.hasMotion && slot.output.motionEnabled;
+    const bool live = !intercepted && state.hasMotion && slot.output.motionEnabled;
     const std::array<float, 3> rest{0.0f, 9.80665f, 0.0f};
     const std::array<float, 3>& accel = live ? state.accel : rest;
     std::array<float, 3> gyro = live ? state.gyro : std::array<float, 3>{0.0f, 0.0f, 0.0f};
@@ -220,21 +228,23 @@ PadData BuildData(PadSlot& slot, const PadInputState& state, std::uint64_t chang
         data.touch_data_touch0_y = injected.touchY;
         data.touch_data_touch0_id = injected.touchId;
     }
-    for (int i = 0; i < 2; ++i) {
-        const PadTouchPoint& tp = state.touch[i];
-        if (!tp.active) { slot.prevTouchActive[i] = false; continue; }
-        if (!slot.prevTouchActive[i]) slot.touchIds[i] = static_cast<std::uint8_t>(slot.nextTouchId++ & 0x7F);
-        slot.prevTouchActive[i] = true;
-        if (injectedContact) continue;
-        if (touchNum == 0) {
-            data.touch_data_touch0_x = tp.x; data.touch_data_touch0_y = tp.y; data.touch_data_touch0_id = slot.touchIds[i];
-        } else {
-            data.touch_data_touch1_x = tp.x; data.touch_data_touch1_y = tp.y; data.touch_data_touch1_id = slot.touchIds[i];
+    if (!intercepted) {
+        for (int i = 0; i < 2; ++i) {
+            const PadTouchPoint& tp = state.touch[i];
+            if (!tp.active) { slot.prevTouchActive[i] = false; continue; }
+            if (!slot.prevTouchActive[i]) slot.touchIds[i] = static_cast<std::uint8_t>(slot.nextTouchId++ & 0x7F);
+            slot.prevTouchActive[i] = true;
+            if (injectedContact) continue;
+            if (touchNum == 0) {
+                data.touch_data_touch0_x = tp.x; data.touch_data_touch0_y = tp.y; data.touch_data_touch0_id = slot.touchIds[i];
+            } else {
+                data.touch_data_touch1_x = tp.x; data.touch_data_touch1_y = tp.y; data.touch_data_touch1_id = slot.touchIds[i];
+            }
+            ++touchNum;
         }
-        ++touchNum;
     }
     const bool injectedTouch = !intercepted && (injected.touchLeft || injected.touchRight);
-    if (!injectedContact && touchNum == 0 && (state.touchLeft || state.touchRight || injectedTouch)) {
+    if (!intercepted && !injectedContact && touchNum == 0 && (state.touchLeft || state.touchRight || injectedTouch)) {
         data.buttons |= 0x100000;
         touchNum = 1;
         data.touch_data_touch0_x = state.touchRight || (!intercepted && injected.touchRight) ? kTouchPadWidth * 3 / 4 : kTouchPadWidth / 4;
@@ -485,6 +495,39 @@ void Pad::SetAngularVelocityDeadband(bool enabled) {
     SetAngularVelocityDeadband(0, enabled);
 }
 
+void Pad::SetForceIntercepted(bool enabled) {
+    std::lock_guard lock(stateMutex);
+    if (forceIntercepted == enabled) return;
+    forceIntercepted = enabled;
+    if (!enabled) return;
+    for (auto& slot : slots) {
+        slot.queue.clear();
+        slot.pressedSinceRead = 0;
+        slot.pressedAnalogL2 = 0;
+        slot.pressedAnalogR2 = 0;
+        slot.pressedAt = 0;
+        slot.prevTouchActive[0] = false;
+        slot.prevTouchActive[1] = false;
+    }
+}
+
+void Pad::SetAngularVelocityBiasCorrection(int port, bool enabled) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
+    std::lock_guard lock(stateMutex);
+    auto& slot = slots[port];
+    slot.angularVelocityBiasCorrection = enabled;
+    if (!enabled) {
+        slot.biasIntegral[0] = slot.biasIntegral[1] = slot.biasIntegral[2] = 0.0f;
+    }
+}
+
+std::array<float, 3> Pad::AngularVelocityBiasIntegral(int port) {
+    if (port < 0 || port >= PAD_MAX_CONTROLLERS) return {};
+    std::lock_guard lock(stateMutex);
+    const auto& integral = slots[port].biasIntegral;
+    return {integral[0], integral[1], integral[2]};
+}
+
 void Pad::SetMotionEnabled(int port, bool enabled) {
     if (port < 0 || port >= PAD_MAX_CONTROLLERS) return;
     std::lock_guard lock(stateMutex);
@@ -515,6 +558,16 @@ extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState
     std::lock_guard lock(stateMutex);
     if (failure) std::rethrow_exception(failure);
     auto& slot = slots[port];
+    if (forceIntercepted) {
+        slot.state = input;
+        slot.timestamp = sceKernelGetProcessTime();
+        slot.queue.clear();
+        slot.pressedSinceRead = 0;
+        slot.pressedAnalogL2 = 0;
+        slot.pressedAnalogR2 = 0;
+        slot.pressedAt = 0;
+        return;
+    }
     if (slot.state.buttons == input.buttons && slot.state.sticks == input.sticks &&
         slot.state.analogButtonsL2 == input.analogButtonsL2 && slot.state.analogButtonsR2 == input.analogButtonsR2 &&
         slot.state.touchLeft == input.touchLeft && slot.state.touchRight == input.touchRight &&
