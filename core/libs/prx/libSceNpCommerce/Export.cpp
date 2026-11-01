@@ -1,5 +1,6 @@
 #include "prx/libSceNpCommerce/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -127,10 +128,19 @@ int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result) {
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
  if (g_status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
  const auto sdkVersion = compiledSdkVersion();
- result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
- result->authorized = 0;
- result->userData = g_userData;
- if (sdkVersion >= 0x01700000) std::fill(std::begin(result->reserved), std::end(result->reserved), 0);
+ const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
+ const std::uint8_t authorized = 0;
+ const std::uint64_t userData = g_userData;
+ const int savedErrno = errno;
+ bool copied = GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult));
+ if (copied) copied = GuestCopyOut_nid_no_patch(&result->authorized, &authorized, sizeof(authorized));
+ if (copied) copied = GuestCopyOut_nid_no_patch(&result->userData, &userData, sizeof(userData));
+ if (copied && sdkVersion >= 0x01700000) {
+  const std::uint8_t reserved[32]{};
+  copied = GuestCopyOut_nid_no_patch(result->reserved, reserved, sizeof(reserved));
+ }
+ errno = savedErrno;
+ if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
  return COMMON_DIALOG_RESULT_USER_CANCELED;
 }
 

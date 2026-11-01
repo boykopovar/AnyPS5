@@ -4,6 +4,7 @@
 
 - [sceNpCommerceDialogOpen, sceNpCommerceDialogOpen2](../../../core/libs/prx/libSceNpCommerce/Export.cpp) (libSceNpCommerce) - with `ANYPS5_PSN_DIALOGS=show`, a successful open shows AnyPS5's notice that the feature needs PlayStation Network; the console's own display without PlayStation Network is not measured, and the notice wording is AnyPS5's.
 - [libSceNpCommerce](../../../core/libs/prx/libSceNpCommerce/Export.cpp) - the PS Store icon show/hide calls and `sceNpCommerceSetPsStoreIconLayout` do nothing
+- [sceNpCommerceDialogGetResult](../../../core/libs/prx/libSceNpCommerce/Export.cpp) - returning `0x80B8000D` for an unwritable result pointer is a host-safety fallback with console behavior unmeasured.
 
 ### Unknown function info
 
