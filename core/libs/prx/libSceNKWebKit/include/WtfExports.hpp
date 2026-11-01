@@ -110,6 +110,14 @@ bool APS5_VABI _ZN3WTF29equalIgnoringASCIICaseNonNullEPKNS_10StringImplES2_(cons
 bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const NKWebKit::WtfAbi::URL* a, const NKWebKit::WtfAbi::URL* b);
 unsigned APS5_VABI _ZN3WTF31sixCharacterHashStringToIntegerEPKc(const char* data);
 void APS5_VABI _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(NKWebKit::WtfAbi::URL* self, const NKWebKit::WtfAbi::URL* base, const NKWebKit::WtfAbi::String* relative, const void* encoding);
+bool APS5_VABI _ZN3WTF3URL11setProtocolENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView value);
+void APS5_VABI _ZN3WTF3URL14setHostAndPortENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView value);
+void APS5_VABI _ZN3WTF3URL17removeCredentialsEv(NKWebKit::WtfAbi::URL* self);
+void APS5_VABI _ZN3WTF3URL21setFragmentIdentifierENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView value);
+void APS5_VABI _ZN3WTF3URL7setHostENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView value);
+void APS5_VABI _ZN3WTF3URL7setPathENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView value);
+void APS5_VABI _ZN3WTF3URL7setUserENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView value);
+void APS5_VABI _ZN3WTF3URL8setQueryENS_10StringViewE(NKWebKit::WtfAbi::URL* self, NKWebKit::WtfAbi::StringView value);
 void APS5_VABI _ZN3WTF3URL10invalidateEv(NKWebKit::WtfAbi::URL* self);
 double APS5_VABI _ZN3WTF40parseES5DateFromNullTerminatedCharactersEPKcRb(const char* dateString, bool& isLocalTime);
 void APS5_VABI _ZN3WTF40releaseFastMallocFreeMemoryForThisThreadEv();
