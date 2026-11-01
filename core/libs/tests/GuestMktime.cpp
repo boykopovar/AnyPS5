@@ -145,10 +145,25 @@ static void CheckWritesStayInside() {
     }
     GuestTm* utc = FillGuarded(bytes);
     Require(gmtime_s_nid_postfix(&timer, utc) == utc && utc->tm_isdst == -1, "gmtime_s did not store tm_isdst -1");
+    utc = FillGuarded(bytes);
+    Require(gmtime_r_nid_postfix(&timer, utc) == utc && utc->tm_isdst == 0, "gmtime_r did not store tm_isdst 0");
+    const GuestTm* shared = gmtime_nid_postfix(&timer);
+    Require(shared != nullptr && shared->tm_isdst == 0, "gmtime did not store tm_isdst 0");
+}
+
+static void CheckGmtimeRoundTrip() {
+    Require(setenv_nid_postfix("TZ", "CET-1CEST", 1) == 0, "Could not set the time zone");
+    tzset_nid_postfix();
+    constexpr std::array<std::int64_t, 2> timers{1000000000, 951825600};
+    for (const auto timer : timers) {
+        GuestTm copy = *gmtime_nid_postfix(&timer);
+        Require(mktime_nid_postfix(&copy) == timer - 3600, "mktime of a gmtime result was not read as standard time");
+    }
 }
 
 int main() {
     CheckWritesStayInside();
+    CheckGmtimeRoundTrip();
     CheckZone("UTC0");
     CheckZone("UTC-2");
     CheckZone("UTC5");

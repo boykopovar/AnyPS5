@@ -479,7 +479,9 @@ double APS5_VABI difftime_nid_postfix(int64_t time1, int64_t time0) {
 
 GuestTm* APS5_VABI libc_gmtime_nid_postfix(const int64_t* timer) {
     static thread_local GuestTm result;
-    return gmtime_s_nid_postfix(timer, &result);
+    if (gmtime_s_nid_postfix(timer, &result) == nullptr) return nullptr;
+    result.tm_isdst = 0;
+    return &result;
 }
 
 GuestTm* APS5_VABI libc_localtime_nid_postfix(const int64_t* timer) {

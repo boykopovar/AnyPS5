@@ -538,8 +538,8 @@ int main() {
 #endif
     CheckLiteralConversions();
 
-    CheckConcurrent(libc_gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent libc_gmtime returned another thread's date");
-    CheckConcurrent(gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent gmtime returned another thread's date");
+    CheckConcurrent(libc_gmtime_nid_postfix, gmtime_r_nid_postfix, "Concurrent libc_gmtime returned another thread's date");
+    CheckConcurrent(gmtime_nid_postfix, gmtime_r_nid_postfix, "Concurrent gmtime returned another thread's date");
     CheckConcurrent(libc_localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent libc_localtime returned another thread's date");
     CheckConcurrent(localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent localtime returned another thread's date");
     CheckGuestZone();

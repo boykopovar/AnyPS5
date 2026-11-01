@@ -44,7 +44,7 @@ static void CheckTimegm(const TimegmCase& test) {
         std::abort();
     }
     Require(time.tm_mday == test.normalizedMday && time.tm_mon == test.normalizedMon && time.tm_year == test.normalizedYear
-        && time.tm_wday == test.wday && time.tm_yday == test.yday && time.tm_isdst == -1,
+        && time.tm_wday == test.wday && time.tm_yday == test.yday && time.tm_isdst == 0,
         "timegm did not normalize the calendar fields");
 }
 
@@ -53,7 +53,8 @@ static void CheckReentrantConversions() {
     for (const std::int64_t timer : timers) {
         GuestTm expected{};
         GuestTm actual{};
-        Require(gmtime_s_nid_postfix(&timer, &expected) == &expected, "gmtime_s rejected a representable time");
+        Require(gmtime_s_nid_postfix(&timer, &expected) == &expected && expected.tm_isdst == -1, "gmtime_s rejected a representable time");
+        expected.tm_isdst = 0;
         Require(gmtime_r_nid_postfix(&timer, &actual) == &actual && Equal(actual, expected), "gmtime_r differs from gmtime_s");
         Require(localtime_s_nid_postfix(&timer, &expected) == &expected, "localtime_s rejected a representable time");
         Require(localtime_r_nid_postfix(&timer, &actual) == &actual && Equal(actual, expected),

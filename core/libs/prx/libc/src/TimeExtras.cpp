@@ -33,7 +33,9 @@ std::int64_t wrappingAdd(std::int64_t left, std::int64_t right) {
 extern "C" {
 
 GuestTm* APS5_VABI gmtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result) {
-    return gmtime_s_nid_postfix(timer, result);
+    if (gmtime_s_nid_postfix(timer, result) == nullptr) return nullptr;
+    result->tm_isdst = 0;
+    return result;
 }
 
 GuestTm* APS5_VABI localtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result) {
@@ -48,6 +50,7 @@ std::int64_t APS5_VABI timegm_nid_postfix(GuestTm* time) {
     const std::int64_t seconds = days * secondsPerDay + std::int64_t{time->tm_hour} * 3600 + std::int64_t{time->tm_min} * 60 + time->tm_sec;
     GuestTm normalized{};
     if (gmtime_s_nid_postfix(&seconds, &normalized) == nullptr) return -1;
+    normalized.tm_isdst = 0;
     *time = normalized;
     return seconds;
 }
