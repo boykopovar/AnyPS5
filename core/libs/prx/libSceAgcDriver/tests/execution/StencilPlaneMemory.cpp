@@ -73,6 +73,51 @@ VkStencilOpState Stencil(VkCompareOp compare, VkStencilOp pass, std::uint32_t re
     return {VK_STENCIL_OP_KEEP, pass, VK_STENCIL_OP_KEEP, compare, 0xffu, 0xffu, reference};
 }
 
+void CheckConsumedStencilClear(AgcDriver::VulkanDevice& device, const DepthFastClearHarness::Shaders& shaders, std::uint32_t swizzle, bool sampled) {
+    auto* blocks = static_cast<std::byte*>(AllocateBlocks(DepthBytes + StencilBytes + Block));
+    auto* depth = reinterpret_cast<float*>(blocks);
+    auto* stencil = reinterpret_cast<std::uint8_t*>(blocks + DepthBytes);
+    auto* htile = reinterpret_cast<std::uint32_t*>(blocks + DepthBytes + StencilBytes);
+    const auto htileBytes = AgcDriver::Graphics::HtileMetadataBytes(PlaneExtent);
+    Require(htileBytes <= Block, "the clear metadata does not fit its allocation");
+    std::fill(depth, depth + PlaneTexels, 1.0f);
+    Fill(stencil, 0u);
+    std::fill(htile, htile + htileBytes / sizeof(*htile), 0xffffffffu);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto stencilBase = reinterpret_cast<std::uintptr_t>(stencil);
+    Surface surface{reinterpret_cast<std::uintptr_t>(depth), stencilBase, reinterpret_cast<std::uintptr_t>(htile), true, VK_FORMAT_D32_SFLOAT_S8_UINT, 0, 0, swizzle};
+    Require(Draw(device, shaders, surface, {.depthTest = true, .depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .stencilTest = true, .stencil = Stencil(VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, 0x18u)}, PlaneExtent, Colors) == PlaneTexels, "the clear control draw did not cover the plane");
+    Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "the clear control did not store its initial stencil");
+    device.WaitIdle();
+    Require(Holding(stencil, 0x18u) == StencilBytes, "the clear control stencil was not stored");
+    Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "the clear control stencil is not clean");
+    std::fill(htile, htile + htileBytes / sizeof(*htile), 0u);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::Graphics::NoteDepthMetadataFill(surface.htile, htileBytes, 0u);
+    if (sampled) {
+        AgcDriver::Graphics::GuestTextureResource resource{};
+        resource.baseAddress = stencilBase;
+        resource.width = PlaneWidth;
+        resource.height = PlaneHeight;
+        resource.format = 5u;
+        resource.dimension = AgcDriver::Graphics::TextureDimension::k2D;
+        resource.tileMode = AgcDriver::Graphics::TextureTileMode::kZ64KBX;
+        resource.mipCount = resource.allocatedMipCount = 1u;
+        resource.dstSelX = 4u; resource.dstSelY = 5u; resource.dstSelZ = 6u; resource.dstSelW = 7u;
+        const std::array<std::uint32_t, 8> words{};
+        Require(AgcDriver::Graphics::DepthSurfaceTexture(device.graphicsContext(), words, resource, {}) != nullptr, "the stencil clear could not be sampled");
+    } else {
+        Require(!AgcDriver::Graphics::FlushDepthPlanes(surface.depth, DepthBytes).empty(), "the depth-only flush did not consume the pending clear");
+    }
+    device.WaitIdle();
+    surface.htile = 0u;
+    Require(Draw(device, shaders, surface, {.depthTest = false, .stencilTest = false}, PlaneExtent, Colors) == PlaneTexels, "the read-only rebind after a clear did not cover the plane");
+    Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a consumed stencil clear was lost on a read-only rebind");
+    device.WaitIdle();
+    Require(Holding(stencil, 0u) == StencilBytes, "the consumed stencil clear did not reach guest memory");
+    Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "the consumed stencil clear was stored twice");
+}
+
 }
 
 int main() {
@@ -97,6 +142,9 @@ int main() {
         device->WaitIdle();
         Require(Holding(stencilPlane, 0x18u) == StencilBytes, "a read of the stencil plane after a draw wrote stencil 0x18 does not see it in guest memory");
         Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a second read of the stored stencil plane stored it again");
+
+        CheckConsumedStencilClear(*device, shaders, swizzle, true);
+        CheckConsumedStencilClear(*device, shaders, swizzle, false);
 
         Require(draw({.depthTest = false, .stencilTest = false}) == PlaneTexels, "the stencil-disabled draw did not cover the plane");
         Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, StencilBytes).empty(), "a stencil-disabled draw dirtied the stored stencil plane");
