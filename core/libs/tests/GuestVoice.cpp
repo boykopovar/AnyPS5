@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
@@ -163,6 +164,19 @@ int main() {
         std::uint32_t guard;
     } resourceOutput{{}, 0xa5a5a5a5u};
     Require(sceVoiceGetResourceInfo(&resourceOutput.info) == 0);
+    errno = 71;
+    Require(sceVoiceGetResourceInfo(reinterpret_cast<VoiceResourceInfo*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    VoicePortParam dummyParam{};
+    dummyParam.port_type = 3;
+    dummyParam.pcmaudio.buffer_size = 1024;
+    dummyParam.pcmaudio.sample_rate = 16000;
+    errno = 71;
+    Require(sceVoiceCreatePort(reinterpret_cast<std::uint32_t*>(0x10), &dummyParam) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceVoiceGetMemorySize(0, 0, 0, 0, 0, 0, 0, 0, 0, reinterpret_cast<std::uint32_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(resourceOutput.info.maxVoiceInputPorts == 15);
     Require(resourceOutput.info.maxVoiceOutputPorts == 4);
     Require(resourceOutput.info.maxDeviceInputPorts == 4);
@@ -263,6 +277,15 @@ int main() {
     Require(sceVoiceGetVolume(input, &volume) == 0 && volume == 0.75f);
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 14400);
     Require(sceVoiceGetPortInfo(input, &rateInfo) == 0 && rateInfo.frame_size == 27);
+    errno = 71;
+    Require(sceVoiceGetMuteFlag(input, reinterpret_cast<bool*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceVoiceGetVolume(input, reinterpret_cast<float*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceVoiceGetBitRate(input, reinterpret_cast<std::uint32_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     update.voice.bitrate = 1;
     RequireThrows([&] { sceVoiceUpdatePort(input, &update); });
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 14400);

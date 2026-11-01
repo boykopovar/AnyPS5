@@ -1,4 +1,5 @@
 #include "prx/libSceVoice/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -96,6 +97,14 @@ bool VoiceFrame(std::int32_t bitrate, std::uint16_t& frameSize, std::uint16_t& f
     }
 }
 
+template <typename TValue>
+bool CopyOutGuest(TValue* destination, const TValue& value) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 }
 
 extern "C" {
@@ -167,7 +176,8 @@ int APS5_VABI sceVoiceCreatePort(std::uint32_t* portId, const VoicePortParam* pa
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return NotInitialized;
     if (!portId || !param) return InvalidArgument;
-    *portId = 255;
+    const std::uint32_t fallback = 255;
+    if (!CopyOutGuest(portId, fallback)) return InvalidArgument;
     std::uint16_t frameSize = 512;
     std::uint16_t frameDuration = 16;
     const auto type = param->port_type;
@@ -208,10 +218,10 @@ int APS5_VABI sceVoiceCreatePort(std::uint32_t* portId, const VoicePortParam* pa
         if (count == limit) return resourceFull;
     }
     const auto id = voice.freePorts.front();
+    if (!CopyOutGuest(portId, id)) return InvalidArgument;
     const bool voicePort = type == PortInVoice || type == PortOutVoice;
     voice.ports.emplace(id, Port{type, param->volume, voicePort ? static_cast<std::uint32_t>(param->voice.bitrate) : 0u, bufferSize, frameSize, param->mute != 0});
     voice.freePorts.pop_front();
-    *portId = id;
     return 0;
 }
 
@@ -255,7 +265,7 @@ int APS5_VABI sceVoiceGetBitRate(std::uint32_t portId, std::uint32_t* bitrate) {
     if (found == voice.ports.end()) return PortNotFound;
     const auto& port = found->second;
     if (port.type != PortInVoice && port.type != PortOutVoice) return PortNotFound;
-    *bitrate = port.bitrate;
+    if (!CopyOutGuest(bitrate, port.bitrate)) return InvalidArgument;
     return 0;
 }
 
@@ -278,7 +288,7 @@ int APS5_VABI sceVoiceGetVolume(std::uint32_t portId, float* volume) {
     if (!volume) return InvalidArgument;
     const auto found = voice.ports.find(portId);
     if (found == voice.ports.end()) return PortNotFound;
-    *volume = found->second.volume;
+    if (!CopyOutGuest(volume, found->second.volume)) return InvalidArgument;
     return 0;
 }
 
@@ -378,7 +388,8 @@ int APS5_VABI sceVoiceGetMuteFlag(std::uint32_t portId, bool* muted) {
     if (!muted) return InvalidArgument;
     const auto found = voice.ports.find(portId);
     if (found == voice.ports.end()) return PortNotFound;
-    *muted = found->second.muted || voice.mutedAll;
+    const bool flag = found->second.muted || voice.mutedAll;
+    if (!CopyOutGuest(muted, flag)) return InvalidArgument;
     return 0;
 }
 
@@ -387,20 +398,22 @@ int APS5_VABI sceVoiceGetResourceInfo(VoiceResourceInfo* info) {
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return NotInitialized;
     if (info == nullptr) return InvalidArgument;
+    VoiceResourceInfo res{};
     switch (voice.appType) {
     case 4:
-        *info = {0, 0, 4, 5};
+        res = {0, 0, 4, 5};
         break;
     case 0x08000000:
     case 0x10000000:
-        *info = {15, 4, 4, 4};
+        res = {15, 4, 4, 4};
         break;
     case 0x20000000:
-        *info = {7, 4, 4, 4};
+        res = {7, 4, 4, 4};
         break;
     default:
         Fail(__func__, "unsupported initialization mode");
     }
+    if (!CopyOutGuest(info, res)) return InvalidArgument;
     return 0;
 }
 
@@ -460,7 +473,8 @@ int APS5_VABI sceVoiceGetMemorySize(std::uint32_t, std::uint32_t, std::uint32_t,
     std::lock_guard lock(voice.mutex);
     if (!voice.initialized) return NotInitialized;
     if (!size) return InvalidArgument;
-    *size = 0;
+    const std::uint32_t zero = 0;
+    if (!CopyOutGuest(size, zero)) return InvalidArgument;
     return MemorySizeVersion;
 }
 
