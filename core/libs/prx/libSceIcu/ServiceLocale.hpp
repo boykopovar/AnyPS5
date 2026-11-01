@@ -16,6 +16,10 @@ struct LocaleKey {
 };
 struct LocaleKeyFactory { const GuestFunction* vtable; UnicodeString name; std::int32_t coverage; };
 struct SimpleLocaleKeyFactory { const GuestFunction* vtable; UnicodeString name; std::int32_t coverage; Object* object; UnicodeString id; std::int32_t kind; };
+struct ICUResourceBundleFactory { const GuestFunction* vtable; UnicodeString name; std::int32_t coverage; UnicodeString bundleName; };
+static_assert(sizeof(ICUResourceBundleFactory) == 144 && alignof(ICUResourceBundleFactory) == 8);
+static_assert(offsetof(ICUResourceBundleFactory, vtable) == 0 && offsetof(ICUResourceBundleFactory, name) == 8);
+static_assert(offsetof(ICUResourceBundleFactory, coverage) == 72 && offsetof(ICUResourceBundleFactory, bundleName) == 80);
 static_assert(sizeof(LocaleKey) == 272 && alignof(LocaleKey) == 8);
 static_assert(offsetof(LocaleKey, vtable) == 0 && offsetof(LocaleKey, id) == 8 && offsetof(LocaleKey, kind) == 72);
 static_assert(offsetof(LocaleKey, primaryId) == 80 && offsetof(LocaleKey, fallbackId) == 144 && offsetof(LocaleKey, currentId) == 208);
@@ -67,4 +71,17 @@ Icu::Abi::Object* APS5_VABI _ZNK6icu_6822SimpleLocaleKeyFactory6createERKNS_13IC
 void APS5_VABI _ZNK6icu_6822SimpleLocaleKeyFactory16updateVisibleIDsERNS_9HashtableER10UErrorCode_nid_postfix(const Icu::Abi::SimpleLocaleKeyFactory* self, Icu::Abi::Hashtable* result, std::int32_t* status);
 Icu::Abi::UnicodeString* APS5_VABI _ZN6icu_6813LocaleUtility21canonicalLocaleStringEPKNS_13UnicodeStringERS1__nid_postfix(const Icu::Abi::UnicodeString* id, Icu::Abi::UnicodeString* result);
 std::int8_t APS5_VABI _ZN6icu_6813LocaleUtility12isFallbackOfERKNS_13UnicodeStringES3__nid_postfix(const Icu::Abi::UnicodeString* root, const Icu::Abi::UnicodeString* child);
+
+void APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix(Icu::Abi::SimpleLocaleKeyFactory* self, Icu::Abi::Object* object, const Icu::Abi::Locale* locale, std::int32_t kind, std::int32_t coverage);
+void APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC2EPNS_7UObjectERKNS_6LocaleEii_nid_postfix(Icu::Abi::SimpleLocaleKeyFactory* self, Icu::Abi::Object* object, const Icu::Abi::Locale* locale, std::int32_t kind, std::int32_t coverage);
+Icu::Abi::UnicodeString* APS5_VABI _ZN6icu_6813LocaleUtility18initNameFromLocaleERKNS_6LocaleERNS_13UnicodeStringE_nid_postfix(const Icu::Abi::Locale* locale, Icu::Abi::UnicodeString* result);
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryC1Ev_nid_postfix(Icu::Abi::ICUResourceBundleFactory* self);
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryC1ERKNS_13UnicodeStringE_nid_postfix(Icu::Abi::ICUResourceBundleFactory* self, const Icu::Abi::UnicodeString* name);
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryC2Ev_nid_postfix(Icu::Abi::ICUResourceBundleFactory* self);
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryC2ERKNS_13UnicodeStringE_nid_postfix(Icu::Abi::ICUResourceBundleFactory* self, const Icu::Abi::UnicodeString* name);
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryD0Ev_nid_postfix(Icu::Abi::ICUResourceBundleFactory* self);
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryD1Ev_nid_postfix(Icu::Abi::ICUResourceBundleFactory* self);
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryD2Ev_nid_postfix(Icu::Abi::ICUResourceBundleFactory* self);
+void* APS5_VABI _ZN6icu_6824ICUResourceBundleFactory16getStaticClassIDEv_nid_postfix();
+void* APS5_VABI _ZNK6icu_6824ICUResourceBundleFactory17getDynamicClassIDEv_nid_postfix(const Icu::Abi::ICUResourceBundleFactory* self);
 }

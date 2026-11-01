@@ -35,4 +35,5 @@ Icu::Abi::LocaleBuilder* APS5_VABI _ZN6icu_6813LocaleBuilder10setVariantENS_11St
 Icu::Abi::LocaleBuilder* APS5_VABI _ZN6icu_6813LocaleBuilder5clearEv_nid_postfix(Icu::Abi::LocaleBuilder*);
 Icu::Abi::LocaleBuilder* APS5_VABI _ZN6icu_6813LocaleBuilder15clearExtensionsEv_nid_postfix(Icu::Abi::LocaleBuilder*);
 std::int8_t APS5_VABI _ZNK6icu_6813LocaleBuilder11copyErrorToER10UErrorCode_nid_postfix(const Icu::Abi::LocaleBuilder*, std::int32_t*);
+Icu::Abi::LocaleBuilder* APS5_VABI _ZN6icu_6813LocaleBuilder9setLocaleERKNS_6LocaleE_nid_postfix(Icu::Abi::LocaleBuilder* builder, const Icu::Abi::Locale* locale);
 }

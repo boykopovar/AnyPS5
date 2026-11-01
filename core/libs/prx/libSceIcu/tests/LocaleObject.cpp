@@ -114,5 +114,8 @@ int main() {
     Check(std::strcmp(_ZN6icu_686Locale15getCanadaFrenchEv_nid_postfix()->fullName, "fr_CA") == 0);
     Check(_ZN6icu_686Locale14getLocaleCacheEv_nid_postfix() != nullptr);
     Check(std::strcmp(_ZN6icu_686Locale9getLocaleEi_nid_postfix(0)->fullName, "en") == 0);
+    std::int32_t length = -1;
+    const auto* known = ulocimp_getKnownCanonicalizedLocaleForTest_nid_postfix(&length);
+    Check(length == 177 && std::strcmp(known[0], "c") == 0 && std::strcmp(known[length - 1], "zu_ZA") == 0);
     std::puts("ICU locale object tests passed");
 }

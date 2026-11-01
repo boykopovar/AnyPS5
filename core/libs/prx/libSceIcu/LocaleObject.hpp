@@ -93,4 +93,5 @@ const Icu::Abi::Locale* APS5_VABI _ZN6icu_686Locale9getCanadaEv_nid_postfix();
 const Icu::Abi::Locale* APS5_VABI _ZN6icu_686Locale15getCanadaFrenchEv_nid_postfix();
 Icu::Abi::Locale* APS5_VABI _ZN6icu_686Locale14getLocaleCacheEv_nid_postfix();
 const Icu::Abi::Locale* APS5_VABI _ZN6icu_686Locale9getLocaleEi_nid_postfix(std::int32_t);
+const char* const* APS5_VABI ulocimp_getKnownCanonicalizedLocaleForTest_nid_postfix(std::int32_t* length);
 }
