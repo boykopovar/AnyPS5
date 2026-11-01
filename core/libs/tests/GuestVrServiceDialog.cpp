@@ -37,7 +37,9 @@ int main() {
     Require(sceVrServiceDialogUpdateStatus() == kStatusInitialized);
 
     Require(sceVrServiceDialogOpen(nullptr) == kErrArgNull);
+    Require(sceVrServiceDialogGetResult(nullptr) == kErrArgNull);
     Require(sceVrServiceDialogGetResult(result) == kErrNotFinished);
+    Require(result[0] == -1 && result[1] == -1);
 
     Require(sceVrServiceDialogOpen(&param) == 0);
     Require(sceVrServiceDialogGetStatus() == kStatusFinished);
@@ -51,6 +53,7 @@ int main() {
     Require(sceVrServiceDialogClose() == 0);
     Require(sceVrServiceDialogTerminate() == 0);
     Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
+    Require(sceVrServiceDialogClose() == kErrNotInitialized);
     Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceVrServiceDialogGetStatus() == kStatusNone);
