@@ -18,15 +18,27 @@ constexpr std::uint32_t SystemSoftwareVersion = 0x01000000;
 constexpr char SystemSoftwareVersionString[] = "01.000.000";
 constexpr std::uint32_t SdkPatchMask = 0xfff;
 
+struct VersionPayload {
+    char versionString[sizeof(SceKernelProsperoSystemSwVersion::versionString)]{};
+    std::uint32_t version{SystemSoftwareVersion};
+};
+static_assert(sizeof(VersionPayload) == sizeof(SceKernelProsperoSystemSwVersion) - offsetof(SceKernelProsperoSystemSwVersion, versionString));
+static_assert(offsetof(VersionPayload, versionString) == 0);
+static_assert(offsetof(VersionPayload, version) == offsetof(SceKernelProsperoSystemSwVersion, version) - offsetof(SceKernelProsperoSystemSwVersion, versionString));
+
 }
 
 extern "C" {
 
 int APS5_VABI sceKernelGetProsperoSystemSwVersion_nid_postfix(SceKernelProsperoSystemSwVersion* version) {
     if (version == nullptr) return 0;
-    std::memset(version->versionString, 0, sizeof(version->versionString));
-    std::memcpy(version->versionString, SystemSoftwareVersionString, sizeof(SystemSoftwareVersionString));
-    version->version = SystemSoftwareVersion;
+    VersionPayload payload{};
+    std::memcpy(payload.versionString, SystemSoftwareVersionString, sizeof(SystemSoftwareVersionString));
+    payload.version = SystemSoftwareVersion;
+    const int saved = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<char*>(version) + offsetof(SceKernelProsperoSystemSwVersion, versionString), &payload, sizeof(payload));
+    errno = saved;
+    if (!copied) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
