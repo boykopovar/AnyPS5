@@ -396,6 +396,7 @@ void Driver::execute(const Submission& submission) {
             CheckFailure();
             std::uint64_t batchesAtFlip = 0, unsignaledAtFlip = 0;
             bool flipInterruptDeferred = false;
+            Graphics::StorageTexture::NoteFlip();
             if (!drains) {
 
                 GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
