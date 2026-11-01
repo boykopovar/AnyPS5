@@ -1,5 +1,6 @@
 #include "Translation/VectorInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
+#include "Recompiler.hpp"
 #include <stdexcept>
 
 namespace ShaderRecompiler {
@@ -142,6 +143,19 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
         return floatMode.has_value() && ((floatMode->floatMode >> 4u) & 1u) != 0u ? 0u : 1u;
     case RdnaOpcode::VDivScaleF32:
     case RdnaOpcode::VDivFixupF32:
+        if (floatMode.has_value() && (floatMode->floatMode & 3u) == 0u) {
+            const std::uint32_t denormals = (floatMode->floatMode >> 4u) & 3u;
+            if (denormals == 2u) return 1u;
+            if (denormals == 1u && inst.op == RdnaOpcode::VDivFixupF32) return 0u;
+            if (denormals == 1u) {
+                if (!float32DenormPreserve || float32FlushToZero) {
+                    throw std::runtime_error("f32 denormal mode 1 at pc " + std::to_string(inst.programCounter) + " needs DenormPreserve 32, which the device does not offer for this shader");
+                }
+                return 2u;
+            }
+        }
+        flush = 1u;
+        break;
     case RdnaOpcode::VMadMixloF16:
     case RdnaOpcode::VMadMixhiF16:
         flush = 1u;
@@ -162,6 +176,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
         }
         throw std::runtime_error("f32 denormal mode " + std::to_string(denormals) + " at pc " + std::to_string(inst.programCounter) + " is not implemented");
     }
+    if (!ExactF32Arithmetic()) return 0u;
     if (denormals != 0u) return 0u;
     return flush == 3u && float32FlushToZero && flushesInHardware(inst) ? 0u : flush;
 }

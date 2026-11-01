@@ -176,6 +176,9 @@ int main() {
     std::copy(third.begin(), third.end(), memoryExpected.begin());
     std::copy(fourth.begin(), fourth.end(), memoryExpected.begin() + 16);
     Require(Read(memoryPath) == memoryExpected);
+    const std::uint32_t syncWritten[2] = {7531u, 0u};
+    Require(sceSaveDataSyncSaveDataMemory(syncWritten) == 0);
+    Require(Read(memoryPath) == memoryExpected);
     const auto setupParamPath = std::filesystem::path("_sd_mem/u42/slot0.param");
     const auto setupBinPath = std::filesystem::path("_sd_mem/u42/slot0.bin");
     Require(std::filesystem::create_directories(setupParamPath.parent_path()));
@@ -195,6 +198,9 @@ int main() {
     Require(!std::filesystem::exists(setupParamPath));
     Require(sceSaveDataSetupSaveDataMemory2(&setup2, &setupResult) == 0);
     Require(setupResult.existed_memory_size == 0);
+    Require(Read(setupBinPath) == std::vector<char>(128, 0));
+    const std::uint32_t syncSetup[2] = {42u, 0u};
+    Require(sceSaveDataSyncSaveDataMemory(syncSetup) == 0);
     Require(Read(setupBinPath) == std::vector<char>(128, 0));
     const auto* setupBytes = reinterpret_cast<const char*>(&setupParam);
     Require(Read(setupParamPath) == std::vector<char>(setupBytes, setupBytes + sizeof(setupParam)));
