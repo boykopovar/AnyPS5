@@ -20,11 +20,11 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES TIMEOUT 30)
         if(mode MATCHES "^shader")
             set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT
-                    "APS5_FRAME_CAPTURE=${capture};APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1")
+                    "APS5_FRAME_CAPTURE=${capture};APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0")
         endif()
         if(mode STREQUAL "unwatched")
             set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT
-                    "APS5_NO_WRITE_WATCH=1;APS5_FRAME_CAPTURE=${capture};APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1")
+                    "APS5_NO_WRITE_WATCH=1;APS5_FRAME_CAPTURE=${capture};APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=1;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0")
         endif()
         if(WIN32)
             set_tests_properties(agc_driver_frame_replay_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
