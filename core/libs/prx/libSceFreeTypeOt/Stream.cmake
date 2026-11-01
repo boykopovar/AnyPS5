@@ -1,7 +1,8 @@
 target_sources(libSceFreeTypeOt PRIVATE ${CMAKE_CURRENT_LIST_DIR}/Stream.cpp)
 
 if(BUILD_TESTING)
-    add_test_executable(guest_freetype_stream_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeStream.cpp)
+    add_test_executable(guest_freetype_stream_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeStream.cpp)
     target_include_directories(guest_freetype_stream_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_freetype_stream_tests PRIVATE ${CMAKE_DL_LIBS})
     if(WIN32)

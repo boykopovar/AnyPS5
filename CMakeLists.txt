@@ -8,11 +8,33 @@ project(Relinker CXX)
 set(ANYPS5_TEST_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests")
 
 function(add_test_executable target)
-    add_executable(${target} ${ARGN})
-    set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+    cmake_parse_arguments(ATE "NO_RUNTIME_DLL_STAGING" "" "" ${ARGN})
+    add_executable(${target} ${ATE_UNPARSED_ARGUMENTS})
+    if(ATE_NO_RUNTIME_DLL_STAGING)
+        set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}/nostage>")
+    else()
+        set_target_properties(${target} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+    endif()
     if(MINGW)
         target_sources(${target} PRIVATE $<TARGET_OBJECTS:anyps5_windows_test_exit>)
         target_link_options(${target} PRIVATE LINKER:--wrap=main)
+        if(ATE_NO_RUNTIME_DLL_STAGING)
+            get_filename_component(_nostage_compiler_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            foreach(runtime libstdc++-6.dll libgcc_s_seh-1.dll libwinpthread-1.dll)
+                if(EXISTS "${_nostage_compiler_dir}/${runtime}")
+                    add_custom_command(TARGET ${target} POST_BUILD
+                        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_nostage_compiler_dir}/${runtime}" "$<TARGET_FILE_DIR:${target}>/"
+                        VERBATIM)
+                endif()
+            endforeach()
+        endif()
+    endif()
+    if(WIN32 AND NOT CMAKE_VERSION VERSION_LESS 3.21 AND NOT ATE_NO_RUNTIME_DLL_STAGING)
+        add_custom_command(TARGET ${target} POST_BUILD
+                COMMAND "${CMAKE_COMMAND}" -E copy_if_different $<TARGET_RUNTIME_DLLS:${target}> "$<TARGET_FILE:${target}>" "$<TARGET_FILE_DIR:${target}>/"
+                COMMAND_EXPAND_LISTS
+                VERBATIM
+        )
     endif()
 endfunction()
 
