@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -1017,8 +1018,13 @@ std::atomic<std::uint64_t> notImplementedCalls{0};
 
 }
 
-extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* funcName) {
+extern "C" [[noreturn]] void (NotImplemented_nid_no_patch)(const char* funcName) {
+    NotImplementedAt_nid_no_patch(funcName, "", 0);
+}
+
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* funcName, const char* file, int line) {
     notImplementedCalls.fetch_add(1, std::memory_order_relaxed);
+    LibcRunReportMissingFunction_nid_no_patch(funcName, file, line);
     throw std::runtime_error(std::string(funcName) + " not implemented");
 }
 

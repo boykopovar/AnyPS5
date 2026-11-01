@@ -73,6 +73,9 @@ include(cmake/SystemDeps.cmake)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=>)
+endif()
 
 include(CheckCXXSourceCompiles)
 function(anyps5_check_cxx_links_standard_library)

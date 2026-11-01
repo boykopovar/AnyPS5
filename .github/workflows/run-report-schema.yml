@@ -8,6 +8,9 @@ on:
       - docs/run-report-fixtures/**
       - tools/requirements-run-report.txt
       - tools/tests/test_run_report_schema.py
+      - tools/tests/test_run_report_docs.py
+      - docs/user/USAGE.md
+      - docs/user/run-report.md
 
 permissions:
   contents: read
@@ -30,3 +33,5 @@ jobs:
           "$RUNNER_TEMP/venv/bin/python" -m pip install --require-virtualenv -r tools/requirements-run-report.txt
       - name: Validate the fixtures against the schema
         run: '"$RUNNER_TEMP/venv/bin/python" tools/tests/test_run_report_schema.py'
+      - name: Check the run report docs
+        run: python3 tools/tests/test_run_report_docs.py
