@@ -817,6 +817,8 @@ std::size_t APS5_VABI mbrtowc_nid_postfix(std::uint16_t* destination, const char
 std::size_t APS5_VABI mbrlen_nid_postfix(const char* source, std::size_t count, void* state);
 int APS5_VABI mbtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count);
 std::size_t APS5_VABI wcrtomb_nid_postfix(char* destination, std::uint16_t value, void*);
+std::size_t APS5_VABI _Mbrtowc_nid_postfix(std::uint16_t* destination, const char* source, std::size_t count, void* state);
+std::size_t APS5_VABI _Wcrtomb_nid_postfix(char* destination, std::uint16_t value, void* state);
 int APS5_VABI mblen_nid_postfix(const char* source, std::size_t count);
 int APS5_VABI wctomb_nid_postfix(char* destination, std::uint16_t value);
 std::size_t APS5_VABI c32rtomb_nid_postfix(char* destination, std::uint32_t value, void*);
