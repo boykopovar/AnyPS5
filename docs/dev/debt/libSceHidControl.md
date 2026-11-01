@@ -1,10 +1,8 @@
 # libSceHidControl technical debt
 
-### Incomplete command transport
+### Functional
 
-The PS5 3.20 decompilation supplies candidate command codes, argument layouts and pre-initialization checks for 68 named exports. The host implementation has no verified HID device backend and does not open a device. `sceHidControlInit` and command transport fail explicitly via `NotImplemented_nid_no_patch`; no command is sent and no output buffer is populated. These exports are **not implemented end-to-end**. The modeled pre-initialization guards return `0x803b3002` for the guarded functions, while the four EQ band value/preset-name paths return `0x803b3001` before initialization, according to the supplied static analysis. These are status values, not proof of device success or an authenticated hardware observation.
-
-The transport, descriptor lifecycle, command failure handling, output buffer layouts, synchronized state changes and ABI signatures still require independent verification before this library can claim working functionality.
+- [libSceHidControl](../../../core/libs/prx/libSceHidControl/Export.cpp) has no verified host HID transport or device lifecycle. `sceHidControlInit` and the command transport throw through `NotImplemented_nid_no_patch`; no device is opened, no command is sent and no output is written. Provisional command codes, layouts and pre-initialization returns were modeled from PS5 3.20 static analysis, not measured on hardware. The guarded functions return `0x803b3002` before initialization and four EQ band value/preset-name functions return `0x803b3001`; those status values do not establish device success. These exports are not implemented end-to-end. Device and error handling, output buffers, state synchronization and signatures require independent verification.
 
 ### Unknown function info
 
