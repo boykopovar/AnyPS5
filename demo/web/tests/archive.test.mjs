@@ -16,6 +16,20 @@ const executable = new Uint8Array(await readFile(path.join(process.argv[3], "mai
 const module = new Uint8Array(await readFile(path.join(process.argv[3], "module.elf")));
 const resource = new Uint8Array(2 * 1024 * 1024).fill(65);
 
+for (const directory of ["sce_modules", "prx"]) {
+  const archive = new Archive([{path: "app/main.elf", file: new Blob([executable])},
+                               {path: `app/${directory}/library.prx`, file: new Blob([module])}]);
+  try {
+    await archive.inspect(() => {});
+    for (const target of ["linux", "windows"]) {
+      const input = await archive.conversionInput(target, false, () => {});
+      const output = native.Convert(input, () => {});
+      assert.equal(output.ok, true, output.error);
+      assert.deepEqual(output.modules.map(item => item.name), [`app0/${directory}/library.prx.guest.prx`]);
+    }
+  } finally { await archive.close(); }
+}
+
 async function zip(entries) {
   const output = new BlobWriter("application/zip");
   const writer = new ZipWriter(output, { zip64: true, level: 9, useWebWorkers: false, useCompressionStream: false });

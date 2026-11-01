@@ -211,6 +211,63 @@ static void TestLeaderboardsParameterLifecycles() {
         });
 }
 
+static void TestUserProfileParameterLifecycles() {
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriendsC1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriendsD1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi11UserProfile2V110FriendsApi21ParameterToGetFriends10initializeEPNS1_6Common10LibContextEPKc(parameter, context, present ? "me" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresencesC1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresencesD1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return _ZN3sce2Np9CppWebApi11UserProfile2V111PresenceApi28ParameterToGetBasicPresences10initializeEPNS1_6Common10LibContextEPKc(parameter, context, present ? "1,2" : nullptr);
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsersC1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsersD1Ev,
+            _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return present ? _ZN3sce2Np9CppWebApi11UserProfile2V19BlocksApi27ParameterToGetBlockingUsers10initializeEPNS1_6Common10LibContextE(parameter, context) : ParameterInvalidArgument;
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatusC1Ev,
+            _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatusD1Ev,
+            _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            return present ? _ZN3sce2Np9CppWebApi30CommunicationRestrictionStatus2V333CommunicationRestrictionStatusApi44ParameterToGetCommunicationRestrictionStatus10initializeEPNS1_6Common10LibContextEm(parameter, context, 1) : ParameterInvalidArgument;
+        });
+    TestParameterLifecycle(
+        {
+            _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanityC1Ev,
+            _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanityD1Ev,
+            _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity9terminateEv,
+            nullptr,
+        },
+        [](void* parameter, const std::uint64_t* context, bool present) {
+            const auto initialize = _ZN3sce2Np9CppWebApi15ProfanityFilter2V212ProfanityApi26ParameterToFilterProfanity10initializeEPNS1_6Common10LibContextEPKcSA_NS6_12IntrusivePtrINS3_19WebApiFilterRequestEEE;
+            if (present) return initialize(parameter, context, "en-US", "0", &body);
+            Require(initialize(parameter, context, "en-US", "0", &missingBody) == ParameterBodyMissing, "initialize accepted a missing filter request");
+            Require(initialize(parameter, context, nullptr, "0", &body) == ParameterInvalidArgument, "initialize accepted a null locale");
+            return initialize(parameter, context, "en-US", nullptr, &body);
+        });
+}
+
 static void TestIteratorDestructors() {
     unsigned char iterator[0x20];
     std::memset(iterator, 0x5a, sizeof(iterator));
@@ -273,6 +330,7 @@ int main() {
     TestParameterLifecycles();
     TestSessionManagerParameterLifecycles();
     TestLeaderboardsParameterLifecycles();
+    TestUserProfileParameterLifecycles();
     TestIteratorDestructors();
     TestVectorSizeAndElements();
     std::puts("NpCppWebApi offline tests passed");

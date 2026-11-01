@@ -1,0 +1,8 @@
+add_test_executable(agc_formatted_buffer_once_tests EXCLUDE_FROM_ALL tests/FormattedBufferOnce.cpp)
+target_link_libraries(agc_formatted_buffer_once_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_formatted_buffer_once_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_formatted_buffer_once_tests)
+
+if(BUILD_TESTING)
+    agc_add_default_test(agc_formatted_buffer_once_tests)
+endif()

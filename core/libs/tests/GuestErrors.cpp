@@ -68,7 +68,21 @@ int main() {
         Require(std::strcmp(strerror_nid_postfix(error), expected) == 0);
         Require(*__error_nid_postfix() == 13);
     }
-    for (const int error : {97, 100, 1000, 9999, INT_MAX, -1, INT_MIN}) {
+    const struct {
+        int error;
+        const char* text;
+    } extended[] = {
+        {107, "State not recoverable"}, {108, "Owner dead"}, {152, "File positioning error"},
+        {1040, "No message available"}, {1050, "No stream resources"}, {1051, "Not a stream"},
+        {1062, "Other"}, {1074, "Stream timeout"},
+    };
+    for (const auto& entry : extended) {
+        Require(strerror_r_nid_postfix(entry.error, buffer, sizeof(buffer)) == 0);
+        Require(std::strcmp(buffer, entry.text) == 0);
+        Require(std::strcmp(strerror_nid_postfix(entry.error), entry.text) == 0);
+        Require(*__error_nid_postfix() == 13);
+    }
+    for (const int error : {97, 100, 106, 109, 151, 153, 1000, 1039, 1041, 1075, 9999, INT_MAX, -1, INT_MIN}) {
         char coded[32];
         std::snprintf(coded, sizeof(coded), "error_code=0x%08x", static_cast<unsigned>(error));
         Require(strerror_r_nid_postfix(error, buffer, sizeof(buffer)) == 0);
