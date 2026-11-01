@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -97,5 +98,13 @@ int main() {
     CHECK64(_ZN9Inspector32ScriptProfilerFrontendDispatcherC2ERNS_14FrontendRouterE, 0);
     CHECK64(_ZN9Inspector34ApplicationCacheFrontendDispatcherC1ERNS_14FrontendRouterE, 0);
     CHECK64(_ZN9Inspector34ApplicationCacheFrontendDispatcherC2ERNS_14FrontendRouterE, 0);
+
+    bool threw = false;
+    try {
+        _ZN3JSC14ProtoCallFrame12setCodeBlockEPNS_9CodeBlockE(nullptr, 0);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
     return 0;
 }
