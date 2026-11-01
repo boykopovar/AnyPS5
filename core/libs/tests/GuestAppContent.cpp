@@ -17,6 +17,7 @@ static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotMounted = static_cast<int>(0x80D90004);
 static void Require(bool value) { if (!value) std::abort(); }
 
+
 int main() {
     static std::array<std::byte, 64> process{};
     Require(ProcessParametersFixture::Install(process.data(), process.size()));
@@ -38,6 +39,7 @@ int main() {
     Require(sceAppContentTemporaryDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
     Require(sceAppContentDownloadDataFormat(nullptr) == notInitialized);
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(nullptr, nullptr) == notInitialized);
+    Require(sceAppContentDownload2Expand(1024) == notInitialized);
     Require(sceAppContentAddcontDelete(0, nullptr) == notInitialized);
     Require(sceAppContentAddcontEnqueueDownload(0, nullptr) == notInitialized);
     Require(sceAppContentGetAddcontDownloadProgress(0, nullptr, nullptr) == notInitialized);
@@ -104,6 +106,21 @@ int main() {
     Require(std::filesystem::exists(downloadData / "index.dat"));
     Require(sceAppContentDownloadDataFormat(&download) == 0);
     Require(std::filesystem::is_directory(downloadData) && std::filesystem::is_empty(downloadData));
+    AppContentMountPoint download2Mount{};
+    std::memcpy(download2Mount.data, "/download2", 11);
+    const auto download2Data = ResolvePath_nid_no_patch("/download2");
+    std::filesystem::create_directories(download2Data);
+    { std::ofstream file(downloadData / "preserve.bin"); file << "download0"; }
+    { std::ofstream file(download2Data / "old.bin"); file << "download2"; }
+    Require(sceAppContentDownloadDataFormat(&download2Mount) == 0);
+    Require(std::filesystem::is_directory(download2Data) && std::filesystem::is_empty(download2Data));
+    Require(std::filesystem::exists(downloadData / "preserve.bin"));
+    Require(sceAppContentDownload2Expand(0) == ErrorParameter);
+    Require(sceAppContentDownload2Expand(1024 * 1024) == 0);
+    Require(std::filesystem::is_directory(download2Data));
+    size_t download2Space = 0;
+    Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download2Mount, &download2Space) == 0);
+    Require(download2Space == 1024);
 
     const int32_t expectedParams[] = {3, 23566, -7, 0, 2147483647};
     for (uint32_t id = 0; id < 5; ++id) {
