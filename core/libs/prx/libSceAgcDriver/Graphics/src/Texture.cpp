@@ -4257,7 +4257,7 @@ void StorageTexture::appendStoredLayers(std::uint64_t address, std::size_t bytes
     constexpr std::uint64_t block = 65536;
     constexpr std::size_t runs = 8;
     const auto start = ranges.size();
-    const bool all = (descriptor.dccAddress != 0 && (uploadedKeys != DccKeys::Uncompressed || descriptor.mipCount > 1)) || (blockUnits && !BlockWriteBackEach());
+    const bool all = readTrapped.load(std::memory_order_acquire) || (descriptor.dccAddress != 0 && (uploadedKeys != DccKeys::Uncompressed || descriptor.mipCount > 1)) || (blockUnits && !BlockWriteBackEach());
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (!layerPending[layer]) continue;
         const auto begin = layerBegin(layer);
