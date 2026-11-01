@@ -279,6 +279,12 @@ bool GuestGsHandleException_nid_no_patch(EXCEPTION_POINTERS* info) {
     if ((base >= 16 && base != 0xfe && base != 0xff) || (index >= 16 && index != 0xff) || entry[10] > 3 || entry[11] > 1 ||
         (scratch != 3 && scratch != 6) || entry[14] > 1 || length == 0 || length > 15 || Value<std::uint32_t>(entry + 4) <= Value<std::uint32_t>(entry) || Value<std::uint32_t>(entry + 4) - Value<std::uint32_t>(entry) > 15 ||
         entry[31 + length] != 0x0f || entry[32 + length] != 0x0b) return false;
+    if ((entry[31] == 0xc4 || entry[31] == 0xc5) && (GetEnabledXStateFeatures() & XSTATE_MASK_AVX) == 0) {
+        context.Rsp += 128;
+        context.Rip = image + Value<std::uint32_t>(entry);
+        fault.ExceptionAddress = reinterpret_cast<void*>(context.Rip);
+        return false;
+    }
     auto address = Value<std::uint64_t>(entry + 16);
     if (base == 0xfe) address += resume;
     else if (base != 0xff) address += Register(context, base) + (base == 4 ? 128 : 0);

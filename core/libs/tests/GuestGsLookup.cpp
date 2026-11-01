@@ -12,6 +12,9 @@ namespace {
 std::atomic<unsigned> reads{};
 std::atomic<unsigned> queries{};
 unsigned installs = 0;
+DWORD64 enabledFeatures = XSTATE_MASK_LEGACY | XSTATE_MASK_AVX;
+
+DWORD64 WINAPI Features() { return enabledFeatures; }
 PVECTORED_EXCEPTION_HANDLER continuation = nullptr;
 using Notification = void (CALLBACK *)(ULONG, const void*, void*);
 Notification notification = nullptr;
@@ -131,9 +134,55 @@ decltype(&ReadProcessMemory) __imp_GuestGsTestReadProcessMemory = Read;
 decltype(&VirtualQuery) __imp_GuestGsTestVirtualQuery = Query;
 decltype(&AddVectoredContinueHandler) __imp_GuestGsTestAddVectoredContinueHandler = Install;
 decltype(&GetProcAddress) __imp_GuestGsTestGetProcAddress = Lookup;
+decltype(&GetEnabledXStateFeatures) __imp_GuestGsTestGetEnabledXStateFeatures = Features;
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--no-avx") == 0) {
+        auto* bytes = Image(false, 3);
+        const std::uint8_t vex2[] = {0xc5, 0xfa, 0x6f, 0x03, 0x0f, 0x0b};
+        const std::uint8_t vex3[] = {0xc4, 0xe1, 0x7a, 0x6f, 0x03, 0x0f, 0x0b};
+        bytes[0x2010 + 13] = 4;
+        std::memcpy(bytes + 0x2010 + 31, vex2, sizeof(vex2));
+        bytes[0x2050 + 13] = 5;
+        std::memcpy(bytes + 0x2050 + 31, vex3, sizeof(vex3));
+        Require(GuestGsRegisterImage_nid_no_patch(bytes));
+        const auto base = reinterpret_cast<std::uintptr_t>(bytes);
+        const auto registeredReads = reads.load();
+        for (const auto mask : {DWORD64{0}, DWORD64{XSTATE_MASK_LEGACY}, DWORD64{XSTATE_MASK_LEGACY | XSTATE_MASK_AVX}}) {
+            enabledFeatures = mask;
+            for (unsigned index = 0; index < 3; ++index) {
+                CONTEXT context{};
+                context.Rip = base + 0x2010 + index * 64 + 29;
+                context.Rsp = 0x100000 - 128;
+                context.Rbx = 0x11223344;
+                context.EFlags = 0x202;
+                const auto before = context;
+                EXCEPTION_RECORD fault{};
+                fault.ExceptionCode = EXCEPTION_ILLEGAL_INSTRUCTION;
+                fault.ExceptionAddress = reinterpret_cast<void*>(context.Rip);
+                EXCEPTION_POINTERS info{&fault, &context};
+                const bool supported = index == 2 || (mask & XSTATE_MASK_AVX) != 0;
+                Require(GuestGsHandleException_nid_no_patch(&info) == supported);
+                if (supported) {
+                    Require(context.Rip == base + 0x2010 + index * 64 + 31);
+                    context.Rip += bytes[0x2010 + index * 64 + 13];
+                    Require(GuestGsHandleException_nid_no_patch(&info));
+                    Require(context.Rip == base + 0x1008);
+                } else {
+                    Require(context.Rip == base + 0x1000);
+                    Require(fault.ExceptionCode == EXCEPTION_ILLEGAL_INSTRUCTION);
+                    Require(fault.ExceptionAddress == reinterpret_cast<void*>(context.Rip));
+                }
+                auto expected = before;
+                expected.Rip = context.Rip;
+                expected.Rsp += 128;
+                Require(std::memcmp(&expected, &context, sizeof(context)) == 0);
+                Require(reads == registeredReads && queries == 0 && installs == 0);
+            }
+        }
+        return 0;
+    }
     Unrelated(1);
     Unrelated(reinterpret_cast<std::uintptr_t>(&main));
     Require(reads == 0 && queries == 0 && installs == 0);

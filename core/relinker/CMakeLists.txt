@@ -655,11 +655,13 @@ if(BUILD_TESTING)
                 target_include_directories(guest_gs_lookup_runtime PRIVATE ../libs)
                 target_compile_definitions(guest_gs_lookup_runtime PRIVATE
                     ReadProcessMemory=GuestGsTestReadProcessMemory VirtualQuery=GuestGsTestVirtualQuery
-                    AddVectoredContinueHandler=GuestGsTestAddVectoredContinueHandler GetProcAddress=GuestGsTestGetProcAddress)
+                    AddVectoredContinueHandler=GuestGsTestAddVectoredContinueHandler GetProcAddress=GuestGsTestGetProcAddress
+                    GetEnabledXStateFeatures=GuestGsTestGetEnabledXStateFeatures)
                 add_test_executable(guest_gs_lookup_tests ../libs/tests/GuestGsLookup.cpp $<TARGET_OBJECTS:guest_gs_lookup_runtime>)
                 target_include_directories(guest_gs_lookup_tests PRIVATE ../libs)
                 add_test(NAME guest_gs_lookup COMMAND guest_gs_lookup_tests)
-                set_tests_properties(guest_gs_lookup PROPERTIES TIMEOUT 20)
+                add_test(NAME guest_gs_no_avx COMMAND guest_gs_lookup_tests --no-avx)
+                set_tests_properties(guest_gs_lookup guest_gs_no_avx PROPERTIES TIMEOUT 20)
             endif()
             add_test_executable(guest_gs_runner relinker/tests/GuestGsRunner.cpp)
             target_include_directories(guest_gs_runner PRIVATE ../libs)
