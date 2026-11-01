@@ -64,4 +64,12 @@ int main() {
     Require(sceHmdSetupDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(sceHmdSetupDialogTerminate() == 0);
+    Require(sceHmdSetupDialogTerminate() == kErrNotInitialized);
+    Require(sceHmdSetupDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceHmdSetupDialogOpen(&param) == kErrNotInitialized);
+    Require(sceHmdSetupDialogClose() == kErrNotInitialized);
+    Require(sceHmdSetupDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceHmdSetupDialogGetResult(result) == kErrNotInitialized);
+    Require(sceHmdSetupDialogGetStatus() == kStatusNone);
+    Require(sceHmdSetupDialogUpdateStatus() == kStatusNone);
 }

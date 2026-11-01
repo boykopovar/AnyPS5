@@ -109,4 +109,20 @@ int APS5_VABI sceOpusCeltEncEncodeFloatWithPriority(OpusCeltEncoder* state, cons
     return 0;
 }
 
+int APS5_VABI sceOpusCeltEncGetAjmContext() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceOpusCeltMultistreamEncCreate() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceOpusCeltMultistreamEncCtl() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceOpusCeltMultistreamEncCreateEx() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 } // extern "C"
