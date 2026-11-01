@@ -50,6 +50,10 @@
 #include "BdaAbi.hpp"
 #include "ShaderCacheSourceVersion.hpp"
 #include <SDL_loadso.h>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#endif
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -6136,6 +6140,18 @@ bool addressShadowTests(const Device& device, Recorder& recorder) {
     return true;
 }
 
+#ifdef __APPLE__
+vm_prot_t HostPageProtection(const void* page) {
+    mach_vm_address_t address = reinterpret_cast<mach_vm_address_t>(page);
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info{};
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    Require(mach_vm_region(mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) == KERN_SUCCESS && address <= reinterpret_cast<mach_vm_address_t>(page), "cannot read the protection of a page");
+    return info.protection & (VM_PROT_READ | VM_PROT_WRITE);
+}
+#endif
+
 bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
     using namespace AgcDriver::GuestMemory;
     constexpr std::size_t unit = 65536;
@@ -6259,6 +6275,146 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
     settle();
     const auto held = static_cast<std::size_t>(std::count(memory + offset, memory + offset + layout.guestBytes, std::uint8_t{0x3c}));
     Require(held == 32u * 32u * 4u, "the label readback did not publish the small tiled image");
+#ifdef __APPLE__
+    if (std::getenv("APS5_NO_LABEL_READ_TRAP") == nullptr) {
+        const auto rewriteImage = [&](const std::shared_ptr<StorageTexture>& target, std::uint32_t extent, std::uint8_t value) {
+            auto source = std::make_shared<Buffer>(context, extent * extent * 4u, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+            std::fill(source->Bytes().begin(), source->Bytes().end(), std::byte{value});
+            const auto commands = recorder.Commands();
+            recorder.Keep(target);
+            recorder.Keep(source);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            copy.imageExtent = {extent, extent, 1};
+            context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, source->Handle(), target->Image(), VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+            target->MarkDirty();
+        };
+        const auto rewrite = [&](std::uint8_t value) { rewriteImage(image, 32u, value); };
+        const auto readUnlocked = [&](const std::function<bool()>& read) {
+            bool seen = false;
+            Require(GpuMutex().DepthOnThisThread() == 1, "the test thread holds the GPU mutex more than once");
+            GpuMutex().unlock();
+            std::thread reader([&] { seen = read(); });
+            reader.join();
+            GpuMutex().lock();
+            return seen;
+        };
+        const auto holds = [&](std::uint8_t value) { return static_cast<std::size_t>(std::count(memory + offset, memory + offset + layout.guestBytes, value)) == 32u * 32u * 4u; };
+        rewrite(0x4b);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a label stored a pending small tiled image instead of trapping its reads");
+        Require(readUnlocked([&] { return holds(0x4b); }), "a read of a trapped image did not see its pending results");
+        Require(HostPageProtection(memory + offset) != VM_PROT_NONE, "a resolved trap did not give back the image's pages");
+        rewrite(0x2d);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a second label did not trap the small tiled image's reads");
+        Require(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(layout.guestBytes), nullptr, "memory access", PublishScope::None), "storing a trapped image stored nothing");
+        settle();
+        Require(HostPageProtection(memory + offset) != VM_PROT_NONE, "storing a trapped image did not release its trap");
+        Require(holds(0x2d), "storing a trapped image did not publish it");
+
+        rewrite(0x5e);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        std::thread flusher([&] { static_cast<void>(StorageTexture::FlushPending(resource.baseAddress, static_cast<std::size_t>(layout.guestBytes), nullptr, "memory access", PublishScope::None)); });
+        while (StorageTexture::AnyPending()) std::this_thread::yield();
+        Require(HostPageProtection(memory + offset) == VM_PROT_NONE, "a trapped image taken for a store gave back its pages before the store");
+        bool fresh = false;
+        std::thread waiting([&] { fresh = holds(0x5e); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        GpuMutex().unlock();
+        flusher.join();
+        waiting.join();
+        GpuMutex().lock();
+        Require(fresh, "a read while a trapped image waited for its store did not see the stored results");
+
+        const auto page = static_cast<std::uint64_t>(::getpagesize());
+        auto linearA = resource;
+        linearA.baseAddress = address + 0xd0000;
+        linearA.width = 8;
+        linearA.height = 8;
+        linearA.tileMode = TextureTileMode::kLinear;
+        const auto layoutA = DescribeSurface(linearA);
+        auto linearB = linearA;
+        linearB.baseAddress = linearA.baseAddress + ((layoutA.guestBytes + 255u) & ~std::uint64_t{255});
+        const auto layoutB = DescribeSurface(linearB);
+        Require(linearA.baseAddress / page == (linearB.baseAddress + layoutB.guestBytes - 1) / page && linearB.baseAddress + layoutB.guestBytes <= address + 0xe0000, "the two small linear surfaces do not share a page");
+        auto imageA = StorageTexture::Create(context, detiler, linearA, 0);
+        auto imageB = StorageTexture::Create(context, detiler, linearB, 0);
+        imageA->Refresh();
+        imageB->Refresh();
+        settle();
+        auto* pageBytes = memory + (linearA.baseAddress - address);
+        const auto holdsIn = [&](const GuestTextureResource& surface, std::size_t bytes, std::uint8_t value) { return static_cast<std::size_t>(std::count(memory + (surface.baseAddress - address), memory + (surface.baseAddress - address) + bytes, value)) >= 8u * 8u * 4u; };
+        rewriteImage(imageA, 8u, 0x61);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap a lone pending linear image");
+        rewriteImage(imageB, 8u, 0x62);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        settle();
+        Require(HostPageProtection(pageBytes) != VM_PROT_NONE, "a label left a trap on a page it stored another image on");
+        Require(holdsIn(linearA, static_cast<std::size_t>(layoutA.guestBytes), 0x61) && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x62), "a label did not store both images on a shared page");
+        rewriteImage(imageA, 8u, 0x63);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap a lone pending linear image again");
+        rewriteImage(imageB, 8u, 0x64);
+        Require(StorageTexture::FlushPending(linearB.baseAddress, static_cast<std::size_t>(layoutB.guestBytes), nullptr, "idle", PublishScope::None), "a CPU store next to a trapped image stored nothing");
+        settle();
+        Require(HostPageProtection(pageBytes) != VM_PROT_NONE && holdsIn(linearB, static_cast<std::size_t>(layoutB.guestBytes), 0x64), "a CPU store next to a trapped image did not store through its page");
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap the image a neighbouring CPU store left pending");
+        Require(readUnlocked([&] { return holdsIn(linearA, static_cast<std::size_t>(layoutA.guestBytes), 0x63); }), "a read of the re-trapped image did not see its pending results");
+
+        auto outer = resource;
+        outer.baseAddress = address;
+        outer.width = 256;
+        outer.height = 256;
+        outer.tileMode = TextureTileMode::kR64KBX;
+        const auto outerLayout = DescribeSurface(outer);
+        Require(outerLayout.guestBytes > StorageTexture::SmallStoreBytes && outer.baseAddress + outerLayout.guestBytes <= resource.baseAddress, "the large tiled surface does not fit below the small one");
+        auto inner = linearA;
+        inner.baseAddress = address + 0x20000;
+        const auto innerLayout = DescribeSurface(inner);
+        auto outerImage = StorageTexture::Create(context, detiler, outer, 0);
+        auto innerImage = StorageTexture::Create(context, detiler, inner, 0);
+        outerImage->Refresh();
+        innerImage->Refresh();
+        settle();
+        auto* innerBytes = memory + (inner.baseAddress - address);
+        const auto innerHolds = [&](std::uint8_t value) { return holdsIn(inner, static_cast<std::size_t>(innerLayout.guestBytes), value); };
+        const auto storeOuterBlock = [&] {
+            Require(StorageTexture::FlushPending(address + 0x28000, 256, nullptr, "memory access", PublishScope::None), "a store of the large image's block stored nothing");
+            settle();
+        };
+        rewriteImage(outerImage, 256u, 0x71);
+        rewriteImage(innerImage, 8u, 0x72);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label stored a small image inside a pending large tiled one instead of trapping its reads");
+        storeOuterBlock();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE, "a store of a large image's block left a trapped image inside it trapped");
+        Require(innerHolds(0x72), "a store of a large image's block over a trapped image did not leave the bytes a label store leaves");
+        rewriteImage(outerImage, 256u, 0x73);
+        rewriteImage(innerImage, 8u, 0x75);
+        rewriteImage(outerImage, 256u, 0x74);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image again");
+        storeOuterBlock();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x75), "a large image written again after a trapped one was stored before it");
+        rewriteImage(outerImage, 256u, 0x76);
+        rewriteImage(innerImage, 8u, 0x77);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image a third time");
+        outerImage->Flush();
+        settle();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x77), "evicting a large image did not store the trapped image inside it first");
+        rewriteImage(innerImage, 8u, 0x78);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image after the large one was evicted");
+        Require(readUnlocked([&] { return innerHolds(0x78); }), "a read of a trapped image inside an evicted large one did not see its results");
+    }
+#endif
     auto large = resource;
     large.baseAddress = address + 0x80000;
     large.width = 256;

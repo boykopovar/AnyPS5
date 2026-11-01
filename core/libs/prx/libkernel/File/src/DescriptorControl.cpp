@@ -309,7 +309,11 @@ std::optional<Kind> Classify(int fd, const char* function) {
     if (S_ISFIFO(status.st_mode)) return Kind::Pipe;
     if (S_ISCHR(status.st_mode)) return Kind::Device;
     if (S_ISSOCK(status.st_mode)) return Kind::Socket;
+#ifdef __linux__
+    return std::nullopt;
+#else
     throw std::runtime_error(std::string(function) + ": descriptor " + std::to_string(fd) + " is neither a file, a directory, a pipe, a socket nor a character device");
+#endif
 }
 
 int HostStatus(int fd, const char* function) {

@@ -180,6 +180,7 @@ long double APS5_VABI fmal_nid_postfix(long double x, long double y, long double
 double APS5_VABI rint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::rint(x); }
 float APS5_VABI rintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::rint(x); }
 float APS5_VABI nearbyintf_nid_postfix(float x) { return std::isnan(x) ? x + x : std::rintf(x); }
+double APS5_VABI nearbyint_nid_postfix(double x) { return std::isnan(x) ? x + x : std::rint(x); }
 
 std::int64_t APS5_VABI lrint_nid_postfix(double x) { return _mm_cvtsd_si64(_mm_set_sd(x)); }
 
