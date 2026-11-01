@@ -12,6 +12,7 @@
 
 - [JavaScriptCore C API](../../../core/libs/prx/libSceNKWebKit/src/JscContext.cpp) (libSceNKWebKit) - `JS*` runs on QuickJS-NG (`3rdparty/quickjs`), not JavaScriptCore: there is no JIT and no conservative stack scan, and error messages, stack traces and property order come from QuickJS. An unprotected `JSObjectRef` held only in a native variable or heap structure across `JSGarbageCollect` is collected, where JavaScriptCore keeps it through its stack scan; `JSValueProtect`, a marking constraint, a JavaScript reference or an active callback frame keep it alive. `JSStringRef` values are `libSceJsc` strings.
 - [Dictionary key order](../../../core/libs/prx/libSceNKWebKit/src/Dictionary.cpp) (libSceNKWebKit) - `WKDictionaryCopyKeys` returns keys sorted by UTF-16 code unit, not in the `WTF::HashMap` iteration order of [WKDictionary.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKDictionary.cpp).
+- [URL boundary fields](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) (libSceNKWebKit) - `URL::lastPathComponent` and `URL::strippedForUseAsReferrer` follow the [pinned URL.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp) for consistent URLs, but throw `std::out_of_range` where upstream clamps inconsistent boundary fields (`pathEnd` or `queryEnd` beyond the string, `userStart` after `passwordEnd`, a credential end after `queryEnd`). Closes when: the console behaviour for inconsistent fields is measured.
 - [Out-of-line colors](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColor.cpp) (libSceNKWebKit) - `WebCore::Color` operations on an out-of-line value (extended color spaces in [Color.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/Color.h)) throw; only inline 8-bit sRGBA values are handled.
 - [WTF host services](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `fastMalloc`, `bmalloc` and Gigacage allocations come from the host allocator, and `numberOfProcessorCores`, `ramSize`, the clocks and random values come from the host, not the console; they throw when the host cannot answer. `WTFCrash` and failed assertions abort the process.
 
@@ -27,7 +28,7 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7439 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7437 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -6050,10 +6051,8 @@
 | `_ZNK3WTF3URL11hostAndPortEv` | `RZHqKvX5z+E` |
 | `_ZNK3WTF3URL14fileSystemPathEv` | `lOFTLo+dG3Y` |
 | `_ZNK3WTF3URL16isMatchingDomainENS_10StringViewE` | `Ub4JvxZ0KE4` |
-| `_ZNK3WTF3URL17lastPathComponentEv` | `ElXcYHtYqtE` |
 | `_ZNK3WTF3URL19protocolHostAndPortEv` | `q8fEMeIqd5w` |
 | `_ZNK3WTF3URL21truncatedForUseAsBaseEv` | `uekVJTVqBGc` |
-| `_ZNK3WTF3URL24strippedForUseAsReferrerEv` | `CyN41AniueA` |
 | `_ZNK3WTF3URL30stringCenterEllipsizedToLengthEj` | `JRPrmfTHt08` |
 | `_ZNK3WTF3URL4dumpERNS_11PrintStreamE` | `ITwB6pPwmRc` |
 | `_ZNK3WTF3URL4userEv` | `ETN4mn+-5l0` |

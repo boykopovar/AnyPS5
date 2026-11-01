@@ -779,9 +779,9 @@ void Run() {
 
 }  // namespace Wtf2Tests
 
-namespace Wtf2Tests { void TestURLsAndReallocation(); }
+namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); }
 
-void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); }
+void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); }
 
 namespace Wtf2Tests {
 
@@ -806,6 +806,8 @@ const auto URLEqualIgnoringFragment = &_ZN3WTF31equalIgnoringFragmentIdentifierE
 const auto IsJavaScript = &_ZN3WTF20protocolIsJavaScriptENS_10StringViewE;
 const auto IsHTTP = &_ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE;
 const auto JSRealloc = &_ZN3WTF14jsValueReallocEPvm;
+const auto URLLastPathComponent = &_ZNK3WTF3URL17lastPathComponentEv;
+const auto URLStrippedForReferrer = &_ZNK3WTF3URL24strippedForUseAsReferrerEv;
 
 std::string ViewText(StringView view) { return Bytes(ViewUTF8(&view, 1)); }
 
@@ -967,6 +969,97 @@ void TestURLsAndReallocation() {
     memory = static_cast<unsigned char*>(JSRealloc(memory, 2));
     Check(memory[0] == 'h' && memory[1] == 'e');
     Check(!JSRealloc(memory, 0));
+}
+
+void TestURLLastPathComponentAndReferrer() {
+    auto httpBits = [](unsigned schemeEnd, unsigned portLength) { return 1U | 2U | (portLength << 3) | (schemeEnd << 6); };
+    auto simple = FromUTF8Z(U8("http://h/a/b"));
+    URL url{simple.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
+    Check(ViewText(URLLastPathComponent(&url)) == "b");
+    auto trailing = FromUTF8Z(U8("http://h/a/b/"));
+    URL slashed{trailing.impl, httpBits(4, 0), 7, 7, 7, 8, 13, 13, 13};
+    Check(ViewText(URLLastPathComponent(&slashed)) == "b");
+    auto root = FromUTF8Z(U8("http://h/"));
+    URL rootUrl{root.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 9, 9};
+    Check(!URLLastPathComponent(&rootUrl).data);
+    auto hostOnly = FromUTF8Z(U8("http://h"));
+    URL noPath{hostOnly.impl, httpBits(4, 0), 7, 7, 7, 8, 8, 8, 8};
+    Check(!URLLastPathComponent(&noPath).data);
+    auto opaque = FromUTF8Z(U8("mailto:abc"));
+    URL mailto{opaque.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 10, 10};
+    Check(ViewText(URLLastPathComponent(&mailto)) == "mailto:abc");
+    auto wide = Create16(u"http://h/a/b", 12);
+    URL wideUrl{wide.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
+    auto wideResult = URLLastPathComponent(&wideUrl);
+    Check(!wideResult.is8Bit && wideResult.length == 1 && ViewText(wideResult) == "b");
+    auto port = FromUTF8Z(U8("http://h:80/dir/file.txt?q"));
+    URL withPort{port.impl, httpBits(4, 3), 7, 7, 7, 8, 16, 24, 26};
+    Check(ViewText(URLLastPathComponent(&withPort)) == "file.txt");
+    auto slashDot = FromUTF8Z(U8("foo:/.//a"));
+    URL dotted{slashDot.impl, 1U | (3U << 6), 4, 4, 4, 4, 8, 9, 9};
+    Check(ViewText(URLLastPathComponent(&dotted)) == "a");
+    auto beforePath = FromUTF8Z(U8("foo:/.a"));
+    URL guarded{beforePath.impl, 1U | (3U << 6), 4, 4, 4, 4, 5, 7, 7};
+    Check(!URLLastPathComponent(&guarded).data);
+    auto emptyComponent = FromUTF8Z(U8("http://h//"));
+    URL doubled{emptyComponent.impl, httpBits(4, 0), 7, 7, 7, 8, 10, 10, 10};
+    auto emptyResult = URLLastPathComponent(&doubled);
+    Check(emptyResult.data && emptyResult.length == 0);
+    URL absent{};
+    Check(!URLLastPathComponent(&absent).data);
+    URL pastEnd = url;
+    pastEnd.pathEnd = 50;
+    Throws([&] { URLLastPathComponent(&pastEnd); });
+    Throws([&] { URLLastPathComponent(nullptr); });
+
+    auto full = FromUTF8Z(U8("https://u:p@h:80/a?q#f"));
+    URL credentialed{full.impl, httpBits(5, 3), 8, 9, 11, 13, 17, 18, 20};
+    auto stripped = URLStrippedForReferrer(&credentialed);
+    Check(Bytes(UTF8(&stripped, 1)) == "https://h:80/a?q" && stripped.impl != full.impl && stripped.impl->length == 16);
+    auto plain = FromUTF8Z(U8("http://h/a?q"));
+    URL untouched{plain.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 12};
+    auto same = URLStrippedForReferrer(&untouched);
+    Check(same.impl == plain.impl && plain.impl->refCount == 4);
+    auto fragment = FromUTF8Z(U8("http://h/a#f"));
+    URL fragmentOnly{fragment.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 10};
+    auto noFragment = URLStrippedForReferrer(&fragmentOnly);
+    Check(Bytes(UTF8(&noFragment, 1)) == "http://h/a");
+    auto userOnly = FromUTF8Z(U8("http://u@h/a"));
+    URL userUrl{userOnly.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
+    auto noUser = URLStrippedForReferrer(&userUrl);
+    Check(Bytes(UTF8(&noUser, 1)) == "http://h/a");
+    auto wideFull = Create16(u"http://u@h/a#f", 14);
+    URL wideCredentialed{wideFull.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
+    auto wideStripped = URLStrippedForReferrer(&wideCredentialed);
+    Check(!(wideStripped.impl->hashAndFlags & 4) && wideStripped.impl->length == 10 && Bytes(UTF8(&wideStripped, 1)) == "http://h/a");
+    URL invalid{plain.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    {
+        const unsigned before = plain.impl->refCount;
+        auto kept = URLStrippedForReferrer(&invalid);
+        Check(kept.impl == plain.impl && plain.impl->refCount == before + 2);
+    }
+    Check(plain.impl->refCount == 4);
+    URL badBounds = untouched;
+    badBounds.queryEnd = 99;
+    Throws([&] { URLStrippedForReferrer(&badBounds); });
+    auto passwordOnly = FromUTF8Z(U8("http://:p@h/"));
+    URL passwordUrl{passwordOnly.impl, httpBits(4, 0), 7, 7, 9, 11, 12, 12, 12};
+    auto noPassword = URLStrippedForReferrer(&passwordUrl);
+    Check(Bytes(UTF8(&noPassword, 1)) == "http://h/");
+    URL reversedCredentials = userUrl;
+    reversedCredentials.userStart = 200;
+    Throws([&] { URLStrippedForReferrer(&reversedCredentials); });
+    auto hostless = FromUTF8Z(U8("mailto:@x"));
+    URL atSign{hostless.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 9, 9};
+    Check(URLStrippedForReferrer(&atSign).impl == hostless.impl);
+    auto allCredentials = FromUTF8Z(U8("ab"));
+    URL consumed{allCredentials.impl, 1U, 0, 0, 0, 0, 0, 0, 0};
+    auto vanished = URLStrippedForReferrer(&consumed);
+    Check(vanished.impl && vanished.impl->length == 0 && vanished.impl != allCredentials.impl);
+    URL queryBeforeCredentials = userUrl;
+    queryBeforeCredentials.queryEnd = 8;
+    Throws([&] { URLStrippedForReferrer(&queryBeforeCredentials); });
+    Throws([&] { URLStrippedForReferrer(nullptr); });
 }
 
 }  // namespace Wtf2Tests
