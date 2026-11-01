@@ -319,7 +319,7 @@ int APS5_VABI sceVdecswGetPictureInfo(const OutputInfo* output, void* first, voi
     static_cast<void>(second);
     if (output == nullptr || (output->thisSize | 8u) != sizeof(OutputInfo)) throw std::runtime_error("Vdecsw: invalid output info");
     if (output->pictureCount == 0) return 0;
-    if (output->pictureCount > 1) NotImplemented_nid_no_patch(__func__);
+    if (output->pictureCount > 1) throw std::runtime_error("Vdecsw: second field picture info is not implemented");
     if (first == nullptr) return 0;
     std::uint64_t size;
     std::memcpy(&size, first, sizeof(size));
