@@ -126,6 +126,18 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(found["APS5_STILL_STRING"], [(source.as_posix(), 11, "string", "")])
         self.assertEqual(found["APS5_SHORT_DEFAULT"], [(source.as_posix(), 13, "string", "42")])
 
+    def test_single_read_ignores_other_arguments_kind_and_default(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        for text in ('consume(atoi("7"), std::getenv("APS5_TEXT"));',
+                     'consume(flag ? 0 : 5, std::getenv("APS5_TEXT"));',
+                     'consume(std::getenv("APS5_TEXT"), atoi("7"));',
+                     'auto value = (atoi("7"), std::getenv("APS5_TEXT"));',
+                     'auto value = (std::getenv("APS5_TEXT"), atoi("7"));'):
+            with self.subTest(source=text):
+                source.write_text(text, encoding="utf-8")
+                self.assertEqual(env_reference.reads([root / "core"])["APS5_TEXT"][0][2:], ("string", ""))
+
     def test_statement_boundaries_ignore_comments_and_literals(self):
         cases = (
             ('auto value = atoi(/* ;{} */ std::getenv("APS5_VALUE"));', "integer", ""),
