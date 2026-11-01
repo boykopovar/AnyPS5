@@ -254,7 +254,7 @@ bool SubscriptionBumpsSince(const WriteSubscription& subscription, std::uint64_t
 void TrimSubscriptionBumps(WriteSubscription& subscription, std::uint64_t generation) {
     auto& index = Index();
     std::lock_guard lock(index.mutex);
-    if (subscription.overflowedAt != 0 && subscription.overflowedAt <= generation) {
+    if (subscription.overflowedAt != 0 && subscription.generation.load(std::memory_order_acquire) == generation) {
         subscription.overflowedAt = 0;
         subscription.bumps.clear();
         return;

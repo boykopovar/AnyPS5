@@ -472,6 +472,30 @@ void ArraySlices(AgcDriver::VulkanDevice& device) {
     Settle(device, scene, "array (after)", 0u);
 }
 
+void OverflowedHistory(AgcDriver::VulkanDevice& device) {
+    static_cast<void>(device);
+    GuestBlocks blocks(3u * BlockBytes);
+    const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(blocks.base));
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> ranges{{{base, base + 3u * BlockBytes}}};
+    const auto subscription = GuestMemory::SubscribeWrites(ranges);
+    const auto bump = [&](std::uint64_t block) { GuestMemory::NoteGpuPending(base + block * BlockBytes, 4u); };
+    std::vector<std::uint64_t> plain;
+    std::vector<std::uint64_t> lookup;
+    const auto receipt = GuestMemory::SubscriptionGeneration(*subscription);
+    const auto overflowsBefore = GuestMemory::WriteIndexCounted().overflows;
+    for (std::uint64_t round = 0; round < 4096u && GuestMemory::WriteIndexCounted().overflows == overflowsBefore; ++round) bump(round % 2u);
+    Require(!GuestMemory::SubscriptionBumpsSince(*subscription, receipt, plain, lookup), "overflow: alternating bumps over two blocks did not overflow the subscription's recorded history, so its next proof would not fall back");
+    const auto baseline = GuestMemory::SubscriptionGeneration(*subscription);
+    bump(2u);
+    GuestMemory::TrimSubscriptionBumps(*subscription, baseline);
+    Require(!GuestMemory::SubscriptionBumpsSince(*subscription, baseline, plain, lookup), "overflow: trimming the overflowed history at the fallback's baseline forgot the unrecorded bump of block 2 after it, so the next proof would check " + std::to_string(plain.size()) + " changed blocks instead of falling back");
+    const auto settled = GuestMemory::SubscriptionGeneration(*subscription);
+    GuestMemory::TrimSubscriptionBumps(*subscription, settled);
+    Require(GuestMemory::SubscriptionBumpsSince(*subscription, settled, plain, lookup) && plain.empty() && lookup.empty(), "overflow: a trim at the subscription's current generation did not clear the overflow");
+    bump(2u);
+    Require(GuestMemory::SubscriptionBumpsSince(*subscription, settled, plain, lookup) && plain == std::vector<std::uint64_t>{GuestMemory::WriteBlockOf(base + 2u * BlockBytes)} && lookup.empty(), "overflow: after the overflow cleared, a new bump of block 2 was not listed by itself");
+}
+
 }
 
 int main(int argc, char** argv) {
@@ -496,7 +520,7 @@ int main(int argc, char** argv) {
         TargetBytes = AgcDriver::Graphics::ColorTargetLayout(TargetWidth, TargetHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4).Bytes();
         GuestBlocks target((TargetBytes + BlockBytes - 1) / BlockBytes * BlockBytes);
         Target = &target;
-        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 10> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"array", &ArraySlices}}};
+        const std::array<std::pair<const char*, std::function<void(AgcDriver::VulkanDevice&)>>, 11> cases{{{"cpu", &CpuWrite}, {"table", &TableWord}, {"pending", &PendingWrite}, {"remap", &Remap}, {"compared", &Compared}, {"driver", &DriverStore}, {"unwatch", &UnwatchRange}, {"release", &Released}, {"import", &Imported}, {"array", &ArraySlices}, {"overflow", &OverflowedHistory}}};
         for (const auto& [name, run] : cases) {
             if (!args.empty() && std::find(args.begin(), args.end(), name) == args.end()) continue;
             run(*device);
