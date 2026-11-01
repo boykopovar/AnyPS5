@@ -2,7 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <type_traits>
 
-using LoginSignature = int (APS5_VABI *)(int, void*);
+using LoginSignature = int (APS5_VABI *)(int, std::uint64_t);
 using LogoutSignature = int (APS5_VABI *)(int, int);
 using DestroyUserSignature = int (APS5_VABI *)(int);
 

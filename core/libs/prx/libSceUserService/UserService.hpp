@@ -103,7 +103,7 @@ int APS5_VABI sceUserServiceSetNotificationSettings2(void);
 int APS5_VABI sceUserServiceGetPsnPasswordForDebug(void);
 int APS5_VABI sceUserServiceGetPbtcAdditionalTime(void);
 int APS5_VABI sceUserServiceSetGlsLfpsSortOrder(void);
-int APS5_VABI sceUserServiceLogin(int userId, void* request);
+int APS5_VABI sceUserServiceLogin(int userId, std::uint64_t request);
 int APS5_VABI sceUserServiceGetNpLoginId(void);
 int APS5_VABI sceUserServiceSetGlsBroadcastersCommentColor(void);
 int APS5_VABI sceUserServiceSetParentalBrowser(void);

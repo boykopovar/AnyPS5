@@ -574,7 +574,7 @@ int APS5_VABI sceUserServiceSetGlsLfpsSortOrder(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceLogin(int userId, void* request) {
+int APS5_VABI sceUserServiceLogin(int userId, std::uint64_t request) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
