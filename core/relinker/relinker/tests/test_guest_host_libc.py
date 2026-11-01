@@ -6,6 +6,7 @@ import tempfile
 
 from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
 from test_guest_module_directories import needed_libraries
+from test_guest_needed_modules import module_with_needed
 
 DYNAMIC = 0x4800
 STRINGS = 0x4A00
@@ -60,6 +61,17 @@ def main():
         needed = convert(relinker, work / "excluded", imports, ["libc.prx", "other.prx"],
                          ["--exclude-sce-module", "libc.prx"])
         assert needed == ["$ORIGIN/app0/sce_module/other.prx.guest.prx", *imports], needed
+
+        case = work / "module-internal"
+        (case / "sce_module").mkdir(parents=True)
+        (case / "input.elf").write_bytes(importing("libkernel.prx"))
+        (case / "sce_module" / "user.prx").write_bytes(module_with_needed((b"libSceLibcInternal.prx",), (0,)))
+        result = subprocess.run([str(relinker), str(case / "input.elf"), str(case / "output.elf")], capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        needed = needed_libraries((case / "output.elf").read_bytes())
+        assert needed == ["$ORIGIN/app0/sce_module/user.prx.guest.prx", "libkernel.prx", "libSceLibcInternal.prx", "libc.prx"], needed
+        needed = needed_libraries((case / "app0" / "sce_module" / "user.prx.guest.prx").read_bytes())
+        assert needed == ["libSceLibcInternal.prx", "libc.prx"], needed
     print("Guest host libc integration tests passed")
 
 

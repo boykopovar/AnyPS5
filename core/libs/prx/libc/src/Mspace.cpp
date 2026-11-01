@@ -1,5 +1,8 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/MallocManagedSize.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
@@ -8,9 +11,8 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <stdexcept>
 #include <utility>
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -22,7 +24,6 @@ constexpr std::uintptr_t ArenaHeaderBytes = 64;
 struct Chunk {
     std::uintptr_t end;
     bool used;
-    std::size_t requested;
 };
 
 struct Arena {
@@ -51,7 +52,7 @@ Arena* Find(void* handle) {
 }
 
 void AddFree(Arena& arena, std::uintptr_t start, std::uintptr_t end) {
-    arena.chunks[start] = {end, false, 0};
+    arena.chunks[start] = {end, false};
     arena.free.emplace(end - start, start);
 }
 
@@ -62,7 +63,7 @@ void RemoveFree(Arena& arena, std::map<std::uintptr_t, Chunk>::iterator chunk) {
 void* Allocate(Arena* arena, std::size_t size, std::size_t alignment) {
     if (!arena) return nullptr;
     alignment = std::max<std::size_t>(alignment, MinimumAlignment);
-    const auto needed = AlignUp(std::max<std::size_t>(size, 1), Granule);
+    const auto needed = AlignUp(std::max<std::size_t>(size, 1), MinimumAlignment);
     if (needed < size || needed > std::numeric_limits<std::uintptr_t>::max() - alignment) {
         Error(12);
         return nullptr;
@@ -78,7 +79,7 @@ void* Allocate(Arena* arena, std::size_t size, std::size_t alignment) {
         if (aligned > start) AddFree(*arena, start, aligned);
         const auto finish = aligned + needed;
         if (finish < end) AddFree(*arena, finish, end);
-        arena->chunks[aligned] = {finish, true, size};
+        arena->chunks[aligned] = {finish, true};
         arena->inUse += needed;
         arena->peakInUse = std::max(arena->peakInUse, arena->inUse);
         return reinterpret_cast<void*>(aligned);
@@ -124,17 +125,6 @@ bool InsideAllocation(const Arena& arena, std::uintptr_t start, std::size_t size
     --found;
     return found->second.used && size <= found->second.end - start && start - found->first <= found->second.end - found->first - size;
 }
-
-struct MallocManagedSize {
-    std::uint16_t size;
-    std::uint16_t version;
-    std::uint32_t reserved;
-    std::size_t maxSystemSize;
-    std::size_t currentSystemSize;
-    std::size_t maxInuseSize;
-    std::size_t currentInuseSize;
-};
-static_assert(sizeof(MallocManagedSize) == 0x28);
 
 int FillStats(void* handle, MallocManagedSize* stats) {
     if (!stats || stats->size < sizeof(MallocManagedSize)) return 22;
@@ -216,14 +206,11 @@ void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void* handle, void* pointer, st
     std::map<std::uintptr_t, Chunk>::iterator chunk;
     if (!FindUsed(arena, pointer, chunk)) return nullptr;
     if (!size) { Release(*arena, chunk); return nullptr; }
-    const auto needed = AlignUp(size, Granule);
+    const auto needed = AlignUp(size, MinimumAlignment);
     if (needed < size) { Error(12); return nullptr; }
     const auto start = chunk->first;
     const auto capacity = chunk->second.end - start;
-    if (needed <= capacity) {
-        chunk->second.requested = size;
-        return pointer;
-    }
+    if (needed <= capacity) return pointer;
     const auto next = std::next(chunk);
     if (next != arena->chunks.end() && !next->second.used && next->first == chunk->second.end && next->second.end - start >= needed) {
         const auto nextEnd = next->second.end;
@@ -233,13 +220,12 @@ void* APS5_VABI sceLibcMspaceRealloc_nid_postfix(void* handle, void* pointer, st
         if (finish < nextEnd) AddFree(*arena, finish, nextEnd);
         arena->inUse += needed - capacity;
         arena->peakInUse = std::max(arena->peakInUse, arena->inUse);
-        arena->chunks[start] = {finish, true, size};
+        arena->chunks[start] = {finish, true};
         return pointer;
     }
-    const auto previousSize = chunk->second.requested;
     void* result = Allocate(arena, size, Granule);
     if (result) {
-        std::memcpy(result, pointer, previousSize);
+        std::memcpy(result, pointer, std::min<std::size_t>(capacity, size));
         Release(*arena, arena->chunks.find(start));
     }
     return result;
@@ -266,29 +252,26 @@ void* APS5_VABI sceLibcMspaceMemalign_nid_postfix(void* handle, std::size_t alig
     return Allocate(Find(handle), size, alignment);
 }
 
-void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t size, std::size_t alignment) {
-    if (alignment == 0 || (alignment & (alignment - 1))) {
-        Error(22);
-        return nullptr;
-    }
-    const auto effective = std::max<std::size_t>(alignment, 16);
+void* APS5_VABI sceLibcMspaceAlignedAlloc_nid_postfix(void* handle, std::size_t alignment, std::size_t size) {
+    return sceLibcMspaceMemalign_nid_postfix(handle, alignment, size);
+}
+
+void* APS5_VABI sceLibcMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t alignment, std::size_t size) {
+    if (alignment >> 63) return nullptr;
+    const auto effective = std::bit_ceil(std::max<std::size_t>(alignment, MinimumAlignment));
     std::lock_guard lock(arenaMutex);
     auto* arena = Find(handle);
     if (!pointer) return Allocate(arena, size, effective);
     std::map<std::uintptr_t, Chunk>::iterator chunk;
     if (!FindUsed(arena, pointer, chunk)) return nullptr;
-    if (!size) { Release(*arena, chunk); return nullptr; }
-    const auto needed = AlignUp(size, Granule);
+    const auto needed = AlignUp(std::max<std::size_t>(size, 1), MinimumAlignment);
     if (needed < size) { Error(12); return nullptr; }
     const auto start = chunk->first;
-    if (needed <= chunk->second.end - start && (start & (effective - 1)) == 0) {
-        chunk->second.requested = size;
-        return pointer;
-    }
-    const auto previousSize = chunk->second.requested;
+    const auto capacity = chunk->second.end - start;
+    if (needed <= capacity && (start & (effective - 1)) == 0) return pointer;
     void* result = Allocate(arena, size, effective);
     if (result) {
-        std::memcpy(result, pointer, std::min(previousSize, size));
+        std::memcpy(result, pointer, std::min<std::size_t>(capacity, size));
         Release(*arena, arena->chunks.find(start));
     }
     return result;
@@ -314,5 +297,58 @@ std::size_t APS5_VABI sceLibcMspaceMallocUsableSize_nid_postfix(const void* poin
     }
     Error(22);
     return 0;
+}
+
+void* APS5_VABI sceLibcPafMspaceCreate_nid_postfix(const char* name, void* base, std::size_t size, unsigned flags, const void* options) {
+    if (options) throw std::runtime_error("sceLibcPafMspaceCreate: creation options are not supported");
+    return sceLibcMspaceCreate_nid_postfix(name, base, size, flags);
+}
+
+int APS5_VABI sceLibcPafMspaceDestroy_nid_postfix(void* handle) {
+    return sceLibcMspaceDestroy_nid_postfix(handle);
+}
+
+void* APS5_VABI sceLibcPafMspaceMalloc_nid_postfix(void* handle, std::size_t size, const void* owner) {
+    (void)owner;
+    return sceLibcMspaceMalloc_nid_postfix(handle, size);
+}
+
+void* APS5_VABI sceLibcPafMspaceMemalign_nid_postfix(void* handle, std::size_t alignment, std::size_t size, const void* owner) {
+    (void)owner;
+    return sceLibcMspaceMemalign_nid_postfix(handle, alignment, size);
+}
+
+void APS5_VABI sceLibcPafMspaceFree_nid_postfix(void* handle, void* pointer, const void* owner) {
+    (void)owner;
+    sceLibcMspaceFree_nid_postfix(handle, pointer);
+
+}
+
+void* APS5_VABI sceLibcPafMspaceCalloc_nid_postfix(void* handle, std::size_t count, std::size_t size, const void* owner) {
+    (void)owner;
+    return sceLibcMspaceCalloc_nid_postfix(handle, count, size);
+}
+
+void* APS5_VABI sceLibcPafMspaceRealloc_nid_postfix(void* handle, void* pointer, std::size_t size, const void* owner) {
+    (void)owner;
+    return sceLibcMspaceRealloc_nid_postfix(handle, pointer, size);
+}
+
+void* APS5_VABI sceLibcPafMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t alignment, std::size_t size, const void* owner) {
+    (void)owner;
+    return sceLibcMspaceReallocalign_nid_postfix(handle, pointer, alignment, size);
+}
+
+int APS5_VABI sceLibcPafMspacePosixMemalign_nid_postfix(void* handle, void** result, std::size_t alignment, std::size_t size, const void* owner) {
+    (void)owner;
+    return sceLibcMspacePosixMemalign_nid_postfix(handle, result, alignment, size);
+}
+
+int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void* handle, MallocManagedSize* stats) {
+    return sceLibcMspaceMallocStats_nid_postfix(handle, stats);
+}
+
+int APS5_VABI sceLibcPafMspaceMallocStatsFast_nid_postfix(void* handle, MallocManagedSize* stats) {
+    return sceLibcMspaceMallocStatsFast_nid_postfix(handle, stats);
 }
 }

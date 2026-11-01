@@ -8,6 +8,7 @@
 
 #include "SceShaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderUtils.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 
@@ -56,7 +57,9 @@ int APS5_VABI sceAgcCreatePrimState(ShaderRegister* cx_regs, ShaderRegister* uc_
     const std::array<const Shader*, 2> stages{hs, gs};
     const bool patch = prim_type == static_cast<std::uint32_t>(ShaderRegs::PrimitiveType::Patch);
     if (patch == ((contextValues[0].value & ShaderRegs::VGT_SHADER_STAGES_HS_BIT) != 0)) {
+        AgcDriver::ShaderPreparationScope transaction({hs, gs});
         AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span(stages).subspan(hs == nullptr ? 1u : 0u), contextValues, primitiveValues);
+        transaction.Commit();
     }
     if (cx_regs != nullptr) std::copy(contextValues.begin(), contextValues.end(), cx_regs);
     if (uc_regs != nullptr) std::copy(primitiveValues.begin(), primitiveValues.end(), uc_regs);

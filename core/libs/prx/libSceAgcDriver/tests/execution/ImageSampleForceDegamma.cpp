@@ -24,6 +24,10 @@ constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Size = 4;
 constexpr std::uint32_t Format8888UNorm = 56;
 constexpr std::uint32_t Format8888Srgb = 130;
+constexpr std::uint32_t Format32Float = 22;
+constexpr std::uint32_t Format8888SNorm = 57;
+constexpr std::uint32_t FormatBc4UNorm = 175;
+constexpr std::uint32_t Format32UInt = 20;
 constexpr std::uint32_t Type2D = 9;
 constexpr std::uint32_t FilterPoint = 0;
 constexpr std::uint32_t FilterBilinear = 1;
@@ -126,7 +130,7 @@ void RequireSame(const std::array<float, Threads * 4>& forced, const std::array<
     }
 }
 
-void RequireDecoded(const std::array<float, Threads * 4>& sampled) {
+void RequireDecoded(const std::array<float, Threads * 4>& sampled, const char* name) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const auto x = tid % Size;
         const auto y = (tid / Size) % Size;
@@ -134,7 +138,7 @@ void RequireDecoded(const std::array<float, Threads * 4>& sampled) {
             const auto code = Code8(x, y, channel);
             const float expected = channel == 3u ? static_cast<float>(code) / 255.0f : SrgbToLinear(code);
             const float value = sampled[tid * 4u + channel];
-            Require(std::fabs(value - expected) <= 0.005f, "8_8_8_8_SRGB through FORCE_DEGAMMA: thread " + std::to_string(tid) + " component " + std::to_string(channel) + " sampled " + std::to_string(value) + ", expected " + std::to_string(expected));
+            Require(std::fabs(value - expected) <= 0.005f, std::string(name) + " through FORCE_DEGAMMA: thread " + std::to_string(tid) + " component " + std::to_string(channel) + " sampled " + std::to_string(value) + ", expected " + std::to_string(expected));
         }
     }
 }
@@ -158,13 +162,27 @@ int main() {
         FillTexels();
         FillInput(true);
         const auto forcedPoint = Sample(*device, Format8888Srgb, FilterPoint, ForceDegamma);
-        RequireDecoded(forcedPoint);
+        RequireDecoded(forcedPoint, "8_8_8_8_SRGB");
         RequireSame(forcedPoint, Sample(*device, Format8888Srgb, FilterPoint, 0u), "8_8_8_8_SRGB, point");
         FillInput(false);
         const auto forcedBilinear = Sample(*device, Format8888Srgb, FilterBilinear, ForceDegamma);
         RequireSame(forcedBilinear, Sample(*device, Format8888Srgb, FilterBilinear, 0u), "8_8_8_8_SRGB, bilinear");
         RequireSame(Sample(*device, Format8888Srgb, FilterAnisoBilinear, ForceDegamma, AnisoOverride), forcedBilinear, "8_8_8_8_SRGB, single level", "anisotropically under ANISO_OVERRIDE", "bilinearly");
-        Reject(*device, Format8888UNorm, "guest format 56, which is not sRGB, is sampled through a sampler that forces sRGB decoding");
+        FillInput(true);
+        const auto unormPoint = Sample(*device, Format8888UNorm, FilterPoint, ForceDegamma);
+        RequireDecoded(unormPoint, "8_8_8_8_UNORM");
+        RequireSame(unormPoint, forcedPoint, "8_8_8_8_UNORM, point", "through FORCE_DEGAMMA", "as 8_8_8_8_SRGB");
+        const auto unormPlain = Sample(*device, Format8888UNorm, FilterPoint, 0u);
+        Require(unormPlain[0] != unormPoint[0] || unormPlain[4] != unormPoint[4], "8_8_8_8_UNORM without FORCE_DEGAMMA sampled the decoded values");
+        FillInput(false);
+        RequireSame(Sample(*device, Format8888UNorm, FilterBilinear, ForceDegamma), forcedBilinear, "8_8_8_8_UNORM, bilinear", "through FORCE_DEGAMMA", "as 8_8_8_8_SRGB");
+        RequireSame(Sample(*device, Format32Float, FilterPoint, ForceDegamma), Sample(*device, Format32Float, FilterPoint, 0u), "32_FLOAT, point");
+        RequireSame(Sample(*device, FormatBc4UNorm, FilterPoint, ForceDegamma), Sample(*device, FormatBc4UNorm, FilterPoint, 0u), "BC4_UNORM, point");
+        FillInput(true);
+        RequireSame(Sample(*device, Format8888SNorm, FilterPoint, ForceDegamma), forcedPoint, "8_8_8_8_SNORM, point", "through FORCE_DEGAMMA", "as 8_8_8_8_SRGB");
+        FillInput(false);
+        RequireSame(Sample(*device, Format8888SNorm, FilterBilinear, ForceDegamma), forcedBilinear, "8_8_8_8_SNORM, bilinear", "through FORCE_DEGAMMA", "as 8_8_8_8_SRGB");
+        Reject(*device, Format32UInt, "guest format 20, which is not sRGB and has no sRGB view, is sampled through a sampler that forces sRGB decoding");
         std::puts("image sample force degamma tests passed");
         return 0;
     } catch (const std::exception& error) {

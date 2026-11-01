@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/ThreadLifecycle.hpp"
 #include "../include/WindowsThreadLocal.hpp"
@@ -64,6 +65,11 @@ struct ThreadValues {
     }
 };
 
+static int KeySlot(PthreadKey key) {
+    const unsigned slot = static_cast<unsigned>(key) - 1u;
+    return slot < static_cast<unsigned>(MAX_KEYS) ? static_cast<int>(slot) : -1;
+}
+
 static ThreadValues& Values() {
 #ifdef _WIN32
     return WindowsThreadLocal<ThreadValues>::Get();
@@ -86,7 +92,7 @@ int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t
         if (g_keys[index].sequence.load(std::memory_order_relaxed) == FREE_KEY) {
             g_keys[index].destructor = reinterpret_cast<GuestKeyDestructor>(destructor);
             g_keys[index].sequence.store(++g_lastSequence, std::memory_order_release);
-            *key = index;
+            *key = index + 1;
             return SCE_OK;
         }
     }
@@ -94,25 +100,28 @@ int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t
 }
 
 int APS5_VABI scePthreadKeyDelete(PthreadKey key) {
-    if (key < 0 || key >= MAX_KEYS) return SCE_KERNEL_ERROR_EINVAL;
+    const int slot = KeySlot(key);
+    if (slot < 0) return SCE_KERNEL_ERROR_EINVAL;
     std::lock_guard lock(g_keyLock);
-    if (g_keys[key].sequence.load(std::memory_order_relaxed) == FREE_KEY) return SCE_KERNEL_ERROR_EINVAL;
-    g_keys[key].sequence.store(FREE_KEY, std::memory_order_release);
-    g_keys[key].destructor = nullptr;
+    if (g_keys[slot].sequence.load(std::memory_order_relaxed) == FREE_KEY) return SCE_KERNEL_ERROR_EINVAL;
+    g_keys[slot].sequence.store(FREE_KEY, std::memory_order_release);
+    g_keys[slot].destructor = nullptr;
     return SCE_OK;
 }
 
 void* APS5_VABI scePthreadGetspecific(PthreadKey key) {
-    if (key < 0 || key >= MAX_KEYS) return nullptr;
-    const ThreadValue& entry = Values().values[key];
-    return entry.sequence == g_keys[key].sequence.load(std::memory_order_acquire) ? entry.value : nullptr;
+    const int slot = KeySlot(key);
+    if (slot < 0) return nullptr;
+    const ThreadValue& entry = Values().values[slot];
+    return entry.sequence == g_keys[slot].sequence.load(std::memory_order_acquire) ? entry.value : nullptr;
 }
 
 int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value) {
-    if (key < 0 || key >= MAX_KEYS) return SCE_KERNEL_ERROR_EINVAL;
-    const std::uint64_t sequence = g_keys[key].sequence.load(std::memory_order_acquire);
+    const int slot = KeySlot(key);
+    if (slot < 0) return SCE_KERNEL_ERROR_EINVAL;
+    const std::uint64_t sequence = g_keys[slot].sequence.load(std::memory_order_acquire);
     if (sequence == FREE_KEY) return SCE_KERNEL_ERROR_EINVAL;
-    Values().values[key] = {value, sequence};
+    Values().values[slot] = {value, sequence};
     return SCE_OK;
 }
 

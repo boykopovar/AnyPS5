@@ -1,3 +1,5 @@
+#include "prx/libScePosixForWebKit/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
@@ -16,14 +18,6 @@
 #include <string>
 #include <thread>
 
-extern "C" {
-GuestResolver::HostEntry* APS5_VABI gethostbyname_nid_postfix(const char*);
-int* APS5_VABI sceNetErrnoLoc();
-int APS5_VABI getaddrinfo_nid_postfix(const char*, const char*, const GuestResolver::AddressInfo*, GuestResolver::AddressInfo**);
-void APS5_VABI freeaddrinfo_nid_postfix(GuestResolver::AddressInfo*);
-int APS5_VABI getnameinfo_nid_postfix(const void*, std::uint32_t, char*, std::uint32_t, char*, std::uint32_t, int);
-const char* APS5_VABI gai_strerror_nid_postfix(int);
-}
 void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (!condition) {
         std::fprintf(stderr, "Resolver check failed at line %u\n", location.line());
@@ -113,8 +107,13 @@ int main() {
     Require(getnameinfo_nid_postfix(v4.data(), 2, host, sizeof(host), nullptr, 0, 10) == 5);
     Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, sizeof(host), nullptr, 0, 32) == 3);
     Require(getnameinfo_nid_postfix(v4.data(), v4.size(), host, 1, nullptr, 0, 10) == 14);
-    Require(std::strlen(gai_strerror_nid_postfix(14)) > 0);
-    Require(std::strstr(gai_strerror_nid_postfix(-1), "Unknown") != nullptr);
+    Require(std::strcmp(gai_strerror_nid_postfix(0), "Success") == 0);
+    Require(std::strcmp(gai_strerror_nid_postfix(3), "Invalid value for ai_flags") == 0);
+    Require(std::strcmp(gai_strerror_nid_postfix(8), "hostname nor servname provided, or not known") == 0);
+    Require(std::strcmp(gai_strerror_nid_postfix(10), "ai_socktype not supported") == 0);
+    Require(std::strcmp(gai_strerror_nid_postfix(14), "Argument buffer overflow") == 0);
+    Require(std::strcmp(gai_strerror_nid_postfix(-1), "Unknown error") == 0);
+    Require(std::strcmp(gai_strerror_nid_postfix(15), "Unknown error") == 0);
     GuestResolver::AddressInfo hints{};
     hints.flags = 12; // numeric host and service: no external DNS dependency
     hints.socketType = 1;
@@ -130,6 +129,7 @@ int main() {
             Require(std::strcmp(host, numeric) == 0 && std::strcmp(service, "27910") == 0);
         }
         freeaddrinfo_nid_postfix(result);
+
     }
     GuestResolver::AddressInfo* result = reinterpret_cast<GuestResolver::AddressInfo*>(1);
     hints.family = 1234;
@@ -140,4 +140,5 @@ int main() {
     hints.flags = 12;
     Require(getaddrinfo_nid_postfix("invalid-numeric-address", "1", &hints, &result) == 8 && !result);
     freeaddrinfo_nid_postfix(nullptr);
+
 }

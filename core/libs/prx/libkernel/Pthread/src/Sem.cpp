@@ -1,6 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/Cancel.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <cstdint>
 #include <memory>
@@ -11,6 +13,7 @@ namespace {
 
 constexpr int sceBusy = static_cast<int>(0x80020010u);
 constexpr int sceTimedOut = static_cast<int>(0x8002003cu);
+constexpr int sceSemValueMax = 0x7fffffff;
 std::mutex semInitializationMutex;
 
 PthreadSem destroyedSem() {
@@ -34,6 +37,8 @@ extern "C" {
 int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, const char* name) {
     if (!sem)
         throw std::invalid_argument("Semaphore pointer is null");
+    if (value > static_cast<unsigned int>(sceSemValueMax))
+        return SCE_KERNEL_ERROR_EINVAL;
     (void)flag;
     (void)name;
     auto replacement = std::make_unique<PthreadSemPrivate>(value);
@@ -58,6 +63,8 @@ int APS5_VABI scePthreadSemPost(PthreadSem* sem) {
     auto* current = resolveSem(sem);
     {
         std::lock_guard lock(current->_mutex);
+        if (current->_count == sceSemValueMax)
+            return SCE_KERNEL_ERROR_EOVERFLOW;
         ++current->_count;
     }
     current->_cv.NotifyOne();

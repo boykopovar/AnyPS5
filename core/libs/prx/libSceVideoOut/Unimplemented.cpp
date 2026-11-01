@@ -1,3 +1,4 @@
+#include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -7,19 +8,8 @@
 
 extern "C" {
 
-int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status) {
+int APS5_VABI sceDbgVideoOutAddOutputModeVr60Privilege() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-
-int APS5_VABI sceVideoOutAdjustColor_(int handle, const VideoOutColorSettings* settings, uint32_t settings_size) {
-    if (settings_size < sizeof(VideoOutColorSettings)) throw std::runtime_error("sceVideoOutAdjustColor_: VIDEO_OUT_ERROR_INVALID_VALUE");
-    return sceVideoOutAdjustColor(handle, settings);
-}
-
-int APS5_VABI sceVideoOutColorSettingsSetGamma_(VideoOutColorSettings* settings, float gamma, uint32_t settings_size) {
-    if (settings_size < sizeof(VideoOutColorSettings)) throw std::runtime_error("sceVideoOutColorSettingsSetGamma_: VIDEO_OUT_ERROR_INVALID_VALUE");
-    return sceVideoOutColorSettingsSetGamma(settings, gamma);
-}
-
 }

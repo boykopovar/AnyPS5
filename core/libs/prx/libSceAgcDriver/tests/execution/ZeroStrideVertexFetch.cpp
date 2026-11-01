@@ -37,11 +37,14 @@ struct Case {
     std::uint32_t records;
     bool inRange;
     const char* what;
+    std::uint32_t selectors = 0xfacu;
 };
+
+std::vector<std::uint32_t> registrationModule;
 
 std::array<std::uint32_t, 4> VertexBufferDescriptor(const Case& value) {
     const auto address = reinterpret_cast<std::uintptr_t>(Element.data());
-    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), value.records, 0x0104dfacu | (value.select << 28u)};
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), value.records, (0x0104dfacu & ~0xfffu) | value.selectors | (value.select << 28u)};
 }
 
 std::array<std::uint32_t, 4> OutputDescriptor() {
@@ -74,6 +77,10 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     vertexRequest.useCache = false;
     const auto vertexResult = ShaderRecompiler::Recompile(vertexRequest);
     Require(vertexResult.vertexAttributes.size() == 1u, std::string(value.what) + ": the fetch did not become a vertex attribute");
+    if (device.Target().registrationModules) {
+        if (registrationModule.empty()) registrationModule = vertexResult.spirv.Copy();
+        Require(std::ranges::equal(vertexResult.spirv.Words(), registrationModule), std::string(value.what) + ": registration modules: the V# specialized the vertex module");
+    }
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};
@@ -117,10 +124,34 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     device.WaitIdle();
 }
 
+void DescriptorDiagnostics(AgcDriver::VulkanDevice& device) {
+    for (std::uint32_t component = 0; component < 4u; ++component) {
+        for (const auto selector : {2u, 3u}) {
+            const auto shift = component * 3u;
+            const Case value{3u, 16u, true, "reserved selector", (0xfacu & ~(7u << shift)) | (selector << shift)};
+            const auto fields = VertexBufferDescriptor(value);
+            char expected[192];
+            std::snprintf(expected, sizeof(expected), "reserved prepared vertex component selector %u at location 0 component %u (V#=[%08x %08x %08x %08x])",
+                selector, component, fields[0], fields[1], fields[2], fields[3]);
+            bool rejected = false;
+            try {
+                Draw(device, value);
+            } catch (const std::runtime_error& error) {
+                const std::string message(error.what());
+                Require(message.find(expected) != std::string::npos, "reserved selector error did not identify the component and descriptor: " + message);
+                rejected = true;
+            }
+            Require(rejected, "a reserved vertex component selector was accepted");
+        }
+    }
+}
+
 void Check(const Case& value) {
     for (std::uint32_t vertex = 0; vertex < Vertices; ++vertex) {
         for (std::uint32_t component = 0; component < 4u; ++component) {
-            const auto expected = value.inRange ? std::bit_cast<std::uint32_t>(Element[component]) : 0u;
+            const auto selector = (value.selectors >> (component * 3u)) & 7u;
+            const auto selected = selector >= 4u ? std::bit_cast<std::uint32_t>(Element[selector - 4u]) : selector == 1u ? std::bit_cast<std::uint32_t>(1.0f) : 0u;
+            const auto expected = value.inRange || selector < 4u ? selected : 0u;
             const auto actual = Output[vertex * 4u + component];
             Require(actual == expected, std::string(value.what) + ": vertex " + std::to_string(vertex) + " v" + std::to_string(8u + component) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected));
         }
@@ -133,17 +164,34 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        constexpr std::array<Case, 5> cases{{
-            {2u, 1u, true, "OOB_SELECT 2, one record"},
+        constexpr std::uint32_t Wzyx = 7u | (6u << 3u) | (1u << 6u) | (0u << 9u);
+        constexpr std::array<Case, 20> cases{{
+            {0u, 0u, false, "OOB_SELECT 0, no records"},
+            {0u, 1u, false, "OOB_SELECT 0, one record"},
+            {0u, 16u, false, "OOB_SELECT 0, records cover the element's bytes"},
+            {0u, 0xffffffffu, false, "OOB_SELECT 0, NUM_RECORDS 0xffffffff"},
+            {0u, 0xffffffffu, false, "OOB_SELECT 0, NUM_RECORDS 0xffffffff, selectors W Z 1 0", Wzyx},
+            {1u, 0u, false, "OOB_SELECT 1, no records"},
+            {1u, 3u, true, "OOB_SELECT 1, NUM_RECORDS counts the three vertices' records"},
+            {1u, 4u, true, "OOB_SELECT 1, NUM_RECORDS past the vertices"},
+            {1u, 0xffffffffu, true, "OOB_SELECT 1, NUM_RECORDS 0xffffffff"},
+            {1u, 3u, true, "OOB_SELECT 1, NUM_RECORDS 3, selectors W Z 1 0", Wzyx},
             {2u, 0u, false, "OOB_SELECT 2, no records"},
-            {3u, 16u, true, "OOB_SELECT 3, whole element in range"},
+            {2u, 1u, true, "OOB_SELECT 2, one record"},
+            {2u, 16u, true, "OOB_SELECT 2, whole element in range"},
             {3u, 0u, false, "OOB_SELECT 3, no records"},
-            {0u, 16u, true, "OOB_SELECT 0, whole element in range"},
+            {3u, 8u, false, "OOB_SELECT 3, the element only partly fits"},
+            {3u, 15u, false, "OOB_SELECT 3, the element misses its last byte"},
+            {3u, 16u, true, "OOB_SELECT 3, whole element in range"},
+            {3u, 0xffffffffu, true, "OOB_SELECT 3, NUM_RECORDS 0xffffffff"},
+            {3u, 16u, true, "OOB_SELECT 3, selectors W Z 1 0", Wzyx},
+            {3u, 8u, false, "OOB_SELECT 3, partly fits, selectors W Z 1 0", Wzyx},
         }};
         for (const auto& value : cases) {
             Draw(*device, value);
             Check(value);
         }
+        DescriptorDiagnostics(*device);
         std::puts("zero-stride vertex fetch tests passed");
         return 0;
     } catch (const std::exception& error) {

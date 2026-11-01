@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
@@ -109,6 +110,11 @@ int main() {
         const GuestBlock output;
         const GuestBlock destination;
         RecordDispatch(*device, input, output);
+        auto* recorder = AgcDriver::Graphics::Recorder::Active();
+        Require(recorder != nullptr, "copied writer: no active recorder");
+        constexpr std::array<std::byte, 4> labelValue{std::byte{1}, std::byte{0}, std::byte{0}, std::byte{0}};
+        recorder->NoteLabel(output.Address(), labelValue, 1, 0);
+        Require(recorder->AfterRecordedWork([] {}), "copied writer: completion action was not recorded");
         AgcDriver::VulkanDevice::CopyOutcome outcome{};
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());

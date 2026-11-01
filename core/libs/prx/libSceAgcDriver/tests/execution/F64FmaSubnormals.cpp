@@ -135,7 +135,7 @@ std::vector<std::uint32_t> Recompile(bool float64DenormPreserve) {
     request.target.float64DenormPreserve = float64DenormPreserve;
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
-    return ShaderRecompiler::Recompile(request).spirv;
+    return ShaderRecompiler::Recompile(request).spirv.Copy();
 }
 
 bool HasDenormPreserve64(std::span<const std::uint32_t> words) {

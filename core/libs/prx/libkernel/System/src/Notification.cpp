@@ -1,4 +1,7 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include <string>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -8,6 +11,7 @@
 #include <mutex>
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
 #else
 #include <unistd.h>
 #endif
@@ -17,6 +21,15 @@ extern "C" int APS5_VABI sceKernelDebugOutText(int channel, const char* text) {
     if (!text) return static_cast<int>(0x8002000eu);
     static std::mutex outputMutex;
     const std::lock_guard lock(outputMutex);
+    if (const int host = File::HostStandardError(); host >= 0) {
+        const auto line = "[debug:" + std::to_string(channel) + "] " + text;
+#ifdef _WIN32
+        const auto written = _write(host, line.data(), static_cast<unsigned>(line.size()));
+#else
+        const auto written = ::write(host, line.data(), line.size());
+#endif
+        return written == static_cast<decltype(written)>(line.size()) ? 0 : static_cast<int>(0x80020005u);
+    }
     if (std::fprintf(stderr, "[debug:%d] %s", channel, text) < 0 || std::fflush(stderr) != 0)
         return static_cast<int>(0x80020005u);
     return 0;
@@ -30,6 +43,7 @@ extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void
     constexpr std::size_t requestSize = 3120;
     constexpr std::size_t messageOffset = 45;
     constexpr std::size_t messageCapacity = 1024;
+    constexpr std::int32_t systemTextType = 5;
 
     if (size != requestSize || device < 0)
         return invalidArgument;
@@ -40,7 +54,7 @@ extern "C" int APS5_VABI sceKernelSendNotificationRequest(int device, const void
 
     std::int32_t type;
     std::memcpy(&type, request, sizeof(type));
-    if (type != 0 || static_cast<const unsigned char*>(request)[messageOffset - 1] != 0)
+    if ((type != 0 && type != systemTextType) || static_cast<const unsigned char*>(request)[messageOffset - 1] != 0)
         return notSupported;
 
     const auto* message = static_cast<const char*>(request) + messageOffset;

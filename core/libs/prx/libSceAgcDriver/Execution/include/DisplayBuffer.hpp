@@ -22,12 +22,18 @@ struct DisplayBuffer {
     std::uint32_t pitchInPixel = 0;
     std::uint64_t dccAddress = 0;
     std::uint64_t dccClearColor = 0;
+    std::uint32_t alignment = 65536;
 };
+
+inline constexpr std::uint32_t DisplayTilingGcn = 2;
 
 std::size_t DisplayBufferSize(const DisplayBuffer& buffer);
 std::size_t DisplayBufferOffset(const DisplayBuffer& buffer, std::uint32_t x, std::uint32_t y);
 std::vector<std::byte> DecodeDisplayBuffer(const DisplayBuffer& buffer, std::span<const std::byte> source);
 std::vector<std::byte> ReadDisplayBuffer(const DisplayBuffer& buffer);
+std::vector<std::byte> DisplayBufferTexels(const DisplayBuffer& buffer, std::span<const std::byte> source);
+std::vector<std::byte> ReadDisplayBufferTexels(const DisplayBuffer& buffer);
+std::array<std::byte, 4> DisplayBufferClearTexel(const DisplayBuffer& buffer, Graphics::DccKeys keys);
 std::array<std::byte, 4> DisplayBufferClearPixel(const DisplayBuffer& buffer, Graphics::DccKeys keys);
 std::size_t DisplayBufferKeyBytes(const DisplayBuffer& buffer);
 Graphics::DccKeys DisplayBufferKeys(const DisplayBuffer& buffer);

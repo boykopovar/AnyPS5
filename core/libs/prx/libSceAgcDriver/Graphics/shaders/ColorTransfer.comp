@@ -1,14 +1,19 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+
+#include "PqToSdr.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 layout(set = 0, binding = 0, std430) buffer TiledPixels { uint tiled[]; };
 layout(set = 0, binding = 1, std430) buffer LinearPixels { uint linear[]; };
 layout(set = 0, binding = 2, std430) readonly buffer ScanoutThresholds { uint thresholds[]; };
+layout(set = 0, binding = 3, std430) readonly buffer PqLuminance { float pqNits[]; };
 layout(push_constant) uniform Parameters {
     uint width;
     uint height;
     uint blocksPerRow;
     uint mode;
+    float whiteNits;
 } parameters;
 
 uint scanoutCode(uint bits, uint base) {
@@ -44,6 +49,13 @@ void main() {
         pixel = scanoutCode(first & 0xffffu, 0u) | (scanoutCode(first >> 16u, 0u) << 8u) | (scanoutCode(second & 0xffffu, 0u) << 16u) | (scanoutCode(second >> 16u, 255u) << 24u);
     } else {
         pixel = (parameters.mode & 1u) != 0u ? linear[linearIndex] : tiled[tiledIndex];
+    }
+    if ((parameters.mode & 32u) != 0u) {
+        vec3 nits = vec3(pqNits[pixel & 0x3ffu], pqNits[(pixel >> 10u) & 0x3ffu], pqNits[(pixel >> 20u) & 0x3ffu]);
+        vec3 encoded = srgbEncode(pqToSdrLinear((parameters.mode & 2u) != 0u ? nits : nits.zyx, parameters.whiteNits));
+        uvec3 codes = uvec3(floor(encoded * 255.0 + 0.5));
+        linear[linearIndex] = codes.b | (codes.g << 8u) | (codes.r << 16u) | 0xff000000u;
+        return;
     }
     // Mode 8: A2B10G10R10 source (red in the low bits) presented as 8-bit RGBA.
     if ((parameters.mode & 8u) != 0u) pixel = ((pixel >> 2u) & 0xffu) | (((pixel >> 12u) & 0xffu) << 8u) | (((pixel >> 22u) & 0xffu) << 16u) | 0xff000000u;

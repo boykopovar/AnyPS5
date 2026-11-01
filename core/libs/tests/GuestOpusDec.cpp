@@ -1,19 +1,14 @@
+#include "prx/libSceOpusDec/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
+#include <span>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceOpusDecInitialize(std::uint32_t*);
-int APS5_VABI sceOpusDecTerminate(std::uint32_t*);
-int APS5_VABI sceOpusDecGetSize(int);
-int APS5_VABI sceOpusDecCreateEx(std::uint32_t*, void*, int, int);
-int APS5_VABI sceOpusDecDecode(void*, const std::uint8_t*, int, std::int16_t*, int);
-int APS5_VABI sceOpusDecDestroy(void*);
-}
+#include <opus.h>
 
 namespace {
 
@@ -40,11 +35,78 @@ const std::uint8_t OPUS_STEREO[] = {
     0xA7, 0xFA, 0x99, 0xF9, 0x47, 0x32, 0x07, 0xAF, 0x24, 0xBF, 0x14, 0xC5,
 };
 
+const std::uint8_t OPUS_NARROWBAND[] = {
+    11, 0, 0x08, 0x83, 0x9C, 0xE1, 0x7B, 0x2F, 0x52, 0xCA, 0x9E, 0x75, 0xD8,
+    13, 0, 0x08, 0x96, 0x51, 0x3A, 0x33, 0x4A, 0xF8, 0x29, 0xF5, 0xBE, 0x40, 0x15, 0x98,
+    10, 0, 0x08, 0x85, 0x89, 0x9D, 0x73, 0x0F, 0xC2, 0xB1, 0xE2, 0x48,
+};
+
+void CheckReference(int rate, int channels) {
+    std::uint32_t context = 0;
+    std::array<std::uint8_t, 640> state{};
+    Require(sceOpusDecInitialize(&context) == 0);
+    Require(sceOpusDecCreateEx(&context, state.data(), rate, channels) == 0);
+    int error = OPUS_OK;
+    auto* reference = opus_decoder_create(rate, channels, &error);
+    Require(reference && error == OPUS_OK);
+    std::array<std::uint8_t, 1500> longPacket{};
+    auto* repacketizer = opus_repacketizer_create();
+    Require(repacketizer != nullptr);
+    for (int i = 0; i < 6; ++i) Require(opus_repacketizer_cat(repacketizer, OPUS_STEREO + 2, OPUS_STEREO[0]) == OPUS_OK);
+    const int longSize = opus_repacketizer_out(repacketizer, longPacket.data() + 2, static_cast<opus_int32>(longPacket.size() - 2));
+    Require(longSize > 0);
+    opus_repacketizer_destroy(repacketizer);
+    longPacket[0] = static_cast<std::uint8_t>(longSize);
+    longPacket[1] = static_cast<std::uint8_t>(longSize >> 8);
+    for (auto packets : {std::span<const std::uint8_t>(OPUS_NARROWBAND), std::span<const std::uint8_t>(OPUS_STEREO),
+             std::span<const std::uint8_t>(OPUS_NARROWBAND), std::span<const std::uint8_t>(longPacket.data(), longSize + 2)}) {
+        for (std::size_t offset = 0; offset < packets.size();) {
+            const int bytes = packets[offset] | (packets[offset + 1] << 8);
+            const auto* packet = packets.data() + offset + 2;
+            std::array<std::int16_t, 11520> expected{};
+            const int samples = opus_decode(reference, packet, bytes, expected.data(), 5760, 0);
+            Require(samples > 0);
+            const int count = samples * channels;
+            std::array<std::int16_t, 11522> actual{};
+            actual.fill(12345);
+            Require(sceOpusDecDecode(state.data(), packet, bytes, actual.data() + 1, count * 2 + 1) == count * 2);
+            if (!std::equal(expected.begin(), expected.begin() + count, actual.begin() + 1)) {
+                std::fprintf(stderr, "Opus PCM differs from libopus at %d Hz, %d channels, packet offset %zu\n", rate, channels, offset);
+                std::abort();
+            }
+            Require(actual.front() == 12345 && std::all_of(actual.begin() + count + 1, actual.end(), [](auto value) { return value == 12345; }));
+            offset += bytes + 2;
+        }
+    }
+    opus_decoder_destroy(reference);
+    Require(sceOpusDecDestroy(state.data()) == 0);
+    Require(sceOpusDecTerminate(&context) == 0);
+}
+
 } // namespace
 
 int main() {
+    constexpr std::uint32_t errorBase = 0x81740000u;
+    Require(sceOpusDecInitialize(nullptr) == static_cast<int>(errorBase + 13));
+    Require(sceOpusDecDestroy(nullptr) == static_cast<int>(errorBase));
+    for (int rate : {8000, 12000, 16000, 24000, 48000})
+        for (int channels : {1, 2}) CheckReference(rate, channels);
     std::uint32_t context = 0, otherContext = 0;
     Require(sceOpusDecInitialize(&context) == 0);
+    std::array<std::uint8_t, 640> invalidState{};
+    std::int16_t output = 12345;
+    const std::uint8_t packet = 0;
+    Require(sceOpusDecCreateEx(nullptr, invalidState.data(), 0, 0) == static_cast<int>(errorBase));
+    Require(sceOpusDecCreateEx(&context, invalidState.data(), 0, 0) == static_cast<int>(errorBase + 2));
+    Require(sceOpusDecCreateEx(&context, invalidState.data(), 48000, 0) == static_cast<int>(errorBase + 3));
+    Require(sceOpusDecDecode(nullptr, nullptr, -1, nullptr, -1) == static_cast<int>(errorBase));
+    Require(sceOpusDecDecode(invalidState.data(), nullptr, -1, nullptr, -1) == static_cast<int>(errorBase + 6));
+    Require(sceOpusDecDecode(invalidState.data(), &packet, -1, nullptr, -1) == static_cast<int>(errorBase + 7));
+    Require(sceOpusDecDecode(invalidState.data(), &packet, 1, nullptr, -1) == static_cast<int>(errorBase + 8));
+    Require(sceOpusDecDecode(invalidState.data(), &packet, 1, &output, -1) == static_cast<int>(errorBase + 9));
+    Require(sceOpusDecDecode(invalidState.data(), &packet, 1, &output, 2) == static_cast<int>(errorBase + 1));
+    Require(output == 12345);
+
     Require(sceOpusDecInitialize(&otherContext) == 0 && context != otherContext);
     RequireThrows([&] { sceOpusDecInitialize(&context); });
     Require(sceOpusDecGetSize(1) == 640 && sceOpusDecGetSize(2) == 640);
@@ -54,10 +116,10 @@ int main() {
     Require(sceOpusDecCreateEx(&context, monoState.data(), 48000, 1) == 0);
     RequireThrows([&] { sceOpusDecTerminate(&context); });
     RequireThrows([&] { sceOpusDecCreateEx(&context, state.data(), 48000, 2); });
-    RequireThrows([&] { sceOpusDecGetSize(3); });
+    Require(sceOpusDecGetSize(3) == static_cast<int>(errorBase + 3));
     std::array<std::uint8_t, 640> unsupported{};
-    for (int rate : {8000, 12000, 16000, 24000})
-        RequireThrows([&] { sceOpusDecCreateEx(&context, unsupported.data(), rate, 2); });
+    for (int rate : {0, 22050, 44100, 96000})
+        Require(sceOpusDecCreateEx(&context, unsupported.data(), rate, 2) == static_cast<int>(errorBase + 2));
     std::array<std::int16_t, 1922> pcm{}, reference{};
     pcm.fill(12345);
     RequireThrows([&] { sceOpusDecDecode(state.data(), OPUS_STEREO + 2, 70, pcm.data() + 1, 3839); });
@@ -93,9 +155,28 @@ int main() {
         Require(std::any_of(mono.begin() + 1, mono.end() - 1, [](auto value) { return value != 0; }));
         offset += bytes + 2;
     }
+    for (int rate : {8000, 12000, 16000, 24000}) {
+        std::array<std::uint8_t, 640> rateState{};
+        Require(sceOpusDecCreateEx(&context, rateState.data(), rate, 2) == 0);
+        const int samples = 960 * rate / 48000;
+        std::array<std::int16_t, 962> resampled{};
+        int peak = 0;
+        for (std::size_t at = 0, frame = 0; frame < 3; ++frame) {
+            const int bytes = OPUS_STEREO[at] | (OPUS_STEREO[at + 1] << 8);
+            resampled.fill(12345);
+            RequireThrows([&] { sceOpusDecDecode(rateState.data(), OPUS_STEREO + at + 2, bytes, resampled.data() + 1, samples * 4 - 1); });
+            Require(sceOpusDecDecode(rateState.data(), OPUS_STEREO + at + 2, bytes, resampled.data() + 1, samples * 4) == samples * 4);
+            Require(resampled[0] == 12345 && resampled[samples * 2 + 1] == 12345);
+            for (int index = 1; index <= samples * 2; ++index) peak = std::max(peak, std::abs(static_cast<int>(resampled[index])));
+            at += bytes + 2;
+        }
+        Require(peak > 900 && peak < 1200);
+        Require(sceOpusDecDestroy(rateState.data()) == 0);
+    }
+
     Require(sceOpusDecDestroy(state.data()) == 0);
-    RequireThrows([&] { sceOpusDecDestroy(state.data()); });
-    RequireThrows([&] { sceOpusDecDecode(state.data(), OPUS_STEREO + 2, 70, pcm.data(), 3840); });
+    Require(sceOpusDecDestroy(state.data()) == static_cast<int>(errorBase + 1));
+    Require(sceOpusDecDecode(state.data(), OPUS_STEREO + 2, 70, pcm.data(), 3840) == static_cast<int>(errorBase + 1));
     Require(sceOpusDecCreateEx(&context, state.data(), 48000, 2) == 0);
     Require(sceOpusDecDecode(state.data(), OPUS_STEREO + 2, 70, pcm.data(), 3840) == 3840);
     std::array<std::int16_t, 3842> rejected;
@@ -111,4 +192,25 @@ int main() {
     Require(sceOpusDecDecode(otherState.data(), OPUS_STEREO + offset + 2, OPUS_STEREO[offset], reference.data(), 3840) == 3840);
     Require(sceOpusDecDestroy(otherState.data()) == 0);
     Require(sceOpusDecTerminate(&otherContext) == 0);
+
+    std::uint32_t narrowContext = 0;
+    std::array<std::uint8_t, 640> narrowState{};
+    Require(sceOpusDecInitialize(&narrowContext) == 0);
+    Require(sceOpusDecCreateEx(&narrowContext, narrowState.data(), 48000, 1) == 0);
+    std::array<std::int16_t, 962> narrow{};
+    bool audible = false;
+    for (std::size_t at = 0; at < sizeof(OPUS_NARROWBAND);) {
+        const int bytes = OPUS_NARROWBAND[at] | (OPUS_NARROWBAND[at + 1] << 8);
+        narrow.fill(12345);
+        Require(sceOpusDecDecode(narrowState.data(), OPUS_NARROWBAND + at + 2, bytes, narrow.data() + 1, 1920) == 1920);
+        Require(narrow.front() == 12345 && narrow.back() == 12345);
+        audible = audible || std::any_of(narrow.begin() + 1, narrow.end() - 1, [](auto value) { return value != 0 && value != 12345; });
+        at += bytes + 2;
+    }
+    Require(audible);
+    narrow.fill(12345);
+    Require(sceOpusDecDecode(narrowState.data(), OPUS_STEREO + 2, 70, narrow.data() + 1, 1920) == 1920);
+    Require(narrow.front() == 12345 && narrow.back() == 12345);
+    Require(sceOpusDecDestroy(narrowState.data()) == 0);
+    Require(sceOpusDecTerminate(&narrowContext) == 0);
 }

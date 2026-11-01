@@ -3,10 +3,14 @@
 #include <nid/PeNidPatcher.hpp>
 #include <nid/MachONidPatcher.hpp>
 #include <nid/NidPatcherUtils.hpp>
+#include <nid/NativePath.hpp>
+#include <algorithm>
 #include <bit>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
+#include <vector>
 
 namespace Nid {
 
@@ -49,7 +53,12 @@ std::unordered_set<std::string> ReadPeExports(const std::vector<std::uint8_t>& b
     if (!directory.VirtualAddress || directory.Size < sizeof(PeExportDirectory)) throw std::runtime_error("missing reference PE exports");
     const auto sections = optional + optionalSize;
     RequireRange(binary, sections, std::uint64_t{sectionCount} * sizeof(PeSectionHeader));
+    const auto headersSize = ReadValue<std::uint32_t>(binary, optional + 60);
     const auto mapRva = [&](std::uint32_t rva, std::uint64_t size) -> std::uint64_t {
+        if (rva < headersSize && size <= headersSize - rva) {
+            RequireRange(binary, rva, size);
+            return rva;
+        }
         for (std::uint16_t index = 0; index < sectionCount; ++index) {
             const auto section = ReadValue<PeSectionHeader>(binary, sections + std::uint64_t{index} * sizeof(PeSectionHeader));
             if (rva < section.VirtualAddress) continue;
@@ -64,14 +73,20 @@ std::unordered_set<std::string> ReadPeExports(const std::vector<std::uint8_t>& b
     const auto table = ReadValue<PeExportDirectory>(binary, mapRva(directory.VirtualAddress, sizeof(PeExportDirectory)));
     if (!table.NumberOfNames) throw std::runtime_error("reference PE has no named exports");
     const auto names = mapRva(table.AddressOfNames, std::uint64_t{table.NumberOfNames} * 4);
+    const auto ordinals = mapRva(table.AddressOfNameOrdinals, std::uint64_t{table.NumberOfNames} * 2);
+    const auto functions = mapRva(table.AddressOfFunctions, std::uint64_t{table.NumberOfFunctions} * 4);
     std::unordered_set<std::string> result;
     for (std::uint32_t index = 0; index < table.NumberOfNames; ++index) {
+        const auto ordinal = ReadValue<std::uint16_t>(binary, ordinals + std::uint64_t{index} * 2);
+        if (ordinal >= table.NumberOfFunctions) throw std::runtime_error("invalid reference PE export ordinal");
+        if (!ReadValue<std::uint32_t>(binary, functions + std::uint64_t{ordinal} * 4)) continue;
         const auto rva = ReadValue<std::uint32_t>(binary, names + std::uint64_t{index} * 4);
         const auto offset = mapRva(rva, 1);
         auto name = ReadName(binary, offset, binary.size() - offset);
         mapRva(rva, name.size() + 1);
         if (!result.insert(name).second) throw std::runtime_error("duplicate reference export: " + name);
     }
+    if (result.empty()) throw std::runtime_error("reference PE has no named exports");
     return result;
 }
 
@@ -101,6 +116,24 @@ std::unordered_set<std::string> ReadElfExports(const std::vector<std::uint8_t>& 
     return result;
 }
 
+std::string ReadText(const std::string& path, std::ifstream& input) {
+    std::string text{std::istreambuf_iterator<char>(input), {}};
+    if (input.bad()) throw std::runtime_error("cannot read export list: " + path);
+    return text;
+}
+
+std::string FormatExportList(const std::unordered_set<std::string>& exports) {
+    std::vector<std::string> names(exports.begin(), exports.end());
+    std::ranges::sort(names);
+    std::string text;
+    for (const auto& name : names) {
+        if (name.find('\n') != std::string::npos) throw std::runtime_error("export name contains a line break: " + name);
+        text += name;
+        text += '\n';
+    }
+    return text;
+}
+
 }
 
 std::string NormalizeExportName(const std::string& name) {
@@ -110,7 +143,7 @@ std::string NormalizeExportName(const std::string& name) {
 
 std::unordered_set<std::string> ReadExportExclusions(const std::string& path) {
     if constexpr (std::endian::native != std::endian::little) throw std::runtime_error("export references require a little-endian host");
-    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    std::ifstream input(Internal::NativePath(path), std::ios::binary | std::ios::ate);
     if (!input) throw std::runtime_error("cannot open export reference: " + path);
     const auto size = input.tellg();
     if (size <= 0) throw std::runtime_error("empty or unreadable export reference: " + path);
@@ -139,6 +172,33 @@ std::unordered_set<std::string> ReadExportExclusions(const std::string& path) {
         result.insert(std::move(normalized));
     }
     return result;
+}
+
+std::unordered_set<std::string> ReadExportList(const std::string& path) {
+    std::ifstream input(Internal::NativePath(path), std::ios::binary);
+    if (!input) throw std::runtime_error("cannot open export list: " + path);
+    const auto text = ReadText(path, input);
+    if (text.empty() || text.back() != '\n') throw std::runtime_error("malformed export list: " + path);
+    std::unordered_set<std::string> result;
+    for (std::size_t start = 0; start < text.size();) {
+        const auto end = text.find('\n', start);
+        if (end == start) throw std::runtime_error("empty name in export list: " + path);
+        auto name = text.substr(start, end - start);
+        if (!result.insert(name).second) throw std::runtime_error("duplicate name in export list: " + name);
+        start = end + 1;
+    }
+    return result;
+}
+
+bool WriteExportList(const std::string& referencePath, const std::string& path) {
+    const auto text = FormatExportList(ReadExportExclusions(referencePath));
+    if (std::ifstream existing(Internal::NativePath(path), std::ios::binary); existing && ReadText(path, existing) == text) return false;
+    std::ofstream output(Internal::NativePath(path), std::ios::binary | std::ios::trunc);
+    if (!output) throw std::runtime_error("cannot write export list: " + path);
+    output.write(text.data(), static_cast<std::streamsize>(text.size()));
+    output.close();
+    if (!output) throw std::runtime_error("cannot write export list: " + path);
+    return true;
 }
 
 }

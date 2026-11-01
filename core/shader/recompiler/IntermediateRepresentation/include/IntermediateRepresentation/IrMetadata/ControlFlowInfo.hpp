@@ -19,26 +19,51 @@ struct BlockInfo {
     IrValue* indirectTarget = nullptr;
 };
 
+struct KeyDomain {
+    std::uint32_t source = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t stride = 4;
+    bool value = false;
+
+    bool operator==(const KeyDomain& other) const = default;
+};
+
+struct PointerHop {
+    std::uint32_t offset = 0;
+    std::uint32_t immediate = 0;
+
+    bool operator==(const PointerHop& other) const = default;
+};
+
+struct TableColumn {
+    std::uint32_t heapSource = 0;
+    std::uint32_t stride = 0;
+    std::uint32_t addend = 0;
+    std::uint32_t offset = 0;
+    std::uint32_t dwordCount = 0;
+    std::uint32_t maxKey = 0xffffffffu;
+    bool sampler = false;
+    bool address = false;
+    std::vector<KeyDomain> keyDomains;
+    bool unkeyed = false;
+    bool indirect = false;
+    std::uint32_t indirectOffset = 0;
+    std::uint32_t indirectImmediate = 0;
+    std::vector<PointerHop> pointerHops;
+    std::uint32_t foldedAddend = 0;
+    std::uint32_t foldedCarry = 0;
+    bool selected = false;
+    std::uint32_t selection = 0;
+
+    bool operator==(const TableColumn& other) const {
+        return heapSource == other.heapSource && stride == other.stride && addend == other.addend && offset == other.offset && dwordCount == other.dwordCount && sampler == other.sampler && address == other.address && indirect == other.indirect && indirectOffset == other.indirectOffset && indirectImmediate == other.indirectImmediate && pointerHops == other.pointerHops && foldedAddend == other.foldedAddend && foldedCarry == other.foldedCarry && selected == other.selected && selection == other.selection;
+    }
+};
+
 struct DescriptorSource {
-    // A T# loaded from a table buffer (`heapSource`) at `entryOffset + key * 32`, the key a
-    // wave-uniform runtime value (handle argument `keyArg`). With `hasMaterial` the key is itself
-    // `M[readfirstlane(i) * selectorStride + selectorOffset]` over `materialSource`, so the key
-    // set can be enumerated from the material records (see ResourceMaterializer).
-    struct IndirectImage {
-        std::uint32_t materialSource = 0;
-        std::uint32_t heapSource = 0;
-        std::uint32_t selectorStride = 0;
-        std::uint32_t selectorOffset = 0;
-        std::uint32_t keyArg = 0;
-        std::uint32_t entryOffset = 0;
-        bool hasMaterial = false;
-
-        bool operator==(const IndirectImage& other) const = default;
-    };
-
     std::array<IrValue*, 8> dwords {};
     std::uint32_t dwordCount = 0;
-    std::optional<IndirectImage> indirectImage;
+    std::optional<TableColumn> tableColumn;
 
     bool operator==(const DescriptorSource& other) const = default;
 };
@@ -62,6 +87,8 @@ struct ResourceBlock {
     IrValue* condition = nullptr;
     std::vector<std::uint32_t> successors;
     std::vector<std::uint32_t> sources;
+    std::vector<std::uint32_t> images;
+    std::vector<std::uint32_t> flatSlots;
 };
 
 }

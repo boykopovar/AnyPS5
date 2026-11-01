@@ -231,6 +231,10 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (!TargetHasCapability(device->Target(), spv::CapabilityFloat64)) {
+            std::puts("skipped, v_dot2_f32_f16 takes an f64 branch and the device has no shaderFloat64");
+            return VulkanTestSkipped;
+        }
         const auto cases = Cases();
         for (std::size_t index = 0; index < cases.size(); ++index) {
             Input[index * 4u] = cases[index].a;

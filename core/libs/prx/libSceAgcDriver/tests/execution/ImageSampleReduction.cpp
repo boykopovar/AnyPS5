@@ -31,6 +31,8 @@ constexpr std::uint32_t ReductionMin = 1;
 constexpr std::uint32_t ReductionMax = 2;
 constexpr std::uint32_t FilterPoint = 0;
 constexpr std::uint32_t FilterBilinear = 1;
+constexpr std::uint32_t FilterAnisoBilinear = 3;
+constexpr std::uint32_t Aniso2x = 1;
 constexpr std::uint32_t MipNone = 0;
 constexpr std::uint32_t MipPoint = 1;
 constexpr std::uint32_t MipLinear = 2;
@@ -67,6 +69,7 @@ struct Sampler {
     std::uint32_t reduction;
     std::uint32_t filter;
     std::uint32_t mip;
+    std::uint32_t anisoRatio = 0;
 };
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
@@ -89,7 +92,7 @@ std::array<std::uint32_t, 8> TextureDescriptor(std::uint32_t format, const void*
 }
 
 std::array<std::uint32_t, 4> SamplerDescriptor(const Sampler& sampler) {
-    return {0x92u | (sampler.reduction << 29u), 0x00fff000u, (sampler.filter << 20u) | (sampler.filter << 22u) | (1u << 24u) | (sampler.mip << 26u), 0u};
+    return {0x92u | (sampler.anisoRatio << 9u) | (sampler.reduction << 29u), 0x00fff000u, (sampler.filter << 20u) | (sampler.filter << 22u) | (1u << 24u) | (sampler.mip << 26u), 0u};
 }
 
 void FillTexels() {
@@ -301,6 +304,8 @@ int main() {
         Run(*device, {ReductionMax, FilterPoint, MipPoint}, "max, point, point mip");
         Run(*device, {ReductionMin, FilterBilinear, MipNone}, "min, bilinear, no mip");
         Run(*device, {ReductionMax, FilterPoint, MipNone}, "max, point, no mip");
+        Run(*device, {ReductionMin, FilterAnisoBilinear, MipNone, Aniso2x}, "min, 2x anisotropic bilinear, no mip");
+        Run(*device, {ReductionMax, FilterAnisoBilinear, MipNone, Aniso2x}, "max, 2x anisotropic bilinear, no mip");
         Gather(*device, {ReductionMin, FilterBilinear, MipPoint}, "gather4_lz, min");
         Gather(*device, {ReductionMax, FilterBilinear, MipPoint}, "gather4_lz, max");
         RunWithColors(*device, loaded, LoadedCode, false, "min 32_FLOAT, image_load 8_8_8_8");

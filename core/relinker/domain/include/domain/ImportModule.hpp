@@ -3,15 +3,27 @@
 
 #include <domain/Types.hpp>
 #include <algorithm>
+#include <array>
 #include <span>
 #include <string_view>
 
 namespace Domain {
 
+inline constexpr std::array<std::string_view, 4> ModuleSuffixes = {".prx", ".sprx", ".suprx", ".debug_prx"};
+
+inline std::string_view ModuleSuffix(const std::string_view name) {
+    const auto suffix = std::find_if(ModuleSuffixes.begin(), ModuleSuffixes.end(), [&](const auto candidate) { return name.ends_with(candidate); });
+    return suffix == ModuleSuffixes.end() ? std::string_view{} : *suffix;
+}
+
+inline std::string NeededLibraryName(std::string name) {
+    const auto suffix = ModuleSuffix(name);
+    if (!suffix.empty() && suffix != ".prx") name.replace(name.size() - suffix.size(), suffix.size(), ".prx");
+    return name;
+}
+
 inline std::string ImportModuleName(std::string name) {
-    if (name.ends_with(".prx")) name.resize(name.size() - 4);
-    else if (name.ends_with(".sprx")) name.resize(name.size() - 5);
-    else if (name.ends_with(".suprx")) name.resize(name.size() - 6);
+    name.resize(name.size() - ModuleSuffix(name).size());
     if (name.ends_with("-module")) name.resize(name.size() - 7);
     std::replace(name.begin(), name.end(), '.', '_');
     return name;
@@ -44,7 +56,7 @@ inline std::string ImportModule(const std::string& symbol, const std::map<std::u
     std::span<const std::string> dependencies = {}) {
     auto name = DeclaredImportModule(symbol, modules);
     if (name.empty()) return {};
-    if (!name.ends_with(".prx") && !name.ends_with(".sprx") && !name.ends_with(".suprx")) name += ".prx";
+    if (ModuleSuffix(name).empty()) name += ".prx";
     if (std::find(dependencies.begin(), dependencies.end(), name) != dependencies.end()) return name;
     std::string matched;
     for (const auto& dependency : dependencies) {

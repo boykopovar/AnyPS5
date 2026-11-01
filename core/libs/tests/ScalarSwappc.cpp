@@ -135,7 +135,7 @@ static void CheckThrows() {
     ExpectThrow("escapes the constant-offset call/return model", [] {
         Build(Program({
             Sop1(0x00u, 4u, 0x1fu, 0u),
-            Sop2Literal(0x04u, 4u, 0x00u, 4u, 0x18u),
+            Sop2Literal(0x04u, 4u, 0x00u, 4u, 0x20u),
             Sop2Literal(0x0cu, 5u, 0x04u, 5u, 0u),
             Sop1(0x14u, 8u, 0x21u, 4u),
             Sop1(0x18u, 8u, 0x03u, 8u),

@@ -28,6 +28,30 @@ static void CheckPck(std::uint32_t encoding, RdnaOpcode opcode, std::uint32_t dm
     Require(instruction.dataDwordCount == dataComponents);
     Require(IsImageOpcode(instruction.op));
 }
+static void CheckSamplerVccTuple() {
+    const std::array<std::uint32_t, 2> code{0xf0800f08u, 26u << 21u};
+    const RdnaInstruction instruction = DecodeRdnaMimg(0u, code, 0u);
+    Require(instruction.op == RdnaOpcode::ImageSample);
+    Require(instruction.source1.reg == 0u);
+    Require(instruction.source2.kind == RdnaOperandKind::ScalarRegister && instruction.source2.reg == 104u);
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.TranslateInstruction(instruction);
+    Require(program.Resources().memoryInfo.size() == 1u);
+    Require(program.Resources().memoryInfo.back().sampler == 26u);
+}
+static void CheckSamplerVccTupleOverflow() {
+    const std::array<std::uint32_t, 2> code{0xf0800f08u, 27u << 21u};
+    bool rejected = false;
+    try {
+        DecodeRdnaMimg(0u, code, 0u);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
 static void CheckPckRejectsZeroMask(std::uint32_t encoding) {
     const std::array<std::uint32_t, 2> code{(0x3cu << 26u) | (encoding << 18u) | (1u << 3u), 0u};
     bool rejected = false;
@@ -37,6 +61,21 @@ static void CheckPckRejectsZeroMask(std::uint32_t encoding) {
         rejected = true;
     }
     Require(rejected);
+}
+static void CheckGatherCompareAdjust(std::uint32_t word0, std::uint32_t opcodeId, RdnaOpcode opcode, std::uint32_t flags, std::uint32_t addressComponents) {
+    const std::array<std::uint32_t, 2> code{word0, 0x00801e33u};
+    const RdnaInstruction instruction = DecodeRdnaMimg(0u, code, 0u);
+    Require(instruction.op == opcode);
+    Require(instruction.imageOpcodeId == opcodeId);
+    Require(instruction.imageSampleFlags == flags);
+    Require(instruction.imageAddressComponents == addressComponents);
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.TranslateInstruction(instruction);
+    Require(program.Resources().memoryInfo.size() == 1u);
+    Require(program.Resources().memoryInfo.back().imageSampleFlags == flags);
 }
 static void CheckUnsupportedOpcodeDiagnostic(std::uint32_t encoding, std::string_view expected) {
     const std::array<std::uint32_t, 2> code{(0x3cu << 26u) | ((encoding & 0x7fu) << 18u) | (encoding >> 7u), 0u};
@@ -48,7 +87,26 @@ static void CheckUnsupportedOpcodeDiagnostic(std::uint32_t encoding, std::string
     }
     Require(false);
 }
+static void CheckSampleCompareOffsetAdjust() {
+    const std::array<std::uint32_t, 2> code{0xf0e00109u, 0x00801e33u};
+    const RdnaInstruction instruction = DecodeRdnaMimg(0u, code, 0u);
+    Require(instruction.op == RdnaOpcode::ImageSample);
+    Require(instruction.imageOpcodeId == 0xb8u);
+    Require(instruction.imageSampleFlags == (RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust));
+    Require(instruction.imageAddressComponents == 4u);
+    Require(GetRdnaImageAddressComponentLayout(instruction.imageSampleFlags, 1u).bitOffset == 32u);
+    IrProgram program;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    TranslationContext context(program, block, 256);
+    context.TranslateInstruction(instruction);
+    Require(program.Resources().memoryInfo.size() == 1u);
+    Require(program.Resources().memoryInfo.back().imageSampleFlags == instruction.imageSampleFlags);
+}
 int main() {
+    CheckSamplerVccTuple();
+    CheckSampleCompareOffsetAdjust();
+    CheckSamplerVccTupleOverflow();
     Check(0x26u, RdnaOpcode::ImageSampleBCl, 0xfu);
     Check(0x36u, RdnaOpcode::ImageSampleBClO, 0xfu);
     Check(0x35u, RdnaOpcode::ImageSampleBO, 0xfu);
@@ -99,6 +157,8 @@ int main() {
     CheckPck(0x63u, RdnaOpcode::ImageGather8hPck, 0xFu, 4u);
     CheckPckRejectsZeroMask(0x62u);
     CheckPckRejectsZeroMask(0x63u);
+    CheckGatherCompareAdjust(0xf1200109u, 0xc8u, RdnaOpcode::ImageGather4C, RdnaImageSampleFlagCompare | RdnaImageSampleFlagAdjust, 3u);
+    CheckGatherCompareAdjust(0xf1600109u, 0xd8u, RdnaOpcode::ImageGather4CO, RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust, 4u);
     CheckUnsupportedOpcodeDiagnostic(0x06u, "MIMG opcode 0x06");
     CheckUnsupportedOpcodeDiagnostic(0xffu, "MIMG opcode 0xff");
 }

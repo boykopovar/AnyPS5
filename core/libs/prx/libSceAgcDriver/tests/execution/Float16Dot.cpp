@@ -31,6 +31,12 @@ alignas(256) constexpr std::array<std::uint32_t, 37> Code{
     0xe0781020, 0x80011203, 0xe0781030, 0x80011603, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 20> AccumulatorCode{
+    0x34020084, 0x34060086, 0xe0381000, 0x80000401, 0xbf8c3f70, 0xcc13600a, 0x1c1a0b04, 0xcc13000b,
+    0x1c1a0b04, 0xcc13440c, 0x1c1a0b04, 0xcc13400d, 0x9c1a0b04, 0xcc13440e, 0x9c1a0b04, 0xe0781000,
+    0x80010a03, 0xe0701010, 0x80010e03, 0xbf810000,
+};
+
 constexpr std::uint32_t Rows[32][4] = {
     {0x0001bc00u, 0x81bfacbau, 0xc541aa2fu, 0x00000000u},
     {0x01f61a79u, 0x3c000381u, 0xc1729fffu, 0x00000000u},
@@ -101,6 +107,43 @@ constexpr std::uint32_t Expected[32][10] = {
     {0xbaf43c38u, 0xbaf43c38u, 0x3af43c38u, 0x3af43c38u, 0x3abe63ecu, 0xbaf43c38u, 0xc021e000u, 0x3fb50000u, 0xba90cd60u, 0x3abe63ecu}
 };
 
+constexpr std::uint32_t AccumulatorExpected[32][5] = {
+    {0xc541a901u, 0xc541a901u, 0x4541ab5du, 0x4541ab5du, 0xc541a901u},
+    {0xc1729fdfu, 0xc1729fdfu, 0x4172a01fu, 0x4172a01fu, 0xc1729fdfu},
+    {0x4187e315u, 0x4187e315u, 0x4187e315u, 0xc1882737u, 0xc1882737u},
+    {0x3f7fdb0fu, 0x3f7fdb0fu, 0x3f7fdb0fu, 0xbf801279u, 0xbf801279u},
+    {0xbe511687u, 0xbe511687u, 0xbe511687u, 0xbe5166f4u, 0xbe5166f4u},
+    {0xc1e56f13u, 0xc1e56f13u, 0x41e55ba5u, 0x41e55ba5u, 0xc1e56f13u},
+    {0x439a1228u, 0x439a1228u, 0x439a1228u, 0xc3a5d2acu, 0xc3a5d2acu},
+    {0x37f5fb14u, 0x37f5fb14u, 0x37f5fc0cu, 0x37f5fc0cu, 0x37f5fb14u},
+    {0x7fd0a000u, 0x7fd0a000u, 0x7fd0a000u, 0x7fd0a000u, 0x7fd0a000u},
+    {0xffc8ab86u, 0xffc8ab86u, 0x7fc8ab86u, 0x7fc8ab86u, 0xffc8ab86u},
+    {0x7fe00000u, 0x7fe00000u, 0x7fe00000u, 0x7fe00000u, 0x7fe00000u},
+    {0xffc00000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, 0xffc00000u},
+    {0xb974e480u, 0xb974e480u, 0xb974e480u, 0xb974e480u, 0xb974e480u},
+    {0x7f800000u, 0x7f800000u, 0x7f800000u, 0xff800000u, 0xff800000u},
+    {0xff800000u, 0xff800000u, 0xff800000u, 0xff800000u, 0xff800000u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x80000000u, 0x80000000u},
+    {0x7fe00000u, 0x7fe00000u, 0x7fe00000u, 0x7fe00000u, 0x7fe00000u},
+    {0x7fc42000u, 0x7fc42000u, 0x7fc42000u, 0x7fc42000u, 0x7fc42000u},
+    {0xbf052ae0u, 0xbf052ae0u, 0xbf052ae0u, 0xbf052ae0u, 0xbf052ae0u},
+    {0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u},
+    {0x5f834da7u, 0x5f834da7u, 0x5f834da7u, 0xdf834da7u, 0xdf834da7u},
+    {0x7f7fffffu, 0x7f7fffffu, 0x7f7fffffu, 0xff7fffffu, 0xff7fffffu},
+    {0x42750eeeu, 0x42750eeeu, 0x42750eeeu, 0xc2750eeeu, 0xc2750eeeu},
+    {0x43380748u, 0x43380748u, 0x43380748u, 0xc3380746u, 0xc3380746u},
+    {0xffc00000u, 0xffc00000u, 0xffc00000u, 0xffc00000u, 0xffc00000u},
+    {0xf540cddbu, 0xf540cddbu, 0x7540cddbu, 0x7540cddbu, 0xf540cddbu},
+    {0x7fc00000u, 0x7fc00000u, 0x7fc00000u, 0x7fc00000u, 0x7fc00000u},
+    {0x7fe00000u, 0x7fe00000u, 0x7fe00000u, 0xffe00000u, 0xffe00000u},
+    {0x3cb7c720u, 0x3cb7c720u, 0x3cb7c720u, 0x3cb7c720u, 0x3cb7c720u},
+    {0xbf9bd158u, 0xbf9bd158u, 0xbf9bd158u, 0xbf9bd158u, 0xbf9bd158u},
+    {0x565f49ebu, 0x565f49ebu, 0x565f49ebu, 0xd65f49ebu, 0xd65f49ebu},
+    {0xbaf43c38u, 0xbaf43c38u, 0xbaf43c38u, 0xbaf43c38u, 0xbaf43c38u}
+};
+
+constexpr const char* AccumulatorNames[5] = {"v_dot2 op_sel src2", "v_dot2 op_sel_hi src2 cleared", "v_dot2 neg_hi src2", "v_dot2 neg_lo src2", "v_dot2 neg_lo and neg_hi src2"};
+
 constexpr const char* Names[10] = {"v_dot2c", "v_dot2", "v_dot2 neg_lo src0/src2 neg_hi src1", "v_dot2 neg_lo src1 neg_hi src0", "v_dot2 op_sel src0", "v_dot2 clamp", "v_dot2c inline 1.0", "v_dot2c literal", "v_dot2c dpp quad_perm", "v_dot2 op_sel src1"};
 
 void Fill(std::uint32_t tid, std::uint32_t* words) {
@@ -140,21 +183,9 @@ auto Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> cod
     return ShaderRecompiler::Recompile(request);
 }
 
-void CheckRefused(AgcDriver::VulkanDevice& device, std::uint32_t word0, const std::string& what) {
-    alignas(256) const std::array<std::uint32_t, 3> code{word0, 0x1c1a0b04u, 0xbf810000u};
-    std::string refusal;
-    try {
-        static_cast<void>(Compile(device, code));
-    } catch (const std::exception& error) {
-        refusal = error.what();
-    }
-    Require(refusal.find("v_dot2_f32_f16 accumulator op_sel, op_sel_hi and neg_hi are not implemented") != std::string::npos, what + " was not refused");
-}
-
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) Fill(tid, &Input[tid * Inputs]);
     Output.fill(0xdeadbeefu);
-    const std::span<const std::uint32_t> code(Code);
     const auto result = Compile(device, code);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
@@ -164,6 +195,13 @@ void Check() {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* out = &Output[tid * Results];
         for (std::uint32_t i = 0; i < 10; ++i) Expect(tid, out[i], Expected[tid][i], Names[i]);
+    }
+}
+
+void CheckAccumulator() {
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const std::uint32_t* out = &Output[tid * Results];
+        for (std::uint32_t i = 0; i < 5; ++i) Expect(tid, out[i], AccumulatorExpected[tid][i], AccumulatorNames[i]);
     }
 }
 
@@ -177,11 +215,10 @@ int main() {
             std::puts("skipped, v_dot2_f32_f16 is computed in f64 and the device has no shaderFloat64");
             return VulkanTestSkipped;
         }
-        Run(*device);
+        Run(*device, Code);
         Check();
-        CheckRefused(*device, 0xcc13600au, "op_sel on the accumulator");
-        CheckRefused(*device, 0xcc13440au, "neg_hi on the accumulator");
-        CheckRefused(*device, 0xcc13000au, "op_sel_hi cleared on the accumulator");
+        Run(*device, AccumulatorCode);
+        CheckAccumulator();
         std::puts("v_dot2_f32_f16 tests passed");
         return 0;
     } catch (const std::exception& error) {

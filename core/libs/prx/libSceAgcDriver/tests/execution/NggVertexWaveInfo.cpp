@@ -24,6 +24,11 @@ alignas(256) constexpr std::array<std::uint32_t, 10> VertexCode{
     0xe0382000, 0x80020005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 10> GroupInfoVertexCode{
+    0x9380ff02, 0x0009000c, 0x8f009000, 0x94fe00c1,
+    0xe0382000, 0x80020005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 4> PixelCode{
     0x7e0e02f2, 0xf800180f, 0x07070707, 0xbf810000,
 };
@@ -37,16 +42,16 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
+void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize, std::span<const std::uint32_t> vertexCode) {
     Pixels.fill(Kept);
     const auto target = device.Target();
 
     std::vector<std::uint32_t> vertexUserData(4, 0u);
     const auto vertexBuffer = BufferDescriptor(Triangle.data(), 16u, static_cast<std::uint32_t>(Triangle.size()));
     std::copy(vertexBuffer.begin(), vertexBuffer.end(), vertexUserData.begin());
-    const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(VertexCode.data()), std::as_bytes(std::span(VertexCode))}}};
+    const std::array<ShaderRecompiler::MemoryRegion, 1> vertexMemory{{{reinterpret_cast<std::uintptr_t>(vertexCode.data()), std::as_bytes(vertexCode)}}};
     ShaderRecompiler::RecompileRequest vertex{
-        {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(VertexCode.data()), VertexCode, 0, {}},
+        {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(vertexCode.data()), vertexCode, 0, {}},
         {waveSize, 8, vertexUserData, std::nullopt, std::nullopt, ShaderRecompiler::ShaderVertexStageInfo{}, vertexMemory},
         target,
         {0, 0, 0, 64}
@@ -97,12 +102,12 @@ void Draw(AgcDriver::VulkanDevice& device, std::uint32_t waveSize) {
     device.WaitIdle();
 }
 
-void Check(std::uint32_t waveSize) {
-    const auto what = "NGG vertex prologue wave" + std::to_string(waveSize);
+void Check(std::uint32_t waveSize, const std::string& source) {
+    const auto what = "NGG vertex prologue wave" + std::to_string(waveSize) + " (" + source + ")";
     for (std::uint32_t pixel = 0; pixel < Width * Height; ++pixel) {
         for (std::uint32_t channel = 0; channel < 4; ++channel) {
             const auto actual = Pixels[pixel * 4u + channel];
-            Require(actual == std::byte{255}, what + ": pixel " + std::to_string(pixel) + " channel " + std::to_string(channel) + " is " + std::to_string(static_cast<unsigned>(actual)) + ", expected 255 (EXEC built from the merged wave info must cover every vertex)");
+            Require(actual == std::byte{255}, what + ": pixel " + std::to_string(pixel) + " channel " + std::to_string(channel) + " is " + std::to_string(static_cast<unsigned>(actual)) + ", expected 255 (EXEC built from the " + source + " must cover every vertex)");
         }
     }
 }
@@ -118,8 +123,10 @@ int main() {
             return VulkanTestSkipped;
         }
         for (const auto waveSize : {64u, 32u}) {
-            Draw(*device, waveSize);
-            Check(waveSize);
+            Draw(*device, waveSize, VertexCode);
+            Check(waveSize, "merged wave info");
+            Draw(*device, waveSize, GroupInfoVertexCode);
+            Check(waveSize, "group info");
         }
         std::puts("NGG vertex wave info tests passed");
         return 0;

@@ -16,13 +16,16 @@ struct MouseInputEvent {
 };
 
 namespace Mouse {
+bool IsOpen();
 int Initialize();
 int Open(int userId, std::int32_t type, std::int32_t index, const MouseOpenParam* param);
 int Close(std::int32_t handle);
 int Read(std::int32_t handle, MouseData* data, std::int32_t num);
+int ResetAbsolutePosition(std::int32_t handle, std::uint16_t x, std::uint16_t y);
 void Publish(const MouseInputEvent& event);
 }
 
-extern "C" void MousePublishInput_nid_postfix(const MouseInputEvent& event);
+extern "C" void MousePublishInput_nid_no_patch(const MouseInputEvent& event);
+extern "C" bool MouseIsOpen_nid_no_patch();
 
 #endif

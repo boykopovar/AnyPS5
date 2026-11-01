@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <atomic>
@@ -12,11 +13,6 @@
 
 using GuestDestructor = void(APS5_VABI *)(void*);
 
-extern "C" {
-int APS5_VABI __cxa_thread_atexit_impl_nid_postfix(GuestDestructor, void*, void*);
-int APS5_VABI LibcInternalExtCxaThreadAtexit_nid_postfix(GuestDestructor, void*, void*);
-}
-
 namespace {
 
 struct Call {
@@ -24,7 +20,7 @@ struct Call {
     void* object;
 };
 
-std::array<Call, 3> calls{};
+std::array<Call, 4> calls{};
 std::atomic<std::size_t> callCount{0};
 std::atomic<bool> registrationFailed{false};
 
@@ -37,6 +33,7 @@ void Record(int id, void* object) {
 void APS5_VABI FirstDestructor(void* object) { Record(1, object); }
 void APS5_VABI SecondDestructor(void* object) { Record(2, object); }
 void APS5_VABI ThirdDestructor(void* object) { Record(3, object); }
+void APS5_VABI FourthDestructor(void* object) { Record(4, object); }
 
 void Fail(const char* message) { std::fprintf(stderr, "%s\n", message); }
 
@@ -55,19 +52,19 @@ int main() {
     }
 
     void* directDso = module;
-#ifdef _WIN32
-    directDso = nullptr;
-#endif
 
     int firstObject = 1;
     int secondObject = 2;
     int thirdObject = 3;
+    int fourthObject = 4;
     std::thread worker([&] {
         if (__cxa_thread_atexit_impl_nid_postfix(FirstDestructor, &firstObject, directDso) != 0)
             registrationFailed.store(true);
         if (__cxa_thread_atexit_impl_nid_postfix(SecondDestructor, &secondObject, directDso) != 0)
             registrationFailed.store(true);
         if (LibcInternalExtCxaThreadAtexit_nid_postfix(ThirdDestructor, &thirdObject, module) != 0)
+            registrationFailed.store(true);
+        if (__cxa_thread_atexit_nid_postfix(FourthDestructor, &fourthObject, directDso) != 0)
             registrationFailed.store(true);
     });
     worker.join();
@@ -84,7 +81,7 @@ int main() {
         Fail("thread exit did not run each registered destructor once");
         return 1;
     }
-    const std::array<Call, 3> expected = {{{3, &thirdObject}, {2, &secondObject}, {1, &firstObject}}};
+    const std::array<Call, 4> expected = {{{4, &fourthObject}, {3, &thirdObject}, {2, &secondObject}, {1, &firstObject}}};
     for (std::size_t index = 0; index < expected.size(); ++index) {
         if (calls[index].id != expected[index].id || calls[index].object != expected[index].object) {
             std::fprintf(stderr, "thread destructor %d received object %p; expected %p\n", calls[index].id,

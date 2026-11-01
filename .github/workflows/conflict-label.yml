@@ -9,6 +9,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: conflict-label
+  cancel-in-progress: true
+
 jobs:
   label:
     runs-on: ubuntu-latest

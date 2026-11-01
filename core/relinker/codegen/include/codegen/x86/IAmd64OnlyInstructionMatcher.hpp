@@ -2,6 +2,7 @@
 #define CODEGEN_X86_IAMD64ONLYINSTRUCTIONMATCHER_HPP
 
 #include <codegen/x86/Amd64OnlySubstitutionTypes.hpp>
+#include <codegen/x86/StubBodyBuilder.hpp>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -22,6 +23,12 @@ public:
     [[nodiscard]] virtual std::optional<Amd64OnlyMatch> MatchSequence(
         std::span<const std::span<const std::uint8_t>> instructions,
         std::span<const std::uint8_t> trailing
+    ) const = 0;
+
+    virtual void EmitOutOfLine(
+        StubBodyBuilder& body,
+        std::span<const std::uint8_t> instruction,
+        bool allowInPlace = false
     ) const = 0;
 };
 

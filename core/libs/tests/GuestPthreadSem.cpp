@@ -1,28 +1,44 @@
+#include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 #include <thread>
 
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, const char* name);
-int APS5_VABI scePthreadSemDestroy(PthreadSem* sem);
-int APS5_VABI scePthreadSemPost(PthreadSem* sem);
-int APS5_VABI scePthreadSemWait(PthreadSem* sem);
-int APS5_VABI scePthreadSemTrywait(PthreadSem* sem);
-int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, unsigned int usec);
-int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value);
-}
-
 static constexpr int SCE_OK = 0;
-static constexpr int SCE_KERNEL_ERROR_EBUSY = static_cast<int>(0x80020010);
-static constexpr int SCE_KERNEL_ERROR_ETIMEDOUT = static_cast<int>(0x8002003C);
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static void CheckValueLimit() {
+    constexpr unsigned int maximum = 0x7fffffffu;
+    PthreadSem sem = nullptr;
+    Require(scePthreadSemInit(&sem, 0, 7, nullptr) == SCE_OK);
+    const PthreadSem original = sem;
+    const unsigned int invalidValues[] = {maximum + 1u, std::numeric_limits<unsigned int>::max()};
+    int value = -1;
+    for (const unsigned int initial : invalidValues) {
+        Require(scePthreadSemInit(&sem, 0, initial, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+        Require(sem == original);
+        Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == 7);
+    }
+    Require(scePthreadSemDestroy(&sem) == SCE_OK);
+
+    Require(scePthreadSemInit(&sem, 0, maximum, nullptr) == SCE_OK);
+    Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == static_cast<int>(maximum));
+    Require(scePthreadSemPost(&sem) == SCE_KERNEL_ERROR_EOVERFLOW);
+    Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == static_cast<int>(maximum));
+    Require(scePthreadSemTrywait(&sem) == SCE_OK);
+    Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == static_cast<int>(maximum - 1));
+    Require(scePthreadSemPost(&sem) == SCE_OK);
+    Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == static_cast<int>(maximum));
+    Require(scePthreadSemPost(&sem) == SCE_KERNEL_ERROR_EOVERFLOW);
+    Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == static_cast<int>(maximum));
+    Require(scePthreadSemDestroy(&sem) == SCE_OK);
+}
 
 struct Context {
     PthreadSem sem = nullptr;
@@ -37,6 +53,8 @@ static void* APS5_VABI Poster(void* arg) {
 }
 
 int main() {
+    CheckValueLimit();
+
     PthreadSem sem = nullptr;
     Require(scePthreadSemInit(&sem, 0, 2, nullptr) == SCE_OK);
     int value = -1;

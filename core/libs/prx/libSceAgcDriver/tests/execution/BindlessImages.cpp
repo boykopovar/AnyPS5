@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
+#include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -61,17 +62,16 @@ void Run(AgcDriver::VulkanDevice& device) {
         else Require(shader.cacheHit && shader.variantId == artifact.variantId, "bindless table changed the compiled artifact");
         if (iteration == 1u) {
             auto invalid = shader;
-            auto binding = std::ranges::find_if(invalid.bindings, [](const DescriptorBinding& value) { return value.role == DescriptorRole::ShaderData; });
-            Require(binding != invalid.bindings.end(), "bindless shader has no runtime metadata");
-            const auto offset = invalid.imageMetadataDword + invalid.runtimeImageResources.at(0) * (sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t)) + offsetof(RuntimeAbi::ResourceMetadata, firstElement) / sizeof(std::uint32_t);
-            binding->guestDescriptor.at(offset) = RuntimeAbi::SampledHeapCapacity;
+            auto binding = std::ranges::find_if(invalid.bindings, [](const DescriptorBinding& value) { return value.role == DescriptorRole::ImageTableMap; });
+            Require(binding != invalid.bindings.end(), "bindless shader has no image table map");
+            binding->guestDescriptor.at(ImageTableAbi::HeaderElementCount) += 1u;
             bool rejected = false;
             try {
                 device.Dispatch(invalid, 1u, 1u, 1u);
             } catch (const std::exception& error) {
-                rejected = std::string_view(error.what()).find("runtime metadata exceeds its bound heap") != std::string_view::npos;
+                rejected = std::string_view(error.what()).find("image table map disagrees with its image binding") != std::string_view::npos;
             }
-            Require(rejected, "driver accepted an out-of-range runtime heap index");
+            Require(rejected, "driver accepted an image table map naming more elements than its bound table");
         }
         device.Dispatch(shader, 1u, 1u, 1u);
         device.SubmitRecorded(false);

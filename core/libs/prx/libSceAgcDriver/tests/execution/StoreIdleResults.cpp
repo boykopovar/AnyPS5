@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -9,6 +10,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <mutex>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -75,18 +78,28 @@ void Store(const std::uint32_t* texels) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
         std::vector<std::uint32_t> storage((BlockBytes + 0x10000u) / 4u);
+        const bool wake = argc == 2 && std::string_view(argv[1]) == "--idle-epoch-wake";
+        std::vector<std::uint32_t> nextStorage(wake ? (BlockBytes + 0x10000u) / 4u : 0u);
+        auto* nextTexels = wake ? reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(nextStorage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu}) : nullptr;
+        struct ShutdownGuard {
+            ~ShutdownGuard() { try { AgcDriverShutdown_nid_postfix(); } catch (...) {} }
+        } shutdown;
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu});
         std::fill(texels, texels + BlockBytes / 4u, Untouched);
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(texels, BlockBytes, true, true, true);
+            if (nextTexels != nullptr) {
+                std::fill(nextTexels, nextTexels + BlockBytes / 4u, Untouched);
+                mutation.Add(nextTexels, BlockBytes, true, true, true);
+            }
         }
         const auto bytes = AgcDriver::Graphics::DescribeSurface(AgcDriver::Graphics::DecodeTextureResource(TextureDescriptor(texels))).guestBytes;
         const volatile std::uint32_t* cpu = texels;
@@ -98,7 +111,23 @@ int main() {
         };
 
         Store(texels);
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        if (wake) {
+            const auto pendingDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+            while (!AgcDriver::Graphics::StorageTexture::AnyPending() && std::chrono::steady_clock::now() < pendingDeadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            Require(AgcDriver::Graphics::StorageTexture::AnyPending(), "idle wake fixture did not observe pending storage results");
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            {
+                std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
+                AgcDriver::Graphics::StorageTexture::FlushAllPending("idle wake fixture");
+            }
+            std::array<std::uint32_t, 2> nop{0xc0001000u, 0u};
+            Packet packet{nop.data(), static_cast<std::uint32_t>(nop.size()), 0, {}};
+            AgcDriver::Submit(&packet, 0x30u);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            cpu = nextTexels;
+            Store(nextTexels);
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         while (!stored() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         Require(stored(), "the queue-idle store did not bring the result to guest memory without a direct flush or further submission");
 
@@ -106,6 +135,7 @@ int main() {
         {
             GuestAllocations::Mutation mutation;
             mutation.Remove(texels);
+            if (nextTexels != nullptr) mutation.Remove(nextTexels);
         }
         std::puts("store idle results tests passed");
         return 0;

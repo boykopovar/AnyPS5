@@ -70,6 +70,7 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0xa5u, RdnaOpcode::ImageSample, "image_sample_b_a", RdnaImageSampleFlagBias | RdnaImageSampleFlagAdjust, true, false, false},
     {0xa8u, RdnaOpcode::ImageSample, "image_sample_c_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagAdjust, true, false, false},
     {0xb0u, RdnaOpcode::ImageSample, "image_sample_o_a", RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust, true, false, false},
+    {0xb8u, RdnaOpcode::ImageSample, "image_sample_c_o_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust, true, false, false},
     {0x3cu, RdnaOpcode::ImageSampleCLO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLod | RdnaImageSampleFlagOffset, true, false, false},
     {0x3fu, RdnaOpcode::ImageSampleCLzO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, true, false, false},
     {0x3au, RdnaOpcode::ImageSampleCDO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagDerivative | RdnaImageSampleFlagOffset, true, false, false},
@@ -85,6 +86,8 @@ constexpr ImageOpcodeInfo imageOpcodes[] = {
     {0x4fu, RdnaOpcode::ImageGather4CLz, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero, false, true, false},
     {0x57u, RdnaOpcode::ImageGather4LzO, nullptr, RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, false, true, false},
     {0x58u, RdnaOpcode::ImageGather4CO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset, false, true, false},
+    {0xc8u, RdnaOpcode::ImageGather4C, "image_gather4_c_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagAdjust, false, true, false},
+    {0xd8u, RdnaOpcode::ImageGather4CO, "image_gather4_c_o_a", RdnaImageSampleFlagCompare | RdnaImageSampleFlagOffset | RdnaImageSampleFlagAdjust, false, true, false},
     {0x5fu, RdnaOpcode::ImageGather4CLzO, nullptr, RdnaImageSampleFlagCompare | RdnaImageSampleFlagLevelZero | RdnaImageSampleFlagOffset, false, true, false},
     {0x61u, RdnaOpcode::ImageGather4h, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
     {0x62u, RdnaOpcode::ImageGather4hPck, nullptr, RdnaImageSampleFlagGatherHorizontal, false, true, false},
@@ -417,7 +420,7 @@ RdnaInstruction DecodeRdnaMimg(std::uint32_t programCounter, std::span<const std
     const auto resource = ((word1 >> 16u) & 31u) * 4u;
     const auto sampler = ((word1 >> 21u) & 31u) * 4u;
     const bool r128 = (word0 & 0x8000u) != 0u;
-    if (resource + (r128 ? 4u : 8u) > 106u || ((info.sample || info.gather || opcode == 0x60u) && sampler + 4u > 106u)) {
+    if (resource + (r128 ? 4u : 8u) > 106u || ((info.sample || info.gather || opcode == 0x60u) && sampler > 104u)) {
         throw std::runtime_error("MIMG descriptor register range overflow");
     }
     RdnaInstruction instruction{};

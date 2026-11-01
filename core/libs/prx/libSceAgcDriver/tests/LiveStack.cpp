@@ -39,6 +39,14 @@ void checkLiveStack(std::uintptr_t stackBottom, std::uintptr_t stackTop, std::ui
 
 void RunLiveStackAccessTests() {
     checkLiveStack(0, 0, 0);
+#if defined(_WIN32)
+    for (const auto address : {std::uintptr_t{0xf00000000000ull}, std::uintptr_t{0x7fffffffffffull}}) {
+        Require(!GuestMemory::Accessible(reinterpret_cast<const void*>(address), 4),
+                "an address above the user address space is reported accessible");
+        const auto committed = GuestMemory::CommittedRanges(address, 4, false);
+        Require(committed.empty(), "an address above the user address space reports committed bytes");
+    }
+#endif
 #if defined(__linux__)
     const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
     const std::size_t stackBytes = 256 * 1024;
@@ -67,6 +75,7 @@ void RunLiveStackAccessTests() {
     pthread_join(thread, nullptr);
     pthread_attr_destroy(&attributes);
     Require(GuestMemory::Accessible(block + page, 64, true) && !GuestMemory::Accessible(block, 16) && !GuestMemory::Accessible(block + stackBytes, 16), "the released test stack is misreported");
+    Require(GuestMemory::Accessible(block + page, 64) && !GuestMemory::Accessible(block + page - 8, 16) && !GuestMemory::Accessible(block + stackBytes - 8, 16), "a read of the released test stack is misreported");
     munmap(block, stackBytes + page);
     Require(arguments.failure.empty(), arguments.failure.c_str());
 #endif

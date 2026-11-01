@@ -53,6 +53,12 @@ alignas(256) constexpr std::array<std::uint32_t, 18> LevelZeroCode{
     0x80000b01, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 22> GradientCode{
+    0x34020086, 0xe0301000, 0x80000601, 0xe0301004, 0x80000701, 0xbf8c3f70, 0x7e0402f6, 0x7e060280,
+    0x7e080280, 0x7e0a02f6, 0xf0880f08, 0x00610802, 0xbf8c3f70, 0xe0701010, 0x80000801, 0xe0701014,
+    0x80000901, 0xe0701018, 0x80000a01, 0xe070101c, 0x80000b01, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 45> OffsetCode{
     0x34020086, 0xe0301008, 0x80000201, 0xe0301000, 0x80000301, 0xe0301004, 0x80000401, 0xbf8c3f70,
     0x7e0a02ff, 0x402ccccd, 0x7e2802ff, 0x0000023d, 0xf0dc0f08, 0x00610802, 0xf0d00f08, 0x00610c02,
@@ -75,6 +81,7 @@ struct Program {
 
 const Program Plain{Code, {"image_sample_lz", "image_sample_l 2.7", "image_sample"}, {Offset::None, Offset::None, Offset::None}};
 const Program LevelZero{LevelZeroCode, {"image_sample_lz", "", ""}, {Offset::None, Offset::None, Offset::None}, 1};
+const Program Gradient{GradientCode, {"image_sample_d (4, 0, 0, 4)", "", ""}, {Offset::None, Offset::None, Offset::None}, 1};
 const Program Offsets{OffsetCode, {"image_sample_lz_o", "image_sample_l_o 2.7", "image_sample_lz_o (-3, 2) NSA"}, {Offset::Lane, Offset::Lane, Offset::Constant}};
 
 alignas(256) constexpr std::array<std::uint32_t, 34> ConstantCode{
@@ -313,6 +320,8 @@ int main() {
             Check(Plain, sampler, 0u, "first level of a 4-level image", coordinates, multiSamples);
             Require(multiSamples == singleSamples, std::string(sampler.name) + ": the first level of a 4-level image does not sample like a 1-level image");
             Check(Offsets, sampler, 0u, "1-level image", offsetCoordinates, Run(*device, Offsets, single, sampler.words, offsetCoordinates));
+            Check(Gradient, sampler, 0u, "1-level image", coordinates, Run(*device, Gradient, single, sampler.words, coordinates));
+            Check(Gradient, sampler, 0u, "first level of a 4-level image", coordinates, Run(*device, Gradient, multi, sampler.words, coordinates));
             if (!sampler.atBaseLevel) continue;
             const auto levelZeroSingle = Run(*device, LevelZero, single, sampler.words, coordinates);
             const auto levelZeroChain = Run(*device, LevelZero, chain, sampler.words, coordinates);
@@ -324,9 +333,20 @@ int main() {
         ExpectFailure(*device, Plain, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_l and image_sample");
         ExpectFailure(*device, Plain, fromLevelOne, Samplers[0].words, "single-level", "a view starting at mip 1 read by image_sample_l and image_sample");
         ExpectFailure(*device, Offsets, chain, Samplers[0].words, "single-level", "a 4-level view read with texel offsets");
+        ExpectFailure(*device, Gradient, chain, Samplers[0].words, "single-level", "a 4-level view read by image_sample_d");
         ExpectFailure(*device, LevelZero, chain, Samplers[2].words, "single-level", "a 4-level view through an S# with a minimum LOD and a LOD bias");
-        ExpectFailure(*device, Plain, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, "different minification", "unequal minification and magnification filters");
-        ExpectFailure(*device, Plain, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, "clamp mode 0", "wrap on X");
+        const auto magFilterReference = Run(*device, Plain, single, {0x00008092u, 0x00fff000u, 0x05500000u, 0u}, coordinates);
+        const auto unequalFilterSamples = Run(*device, Plain, single, {0x00008092u, 0x00fff000u, 0x05100000u, 0u}, coordinates);
+        Require(unequalFilterSamples == magFilterReference, "unnormalized sampler with unequal filters does not sample with its magnification filter");
+        const auto clampModeZeroSamples = Run(*device, Plain, single, {0x00008090u, 0x00fff000u, 0x05500000u, 0u}, coordinates);
+        Require(clampModeZeroSamples == magFilterReference, "unnormalized sampler with clamp mode 0 does not sample with clamp mode 2");
+        for (const std::size_t index : {std::size_t{0}, std::size_t{1}, std::size_t{4}}) {
+            auto truncated = Samplers[index].words;
+            truncated[0] |= 1u << 27u;
+            const auto truncatedSamples = Run(*device, Plain, single, truncated, coordinates);
+            Check(Plain, Samplers[index], 0u, "1-level image through an S# with TRUNC_COORD", coordinates, truncatedSamples);
+            Require(truncatedSamples == Run(*device, Plain, single, Samplers[index].words, coordinates), std::string(Samplers[index].name) + ": TRUNC_COORD changed the samples");
+        }
         const auto constantView = [&](std::uint32_t type, std::uint32_t format, std::uint32_t swizzle) {
             auto descriptor = TextureDescriptor(SingleLevel.data(), 0u, 0u);
             descriptor[1] = (descriptor[1] & ~(0x1ffu << 20u)) | (format << 20u);

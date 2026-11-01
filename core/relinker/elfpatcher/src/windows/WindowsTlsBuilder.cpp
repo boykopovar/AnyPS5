@@ -1,4 +1,5 @@
 #include <elfpatcher/windows/WindowsTlsBuilder.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/windows/WindowsStubEmitter.hpp>
 #include <elfpatcher/windows/WindowsTlsTemplateBuilder.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -23,6 +24,8 @@ struct MovedInstruction {
     std::uint32_t Rva;
     std::vector<std::uint8_t> Bytes;
     std::optional<std::size_t> RipDisplacement;
+    std::optional<std::uint32_t> BranchTarget;
+    std::size_t BranchDisplacementOffset = 0;
 };
 
 struct TlsAccess {
@@ -37,6 +40,12 @@ struct TlsAccess {
     std::vector<std::uint8_t> Address = {};
     bool Wide = true;
     std::vector<MovedInstruction> Moved = {};
+};
+
+struct GsTrap {
+    std::uint32_t Rva;
+    std::size_t Length;
+    std::optional<Domain::FileByteOffset> Entry;
 };
 
 bool isAluReadOpcode(std::uint8_t opcode) {
@@ -88,15 +97,33 @@ void patchAccess(std::vector<PeSection>& sections, const TlsAccess& access, cons
     throw Domain::RelinkerException("TLS instruction is outside the PE image", access.Rva);
 }
 
+void trapInstruction(std::vector<PeSection>& sections, const std::uint32_t rva, const std::size_t length) {
+    for (auto& section : sections) {
+        if (rva < section.Rva || rva - section.Rva >= section.Data.size())
+            continue;
+        const auto offset = rva - section.Rva;
+        if (length > section.Data.size() - offset)
+            throw Domain::RelinkerException("Guest GS instruction crosses a PE section boundary", rva);
+        std::fill_n(section.Data.begin() + offset, length, 0x90);
+        std::copy(std::begin(kStubOpUd2), std::end(kStubOpUd2), section.Data.begin() + offset);
+        return;
+    }
+    throw Domain::RelinkerException("Guest GS instruction is outside the PE image", rva);
 }
 
-PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva) const {
+}
+
+PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const WindowsLoadImage& image, std::vector<PeSection>& sections, std::vector<std::uint32_t>& relocations, std::uint32_t& nextRva, std::uint32_t* tlsIndexRva, const std::function<void(std::uint64_t, std::uint64_t)>& progress, const std::function<void(std::string_view)>& message) const {
+    const auto report = [&](std::uint64_t completed) { if (progress) progress(completed, 10000); };
     const Domain::ProgramHeader* tls = nullptr;
     const Codegen::X64InstructionDecoder decoder;
 
     std::vector<TlsAccess> accesses;
-    std::set<std::uint32_t> branchTargets;
-    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers);
+    std::vector<GsTrap> gsTraps;
+    std::vector<std::uint32_t> branchTargets;
+    std::set<Domain::VirtualAddress> entryRoots;
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, [&](auto completed, auto total) { report(7000 * completed / total); }, &entryRoots, message);
+    std::uint64_t scanned = 0;
 
     for (const auto& header : headers) {
         if (header.Type == 7) {
@@ -108,19 +135,33 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             continue;
         std::uint64_t decodedEnd = 0;
         for (auto instruction = instructions.lower_bound(header.MappedAddress); instruction != instructions.end() && *instruction - header.MappedAddress < header.FileSize; ++instruction) {
+            if (scanned % 4096 == 0) report(7000 + 2000 * scanned / std::max<std::size_t>(instructions.size(), 1));
+            ++scanned;
             const auto offset = *instruction - header.MappedAddress;
             const auto* bytes = source.data() + header.Offset + offset;
             const auto info = decoder.DecodeInstruction(bytes, header.FileSize - offset);
             const auto rva = image.GetRva(header.MappedAddress + offset, info.Length);
             const bool insidePrevious = *instruction < decodedEnd;
             decodedEnd = std::max(decodedEnd, *instruction + info.Length);
+            const auto checkProtectedEntry = [&](const std::size_t length) {
+                const auto entry = entryRoots.upper_bound(*instruction);
+                if (entry != entryRoots.end() && *entry - *instruction < length)
+                    throw Domain::RelinkerException("TLS rewrite would overwrite an executable entry point", header.Offset + *entry - header.MappedAddress);
+            };
 
             if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
                 const auto target = static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(info.Length) + info.BranchDisp;
                 if (target >= 0 && target <= std::numeric_limits<std::uint32_t>::max())
-                    branchTargets.insert(static_cast<std::uint32_t>(target));
+                    branchTargets.push_back(static_cast<std::uint32_t>(target));
             }
 
+            if (info.SegmentPrefix == 0x65 && !insidePrevious) {
+                if (info.HasMemoryOperand) {
+                    const auto entry = entryRoots.upper_bound(*instruction);
+                    gsTraps.push_back({rva, info.Length, entry != entryRoots.end() && *entry - *instruction < info.Length ? std::optional<Domain::FileByteOffset>(header.Offset + *entry - header.MappedAddress) : std::nullopt});
+                }
+                continue;
+            }
             if (info.SegmentPrefix != 0 && !(insidePrevious && info.SegmentPrefix != 0x64)) {
                 const auto position = info.OpcodeOffset;
                 bool hasOperandSizePrefix = false;
@@ -137,7 +178,7 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                 const bool wide = (info.RexPrefix & 8) != 0;
                 const bool isAlu = isAluReadOpcode(bytes[position]);
                 const auto address = supportedPrefixes && !loadValue && !aluRead && (bytes[position] == 0x8b || isAlu) && (wide || !hasOperandSizePrefix) ? registerAddress(bytes, position, info.Length, info.RexPrefix) : std::nullopt;
-                const auto addressRegister = static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1));
+                const auto addressRegister = address ? static_cast<std::uint8_t>(((bytes[position + 1] >> 3) & 7) | ((info.RexPrefix & 4) << 1)) : std::uint8_t{4};
                 if (address && addressRegister != 4) {
                     std::vector<MovedInstruction> moved;
                     auto length = info.Length;
@@ -145,11 +186,31 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                         if (length >= header.FileSize - offset)
                             throw Domain::RelinkerException("Short guest TLS instruction ends its segment", header.Offset + offset);
                         const auto next = decoder.DecodeInstruction(bytes + length, header.FileSize - offset - length);
-                        if (next.FlowKind != Codegen::ControlFlowKind::Sequential || next.HasBranchTarget || next.SegmentPrefix != 0)
+                        const bool relativeBranch =
+                            (next.FlowKind == Codegen::ControlFlowKind::ConditionalBranch && !next.TruncatesBranchTarget && (next.IsTwoByteOpcode ? next.Opcode >= 0x80 && next.Opcode <= 0x8f : next.Opcode >= 0x70 && next.Opcode <= 0x7f)) ||
+                            (next.FlowKind == Codegen::ControlFlowKind::UnconditionalJump && !next.TruncatesBranchTarget && !next.HasRipRelativeDisp && !next.IsTwoByteOpcode && (next.Opcode == 0xe9 || next.Opcode == 0xeb));
+                        if (!relativeBranch && (next.FlowKind != Codegen::ControlFlowKind::Sequential || next.HasBranchTarget || next.SegmentPrefix != 0))
                             throw Domain::RelinkerException("Short guest TLS instruction is followed by an instruction that cannot move", header.Offset + offset + length);
-                        moved.push_back({CheckedRva(rva + length), std::vector<std::uint8_t>(bytes + length, bytes + length + next.Length), next.HasRipRelativeDisp ? std::optional<std::size_t>(next.RipRelativeDispOffset) : std::nullopt});
+                        std::vector<std::uint8_t> movedBytes(bytes + length, bytes + length + next.Length);
+                        std::optional<std::uint32_t> branchTarget;
+                        std::size_t branchDisplacementOffset = 0;
+                        if (relativeBranch) {
+                            const auto target = static_cast<std::int64_t>(rva) + static_cast<std::int64_t>(length + next.Length) + next.BranchDisp;
+                            if (target < 0 || target > std::numeric_limits<std::uint32_t>::max())
+                                throw Domain::RelinkerException("Short guest TLS instruction is followed by a branch beyond the address space", header.Offset + offset + length);
+                            branchTarget = static_cast<std::uint32_t>(target);
+                            if (!next.IsTwoByteOpcode && next.Opcode != 0xe9) {
+                                movedBytes = next.Opcode == 0xeb ? std::vector<std::uint8_t>{0xe9} : std::vector<std::uint8_t>{0x0f, static_cast<std::uint8_t>(0x80 | (next.Opcode & 0xf))};
+                                branchDisplacementOffset = movedBytes.size();
+                                movedBytes.resize(movedBytes.size() + 4);
+                            } else {
+                                branchDisplacementOffset = next.Length - 4;
+                            }
+                        }
+                        moved.push_back({CheckedRva(rva + length), std::move(movedBytes), next.HasRipRelativeDisp ? std::optional<std::size_t>(next.RipRelativeDispOffset) : std::nullopt, branchTarget, branchDisplacementOffset});
                         length += next.Length;
                     }
+                    checkProtectedEntry(length);
                     accesses.push_back({rva, header.Offset + offset, length, false, 0, addressRegister, 0, isAlu ? bytes[position] : std::uint8_t{0}, *address, wide, std::move(moved)});
                     continue;
                 }
@@ -161,18 +222,30 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
                     message << ')';
                     throw Domain::RelinkerException(message.str(), header.Offset + offset);
                 }
+                checkProtectedEntry(info.Length);
                 accesses.push_back({rva, header.Offset + offset, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0, storeImmediate ? std::uint8_t{0} : loadRegister, storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3), aluRead ? bytes[position] : std::uint8_t{0}});
             }
         }
     }
 
+    report(9000);
+    std::sort(branchTargets.begin(), branchTargets.end());
+    branchTargets.erase(std::unique(branchTargets.begin(), branchTargets.end()), branchTargets.end());
+    for (const auto& [rva, length, entry] : gsTraps) {
+        const auto target = std::upper_bound(branchTargets.begin(), branchTargets.end(), rva);
+        if (target != branchTargets.end() && *target < rva + length)
+            throw Domain::RelinkerException("Branch enters a guest GS instruction", *target);
+        if (entry)
+            throw Domain::RelinkerException("GS trap would overwrite an executable entry point", *entry);
+        trapInstruction(sections, rva, length);
+    }
     if (tls == nullptr) {
         if (!accesses.empty())
             throw Domain::RelinkerException("Guest TLS access without PT_TLS");
         return {};
     }
 
-    if (tls->FileSize > tls->MemorySize || tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset || (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 || tls->MemorySize > 0x7fff0000u)
+    if (tls->FileSize > tls->MemorySize || (tls->FileSize != 0 && (tls->Offset > source.size() || tls->FileSize > source.size() - tls->Offset)) || (tls->Alignment > 1 && !std::has_single_bit(tls->Alignment)) || tls->Alignment > 8192 || tls->MemorySize > 0x7fff0000u)
         throw Domain::RelinkerException("Invalid or unsupported ELF TLS layout", tls->Offset);
     // Native homebrew linkers can emit an empty PT_TLS placeholder.
     // It needs no Windows TLS directory unless guest code accesses TLS.
@@ -191,13 +264,13 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         if (displacement != stackGuardDisplacement && (displacement > 0 || displacement < -static_cast<std::int64_t>(threadPointerOffset)))
             throw Domain::RelinkerException("Windows guest TLS load displacement " + std::to_string(displacement) + " is not in the thread TLS block, 0 or the stack guard at 0x28", access.FileOffset);
     }
-    PeSection data{".gtls", nextRva, SectionRead | SectionWrite | 0x40u, std::vector<std::uint8_t>(templateOffset + blockSize + threadControlBlockSize)};
+    PeSection data{".gtls", nextRva, SectionRead | SectionWrite | 0x40u, std::vector<std::uint8_t>(templateOffset + tls->FileSize), CheckedRva(templateOffset + blockSize + threadControlBlockSize)};
 
     const auto indexRva = nextRva + 40;
     if (tlsIndexRva != nullptr) *tlsIndexRva = indexRva;
     const auto callbackTableRva = nextRva + 48;
     const auto templateRva = nextRva + templateOffset;
-    const auto codeRva = AlignRva(nextRva + data.Data.size());
+    const auto codeRva = AlignRva(nextRva + data.MemorySize());
 
     WindowsStubEmitter code(codeRva);
     const auto loadPointer = [&] {
@@ -217,8 +290,11 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
     code.PatchBranch(skipCallback, code.GetRva());
     code.Emit({0xc3});
 
+    std::uint64_t patched = 0;
     for (const auto& access : accesses) {
-        const auto target = branchTargets.upper_bound(access.Rva);
+        if (patched % 256 == 0) report(9000 + 900 * patched / accesses.size());
+        ++patched;
+        const auto target = std::upper_bound(branchTargets.begin(), branchTargets.end(), access.Rva);
         if (target != branchTargets.end() && *target < access.Rva + access.Length)
             throw Domain::RelinkerException("Branch enters a guest TLS instruction", *target);
         patchAccess(sections, access, code.GetRva());
@@ -353,9 +429,16 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
             if (instruction.RipDisplacement) {
                 const auto target = static_cast<std::int64_t>(instruction.Rva) + static_cast<std::int64_t>(bytes.size()) + std::bit_cast<std::int32_t>(Io::ReadU32(bytes, *instruction.RipDisplacement));
                 const auto displacement = target - (static_cast<std::int64_t>(code.GetRva()) + static_cast<std::int64_t>(bytes.size()));
-                if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+                const bool addressSize32 = Codegen::X64InstructionDecoder{}.DecodeInstruction(bytes.data(), bytes.size()).AddressSize32;
+                if (!addressSize32 && (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max()))
                     throw Domain::RelinkerException("Moved RIP-relative instruction exceeds rel32 range from its TLS stub", access.FileOffset);
-                Io::WriteU32(bytes, *instruction.RipDisplacement, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
+                Io::WriteU32(bytes, *instruction.RipDisplacement, static_cast<std::uint32_t>(displacement));
+            }
+            if (instruction.BranchTarget) {
+                const auto displacement = static_cast<std::int64_t>(*instruction.BranchTarget) - (static_cast<std::int64_t>(code.GetRva()) + static_cast<std::int64_t>(bytes.size()));
+                if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+                    throw Domain::RelinkerException("Moved branch exceeds rel32 range from its TLS stub", access.FileOffset);
+                Io::WriteU32(bytes, instruction.BranchDisplacementOffset, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
             }
             for (const auto byte : bytes)
                 code.Emit({byte});
@@ -363,10 +446,11 @@ PeDirectory WindowsTlsBuilder::Build(const std::vector<std::uint8_t>& source, co
         code.Rip({0xe9}, CheckedRva(access.Rva + access.Length));
     }
 
+    report(9900);
     const auto templateBytes = WindowsTlsTemplateBuilder().Build(*tls, image, sections, templateRva, relocations);
     std::copy(templateBytes.begin(), templateBytes.end(), data.Data.begin() + templateOffset);
     const auto writeAddress = [&](const std::size_t offset, const std::uint32_t rva) {
-        Io::WriteU64(data.Data, offset, ImageBase + rva);
+        Io::WriteU64(data.Data, offset, image.GetImageBase() + rva);
         relocations.push_back(CheckedRva(data.Rva + offset));
     };
 

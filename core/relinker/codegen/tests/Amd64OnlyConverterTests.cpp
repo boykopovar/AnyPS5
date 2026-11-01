@@ -8,22 +8,26 @@
 #include <codegen/x86/ClzeroOperands.hpp>
 #include <codegen/x86/ClzeroLowering.hpp>
 #include <codegen/x86/ReciprocalOperands.hpp>
+#include <codegen/x86/WideStoreOperands.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <codegen/x86/DecodedInstruction.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/x86/X64InstructionRewriter.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <elfpatcher/general/EntryStubBuilder.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
 #include <elfpatcher/general/SegmentFilter.hpp>
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <io/ByteWriter.hpp>
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <cstdint>
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
 #include <sys/mman.h>
 #endif
 #include <functional>
@@ -205,6 +209,8 @@ void decoderTwoByteOpcodeLengths() {
 }
 
 void sse4aOperands() {
+    requireFailure([] { const Bytes bytes = {0xF0, 0x66, 0x0F, 0x78, 0xC0, 0x08, 0x00}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "LOCK EXTRQ was accepted");
+    requireFailure([] { const Bytes bytes = {0xF2, 0xF0, 0x0F, 0x79, 0xC1}; (void)Codegen::DecodeSse4a(bytes.data(), bytes.size()); }, "LOCK INSERTQ was accepted");
     const auto check = [](const Bytes& site, const bool insertq, const int dst, const int src, const int length, const int index) {
         const auto operands = Codegen::DecodeSse4a(site.data(), site.size());
         require(operands.Insertq == insertq && !operands.RegisterForm && operands.Destination == dst && operands.Source == src && operands.Length == length && operands.Index == index, "SSE4a operands were decoded incorrectly");
@@ -228,6 +234,8 @@ void sse4aOperands() {
 }
 
 void sha256Operands() {
+    requireFailure([] { const Bytes bytes = {0xF0, 0x0F, 0x38, 0xCB, 0xCA}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "LOCK SHA256RNDS2 was accepted");
+    requireFailure([] { const Bytes bytes = {0x2E, 0xF0, 0x0F, 0x38, 0xCC, 0x08}; (void)Codegen::DecodeSha256(bytes.data(), bytes.size()); }, "LOCK SHA256MSG1 memory form was accepted");
     const auto check = [](const Bytes& site, const Codegen::Sha256Operation operation, const int dst, const int src) {
         const auto operands = Codegen::DecodeSha256(site.data(), site.size());
         require(operands.Operation == operation && operands.Destination == dst && operands.Source == src, "SHA-256 operands were decoded incorrectly");
@@ -258,6 +266,8 @@ void sha256Operands() {
 }
 
 void sha1Operands() {
+    requireFailure([] { const Bytes bytes = {0xF0, 0x0F, 0x3A, 0xCC, 0xCA, 0x00}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "LOCK SHA1RNDS4 was accepted");
+    requireFailure([] { const Bytes bytes = {0x2E, 0xF0, 0x0F, 0x38, 0xC9, 0x08}; (void)Codegen::DecodeSha1(bytes.data(), bytes.size()); }, "LOCK SHA1MSG1 memory form was accepted");
     const auto check = [](const Bytes& site, const Codegen::Sha1Operation operation, const int dst, const int src, const int function) {
         const auto operands = Codegen::DecodeSha1(site.data(), site.size());
         require(operands.Operation == operation && operands.Destination == dst && operands.Source == src && operands.Function == function, "SHA-1 operands were decoded incorrectly");
@@ -319,6 +329,8 @@ void matcherSubstitutions() {
     const auto movntsd = match({0xF2, 0x44, 0x0F, 0x2B, 0x4C, 0x24, 0x10});
     require(movntsd && movntsd->Lowering == Codegen::Amd64OnlyLowering::InPlace && movntsd->ReplacementBytes == Bytes{0xF2, 0x44, 0x0F, 0x11, 0x4C, 0x24, 0x10} && movntsd->InstructionName == "MOVNTSD", "MOVNTSD was not rewritten to MOVSD");
     requireFailure([&] { (void)match({0xF3, 0x0F, 0x2B, 0xC1}); }, "MOVNTSS with a register operand was accepted");
+    const auto movntssDisplacement = match({0xF3, 0x0F, 0x2B, 0x47, 0xF0});
+    require(movntssDisplacement && movntssDisplacement->ReplacementBytes == Bytes{0xF3, 0x0F, 0x11, 0x47, 0xF0}, "MOVNTSS displacement byte was treated as a LOCK prefix");
     const auto monitorx = match({0x0F, 0x01, 0xFA});
     require(monitorx && monitorx->Lowering == Codegen::Amd64OnlyLowering::InPlace && monitorx->ReplacementBytes == Bytes{0x0F, 0x1F, 0x00} && monitorx->InstructionName == "MONITORX", "MONITORX was not replaced by a NOP");
     const auto mwaitx = match({0x0F, 0x01, 0xFB});
@@ -348,7 +360,16 @@ void matcherSubstitutions() {
         require(prefixedClzero && prefixedClzero->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "CLZERO with a 66, F2 or F3 prefix was not reported as unsupported");
     }
     const auto rdpru = match({0x0F, 0x01, 0xFD});
-    require(rdpru && rdpru->Lowering == Codegen::Amd64OnlyLowering::Unsupported && rdpru->InstructionName == "RDPRU", "RDPRU was not reported as unsupported");
+    require(rdpru && rdpru->Lowering == Codegen::Amd64OnlyLowering::Trampoline && rdpru->InstructionName == "RDPRU" && rdpru->StubBody.size() == 40 && rdpru->ReturnBranchOffset == 35 && rdpru->Relocations.empty(), "RDPRU was not lowered through a runtime-checked stub");
+    require(Bytes(rdpru->StubBody.begin(), rdpru->StubBody.begin() + 35) == Bytes{0x48, 0x8D, 0xA4, 0x24, 0x70, 0xFF, 0xFF, 0xFF, 0x9C, 0x85, 0xC9, 0x74, 0x0B, 0x83, 0xF9, 0x01, 0x74, 0x06, 0x31, 0xC0, 0x31, 0xD2, 0xEB, 0x02, 0x0F, 0x31, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x90, 0x00, 0x00, 0x00}, "RDPRU stub does not frame the red zone or dispatch ECX to TSC or zero");
+    const auto mcommit = match({0xF3, 0x0F, 0x01, 0xFA});
+    require(mcommit && mcommit->Lowering == Codegen::Amd64OnlyLowering::InPlace && mcommit->InstructionName == "MCOMMIT" && mcommit->ReplacementBytes == Bytes{0xF9, 0x0F, 0x1F, 0x00}, "MCOMMIT was not replaced by STC plus NOP");
+    const auto prefixedMcommit = match({0x2E, 0xF3, 0x0F, 0x01, 0xFA});
+    require(prefixedMcommit && prefixedMcommit->Lowering == Codegen::Amd64OnlyLowering::InPlace && prefixedMcommit->ReplacementBytes == Bytes{0xF9, 0x0F, 0x1F, 0x40, 0x00}, "Prefixed MCOMMIT was not padded to its length");
+    const auto lockedMcommit = match({0xF0, 0xF3, 0x0F, 0x01, 0xFA});
+    require(lockedMcommit && lockedMcommit->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "LOCK MCOMMIT was replaced instead of failing");
+    const auto lockedRdpru = match({0xF0, 0x0F, 0x01, 0xFD});
+    require(lockedRdpru && lockedRdpru->Lowering == Codegen::Amd64OnlyLowering::Unsupported, "LOCK RDPRU was replaced instead of failing");
     const auto registerForm = match({0x66, 0x0F, 0x79, 0xCA});
     require(registerForm && registerForm->Lowering == Codegen::Amd64OnlyLowering::Trampoline && registerForm->InstructionName == "EXTRQ register form", "EXTRQ register form was not lowered through a stub");
     const auto insertqRegisterForm = match({0xF2, 0x0F, 0x79, 0xCA});
@@ -454,6 +475,54 @@ void stubRelocations() {
     requireFailure([&] { Codegen::ApplyStubRelocations(body, narrow, 0x1000, 0x2000, 0); }, "Stub relocation narrower than a displacement was accepted");
 }
 
+void eipRelativeStubRelocations() {
+    const Bytes lea = {0x67, 0x48, 0x8D, 0x05, 0x00, 0x00, 0x00, 0x80};
+    const Bytes sha = {0x65, 0x67, 0x0F, 0x38, 0xCC, 0x15, 0x00, 0x00, 0x00, 0x80};
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    auto loweredSha = matcher->Match(sha.data(), sha.size());
+    require(loweredSha && loweredSha->Relocations.size() == 1, "EIP-relative SHA operand has no relocation");
+    Codegen::StubBodyBuilder moved;
+    moved.Move(lea, 4);
+    auto movedBody = moved.Finish();
+    Codegen::StubBodyBuilder rewritten;
+    rewritten.RipRelative(lea, 4, static_cast<std::int64_t>(lea.size()) - 0x80000000ll);
+    auto rewrittenBody = rewritten.Finish();
+    const auto check = [](Bytes body, const std::vector<Codegen::StubRelocation>& relocations, const std::size_t originalLength) {
+        for (const std::uint64_t site : {0x1000ull, 0x100000000ull, 0x7FFF00000000ull}) {
+            for (const std::uint64_t distance : {0x100ull, 0x90000000ull}) {
+                const auto stub = site + distance;
+                Codegen::ApplyStubRelocations(body, relocations, site, stub, 0);
+                const auto& relocation = relocations.front();
+                const auto actual = static_cast<std::uint32_t>(stub + relocation.InstructionEnd + read<std::int32_t>(body, relocation.DisplacementOffset));
+                const auto expected = static_cast<std::uint32_t>(site + originalLength - 0x80000000ull);
+                require(actual == expected, "EIP-relative relocation changed the effective address");
+            }
+        }
+    };
+    check(loweredSha->StubBody, loweredSha->Relocations, sha.size());
+    check(movedBody.Bytes, movedBody.Relocations, lea.size());
+    check(rewrittenBody.Bytes, rewrittenBody.Relocations, lea.size());
+    const Bytes ripLea = {0x48, 0x8D, 0x05, 0x67, 0x00, 0x00, 0x80};
+    Codegen::StubBodyBuilder rip;
+    rip.Move(ripLea, 3);
+    auto ripBody = rip.Finish();
+    requireFailure([&] { Codegen::ApplyStubRelocations(ripBody.Bytes, ripBody.Relocations, 0x100000000ull, 0x100000100ull, 0); }, "A displacement byte was mistaken for an address-size prefix");
+    Codegen::StubBodyBuilder ripRewritten;
+    ripRewritten.RipRelative(ripLea, 3, static_cast<std::int64_t>(ripLea.size()) - 0x80000000ll);
+    auto ripRewrittenBody = ripRewritten.Finish();
+    requireFailure([&] { Codegen::ApplyStubRelocations(ripRewrittenBody.Bytes, ripRewrittenBody.Relocations, 0x100000000ull, 0x100000100ull, 0); }, "A rewritten RIP-relative operand wrapped at 32 bits");
+    const Bytes ripSha = {0x65, 0x0F, 0x38, 0xCC, 0x15, 0x00, 0x00, 0x00, 0x80};
+    auto loweredRipSha = matcher->Match(ripSha.data(), ripSha.size());
+    require(loweredRipSha && loweredRipSha->Relocations.size() == 1, "RIP-relative SHA operand has no relocation");
+    requireFailure([&] { Codegen::ApplyStubRelocations(loweredRipSha->StubBody, loweredRipSha->Relocations, 0x100000000ull, 0x100000100ull, 0); }, "A reloaded RIP-relative SHA operand wrapped at 32 bits");
+    const Bytes branch = {0x67, 0xE9, 0x00, 0x00, 0x00, 0x80};
+    const Codegen::X64InstructionDecoder decoder;
+    Codegen::StubBodyBuilder jumped;
+    jumped.MoveControlFlow(branch, decoder.DecodeInstruction(branch.data(), branch.size()));
+    auto jumpBody = jumped.Finish();
+    requireFailure([&] { Codegen::ApplyStubRelocations(jumpBody.Bytes, jumpBody.Relocations, 0x100000000ull, 0x100000100ull, 0); }, "Address-size prefix incorrectly allowed a direct branch to wrap at 32 bits");
+}
+
 Bytes segmentFixture() {
     Bytes file(0x300, 0xCC);
     const Bytes text = {
@@ -488,12 +557,19 @@ void converterSegment() {
     auto branchInside = file;
     branchInside[0x207] = 0x02;
     requireFailure([&] { (void)converter->Convert(branchInside, {segmentHeader(20)}); }, "Branch into an AMD-only instruction was accepted");
-    auto rdpru = file;
-    rdpru[0x20F] = 0x0F;
-    rdpru[0x210] = 0x01;
-    rdpru[0x211] = 0xFD;
-    rdpru[0x212] = 0x90;
-    requireFailure([&] { (void)converter->Convert(rdpru, {segmentHeader(20)}); }, "RDPRU was silently kept");
+    auto lockedRdpru = file;
+    lockedRdpru[0x20F] = 0xF0;
+    lockedRdpru[0x210] = 0x0F;
+    lockedRdpru[0x211] = 0x01;
+    lockedRdpru[0x212] = 0xFD;
+    requireFailure([&] { (void)converter->Convert(lockedRdpru, {segmentHeader(20)}); }, "LOCK RDPRU was accepted");
+    for (const Bytes& instruction : {Bytes{0xF0, 0xF3, 0x0F, 0x2B, 0x07}, Bytes{0xF3, 0xF0, 0x0F, 0x2B, 0x07},
+                                     Bytes{0xF0, 0xF2, 0x0F, 0x2B, 0x07}, Bytes{0xF2, 0xF0, 0x0F, 0x2B, 0x07}}) {
+        auto lockedMovnts = file;
+        std::copy(instruction.begin(), instruction.end(), lockedMovnts.begin() + 0x20F);
+        lockedMovnts[0x214] = 0xC3;
+        require(failureOffset([&] { (void)converter->Convert(lockedMovnts, {segmentHeader(21)}); }, "LOCK MOVNTSS/MOVNTSD was accepted") == 0x20F, "LOCK MOVNTSS/MOVNTSD failure does not carry the file offset");
+    }
     auto registerForm = file;
     const Bytes extrqRegister = {0x66, 0x0F, 0x79, 0xCA};
     std::copy(extrqRegister.begin(), extrqRegister.end(), registerForm.begin() + 0x20F);
@@ -506,6 +582,20 @@ void converterSegment() {
     require(shortSite.Offset == 0x20F && shortSite.Length == 5 && shortSite.OriginalBytes == shortOriginal, "Short EXTRQ site did not absorb the following instruction");
     require(shortSite.Body[shortSite.ReturnBranchOffset - 1] == 0x90 && shortSite.Body[shortSite.ReturnBranchOffset] == 0xE9, "Absorbed instruction does not run before the return jump");
     requireFailure([&] { (void)converter->Convert(file, {segmentHeader(0x200)}); }, "Segment exceeding the file was accepted");
+}
+
+void converterSegmentMappedAtInt64Max() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+    const auto file = segmentFixture();
+    const Domain::ProgramHeader mappedAtInt64Max{1, 5, 0x200, 0x8000000000000000, 0, 20, 20, 16};
+    const auto converted = converter->Convert(file, {mappedAtInt64Max});
+    require(converted.ReplacedCount == 1 && converted.Trampolines.size() == 1, "Converter misclassified a segment mapped at 2^63");
+    auto branchInto = file;
+    branchInto[0x207] = 0x02;
+    requireFailure([&] { (void)converter->Convert(branchInto, {mappedAtInt64Max}); }, "A branch into an AMD-only instruction was accepted in a segment mapped at 2^63");
+    branchInto[0x207] = 0x80;
+    const auto backward = converter->Convert(branchInto, {mappedAtInt64Max});
+    require(backward.ReplacedCount == 1 && backward.Trampolines.size() == 1, "A backward branch from a segment mapped at 2^63 changed the conversion");
 }
 
 void converterRipRelativeFollower() {
@@ -549,6 +639,9 @@ void converterSha256() {
         0x90,
         0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    auto locked = file;
+    locked.insert(locked.begin() + 0x200, 0xF0);
+    require(failureOffset([&] { (void)converter->Convert(locked, {segmentHeader(text.size() + 1)}); }, "LOCK SHA-256 was accepted") == 0x200, "LOCK SHA-256 failure does not carry the file offset");
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
     require(result.Trampolines.size() == 2 && result.Reports.size() == 2 && result.Bytes == file, "SHA-256 sites were not lowered through stubs");
     const auto& rounds = result.Trampolines[0];
@@ -584,6 +677,9 @@ void converterSha1() {
         0x90,
         0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    auto locked = file;
+    locked.insert(locked.begin() + 0x200, 0xF0);
+    require(failureOffset([&] { (void)converter->Convert(locked, {segmentHeader(text.size() + 1)}); }, "LOCK SHA-1 was accepted") == 0x200, "LOCK SHA-1 failure does not carry the file offset");
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
     require(result.Trampolines.size() == 3 && result.Reports.size() == 3 && result.Bytes == file, "SHA-1 sites were not lowered through stubs");
     require(result.Trampolines[0].Offset == 0x200 && result.Trampolines[0].Length == 5 && result.Reports[0].InstructionName == "SHA1RNDS4", "SHA1RNDS4 was not lowered as one site");
@@ -610,15 +706,39 @@ void converterSha1() {
 void converterMonitorWait() {
     const auto converter = Codegen::MakeAmd64OnlyConverter();
     Bytes file(0x300, 0xCC);
-    const Bytes text = {0x0F, 0x01, 0xFA, 0x0F, 0x01, 0xFB, 0x2E, 0x0F, 0x01, 0xFB, 0xC3};
+    const Bytes text = {0x0F, 0x01, 0xFA, 0x0F, 0x01, 0xFB, 0x2E, 0x0F, 0x01, 0xFB, 0xF3, 0x0F, 0x01, 0xFA, 0xC3};
     std::copy(text.begin(), text.end(), file.begin() + 0x200);
     const auto result = converter->Convert(file, {segmentHeader(text.size())});
-    require(result.ReplacedCount == 3 && result.Trampolines.empty() && result.Reports.size() == 3, "MONITORX/MWAITX were not replaced in place");
+    require(result.ReplacedCount == 4 && result.Trampolines.empty() && result.Reports.size() == 4, "MONITORX/MWAITX/MCOMMIT were not replaced in place");
     require(result.Reports[0].InstructionName == "MONITORX" && result.Reports[1].InstructionName == "MWAITX" && result.Reports[2].Offset == 0x206 && result.Reports[2].ReplacementLength == 4 && result.Reports[2].Lowering == Codegen::Amd64OnlyLowering::InPlace, "MONITORX/MWAITX reports are wrong");
+    require(result.Reports[3].InstructionName == "MCOMMIT" && result.Reports[3].Offset == 0x20A && result.Reports[3].ReplacementLength == 4 && result.Reports[3].Lowering == Codegen::Amd64OnlyLowering::InPlace, "MCOMMIT report is wrong");
     auto expected = file;
-    const Bytes replaced = {0x0F, 0x1F, 0x00, 0xF3, 0x90, 0x90, 0xF3, 0x90, 0x66, 0x90, 0xC3};
+    const Bytes replaced = {0x0F, 0x1F, 0x00, 0xF3, 0x90, 0x90, 0xF3, 0x90, 0x66, 0x90, 0xF9, 0x0F, 0x1F, 0x00, 0xC3};
     std::copy(replaced.begin(), replaced.end(), expected.begin() + 0x200);
-    require(result.Bytes == expected, "MONITORX/MWAITX were replaced with the wrong bytes");
+    require(result.Bytes == expected, "MONITORX/MWAITX/MCOMMIT were replaced with the wrong bytes");
+}
+
+void converterInPlaceFollower() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+    const auto convert = [&](const Bytes& following) {
+        Bytes file(0x300, 0xCC);
+        Bytes text = {0x66, 0x0F, 0x79, 0xCA};
+        text.insert(text.end(), following.begin(), following.end());
+        text.push_back(0xC3);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return converter->Convert(file, {segmentHeader(text.size())});
+    };
+    const auto tail = [](const Codegen::TrampolineSite& site, const std::size_t length) {
+        return Bytes(site.Body.begin() + static_cast<std::ptrdiff_t>(site.ReturnBranchOffset - length), site.Body.begin() + static_cast<std::ptrdiff_t>(site.ReturnBranchOffset));
+    };
+    const auto store = convert({0xF3, 0x0F, 0x2B, 0x07});
+    require(store.Trampolines.size() == 1 && store.Trampolines[0].Length == 8 && tail(store.Trampolines[0], 4) == Bytes{0xF3, 0x0F, 0x11, 0x07}, "MOVNTSS after a short EXTRQ was not moved into its stub as MOVSS");
+    const auto ripStore = convert({0xF2, 0x0F, 0x2B, 0x05, 0x40, 0x00, 0x00, 0x00});
+    require(ripStore.Trampolines.size() == 1 && ripStore.Trampolines[0].Length == 12, "RIP-relative MOVNTSD after a short EXTRQ was not moved into its stub");
+    const auto& ripSite = ripStore.Trampolines[0];
+    require(tail(ripSite, 8) == Bytes{0xF2, 0x0F, 0x11, 0x05, 0x00, 0x00, 0x00, 0x00} && ripSite.Relocations.size() == 1 && ripSite.Relocations[0].SiteTarget == 12 + 0x40 && ripSite.Relocations[0].InstructionEnd == ripSite.ReturnBranchOffset, "Moved MOVNTSD has the wrong bytes or relocation");
+    const auto monitor = convert({0x0F, 0x01, 0xFA});
+    require(monitor.Trampolines.size() == 1 && monitor.Trampolines[0].Length == 7 && tail(monitor.Trampolines[0], 3) == Bytes{0x0F, 0x1F, 0x00}, "MONITORX after a short EXTRQ was not moved into its stub as a NOP");
 }
 
 void converterClzero() {
@@ -654,8 +774,8 @@ void rosettaSubstitutions() {
     const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto match = [](const auto& matcher, const Bytes& bytes) { return matcher->Match(bytes.data(), bytes.size()); };
-    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}})
-        require(!match(intel, bytes).has_value(), "RDSEED, RDPID or CLWB was converted for an Intel host");
+    for (const auto& bytes : {Bytes{0x0F, 0xC7, 0xF8}, Bytes{0xF3, 0x0F, 0xC7, 0xF8}, Bytes{0x66, 0x0F, 0xAE, 0x30}, Bytes{0x0F, 0x01, 0xF9}, Bytes{0x0F, 0xAE, 0x37}})
+        require(!match(intel, bytes).has_value(), "RDSEED, RDPID, CLWB, RDTSCP or XSAVEOPT was converted for an Intel host");
     const auto rdseed = match(rosetta, {0x48, 0x0F, 0xC7, 0xF9});
     require(rdseed && rdseed->Lowering == Amd64OnlyLowering::InPlace && rdseed->ReplacementBytes == Bytes{0x48, 0x0F, 0xC7, 0xF1} && rdseed->InstructionName == "RDSEED", "RDSEED was not rewritten to RDRAND");
     const auto rdseed16 = match(rosetta, {0x66, 0x41, 0x0F, 0xC7, 0xFA});
@@ -665,9 +785,412 @@ void rosettaSubstitutions() {
     require(clwb && clwb->Lowering == Amd64OnlyLowering::InPlace && clwb->ReplacementBytes == Bytes{0x66, 0x0F, 0x1F, 0x44, 0x00, 0x00} && clwb->InstructionName == "CLWB", "CLWB was not replaced by a NOP");
     require(!match(rosetta, {0x66, 0x0F, 0xAE, 0xF1}).has_value(), "TPAUSE (the register form of 66 0F AE /6) was taken for CLWB");
     require(!match(rosetta, {0x66, 0x0F, 0xAE, 0x38}).has_value(), "CLFLUSHOPT was taken for CLWB");
+    const auto xsaveopt = match(rosetta, {0x0F, 0xAE, 0x37});
+    require(xsaveopt && xsaveopt->Lowering == Amd64OnlyLowering::InPlace && xsaveopt->ReplacementBytes == Bytes{0x0F, 0xAE, 0x27} && xsaveopt->InstructionName == "XSAVEOPT", "XSAVEOPT was not rewritten to XSAVE");
+    const auto xsaveopt64 = match(rosetta, {0x48, 0x0F, 0xAE, 0x74, 0x24, 0x40});
+    require(xsaveopt64 && xsaveopt64->ReplacementBytes == Bytes{0x48, 0x0F, 0xAE, 0x64, 0x24, 0x40}, "XSAVEOPT64 with an RSP-relative operand was not rewritten to XSAVE64");
+    const auto xsaveoptR12 = match(rosetta, {0x41, 0x0F, 0xAE, 0x34, 0x24});
+    require(xsaveoptR12 && xsaveoptR12->ReplacementBytes == Bytes{0x41, 0x0F, 0xAE, 0x24, 0x24}, "XSAVEOPT with an extended base register was not rewritten to XSAVE");
+    const auto xsaveoptRip = match(rosetta, {0x0F, 0xAE, 0x35, 0x00, 0x01, 0x00, 0x00});
+    require(xsaveoptRip && xsaveoptRip->ReplacementBytes == Bytes{0x0F, 0xAE, 0x25, 0x00, 0x01, 0x00, 0x00}, "RIP-relative XSAVEOPT was not rewritten to XSAVE with the same displacement");
+    const auto xsaveoptFs = match(rosetta, {0x64, 0x0F, 0xAE, 0x34, 0x25, 0x40, 0x00, 0x00, 0x00});
+    require(xsaveoptFs && xsaveoptFs->ReplacementBytes == Bytes{0x64, 0x0F, 0xAE, 0x24, 0x25, 0x40, 0x00, 0x00, 0x00}, "FS-relative XSAVEOPT was not rewritten to XSAVE");
+    for (const auto& other : {Bytes{0x0F, 0xAE, 0x27}, Bytes{0x0F, 0xAE, 0x2F}, Bytes{0x0F, 0xAE, 0x3F}, Bytes{0x0F, 0xAE, 0xF0}, Bytes{0xF3, 0x0F, 0xAE, 0xF0}, Bytes{0xF2, 0x0F, 0xAE, 0xF1}, Bytes{0xF3, 0x0F, 0xAE, 0x37}})
+        require(!match(rosetta, other).has_value(), "XSAVE, XRSTOR, CLFLUSH, MFENCE, UMONITOR, UMWAIT or a prefixed 0F AE /6 was taken for XSAVEOPT");
     const auto rdpid = match(rosetta, {0xF3, 0x41, 0x0F, 0xC7, 0xFB});
     require(rdpid && rdpid->Lowering == Amd64OnlyLowering::Trampoline && rdpid->Optional && rdpid->InstructionName == "RDPID", "RDPID was not lowered through an optional stub");
     require(rdpid->ReturnBranchOffset == 6 && Bytes(rdpid->StubBody.begin(), rdpid->StubBody.begin() + 7) == Bytes{0x41, 0xBB, 0, 0, 0, 0, 0xE9}, "RDPID r11 stub does not load 0 before returning");
+    const auto rdtscp = match(rosetta, {0x0F, 0x01, 0xF9});
+    require(rdtscp && rdtscp->Lowering == Amd64OnlyLowering::Trampoline && rdtscp->Optional && rdtscp->InstructionName == "RDTSCP", "RDTSCP was not lowered through an optional stub");
+    require(rdtscp->ReturnBranchOffset == 8 && Bytes(rdtscp->StubBody.begin(), rdtscp->StubBody.begin() + 9) == Bytes{0x0F, 0x01, 0xF9, 0xB9, 0, 0, 0, 0, 0xE9}, "RDTSCP stub does not load 0 into ECX after reading the counter");
+    require(!match(rosetta, {0x0F, 0x01, 0xF8}).has_value(), "SWAPGS (0F 01 F8) was taken for RDTSCP");
+    require(!match(rosetta, {0x66, 0x0F, 0x01, 0xF9}).has_value(), "RDTSCP with an operand size prefix was lowered");
+}
+
+void wideStoreSplit() {
+    struct Case {
+        Bytes Original;
+        Bytes Low;
+        Bytes High;
+        const char* Name;
+    };
+    const std::vector<Case> cases = {
+        {{0xC5, 0xFC, 0x11, 0x07}, {0xC5, 0xF8, 0x11, 0x07}, {0xC4, 0xE3, 0x7D, 0x19, 0x47, 0x10, 0x01}, "vmovups (%rdi)"},
+        {{0xC4, 0x41, 0x7E, 0x7F, 0x4C, 0x87, 0x70}, {0xC4, 0x41, 0x7A, 0x7F, 0x4C, 0x87, 0x70}, {0xC4, 0x43, 0x7D, 0x19, 0x8C, 0x87, 0x80, 0x00, 0x00, 0x00, 0x01}, "vmovdqu 0x70(%r15,%rax,4)"},
+        {{0xC5, 0xFC, 0x11, 0x4C, 0x24, 0xF8}, {0xC5, 0xF8, 0x11, 0x4C, 0x24, 0xF8}, {0xC4, 0xE3, 0x7D, 0x19, 0x4C, 0x24, 0x08, 0x01}, "vmovups -8(%rsp)"},
+        {{0xC5, 0xFE, 0x7F, 0x93, 0x78, 0x56, 0x34, 0x12}, {0xC5, 0xFA, 0x7F, 0x93, 0x78, 0x56, 0x34, 0x12}, {0xC4, 0xE3, 0x7D, 0x19, 0x93, 0x88, 0x56, 0x34, 0x12, 0x01}, "vmovdqu 0x12345678(%rbx)"},
+        {{0x64, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0x40, 0x00, 0x00, 0x00}, {0x64, 0xC5, 0xF8, 0x11, 0x04, 0x25, 0x40, 0x00, 0x00, 0x00}, {0x64, 0xC4, 0xE3, 0x7D, 0x19, 0x04, 0x25, 0x50, 0x00, 0x00, 0x00, 0x01}, "vmovups %fs:0x40"},
+        {{0xC4, 0x41, 0x7C, 0x11, 0x65, 0x00}, {0xC4, 0x41, 0x78, 0x11, 0x65, 0x00}, {0xC4, 0x43, 0x7D, 0x19, 0x65, 0x10, 0x01}, "vmovups (%r13)"},
+        {{0xC4, 0xC1, 0x7C, 0x11, 0x47, 0x68}, {0xC4, 0xC1, 0x78, 0x11, 0x47, 0x68}, {0xC4, 0xC3, 0x7D, 0x19, 0x47, 0x78, 0x01}, "vmovups 0x68(%r15)"}};
+    for (const auto& item : cases) {
+        const auto split = Codegen::DecodeVexWideStore(item.Original.data(), item.Original.size());
+        require(split && split->Low.Bytes == item.Low && split->High.Bytes == item.High && !split->Low.RipDisplacementOffset && !split->High.RipDisplacementOffset, (std::string("256-bit store was not split into its 128-bit halves: ") + item.Name).c_str());
+    }
+    const Bytes rip = {0xC5, 0xFD, 0x11, 0x1D, 0x00, 0x01, 0x00, 0x00};
+    const auto ripSplit = Codegen::DecodeVexWideStore(rip.data(), rip.size());
+    require(ripSplit && ripSplit->Low.Bytes == Bytes{0xC5, 0xF9, 0x11, 0x1D, 0x00, 0x01, 0x00, 0x00} && ripSplit->High.Bytes == Bytes{0xC4, 0xE3, 0x7D, 0x19, 0x1D, 0x00, 0x00, 0x00, 0x00, 0x01}, "RIP-relative 256-bit store was not split");
+    require(ripSplit->Low.RipDisplacementOffset == 4 && ripSplit->Low.RipTarget == 8 + 0x100 && ripSplit->High.RipDisplacementOffset == 5 && ripSplit->High.RipTarget == 8 + 0x110, "RIP-relative halves do not address the original operand and the one 16 bytes above it");
+    for (const auto& other : {Bytes{0xC5, 0xF8, 0x11, 0x07}, Bytes{0xC5, 0xFC, 0x11, 0xC1}, Bytes{0xC5, 0xFC, 0x10, 0x07}, Bytes{0xC4, 0xE2, 0x75, 0x2E, 0x07}, Bytes{0xC5, 0xF4, 0x11, 0x07}, Bytes{0xC4, 0xE3, 0x7D, 0x19, 0x07, 0x01}, Bytes{0xC5, 0xFC, 0x11, 0x04}, Bytes{0xC5, 0xFC, 0x11, 0x47}})
+        require(!Codegen::DecodeVexWideStore(other.data(), other.size()).has_value(), "An instruction other than a plain 256-bit store was split");
+    for (const auto& aligned : {Bytes{0xC5, 0xFC, 0x29, 0x4C, 0x24, 0xF8}, Bytes{0xC5, 0xFD, 0xE7, 0x93, 0x78, 0x56, 0x34, 0x12}, Bytes{0xC5, 0xFD, 0x7F, 0x1F}, Bytes{0xC5, 0xFC, 0x2B, 0x27}})
+        require(!Codegen::DecodeVexWideStore(aligned.data(), aligned.size()).has_value(), "An aligned 256-bit store, which cannot cross a page, was split");
+    const Bytes farRip = {0xC5, 0xFC, 0x11, 0x05, 0xF8, 0xFF, 0xFF, 0x7F};
+    const auto farRipSplit = Codegen::DecodeVexWideStore(farRip.data(), farRip.size());
+    require(farRipSplit && farRipSplit->High.RipTarget == std::int64_t{8} + 0x7FFFFFF8 + 0x10, "A RIP-relative 256-bit store near the end of its displacement range was not split");
+    const Bytes farBase = {0xC5, 0xFC, 0x11, 0x80, 0xF8, 0xFF, 0xFF, 0x7F};
+    requireFailure([&] { (void)Codegen::DecodeVexWideStore(farBase.data(), farBase.size()); }, "A 256-bit store whose upper half has no 32-bit displacement was kept");
+    const Bytes absolute32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F};
+    const auto absolute32Split = Codegen::DecodeVexWideStore(absolute32.data(), absolute32.size());
+    require(absolute32Split && absolute32Split->Low.Bytes == Bytes{0x67, 0xC5, 0xF8, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F} && absolute32Split->High.Bytes == Bytes{0x67, 0xC4, 0xE3, 0x7D, 0x19, 0x04, 0x25, 0x08, 0x00, 0x00, 0x80, 0x01}, "A 32-bit absolute 256-bit store was not split across the signed displacement boundary");
+    const Bytes disp32 = {0x67, 0xC5, 0xFC, 0x11, 0x80, 0xF8, 0xFF, 0xFF, 0x7F};
+    requireFailure([&] { (void)Codegen::DecodeVexWideStore(disp32.data(), disp32.size()); }, "A 32-bit base-relative 256-bit store whose upper half can wrap was split");
+    const Bytes indexed32 = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x0D, 0xF8, 0xFF, 0xFF, 0x7F};
+    requireFailure([&] { (void)Codegen::DecodeVexWideStore(indexed32.data(), indexed32.size()); }, "A 32-bit indexed 256-bit store whose upper half can wrap was split");
+    const Bytes extendedIndex32 = {0x67, 0xC4, 0xA1, 0x7C, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F};
+    requireFailure([&] { (void)Codegen::DecodeVexWideStore(extendedIndex32.data(), extendedIndex32.size()); }, "A 32-bit store indexed by an extended register through VEX.X was split as absolute");
+    const Bytes absolute32Overflow = {0x67, 0xC5, 0xFC, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0xFF};
+    requireFailure([&] { (void)Codegen::DecodeVexWideStore(absolute32Overflow.data(), absolute32Overflow.size()); }, "A 32-bit absolute 256-bit store whose upper half crosses the address boundary was split");
+    const Bytes absolute64 = {0xC5, 0xFC, 0x11, 0x04, 0x25, 0xF8, 0xFF, 0xFF, 0x7F};
+    requireFailure([&] { (void)Codegen::DecodeVexWideStore(absolute64.data(), absolute64.size()); }, "A 64-bit absolute 256-bit store whose upper half has no signed displacement was kept");
+    requireFailure([] { Codegen::StubBodyBuilder body; body.RipRelative(Bytes{0x90}, 0, 0); }, "A RIP-relative displacement outside its instruction was relocated");
+    const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes store = {0xC4, 0xC1, 0x7C, 0x11, 0x47, 0x68};
+    const auto lowered = rosetta->Match(store.data(), store.size());
+    require(lowered && lowered->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !lowered->Optional && lowered->RelocatableWindow && lowered->InstructionName == "256-bit store", "A 256-bit store was not lowered through a required stub that may move its neighbours for Rosetta");
+    Bytes expectedBody = cases.back().Low;
+    expectedBody.insert(expectedBody.end(), cases.back().High.begin(), cases.back().High.end());
+    require(Bytes(lowered->StubBody.begin(), lowered->StubBody.begin() + static_cast<std::ptrdiff_t>(lowered->ReturnBranchOffset)) == expectedBody, "The 256-bit store stub is not the two halves");
+    const std::vector<std::span<const std::uint8_t>> pair = {std::span<const std::uint8_t>(cases[0].Original), std::span<const std::uint8_t>(rip)};
+    const auto sequence = rosetta->MatchSequence(pair, {});
+    require(sequence && sequence->Relocations.size() == 2 && sequence->Relocations[0].SiteTarget == 4 + 8 + 0x100 && sequence->Relocations[1].SiteTarget == 4 + 8 + 0x110, "A RIP-relative 256-bit store after another is not relocated from its place in the site");
+    require(!Codegen::MakeAmd64OnlyInstructionMatcher()->Match(store.data(), store.size()).has_value(), "A 256-bit store was split for an Intel host");
+    const std::vector<std::span<const std::uint8_t>> single = {std::span<const std::uint8_t>(store)};
+    require(!Codegen::MakeAmd64OnlyInstructionMatcher()->MatchSequence(single, {}).has_value(), "A 256-bit store was split in a sequence for an Intel host");
+}
+
+void converterWideStoreWindows() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes store = {0xC5, 0xFC, 0x11, 0x07};
+    Bytes halves = {0xC5, 0xF8, 0x11, 0x07, 0xC4, 0xE3, 0x7D, 0x19, 0x47, 0x10, 0x01};
+    const auto convert = [&](const Bytes& text) {
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return converter->Convert(file, {segmentHeader(text.size())});
+    };
+    const auto body = [](const Codegen::TrampolineSite& site) {
+        return Bytes(site.Body.begin(), site.Body.begin() + static_cast<std::ptrdiff_t>(site.ReturnBranchOffset));
+    };
+    const auto withStore = [&](Bytes before, const Bytes& after) {
+        before.insert(before.end(), store.begin(), store.end());
+        before.insert(before.end(), after.begin(), after.end());
+        return before;
+    };
+
+    const auto returned = convert(withStore({}, {0xC3}));
+    Bytes expected = halves;
+    expected.push_back(0xC3);
+    require(returned.Trampolines.size() == 1 && returned.KeptCount == 0 && returned.Reports.size() == 1 && returned.Reports[0].InstructionName == "256-bit store", "A 256-bit store followed by a return was not moved");
+    require(returned.Trampolines[0].Offset == 0x200 && returned.Trampolines[0].Length == 5 && body(returned.Trampolines[0]) == expected, "A 256-bit store followed by a return did not end its stub with the return");
+
+    const auto called = convert(withStore({}, {0xE8, 0x10, 0x00, 0x00, 0x00}));
+    require(called.Trampolines.size() == 1 && called.Trampolines[0].Offset == 0x200 && called.Trampolines[0].Length == 9, "A 256-bit store followed by a call did not take the call");
+    const auto& call = called.Trampolines[0];
+    expected = halves;
+    expected.insert(expected.end(), {0x48, 0x8D, 0x64, 0x24, 0xF8, 0x50, 0x48, 0x8D, 0x05, 0, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0x08, 0x58, 0xE9, 0, 0, 0, 0});
+    require(body(call) == expected, "A moved call does not push its original return address and jump");
+    require(call.Relocations.size() == 2 && call.Relocations[0].DisplacementOffset == halves.size() + 9 && call.Relocations[0].SiteTarget == 9 && call.Relocations[1].DisplacementOffset == halves.size() + 20 && call.Relocations[1].SiteTarget == 9 + 0x10, "A moved call returns to or calls the wrong address");
+
+    const auto branched = convert(withStore({}, {0x75, 0x10, 0x90}));
+    require(branched.Trampolines.size() == 1 && branched.Trampolines[0].Length == 6, "A 256-bit store followed by a short conditional branch did not take the branch");
+    const auto& jcc = branched.Trampolines[0];
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0x85, 0, 0, 0, 0});
+    require(body(jcc) == expected && jcc.Relocations.size() == 1 && jcc.Relocations[0].SiteTarget == 6 + 0x10, "A moved short conditional branch was not re-encoded with a 32-bit displacement to its target");
+
+    const auto jumped = convert(withStore({}, {0xEB, 0x10, 0x90}));
+    expected = halves;
+    expected.insert(expected.end(), {0xE9, 0, 0, 0, 0});
+    require(jumped.Trampolines.size() == 1 && body(jumped.Trampolines[0]) == expected && jumped.Trampolines[0].Relocations.size() == 1 && jumped.Trampolines[0].Relocations[0].SiteTarget == 6 + 0x10, "A moved short jump was not re-encoded with a 32-bit displacement to its target");
+
+    const auto longBranched = convert(withStore({}, {0x0F, 0x85, 0x10, 0x00, 0x00, 0x00}));
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0x85, 0, 0, 0, 0});
+    require(longBranched.Trampolines.size() == 1 && longBranched.Trampolines[0].Length == 10 && body(longBranched.Trampolines[0]) == expected && longBranched.Trampolines[0].Relocations.size() == 1 && longBranched.Trampolines[0].Relocations[0].SiteTarget == 10 + 0x10, "A moved conditional branch with a 32-bit displacement does not reach its target");
+
+    const auto entered = convert(withStore({0x48, 0x83, 0xC1, 0x01}, {0xC3, 0xEB, 0xFD}));
+    expected = {0x48, 0x83, 0xC1, 0x01};
+    expected.insert(expected.end(), halves.begin(), halves.end());
+    require(entered.Trampolines.size() == 1 && entered.Trampolines[0].Offset == 0x200 && entered.Trampolines[0].Length == 8 && body(entered.Trampolines[0]) == expected, "A 256-bit store before a branch target did not take room from the instruction before it");
+
+    Bytes adds;
+    for (int index = 0; index < 4; ++index)
+        adds.insert(adds.end(), {0x48, 0x83, 0xC1, 0x01});
+    Bytes after = {0xC3, 0xEB, 0xFD};
+    after.insert(after.end(), adds.begin(), adds.end());
+    const auto island = convert(withStore({0xE8, 0x00, 0x00, 0x00, 0x00}, after));
+    require(island.Trampolines.size() == 2 && island.KeptCount == 0, "A 256-bit store with no movable neighbours was not lowered through an island");
+    const auto& moved = island.Trampolines[0];
+    const auto& lowered = island.Trampolines[1];
+    expected = adds;
+    expected.insert(expected.end(), {0xE9, 0, 0, 0, 0});
+    require(moved.Offset == 0x20C && moved.Length == 8 && body(moved) == expected && moved.Relocations.size() == 1 && moved.Relocations[0].SiteTarget == 16, "The instructions under the island were not moved and continued after it");
+    expected = halves;
+    expected.insert(expected.end(), {0xE9, 0, 0, 0, 0});
+    require(lowered.Offset == 0x214 && lowered.Length == 5 && body(lowered) == expected && lowered.Relocations.size() == 1 && lowered.Relocations[0].SiteTarget == -11, "The island does not store both halves and return after the original store");
+    require(Bytes(island.Bytes.begin() + 0x205, island.Bytes.begin() + 0x209) == Bytes{0xEB, 0x0D, 0xCC, 0xCC}, "The 256-bit store was not replaced by a short jump to its island");
+
+    requireFailure([&] { (void)convert(withStore({0xE8, 0x00, 0x00, 0x00, 0x00}, {0xC3, 0xEB, 0xFD})); }, "A 256-bit store with no room for a stub jump was kept");
+
+    const auto paired = convert(withStore({}, {0xC5, 0xFC, 0x11, 0x0E, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0xC5, 0xF8, 0x11, 0x0E, 0xC4, 0xE3, 0x7D, 0x19, 0x4E, 0x10, 0x01});
+    require(paired.Trampolines.size() == 1 && paired.Trampolines[0].Length == 8 && body(paired.Trampolines[0]) == expected && paired.Reports.size() == 1, "A 256-bit store followed by another was not lowered with it in one stub");
+
+    const auto withRdseed = convert(withStore({}, {0x0F, 0xC7, 0xF8, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0xC7, 0xF0});
+    require(withRdseed.Trampolines.size() == 1 && withRdseed.Trampolines[0].Length == 7 && body(withRdseed.Trampolines[0]) == expected && withRdseed.Reports.size() == 1, "A 256-bit store followed by an in-place site did not move its replacement into the stub");
+
+    const auto withClwb = convert(withStore({}, {0x66, 0x0F, 0xAE, 0x37, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0x0F, 0x1F, 0x40, 0x00});
+    require(withClwb.Trampolines.size() == 1 && withClwb.Trampolines[0].Length == 8 && body(withClwb.Trampolines[0]) == expected, "A 256-bit store followed by CLWB did not move its replacement into the stub");
+
+    const auto withRipStore = convert(withStore({}, {0xF3, 0x0F, 0x2B, 0x05, 0x40, 0x00, 0x00, 0x00, 0xC3}));
+    expected = halves;
+    expected.insert(expected.end(), {0xF3, 0x0F, 0x11, 0x05, 0x00, 0x00, 0x00, 0x00});
+    require(withRipStore.Trampolines.size() == 1 && withRipStore.Trampolines[0].Length == 12 && body(withRipStore.Trampolines[0]) == expected && withRipStore.Trampolines[0].Relocations.size() == 1 && withRipStore.Trampolines[0].Relocations[0].SiteTarget == 0x4C && withRipStore.Trampolines[0].Relocations[0].InstructionEnd == 19, "A 256-bit store followed by a RIP-relative in-place site did not relocate its replacement");
+
+    const Bytes push = {0x48, 0x8D, 0x64, 0x24, 0xF8, 0x50, 0x48, 0x8D, 0x05, 0, 0, 0, 0, 0x48, 0x89, 0x44, 0x24, 0x08, 0x58};
+    const auto ripCalled = convert(withStore({}, {0xFF, 0x15, 0x10, 0x00, 0x00, 0x00}));
+    expected = halves;
+    expected.insert(expected.end(), push.begin(), push.end());
+    expected.insert(expected.end(), {0xFF, 0x25, 0, 0, 0, 0});
+    const auto& ripCall = ripCalled.Trampolines[0];
+    require(ripCalled.Trampolines.size() == 1 && ripCall.Length == 10 && body(ripCall) == expected, "A moved call through a RIP-relative pointer does not push its original return address and jump through the pointer");
+    require(ripCall.Relocations.size() == 2 && ripCall.Relocations[0].SiteTarget == 10 && ripCall.Relocations[1].DisplacementOffset == halves.size() + 21 && ripCall.Relocations[1].SiteTarget == 10 + 0x10, "A moved call through a RIP-relative pointer returns to or reads the wrong address");
+
+    const auto ripJumped = convert(withStore({}, {0xFF, 0x25, 0x10, 0x00, 0x00, 0x00}));
+    expected = halves;
+    expected.insert(expected.end(), {0xFF, 0x25, 0, 0, 0, 0});
+    require(ripJumped.Trampolines.size() == 1 && body(ripJumped.Trampolines[0]) == expected && ripJumped.Trampolines[0].Relocations.size() == 1 && ripJumped.Trampolines[0].Relocations[0].SiteTarget == 10 + 0x10, "A moved jump through a RIP-relative pointer reads the wrong address");
+
+    const auto relaxed = convert(withStore({}, {0x67, 0xE8, 0x10, 0x00, 0x00, 0x00}));
+    expected = halves;
+    expected.insert(expected.end(), push.begin(), push.end());
+    expected.insert(expected.end(), {0xE9, 0, 0, 0, 0});
+    require(relaxed.Trampolines.size() == 1 && relaxed.Trampolines[0].Length == 10 && body(relaxed.Trampolines[0]) == expected && relaxed.Trampolines[0].Relocations.size() == 2 && relaxed.Trampolines[0].Relocations[1].SiteTarget == 10 + 0x10, "A call with an address-size prefix was not moved like a call");
+
+    const Bytes add = {0x48, 0x83, 0xC1, 0x01};
+    for (const auto& follower : {Bytes{0xFF, 0xD0}, Bytes{0xE3, 0x10}, Bytes{0x66, 0x75, 0x10}, Bytes{0x66, 0x0F, 0xAE, 0x37}}) {
+        const auto preceded = convert(withStore(add, follower));
+        expected = add;
+        expected.insert(expected.end(), halves.begin(), halves.end());
+        require(!preceded.Trampolines.empty() && preceded.Trampolines[0].Offset == 0x200 && preceded.Trampolines[0].Length == 8 && body(preceded.Trampolines[0]) == expected, "A 256-bit store moved a following instruction that cannot leave its place instead of the one before it");
+    }
+
+    const Bytes fsRead = {0x66, 0x66, 0x66, 0x64, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};
+    const Bytes gsRead = {0x65, 0x48, 0x8B, 0x04, 0x25, 0x00, 0x00, 0x00, 0x00};
+    for (const auto& segmentRead : {fsRead, gsRead}) {
+        const auto beforeSegment = convert(withStore(add, segmentRead));
+        expected = add;
+        expected.insert(expected.end(), halves.begin(), halves.end());
+        require(beforeSegment.Trampolines.size() == 1 && beforeSegment.Trampolines[0].Offset == 0x200 && beforeSegment.Trampolines[0].Length == 8 && body(beforeSegment.Trampolines[0]) == expected, "A 256-bit store moved a following FS or GS access, which the macOS writer cannot rewrite in a stub, instead of the instruction before it");
+        const auto onlySegment = convert(withStore({}, segmentRead));
+        expected = halves;
+        expected.insert(expected.end(), segmentRead.begin(), segmentRead.end());
+        require(onlySegment.Trampolines.size() == 1 && onlySegment.Trampolines[0].Offset == 0x200 && onlySegment.Trampolines[0].Length == store.size() + segmentRead.size() && body(onlySegment.Trampolines[0]) == expected, "A 256-bit store with no other movable neighbour did not fall back to the following FS or GS access");
+    }
+
+    Bytes throwing = {0xC3, 0xEB, 0xFD};
+    for (int index = 0; index < 3; ++index)
+        throwing.insert(throwing.end(), add.begin(), add.end());
+    throwing.insert(throwing.end(), {0xFF, 0xD0});
+    throwing.insert(throwing.end(), adds.begin(), adds.end());
+    const auto farther = convert(withStore({0xE8, 0x00, 0x00, 0x00, 0x00}, throwing));
+    require(farther.Trampolines.size() == 2 && farther.Trampolines[0].Offset == 0x21A && farther.Trampolines[1].Offset == 0x222, "An island that would move a register call was not passed over for the next one");
+    require(Bytes(farther.Bytes.begin() + 0x205, farther.Bytes.begin() + 0x207) == Bytes{0xEB, 0x1B}, "The 256-bit store does not jump to the island after the register call");
+
+    Bytes reentered = {0xFF, 0xD0, 0xEB, 0xF8};
+    reentered.insert(reentered.end(), adds.begin(), adds.end());
+    const auto beyondStore = convert(withStore(Bytes(adds.begin(), adds.begin() + 8), reentered));
+    require(beyondStore.Trampolines.size() == 2 && beyondStore.Trampolines[0].Offset == 0x210 && beyondStore.Trampolines[1].Offset == 0x218, "An island before a 256-bit store that is a branch target took the store with it");
+    require(Bytes(beyondStore.Bytes.begin() + 0x208, beyondStore.Bytes.begin() + 0x20A) == Bytes{0xEB, 0x0E}, "The 256-bit store that is a branch target does not jump to the island after it");
+
+    const Bytes farCall = {0xE8, 0x40, 0x00, 0x00, 0x00};
+    Bytes claimedFirst = {0xFF, 0xD0};
+    claimedFirst.insert(claimedFirst.end(), adds.begin(), adds.end());
+    const auto afterSequence = convert(withStore({0xC5, 0xF8, 0x53, 0xC1, 0x48, 0x83, 0xC1, 0x01}, claimedFirst));
+    require(afterSequence.Trampolines.size() == 3 && afterSequence.Trampolines[0].Offset == 0x200 && afterSequence.Trampolines[0].Length == 8 && afterSequence.Trampolines[1].Offset == 0x20E && afterSequence.Trampolines[2].Offset == 0x216, "A 256-bit store moved an instruction already moved into the stub of the instruction before it");
+
+    Bytes pendingRun = {0xFF, 0xD0, 0x48, 0x83, 0xC1, 0x01, 0xC5, 0xFC, 0x11, 0x47, 0x10};
+    pendingRun.insert(pendingRun.end(), adds.begin(), adds.end());
+    const auto pendingIsland = convert(withStore(farCall, pendingRun));
+    require(pendingIsland.Trampolines.size() == 3 && pendingIsland.Trampolines[0].Offset == 0x214 && pendingIsland.Trampolines[1].Offset == 0x21C && pendingIsland.Trampolines[2].Offset == 0x20F && pendingIsland.Trampolines[2].Length == 5, "An island moved the call before a 256-bit store or another store that still needs its own stub");
+
+    Bytes enteredRun = {0xFF, 0xD0};
+    for (int index = 0; index < 6; ++index)
+        enteredRun.insert(enteredRun.end(), add.begin(), add.end());
+    enteredRun.insert(enteredRun.end(), {0xEB, 0xEE});
+    const auto enteredIsland = convert(withStore(farCall, enteredRun));
+    require(enteredIsland.Trampolines.size() == 2 && enteredIsland.Trampolines[0].Offset == 0x213 && enteredIsland.Trampolines[1].Offset == 0x21B, "An island was placed over a branch target");
+
+    Bytes returning = {0xFF, 0xD0};
+    for (int index = 0; index < 3; ++index)
+        returning.insert(returning.end(), add.begin(), add.end());
+    returning.push_back(0xC3);
+    const auto returnIsland = convert(withStore(farCall, returning));
+    expected = Bytes(adds.begin(), adds.begin() + 12);
+    expected.push_back(0xC3);
+    require(returnIsland.Trampolines.size() == 2 && returnIsland.Trampolines[0].Offset == 0x20B && body(returnIsland.Trampolines[0]) == expected, "Instructions moved for an island that end in a return jump back after it");
+
+    const auto intoStore = convert(withStore({0x73, 0x01}, {0xC3}));
+    expected = halves;
+    expected.push_back(0xC3);
+    require(intoStore.Trampolines.size() == 1 && intoStore.Trampolines[0].Offset == 0x202 && intoStore.Trampolines[0].Length == 5 && body(intoStore.Trampolines[0]) == expected, "A branch into the middle of a 256-bit store, where no scanned instruction starts, kept the store");
+
+    const auto intoFollower = convert(withStore({0x73, 0x06}, {0x48, 0x83, 0xC1, 0x01, 0xC3}));
+    require(intoFollower.Trampolines.size() == 1 && intoFollower.Trampolines[0].Offset == 0x202 && intoFollower.Trampolines[0].Length == 8, "A branch into the middle of an instruction moved with a 256-bit store kept the store");
+
+    const auto afterBranch = convert(withStore({0x75, 0x10}, {0xFF, 0xD0}));
+    expected = {0x0F, 0x85, 0, 0, 0, 0};
+    expected.insert(expected.end(), halves.begin(), halves.end());
+    require(afterBranch.Trampolines.size() == 1 && afterBranch.Trampolines[0].Offset == 0x200 && afterBranch.Trampolines[0].Length == 6 && body(afterBranch.Trampolines[0]) == expected && afterBranch.Trampolines[0].Relocations[0].SiteTarget == 2 + 0x10, "A 256-bit store after a conditional branch did not take the branch");
+
+    Bytes far = adds;
+    far.resize(8);
+    for (int index = 0; index < 60; ++index)
+        far.insert(far.end(), {0xFF, 0xD0});
+    far.insert(far.end(), adds.begin(), adds.end());
+    for (int index = 0; index < 70; ++index)
+        far.insert(far.end(), {0xFF, 0xD0});
+    Bytes tail;
+    for (int index = 0; index < 11; ++index)
+        tail.insert(tail.end(), {0xFF, 0xD0});
+    tail.insert(tail.end(), {0x90, 0x90});
+    requireFailure([&] { (void)convert(withStore(far, tail)); }, "A 256-bit store whose movable neighbours are all beyond a short jump was kept");
+}
+
+void converterIslandIndirectEntries() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes prologue = {0x55, 0x48, 0x89, 0xE5, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0xC3};
+    for (const auto& padding : {Bytes{0xCC, 0xCC}, Bytes{0x66, 0x90}, Bytes{0x0F, 0x1F, 0x00}, Bytes{}}) {
+        Bytes text = {0xE8, 0x40, 0x00, 0x00, 0x00, 0xC5, 0xFC, 0x11, 0x07, 0xC3, 0xEB, 0xFD};
+        text.insert(text.end(), padding.begin(), padding.end());
+        const auto entry = static_cast<Domain::FileByteOffset>(0x200 + text.size());
+        text.insert(text.end(), prologue.begin(), prologue.end());
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        const auto result = converter->Convert(file, {segmentHeader(text.size())});
+        require(result.Trampolines.size() == 2 && result.KeptCount == 0, "A 256-bit store before a function that only a pointer reaches was not lowered through an island");
+        for (const auto& site : result.Trampolines)
+            require(site.Offset >= entry || site.Offset + site.Length <= entry, "An island covered the entry of a function that follows a jump and its padding");
+        require(result.Trampolines[0].Offset == entry, "An island next to a function that follows a jump and its padding did not start at its entry");
+    }
+}
+
+void converterIslandInTrapPadding() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    Bytes text = {0xE8, 0x40, 0x00, 0x00, 0x00, 0xC5, 0xFC, 0x11, 0x07, 0xC3, 0xEB, 0xFD};
+    const Bytes padding(15, 0xCC);
+    text.insert(text.end(), padding.begin(), padding.end());
+    const auto entry = static_cast<Domain::FileByteOffset>(0x200 + text.size());
+    text.insert(text.end(), {0xE9, 0x00, 0x01, 0x00, 0x00});
+    Bytes file(0x300 + text.size(), 0xCC);
+    std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    const auto result = converter->Convert(file, {segmentHeader(text.size())});
+    require(result.Trampolines.size() == 2 && result.KeptCount == 0, "A 256-bit store before int3 padding and a function that cannot move was not lowered through an island");
+    for (const auto& site : result.Trampolines)
+        require(site.Offset + site.Length <= entry, "An island in the int3 padding after a jump ran into the next function");
+}
+
+void converterClaimedFollower() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    for (const auto& [shortInstruction, name] : {std::pair{Bytes{0x0F, 0x53, 0xCA}, "RCPPS"}, std::pair{Bytes{0xF3, 0x0F, 0xC7, 0xF8}, "RDPID"}}) {
+        Bytes file(0x300, 0xCC);
+        Bytes text = {0x74, 0x06, 0xEB, 0x00, 0xC5, 0xFC, 0x11, 0x07};
+        text.insert(text.end(), shortInstruction.begin(), shortInstruction.end());
+        for (int index = 0; index < 4; ++index)
+            text.insert(text.end(), {0x48, 0x01, 0xC8});
+        text.insert(text.end(), 8, 0x90);
+        text.push_back(0xC3);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        const auto result = converter->Convert(file, {segmentHeader(text.size())});
+        for (std::size_t left = 0; left < result.Trampolines.size(); ++left) {
+            for (std::size_t right = left + 1; right < result.Trampolines.size(); ++right) {
+                const auto& a = result.Trampolines[left];
+                const auto& b = result.Trampolines[right];
+                require(a.Offset + a.Length <= b.Offset || b.Offset + b.Length <= a.Offset, "A short instruction's site overlaps instructions another stub already moved");
+            }
+        }
+        bool kept = false;
+        for (const auto& report : result.Reports)
+            kept = kept || (report.InstructionName == name && report.Lowering == Codegen::Amd64OnlyLowering::Kept);
+        require(result.KeptCount == 1 && kept, "An optional short instruction followed by moved instructions was not kept");
+    }
+}
+
+void converterWideStoreIslandAcrossInt64Max() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    Bytes text = {0xE8, 0x00, 0x00, 0x00, 0x00, 0xC5, 0xFC, 0x11, 0x07, 0xC3, 0xEB, 0xFD};
+    for (int index = 0; index < 4; ++index)
+        text.insert(text.end(), {0x48, 0x83, 0xC1, 0x01});
+    const auto convertAt = [&](const std::uint64_t base) {
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return converter->Convert(file, {{1, 5, 0x200, base, 0, text.size(), text.size(), 16}});
+    };
+    const auto low = convertAt(0x1000);
+    const auto high = convertAt(0x8000000000000000 - 0x10);
+    require(high.Trampolines.size() == 2 && high.KeptCount == 0, "A 256-bit store just below 2^63 was not lowered through an island above it");
+    require(high.Bytes == low.Bytes, "An island across 2^63 changed the segment bytes");
+    for (std::size_t index = 0; index < 2; ++index) {
+        const auto& site = high.Trampolines[index];
+        const auto& reference = low.Trampolines[index];
+        require(site.Offset == reference.Offset && site.Length == reference.Length && site.Body == reference.Body, "An island across 2^63 changed a trampoline");
+        require(site.Relocations.size() == reference.Relocations.size(), "An island across 2^63 changed the number of relocations");
+        for (std::size_t relocation = 0; relocation < site.Relocations.size(); ++relocation)
+            require(site.Relocations[relocation].DisplacementOffset == reference.Relocations[relocation].DisplacementOffset &&
+                    site.Relocations[relocation].SiteTarget == reference.Relocations[relocation].SiteTarget, "An island across 2^63 changed where a stub jumps");
+    }
+    require(Bytes(high.Bytes.begin() + 0x205, high.Bytes.begin() + 0x207) == Bytes{0xEB, 0x0D}, "The short jump to an island across 2^63 has the wrong displacement");
+}
+
+void converterJumpTableTargets() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes leaTable = {0x48, 0x8D, 0x0D, 0xF9, 0x1F, 0x00, 0x00};
+    const Bytes dispatch = {0x48, 0x63, 0x04, 0x81, 0x48, 0x01, 0xC8, 0xFF, 0xE0, 0x48, 0x83, 0xC1, 0x01, 0xC5, 0xFC, 0x11, 0x07, 0x48, 0x83, 0xC2, 0x01, 0xC3};
+    const Bytes store = {0xC5, 0xFC, 0x11, 0x07};
+    const Domain::ProgramHeader code{1, 5, 0x200, 0x1000, 0, 29, 29, 16};
+    const Domain::ProgramHeader data{1, 4, 0x300, 0x3000, 0, 0x40, 0x40, 16};
+    const auto table = [](const std::uint64_t base, const std::vector<std::uint64_t>& targets) {
+        Bytes bytes;
+        for (const auto target : targets) {
+            const auto relative = static_cast<std::uint32_t>(target - base);
+            for (std::size_t byte = 0; byte < 4; ++byte)
+                bytes.push_back(static_cast<std::uint8_t>(relative >> (byte * 8)));
+        }
+        return bytes;
+    };
+    const auto convert = [&](const Bytes& first, const std::vector<std::pair<std::size_t, Bytes>>& placed, const std::vector<Domain::ProgramHeader>& headers) {
+        Bytes file(0x400, 0xCC);
+        std::copy(first.begin(), first.end(), file.begin() + 0x200);
+        std::copy(dispatch.begin(), dispatch.end(), file.begin() + 0x207);
+        for (const auto& [offset, bytes] : placed)
+            std::copy(bytes.begin(), bytes.end(), file.begin() + static_cast<std::ptrdiff_t>(offset));
+        return converter->Convert(file, headers);
+    };
+    const auto placedAt = [](const Codegen::ConvertResult& result, const Domain::FileByteOffset offset) {
+        return result.Trampolines.size() == 1 && result.Trampolines[0].Offset == offset && result.Trampolines[0].Length == 8;
+    };
+
+    require(placedAt(convert(leaTable, {{0x300, table(0x3000, {0x1010, 0x1018})}, {0x330, store}}, {code, data}), 0x210), "A 256-bit store moved the instruction after it although a jump table enters that instruction");
+    require(placedAt(convert(leaTable, {{0x300, table(0x3000, {0x1010, 0x1019, 0x1018})}}, {code, data}), 0x214), "A jump table was read past an entry that does not start an instruction");
+    require(placedAt(convert({0x48, 0x8B, 0x0D, 0xF9, 0x1F, 0x00, 0x00}, {{0x300, table(0x3000, {0x1010, 0x1018})}}, {code, data}), 0x214), "A jump table was read at an address loaded rather than formed by LEA");
+    require(placedAt(convert({0x48, 0x8D, 0x0D, 0xF7, 0x1F, 0x00, 0x00}, {{0x2FE, table(0x2FFE, {0x1018})}}, {code, data}), 0x214), "A jump table was read at an address outside every segment");
+    require(placedAt(convert(leaTable, {{0x300, table(0x3000, {0x1010})}, {0x380, table(0x3000, {0x1018})}}, {code, data, {0x61000000, 4, 0x380, 0x3000, 0, 0x10, 0x10, 16}}), 0x214), "A jump table was read from a segment that is not loaded");
+    require(placedAt(convert(leaTable, {{0x300, table(0x3000, {0x1010, 0x1018})}, {0x3A0, store}}, {code, data, {2, 5, 0x3A0, 0x2000, 0, 4, 4, 16}}), 0x210), "A segment that is not loaded was converted");
+    requireFailure([&] { (void)convert(leaTable, {{0x300, table(0x3000, {0x1010, 0x1018})}}, {code, {1, 4, 0x300, 0x3000, 0, 0x1000, 0x1000, 16}}); }, "A jump table was read from a segment that exceeds the file");
 }
 
 void converterRosetta() {
@@ -697,6 +1220,108 @@ void converterRosetta() {
     require(kept.KeptCount == 1 && kept.Trampolines.empty() && kept.ReplacedCount == 2, "RDPID without room for a jump was not kept");
     const auto intel = Codegen::MakeAmd64OnlyConverter()->Convert(file, {segmentHeader(text.size())});
     require(intel.Reports.empty() && intel.Bytes == file, "The Intel target converted RDSEED, RDPID or CLWB");
+}
+
+void rosettaScalarCompares() {
+    const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const auto match = [&](const Bytes& bytes) { return rosetta->Match(bytes.data(), bytes.size()); };
+    const Bytes compare = {0xC5, 0xEA, 0xC2, 0xCA, 0x03};
+    const auto lowered = match(compare);
+    require(lowered && lowered->Lowering == Codegen::Amd64OnlyLowering::Trampoline && lowered->Optional && !lowered->RelocatableWindow && lowered->InstructionName == "scalar compare", "A Rosetta-hazard scalar compare was not lowered through an optional stub");
+    require(lowered->ReturnBranchOffset == 5 && lowered->StubBody.size() == 10 && Bytes(lowered->StubBody.begin(), lowered->StubBody.begin() + 5) == compare && lowered->StubBody[5] == 0xE9 && lowered->Relocations.empty(), "The scalar compare stub does not run the compare unchanged before its return jump");
+    const auto unaligned = match(Bytes{0xC5, 0xEA, 0xC2, 0x47, 0x68, 0x03});
+    require(unaligned && Bytes(unaligned->StubBody.begin(), unaligned->StubBody.begin() + 6) == Bytes{0xC5, 0xEA, 0xC2, 0x47, 0x68, 0x03} && unaligned->Relocations.empty(), "A memory-form scalar compare does not move unchanged");
+    const Bytes rip = {0xC5, 0xEA, 0xC2, 0x0D, 0x00, 0x01, 0x00, 0x00, 0x03};
+    const auto ripLowered = match(rip);
+    require(ripLowered && ripLowered->Relocations.size() == 1 && ripLowered->Relocations[0].DisplacementOffset == 4 && ripLowered->Relocations[0].InstructionEnd == 9 && ripLowered->Relocations[0].SiteTarget == 9 + 0x100, "A RIP-relative scalar compare was not relocated from its place in the site");
+    require(Bytes(ripLowered->StubBody.begin() + 4, ripLowered->StubBody.begin() + 8) == Bytes(4, 0), "The RIP-relative scalar compare keeps its displacement in the stub");
+    const auto vex3 = match(Bytes{0xC4, 0xE1, 0xEB, 0xC2, 0xCB, 0x03});
+    require(vex3 && Bytes(vex3->StubBody.begin(), vex3->StubBody.begin() + 6) == Bytes{0xC4, 0xE1, 0xEB, 0xC2, 0xCB, 0x03}, "A VEX3 VCMPSD with a hazard predicate does not move unchanged");
+    for (const Bytes& kept : {Bytes{0xC5, 0xEA, 0xC2, 0xCA, 0x00}, Bytes{0xC5, 0xEA, 0xC2, 0xCA, 0x01}, Bytes{0xC5, 0xEA, 0xC2, 0xCA, 0x02}, Bytes{0xC4, 0xE1, 0xEB, 0xC2, 0xCB, 0x01}})
+        require(!match(kept).has_value(), "An EQ_OQ, LT_OS or LE_OS scalar compare must stay inline");
+    for (const Bytes& other : {Bytes{0xC5, 0xE9, 0xC2, 0xCA, 0x03}, Bytes{0xC5, 0xE8, 0xC2, 0xCA, 0x03}, Bytes{0xC5, 0xEA, 0x2E, 0xC8}, Bytes{0xC5, 0xEA, 0xC2, 0xCA}, Bytes{0xC4, 0xE2, 0xEB, 0xC2, 0xCB, 0x03}, Bytes{0x62, 0xD1, 0x76, 0x08, 0xC2, 0xCB, 0x03}})
+        require(!match(other).has_value(), "An instruction other than a Rosetta-hazard scalar compare was moved");
+    require(!Codegen::MakeAmd64OnlyInstructionMatcher()->Match(compare.data(), compare.size()).has_value(), "A scalar compare was moved for an Intel host");
+    const std::vector<std::span<const std::uint8_t>> pair = {std::span<const std::uint8_t>(compare), std::span<const std::uint8_t>(rip)};
+    const auto sequence = rosetta->MatchSequence(pair, {});
+    require(sequence && sequence->InstructionName == "scalar compare" && sequence->ReturnBranchOffset == 14 && sequence->Relocations.size() == 1 && sequence->Relocations[0].SiteTarget == 5 + 9 + 0x100, "A scalar compare after another is not emitted out of line in one stub");
+}
+
+void rosettaLegacyScalarCompares() {
+    const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const auto match = [&](const Bytes& bytes) { return rosetta->Match(bytes.data(), bytes.size()); };
+    for (const Bytes& moved : {Bytes{0xF3, 0x0F, 0xC2, 0xCA, 0x03}, Bytes{0xF2, 0x0F, 0xC2, 0xCA, 0x04}, Bytes{0xF2, 0x41, 0x0F, 0xC2, 0xC9, 0x05},
+                               Bytes{0x64, 0xF3, 0x0F, 0xC2, 0x4F, 0x68, 0x06}, Bytes{0xF3, 0x2E, 0x0F, 0xC2, 0x44, 0x24, 0x08, 0x07}, Bytes{0xF3, 0x0F, 0xC2, 0xCA, 0x08}}) {
+        const auto lowered = match(moved);
+        require(lowered && lowered->Lowering == Codegen::Amd64OnlyLowering::Trampoline && lowered->Optional && lowered->InstructionName == "scalar compare", "A legacy Rosetta-hazard scalar compare was not lowered through an optional stub");
+        require(lowered->ReturnBranchOffset == moved.size() && lowered->StubBody.size() == moved.size() + 5 && Bytes(lowered->StubBody.begin(), lowered->StubBody.begin() + static_cast<std::ptrdiff_t>(moved.size())) == moved && lowered->StubBody[moved.size()] == 0xE9 && lowered->Relocations.empty(), "A legacy scalar compare does not run unchanged before its return jump");
+    }
+    const auto rip = match(Bytes{0xF3, 0x0F, 0xC2, 0x0D, 0x00, 0x01, 0x00, 0x00, 0x06});
+    require(rip && rip->Relocations.size() == 1 && rip->Relocations[0].DisplacementOffset == 4 && rip->Relocations[0].InstructionEnd == 9 && rip->Relocations[0].SiteTarget == 9 + 0x100, "A RIP-relative legacy CMPSS was not relocated from its place in the site");
+    const auto ripRex = match(Bytes{0xF2, 0x48, 0x0F, 0xC2, 0x05, 0x00, 0x01, 0x00, 0x00, 0x07});
+    require(ripRex && ripRex->Relocations.size() == 1 && ripRex->Relocations[0].DisplacementOffset == 5 && ripRex->Relocations[0].InstructionEnd == 10 && ripRex->Relocations[0].SiteTarget == 10 + 0x100, "A RIP-relative legacy CMPSD with REX was not relocated");
+    for (const Bytes& kept : {Bytes{0xF3, 0x0F, 0xC2, 0xCA, 0x00}, Bytes{0xF3, 0x0F, 0xC2, 0xCA, 0x01}, Bytes{0xF2, 0x0F, 0xC2, 0xCA, 0x02}})
+        require(!match(kept).has_value(), "A legacy EQ_OQ, LT_OS or LE_OS scalar compare must stay inline");
+    for (const Bytes& other : {Bytes{0x0F, 0xC2, 0xCA, 0x03}, Bytes{0x66, 0x0F, 0xC2, 0xCA, 0x03}, Bytes{0x66, 0xF3, 0x0F, 0xC2, 0xCA, 0x03}, Bytes{0xF2, 0xF3, 0x0F, 0xC2, 0xCA, 0x03},
+                               Bytes{0x67, 0xF3, 0x0F, 0xC2, 0x0D, 0x00, 0x01, 0x00, 0x00, 0x03}, Bytes{0xF0, 0xF3, 0x0F, 0xC2, 0xCA, 0x03}, Bytes{0x48, 0xF3, 0x0F, 0xC2, 0xCA, 0x03},
+                               Bytes{0xF3, 0x0F, 0xC2, 0xCA}, Bytes{0xF3, 0x0F, 0xC3, 0xCA, 0x03}, Bytes{0xF3, 0x0F, 0x10, 0xCA}})
+        require(!match(other).has_value(), "An instruction other than a legacy Rosetta-hazard scalar compare was moved");
+    const Bytes compare = {0xF3, 0x0F, 0xC2, 0xCA, 0x03};
+    require(!Codegen::MakeAmd64OnlyInstructionMatcher()->Match(compare.data(), compare.size()).has_value(), "A legacy scalar compare was moved for an Intel host");
+}
+
+void converterRosettaLegacyScalarCompare() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    Bytes file(0x300, 0xCC);
+    const Bytes text = {
+        0xF3, 0x0F, 0x10, 0x15, 0x10, 0x00, 0x00, 0x00,
+        0x0F, 0x28, 0xC2,
+        0xF3, 0x0F, 0xC2, 0xCA, 0x03,
+        0xC5, 0xF8, 0x28, 0x0D, 0x20, 0x00, 0x00, 0x00,
+        0xC5, 0xF8, 0x2E, 0xC8,
+        0xC3};
+    std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    const auto result = converter->Convert(file, {segmentHeader(text.size())});
+    require(result.Trampolines.size() == 1 && result.Reports.size() == 1 && result.Reports[0].InstructionName == "scalar compare" && result.Reports[0].Offset == 0x20B && result.Reports[0].Lowering == Codegen::Amd64OnlyLowering::Trampoline, "The legacy compare in the fmax shape was not the only moved instruction");
+    const auto& site = result.Trampolines[0];
+    require(site.Offset == 0x20B && site.Length == 5 && Bytes(site.Body.begin(), site.Body.begin() + 5) == Bytes(text.begin() + 11, text.begin() + 16) && site.Relocations.empty(), "The legacy compare stub does not run the compare unchanged");
+    const auto intel = Codegen::MakeAmd64OnlyConverter()->Convert(file, {segmentHeader(text.size())});
+    require(intel.Reports.empty() && intel.Bytes == file, "The Intel target moved a legacy scalar compare");
+}
+
+void converterRosettaScalarCompare() {
+    const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
+    Bytes file(0x300, 0xCC);
+    const Bytes text = {
+        0xC5, 0xFA, 0x10, 0x15, 0x10, 0x00, 0x00, 0x00,
+        0xC5, 0xF8, 0x28, 0xC2,
+        0xC5, 0xEA, 0xC2, 0xCA, 0x03,
+        0xC5, 0xF8, 0x28, 0x0D, 0x20, 0x00, 0x00, 0x00,
+        0xC5, 0xF8, 0x2E, 0xC8,
+        0xC3};
+    std::copy(text.begin(), text.end(), file.begin() + 0x200);
+    const auto result = converter->Convert(file, {segmentHeader(text.size())});
+    require(result.ReplacedCount == 0 && result.KeptCount == 0 && result.Trampolines.size() == 1 && result.Reports.size() == 1 && result.Reports[0].InstructionName == "scalar compare" && result.Reports[0].Offset == 0x20C && result.Reports[0].Lowering == Codegen::Amd64OnlyLowering::Trampoline, "The Rosetta-hazard compare in the fmax shape was not the only moved instruction");
+    const auto& site = result.Trampolines[0];
+    require(site.Offset == 0x20C && site.Length == 5 && site.ReturnBranchOffset == 5 && Bytes(site.Body.begin(), site.Body.begin() + 5) == Bytes(text.begin() + 12, text.begin() + 17) && Bytes(site.Body.begin() + 5, site.Body.begin() + 10) == Bytes{0xE9, 0, 0, 0, 0} && site.Relocations.empty(), "The compare stub does not run the compare unchanged and return");
+    require(result.Bytes == file, "Moving the compare changed the file image");
+    auto branchInside = file;
+    const Bytes jumped = {0xEB, 0x01, 0xF3, 0x0F, 0xC2, 0xCA, 0x03, 0xC3};
+    std::copy(jumped.begin(), jumped.end(), branchInside.begin() + 0x200);
+    const auto kept = converter->Convert(branchInside, {segmentHeader(jumped.size())});
+    require(kept.Trampolines.empty() && kept.KeptCount == 1 && kept.Reports.size() == 1 && kept.Reports[0].Lowering == Codegen::Amd64OnlyLowering::Kept && kept.Bytes == branchInside, "A branch past the prefix of the compare did not keep it native");
+    auto branchIntoVex = file;
+    const Bytes vexJumped = {0xEB, 0x02, 0xC5, 0xEA, 0xC2, 0xCA, 0x03, 0xC3};
+    std::copy(vexJumped.begin(), vexJumped.end(), branchIntoVex.begin() + 0x200);
+    const auto moved = converter->Convert(branchIntoVex, {segmentHeader(vexJumped.size())});
+    require(moved.Trampolines.size() == 1 && moved.Trampolines[0].Offset == 0x202 && moved.KeptCount == 0, "A branch past the VEX prefix of the compare, where no instruction starts, kept the compare native");
+    auto ripSource = file;
+    const Bytes ripText = {0xC5, 0xEA, 0xC2, 0x0D, 0x00, 0x01, 0x00, 0x00, 0x03, 0xC3};
+    std::copy(ripText.begin(), ripText.end(), ripSource.begin() + 0x200);
+    const auto ripMoved = converter->Convert(ripSource, {segmentHeader(ripText.size())});
+    require(ripMoved.Trampolines.size() == 1 && ripMoved.Trampolines[0].Relocations.size() == 1 && ripMoved.Trampolines[0].Relocations[0].SiteTarget == 9 + 0x100, "A RIP-relative compare source was not relocated");
+    const auto intel = Codegen::MakeAmd64OnlyConverter()->Convert(file, {segmentHeader(text.size())});
+    require(intel.Reports.empty() && intel.Bytes == file, "The Intel target moved a scalar compare");
 }
 
 void reciprocalOperands() {
@@ -776,7 +1401,7 @@ void converterReciprocal() {
 void converterStrayRex() {
     const auto converter = Codegen::MakeAmd64OnlyConverter();
     const auto convert = [&](const Bytes& text) {
-        Bytes file(0x300, 0xCC);
+        Bytes file(0x300 + text.size(), 0xCC);
         std::copy(text.begin(), text.end(), file.begin() + 0x200);
         return std::pair{file, converter->Convert(file, {segmentHeader(text.size())})};
     };
@@ -833,10 +1458,10 @@ void converterFailureOffsets() {
     auto movntsRegister = file;
     movntsRegister[0x212] = 0xC1;
     require(failureOffset([&] { (void)converter->Convert(movntsRegister, {segmentHeader(20)}); }, "MOVNTSS register form was accepted") == 0x20F, "MOVNTSS failure does not carry the file offset");
-    auto rdpru = file;
-    const Bytes rdpruBytes = {0x0F, 0x01, 0xFD, 0x90};
-    std::copy(rdpruBytes.begin(), rdpruBytes.end(), rdpru.begin() + 0x20F);
-    require(failureOffset([&] { (void)converter->Convert(rdpru, {segmentHeader(20)}); }, "RDPRU was accepted") == 0x20F, "Unsupported instruction failure does not carry the file offset");
+    auto lockedWait = file;
+    const Bytes lockedWaitBytes = {0xF0, 0x0F, 0x01, 0xFB};
+    std::copy(lockedWaitBytes.begin(), lockedWaitBytes.end(), lockedWait.begin() + 0x20F);
+    require(failureOffset([&] { (void)converter->Convert(lockedWait, {segmentHeader(20)}); }, "LOCK MWAITX was accepted") == 0x20F, "Unsupported instruction failure does not carry the file offset");
 }
 
 Bytes elfFixture(const Bytes& text) {
@@ -887,9 +1512,10 @@ Elfpatcher::Linux::LinuxElfPatcher linuxPatcher() {
 }
 
 std::uint64_t executableFileOffset(const Bytes& output, const std::uint64_t address) {
+    const auto phOff = read<std::uint64_t>(output, 32);
     const auto phNum = read<std::uint16_t>(output, 56);
     for (std::uint16_t index = 0; index < phNum; ++index) {
-        const auto header = 64 + index * 56;
+        const auto header = phOff + index * 56;
         if (read<std::uint32_t>(output, header) != 1) continue;
         const auto vaddr = read<std::uint64_t>(output, header + 16);
         const auto memSize = read<std::uint64_t>(output, header + 40);
@@ -937,9 +1563,61 @@ void linuxRipRelativePlacement() {
     require(operand == 0x2040, "Relocated RIP-relative operand does not reach the original address");
 }
 
+std::vector<std::array<std::uint64_t, 8>> stackHeaders(const Bytes& output) {
+    const auto phOff = read<std::uint64_t>(output, 32);
+    const auto phNum = read<std::uint16_t>(output, 56);
+    std::vector<std::array<std::uint64_t, 8>> found;
+    for (std::uint16_t index = 0; index < phNum; ++index) {
+        const auto header = static_cast<std::size_t>(phOff) + index * 56;
+        if (read<std::uint32_t>(output, header) != Elfpatcher::PT_GNU_STACK) continue;
+        found.push_back({read<std::uint32_t>(output, header), read<std::uint32_t>(output, header + 4),
+            read<std::uint64_t>(output, header + 8), read<std::uint64_t>(output, header + 16),
+            read<std::uint64_t>(output, header + 24), read<std::uint64_t>(output, header + 32),
+            read<std::uint64_t>(output, header + 40), read<std::uint64_t>(output, header + 48)});
+    }
+    return found;
 }
 
-#if defined(__linux__) && defined(__x86_64__)
+void linuxStackSynthesis() {
+    const auto patchOutput = [](std::uint16_t slots, std::vector<Domain::ProgramHeader> headers) {
+        auto elf = elfFixture({0xC3});
+        write<std::uint16_t>(elf, 56, slots);
+        auto patcher = linuxPatcher();
+        return patcher.Patch(std::move(elf), std::move(headers), {}, 0, "$ORIGIN/libs", true, false, {});
+    };
+    const Domain::ProgramHeader inputStack{Elfpatcher::PT_GNU_STACK, 6, 0, 0, 0, 0, 0x20000, 16};
+    const std::vector<std::array<std::uint64_t, 8>> synthetic = {{Elfpatcher::PT_GNU_STACK, 6, 0, 0, 0, 0, 0, 16}};
+    const std::vector<std::array<std::uint64_t, 8>> preserved = {{Elfpatcher::PT_GNU_STACK, 6, 0, 0, 0, 0, 0x20000, 16}};
+
+    const auto exactFit = patchOutput(7, elfHeaders());
+    require(read<std::uint64_t>(exactFit, 32) >= 0x400, "a full input table must move to make room for the synthetic stack");
+    require(read<std::uint16_t>(exactFit, 56) == 8, "the output must use the reserved synthetic stack slot");
+    require(stackHeaders(exactFit) == synthetic, "the synthetic stack must be PT_GNU_STACK with PF_R|PF_W and alignment 16");
+
+    const auto spareSlot = patchOutput(8, elfHeaders());
+    require(read<std::uint64_t>(spareSlot, 32) == 64, "the required count must not move a table that has a free slot");
+    require(read<std::uint16_t>(spareSlot, 56) == 8, "the free slot must be filled by the synthetic stack");
+    require(stackHeaders(spareSlot) == synthetic, "the synthetic stack must be PT_GNU_STACK with PF_R|PF_W and alignment 16");
+
+    const auto roomyTable = patchOutput(9, elfHeaders());
+    require(read<std::uint64_t>(roomyTable, 32) == 64, "the required count must not move a table with spare slots");
+    require(read<std::uint16_t>(roomyTable, 56) == 8, "the output count must match the required count");
+    require(stackHeaders(roomyTable) == synthetic, "the synthetic stack must be PT_GNU_STACK with PF_R|PF_W and alignment 16");
+
+    const auto keptStackExact = patchOutput(8, {elfHeaders()[0], elfHeaders()[1], inputStack});
+    require(read<std::uint64_t>(keptStackExact, 32) == 64, "an input stack must not over-reserve a header slot");
+    require(read<std::uint16_t>(keptStackExact, 56) == 8, "an input stack must not grow the output count");
+    require(stackHeaders(keptStackExact) == preserved, "a kept PT_GNU_STACK must stay unchanged");
+
+    const auto keptStackShort = patchOutput(7, {elfHeaders()[0], elfHeaders()[1], inputStack});
+    require(read<std::uint64_t>(keptStackShort, 32) >= 0x400, "a full input table must move when the kept stack does not fit");
+    require(read<std::uint16_t>(keptStackShort, 56) == 8, "the moved table must carry the kept stack");
+    require(stackHeaders(keptStackShort) == preserved, "a kept PT_GNU_STACK must stay unchanged");
+}
+
+}
+
+#if (defined(__linux__) || defined(__APPLE__)) && defined(__x86_64__)
 std::uint64_t extrqReference(std::uint64_t value, std::uint64_t control) {
     const auto length = static_cast<unsigned>(control & 0x3f);
     const auto index = static_cast<unsigned>((control >> 8) & 0x3f);
@@ -1317,7 +1995,13 @@ void sha1Execution() {
                 else
                     require(run.Xmm[reg][0] == xmmIn[reg][0] && run.Xmm[reg][1] == xmmIn[reg][1], "SHA-1 stub clobbered an xmm register");
             }
-            require(run.Rax == rax && run.Rcx == 0x1122334455667788ull && (run.Flags & 0x8D5) == (0x8D7 & 0x8D5), "SHA-1 stub changed a general register or RFLAGS");
+            if (run.Rax != rax || run.Rcx != 0x1122334455667788ull || (run.Flags & 0x8D5) != (0x8D7 & 0x8D5)) {
+                std::cerr << "SHA-1 sample=" << sample << " site=" << std::hex;
+                for (const auto byte : site)
+                    std::cerr << static_cast<unsigned>(byte) << ' ';
+                std::cerr << "rax=" << run.Rax << " expected=" << rax << " rcx=" << run.Rcx << " flags=" << run.Flags << std::dec << '\n';
+                throw std::runtime_error("SHA-1 stub changed a general register or RFLAGS");
+            }
         }
     }
 }
@@ -1372,6 +2056,289 @@ void ripRelativeExecution() {
     require(movedRun.Rax == movedRun.SiteAddress + 4096 + 0x30, "Moved RIP-relative LEA did not compute the original address");
     unchanged(movedRun, (1u << 1) | (1u << 3), "Stub with moved RIP-relative instructions clobbered a register or RFLAGS");
 }
+
+void rdpruExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const Bytes site = {0x0F, 0x01, 0xFD};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "RDPRU stub was not produced");
+    auto body = match->StubBody;
+    const auto ret = body.size();
+    body.push_back(0xC3);
+    const auto displacement = static_cast<std::int32_t>(ret - (match->ReturnBranchOffset + 5));
+    std::memcpy(body.data() + match->ReturnBranchOffset + 1, &displacement, sizeof(displacement));
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the RDPRU stub");
+    std::memcpy(code, body.data(), body.size());
+    for (const std::uint32_t selector : {0u, 1u, 2u, 0xFFFFFFFFu}) {
+        std::uint64_t raxOut = 0;
+        std::uint64_t rdxOut = 0;
+        std::uint64_t rcxOut = 0;
+        std::uint64_t flagsOut = 0;
+        std::uint64_t canaryOut = 0;
+        asm volatile(
+            "sub $128, %%rsp\n\t"
+            "movabs $0xA5A5A5A5A5A5A5A5, %%rax\n\t"
+            "lea -136(%%rsp), %%rdi\n\t"
+            "mov $16, %%ecx\n\t"
+            "rep stosq\n\t"
+            "movl %[selector], %%ecx\n\t"
+            "pushq $0x8D7\n\t"
+            "popfq\n\t"
+            "call *%[code]\n\t"
+            "mov %%rax, %[rax]\n\t"
+            "mov %%rdx, %[rdx]\n\t"
+            "mov %%rcx, %[rcx]\n\t"
+            "pushfq\n\t"
+            "popq %[flags]\n\t"
+            "xor %%r8, %%r8\n\t"
+            "lea -136(%%rsp), %%rsi\n\t"
+            "mov $16, %%ecx\n\t"
+            "1:\n\t"
+            "xor (%%rsi), %%r8\n\t"
+            "add $8, %%rsi\n\t"
+            "dec %%ecx\n\t"
+            "jnz 1b\n\t"
+            "mov %%r8, %[canary]\n\t"
+            "add $128, %%rsp\n\t"
+            : [rax] "=r"(raxOut), [rdx] "=r"(rdxOut), [rcx] "=r"(rcxOut), [flags] "=r"(flagsOut), [canary] "=r"(canaryOut)
+            : [selector] "r"(selector), [code] "r"(code)
+            : "rax", "rcx", "rdx", "rsi", "rdi", "r8", "memory", "cc");
+        require(canaryOut == 0, "RDPRU stub clobbered the red zone");
+        require(rcxOut == selector, "RDPRU stub changed ecx");
+        require((flagsOut & 0x8D5) == (0x8D7 & 0x8D5), "RDPRU stub changed RFLAGS");
+        if (selector <= 1)
+            require((raxOut | rdxOut) != 0, "RDPRU MPERF/APERF selector did not yield the TSC approximation");
+        else
+            require(raxOut == 0 && rdxOut == 0, "RDPRU with an undefined selector did not yield zero");
+    }
+    munmap(code, 4096);
+}
+
+void mcommitExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher();
+    const Bytes site = {0xF3, 0x0F, 0x01, 0xFA};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "MCOMMIT lowering was not produced");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the MCOMMIT lowering");
+    std::memcpy(code, body.data(), body.size());
+    for (const std::uint64_t flagsIn : {std::uint64_t{0x8D6}, std::uint64_t{0x8D7}}) {
+        std::uint64_t flagsOut = 0;
+        asm volatile(
+            "mov %[in], %%rax\n\t"
+            "pushq %%rax\n\t"
+            "popfq\n\t"
+            "call *%[code]\n\t"
+            "pushfq\n\t"
+            "popq %[out]\n\t"
+            : [out] "=r"(flagsOut)
+            : [in] "r"(flagsIn), [code] "r"(code)
+            : "rax", "memory", "cc");
+        require((flagsOut & 1) == 1, "MCOMMIT lowering did not report committed");
+        require((flagsOut & 0x8D4) == (flagsIn & 0x8D4), "MCOMMIT lowering changed flags other than CF");
+    }
+    munmap(code, 4096);
+}
+
+void wideStoreExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0xC5, 0xFC, 0x11, 0x00};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "256-bit store stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    alignas(32) std::uint8_t source[32];
+    for (std::size_t index = 0; index < sizeof(source); ++index) source[index] = static_cast<std::uint8_t>(index + 1);
+    auto* pages = static_cast<std::uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    require(pages != MAP_FAILED, "cannot map the destination pages");
+    for (const std::size_t offset : {std::size_t{0}, std::size_t{1}, std::size_t{4080}}) {
+        std::memset(pages, 0, 8192);
+        auto* destination = pages + offset;
+        asm volatile(
+            "vmovups (%[source]), %%ymm0\n\t"
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "add $128, %%rsp\n\t"
+            :
+            : [source] "r"(source), [code] "r"(code), "a"(destination)
+            : "memory", "ymm0");
+        require(std::memcmp(destination, source, sizeof(source)) == 0, "256-bit store stub did not write both halves");
+        require(std::all_of(pages, destination, [](const std::uint8_t value) { return value == 0; }), "256-bit store stub wrote before its operand");
+        require(std::all_of(destination + sizeof(source), pages + 8192, [](const std::uint8_t value) { return value == 0; }),
+                "256-bit store stub wrote past its operand");
+    }
+    munmap(pages, 8192);
+    munmap(code, 4096);
+}
+
+void xsaveoptExecution() {
+    const Bytes site = {0x48, 0x0F, 0xAE, 0x37};
+    const auto match = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta)->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "XSAVEOPT64 was not rewritten in place");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the XSAVEOPT replacement");
+    std::memcpy(code, body.data(), body.size());
+    alignas(64) std::uint8_t area[1024] = {};
+    alignas(32) std::uint8_t pattern[32];
+    alignas(32) std::uint8_t restored[32] = {};
+    for (std::size_t i = 0; i < sizeof(pattern); ++i)
+        pattern[i] = static_cast<std::uint8_t>(0xA0 + i);
+    asm volatile(
+        "vmovdqu (%[pattern]), %%ymm3\n\t"
+        "mov %[area], %%rdi\n\t"
+        "mov $7, %%eax\n\t"
+        "xor %%edx, %%edx\n\t"
+        "sub $128, %%rsp\n\t"
+        "call *%[code]\n\t"
+        "add $128, %%rsp\n\t"
+        "vpxor %%ymm3, %%ymm3, %%ymm3\n\t"
+        "mov $7, %%eax\n\t"
+        "xor %%edx, %%edx\n\t"
+        "xrstor64 (%%rdi)\n\t"
+        "vmovdqu %%ymm3, (%[restored])\n\t"
+        "vzeroupper\n\t"
+        :
+        : [pattern] "r"(pattern), [area] "r"(area), [code] "r"(code), [restored] "r"(restored)
+        : "rax", "rdx", "rdi", "xmm3", "memory");
+    munmap(code, 4096);
+    std::uint64_t components = 0;
+    std::memcpy(&components, area + 512, sizeof(components));
+    require((components & 6) == 6, "XSAVE did not mark the SSE and AVX state as saved");
+    require(std::memcmp(area + 160 + 3 * 16, pattern, 16) == 0 && std::memcmp(area + 576 + 3 * 16, pattern + 16, 16) == 0, "XSAVE did not store YMM3 in the standard format");
+    require(std::memcmp(restored, pattern, sizeof(pattern)) == 0, "XRSTOR did not restore YMM3 from the area XSAVE wrote");
+}
+
+void scalarCompareExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0xF3, 0x0F, 0xC2, 0xC1, 0x05};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "scalar compare stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    struct Case {
+        float left;
+        float right;
+        std::uint32_t mask;
+        const char* name;
+    };
+    for (const auto& item : std::vector<Case>{{309.0f, 309.0f, 0xFFFFFFFFu, "309 is not less than 309"},
+                                              {309.0f, 310.0f, 0u, "309 is less than 310"}}) {
+        alignas(16) float left[4] = {item.left, 1.0f, 2.0f, 3.0f};
+        alignas(16) float right[4] = {item.right, 0.0f, 0.0f, 0.0f};
+        alignas(16) std::uint32_t result[4] = {};
+        asm volatile(
+            "movaps (%[left]), %%xmm0\n\t"
+            "movaps (%[right]), %%xmm1\n\t"
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "add $128, %%rsp\n\t"
+            "movaps %%xmm0, (%[result])\n\t"
+            :
+            : [left] "r"(left), [right] "r"(right), [result] "r"(result), [code] "r"(code)
+            : "memory", "xmm0", "xmm1");
+        require(result[0] == item.mask, item.name);
+        require(result[1] == std::bit_cast<std::uint32_t>(1.0f) && result[2] == std::bit_cast<std::uint32_t>(2.0f)
+                    && result[3] == std::bit_cast<std::uint32_t>(3.0f),
+                "scalar compare stub changed the upper lanes of its destination");
+    }
+    munmap(code, 4096);
+}
+
+void rdpidExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0xF3, 0x0F, 0xC7, 0xF8};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "RDPID stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    std::uint64_t processor = ~std::uint64_t{0};
+    std::uint8_t carry = 0;
+    asm volatile(
+        "sub $128, %%rsp\n\t"
+        "stc\n\t"
+        "call *%[code]\n\t"
+        "setc %[carry]\n\t"
+        "add $128, %%rsp\n\t"
+        : "=&a"(processor), [carry] "=&q"(carry)
+        : [code] "r"(code)
+        : "memory", "cc");
+    munmap(code, 4096);
+    require(processor == 0, "RDPID stub left a value other than processor 0 in RAX");
+    require(carry == 1, "RDPID stub changed the flags");
+}
+
+void rdseedExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0x0F, 0xC7, 0xF8};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "RDSEED replacement was not produced");
+    require(match->ReplacementBytes.size() == site.size(), "RDSEED replacement changed the instruction length");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the replacement");
+    std::memcpy(code, body.data(), body.size());
+    bool produced = false;
+    for (unsigned attempt = 0; attempt < 16 && !produced; ++attempt) {
+        std::uint64_t value = 0;
+        std::uint8_t carry = 0;
+        asm volatile(
+            "sub $128, %%rsp\n\t"
+            "call *%[code]\n\t"
+            "setc %[carry]\n\t"
+            "add $128, %%rsp\n\t"
+            : "=&a"(value), [carry] "=&q"(carry)
+            : [code] "r"(code)
+            : "memory", "cc");
+        produced = carry == 1;
+    }
+    munmap(code, 4096);
+    require(produced, "RDSEED replacement never reported a random value");
+}
+
+void clwbExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0x66, 0x0F, 0xAE, 0x30};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace, "CLWB replacement was not produced");
+    require(match->ReplacementBytes.size() == site.size(), "CLWB replacement changed the instruction length");
+    auto body = match->ReplacementBytes;
+    body.push_back(0xC3);
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the replacement");
+    std::memcpy(code, body.data(), body.size());
+    std::uint8_t line[64] = {};
+    std::uint64_t address = reinterpret_cast<std::uint64_t>(line);
+    std::uint64_t kept = 0x5A5A5A5A5A5A5A5Aull;
+    std::uint8_t carry = 0;
+    asm volatile(
+        "sub $128, %%rsp\n\t"
+        "stc\n\t"
+        "call *%[code]\n\t"
+        "setc %[carry]\n\t"
+        "add $128, %%rsp\n\t"
+        : "+a"(address), "+b"(kept), [carry] "=&q"(carry)
+        : [code] "r"(code)
+        : "memory", "cc");
+    munmap(code, 4096);
+    require(address == reinterpret_cast<std::uint64_t>(line), "CLWB replacement changed its address register");
+    require(kept == 0x5A5A5A5A5A5A5A5Aull, "CLWB replacement changed an unrelated register");
+    require(carry == 1, "CLWB replacement changed the flags");
+}
 #else
 void reciprocalExecution() {}
 void registerFormExecution() {}
@@ -1380,6 +2347,48 @@ void sha256Execution() {}
 void clzeroExecution() {}
 void immediateFormExecution() {}
 void ripRelativeExecution() {}
+void rdpruExecution() {}
+void mcommitExecution() {}
+void xsaveoptExecution() {}
+#endif
+
+#if defined(__x86_64__) && (defined(__linux__) || defined(__APPLE__))
+void rdtscpExecution() {
+    const auto matcher = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
+    const Bytes site = {0x0F, 0x01, 0xF9};
+    const auto match = matcher->Match(site.data(), site.size());
+    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "RDTSCP stub was not produced");
+    auto body = match->StubBody;
+    body[match->ReturnBranchOffset] = 0xC3;
+    void* code = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    require(code != MAP_FAILED, "cannot map executable memory for the stub");
+    std::memcpy(code, body.data(), body.size());
+    std::uint64_t low = 0;
+    std::uint64_t high = 0;
+    std::uint64_t processor = 0;
+    std::uint8_t carry = 0;
+    asm volatile(
+        "mov $-1, %%rcx\n\t"
+        "sub $128, %%rsp\n\t"
+        "stc\n\t"
+        "call *%[code]\n\t"
+        "setc %[carry]\n\t"
+        "add $128, %%rsp\n\t"
+        : "=&a"(low), "=&d"(high), "=&c"(processor), [carry] "=&q"(carry)
+        : [code] "r"(code)
+        : "memory", "cc");
+    munmap(code, 4096);
+    require(((high << 32) | low) != 0, "RDTSCP stub did not read the time stamp counter");
+    require(processor == 0, "RDTSCP stub left a value other than processor 0 in RCX");
+    require(carry == 1, "RDTSCP stub changed the flags");
+}
+#else
+void rdtscpExecution() {}
+void wideStoreExecution() {}
+void scalarCompareExecution() {}
+void rdpidExecution() {}
+void rdseedExecution() {}
+void clwbExecution() {}
 #endif
 
 void scannerZeroTail() {
@@ -1388,6 +2397,18 @@ void scannerZeroTail() {
     require(scanner->ScanCodeSection(code, 0, code.size()).size() == 2, "Odd zero padding at segment tail must end the scan");
     const Bytes truncated{0xC3, 0x0F};
     requireFailure([&] { (void)scanner->ScanCodeSection(truncated, 0, truncated.size()); }, "Truncated non-zero tail must still fail");
+}
+
+void scannerUnwindRanges() {
+    const Bytes slot{0x48, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x2E, 0x0F, 0x1F, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC3};
+    const auto gap = Codegen::MakeInstructionScanner({}, {{16, 17}})->ScanCodeSection(slot, 0x1000, slot.size());
+    require(gap.size() == 2 && gap[0].Offset == 0x1001 && gap[0].Length == 15 && gap[1].Offset == 0x1010 && gap[1].Length == 1, "An undecodable byte outside every unwind range must resume the scan at the next byte");
+    requireFailure([&] { (void)Codegen::MakeInstructionScanner({}, {{0, 17}})->ScanCodeSection(slot, 0, slot.size()); }, "An undecodable byte inside an unwind range must still fail");
+    requireFailure([&] { (void)Codegen::MakeInstructionScanner()->ScanCodeSection(slot, 0, slot.size()); }, "An undecodable byte without unwind ranges must still fail");
+    const Bytes crossing{0xB8, 0x0F, 0x05, 0xC3, 0x90};
+    const auto cut = Codegen::MakeInstructionScanner({}, {{3, 4}, {1, 3}})->ScanCodeSection(crossing, 0, crossing.size());
+    require(cut.size() == 3 && cut[0].Offset == 1 && cut[0].Length == 2 && cut[1].Offset == 3 && cut[2].Offset == 4, "A gap instruction that crosses into an unwind range must end at the range");
+    require(Codegen::MakeInstructionScanner()->ScanCodeSection(crossing, 0, crossing.size()).front().Length == 5, "Without unwind ranges the crossing instruction must decode whole");
 }
 
 int main() {
@@ -1404,6 +2425,7 @@ int main() {
         goldenBodies();
         ripRelativeBodies();
         stubRelocations();
+        eipRelativeStubRelocations();
         registerFormExecution();
         immediateFormExecution();
         sha256Execution();
@@ -1411,14 +2433,36 @@ int main() {
         clzeroExecution();
         reciprocalExecution();
         ripRelativeExecution();
+        rdpruExecution();
+        mcommitExecution();
         converterSegment();
+        converterSegmentMappedAtInt64Max();
         converterRipRelativeFollower();
         converterSha256();
         converterSha1();
         converterMonitorWait();
+        converterInPlaceFollower();
         converterClzero();
         rosettaSubstitutions();
+        xsaveoptExecution();
         converterRosetta();
+        rosettaScalarCompares();
+        converterRosettaScalarCompare();
+        rosettaLegacyScalarCompares();
+        converterRosettaLegacyScalarCompare();
+        rdtscpExecution();
+        wideStoreExecution();
+        scalarCompareExecution();
+        rdpidExecution();
+        rdseedExecution();
+        clwbExecution();
+        wideStoreSplit();
+        converterWideStoreWindows();
+        converterWideStoreIslandAcrossInt64Max();
+        converterIslandIndirectEntries();
+        converterIslandInTrapPadding();
+        converterClaimedFollower();
+        converterJumpTableTargets();
         converterReciprocal();
         converterStrayRex();
         rewriterStrayRex();
@@ -1426,7 +2470,9 @@ int main() {
         converterFailureOffsets();
         linuxPlacement();
         linuxRipRelativePlacement();
+        linuxStackSynthesis();
         scannerZeroTail();
+        scannerUnwindRanges();
         std::cout << "AMD64-only converter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

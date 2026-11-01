@@ -14,6 +14,8 @@ struct GuestImport {
     std::uint64_t Addend;
     std::uint32_t RelocationType = 1;
     std::string Library;
+    bool Function = false;
+    bool Weak = false;
 };
 
 struct GuestRuntime {

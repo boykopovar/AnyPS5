@@ -1,3 +1,6 @@
+#include "prx/libSceAgc/Shader/include/PrimState.hpp"
+#include "prx/libSceAgc/Shader/include/LinkShaders.hpp"
+#include "prx/libSceAgc/Shader/include/InterpolantMapping.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparationScope.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -5,9 +8,6 @@
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include <array>
 #include <algorithm>
-
-extern "C" int APS5_VABI sceAgcCreatePrimState(ShaderRegister*, ShaderRegister*, const Shader*, const Shader*, std::uint32_t);
-extern "C" int APS5_VABI sceAgcCreateInterpolantMapping_0100(ShaderRegister*, const Shader*, const Shader*);
 
 extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister* context, ShaderRegister* primitive,
     const void* reserved, const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
@@ -22,7 +22,7 @@ extern "C" int APS5_VABI sceAgcLinkShaders(ShaderRegister* context, ShaderRegist
 
     // The simple vertex/pixel pipeline combines two primitive context registers
     // and 32 interpolant registers. Publish only after both helpers succeed.
-    AgcDriver::ShaderPreparationScope transaction;
+    AgcDriver::ShaderPreparationScope transaction({vertex, pixel});
     std::array<ShaderRegister, 34> contextValues{};
     std::array<ShaderRegister, 3> primitiveValues{};
     sceAgcCreatePrimState(contextValues.data(), primitiveValues.data(), nullptr, vertex, primitiveType);

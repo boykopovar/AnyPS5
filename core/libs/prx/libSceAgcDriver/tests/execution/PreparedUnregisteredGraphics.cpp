@@ -51,13 +51,13 @@ void Check(AgcDriver::VulkanDevice& device) {
     Require(draw.programs.size() == 2 && draw.roles.back() == ProgramRole::Fragment, "unregistered graphics programs did not decode as a vertex and a fragment stage");
     for (const auto& program : draw.programs) Require(program.snapshot != nullptr && program.snapshot->header.empty() && program.snapshot->prepared->entries.empty(), "an unregistered graphics program was not read as raw code");
     Require(RawGraphicsDrawn(), "a draw of unregistered graphics programs was not noted");
-    bool refused = false;
-    try {
-        Driver::Get().RegisterShader(nullptr);
-    } catch (const std::exception& error) {
-        refused = std::string(error.what()).find("registered after graphics programs were drawn") != std::string::npos;
+    for (const auto& program : draw.programs) {
+        const auto begin = program.snapshot->codeAddress;
+        Require(RawGraphicsDrawnIn(begin, begin + 4u) && RawGraphicsDrawnIn(begin - 4u, begin + 1u), "a raw-drawn program's code is not recorded");
+        Require(!RawGraphicsDrawnIn(begin - 4u, begin), "the raw-drawn range starts before the program");
     }
-    Require(refused, "a shader registration after unregistered graphics draws was accepted");
+    alignas(256) static std::array<std::uint32_t, 4> Elsewhere{0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
+    Require(!RawGraphicsDrawnIn(reinterpret_cast<std::uintptr_t>(Elsewhere.data()), reinterpret_cast<std::uintptr_t>(Elsewhere.data()) + sizeof(Elsewhere)), "unrelated code reads as drawn raw");
     const auto target = device.Target();
     std::vector<LinkedProgram> linked;
     std::vector<MemoryRegion> memory;

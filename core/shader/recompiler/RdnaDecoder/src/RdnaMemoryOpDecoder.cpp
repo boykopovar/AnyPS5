@@ -469,6 +469,9 @@ RdnaOperand scalarDestination(std::uint32_t code) {
 
 RdnaOperand scalarDescriptorBase(std::uint32_t reg, std::uint32_t registerCount, const char* reason) {
     const auto operand = scalarSource(reg);
+    if (registerCount == 4u && reg == 104u && operand.kind == RdnaOperandKind::ScalarRegister) {
+        return operand;
+    }
     if (registerCount == 2u && operand.kind == RdnaOperandKind::VccLo) {
         return operand;
     }
@@ -930,6 +933,23 @@ RdnaInstruction DecodeRdnaFlat(std::uint32_t programCounter, std::span<const std
         }
         instruction.source0 = scalarDescriptorBase(saddr, 2u, (name + " supports only an SGPR pair as base address").c_str());
         instruction.sourceCount = 1;
+        return instruction;
+    }
+    if (seg == 1u) {
+        const RdnaOperand zero = scalarSource(128u);
+        instruction.source0 = saddr == 0x7Du ? vectorRegister(addr) : zero;
+        instruction.source1 = zero;
+        if (saddr != 0x7Du && saddr != 0x7Fu) {
+            instruction.source1 = scalarSource(saddr);
+            if (instruction.source1.kind != RdnaOperandKind::ScalarRegister &&
+                instruction.source1.kind != RdnaOperandKind::VccLo &&
+                instruction.source1.kind != RdnaOperandKind::VccHi &&
+                instruction.source1.kind != RdnaOperandKind::M0 &&
+                instruction.source1.kind != RdnaOperandKind::ExecLo) {
+                throw std::runtime_error("FLAT scratch scalar offset register is unsupported");
+            }
+        }
+        instruction.sourceCount = 2;
         return instruction;
     }
     instruction.source0 = vectorRegister(addr);

@@ -116,7 +116,8 @@ IrValue* IrBuilder::vectorWindowIndex(VectorReg reg) {
 }
 
 IrValue& IrBuilder::GetVectorReg(VectorReg reg) {
-    if (IrValue* index = vectorWindowIndex(reg)) return Emit(IrOpcode::LoadVectorWindow, IrType::U32, {index});
+    IrValue* index = vectorWindowIndex(reg);
+    if (index != nullptr && program.Metadata().vectorWindowIndexedWrites) return Emit(IrOpcode::LoadVectorWindow, IrType::U32, {index});
     IrValue& operand = createRegisterOperand(program, RegisterBank::Vector, RegIndex(reg), IrType::VectorReg);
     return Emit(IrOpcode::GetVectorRegister, IrType::U32, {&operand});
 }
@@ -124,7 +125,7 @@ IrValue& IrBuilder::GetVectorReg(VectorReg reg) {
 void IrBuilder::SetVectorReg(VectorReg reg, IrValue& value) {
     if (IrValue* index = vectorWindowIndex(reg)) {
         (void)Emit(IrOpcode::StoreVectorWindow, IrType::Void, {index, &value});
-        return;
+        if (program.Metadata().vectorWindowIndexedWrites) return;
     }
     IrValue& operand = createRegisterOperand(program, RegisterBank::Vector, RegIndex(reg), IrType::VectorReg);
     (void)Emit(IrOpcode::SetVectorRegister, IrType::Void, {&operand, &value});

@@ -1,5 +1,7 @@
 #include <relinker/output/SysVDynamicSectionBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
+#include <domain/ImportModule.hpp>
+#include <algorithm>
 #include <cstring>
 
 namespace Relinker {
@@ -68,6 +70,7 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
     std::uint32_t originalJmprelCount)
 {
     SysVDynamicSection result;
+    result.NeededLibraries = neededLibraries;
     result.DynStrData.push_back(0);
 
     std::vector<std::uint32_t> neededOffsets;
@@ -76,10 +79,21 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
 
     _appendElfSym(result.DynSymData, 0, 0, 0, 0, 0, 0);
 
+    const bool consoleFileNames = std::any_of(neededLibraries.begin(), neededLibraries.end(),
+        [](const std::string& name) { return Domain::NeededLibraryName(name) != name; });
+
     auto stripHashSuffix = [](const std::string& value) -> std::string {
         const auto hashPos = value.find('#');
         if (hashPos == std::string::npos) return value;
         return value.substr(0, hashPos);
+    };
+
+    auto symbolInfo = [](const NidReference& ref) -> std::uint8_t {
+        if (ref.Nid.empty()) return static_cast<std::uint8_t>((STB_WEAK << 4) | STT_NOTYPE);
+        const bool tls = ref.RelocationTypeValue == R_X86_64_DTPMOD64 || ref.RelocationTypeValue == R_X86_64_DTPOFF64
+            || ref.RelocationTypeValue == R_X86_64_TPOFF64;
+        const auto type = tls ? STT_TLS : ref.SymbolType;
+        return static_cast<std::uint8_t>(((ref.Weak ? STB_WEAK : STB_GLOBAL) << 4) | type);
     };
 
     static constexpr std::size_t kRelaEntSize = 24;
@@ -89,6 +103,8 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
 
     for (const auto& ref : nidReferences) {
         if (!ref.Library.empty()) result.ImportModules.emplace(ref.RelocationAddress, ref.Library);
+        if (ref.Function) result.FunctionImports.insert(ref.RelocationAddress);
+        if (consoleFileNames && ref.Library.empty() && !ref.Nid.empty() && ref.Nid.find('#') == std::string::npos) result.NamedImports.insert(ref.RelocationAddress);
         std::uint32_t relType = ref.RelocationTypeValue;
         if (relType == 0) relType = R_X86_64_JUMP_SLOT;
 
@@ -132,8 +148,7 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
 
         const NidReference& ref = *slot;
         const std::uint32_t nameOff = _appendStr(result.DynStrData, stripHashSuffix(ref.Nid));
-        const auto info = static_cast<std::uint8_t>((STB_GLOBAL << 4) | STT_FUNC);
-        _appendElfSym(result.DynSymData, nameOff, info, STV_DEFAULT, 0, 0, 0);
+        _appendElfSym(result.DynSymData, nameOff, symbolInfo(ref), STV_DEFAULT, 0, 0, 0);
 
         const std::uint64_t relaInfo = (static_cast<std::uint64_t>(symIdx) << 32) | R_X86_64_JUMP_SLOT;
         _appendRela(result.RelaPltData, ref.RelocationAddress, relaInfo, ref.Addend);
@@ -143,8 +158,7 @@ SysVDynamicSection SysVDynamicSectionBuilder::BuildDynamicSection(
     for (const NidReference* slotPtr : nonPltRefs) {
         const NidReference& ref = *slotPtr;
         const std::uint32_t nameOff = _appendStr(result.DynStrData, stripHashSuffix(ref.Nid));
-        const auto info = static_cast<std::uint8_t>((STB_GLOBAL << 4) | STT_FUNC);
-        _appendElfSym(result.DynSymData, nameOff, info, STV_DEFAULT, 0, 0, 0);
+        _appendElfSym(result.DynSymData, nameOff, symbolInfo(ref), STV_DEFAULT, 0, 0, 0);
 
         const std::uint64_t relaInfo = (static_cast<std::uint64_t>(symIdx) << 32) | ref.RelocationTypeValue;
         _appendRela(result.RelaData, ref.RelocationAddress, relaInfo, ref.Addend);

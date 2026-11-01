@@ -16,6 +16,12 @@
 
 namespace {
 
+std::string Hex(std::uint32_t value) {
+    char text[16];
+    std::snprintf(text, sizeof(text), "0x%08x", value);
+    return text;
+}
+
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
 
@@ -156,7 +162,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t dmask) {
         const auto expected = Expected(tid, dmask);
         for (std::uint32_t component = 0; component < static_cast<std::uint32_t>(std::popcount(dmask)); ++component) {
             const std::uint32_t actual = Output[tid * 4u + component];
-            Require(actual == expected[component], std::string("packed horizontal gather: dmask ") + std::to_string(dmask) + " thread " + std::to_string(tid) + " register " + std::to_string(component) + " is 0x" + std::to_string(actual) + ", expected 0x" + std::to_string(expected[component]));
+            Require(actual == expected[component], std::string("packed horizontal gather: dmask ") + std::to_string(dmask) + " thread " + std::to_string(tid) + " register " + std::to_string(component) + " is " + Hex(actual) + ", expected " + Hex(expected[component]));
         }
     }
 }

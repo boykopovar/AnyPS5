@@ -25,6 +25,7 @@ constexpr std::uint32_t GE_PC_ALLOC = 0x260u;
 
 constexpr std::uint32_t SPI_SHADER_PGM_RSRC4_GS = 0x081u;
 constexpr std::uint32_t SPI_VS_OUT_CONFIG = 0x1B1u;
+constexpr std::uint32_t SPI_SHADER_IDX_FORMAT = 0x1C2u;
 constexpr std::uint32_t GE_MAX_OUTPUT_PER_SUBGROUP = 0x1FFu;
 constexpr std::uint32_t PA_CL_VS_OUT_CNTL = 0x207u;
 constexpr std::uint32_t VGT_GS_ONCHIP_CNTL = 0x291u;

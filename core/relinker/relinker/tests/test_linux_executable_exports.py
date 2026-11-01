@@ -16,7 +16,7 @@ def main():
         work = Path(directory)
         probe = work / "probe.c"
         probe.write_text(
-            "#include <dlfcn.h>\n"
+            "#define _GNU_SOURCE\n#include <dlfcn.h>\n"
             "#include <unistd.h>\n"
             "void check(void) {\n"
             "    int (*function)(void) = dlsym(RTLD_DEFAULT, \"FixtureExport\");\n"
@@ -36,12 +36,13 @@ def main():
             struct.pack_into("<qQ", image, 0x4800 + index * 16, *tag)
         source = work / "input.elf"
         source.write_bytes(image)
-        output = work / "output.elf"
-        result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)], capture_output=True, text=True)
-        assert result.returncode == 0, (result.stdout, result.stderr)
-        output.chmod(0o755)
-        executed = subprocess.run([str(output)], capture_output=True)
-        assert executed.returncode == 42, (executed.returncode, executed.stderr)
+        for options in ([], ["--linux-fixed-base", "0x400000"]):
+            output = work / "output.elf"
+            result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)], capture_output=True, text=True)
+            assert result.returncode == 0, (options, result.stdout, result.stderr)
+            output.chmod(0o755)
+            executed = subprocess.run([str(output)], capture_output=True)
+            assert executed.returncode == 42, (options, executed.returncode, executed.stderr)
         struct.pack_into("<Q", image, 0x4800 + 7 * 16 + 8, 47)
         source.write_bytes(image)
         invalid = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(work / "invalid.elf")], capture_output=True, text=True)

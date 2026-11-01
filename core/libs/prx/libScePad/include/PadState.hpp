@@ -6,6 +6,9 @@
 #include <exception>
 #include "SceTypes.hpp"
 
+constexpr std::uint16_t kTouchPadWidth = 1920;
+constexpr std::uint16_t kTouchPadHeight = 1080;
+
 struct PadTouchPoint {
     bool active = false;
     std::uint16_t x = 0;
@@ -27,6 +30,7 @@ struct PadInputState {
     std::array<float, 3> gyro{0.0f, 0.0f, 0.0f};
     std::array<PadTouchPoint, 2> touch{};
     std::uint8_t deviceKind = 0;
+    bool intercepted = false;
 };
 
 struct PadTriggerRequest {
@@ -40,6 +44,8 @@ struct PadOutputState {
     std::uint32_t sequence = 0;
     std::uint8_t vibrationLarge = 0;
     std::uint8_t vibrationSmall = 0;
+    std::uint8_t audioVibrationLarge = 0;
+    std::uint8_t audioVibrationSmall = 0;
     bool lightBarValid = false;
     std::uint8_t lightBar[3]{};
     PadTriggerRequest trigger[2];
@@ -50,19 +56,38 @@ struct PadOutputState {
 
 namespace Pad {
 void Initialize();
-PadData ReadState();
-int Read(PadData* data, int num);
+bool IsInitialized();
+PadData ReadState(int port = 0);
+int Read(PadData* data, int num, int port = 0);
+void SetVibration(int port, std::uint8_t large, std::uint8_t small);
 void SetVibration(std::uint8_t large, std::uint8_t small);
+void SetVibrationMode(int port, int mode);
 void SetVibrationMode(int mode);
+void SetLightBar(int port, bool valid, std::uint8_t r, std::uint8_t g, std::uint8_t b);
 void SetLightBar(bool valid, std::uint8_t r, std::uint8_t g, std::uint8_t b);
+void SetTriggerCommand(int port, int trigger, const std::uint8_t* command);
 void SetTriggerCommand(int trigger, const std::uint8_t* command);
-void ResetOrientation();
+void ResetOrientation(int port = 0);
+void SetMotionEnabled(int port, bool enabled);
 void SetMotionEnabled(bool enabled);
+void SetTiltCorrection(int port, bool enabled);
 void SetTiltCorrection(bool enabled);
+void SetAngularVelocityDeadband(int port, bool enabled);
+void SetAngularVelocityDeadband(bool enabled);
+void SetConnected(int port, bool connected);
+bool IsConnected(int port);
 }
 
 extern "C" void PadPublishInput_nid_postfix(const PadInputState& input);
+extern "C" void PadPublishInputForPort_nid_postfix(int port, const PadInputState& input);
+extern "C" void PadApplyInjectedInput_nid_postfix(PadInputState* state);
 extern "C" void PadReportInputFailure_nid_postfix(std::exception_ptr error);
 extern "C" bool PadFetchOutput_nid_postfix(std::uint32_t* seenSequence, PadOutputState* out);
+extern "C" bool PadFetchOutputForPort_nid_postfix(int port, std::uint32_t* seenSequence, PadOutputState* out);
+extern "C" void PadSubmitAudioHaptics_nid_postfix(std::uint8_t large, std::uint8_t small);
+extern "C" void PadQueueLegacyAudioHaptics_nid_postfix(int source, std::uint64_t begin, std::uint64_t end, std::uint8_t large, std::uint8_t small);
+extern "C" void PadClearLegacyAudioHaptics_nid_postfix(int source);
+extern "C" void PadSubmitAudioHapticsForPort_nid_postfix(int port, std::uint8_t large, std::uint8_t small);
+extern "C" void PadSetPortConnected_nid_postfix(int port, bool connected);
 
 #endif

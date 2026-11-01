@@ -1,5 +1,6 @@
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
 #include <chrono>
+#include <clocale>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -33,6 +34,37 @@ static ParsedParamJson ParseText(const std::filesystem::path& path, const std::s
     return parseParamJson(path);
 }
 
+static void CheckNumericLocale(const std::filesystem::path& path) {
+    struct RestoreLocale {
+        std::string previous = std::setlocale(LC_NUMERIC, nullptr);
+        ~RestoreLocale() { std::setlocale(LC_NUMERIC, previous.c_str()); }
+    } restore;
+    bool commaLocale = false;
+    for (const auto* name : {"French", "French_France.1252", "fr_FR.UTF-8", "de_DE.UTF-8"}) {
+        if (std::setlocale(LC_NUMERIC, name) != nullptr && std::string(std::localeconv()->decimal_point) == ",") {
+            commaLocale = true;
+            break;
+        }
+    }
+    if (!commaLocale) {
+#ifdef _WIN32
+        throw std::runtime_error("No Windows comma-decimal locale available for regression");
+#else
+        std::cout << "Comma-decimal locale regression unavailable on this host\n";
+        return;
+#endif
+    }
+    for (const auto& [number, expected] : {std::pair{"1.25e3", std::uint64_t{1250}},
+            std::pair{"0.5e3", std::uint64_t{500}}, std::pair{"12.75e2", std::uint64_t{1275}},
+            std::pair{"1.25", std::uint64_t{1}}}) {
+        Require(ParseSize(path, number).downloadDataSizeMiB == expected,
+            std::string("JSON number depends on host locale: ") + number);
+    }
+    bool rejected = false;
+    try { ParseSize(path, "-0.5"); } catch (const std::exception&) { rejected = true; }
+    Require(rejected, "Negative fractional size was accepted under comma locale");
+}
+
 static void CheckUserDefinedParams(const std::filesystem::path& path) {
     const auto parsed = ParseText(path, R"({"titleId":"PPSA23566","localizedParameters":{"en-US":{"titleName":"Example"}},)"
                                         R"("userDefinedParam1":23566,"userDefinedParam3":-7,"userDefinedParam4":2147483647})");
@@ -46,6 +78,52 @@ static void CheckUserDefinedParams(const std::filesystem::path& path) {
             rejected = true;
         }
         Require(rejected, std::string("Accepted invalid user defined param: ") + text);
+    }
+}
+
+static void CheckContentVersion(const std::filesystem::path& path) {
+    Require(ParseText(path, R"({"titleId":"PPSA00000","contentVersion":"01.002.000","localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion == "01.002.000", "Incorrect content version");
+    Require(ParseText(path, R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion.empty(), "A missing content version was not empty");
+    Require(ParseText(path, R"({"titleId":"PPSA00000","contentVersion":1,"localizedParameters":{"en-US":{"titleName":"Example"}}})").contentVersion.empty(), "A content version that is not a string was kept");
+}
+
+static void CheckNesting(const std::filesystem::path& path) {
+    const std::string prefix = R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}},"extra":)";
+    const auto nested = [&](std::size_t arrays) {
+        return prefix + std::string(arrays, '[') + std::string(arrays, ']') + "}";
+    };
+    Require(ParseText(path, nested(511)).title == "Example", "Nesting within the limit rejected");
+    for (const std::size_t arrays : {std::size_t{512}, std::size_t{513}, std::size_t{100000}}) {
+        bool rejected = false;
+        try {
+            ParseText(path, nested(arrays));
+        } catch (const std::runtime_error& error) {
+            rejected = std::string(error.what()).find("nested too deeply") != std::string::npos;
+        }
+        Require(rejected, "Excessive nesting not rejected: " + std::to_string(arrays));
+    }
+}
+
+static void CheckFlexibleMemorySize(const std::filesystem::path& path) {
+    const std::string prefix = R"({"titleId":"PPSA00000","localizedParameters":{"en-US":{"titleName":"Example"}})";
+    Require(!ParseText(path, prefix + "}").flexibleMemorySizeBytes, "Absent kernel changed the default budget");
+    Require(!ParseText(path, prefix + R"(,"kernel":{}})").flexibleMemorySizeBytes, "Absent flexible size changed the default budget");
+    Require(!ParseText(path, prefix + R"(,"kernel":{"flexibleMemorySize":0}})").flexibleMemorySizeBytes, "A zero flexible size changed the default budget");
+    for (const auto bytes : {std::uint64_t{16384}, std::uint64_t{838860800}, std::uint64_t{18446744073709535232ull}}) {
+        const auto parsed = ParseText(path, prefix + R"(,"kernel":{"flexibleMemorySize":)" + std::to_string(bytes) + "}}");
+        Require(parsed.flexibleMemorySizeBytes == bytes, "Incorrect flexible memory size in bytes");
+    }
+    for (const auto* value : {"-0", "-16384", "1", "16385", "838860800.0", "8e8", "true", "null", "\"838860800\"", "18446744073709551616"}) {
+        bool rejected = false;
+        try { ParseText(path, prefix + R"(,"kernel":{"flexibleMemorySize":)" + value + "}}"); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Require(rejected, std::string("Accepted invalid flexible memory size: ") + value);
+    }
+    for (const auto* value : {"null", "true", "[]", "1", "\"kernel\""}) {
+        bool rejected = false;
+        try { ParseText(path, prefix + R"(,"kernel":)" + value + "}"); }
+        catch (const std::runtime_error&) { rejected = true; }
+        Require(rejected, "Accepted a non-object kernel");
     }
 }
 
@@ -69,6 +147,20 @@ static void CheckLanguages(const std::filesystem::path& path) {
         rejected = true;
     }
     Require(rejected, "Accepted localizedParameters without a language entry");
+}
+
+static void CheckOutputPermission(const std::filesystem::path& path) {
+    const std::string prefix = R"({"titleId":"PPSA99007","localizedParameters":{"en-US":{"titleName":"Example"}})";
+    Require(ParseText(path, prefix + "}").attribute3 == 0, "Absent output permission is not zero");
+    Require(!ParseText(path, prefix + ",\"attribute\":8388608}").paramSfoAttribute, "param.json gave a param.sfo attribute");
+    for (const auto& [text, expected] : {std::pair{"0", 0u}, {"524352", 0x80040u}, {"4294967295", 0xFFFFFFFFu}}) {
+        Require(ParseText(path, prefix + ",\"attribute3\":" + text + "}").attribute3 == expected, "Incorrect output permission");
+    }
+    for (const auto* text : {"-1", "0.5", "1e3", "4294967296", "true", "null", "\"524352\""}) {
+        bool rejected = false;
+        try { ParseText(path, prefix + ",\"attribute3\":" + text + "}"); } catch (const std::exception&) { rejected = true; }
+        Require(rejected, "Accepted invalid attribute3");
+    }
 }
 
 static void CheckNumberSyntax(const std::filesystem::path& path) {
@@ -117,7 +209,9 @@ int main() {
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".json");
     int result = 0;
     try {
+        CheckNumericLocale(path);
         CheckUtf8(path);
+        CheckFlexibleMemorySize(path);
         CheckNumberSyntax(path);
         const std::pair<const char*, std::uint64_t> sizes[] = {
             {"", 0}, {"0", 0}, {"-0", 0}, {"0.25", 0}, {"0e3", 0}, {"0E+3", 0}, {"-0e-3", 0}, {"4096", 4096},
@@ -139,6 +233,9 @@ int main() {
         }
         CheckLanguages(path);
         CheckUserDefinedParams(path);
+        CheckContentVersion(path);
+        CheckOutputPermission(path);
+        CheckNesting(path);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         result = 1;

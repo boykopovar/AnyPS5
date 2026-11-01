@@ -1,11 +1,20 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/DenormalFlushEliminator.hpp"
+#include "Recompiler.hpp"
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <functional>
 #include <initializer_list>
+#include <set>
+#include <span>
+#include <spirv/unified1/spirv.hpp>
+#include <stdexcept>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 using namespace ShaderRecompiler;
 
@@ -80,6 +89,47 @@ bool run(const char* name, const std::function<bool()>& test) {
     }
 }
 
+std::vector<std::uint32_t> Recompiled(std::span<const std::uint32_t> code) {
+    const std::array<std::uint32_t, 4> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu};
+    const std::array<std::uint32_t, 2> capabilities{1u, 61u};
+    const std::array<std::string_view, 1> extensions{"SPV_KHR_storage_buffer_storage_class"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
+    request.context.waveSize = 32;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00403000u;
+    request.target.spirvVersion = 0x00010600u;
+    request.target.subgroupSize = 32u;
+    request.target.bdaAbiVersion = 1;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+    request.target.maxWorkgroupInvocations = 1024;
+    request.target.maxWorkgroupSharedMemoryBytes = 49152;
+    request.layout = {0, 0, 0, 128};
+    request.useCache = false;
+    const auto result = Recompile(request);
+    const auto& words = result.spirv.Words();
+    return {words.begin(), words.end()};
+}
+
+std::size_t ExponentMasks(std::span<const std::uint32_t> words) {
+    if (words.size() < 5 || words[0] != spv::MagicNumber) throw std::runtime_error("the recompiler returned no SPIR-V module");
+    std::set<std::uint32_t> exponents;
+    std::size_t masks = 0;
+    for (std::size_t offset = 5; offset < words.size();) {
+        const auto count = words[offset] >> spv::WordCountShift;
+        if (count == 0 || count > words.size() - offset) throw std::runtime_error("the recompiler returned a malformed SPIR-V instruction");
+        const auto opcode = words[offset] & spv::OpCodeMask;
+        if (opcode == spv::OpConstant && count == 4 && words[offset + 3] == 0x7f800000u) exponents.insert(words[offset + 2]);
+        if (opcode == spv::OpBitwiseAnd && count == 5 && (exponents.contains(words[offset + 3]) || exponents.contains(words[offset + 4]))) ++masks;
+        offset += count;
+    }
+    return masks;
+}
+
 }
 
 int main() {
@@ -150,6 +200,66 @@ int main() {
         return b.eliminate() == 1u && !clamped.HasUses() && product.HasUses();
     });
 
+    passed &= run("a min, max, min3, max3 or med3 of flushed values needs no flush, one with an unknown operand does", [] {
+        Builder b;
+        const auto value = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&bits}); };
+        const auto flushedResult = [&](IrOpcode opcode, std::initializer_list<IrValue*> arguments) -> IrValue& {
+            return b.flush(b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(opcode, IrType::F32, arguments)}));
+        };
+        auto& x = value(b.flush(b.unknown()));
+        auto& y = value(b.flush(b.unknown()));
+        auto& z = value(b.flush(b.unknown()));
+        auto& raw = value(b.unknown());
+        IrValue* removed[] = {
+            &flushedResult(IrOpcode::FPMin32, {&x, &y}),
+            &flushedResult(IrOpcode::FPMax32, {&y, &x}),
+            &flushedResult(IrOpcode::FPMinTri32, {&x, &y, &z}),
+            &flushedResult(IrOpcode::FPMaxTri32, {&z, &y, &x}),
+            &flushedResult(IrOpcode::FPMedTri32, {&x, &z, &y}),
+        };
+        auto& mixedPair = flushedResult(IrOpcode::FPMax32, {&x, &raw});
+        auto& mixedMedian = flushedResult(IrOpcode::FPMedTri32, {&x, &y, &raw});
+        for (auto* flushed : removed) b.keep(*flushed);
+        b.keep(mixedPair);
+        b.keep(mixedMedian);
+        const bool counted = b.eliminate() == 5u;
+        bool kept = false;
+        for (auto* flushed : removed) kept |= flushed->HasUses();
+        return counted && !kept && mixedPair.HasUses() && mixedMedian.HasUses();
+    });
+
+    passed &= run("a floor or ceil needs no flush, even of an unknown value", [] {
+        Builder b;
+        auto& raw = b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&b.unknown()});
+        auto& floored = b.flush(b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPFloor32, IrType::F32, {&raw})}));
+        auto& ceiled = b.flush(b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPCeil32, IrType::F32, {&raw})}));
+        b.keep(floored);
+        b.keep(ceiled);
+        return b.eliminate() == 2u && !floored.HasUses() && !ceiled.HasUses();
+    });
+
+    passed &= run("a max carried around a loop without a flush keeps its flush and the search ends", [] {
+        Builder b;
+        IrBlock& head = *b.block;
+        IrBlock& body = b.newBlock();
+        IrBlock& exit = b.newBlock();
+        head.AddBranch(&body);
+        body.AddBranch(&body);
+        body.AddBranch(&exit);
+        auto& initial = b.flush(b.unknown());
+        b.block = &body;
+        auto& carried = b.program.CreateValue(IrOpcode::Phi, IrType::U32);
+        body.AppendInstruction(&carried);
+        auto& step = b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&b.flush(b.unknown())});
+        auto& maximum = b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPMax32, IrType::F32, {&b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&carried}), &step})});
+        carried.AddPhiOperand(&head, &initial);
+        carried.AddPhiOperand(&body, &maximum);
+        auto& flushed = b.flush(maximum);
+        b.block = &exit;
+        b.keep(flushed);
+        return b.eliminate() == 0u && flushed.HasUses();
+    });
+
     passed &= run("a phi of flushed values needs no flush", [] {
         Builder b;
         IrBlock& head = *b.block;
@@ -190,6 +300,80 @@ int main() {
             return !next.HasUses();
         };
         return loop(true) && !loop(false);
+    });
+
+    passed &= run("a product behind its round-to-nearest tiny-product guard needs no flush, one behind another guard does", [] {
+        Builder b;
+        const auto value = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&bits}); };
+        const auto bitsOf = [&](IrValue& number) -> IrValue& { return b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&number}); };
+        const auto guarded = [&](IrValue& lhs, IrValue& rhs, IrValue& guardLhs, IrValue& guardRhs, std::uint32_t threshold) -> IrValue& {
+            auto& product = b.emit(IrOpcode::FPMul32, IrType::F32, {&lhs, &rhs});
+            auto& scaled = b.emit(IrOpcode::FPMul32, IrType::F32, {&b.emit(IrOpcode::FPMul32, IrType::F32, {&guardLhs, &b.constant(0x5f800000u)}), &guardRhs});
+            auto& magnitude = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bitsOf(scaled), &b.constant(0x7fffffffu)});
+            auto& tiny = b.emit(IrOpcode::ULessThan32, IrType::Bool, {&b.emit(IrOpcode::ISub32, IrType::U32, {&magnitude, &b.constant(1u)}), &b.constant(threshold)});
+            auto& sign = b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.emit(IrOpcode::BitwiseXor32, IrType::U32, {&bitsOf(lhs), &bitsOf(rhs)}), &b.constant(0x80000000u)});
+            return b.flush(bitsOf(b.emit(IrOpcode::SelectF32, IrType::F32, {&tiny, &value(sign), &product})));
+        };
+        auto& x = value(b.flush(b.unknown()));
+        auto& y = value(b.flush(b.unknown()));
+        auto& raw = value(b.unknown());
+        IrValue* removed[] = {&guarded(x, y, x, y, 0x207fffffu), &guarded(x, y, y, x, 0x207fffffu)};
+        IrValue* kept[] = {&guarded(x, y, x, raw, 0x207fffffu), &guarded(x, y, x, y, 0x20800000u), &guarded(x, raw, x, raw, 0x207fffffu)};
+        for (auto* flushed : removed) b.keep(*flushed);
+        for (auto* flushed : kept) b.keep(*flushed);
+        const bool counted = b.eliminate() == 2u;
+        bool flushes = true;
+        for (auto* flushed : removed) flushes &= !flushed->HasUses();
+        for (auto* flushed : kept) flushes &= flushed->HasUses();
+        return counted && flushes;
+    });
+
+    passed &= run("an arm a select takes only when its bits are NaN needs no flush, one under another value's NaN test does", [] {
+        Builder b;
+        auto& x = b.unknown();
+        auto& other = b.unknown();
+        const auto magnitude = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&bits, &b.constant(0x7fffffffu)}); };
+        const auto isNan = [&](IrValue& bits) -> IrValue& { return b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&magnitude(bits), &b.constant(0x7f800000u)}); };
+        const auto chosen = [&](IrValue& condition, IrValue& arm) -> IrValue& { return b.flush(b.emit(IrOpcode::SelectU32, IrType::U32, {&condition, &arm, &b.flush(b.unknown())})); };
+        IrValue* removed[] = {
+            &chosen(isNan(x), x),
+            &chosen(isNan(x), b.emit(IrOpcode::BitwiseOr32, IrType::U32, {&x, &b.constant(0x00400000u)})),
+            &chosen(b.emit(IrOpcode::FPIsNan32, IrType::Bool, {&b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&x})}), x),
+        };
+        IrValue* kept[] = {
+            &chosen(isNan(other), x),
+            &chosen(b.emit(IrOpcode::UGreaterThan32, IrType::Bool, {&b.constant(0x7f800000u), &magnitude(x)}), x),
+        };
+        for (auto* flushed : removed) b.keep(*flushed);
+        for (auto* flushed : kept) b.keep(*flushed);
+        const bool counted = b.eliminate() == 3u;
+        bool flushes = true;
+        for (auto* flushed : removed) flushes &= !flushed->HasUses();
+        for (auto* flushed : kept) flushes &= flushed->HasUses();
+        return counted && flushes;
+    });
+
+    passed &= run("the sign or exponent bits of any value need no flush, a mask that keeps significand bits does", [] {
+        Builder b;
+        auto& sign = b.flush(b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.unknown(), &b.constant(0x80000000u)}));
+        auto& exponent = b.flush(b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.constant(0xff800000u), &b.unknown()}));
+        auto& significand = b.flush(b.emit(IrOpcode::BitwiseAnd32, IrType::U32, {&b.unknown(), &b.constant(0x807fffffu)}));
+        b.keep(sign);
+        b.keep(exponent);
+        b.keep(significand);
+        return b.eliminate() == 2u && !sign.HasUses() && !exponent.HasUses() && significand.HasUses();
+    });
+
+    passed &= run("two chained v_mul_f32 keep only the input flush of the first source", [] {
+        const std::array<std::uint32_t, 5> code{
+            0x10020100u,
+            0x10040301u,
+            0xe0700000u, 0x80000200u,
+            0xbf810000u,
+        };
+        const auto masks = ExponentMasks(Recompiled(code));
+        if (masks != 1u) std::fprintf(stderr, "  %zu f32 exponent masks, expected 1\n", masks);
+        return masks == 1u;
     });
 
     return passed ? 0 : 1;

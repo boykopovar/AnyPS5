@@ -502,7 +502,7 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::DsGwsBarrier:
         throw std::runtime_error(std::string(globalWaveSyncName(inst.op)) + " at pc " + std::to_string(inst.programCounter) + ": global wave sync barriers and semaphores shared by waves of different workgroups are not modeled");
     case RdnaOpcode::DsOrderedCount:
-        throw std::runtime_error("ds_ordered_count at pc " + std::to_string(inst.programCounter) + ": GDS counters updated in wave launch order are not modeled");
+        return dsOrderedCount(inst);
     case RdnaOpcode::DsWriteAddtidB32:
         return dsAddtid(inst, true);
     case RdnaOpcode::DsReadAddtidB32:

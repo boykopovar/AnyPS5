@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
@@ -6,18 +8,15 @@
 #include <fstream>
 #include <iterator>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
 
-extern "C" {
-int APS5_VABI sceSaveDataConvert(const SaveDataConvert*);
-int APS5_VABI sceSaveDataInitialize3(const void*);
-}
-
 namespace {
 
 constexpr int SaveDataErrorParameter = -2137063424;
+constexpr int SaveDataErrorNotInitialized = -2137063423;
 constexpr int SaveDataErrorNotFound = -2137063416;
 
 int failures = 0;
@@ -53,16 +52,40 @@ int main() {
     const auto previous = std::filesystem::current_path();
     std::filesystem::current_path(work);
 
+    float progress = 0.0f;
+    Check(sceSaveDataGetConvertProgress(&progress) == SaveDataErrorNotInitialized, "query before initialize fails with not initialized");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
-    Check(Convert("kept", sizeof("kept")) == 0, "an existing save converts");
-    Check(Read(kept) == std::vector<char>{'d', 'a', 't', 'a'}, "the converted save keeps its files");
+    Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds");
+    Check(progress == 0.0f, "convert progress reports 0.0f initially");
+    Check(sceSaveDataGetConvertProgress(nullptr) == SaveDataErrorParameter, "null progress pointer is rejected");
+    Check(sceSaveDataConvert(nullptr) == SaveDataErrorParameter, "null convert pointer is rejected");
+    SaveDataConvert nullDir{};
+    Check(sceSaveDataConvert(&nullDir) == SaveDataErrorParameter, "null dir_name pointer is rejected");
     Check(Convert("missing", sizeof("missing")) == SaveDataErrorNotFound, "a missing save is not found");
-    for (const char* invalid : {"../kept", "", ".", "..", "a\\b", "c:d"}) {
+    Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after failed convert");
+    Check(progress < 1.0f, "convert progress is below 1.0f after failed convert");
+    Check(progress == 0.0f, "convert progress reports 0.0f after failed convert");
+    Check(Convert("kept", sizeof("kept")) == 0, "an existing save converts");
+    SaveDataEvent event{};
+    Check(sceSaveDataGetEventResult(nullptr, &event) == 0, "successful conversion queues completion");
+    Check(event.type == 5 && event.error_code == 0, "conversion event reports successful conversion");
+    Check(event.user_id == 0x10000000 && std::strcmp(event.dir_name.data, "kept") == 0, "conversion event identifies the user and save");
+    Check(sceSaveDataGetEventResult(nullptr, &event) == SaveDataErrorNotFound, "conversion event is delivered once");
+    Check(Read(kept) == std::vector<char>{'d', 'a', 't', 'a'}, "the converted save keeps its files");
+    Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after successful convert");
+    Check(progress == 1.0f, "convert progress reports 1.0f after successful convert");
+    Check(Convert("missing", sizeof("missing")) == SaveDataErrorNotFound, "a missing save is not found");
+    Check(sceSaveDataGetConvertProgress(&progress) == 0, "get convert progress succeeds after subsequent failed convert");
+    Check(progress < 1.0f, "convert progress drops below 1.0f after subsequent failed convert");
+    Check(progress == 0.0f, "convert progress reports 0.0f after subsequent failed convert");
+    for (const char* invalid : {"../kept", "", ".", "..", "a/b", "a\\b", "c:d"}) {
         Check(Convert(invalid, std::strlen(invalid) + 1) == SaveDataErrorParameter, std::string("\"") + invalid + "\" is rejected");
     }
     char unterminated[sizeof(SceSaveDataDirName::data)];
     std::memset(unterminated, 'a', sizeof(unterminated));
     Check(Convert(unterminated, sizeof(unterminated)) == SaveDataErrorParameter, "an unterminated name is rejected");
+    Check(sceSaveDataTerminate() == 0, "SaveData terminates");
+    Check(sceSaveDataGetConvertProgress(&progress) == SaveDataErrorNotInitialized, "query after terminate fails with not initialized");
 
     std::filesystem::current_path(previous);
     std::error_code error;

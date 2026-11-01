@@ -33,6 +33,8 @@ struct BufferResource {
 enum class ImageMipMode { None, DynamicStorage };
 
 namespace EmulatedCompare {
+inline constexpr std::uint32_t ConvertedSampleUnsupported = 1u << 27u;
+inline constexpr std::uint32_t ConvertedSampleRequiresSingleLevel = 1u << 28u;
 inline constexpr std::uint32_t NativeOffsetUnsupported = 1u << 29u;
 inline constexpr std::uint32_t Unsupported = 1u << 31u;
 inline constexpr std::uint32_t RequiresSingleLevel = 1u << 30u;
@@ -57,9 +59,11 @@ inline constexpr std::uint32_t ReferenceZero = 3u;
 [[nodiscard]] inline std::uint32_t Reference(std::uint32_t state) { return (state >> ReferenceShift) & 0x3u; }
 }
 
-struct ImageResource {
-    static constexpr std::uint32_t NoIndirectImage = std::numeric_limits<std::uint32_t>::max();
+inline constexpr std::uint32_t NoTable = std::numeric_limits<std::uint32_t>::max();
 
+enum class TableOperation : std::uint8_t { Supported, Unsupported };
+
+struct ImageResource {
     std::uint32_t source = 0;
     std::uint32_t firstUsePc = 0;
     ImageResourceClass resourceClass = ImageResourceClass::None;
@@ -86,17 +90,26 @@ struct ImageResource {
     bool depthBitsCompatible = true;
     bool constantSwizzle = false;
     bool constantSwizzleCompatible = true;
+    bool cubeFaceCompatible = true;
     bool flatVolumeCompatible = true;
+    bool singleMipPlaneBiasCompatible = false;
+    bool volumeArraySampleCompatible = false;
+    bool adjustedSample = false;
     bool flatLineCompatible = true;
+    bool flatVolumeLineCompatible = true;
+    bool dimensionQueryOnly = true;
+    bool sampledOnly = true;
     bool foldTexelOffsetsOnly = false;
+    bool convertedSamples = false;
+    bool remappedDepth1D = false;
+    bool optionalDescriptor = false;
     std::uint32_t byElements = 0;
     std::uint32_t byComponents = 0;
     IrBufferFormat packedFormat = IrBufferFormat::Invalid;
     std::uint32_t emulatedCompare = 0;
-    std::uint32_t indirectRoot = NoIndirectImage;
-    std::uint32_t indirectMappingOffset = 0;
-    std::uint32_t indirectSearchIterations = 0;
-    std::vector<std::uint32_t> indirectResources;
+    std::uint32_t table = NoTable;
+    TableOperation tableOperation = TableOperation::Supported;
+    bool targetMerge = false;
 
     bool operator==(const ImageResource& other) const = default;
 };
@@ -127,12 +140,17 @@ struct SamplerResource {
     bool depthCompare = false;
     std::uint16_t uses = 0;
     bool foldTexelOffsetsOnly = false;
+    std::uint32_t table = NoTable;
 
     bool operator==(const SamplerResource& other) const = default;
 };
 
 inline bool FoldsTexelOffsets(const SamplerResource& sampler) {
-    return (sampler.uses & SamplerUseOffset) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u && !sampler.depthCompare;
+    return sampler.table == NoTable && (sampler.uses & SamplerUseOffset) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u && !sampler.depthCompare;
+}
+
+inline bool SamplesBaseLevelIfUnnormalized(const SamplerResource& sampler) {
+    return (sampler.uses & (SamplerUseImplicitLod | SamplerUseGradient)) != 0u && (sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient | SamplerUseNonZeroLod | SamplerUseOffset)) == 0u && !sampler.depthCompare;
 }
 
 struct SampledResourcePair {

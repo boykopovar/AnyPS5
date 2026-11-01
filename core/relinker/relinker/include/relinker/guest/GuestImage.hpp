@@ -4,9 +4,12 @@
 #include <codegen/CodegenTypes.hpp>
 #include <domain/Types.hpp>
 #include <relinker/domain/ISyscallScanner.hpp>
+#include <relinker/patching/GamePatch.hpp>
 #include <filesystem>
+#include <domain/IProgress.hpp>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Relinker {
@@ -42,6 +45,7 @@ struct GuestImage {
     std::vector<std::string> ModuleNames;
     std::vector<std::uint8_t> Bytes;
     std::vector<Codegen::TrampolineSite> Trampolines;
+    std::vector<GamePatch::PatchedRange> PatchedRanges;
     std::vector<Domain::ProgramHeader> Headers;
     std::vector<GuestSymbol> Symbols;
     std::vector<std::string> Dependencies;
@@ -49,14 +53,17 @@ struct GuestImage {
     std::vector<std::uint64_t> InitArray;
     std::vector<std::uint64_t> FiniArray;
     std::uint64_t Init = 0;
+    bool HasInit = false;
     std::uint64_t Fini = 0;
+    bool HasFini = false;
     std::uint64_t Got = 0;
     bool UsePlatformTlsResolver = true;
+    bool Symbolic = false;
+    std::vector<std::size_t> NamedImports;
 };
 
 class GuestImageReader {
 public:
-    std::vector<std::string> ReadModuleNames(const std::vector<std::uint8_t>& bytes) const;
     GuestImage Read(const std::filesystem::path& path, std::vector<std::uint8_t> bytes, bool windows = false) const;
 };
 
@@ -65,11 +72,20 @@ struct GuestArtifact {
     std::vector<std::uint8_t> Bytes;
     std::vector<Domain::CallRegistryEntry> Imports;
     std::filesystem::path SourcePath;
+    std::vector<std::string> NeededLibraries;
 };
+
+struct GuestModuleInput {
+    std::filesystem::path Path;
+    std::vector<std::uint8_t> Bytes;
+    std::vector<GamePatch::PatchedRange> PatchedRanges;
+};
+
+std::vector<std::pair<std::filesystem::path, std::filesystem::path>> RemoveBackupCopies(std::vector<GuestModuleInput>& modules);
 
 class GuestModuleBuilder {
 public:
-    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, bool toRosetta, ISyscallScanner& syscallScanner, bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& sceModulePath, const std::vector<std::string>& moduleDirectories = {}) const;
+    std::vector<GuestArtifact> Build(const std::filesystem::path& inputPath, const std::filesystem::path& outputPath, Domain::SysVDynamicSection& dynamic, bool windows, bool macos, bool toIntel, bool toRosetta, ISyscallScanner& syscallScanner, bool lazyBinding, const std::string& runPath, const std::set<std::string>& excludedModules, const std::filesystem::path& root, const std::vector<std::filesystem::path>& runtimeDirectories, std::vector<GuestModuleInput> modules, Domain::IProgress& progress) const;
 };
 
 }

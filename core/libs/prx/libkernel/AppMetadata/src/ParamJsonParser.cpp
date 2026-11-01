@@ -1,9 +1,11 @@
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
+#include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 
 #include <cstdint>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
+#include <locale>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -14,9 +16,10 @@ namespace {
 enum class JsonType { Null, Boolean, Number, String, Array, Object };
 
 struct JsonValue;
+struct JsonMember;
 
 using JsonArray = std::vector<JsonValue>;
-using JsonObject = std::vector<std::pair<std::string, JsonValue>>;
+using JsonObject = std::vector<JsonMember>;
 
 struct JsonValue {
     JsonType type = JsonType::Null;
@@ -26,6 +29,11 @@ struct JsonValue {
     std::string stringValue;
     JsonArray arrayValue;
     JsonObject objectValue;
+};
+
+struct JsonMember {
+    std::string key;
+    JsonValue value;
 };
 
 std::string readFileToString(const std::filesystem::path& path) {
@@ -160,9 +168,12 @@ std::string parseJsonString(const std::string& text, std::size_t& position) {
     return result;
 }
 
-JsonValue parseJsonValue(const std::string& text, std::size_t& position);
+constexpr std::size_t MaxNestingDepth = 512;
 
-JsonValue parseJsonObject(const std::string& text, std::size_t& position) {
+JsonValue parseJsonValue(const std::string& text, std::size_t& position, std::size_t depth);
+
+JsonValue parseJsonObject(const std::string& text, std::size_t& position, std::size_t depth) {
+    if (depth >= MaxNestingDepth) throw std::runtime_error("param.json is nested too deeply");
     expectChar(text, position, '{');
     JsonValue value;
     value.type = JsonType::Object;
@@ -173,8 +184,8 @@ JsonValue parseJsonObject(const std::string& text, std::size_t& position) {
         std::string key = parseJsonString(text, position);
         skipWhitespace(text, position);
         expectChar(text, position, ':');
-        JsonValue member = parseJsonValue(text, position);
-        value.objectValue.emplace_back(std::move(key), std::move(member));
+        JsonValue member = parseJsonValue(text, position, depth + 1);
+        value.objectValue.push_back({std::move(key), std::move(member)});
         skipWhitespace(text, position);
         const char next = peekChar(text, position);
         if (next == ',') { ++position; continue; }
@@ -184,14 +195,15 @@ JsonValue parseJsonObject(const std::string& text, std::size_t& position) {
     return value;
 }
 
-JsonValue parseJsonArray(const std::string& text, std::size_t& position) {
+JsonValue parseJsonArray(const std::string& text, std::size_t& position, std::size_t depth) {
+    if (depth >= MaxNestingDepth) throw std::runtime_error("param.json is nested too deeply");
     expectChar(text, position, '[');
     JsonValue value;
     value.type = JsonType::Array;
     skipWhitespace(text, position);
     if (peekChar(text, position) == ']') { ++position; return value; }
     while (true) {
-        JsonValue element = parseJsonValue(text, position);
+        JsonValue element = parseJsonValue(text, position, depth + 1);
         value.arrayValue.push_back(std::move(element));
         skipWhitespace(text, position);
         const char next = peekChar(text, position);
@@ -199,6 +211,21 @@ JsonValue parseJsonArray(const std::string& text, std::size_t& position) {
         if (next == ']') { ++position; break; }
         throw std::runtime_error("malformed array in param.json");
     }
+    return value;
+}
+
+double parseJsonNumberValue(const std::string& number) {
+    double value = 0.0;
+#ifdef __cpp_lib_to_chars
+    const auto converted = std::from_chars(number.data(), number.data() + number.size(), value);
+    const bool parsed = converted.ec == std::errc{} && converted.ptr == number.data() + number.size();
+#else
+    std::istringstream stream(number);
+    stream.imbue(std::locale::classic());
+    stream >> value;
+    const bool parsed = !stream.fail() && stream.eof();
+#endif
+    if (!parsed) throw std::runtime_error("number outside supported range in param.json");
     return value;
 }
 
@@ -226,15 +253,15 @@ JsonValue parseJsonNumber(const std::string& text, std::size_t& position) {
     JsonValue value;
     value.type = JsonType::Number;
     value.numberText = text.substr(start, position - start);
-    value.numberValue = std::stod(value.numberText);
+    value.numberValue = parseJsonNumberValue(value.numberText);
     return value;
 }
 
-JsonValue parseJsonValue(const std::string& text, std::size_t& position) {
+JsonValue parseJsonValue(const std::string& text, std::size_t& position, std::size_t depth) {
     skipWhitespace(text, position);
     const char c = peekChar(text, position);
-    if (c == '{') return parseJsonObject(text, position);
-    if (c == '[') return parseJsonArray(text, position);
+    if (c == '{') return parseJsonObject(text, position, depth);
+    if (c == '[') return parseJsonArray(text, position, depth);
     if (c == '"') { JsonValue value; value.type = JsonType::String; value.stringValue = parseJsonString(text, position); return value; }
     if (c == 't') { expectLiteral(text, position, "true"); JsonValue value; value.type = JsonType::Boolean; value.boolValue = true; return value; }
     if (c == 'f') { expectLiteral(text, position, "false"); JsonValue value; value.type = JsonType::Boolean; value.boolValue = false; return value; }
@@ -245,7 +272,7 @@ JsonValue parseJsonValue(const std::string& text, std::size_t& position) {
 
 JsonValue parseJsonDocument(const std::string& text) {
     std::size_t position = 0;
-    JsonValue root = parseJsonValue(text, position);
+    JsonValue root = parseJsonValue(text, position, 0);
     skipWhitespace(text, position);
     if (position != text.size()) throw std::runtime_error("unexpected trailing data in param.json");
     return root;
@@ -254,7 +281,7 @@ JsonValue parseJsonDocument(const std::string& text) {
 const JsonValue* findObjectMember(const JsonValue& object, const std::string& key) {
     if (object.type != JsonType::Object) throw std::runtime_error("expected JSON object in param.json");
     for (const auto& member : object.objectValue) {
-        if (member.first == key) return &member.second;
+        if (member.key == key) return &member.value;
     }
     return nullptr;
 }
@@ -287,8 +314,8 @@ ParsedParamJson parseParamJson(const std::filesystem::path& paramJsonPath) {
     if (languageObject == nullptr) languageObject = findObjectMember(*localizedParametersValue, "en-US");
     if (languageObject == nullptr) {
         for (const auto& member : localizedParametersValue->objectValue) {
-            if (member.second.type == JsonType::Object) {
-                languageObject = &member.second;
+            if (member.value.type == JsonType::Object) {
+                languageObject = &member.value;
                 break;
             }
         }
@@ -301,6 +328,27 @@ ParsedParamJson parseParamJson(const std::filesystem::path& paramJsonPath) {
     ParsedParamJson result;
     result.title = title;
     result.titleId = titleId;
+    if (const JsonValue* contentVersion = findObjectMember(root, "contentVersion"); contentVersion != nullptr && contentVersion->type == JsonType::String) result.contentVersion = contentVersion->stringValue;
+    if (const JsonValue* attribute = findObjectMember(root, "attribute3")) {
+        const auto& number = attribute->numberText;
+        if (attribute->type != JsonType::Number || number.find_first_of("-.eE") != std::string::npos) throw std::runtime_error("param.json attribute3 is not an unsigned integer");
+        const auto parsed = std::from_chars(number.data(), number.data() + number.size(), result.attribute3);
+        if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size()) throw std::runtime_error("param.json attribute3 exceeds uint32 range");
+    }
+    if (const JsonValue* kernel = findObjectMember(root, "kernel")) {
+        if (const JsonValue* flexible = findObjectMember(*kernel, "flexibleMemorySize")) {
+            const auto& number = flexible->numberText;
+            if (flexible->type != JsonType::Number || number.find_first_of("-.eE") != std::string::npos)
+                throw std::runtime_error("param.json kernel.flexibleMemorySize is not an unsigned integer");
+            std::uint64_t bytes = 0;
+            const auto parsed = std::from_chars(number.data(), number.data() + number.size(), bytes);
+            if (parsed.ec != std::errc{} || parsed.ptr != number.data() + number.size())
+                throw std::runtime_error("param.json kernel.flexibleMemorySize exceeds uint64 range");
+            if ((bytes & (PS5_PAGE_SIZE - 1)) != 0)
+                throw std::runtime_error("param.json kernel.flexibleMemorySize must be a multiple of 16 KiB");
+            if (bytes != 0) result.flexibleMemorySizeBytes = bytes;
+        }
+    }
     if (const JsonValue* downloadData = findObjectMember(root, "downloadDataSize")) {
         if (downloadData->type != JsonType::Number || downloadData->numberValue < 0) throw std::runtime_error("param.json downloadDataSize is not a size");
         if (downloadData->numberText.find_first_of("-.eE") == std::string::npos) {

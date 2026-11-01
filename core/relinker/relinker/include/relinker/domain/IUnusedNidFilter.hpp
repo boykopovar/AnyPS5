@@ -14,7 +14,8 @@ public:
         const std::vector<NidReference>& nidRefs,
         const std::vector<std::uint8_t>& elfBytes,
         const std::vector<std::uint8_t>& textSection,
-        VirtualAddress textVAddr
+        VirtualAddress textVAddr,
+        const std::vector<VirtualAddress>& extraEntries = {}
     ) = 0;
 };
 

@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -13,28 +15,6 @@
 #include <ctime>
 #include <exception>
 #include <limits>
-
-extern "C" {
-SonyLconv* APS5_VABI sceAmprLocaleconv(void);
-double APS5_VABI sceAmprSinh(double x, double y);
-char* APS5_VABI sceAmprStrtokS(char* str, const char* delim, char** context);
-int APS5_VABI sceAmprCtimeS(char* buffer, std::size_t size, const std::int64_t* time);
-int APS5_VABI sceAmprWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src);
-void* APS5_VABI sceAmprSetConstraintHandlerS(void* handler);
-int APS5_VABI sceAmprFltrounds(void);
-void APS5_VABI sceAmprIgnoreHandlerS(const char* message, void* pointer, int error);
-std::size_t APS5_VABI sceAmprMbstowcs(std::uint16_t* dest, const char* src, std::size_t size);
-int APS5_VABI sceAmprAsctimeS(char* buffer, std::size_t size, const GuestTm* time);
-int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::int64_t* time);
-int APS5_VABI asctime_s_nid_postfix(char* buffer, std::size_t size, const GuestTm* time);
-std::size_t APS5_VABI mbstowcs_nid_postfix(std::uint16_t* dest, const char* src, std::size_t size);
-char* APS5_VABI strtok_s_nid_postfix(char* str, const char* delim, char** context);
-int APS5_VABI __fpclassifyd_nid_postfix(double value);
-unsigned __int128 APS5_VABI __udivti3_nid_postfix(unsigned __int128 dividend, unsigned __int128 divisor);
-SonyLconv* APS5_VABI localeconv_nid_postfix(void);
-int APS5_VABI sceAmprFpclassifyd(double value);
-unsigned int APS5_VABI _ZSt14_Random_devicev_nid_postfix();
-}
 
 #define Require(condition) do { if (!(condition)) { std::fprintf(stderr, "guest_crt: line %d: %s\n", __LINE__, #condition); std::abort(); } } while (0)
 
@@ -85,6 +65,78 @@ int main() {
     }
     Require(trapped);
 
+    Require(__divti3_nid_postfix(100, 3) == 33);
+    Require(__divti3_nid_postfix(-100, 3) == -33);
+    Require(__divti3_nid_postfix(100, -3) == -33);
+    Require(__divti3_nid_postfix(-100, -3) == 33);
+    Require(SonyDivti3(0, 5) == 0);
+    const __int128 large = (__int128)1 << 100;
+    Require(SonyDivti3(large, 3) == large / 3);
+    Require(SonyDivti3(-large, 3) == -(large / 3));
+    Require(SonyDivti3(large, -3) == -(large / 3));
+    Require(SonyDivti3(-large, -3) == large / 3);
+    const __int128 minimum = (__int128)((unsigned __int128)1 << 127);
+    const __int128 maximum = (__int128)(((unsigned __int128)1 << 127) - 1);
+    Require(SonyDivti3(minimum, 1) == minimum);
+    Require(SonyDivti3(minimum, -1) == minimum);
+    Require(SonyDivti3(maximum, -1) == -maximum);
+    trapped = false;
+    try {
+        SonyDivti3(1, 0);
+    } catch (const std::exception&) {
+        trapped = true;
+    }
+    Require(trapped);
+
+    Require(__modti3_nid_postfix(100, 3) == 1);
+    Require(__modti3_nid_postfix(-100, 3) == -1);
+    Require(__modti3_nid_postfix(100, -3) == 1);
+    Require(__modti3_nid_postfix(-100, -3) == -1);
+    Require(SonyModti3(0, 5) == 0);
+    Require(SonyModti3(3, 100) == 3);
+    Require(SonyModti3(-3, 100) == -3);
+    Require(SonyModti3(3, -100) == 3);
+    Require(SonyModti3(-3, -100) == -3);
+    Require(SonyModti3(large, 3) == large % 3);
+    Require(SonyModti3(-large, 3) == -(large % 3));
+    Require(SonyModti3(large, -3) == large % 3);
+    Require(SonyModti3(-large, -3) == -(large % 3));
+    Require(SonyModti3(minimum, 1) == 0);
+    Require(SonyModti3(minimum, -1) == 0);
+    Require(SonyModti3(maximum, 1) == 0);
+    Require(SonyModti3(maximum, -1) == 0);
+    trapped = false;
+    try {
+        SonyModti3(1, 0);
+    } catch (const std::exception&) {
+        trapped = true;
+    }
+    Require(trapped);
+
+    const unsigned __int128 unsignedMaximum = ~(unsigned __int128)0;
+    const unsigned __int128 largeDivisor = ((unsigned __int128)1 << 64) + 3;
+    Require(__umodti3_nid_postfix(100, 3) == 1);
+    Require(__umodti3_nid_postfix(0, 5) == 0);
+    Require(__umodti3_nid_postfix(3, 100) == 3);
+    Require(__umodti3_nid_postfix(unsignedMaximum, 1) == 0);
+    Require(__umodti3_nid_postfix(unsignedMaximum, unsignedMaximum) == 0);
+    Require(__umodti3_nid_postfix(largeDivisor, largeDivisor) == 0);
+    Require(__umodti3_nid_postfix(unsignedMaximum, 10) == 5);
+    Require(__umodti3_nid_postfix((unsigned __int128)1 << 100, 3) == 1);
+    Require(__umodti3_nid_postfix(unsignedMaximum, (unsigned __int128)1 << 64) == 0xFFFFFFFFFFFFFFFFull);
+    Require(__umodti3_nid_postfix(unsignedMaximum, largeDivisor) == 8);
+    Require(__umodti3_nid_postfix((unsigned __int128)1 << 127, largeDivisor) == 0x8000000000000006ull);
+    Require(__umodti3_nid_postfix(unsignedMaximum - 1, unsignedMaximum) == unsignedMaximum - 1);
+    Require(__umodti3_nid_postfix(unsignedMaximum, (unsigned __int128)1 << 127) == ((unsigned __int128)1 << 127) - 1);
+    trapped = false;
+    try {
+        __umodti3_nid_postfix(((unsigned __int128)0x1234 << 64) | 0x5678, 0);
+
+    } catch (const std::runtime_error& error) {
+        trapped = std::strcmp(error.what(), "__umodti3: integer divide by zero (0x00000000000012340000000000005678 % 0)") == 0;
+    }
+    Require(trapped);
+
     void* previous = sceAmprSetConstraintHandlerS(reinterpret_cast<void*>(&CountingHandler));
     Require(previous != nullptr);
     Require(previous != reinterpret_cast<void*>(&CountingHandler));
@@ -115,10 +167,27 @@ int main() {
     Require(asctime_s_nid_postfix(text, sizeof(text), &known) == 0);
     Require(std::strcmp(text, "Thu Jan  1 00:00:00 1970\n") == 0);
     known.tm_wday = 7;
-    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL);
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
     known.tm_wday = 4;
+    known.tm_year = 9000;
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    for (const int year : {INT_MAX, INT_MAX - 1899, INT_MIN}) {
+        known.tm_year = year;
+        text[0] = 'x';
+        Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+        text[0] = 'x';
+        Require(asctime_s_nid_postfix(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    }
+    known.tm_year = 70;
+    known.tm_mday = 32;
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), &known) == EINVAL && text[0] == '\0');
+    known.tm_mday = 1;
     Require(sceAmprAsctimeS(nullptr, sizeof(text), &known) == EINVAL);
-    Require(sceAmprAsctimeS(text, sizeof(text), nullptr) == EINVAL);
+    text[0] = 'x';
+    Require(sceAmprAsctimeS(text, sizeof(text), nullptr) == EINVAL && text[0] == '\0');
     Require(sceAmprAsctimeS(text, 25, &known) == EINVAL);
     const std::int64_t epoch = 0;
     Require(sceAmprCtimeS(text, sizeof(text), &epoch) == 0);
@@ -127,7 +196,8 @@ int main() {
     Require(ctime_s_nid_postfix(libcText, sizeof(libcText), &epoch) == 0);
     Require(std::strcmp(libcText, text) == 0);
     Require(sceAmprCtimeS(text, 25, &epoch) == EINVAL);
-    Require(sceAmprCtimeS(text, sizeof(text), nullptr) == EINVAL);
+    text[0] = 'x';
+    Require(sceAmprCtimeS(text, sizeof(text), nullptr) == EINVAL && text[0] == '\0');
 
     char line[] = "a,b,,c";
     char* context = nullptr;
@@ -144,6 +214,8 @@ int main() {
     Require(sceAmprMbstowcs(wide, "ABC", 8) == 3);
     Require(wide[0] == 65 && wide[1] == 66 && wide[2] == 67 && wide[3] == 0);
     Require(sceAmprMbstowcs(nullptr, "ABC", 8) == 3);
+    Require(sceAmprMbstowcs(nullptr, "ABC", 0) == 3 && sceAmprMbstowcs(nullptr, "ABC", 1) == 3);
+    Require(mbstowcs_nid_postfix(nullptr, "ABC", 0) == 3 && mbstowcs_nid_postfix(nullptr, "ABC", 1) == 3);
     Require(sceAmprMbstowcs(wide, "ABC", 2) == 2);
     Require(mbstowcs_nid_postfix(wide, "ABC", 8) == 3);
 

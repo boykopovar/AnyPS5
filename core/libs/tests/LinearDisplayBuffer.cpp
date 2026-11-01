@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PqToSdr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/HalfFloatScanout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include <algorithm>
@@ -86,6 +87,89 @@ static void HalfFloatDisplay() {
     }
 }
 
+static double ReferencePqNits(std::uint32_t code) {
+    const double m1 = 2610.0 / 16384.0, m2 = 2523.0 / 4096.0 * 128.0, c1 = 3424.0 / 4096.0, c2 = 2413.0 / 4096.0 * 32.0, c3 = 2392.0 / 4096.0 * 32.0;
+    const double e = std::pow(code / 1023.0, 1.0 / m2);
+    return 10000.0 * std::pow(std::max(e - c1, 0.0) / (c2 - c3 * e), 1.0 / m1);
+}
+
+static std::array<double, 3> ReferenceSdr(std::uint32_t red, std::uint32_t green, std::uint32_t blue, double whiteNits) {
+    const double referenceWhite = std::min(203.0, whiteNits);
+    const double r = ReferencePqNits(red) / referenceWhite, g = ReferencePqNits(green) / referenceWhite, b = ReferencePqNits(blue) / referenceWhite;
+    std::array<double, 3> rgb{std::max(1.6604910 * r - 0.5876411 * g - 0.0728499 * b, 0.0), std::max(-0.1245505 * r + 1.1328999 * g - 0.0083494 * b, 0.0), std::max(-0.0181508 * r - 0.1005789 * g + 1.1187297 * b, 0.0)};
+    const double luminance = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+    const double knee = 0.75;
+    if (luminance > knee) {
+        const double t = (luminance - knee) / (1.0 - knee), w = (whiteNits / referenceWhite - knee) / (1.0 - knee);
+        const double mapped = knee + (1.0 - knee) * t * (1.0 + t / (w * w)) / (1.0 + t);
+        for (auto& channel : rgb) channel *= mapped / luminance;
+    }
+    for (auto& channel : rgb) {
+        const double v = std::clamp(channel, 0.0, 1.0);
+        channel = 255.0 * (v <= 0.0031308 ? 12.92 * v : 1.055 * std::pow(v, 1.0 / 2.4) - 0.055);
+    }
+    return rgb;
+}
+
+static std::uint32_t PqWord(std::uint32_t red, std::uint32_t green, std::uint32_t blue, bool redLow) {
+    return (redLow ? red : blue) | (green << 10u) | ((redLow ? blue : red) << 20u) | (3u << 30u);
+}
+
+static void PqDisplay() {
+    constexpr std::uint64_t rgbPq = 0x8100070422000000ull;
+    constexpr std::uint64_t bgrPq = 0x8100070400000000ull;
+    for (const auto pixelFormat : {rgbPq, bgrPq}) {
+        const bool redLow = pixelFormat == rgbPq;
+        Require(AgcDriver::DisplayPq(pixelFormat) && AgcDriver::DisplayTenBit(pixelFormat) && !AgcDriver::DisplayHalfFloat(pixelFormat) && AgcDriver::DisplayRedLow(pixelFormat) == redLow);
+        Require(AgcDriver::DisplayTexelBytes(pixelFormat) == 4 && AgcDriver::DisplayTexelFormat(pixelFormat) == (redLow ? VK_FORMAT_A2B10G10R10_UNORM_PACK32 : VK_FORMAT_A2R10G10B10_UNORM_PACK32));
+        for (const auto storage : {VK_FORMAT_A2B10G10R10_UNORM_PACK32, VK_FORMAT_A2R10G10B10_UNORM_PACK32}) Require(AgcDriver::ResidentPresentPath(storage, pixelFormat, true) == AgcDriver::ResidentPresent::Convert);
+        Require(AgcDriver::ResidentPresentPath(VK_FORMAT_B8G8R8A8_UNORM, pixelFormat, true) == AgcDriver::ResidentPresent::None && AgcDriver::ResidentPresentPath(VK_FORMAT_R16G16B16A16_SFLOAT, pixelFormat, true) == AgcDriver::ResidentPresent::None);
+        Require(AgcDriver::DisplayBufferSize({65536, pixelFormat, 3840, 2160}) == 30u * 17u * 65536u);
+        struct Anchor {
+            std::uint32_t red, green, blue;
+            unsigned r, g, b;
+        };
+        const std::array<Anchor, 8> anchors{{{0, 0, 0, 0, 0, 0}, {1023, 1023, 1023, 255, 255, 255}, {520, 520, 520, 255, 255, 255}, {450, 450, 450, 187, 187, 187},
+            {600, 500, 300, 255, 213, 0}, {480, 470, 350, 225, 204, 95}, {350, 420, 500, 16, 167, 241}, {1023, 0, 0, 255, 0, 0}}};
+        std::array<std::byte, 4 * anchors.size()> input{};
+        for (std::size_t i = 0; i < anchors.size(); ++i) {
+            const auto word = PqWord(anchors[i].red, anchors[i].green, anchors[i].blue, redLow);
+            std::memcpy(input.data() + i * 4, &word, 4);
+        }
+        const AgcDriver::DisplayBuffer buffer{65536, pixelFormat, 4, 2, 1, 0};
+        Require(AgcDriver::DisplayBufferSize(buffer) == input.size());
+        const auto pixels = AgcDriver::DecodeDisplayBuffer(buffer, input);
+        for (std::size_t i = 0; i < anchors.size(); ++i) {
+            Require(std::to_integer<unsigned>(pixels[i * 4]) == anchors[i].b && std::to_integer<unsigned>(pixels[i * 4 + 1]) == anchors[i].g && std::to_integer<unsigned>(pixels[i * 4 + 2]) == anchors[i].r && std::to_integer<unsigned>(pixels[i * 4 + 3]) == 255);
+        }
+    }
+    struct WhiteAnchor {
+        std::uint32_t red, green, blue;
+        unsigned r, g, b;
+    };
+    const std::array<WhiteAnchor, 6> shoulder{{{770, 770, 770, 255, 255, 255}, {700, 700, 700, 252, 252, 252}, {650, 650, 650, 249, 249, 249}, {560, 560, 560, 221, 221, 221}, {450, 450, 450, 136, 136, 136}, {600, 500, 300, 255, 155, 0}}};
+    for (const auto& anchor : shoulder) {
+        const auto pixel = AgcDriver::PqToSdrPixel(PqWord(anchor.red, anchor.green, anchor.blue, true), true, 1000.0f);
+        Require(pixel[2] == anchor.r && pixel[1] == anchor.g && pixel[0] == anchor.b && pixel[3] == 255);
+    }
+    for (const auto pixelFormat : {0x8100070000000000ull, 0x8100000400000000ull, 0x8000070400000000ull, 0x8100070400000001ull, 0x8100070600000000ull, 0xc001070700000000ull}) {
+        Require(!AgcDriver::DisplayPq(pixelFormat));
+        Reject([&] { AgcDriver::DisplayBufferSize({65536, pixelFormat, 64, 64}); });
+    }
+    for (const float white : {100.0f, 150.0f, 1000.0f}) {
+        for (std::uint32_t red = 0; red < 1024; red += 31) {
+            for (std::uint32_t green = 0; green < 1024; green += 31) {
+                for (std::uint32_t blue = 0; blue < 1024; blue += 31) {
+                    const auto expected = ReferenceSdr(red, green, blue, white);
+                    const auto pixel = AgcDriver::PqToSdrPixel(PqWord(red, green, blue, true), true, white);
+                    Require(std::fabs(pixel[2] - expected[0]) <= 1.0 && std::fabs(pixel[1] - expected[1]) <= 1.0 && std::fabs(pixel[0] - expected[2]) <= 1.0 && pixel[3] == 255);
+                    Require(AgcDriver::PqToSdrPixel(PqWord(red, green, blue, false), false, white) == pixel);
+                }
+            }
+        }
+    }
+}
+
 int main() {
     AgcDriver::DisplayBuffer buffer{65536, 0x8000000000000000ull, 2, 2, 1, 3};
     const std::array<unsigned char, 24> input{1,2,3,4, 5,6,7,8, 99,99,99,99,
@@ -110,4 +194,5 @@ int main() {
     Require(AgcDriver::DisplayBufferSize(buffer) == 65536);
     HalfFloatCodes();
     HalfFloatDisplay();
+    PqDisplay();
 }

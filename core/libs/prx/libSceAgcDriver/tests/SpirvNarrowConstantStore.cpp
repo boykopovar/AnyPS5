@@ -44,14 +44,14 @@ void CheckStorageOnlyModule(const RecompileResult& result, std::string_view name
     validator.SetMessageConsumer([&](spv_message_level_t, const char*, const spv_position_t&, const char* message) {
         if (message != nullptr) diagnostics += std::string(message) + '\n';
     });
-    const bool valid = validator.Validate(words);
+    const bool valid = validator.Validate(words.data(), words.size());
     Check(valid, std::string(name) + ": emitted invalid SPIR-V:\n" + diagnostics);
 #endif
 }
 
 SpirvTarget StorageOnlyTarget() {
-    static constexpr std::array<std::uint32_t, 3> capabilities{
-        spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess,
+    static constexpr std::array<std::uint32_t, 4> capabilities{
+        spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance,
     };
     static constexpr std::array<std::string_view, 4> extensions{
         "SPV_EXT_descriptor_indexing", "SPV_KHR_8bit_storage", "SPV_KHR_float_controls", "SPV_KHR_physical_storage_buffer",

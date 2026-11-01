@@ -1,7 +1,9 @@
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <codegen/x86/Amd64OnlySubstitutionTable.hpp>
+#include <codegen/x86/DecodedInstruction.hpp>
 #include <codegen/x86/X64OpcodeConstants.hpp>
 #include <codegen/CodegenException.hpp>
+#include <algorithm>
 #include <limits>
 
 namespace Codegen {
@@ -23,6 +25,12 @@ constexpr std::uint8_t kSibRsp = 0x24;
 constexpr std::uint8_t kShiftDwords = 0x72;
 constexpr std::uint8_t kShiftQwords = 0x73;
 constexpr std::uint8_t kMovdqu = 0x6F;
+
+bool _addressSize32(const std::span<const std::uint8_t> instruction) {
+    const DecodedInstruction decoded{instruction.data(), instruction.size()};
+    const auto prefixes = instruction.first(decoded.OpcodeOffset());
+    return std::find(prefixes.begin(), prefixes.end(), X64OpcodeConstants::PrefixAddressSize) != prefixes.end();
+}
 
 std::uint8_t _rex(const std::uint8_t reg, const std::uint8_t rm) {
     return static_cast<std::uint8_t>(kRexBase | ((reg & 8) != 0 ? kRexR : 0) | ((rm & 8) != 0 ? kRexB : 0));
@@ -87,9 +95,9 @@ void ApplyStubRelocations(const std::span<std::uint8_t> body, const std::span<co
             throw CodegenException("Stub relocation lies outside the stub body", failureOffset);
         const auto target = siteAddress + static_cast<std::uint64_t>(relocation.SiteTarget);
         const auto displacement = static_cast<std::int64_t>(target - (stubAddress + relocation.InstructionEnd));
-        if (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max())
+        if (!relocation.AddressSize32 && (displacement < std::numeric_limits<std::int32_t>::min() || displacement > std::numeric_limits<std::int32_t>::max()))
             throw CodegenException("RIP-relative operand is out of rel32 range from its stub", failureOffset);
-        const auto value = static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement));
+        const auto value = static_cast<std::uint32_t>(displacement);
         for (std::size_t index = 0; index < Disp32Size; ++index)
             body[relocation.DisplacementOffset + index] = static_cast<std::uint8_t>(value >> (index * 8));
     }
@@ -97,10 +105,6 @@ void ApplyStubRelocations(const std::span<std::uint8_t> body, const std::span<co
 
 void EmitSse(std::vector<std::uint8_t>& out, const std::uint8_t prefix, const std::initializer_list<std::uint8_t> opcode, const std::uint8_t dst, const std::uint8_t src) {
     _emit(out, prefix, dst, src, opcode, static_cast<std::uint8_t>(kModRmRegister | ((dst & 7) << 3) | (src & 7)));
-}
-
-void EmitShiftImm(std::vector<std::uint8_t>& out, const std::uint8_t extension, const std::uint8_t reg, const std::uint8_t imm) {
-    _shiftImm(out, kShiftQwords, extension, reg, imm);
 }
 
 void StubBodyBuilder::Sse(const std::uint8_t prefix, const std::initializer_list<std::uint8_t> opcode, const std::uint8_t dst, const std::uint8_t src) {
@@ -150,7 +154,8 @@ void StubBodyBuilder::Load(const std::uint8_t reg, const MemoryOperand& operand)
     if (operand.Rm == ModRmRmSibPresent)
         _bytes.push_back(operand.Sib);
     if (operand.RipRelative) {
-        _relocations.push_back({_bytes.size(), _bytes.size() + Disp32Size, static_cast<std::int64_t>(_siteOffset + operand.InstructionLength) + operand.Displacement});
+        const auto addressSize32 = std::find(operand.Prefixes.begin(), operand.Prefixes.end(), PrefixAddressSize) != operand.Prefixes.end();
+        _relocations.push_back({_bytes.size(), _bytes.size() + Disp32Size, _siteOffset + static_cast<std::int64_t>(operand.InstructionLength) + operand.Displacement, addressSize32});
         _bytes.insert(_bytes.end(), Disp32Size, 0);
         return;
     }
@@ -189,13 +194,84 @@ void StubBodyBuilder::Move(const std::span<const std::uint8_t> instruction, cons
             value |= static_cast<std::uint32_t>(instruction[*ripDisplacementOffset + index]) << (index * 8);
             _bytes[start + *ripDisplacementOffset + index] = 0;
         }
-        _relocations.push_back({start + *ripDisplacementOffset, start + instruction.size(), static_cast<std::int64_t>(_siteOffset + instruction.size()) + static_cast<std::int32_t>(value)});
+        _relocations.push_back({start + *ripDisplacementOffset, start + instruction.size(), _siteOffset + static_cast<std::int64_t>(instruction.size()) + static_cast<std::int32_t>(value), _addressSize32(instruction)});
     }
     Advance(instruction.size());
 }
 
+void StubBodyBuilder::RipRelative(const std::span<const std::uint8_t> instruction, const std::size_t displacementOffset, const std::int64_t target) {
+    using namespace X64OpcodeConstants;
+    if (displacementOffset > instruction.size() || instruction.size() - displacementOffset < Disp32Size)
+        throw CodegenException("RIP-relative displacement lies outside its instruction");
+    const auto start = _bytes.size();
+    Raw(instruction);
+    std::fill_n(_bytes.begin() + static_cast<std::ptrdiff_t>(start + displacementOffset), Disp32Size, std::uint8_t{0});
+    _relocations.push_back({start + displacementOffset, start + instruction.size(), _siteOffset + target, _addressSize32(instruction)});
+}
+
+void StubBodyBuilder::MoveControlFlow(const std::span<const std::uint8_t> instruction, const DecodedInstructionInfo& info) {
+    using namespace X64OpcodeConstants;
+    const auto end = _siteOffset + static_cast<std::int64_t>(instruction.size());
+    if (info.FlowKind == ControlFlowKind::IndirectCall)
+        throw CodegenException("A register or memory call cannot move into a stub");
+    if (info.TruncatesBranchTarget)
+        throw CodegenException("A relative branch with this prefix cannot move into a stub");
+    if (info.FlowKind == ControlFlowKind::Call && info.HasRipRelativeDisp) {
+        _pushReturnAddress(end);
+        std::vector<std::uint8_t> jump(instruction.begin(), instruction.end());
+        auto& modrm = jump[info.RipRelativeDispOffset - 1];
+        modrm = static_cast<std::uint8_t>((modrm & ~(ModRmRegMask << ModRmRegShift)) | (4u << ModRmRegShift));
+        Move(jump, info.RipRelativeDispOffset);
+        return;
+    }
+    if (!info.HasBranchTarget || info.HasRipRelativeDisp) {
+        Move(instruction, info.HasRipRelativeDisp ? std::optional<std::size_t>(info.RipRelativeDispOffset) : std::nullopt);
+        return;
+    }
+    for (std::size_t index = 0; index < info.OpcodeOffset; ++index) {
+        const auto prefix = instruction[index];
+        if (prefix != PrefixSegCs && prefix != PrefixSegDs && prefix != PrefixRepne && prefix != PrefixAddressSize && (prefix & 0xF0) != kRexBase)
+            throw CodegenException("A relative branch with this prefix cannot move into a stub");
+    }
+    const auto target = end + info.BranchDisp;
+    if (info.IsTwoByteOpcode) {
+        _rel32({TwoByteOpcodeEscape, info.Opcode}, target);
+    } else if (info.Opcode == OneByteCallRel32) {
+        _pushReturnAddress(end);
+        _rel32({OneByteJmpRel32}, target);
+    } else if (info.Opcode == OneByteJmpRel32 || info.Opcode == OneByteJmpRel8) {
+        _rel32({OneByteJmpRel32}, target);
+    } else if (info.Opcode >= OneByteJccRel8Min && info.Opcode <= OneByteJccRel8Max) {
+        _rel32({TwoByteOpcodeEscape, static_cast<std::uint8_t>(TwoByteJccRel32Min | (info.Opcode & 0x0F))}, target);
+    } else {
+        throw CodegenException("A LOOP or JRCXZ branch cannot move into a stub");
+    }
+    Advance(instruction.size());
+}
+
+void StubBodyBuilder::JumpTo(const std::int64_t siteTarget) {
+    _rel32({X64OpcodeConstants::OneByteJmpRel32}, siteTarget);
+}
+
+void StubBodyBuilder::Seek(const std::int64_t siteOffset) {
+    _siteOffset = siteOffset;
+}
+
 void StubBodyBuilder::Advance(const std::size_t length) {
-    _siteOffset += length;
+    _siteOffset += static_cast<std::int64_t>(length);
+}
+
+void StubBodyBuilder::_rel32(const std::initializer_list<std::uint8_t> opcode, const std::int64_t siteTarget) {
+    _bytes.insert(_bytes.end(), opcode);
+    const auto displacement = _bytes.size();
+    _bytes.insert(_bytes.end(), X64OpcodeConstants::Disp32Size, std::uint8_t{0});
+    _relocations.push_back({displacement, _bytes.size(), siteTarget});
+}
+
+void StubBodyBuilder::_pushReturnAddress(const std::int64_t siteTarget) {
+    _bytes.insert(_bytes.end(), {0x48, 0x8D, 0x64, 0x24, 0xF8, 0x50});
+    _rel32({0x48, 0x8D, 0x05}, siteTarget);
+    _bytes.insert(_bytes.end(), {0x48, 0x89, 0x44, 0x24, 0x08, 0x58});
 }
 
 LoweredBody StubBodyBuilder::Finish() {

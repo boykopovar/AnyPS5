@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
@@ -16,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <span>
 #include <string>
 #include <vector>
@@ -143,7 +145,15 @@ void Dispatch(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> co
     };
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    const auto before = AgcDriver::VulkanDevice::ComputePipelineCounts();
+    auto prepared = device.PrepareDispatch(result, {}, Threads, reinterpret_cast<std::uintptr_t>(code.data()));
+    const auto after = AgcDriver::VulkanDevice::ComputePipelineCounts();
+    Require(after.created == before.created + 1 && after.underGpuMutex == before.underGpuMutex, "global loads: the address-table program's pipeline was not created before the GPU mutex");
+    {
+        std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
+        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()), std::move(prepared));
+    }
+    Require(AgcDriver::VulkanDevice::ComputePipelineCounts().created == after.created, "global loads: the dispatch created a second pipeline");
     device.WaitIdle();
 }
 

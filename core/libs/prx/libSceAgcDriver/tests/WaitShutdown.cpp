@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
+#include "prx/libSceAgcDriver/Submit/include/CommandBuffer.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -50,6 +51,46 @@ void Submit(std::uint32_t queue, const std::vector<std::uint32_t>& words) {
     Require(result == 0, "shutdown wait submission failed");
 }
 
+void CheckCommandBufferSubmission() {
+    struct MockQueueContext {
+        std::uint32_t unused = 0;
+        std::uint32_t queue_id = 0;
+    };
+    MockQueueContext graphicsCtx{0, 0};
+    MockQueueContext computeCtx{0, 0x20};
+    MockQueueContext invalidCtx{0, 1};
+
+    Packet emptyPacket{nullptr, 0, 0, {}};
+    Require(sceAgcDriverSubmitCommandBuffer(nullptr, &emptyPacket) == 22, "null context submit must return EINVAL");
+    Require(sceAgcDriverSubmitCommandBuffer(&graphicsCtx, nullptr) == 22, "null packet submit must return EINVAL");
+    Require(sceAgcDriverSubmitMultiCommandBuffers(nullptr, nullptr, nullptr, 0) == 0, "count 0 multi submit must return 0");
+
+    std::uint32_t* cmdBufs[] = {nullptr};
+    const std::uint32_t cmdSizes[] = {0};
+    Require(sceAgcDriverSubmitMultiCommandBuffers(nullptr, cmdBufs, cmdSizes, 1) == 22, "null context multi submit must return EINVAL");
+    Require(sceAgcDriverSubmitMultiCommandBuffers(&graphicsCtx, nullptr, cmdSizes, 1) == 22, "null cmdBufs multi submit must return EINVAL");
+    Require(sceAgcDriverSubmitMultiCommandBuffers(&graphicsCtx, cmdBufs, nullptr, 1) == 22, "null cmdSizes multi submit must return EINVAL");
+    Require(sceAgcDriverSubmitMultiCommandBuffers(&graphicsCtx, cmdBufs, cmdSizes, 0) == 0, "empty multi submission failed");
+    Require(sceAgcDriverSubmitMultiCommandBuffers(&graphicsCtx, cmdBufs, cmdSizes, 1) == 0, "graphics context multi submit failed");
+    Require(sceAgcDriverSubmitMultiCommandBuffers(&computeCtx, cmdBufs, cmdSizes, 1) == 0, "compute context multi submit failed");
+
+    bool submitRejected = false;
+    try {
+        sceAgcDriverSubmitCommandBuffer(&invalidCtx, &emptyPacket);
+    } catch (const std::runtime_error&) {
+        submitRejected = true;
+    }
+    Require(submitRejected, "unsupported queue context was not rejected");
+
+    bool multiRejected = false;
+    try {
+        sceAgcDriverSubmitMultiCommandBuffers(&invalidCtx, cmdBufs, cmdSizes, 1);
+    } catch (const std::runtime_error&) {
+        multiRejected = true;
+    }
+    Require(multiRejected, "unsupported queue context for multi submit was not rejected");
+}
+
 void CheckShutdownCancellation() {
     static std::array<LabelState, 3> states{};
     constexpr std::array<std::uint32_t, 3> queues{0, 0x20, 0x28};
@@ -92,6 +133,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     try {
+        CheckCommandBufferSubmission();
         CheckShutdownCancellation();
         std::puts("unsatisfied label waits cancelled cleanly at shutdown");
         return 0;

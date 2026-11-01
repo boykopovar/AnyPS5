@@ -61,6 +61,7 @@ int main() {
         {{0xd6000005u, 0x02020500u}, "modifiers are not implemented", "v_interp_p1_f32_e64 with the packed-half selector"},
         {{0xd6000105u, 0x02020400u}, "modifiers are not implemented", "v_interp_p1_f32_e64 with an absolute source 0"},
         {{0xd6020005u, 0x22000200u}, "modifiers are not implemented", "v_interp_mov_f32_e64 with a negated parameter"},
+        {{0xd7424005u, 0x00020201u}, "modifiers are not implemented", "v_interp_p1ll_f16 with the high-half destination selector"},
     };
     int failures = 0;
     for (const auto& test : accepted) {
@@ -101,6 +102,22 @@ int main() {
         }
         if (refusal.find(test.reason) == std::string::npos) {
             std::fprintf(stderr, "%s was not refused\n", test.name);
+            ++failures;
+        }
+    }
+    for (const std::uint32_t selector : {0x0u, 0x4000u}) {
+        const std::vector<std::uint32_t> code{0xd75a0005u | selector, 0x041e0201u, 0xbf810000u};
+        try {
+            const auto decoded = RdnaInstructionDecoder{}.Decode(code);
+            const auto& instruction = decoded.instructions.at(0);
+            const std::uint32_t half = selector != 0u ? 5u : 6u;
+            if (instruction.op != RdnaOpcode::VInterpP2F16 || instruction.destination.reg != Destination || instruction.destination.sdwaSel != half ||
+                instruction.sourceCount != 4u || instruction.source0.reg != 1u || instruction.source1.value != 1u || instruction.source3.reg != 7u) {
+                std::fprintf(stderr, "v_interp_p2_f16 v5, v1, attr1.x, v7%s decoded to the wrong opcode or operands\n", selector != 0u ? " op_sel:[0,0,0,1]" : "");
+                ++failures;
+            }
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "v_interp_p2_f16 v5, v1, attr1.x, v7%s was refused: %s\n", selector != 0u ? " op_sel:[0,0,0,1]" : "", error.what());
             ++failures;
         }
     }

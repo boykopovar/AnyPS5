@@ -29,7 +29,7 @@ void Run(AgcDriver::VulkanDevice& device, bool integer) {
     const std::array<std::uint32_t, 4> values = integer ? std::array<std::uint32_t, 4>{11, 22, 33, 44} : std::array<std::uint32_t, 4>{0, 0x3e800000u, 0x3f000000u, 0x3f800000u};
     const std::array<std::uint32_t, 13> code{0x7e0002ffu, values[0], 0x7e0202ffu, values[1], 0x7e0402ffu, values[2], 0x7e0602ffu, values[3], 0xf800100fu, 0x03020100u, 0xf800183fu, 0x03020100u, 0xbf810000u};
     AgcDriver::Registers context{{0x1b6, 0x8000}, {0x1b3, 0}, {0x1b4, 0}, {0x203, 0}, {0x1c5, integer ? 0x7007u : 0x9009u}};
-    RecompileRequest request{{ShaderStage::Fragment, 0x20000, code, 0, {}}, {32, 0, {}, {}, AgcDriver::Graphics::DecodePixelStageInfo(context, {}), {}, {}}, device.Target(), {0, 0, 0, 128}};
+    RecompileRequest request{{ShaderStage::Fragment, 0x20000, code, 0, {}}, {32, 0, {}, {}, AgcDriver::Graphics::DecodePixelStageInfo(context, {}), {}, {}}, device.Target(), PixelPushLayout(0u, device.Target())};
     const auto handle = PrepareShader(request);
     const auto& artifact = GetPreparedArtifact(*handle);
     std::uint32_t scalarType = 0;
@@ -85,6 +85,10 @@ void Run(AgcDriver::VulkanDevice& device, bool integer) {
             request.useCache = cached;
             const auto materialized = MaterializeShader(request, *capture, *handle);
             Require(materialized->spirv.data() == pixel->spirv.data() && materialized->PipelineVariantId() == pixel->PipelineVariantId(), "export mapping did not reuse its specialized module");
+            if (device.Target().registrationModules) {
+                Require(materialized->PipelineVariantId() == first->PipelineVariantId(), "registration modules: the export mapping specialized the fragment module");
+                continue;
+            }
             for (std::size_t cursor = 5; cursor < materialized->spirv.size();) {
                 const auto count = materialized->spirv[cursor] >> 16u;
                 Require(count != 0u && count <= materialized->spirv.size() - cursor, "invalid specialized fragment instruction");
@@ -94,7 +98,7 @@ void Run(AgcDriver::VulkanDevice& device, bool integer) {
         }
         request.useCache = true;
         if (integer) continue;
-        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Fragment, pixel.get(), 0}}};
+        const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderStage::Vertex, &vertex, 0}, {ShaderStage::Fragment, pixel.get(), PixelPushOffset(0u, device.Target())}}};
         pixels.fill(0xdeadbeef);
         otherPixels.fill(0xdeadbeef);
         device.Draw(state, draw, shaders);

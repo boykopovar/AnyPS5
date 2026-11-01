@@ -32,6 +32,13 @@ int main() {
         try { resolver->ResolveCallSites(code, 0, std::numeric_limits<std::uint64_t>::max(), 1); }
         catch (const std::exception&) { rejected = true; }
         Require(rejected);
-        std::cout << "10 call-site index cases passed\n";
+        rejected = false;
+        try { resolver->ResolveCallSites(code, std::numeric_limits<std::uint64_t>::max(), 0x1000, 8); }
+        catch (const std::exception&) { rejected = true; }
+        Require(rejected);
+        constexpr std::uint64_t highBase = 0x8000000000000000ULL;
+        std::vector<std::uint8_t> highCode{0xFF, 0x15, 0xFA, 0xFF, 0xFF, 0xFF};
+        Require(resolver->ResolveCallSites(highCode, highBase + 0x100, highBase + 0x100, 8) == std::vector<std::uint64_t>{highBase + 0x100});
+        std::cout << "12 call-site index cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

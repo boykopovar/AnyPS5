@@ -3,10 +3,11 @@
 
 #include <relinker/domain/ISyscallScanner.hpp>
 #include <memory>
+#include <domain/IProgress.hpp>
 
 namespace Relinker {
 
-std::unique_ptr<ISyscallScanner> MakeSyscallScanner(bool trapSdkStubs = false);
+std::unique_ptr<ISyscallScanner> MakeSyscallScanner(Domain::IProgress& progress, bool trapSdkStubs = false);
 std::unique_ptr<ISyscallScanner> MakeNullSyscallScanner();
 
 }

@@ -1,4 +1,5 @@
 #include "Translation/ScalarInstructions.hpp"
+#include "Translation/RoundingMode.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
 #include <string>
@@ -9,9 +10,39 @@ void TranslateScalarInstruction(IrBuilder& builder, const RdnaInstruction& instr
     throw std::runtime_error("TranslateScalarInstruction not implemented");
 }
 
+template <typename TWord>
+bool TranslationContext::sU32Mask(const RdnaInstruction& inst, IrOpcode logicalOpcode, bool binary, bool negateRhs, bool negateResult, TWord&& word) {
+    const auto& destination = inst.destination;
+    const auto execOrVcc = [](const RdnaOperand& operand) { return operand.kind == RdnaOperandKind::ExecLo || operand.kind == RdnaOperandKind::VccLo; };
+    const bool involved = execOrVcc(destination) || execOrVcc(sourceAt(inst, 0u)) || (binary && execOrVcc(sourceAt(inst, 1u)));
+    const bool exact = maskLanesExact(sourceAt(inst, 0u)) && (!binary || maskLanesExact(sourceAt(inst, 1u)));
+    if (program.WaveSize() != 32u || !involved || !exact || (destination.kind != RdnaOperandKind::ScalarRegister && !execOrVcc(destination))) return word();
+    IrU1 lane = binary ? u64MaskBinary(inst, logicalOpcode, negateRhs, negateResult) : readMask(sourceAt(inst, 0u));
+    if (!binary && negateResult) lane = IrU1(ir.LogicalNot(lane.Value()));
+    IrU1 valid = readMaskValid(sourceAt(inst, 0u));
+    if (binary) valid = IrU1(ir.LogicalAnd(valid.Value(), readMaskValid(sourceAt(inst, 1u)).Value()));
+    const bool result = word();
+    switch (destination.kind) {
+    case RdnaOperandKind::ExecLo:
+        ir.SetExec(lane.Value());
+        break;
+    case RdnaOperandKind::VccLo:
+        ir.SetVcc(lane.Value());
+        break;
+    default: {
+        const auto reg = static_cast<ScalarReg>(destination.reg);
+        ir.SetThreadBitScalarReg(reg, lane.Value());
+        ir.SetScalarMaskTag(reg, valid.Value());
+        break;
+    }
+    }
+    return result;
+}
+
 bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     switch (inst.op) {
     case RdnaOpcode::SMovB32:
+        return sU32Mask(inst, IrOpcode::LogicalAnd, false, false, false, [&] { movB32(inst, false); return true; });
     case RdnaOpcode::SMovkI32:
         movB32(inst, false);
         return true;
@@ -57,7 +88,7 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         return true;
     case RdnaOpcode::SSetregB32:
         if ((inst.source1.value & 0x3fu) == 1u) {
-            throw std::runtime_error("s_setreg_b32 at pc " + std::to_string(inst.programCounter) + " writes MODE from an SGPR: runtime MODE changes are not implemented");
+            writeRounding(inst);
         }
         emitControlNop();
         return true;
@@ -65,17 +96,7 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         emitControlNop();
         return true;
     case RdnaOpcode::SSetregImm32B32: {
-        const std::uint32_t field = inst.source1.value;
-        const std::uint32_t offset = (field >> 6u) & 0x1fu;
-        const std::uint32_t size = ((field >> 11u) & 0x1fu) + 1u;
-        const std::uint64_t written = static_cast<std::uint64_t>(inst.source0.value) & ((std::uint64_t{1} << size) - 1u);
-        if ((field & 0x3fu) != 1u || offset + size > 4u) {
-            throw std::runtime_error("s_setreg_imm32_b32 at pc " + std::to_string(inst.programCounter) + " writes a hardware register field other than the MODE rounding fields");
-        }
-        const std::uint32_t initial = floatMode.has_value() ? floatMode->floatMode : 0u;
-        if (written != ((initial >> offset) & ((1u << size) - 1u))) {
-            throw std::runtime_error("s_setreg_imm32_b32 at pc " + std::to_string(inst.programCounter) + " changes the initial MODE rounding fields: runtime MODE changes are not implemented");
-        }
+        writeRounding(inst);
         emitControlNop();
         return true;
     }
@@ -86,8 +107,11 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
         if ((field & 0x3fu) != 1u || offset + size > 4u) {
             throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads hardware register " + std::to_string(field & 0x3fu) + " bits " + std::to_string(offset) + ".." + std::to_string(offset + size - 1u) + ": only the MODE round mode fields are modeled");
         }
-        const std::uint32_t initial = floatMode.has_value() ? floatMode->floatMode : 0u;
-        writeRawU32(inst.destination, IrU32(ir.Constant((initial >> offset) & ((1u << size) - 1u))));
+        const std::uint32_t mask = ((1u << size) - 1u) << offset;
+        if ((rounding.unknown & mask) != 0u) {
+            throw std::runtime_error("s_getreg_b32 at pc " + std::to_string(inst.programCounter) + " reads MODE rounding bits that differ between the paths reaching it or were written from an SGPR: not implemented");
+        }
+        writeRawU32(inst.destination, IrU32(ir.Constant((rounding.value >> offset) & (mask >> offset))));
         return true;
     }
     case RdnaOpcode::SCmovkI32: {
@@ -281,13 +305,13 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SMulHiI32:
         return simpleInteger(inst, IrOpcode::SMulHi, IrType::U32, false, false, false);
     case RdnaOpcode::SAndB32:
-        return simpleInteger(inst, IrOpcode::BitwiseAnd32, IrType::U32, false, false, true);
+        return sU32Mask(inst, IrOpcode::LogicalAnd, true, false, false, [&] { return simpleInteger(inst, IrOpcode::BitwiseAnd32, IrType::U32, false, false, true); });
     case RdnaOpcode::SOrB32:
-        return simpleInteger(inst, IrOpcode::BitwiseOr32, IrType::U32, false, false, true);
+        return sU32Mask(inst, IrOpcode::LogicalOr, true, false, false, [&] { return simpleInteger(inst, IrOpcode::BitwiseOr32, IrType::U32, false, false, true); });
     case RdnaOpcode::SXorB32:
-        return simpleInteger(inst, IrOpcode::BitwiseXor32, IrType::U32, false, false, true);
+        return sU32Mask(inst, IrOpcode::LogicalXor, true, false, false, [&] { return simpleInteger(inst, IrOpcode::BitwiseXor32, IrType::U32, false, false, true); });
     case RdnaOpcode::SNotB32:
-        return simpleInteger(inst, IrOpcode::BitwiseNot32, IrType::U32, false, false, true);
+        return sU32Mask(inst, IrOpcode::LogicalAnd, false, false, true, [&] { return simpleInteger(inst, IrOpcode::BitwiseNot32, IrType::U32, false, false, true); });
     case RdnaOpcode::SBrevB32:
         return simpleInteger(inst, IrOpcode::BitReverse32, IrType::U32, false, false, false);
     case RdnaOpcode::SBrevB64: {
@@ -345,15 +369,15 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SLshrB64:
         return simpleInteger(inst, IrOpcode::ShiftRightLogical64, IrType::U64, false, false, true);
     case RdnaOpcode::SAndn2B32:
-        return composedIntegerBinary(inst, IrOpcode::BitwiseAnd32, true, false, true);
+        return sU32Mask(inst, IrOpcode::LogicalAnd, true, true, false, [&] { return composedIntegerBinary(inst, IrOpcode::BitwiseAnd32, true, false, true); });
     case RdnaOpcode::SOrn2B32:
-        return composedIntegerBinary(inst, IrOpcode::BitwiseOr32, true, false, true);
+        return sU32Mask(inst, IrOpcode::LogicalOr, true, true, false, [&] { return composedIntegerBinary(inst, IrOpcode::BitwiseOr32, true, false, true); });
     case RdnaOpcode::SNandB32:
-        return composedIntegerBinary(inst, IrOpcode::BitwiseAnd32, false, true, true);
+        return sU32Mask(inst, IrOpcode::LogicalAnd, true, false, true, [&] { return composedIntegerBinary(inst, IrOpcode::BitwiseAnd32, false, true, true); });
     case RdnaOpcode::SNorB32:
-        return composedIntegerBinary(inst, IrOpcode::BitwiseOr32, false, true, true);
+        return sU32Mask(inst, IrOpcode::LogicalOr, true, false, true, [&] { return composedIntegerBinary(inst, IrOpcode::BitwiseOr32, false, true, true); });
     case RdnaOpcode::SXnorB32:
-        return composedIntegerBinary(inst, IrOpcode::BitwiseXor32, false, true, true);
+        return sU32Mask(inst, IrOpcode::LogicalXor, true, false, true, [&] { return composedIntegerBinary(inst, IrOpcode::BitwiseXor32, false, true, true); });
     case RdnaOpcode::SFf0I32B64:
         return sFfI32B64(inst, true);
     case RdnaOpcode::SFf1I32B64:
@@ -423,14 +447,10 @@ bool TranslationContext::emitScalar(const RdnaInstruction& inst) {
     case RdnaOpcode::SDecperflevel:
         emitControlNop();
         return true;
-    case RdnaOpcode::SRoundMode: {
-        const std::uint32_t initial = floatMode.has_value() ? floatMode->floatMode : 0u;
-        if ((inst.source0.value & 0xfu) != (initial & 0xfu)) {
-            throw std::runtime_error("s_round_mode " + std::to_string(inst.source0.value) + " at pc " + std::to_string(inst.programCounter) + " changes the initial MODE rounding fields: runtime MODE changes are not implemented");
-        }
+    case RdnaOpcode::SRoundMode:
+        writeRounding(inst);
         emitControlNop();
         return true;
-    }
     case RdnaOpcode::SDenormMode:
         throw std::runtime_error("s_denorm_mode " + std::to_string(inst.source0.value) + " at pc " + std::to_string(inst.programCounter) + ": the recompiler does not model denormal modes");
     case RdnaOpcode::SSethalt:

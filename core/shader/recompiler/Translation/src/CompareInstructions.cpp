@@ -50,6 +50,29 @@ bool unorderedInfinityCompareIsTrue(IrOpcode opcode, bool constantIsLhs, std::ui
     return false;
 }
 
+struct OrderedRelation {
+    IrOpcode integerOpcode;
+    bool unordered;
+};
+
+OrderedRelation orderedRelationOf(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::FPOrdEqual32: return {IrOpcode::IEqual32, false};
+    case IrOpcode::FPUnordEqual32: return {IrOpcode::IEqual32, true};
+    case IrOpcode::FPOrdNotEqual32: return {IrOpcode::INotEqual32, false};
+    case IrOpcode::FPUnordNotEqual32: return {IrOpcode::INotEqual32, true};
+    case IrOpcode::FPOrdLessThan32: return {IrOpcode::SLessThan32, false};
+    case IrOpcode::FPUnordLessThan32: return {IrOpcode::SLessThan32, true};
+    case IrOpcode::FPOrdLessThanEqual32: return {IrOpcode::SLessThanEqual32, false};
+    case IrOpcode::FPUnordLessThanEqual32: return {IrOpcode::SLessThanEqual32, true};
+    case IrOpcode::FPOrdGreaterThan32: return {IrOpcode::SGreaterThan32, false};
+    case IrOpcode::FPUnordGreaterThan32: return {IrOpcode::SGreaterThan32, true};
+    case IrOpcode::FPOrdGreaterThanEqual32: return {IrOpcode::SGreaterThanEqual32, false};
+    case IrOpcode::FPUnordGreaterThanEqual32: return {IrOpcode::SGreaterThanEqual32, true};
+    default: throw std::runtime_error("f32 compare keeping denormals: unexpected compare opcode");
+    }
+}
+
 }
 
 void TranslateCompareInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
@@ -92,8 +115,8 @@ void TranslationContext::emitFloatCompare(const RdnaInstruction& inst, IrOpcode 
     IrValue* lhs = nullptr;
     IrValue* rhs = nullptr;
     if (half) {
-        lhs = &readF16AsF32(sourceAt(inst, 0u)).Value();
-        rhs = &readF16AsF32(sourceAt(inst, 1u)).Value();
+        lhs = &flushF16InputValue(readF16AsF32(sourceAt(inst, 0u))).Value();
+        rhs = &flushF16InputValue(readF16AsF32(sourceAt(inst, 1u))).Value();
     } else {
         IrValue* lhsBits = readOperand(sourceAt(inst, 0u), IrType::U32);
         IrValue* rhsBits = readOperand(sourceAt(inst, 1u), IrType::U32);
@@ -113,6 +136,10 @@ void TranslationContext::emitFloatCompare(const RdnaInstruction& inst, IrOpcode 
             emitCompareResult(inst, floatCompareWithConstant(oriented, IrU32(lhsConstant.has_value() ? *rhsBits : *lhsBits), lhsConstant.has_value() ? *lhsConstant : *rhsConstant), false, cmpx);
             return;
         }
+        if ((f32DenormalFlush & 1u) == 0u) {
+            emitCompareResult(inst, floatCompareKeepingDenormals(opcode, IrU32(*lhsBits), IrU32(*rhsBits)), false, cmpx);
+            return;
+        }
         lhs = &ir.BitCastF32(flushF32Denormal(IrU32(*lhsBits)).Value());
         rhs = &ir.BitCastF32(flushF32Denormal(IrU32(*rhsBits)).Value());
         emitCompareResult(inst, IrU1(ir.Emit(opcode, IrType::U1, {lhs, rhs})), false, cmpx);
@@ -120,6 +147,20 @@ void TranslationContext::emitFloatCompare(const RdnaInstruction& inst, IrOpcode 
     }
     if (swap) std::swap(lhs, rhs);
     emitCompareResult(inst, IrU1(ir.Emit(opcode, IrType::U1, {lhs, rhs})), false, cmpx);
+}
+
+IrU1 TranslationContext::floatCompareKeepingDenormals(IrOpcode opcode, IrU32 lhsBits, IrU32 rhsBits) {
+    const auto magnitude = [&](IrU32 bits) -> IrValue& { return ir.BitwiseAnd(bits.Value(), ir.Constant(0x7fffffffu)); };
+    const auto order = [&](IrU32 bits) -> IrValue& {
+        IrValue& absolute = magnitude(bits);
+        IrValue& negative = ir.INotEqual(ir.BitwiseAnd(bits.Value(), ir.Constant(0x80000000u)), ir.Constant(0u));
+        return ir.Select(negative, ir.ISub(ir.Constant(0u), absolute), absolute);
+    };
+    const auto isNan = [&](IrU32 bits) -> IrValue& { return ir.UGreaterThan(magnitude(bits), ir.Constant(0x7f800000u)); };
+    const OrderedRelation relation = orderedRelationOf(opcode);
+    IrValue& ordering = ir.Emit(relation.integerOpcode, IrType::U1, {&order(lhsBits), &order(rhsBits)});
+    IrValue& eitherNan = ir.LogicalOr(isNan(lhsBits), isNan(rhsBits));
+    return IrU1(relation.unordered ? ir.LogicalOr(eitherNan, ordering) : ir.LogicalAnd(ir.LogicalNot(eitherNan), ordering));
 }
 
 IrU1 TranslationContext::floatCompareWithConstant(IrOpcode opcode, IrU32 variableBits, std::uint32_t constant) {
@@ -184,8 +225,16 @@ IrU64 TranslationContext::float64OrderKey(const std::array<IrU32, 2>& bits) {
 }
 
 void TranslationContext::emitFloat64Compare(const RdnaInstruction& inst, bool less, bool equal, bool greater, bool unordered, bool cmpx) {
-    const std::array<IrU32, 2> lhs = readF64Bits(sourceAt(inst, 0u));
-    const std::array<IrU32, 2> rhs = readF64Bits(sourceAt(inst, 1u));
+    std::array<std::array<IrU32, 2>, 2> bits{readF64Bits(sourceAt(inst, 0u)), readF64Bits(sourceAt(inst, 1u))};
+    if (floatMode.has_value() && (floatMode->floatMode & 0x40u) == 0u) {
+        for (auto& value : bits) {
+            const IrU1 zeroExponent(ir.IEqual(ir.BitwiseAnd(value[1].Value(), ir.Constant(0x7ff00000u)), ir.Constant(0u)));
+            value[0] = IrU32(ir.Select(zeroExponent.Value(), ir.Constant(0u), value[0].Value()));
+            value[1] = IrU32(ir.Select(zeroExponent.Value(), ir.BitwiseAnd(value[1].Value(), ir.Constant(0x80000000u)), value[1].Value()));
+        }
+    }
+    const auto& lhs = bits[0];
+    const auto& rhs = bits[1];
     const IrU1 lhsNan = float64IsNan(lhs);
     const IrU1 rhsNan = float64IsNan(rhs);
     IrValue& isUnordered = ir.LogicalOr(lhsNan.Value(), rhsNan.Value());

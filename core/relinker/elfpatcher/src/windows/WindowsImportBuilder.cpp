@@ -1,11 +1,12 @@
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
+#include <domain/ImportModule.hpp>
 #include <io/BufferUtils.hpp>
 #include <set>
 
 namespace Elfpatcher::Windows {
 
 WindowsImports WindowsImportBuilder::Build(const std::uint32_t sectionRva) const {
-    const std::vector<std::string> names = {"ExitProcess", "FormatMessageA", "FreeLibrary", "GetCommandLineW", "GetFileAttributesW", "GetLastError", "GetModuleFileNameW", "GetModuleHandleA", "GetModuleHandleW", "GetProcAddress", "GetStdHandle", "GetSystemDirectoryW", "LoadLibraryExA", "LoadLibraryExW", "LocalFree", "MultiByteToWideChar", "RaiseException", "SetCurrentDirectoryW", "VirtualAlloc", "WideCharToMultiByte", "WriteFile", "lstrcatA", "lstrcmpA", "lstrcmpiA", "lstrcpyA", "lstrlenA"};
+    const std::vector<std::string> names = {"CloseHandle", "CreateFileW", "ExitProcess", "FormatMessageA", "FreeLibrary", "GetCommandLineW", "GetEnvironmentVariableW", "GetFileAttributesW", "GetLastError", "GetModuleFileNameW", "GetModuleHandleA", "GetModuleHandleW", "GetProcAddress", "GetStdHandle", "GetSystemDirectoryW", "LoadLibraryExA", "LoadLibraryExW", "LocalFree", "MultiByteToWideChar", "RaiseException", "SetCurrentDirectoryW", "SetEnvironmentVariableW", "SetStdHandle", "VirtualAlloc", "WaitForSingleObject", "WideCharToMultiByte", "WriteFile", "lstrcatA", "lstrcmpA", "lstrcmpiA", "lstrcpyA", "lstrlenA"};
     WindowsImports result{{".idata", sectionRva, SectionRead | SectionWrite | 0x40u, std::vector<std::uint8_t>(40)}, {sectionRva, 40}, {}, {}};
     auto& bytes = result.Section.Data;
     const auto lookupOffset = bytes.size();
@@ -43,7 +44,7 @@ std::vector<std::string> WindowsImportBuilder::ReadLibraries(const Domain::SysVD
         const auto nameOffset = Io::ReadU64(bytes, offset + 8);
         if (nameOffset >= dynamicSection.DynStrData.size())
             throw Domain::RelinkerException("DT_NEEDED string offset is out of bounds", nameOffset);
-        auto name = ReadString(dynamicSection.DynStrData, static_cast<std::size_t>(nameOffset));
+        auto name = Domain::NeededLibraryName(ReadString(dynamicSection.DynStrData, static_cast<std::size_t>(nameOffset)));
         if (name.empty() || name.find_first_of("/\\:") != std::string::npos)
             throw Domain::RelinkerException("Invalid DT_NEEDED library: " + name);
         if (unique.insert(name).second)
@@ -52,8 +53,16 @@ std::vector<std::string> WindowsImportBuilder::ReadLibraries(const Domain::SysVD
     // AnyPS5 implements the C runtime in libc.prx. Windows GetProcAddress
     // does not search a module's dependencies as ELF symbol lookup does.
     // Keep the requested module first, then make its shared runtime visible.
-    if (unique.contains("libSceLibcInternal.prx") && !unique.contains("libc.prx"))
-        result.push_back("libc.prx");
+    const auto addIfMissing = [&](const char* library) {
+        if (unique.insert(library).second) result.emplace_back(library);
+    };
+    if (unique.contains("libkernel.prx") || unique.contains("libkernel_sys.prx") || unique.contains("libkernel_web.prx")) {
+        addIfMissing("libkernel.prx");
+        addIfMissing("libkernel_sys.prx");
+        addIfMissing("libkernel_web.prx");
+    }
+    if (unique.contains("libSceLibcInternal.prx") || unique.contains("libkernel.prx") || unique.contains("libkernel_sys.prx") || unique.contains("libkernel_web.prx"))
+        addIfMissing("libc.prx");
     return result;
 }
 

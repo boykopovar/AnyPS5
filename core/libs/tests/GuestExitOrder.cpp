@@ -1,11 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern "C" int APS5_VABI __cxa_atexit_nid_postfix(void (APS5_VABI *func)(void*), void* arg, void* dsoHandle);
 
 namespace {
 
@@ -19,14 +18,16 @@ void APS5_VABI GuestHandler(void*) { Record('G'); }
 
 void HostHandler() { Record('H'); }
 
-bool GuestHandlersRunFirst() {
+void APS5_VABI AtexitHandler() { Record('A'); }
+
+template <typename Setup>
+bool ExitOrder(Setup setup, const char* expected) {
     if (pipe(events) != 0) return false;
     const pid_t child = fork();
     if (child < 0) return false;
     if (child == 0) {
         close(events[0]);
-        __cxa_atexit_nid_postfix(GuestHandler, nullptr, nullptr);
-        std::atexit(HostHandler);
+        setup();
         LibcExit_nid_no_patch(0);
     }
     close(events[1]);
@@ -39,14 +40,18 @@ bool GuestHandlersRunFirst() {
     }
     close(events[0]);
     int status = 0;
-    return waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 && length == 2 && order[0] == 'G' && order[1] == 'H';
+    return waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0 && length == 2 && order[0] == expected[0] && order[1] == expected[1];
 }
 
 }
 
 int main() {
-    if (!GuestHandlersRunFirst()) {
+    if (!ExitOrder([] { __cxa_atexit_nid_postfix(GuestHandler, nullptr, nullptr); std::atexit(HostHandler); }, "GH")) {
         std::fputs("guest exit handlers must run before the host exit handlers\n", stderr);
+        return 1;
+    }
+    if (!ExitOrder([] { __cxa_atexit_nid_postfix(GuestHandler, nullptr, nullptr); atexit_nid_postfix(AtexitHandler); }, "AG")) {
+        std::fputs("atexit and __cxa_atexit handlers must run in reverse order of registration\n", stderr);
         return 1;
     }
     return 0;

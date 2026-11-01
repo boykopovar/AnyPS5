@@ -1,5 +1,6 @@
 add_library(libSceFiber SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceFiber PRIVATE ${LIBS_INCLUDE_DIR})
+target_compile_options(libSceFiber PRIVATE -fno-omit-frame-pointer)
 configure_windows_unwind(libSceFiber)
 
 if(BUILD_TESTING)
@@ -7,8 +8,11 @@ if(BUILD_TESTING)
     target_include_directories(fiber_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(fiber_tests PRIVATE libSceFiber libc)
     add_test(NAME fiber COMMAND fiber_tests)
+    add_test(NAME fiber_contextless COMMAND fiber_tests --contextless)
+    add_asan_test_options(fiber detect_stack_use_after_return=0)
+    add_asan_test_options(fiber_contextless detect_stack_use_after_return=0)
     if(WIN32)
-        set_tests_properties(fiber PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(fiber fiber_contextless PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFiber>")
     endif()
 endif()

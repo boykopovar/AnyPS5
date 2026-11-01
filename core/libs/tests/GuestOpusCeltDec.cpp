@@ -1,44 +1,158 @@
+#include "prx/libSceOpusCeltDec/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
+#include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstdio>
-#include <functional>
 #include <stdexcept>
-#include <string>
+#include <opus.h>
 
-extern "C" {
-int APS5_VABI sceOpusCeltDecInitialize(std::uint32_t*);
-int APS5_VABI sceOpusCeltDecTerminate(std::uint32_t*);
-int APS5_VABI sceOpusCeltDecGetSize(int);
-int APS5_VABI sceOpusCeltDecCreateEx(std::uint32_t*, void*, int, int);
-int APS5_VABI sceOpusCeltDecDecode(void*, const std::uint8_t*, int, std::int16_t*, int);
-int APS5_VABI sceOpusCeltDecDestroy(void*);
+namespace {
+
+void Require(bool value) { if (!value) std::abort(); }
+
+template <typename TFunction>
+void RequireThrows(TFunction function) {
+    try { function(); } catch (const std::runtime_error&) { return; }
+    std::abort();
 }
 
-static int failures = 0;
+const std::uint8_t CELT_STEREO[] = {
+    0x75, 0x00, 0xFC, 0xB5, 0x1F, 0xBC, 0xC8, 0xCA, 0x0B, 0xC2, 0x18, 0x1A, 0xFB, 0xDB, 0x3E, 0x2B, 0x6B, 0x0A, 0x67, 0x71, 0x25, 0x2F, 0x51, 0x57,
+    0x4F, 0x78, 0xB3, 0x1F, 0xE9, 0xF3, 0x99, 0x51, 0xE9, 0x70, 0x72, 0x23, 0x99, 0x3E, 0x26, 0xA3, 0xF1, 0x8F, 0x02, 0xB3, 0xAA, 0xBA, 0xAB, 0x7E,
+    0xA5, 0x6A, 0xBA, 0x33, 0xCA, 0xE9, 0x43, 0x4D, 0x41, 0xC9, 0x90, 0x3C, 0xD0, 0x5F, 0x55, 0xC1, 0x54, 0xA8, 0xD0, 0x6F, 0x71, 0x4F, 0xCB, 0x95,
+    0xDF, 0x09, 0xC9, 0xB6, 0xAA, 0xA1, 0x8D, 0xD4, 0x2B, 0xC0, 0xF7, 0x23, 0xDD, 0xF5, 0x54, 0xEF, 0x90, 0xC4, 0xD3, 0x47, 0xC1, 0x91, 0x2D, 0xA8,
+    0x3D, 0x53, 0xF4, 0x7D, 0xFF, 0xBD, 0x47, 0x0E, 0xD2, 0x95, 0x25, 0x42, 0x66, 0x02, 0xD7, 0x80, 0x00, 0x67, 0x59, 0x13, 0x60, 0x2F, 0x6C, 0x60,
+    0x00, 0xFC, 0xB3, 0xF1, 0x8F, 0xA9, 0xA8, 0x43, 0x9D, 0xC0, 0x23, 0xBE, 0x5B, 0x38, 0xE8, 0xF8, 0xB8, 0x85, 0xBE, 0xD2, 0x2F, 0x40, 0x53, 0x40,
+    0xEF, 0x24, 0xE5, 0xA6, 0x91, 0xF4, 0x9B, 0x73, 0xC5, 0x61, 0x61, 0x08, 0x3F, 0x56, 0x7D, 0x7A, 0x2A, 0xBC, 0xAF, 0x3A, 0x70, 0xDD, 0x5E, 0x0B,
+    0x12, 0xBD, 0xC5, 0xEA, 0x69, 0x63, 0x65, 0x36, 0x5E, 0x27, 0x15, 0xBA, 0xB0, 0xE3, 0x62, 0xE7, 0x4F, 0x54, 0xFA, 0xD2, 0x49, 0x7E, 0xBD, 0xE4,
+    0xDA, 0x9E, 0x2F, 0x90, 0x9E, 0x91, 0x84, 0x6F, 0x95, 0xCE, 0x2D, 0x25, 0x63, 0x23, 0x57, 0x1C, 0x00, 0x20, 0x79, 0xE7, 0xEE, 0xBB, 0x91, 0x7F,
+    0xEE, 0x63, 0x00, 0xFC, 0xB2, 0x91, 0x0B, 0x44, 0x10, 0xE2, 0xD2, 0x82, 0x28, 0x1C, 0x96, 0x98, 0x61, 0xB7, 0x87, 0x46, 0x4A, 0x96, 0xA1, 0x41,
+    0xE7, 0x5F, 0x84, 0xA1, 0x73, 0x0E, 0x28, 0x29, 0xD0, 0x65, 0x9C, 0x99, 0x33, 0xA0, 0x7E, 0x63, 0xB9, 0x51, 0xED, 0x67, 0xCB, 0x5D, 0xD2, 0x22,
+    0xC8, 0x0C, 0x59, 0x72, 0xB5, 0x37, 0xA9, 0xB5, 0x24, 0x25, 0xB3, 0xA1, 0x09, 0x8B, 0xBA, 0x9E, 0x6C, 0x5C, 0x23, 0x7C, 0x7B, 0x19, 0xDB, 0x45,
+    0xCF, 0x19, 0xC5, 0x1F, 0x79, 0xCC, 0x16, 0x07, 0xA5, 0x4C, 0xD8, 0xA0, 0x4B, 0x48, 0x8F, 0xAE, 0x17, 0x7C, 0x28, 0xF0, 0x03, 0xFF, 0xF9, 0xE1,
+    0x80, 0x55, 0x44, 0x44, 0x7F, 0xEE,
+};
 
-static void RequireNotImplemented(const char* name, const std::function<void()>& call) {
-    try {
-        call();
-    } catch (const std::runtime_error& error) {
-        if (std::string(error.what()) == std::string(name) + " not implemented") return;
-        std::fprintf(stderr, "%s threw: %s\n", name, error.what());
-        ++failures;
-        return;
+const std::uint8_t HYBRID_PACKET[] = {0x7C, 0x87, 0xFC, 0xB1};
+
+const std::uint8_t CELT_TONE[4][60] = {
+    {0xFC, 0x9F, 0xF9, 0x33, 0x84, 0xFB, 0x41, 0x76, 0xA8, 0x21, 0xCE, 0x57, 0xBB, 0x16, 0x49, 0x05, 0x21, 0x3F, 0x2A, 0xC4,
+     0x79, 0xD0, 0x73, 0x62, 0x89, 0x7E, 0xF9, 0x29, 0x75, 0x1E, 0xAC, 0x80, 0xAE, 0x30, 0xF1, 0x46, 0x18, 0x1F, 0xF8, 0x8B,
+     0xD0, 0xC4, 0x37, 0xF1, 0x12, 0x47, 0x01, 0xF9, 0x43, 0xA4, 0x1A, 0x8C, 0x80, 0x40, 0xF0, 0x0A, 0xC3, 0xFD, 0x4C, 0xB1},
+    {0xFC, 0x9E, 0xA4, 0xC8, 0xDF, 0x47, 0x28, 0xAE, 0x34, 0xFD, 0x32, 0x11, 0xB9, 0x69, 0x99, 0x7B, 0x61, 0xC6, 0x21, 0x94,
+     0x0E, 0x20, 0xED, 0xC2, 0x95, 0x07, 0x78, 0x0D, 0x00, 0x92, 0x42, 0x12, 0xD4, 0xE9, 0xEC, 0x5E, 0xDC, 0xF4, 0xB9, 0x7A,
+     0x2E, 0x23, 0xA1, 0xC6, 0x4C, 0xD7, 0x69, 0xEC, 0x34, 0x8F, 0x78, 0x21, 0x35, 0xF1, 0x1B, 0xB0, 0xF0, 0xF5, 0x5C, 0xD1},
+    {0xFC, 0x9E, 0xA6, 0x12, 0xDC, 0x36, 0xC3, 0x4B, 0x2C, 0x3D, 0x85, 0x17, 0x32, 0xE1, 0x56, 0x62, 0xFE, 0x39, 0xDB, 0x85,
+     0xFD, 0x83, 0x0D, 0x90, 0xF9, 0x32, 0xEB, 0xEB, 0x38, 0xFD, 0x3D, 0x96, 0x26, 0x21, 0xE6, 0x38, 0x6A, 0x8F, 0xDD, 0x1F,
+     0x68, 0xBD, 0xAF, 0x4F, 0x9D, 0x08, 0x16, 0xED, 0x7B, 0x2A, 0x62, 0x4C, 0x7A, 0x85, 0xAB, 0x7B, 0x0F, 0x3D, 0x43, 0xD1},
+    {0xFC, 0x7F, 0xDF, 0x09, 0x18, 0xD2, 0x71, 0xA1, 0xE6, 0x6C, 0x70, 0xED, 0xCA, 0x2F, 0x47, 0x79, 0xA7, 0xEA, 0xE3, 0xD1,
+     0x9B, 0xCD, 0x9E, 0x87, 0xE5, 0xE0, 0x0A, 0x86, 0x0A, 0xEE, 0x8E, 0x63, 0xE4, 0x77, 0x45, 0xE9, 0xF0, 0x82, 0xF8, 0x2A,
+     0x13, 0xD2, 0xDB, 0x17, 0x11, 0x2E, 0x36, 0x10, 0x03, 0x30, 0x20, 0x00, 0xF7, 0x42, 0xD8, 0x71, 0x7E, 0xB0, 0xF3, 0x3C},
+};
+
+void RequireTone(const std::int16_t* pcm, int samples, int channels, int rate) {
+    for (int channel = 0; channel < channels; ++channel) {
+        int peak = 0, crossings = 0;
+        for (int sample = 0; sample < samples; ++sample) {
+            const int value = pcm[sample * channels + channel];
+            peak = std::max(peak, std::abs(value));
+            if (sample > 0 && (value < 0) != (pcm[(sample - 1) * channels + channel] < 0)) ++crossings;
+        }
+        Require(peak > 100 && peak < 200);
+        const int expected = samples * 2000 / rate;
+        Require(crossings >= expected - 4 && crossings <= expected + 4);
     }
-    std::fprintf(stderr, "%s returned instead of reporting that it is not implemented\n", name);
-    ++failures;
 }
+
+} // namespace
 
 int main() {
+    constexpr std::uint32_t errorBase = 0x81400000u;
+    Require(sceOpusCeltDecInitialize(nullptr) == static_cast<int>(errorBase + 13));
+    Require(sceOpusCeltDecDestroy(nullptr) == static_cast<int>(errorBase));
     std::uint32_t context = 0;
-    std::uint8_t state[64] = {};
-    std::int16_t pcm[16] = {};
-    const std::uint8_t packet[] = {0xFC, 0x00};
-    RequireNotImplemented("sceOpusCeltDecInitialize", [&] { sceOpusCeltDecInitialize(&context); });
-    RequireNotImplemented("sceOpusCeltDecTerminate", [&] { sceOpusCeltDecTerminate(&context); });
-    RequireNotImplemented("sceOpusCeltDecGetSize", [] { sceOpusCeltDecGetSize(2); });
-    RequireNotImplemented("sceOpusCeltDecCreateEx", [&] { sceOpusCeltDecCreateEx(&context, state, 48000, 2); });
-    RequireNotImplemented("sceOpusCeltDecDecode", [&] { sceOpusCeltDecDecode(state, packet, sizeof(packet), pcm, sizeof(pcm)); });
-    RequireNotImplemented("sceOpusCeltDecDestroy", [&] { sceOpusCeltDecDestroy(state); });
-    return failures == 0 ? 0 : 1;
+    Require(sceOpusCeltDecInitialize(&context) == 0);
+    std::array<std::uint8_t, 640> invalidState{};
+    std::int16_t output = 12345;
+    const std::uint8_t packet = 0;
+    Require(sceOpusCeltDecCreateEx(nullptr, invalidState.data(), 0, 0) == static_cast<int>(errorBase));
+    Require(sceOpusCeltDecCreateEx(&context, invalidState.data(), 0, 0) == static_cast<int>(errorBase + 3));
+    Require(sceOpusCeltDecCreateEx(&context, invalidState.data(), 48000, 0) == static_cast<int>(errorBase + 3));
+    Require(sceOpusCeltDecDecode(nullptr, nullptr, -1, nullptr, -1) == static_cast<int>(errorBase));
+    Require(sceOpusCeltDecDecode(invalidState.data(), nullptr, -1, nullptr, -1) == static_cast<int>(errorBase + 6));
+    Require(sceOpusCeltDecDecode(invalidState.data(), &packet, -1, nullptr, -1) == static_cast<int>(errorBase + 7));
+    Require(sceOpusCeltDecDecode(invalidState.data(), &packet, 1, nullptr, -1) == static_cast<int>(errorBase + 8));
+    Require(sceOpusCeltDecDecode(invalidState.data(), &packet, 1, &output, -1) == static_cast<int>(errorBase + 9));
+    Require(sceOpusCeltDecDecode(invalidState.data(), &packet, 1, &output, 2) == static_cast<int>(errorBase + 1));
+    Require(output == 12345);
+
+    RequireThrows([&] { sceOpusCeltDecInitialize(&context); });
+    Require(sceOpusCeltDecGetSize(1) == 640 && sceOpusCeltDecGetSize(2) == 640);
+    Require(sceOpusCeltDecGetSize(3) == static_cast<int>(errorBase + 3));
+    std::array<std::uint8_t, 640> state{}, monoState{};
+    Require(sceOpusCeltDecCreateEx(&context, state.data(), 48000, 2) == 0);
+    Require(sceOpusCeltDecCreateEx(&context, monoState.data(), 48000, 1) == 0);
+    RequireThrows([&] { sceOpusCeltDecCreateEx(&context, state.data(), 48000, 2); });
+    RequireThrows([&] { sceOpusCeltDecTerminate(&context); });
+    std::array<std::int16_t, 1922> pcm{};
+    pcm.fill(12345);
+    RequireThrows([&] { sceOpusCeltDecDecode(state.data(), HYBRID_PACKET, sizeof(HYBRID_PACKET), pcm.data() + 1, 3840); });
+    Require(std::all_of(pcm.begin(), pcm.end(), [](auto value) { return value == 12345; }));
+    std::size_t offset = 0;
+    bool audible = false;
+    for (int frame = 0; frame < 3; ++frame) {
+        const int bytes = CELT_STEREO[offset] | (CELT_STEREO[offset + 1] << 8);
+        const auto* packet = CELT_STEREO + offset + 2;
+        pcm.fill(12345);
+        RequireThrows([&] { sceOpusCeltDecDecode(state.data(), packet, bytes, pcm.data() + 1, 3839); });
+        Require(sceOpusCeltDecDecode(state.data(), packet, bytes, pcm.data() + 1, 3840) == 3840);
+        Require(pcm.front() == 12345 && pcm.back() == 12345);
+        audible = audible || std::any_of(pcm.begin() + 1, pcm.end() - 1, [](auto value) { return value != 0; });
+        std::array<std::int16_t, 962> mono{};
+        mono.front() = mono.back() = 12345;
+        Require(sceOpusCeltDecDecode(monoState.data(), packet, bytes, mono.data() + 1, 1920) == 1920);
+        Require(mono.front() == 12345 && mono.back() == 12345);
+        offset += bytes + 2;
+    }
+    Require(audible);
+
+    std::array<std::uint8_t, 640> unsupported{};
+    for (int rate : {0, 22050, 44100, 96000})
+        Require(sceOpusCeltDecCreateEx(&context, unsupported.data(), rate, 2) == static_cast<int>(errorBase + 2));
+    for (int rate : {8000, 12000, 16000, 24000, 48000}) {
+        for (int channels : {1, 2}) {
+            std::array<std::uint8_t, 640> toneState{};
+            Require(sceOpusCeltDecCreateEx(&context, toneState.data(), rate, channels) == 0);
+            int error = OPUS_OK;
+            auto* reference = opus_decoder_create(rate, channels, &error);
+            Require(reference && error == OPUS_OK);
+            const int samples = 960 * rate / 48000;
+            std::array<std::int16_t, 1922> tone{};
+            for (int frame = 0; frame < 4; ++frame) {
+                tone.fill(12345);
+                RequireThrows([&] { sceOpusCeltDecDecode(toneState.data(), CELT_TONE[frame], 60, tone.data() + 1, samples * channels * 2 - 1); });
+                Require(sceOpusCeltDecDecode(toneState.data(), CELT_TONE[frame], 60, tone.data() + 1, samples * channels * 2) == samples * channels * 2);
+                Require(tone[0] == 12345 && tone[samples * channels + 1] == 12345);
+                std::array<std::int16_t, 1920> expected{};
+                Require(opus_decode(reference, CELT_TONE[frame], 60, expected.data(), samples, 0) == samples);
+                if (!std::equal(expected.begin(), expected.begin() + samples * channels, tone.begin() + 1)) {
+                    std::fprintf(stderr, "CELT PCM differs from libopus at %d Hz, %d channels, frame %d\n", rate, channels, frame);
+                    std::abort();
+                }
+                if (frame == 1 || frame == 2) RequireTone(tone.data() + 1, samples, channels, rate);
+            }
+            opus_decoder_destroy(reference);
+            Require(sceOpusCeltDecDestroy(toneState.data()) == 0);
+        }
+    }
+
+    Require(sceOpusCeltDecDestroy(state.data()) == 0);
+    Require(sceOpusCeltDecDestroy(state.data()) == static_cast<int>(errorBase + 1));
+    Require(sceOpusCeltDecDecode(state.data(), CELT_STEREO + 2, CELT_STEREO[0], pcm.data(), 3840) == static_cast<int>(errorBase + 1));
+    Require(sceOpusCeltDecDestroy(monoState.data()) == 0);
+    Require(sceOpusCeltDecTerminate(&context) == 0);
+    RequireThrows([&] { sceOpusCeltDecTerminate(&context); });
+    RequireThrows([&] { sceOpusCeltDecCreateEx(&context, state.data(), 48000, 2); });
 }

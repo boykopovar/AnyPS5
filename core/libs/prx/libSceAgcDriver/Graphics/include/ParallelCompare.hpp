@@ -16,6 +16,8 @@ struct CompareSpan {
 void CompareSpans(std::span<const CompareSpan> spans, std::span<std::uint8_t> equal);
 void CompareSpansFrom(std::span<const CompareSpan> spans, std::span<std::uint8_t> equal, std::size_t parallelBytes);
 unsigned CompareHelpers();
+void StopCompareHelpers();
+unsigned CompareHelpersRunning();
 
 }
 

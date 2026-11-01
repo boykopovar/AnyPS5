@@ -1,6 +1,9 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PERFORMANCETIMER_HPP
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_EXECUTION_INCLUDE_PERFORMANCETIMER_HPP
 
+#include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
@@ -204,7 +207,7 @@ private:
         return std::chrono::duration<double, std::milli>(elapsed).count();
     }
 
-    std::mutex mutex;
+    AgcDriver::Mutex mutex;
     bool localMetrics = false;
     std::map<std::pair<std::string_view, std::string_view>, Metric> metrics;
     std::map<std::pair<std::string_view, std::string_view>, Metric> asyncMetrics;
@@ -258,11 +261,11 @@ private:
 
 class PerformanceTimer {
 public:
-    explicit PerformanceTimer(const char* scope) : frame(PerformanceContext::Current()), scope(scope) {
+    explicit PerformanceTimer(const char* scope) : frame(PerformanceContext::Current()), trace(PerformanceTrace::Recording() ? PerformanceTrace::Thread() : nullptr), scope(scope) {
         if (frame != nullptr) {
             total = frame->Get(scope, "total");
         }
-        if (frame != nullptr) start = Clock::now();
+        if (frame != nullptr || trace != nullptr) start = Clock::now();
         previous = start;
     }
 
@@ -274,8 +277,12 @@ public:
     }
 
     void Finish() {
-        if (frame == nullptr) return;
+        zone.End();
+        if (frame == nullptr && trace == nullptr) return;
         const auto end = Clock::now();
+        if (trace != nullptr) trace->Add(scope, nullptr, start, end);
+        trace = nullptr;
+        if (frame == nullptr) return;
         if (tail != nullptr) frame->Add(tail, end - previous);
         frame->Add(total, end - start);
         frame = nullptr;
@@ -287,10 +294,13 @@ public:
     }
 
     void Mark(const char* stage, std::uint64_t bytes = 0) {
-        if (frame == nullptr) return;
+        if (frame == nullptr && trace == nullptr) return;
         const auto now = Clock::now();
-        if (tail == nullptr) tail = frame->Get(scope, "tail");
-        frame->Add(frame->Get(scope, stage), now - previous, bytes);
+        if (trace != nullptr) trace->Add(scope, stage, previous, now);
+        if (frame != nullptr) {
+            if (tail == nullptr) tail = frame->Get(scope, "tail");
+            frame->Add(frame->Get(scope, stage), now - previous, bytes);
+        }
         previous = now;
     }
 
@@ -298,7 +308,9 @@ private:
     using Clock = FrameTiming::Clock;
 
     FrameTiming* frame;
+    TraceThread* trace;
     const char* scope;
+    [[no_unique_address]] TracyZone zone{scope};
     FrameTiming::Metric* total = nullptr;
     FrameTiming::Metric* tail = nullptr;
     Clock::time_point start{};

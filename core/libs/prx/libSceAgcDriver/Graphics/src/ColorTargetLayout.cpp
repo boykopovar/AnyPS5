@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include <array>
 #include <bit>
@@ -46,10 +47,24 @@ ColorTileMode DecodeColorTileMode(std::uint32_t attrib3) {
     require((attrib3 & 0x80002000u) == 0 && ((resourceType == 0 && (attrib3 & 0x1fffu) == 0) || resourceType == 1 || resourceType == 2) && ((attrib3 >> 27u) & 7u) == 1, "AGC graphics: unsupported color depth, dimension, resource level or metadata mode");
     const auto mode = (attrib3 >> 14u) & 0x1fu;
     const auto fmaskMode = (attrib3 >> 19u) & 0x1fu;
-    require(mode == 0 || mode == 5 || mode == 9 || mode == 0x15 || mode == 0x16 || mode == 0x1b, "AGC graphics: unsupported color tile mode");
+    require(mode == 0 || mode == 5 || mode == 9 || mode == 0x15 || mode == 0x16 || mode == 0x18 || mode == 0x1a || mode == 0x1b, "AGC graphics: unsupported color tile mode");
     require(fmaskMode == 0 || fmaskMode == 0x18 || fmaskMode == (mode & ~3u), "AGC graphics: unsupported color FMASK swizzle mode");
     require(resourceType != 0 || mode == 0 || mode == 0x1b, "AGC graphics: 1D color targets with a standard swizzle mode are invalid");
     return static_cast<ColorTileMode>(mode);
+}
+
+TileMipLayout ComputeColorTargetMipLayout(ColorTileMode mode, std::uint32_t bytesPerElement, std::uint32_t surfaceWidth, std::uint32_t surfaceHeight, std::uint32_t mipCount, std::uint32_t mipLevel) {
+    require(!ColorTileModeIsGcn(mode), "AGC graphics: PS4 color target mips are laid out by ComputeGcnMipLayout");
+    auto mips = ComputeElementMipLayout(ColorTextureTileMode(mode), bytesPerElement, surfaceWidth, surfaceHeight, mipCount);
+    require(mipLevel < mips.size(), "AGC graphics: color target mip is outside its surface");
+    auto mip = mips[mipLevel];
+    const ColorTargetLayout target(mip.width, mip.height, mode, bytesPerElement);
+    require(mip.tiledSize == target.Bytes(), "AGC graphics: color target mip tiling differs from its surface layout");
+    mip.tiledOffset = 0;
+    mip.linearOffset = 0;
+    mip.pitchBytes = mip.width * bytesPerElement;
+    mip.linearSize = target.LinearBytes();
+    return mip;
 }
 
 namespace {
@@ -60,9 +75,9 @@ struct SwizzleTables {
 };
 
 const SwizzleTables& equationTables(ColorTileMode mode, std::uint32_t bytesPerElement, std::uint32_t blockWidth, std::uint32_t blockHeight) {
-    static std::once_flag once[3][5];
-    static SwizzleTables tables[3][5];
-    const auto modeIndex = mode == ColorTileMode::S4KBX ? 0u : mode == ColorTileMode::D4KBX ? 1u : 2u;
+    static std::once_flag once[5][5];
+    static SwizzleTables tables[5][5];
+    const auto modeIndex = mode == ColorTileMode::S4KBX ? 0u : mode == ColorTileMode::D4KBX ? 1u : mode == ColorTileMode::D64KBX ? 2u : mode == ColorTileMode::Z64KBX ? 4u : 3u;
     const auto index = static_cast<std::size_t>(std::countr_zero(bytesPerElement));
     std::call_once(once[modeIndex][index], [&] {
         const auto* equation = FindTextureSwizzleEquation(static_cast<std::uint32_t>(mode), bytesPerElement);
@@ -104,6 +119,7 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
     require(width != 0 && height != 0 && width <= 16384 && height <= 16384, "AGC graphics: invalid color surface extent");
     require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "AGC graphics: unsupported color element size");
     require(pipeBankXor == 0 || (ColorTileModeIsXor(mode) && pipeBankXor < ColorTileModeBlockBytes(mode) && pipeBankXor % 256u == 0), "AGC graphics: a color pipe/bank XOR applies only to whole 256-byte units of XOR swizzle blocks");
+    require(mode != ColorTileMode::D64KBX || (pipeBankXor & ~0xcf00u) == 0, "AGC graphics: unsupported display color pipe/bank XOR column bits");
     std::uint32_t paddedHeight = height;
     switch (mode) {
         case ColorTileMode::Linear: {
@@ -113,9 +129,10 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
         }
         case ColorTileMode::S4KBX:
         case ColorTileMode::D4KBX:
+        case ColorTileMode::Z64KBX:
+        case ColorTileMode::D64KBX:
         case ColorTileMode::RenderTarget: {
-            // SW_64KB_R_X: 64 KiB blocks of 2^(16 - log2(bpe)) elements, wider than tall for odd powers.
-            const auto log2Elements = (mode == ColorTileMode::RenderTarget ? 16u : 12u) - static_cast<std::uint32_t>(std::countr_zero(bytesPerElement));
+            const auto log2Elements = static_cast<std::uint32_t>(std::countr_zero(ColorTileModeBlockBytes(mode))) - static_cast<std::uint32_t>(std::countr_zero(bytesPerElement));
             blockWidth = 1u << ((log2Elements + 1u) / 2u);
             blockHeight = 1u << (log2Elements / 2u);
             pitch = (width + blockWidth - 1u) / blockWidth * blockWidth;
@@ -123,7 +140,7 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
             const auto& tables = equationTables(mode, bytesPerElement, blockWidth, blockHeight);
             xOffsets = tables.x.data();
             yOffsets = tables.y.data();
-            if (mode == ColorTileMode::RenderTarget) equation = FindTextureSwizzleEquation(static_cast<std::uint32_t>(mode), bytesPerElement);
+            if (mode == ColorTileMode::RenderTarget || mode == ColorTileMode::Z64KBX) equation = FindTextureSwizzleEquation(static_cast<std::uint32_t>(mode), bytesPerElement);
             break;
         }
         case ColorTileMode::Standard4KB:
@@ -140,8 +157,22 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
             yOffsets = tables.y.data();
             break;
         }
+        case ColorTileMode::GcnThin1D:
+        case ColorTileMode::GcnDisplay1D:
+        case ColorTileMode::GcnDisplay2D:
+        case ColorTileMode::GcnThin2D: {
+            const auto geometry = GcnTiling(ColorTextureTileMode(mode), bytesPerElement);
+            blockWidth = geometry.blockWidth;
+            blockHeight = geometry.blockHeight;
+            pitch = (width + blockWidth - 1u) / blockWidth * blockWidth;
+            paddedHeight = (height + blockHeight - 1u) / blockHeight * blockHeight;
+            gcn = true;
+            gcnEquation = geometry.equation;
+            break;
+        }
         default: throw std::runtime_error("AGC graphics: unsupported color tile mode");
     }
+    blockBytes = gcn ? static_cast<std::size_t>(blockWidth) * blockHeight * bytesPerElement : ColorTileModeBlockBytes(mode);
     const auto size = static_cast<std::uint64_t>(pitch) * paddedHeight * bytesPerElement;
     require(size <= std::numeric_limits<std::size_t>::max(), "AGC graphics: color surface size overflow");
     bytes = static_cast<std::size_t>(size);
@@ -150,6 +181,11 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
 std::size_t ColorTargetLayout::offset(std::uint32_t x, std::uint32_t y) const {
     if (mode == ColorTileMode::Linear) return (static_cast<std::size_t>(y) * pitch + x) * elementBytes;
     const auto block = static_cast<std::size_t>(y / blockHeight) * (pitch / blockWidth) + x / blockWidth;
+    if (gcn) {
+        std::uint32_t inBlock = 0;
+        for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= parity((x & gcnEquation[bit] & 0xfffu) ^ ((y << 12u) & gcnEquation[bit] & 0xfff000u)) << bit;
+        return block * blockBytes + inBlock;
+    }
     auto inBlock = xOffsets[x % blockWidth] ^ yOffsets[y % blockHeight];
     if (equation != nullptr) {
         const auto highX = (x & ~(blockWidth - 1u)) & 0xfffu;

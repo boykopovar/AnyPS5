@@ -12,7 +12,7 @@
 #endif
 
 static_assert(sizeof(_Unwind_Context::registers) == 17 * sizeof(std::uintptr_t));
-static_assert(offsetof(_Unwind_Context, cfa) == 17 * sizeof(std::uintptr_t));
+static_assert(offsetof(_Unwind_Context, cfa) == offsetof(_Unwind_Context, registers) + 17 * sizeof(std::uintptr_t));
 
 extern "C" void CaptureProbe(std::uintptr_t*);
 extern "C" void RestoreProbe(std::uintptr_t*, std::uintptr_t*);
