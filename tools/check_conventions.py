@@ -217,7 +217,7 @@ class Check:
             source = self.show(path)
             comments = python_comments(source) if path.endswith(".py") else cmake_comments(source)
             for number, text in lines:
-                shebang = text.startswith("#!") or (number == 1 and text.startswith("\ufeff#!"))
+                shebang = number == 1 and text.removeprefix("\ufeff").startswith("#!")
                 comment = number in comments if comments is not None else "#" in STRINGS.sub('""', text)
                 if comment and not shebang:
                     self.report("comment", path, number)
