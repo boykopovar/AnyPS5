@@ -101,7 +101,7 @@ std::size_t AddressFromText(unsigned char* out, const char* text) {
 }
 
 LibreSslX509VerifyParamId* Identity(LibreSslX509VerifyParam* param, const char* function) {
-    if (!param || !param->id) NotImplemented_nid_no_patch(function);
+    if (!param || !param->id) throw std::invalid_argument(std::string(function) + ": null verify parameters");
     return param->id;
 }
 
@@ -114,7 +114,7 @@ void APS5_VABI X509_VERIFY_PARAM_set_hostflags_nid_postfix(LibreSslX509VerifyPar
 }
 
 int APS5_VABI X509_VERIFY_PARAM_set1_ip_asc_nid_postfix(LibreSslX509VerifyParam* param, const char* text) {
-    if (!text) NotImplemented_nid_no_patch(__func__);
+    if (!text) throw std::invalid_argument(std::string(__func__) + ": null address text");
     unsigned char address[16];
     const std::size_t length = AddressFromText(address, text);
     if (length == 0) return 0;
