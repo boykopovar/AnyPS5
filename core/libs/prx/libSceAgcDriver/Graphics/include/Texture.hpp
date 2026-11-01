@@ -497,9 +497,11 @@ private:
     void releaseReadTraps(bool sharingPages);
     void storeTrappedOverlaps(const char* reason);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
+    bool cpuLeftUnchanged(std::uint32_t layer, std::uint64_t from, std::uint64_t to, bool edge) const;
     void saveBeforeUnwatch();
     void forgetKeptAtUnwatch(std::uint32_t unit);
     bool keptAtUnwatchHolds(std::uint64_t from, std::uint32_t unit) const;
+    bool keptForCpu(std::uint32_t unit) const;
     // Drops the saved guest bytes of the units over [address, address + bytes) (another image's fill
     // or copy supersedes them there); the other units' bytes stay valid.
     void forgetSavedOver(std::uint64_t address, std::size_t bytes);
@@ -716,6 +718,7 @@ private:
     std::uint32_t trackedLayers = 1;
     std::uint64_t trackedLayerBytes = 0;
     std::vector<std::uint64_t> layerGeneration;
+    std::vector<std::uint64_t> layerPendingSince;
     std::vector<std::uint64_t> completionKept;
     UnitFlags layerPending;
     std::vector<bool> layerBehind;
