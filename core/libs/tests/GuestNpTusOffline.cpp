@@ -243,8 +243,8 @@ int main() {
     CheckFriends("sceNpTusGetFriendsDataStatusForCrossSave", SignedOut, 2, true, [&](int req, int slotId, int sortType, void* array, int arrayLen, const FriendsOption* option) { return sceNpTusGetFriendsDataStatusForCrossSave(req, slotId, 0, sortType, array, 16, arrayLen, option); });
     CheckFriends("sceNpTusGetFriendsVariableForCrossSaveAsync", 0, 4, false, [&](int req, int slotId, int sortType, void* array, int arrayLen, const FriendsOption* option) { return sceNpTusGetFriendsVariableForCrossSaveAsync(req, slotId, 0, sortType, array, 16, arrayLen, option); });
     CheckFriends("sceNpTusGetFriendsVariableForCrossSave", SignedOut, 4, true, [&](int req, int slotId, int sortType, void* array, int arrayLen, const FriendsOption* option) { return sceNpTusGetFriendsVariableForCrossSave(req, slotId, 0, sortType, array, 16, arrayLen, option); });
-    CheckAsync("sceNpTusGetDataForCrossSaveVUserAsync", [&](int req) { return sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, buffer, sizeof(buffer), buffer, 16, nullptr); }, [&]() { return sceNpTusGetDataForCrossSaveVUserAsync(9999, &virtualUser, 1, buffer, sizeof(buffer), buffer, 16, nullptr); }, [&](int req) { return sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, buffer, sizeof(buffer), buffer, 16, &buffer); });
-    CheckSync("sceNpTusGetDataForCrossSaveVUser", [&](int req) { return sceNpTusGetDataForCrossSaveVUser(req, &virtualUser, 1, buffer, sizeof(buffer), buffer, 16, nullptr); });
+    CheckAsync("sceNpTusGetDataForCrossSaveVUserAsync", [&](int req) { return sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, buffer, 0x1F0, buffer, 16, nullptr); }, [&]() { return sceNpTusGetDataForCrossSaveVUserAsync(9999, &virtualUser, 1, buffer, 0x1F0, buffer, 16, nullptr); }, [&](int req) { return sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, buffer, 0x1F0, buffer, 16, &buffer); });
+    CheckSync("sceNpTusGetDataForCrossSaveVUser", [&](int req) { return sceNpTusGetDataForCrossSaveVUser(req, &virtualUser, 1, buffer, 0x1F0, buffer, 16, nullptr); });
     CheckAsync("sceNpTusDeleteMultiSlotDataVUserAsync", [&](int req) { return sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, slots, 2, nullptr); }, [&]() { return sceNpTusDeleteMultiSlotDataVUserAsync(9999, &virtualUser, slots, 2, nullptr); }, [&](int req) { return sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, slots, 2, &buffer); });
     CheckSync("sceNpTusDeleteMultiSlotDataVUser", [&](int req) { return sceNpTusDeleteMultiSlotDataVUser(req, &virtualUser, slots, 2, nullptr); });
     CheckTss("sceNpTssGetDataAsync", 0, [&](int req, int slotId, void* status, std::uint64_t statusSize, const TssOption* option) { return sceNpTssGetDataAsync(req, slotId, status, statusSize, buffer, 16, option); });
@@ -272,18 +272,24 @@ int main() {
         Require(sceNpTusGetMultiUserVariableAAsync(req, accounts, 1, buffer, sizeof(buffer), 102, nullptr) == TooManyNpId, "sceNpTusGetMultiUserVariableAAsync", "102 users were taken");
         Require(sceNpTusGetFriendsVariableAsync(req, 1, 0, 5, buffer, sizeof(buffer), 2, nullptr) == InvalidArgument, "sceNpTusGetFriendsVariableAsync", "sort type 5 was taken");
         Require(sceNpTusGetFriendsVariableAsync(req, 1, 0, 1, buffer, sizeof(buffer), 101, nullptr) == TooManyNpId, "sceNpTusGetFriendsVariableAsync", "101 friends were taken");
-        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, nullptr, 1, buffer, sizeof(buffer), buffer, 16, nullptr) == InsufficientArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "a null virtual user was taken");
-        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, nullptr, sizeof(buffer), buffer, 16, nullptr) == InsufficientArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "a null data status was taken");
-        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, buffer, 0, buffer, 16, nullptr) == InsufficientArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "a data status size of 0 was taken");
-        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, -1, buffer, sizeof(buffer), buffer, 16, nullptr) == InvalidArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "a negative slot id was taken");
-        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &emptyUser, 1, buffer, sizeof(buffer), buffer, 16, nullptr) == InvalidArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "an empty virtual user was taken");
-        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, nullptr, -1, buffer, sizeof(buffer), buffer, 16, nullptr) == InvalidArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "the slot id was not checked before the virtual user");
-        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, nullptr, slots, 2, nullptr) == InsufficientArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "a null virtual user was taken");
-        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, nullptr, 2, nullptr) == InsufficientArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "null slot ids were taken");
-        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, slots, 0, nullptr) == InsufficientArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "an array length of 0 was taken");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, nullptr, 1, buffer, 0x1F0, buffer, 16, nullptr) == InsufficientArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "a null virtual user was taken");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, nullptr, -1, buffer, 0x1F0, buffer, 16, &buffer) == InsufficientArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "the virtual user was not checked before the slot id and the option");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, -1, buffer, 0x1F0, buffer, 16, nullptr) == InvalidArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "a negative slot id was taken");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, -1, buffer, 0, buffer, 16, nullptr) == InvalidArgument, "sceNpTusGetDataForCrossSaveVUserAsync", "the slot id was not checked before the data status size");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, buffer, 0, buffer, 16, nullptr) == InvalidAlignment, "sceNpTusGetDataForCrossSaveVUserAsync", "a data status size of 0 was taken");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, buffer, 0x200, buffer, 16, nullptr) == InvalidAlignment, "sceNpTusGetDataForCrossSaveVUserAsync", "a data status size of 0x200 was taken");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, buffer, sizeof(buffer), buffer, 16, nullptr) == InvalidAlignment, "sceNpTusGetDataForCrossSaveVUserAsync", "a data status size of 1024 was taken");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, buffer, 0x210, buffer, 16, nullptr) == 0, "sceNpTusGetDataForCrossSaveVUserAsync", "a data status size of 0x210 was refused");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &virtualUser, 1, nullptr, 0x1F0, buffer, 16, nullptr) == 0, "sceNpTusGetDataForCrossSaveVUserAsync", "a null data status was refused");
+        Require(sceNpTusGetDataForCrossSaveVUserAsync(req, &emptyUser, 1, buffer, 0x1F0, buffer, 16, nullptr) == 0, "sceNpTusGetDataForCrossSaveVUserAsync", "an empty virtual user was refused");
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, nullptr, 0, &buffer) == InsufficientArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "null slot ids were not checked first");
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, slots, 0, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "an array length of 0 was taken");
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, manySlots, 65, &buffer) == InvalidArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "the option was not checked before the slot count");
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, manySlots, 65, nullptr) == TooManySlotId, "sceNpTusDeleteMultiSlotDataVUserAsync", "65 slots were taken");
         Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, negative, 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "a negative slot id was taken");
-        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &emptyUser, slots, 2, nullptr) == InvalidArgument, "sceNpTusDeleteMultiSlotDataVUserAsync", "an empty virtual user was taken");
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, slots, -1, nullptr) == 0, "sceNpTusDeleteMultiSlotDataVUserAsync", "an array length of -1 was refused");
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, nullptr, slots, 2, nullptr) == 0, "sceNpTusDeleteMultiSlotDataVUserAsync", "a null virtual user was refused");
+        Require(sceNpTusDeleteMultiSlotDataVUserAsync(req, &emptyUser, slots, 2, nullptr) == 0, "sceNpTusDeleteMultiSlotDataVUserAsync", "an empty virtual user was refused");
         sceNpTusDeleteRequest(req);
 
     }
