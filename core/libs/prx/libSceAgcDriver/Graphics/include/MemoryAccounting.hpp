@@ -7,6 +7,8 @@
 
 namespace AgcDriver::Graphics {
 
+struct StorageTextureBudgetSnapshot;
+
 class MemoryAccounting {
 public:
     struct Allocation {
@@ -31,7 +33,7 @@ public:
     static void RetainPart(VkDevice device, VkDeviceMemory memory, VkDeviceSize bytes, bool retained) noexcept;
     static void ForgetDevice(VkDevice device) noexcept;
     static Snapshot Read(VkDevice device);
-    static void Report(const Context& context, const VkPhysicalDeviceMemoryBudgetPropertiesEXT& reported, std::uint64_t sampledBytes, std::uint64_t storageBytes, std::uint64_t storageBudget) noexcept;
+    static void Report(const Context& context, const VkPhysicalDeviceMemoryBudgetPropertiesEXT& reported, const StorageTextureBudgetSnapshot& storage) noexcept;
 };
 
 }
