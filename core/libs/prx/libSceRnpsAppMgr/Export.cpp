@@ -51,9 +51,21 @@ int APS5_VABI sceRnpsAppMgrGetAppInfoList() {
     return 0;
 }
 
+int APS5_VABI sceRnpsAppMgrGetEvent() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI sceRnpsAppMgrGetEventForShellUI() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceRnpsAppMgrGetMboInfo() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRnpsAppMgrGetMboManifestDebugString() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceRnpsAppMgrGetUpdateProgress() {
@@ -69,6 +81,18 @@ int APS5_VABI sceRnpsAppMgrHasEventForShellUI() {
 int APS5_VABI sceRnpsAppMgrInitialize() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
+}
+
+int APS5_VABI sceRnpsAppMgrIsBgsInstallReady() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRnpsAppMgrIsCrlUpdated() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRnpsAppMgrIsMboUpdated() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI sceRnpsAppMgrPushEventForShellUI() {
@@ -140,5 +164,13 @@ int APS5_VABI sceRnpsAppMgrUnregisterShellUI() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+int APS5_VABI sceRnpsAppMgrVerifyApp() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceRnpsAppMgrVerifyFileInApp() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 
 }
