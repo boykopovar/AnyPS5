@@ -23,7 +23,8 @@ def render_csv(report):
         writer.writerow(("capture", field, unit, report["baseline"][field], report["candidate"][field], "", ""))
     writer.writerow(("capture", "window.ms", "ms", report["baseline"]["window"]["ms"],
                      report["candidate"]["window"]["ms"], "", ""))
-    for kind, key, unit in (("metric", "metrics_ms", "ms"), ("phase", "top_phases_ms_per_frame", "ms/frame")):
+    for kind, key, unit in (("metric", "metrics_ms", "ms"), ("phase", "top_phases_ms_per_frame", "ms/frame"),
+                            ("worker", "worker_busy_pct", "%")):
         for name, values in report[key].items():
             writer.writerow((kind, name, unit, *(values[field] for field in ("baseline", "candidate", "change", "change_pct"))))
     for name, values in report["configuration_differences"].items():
