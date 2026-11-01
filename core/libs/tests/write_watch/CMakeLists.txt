@@ -7,6 +7,19 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 find_package(Threads REQUIRED)
+add_executable(write_watch_backing_tests ../WriteWatchBacking.cpp ../../prx/libc/src/GuestWriteWatch.cpp)
+target_include_directories(write_watch_backing_tests PRIVATE ../..)
+target_compile_features(write_watch_backing_tests PRIVATE cxx_std_20)
+target_link_libraries(write_watch_backing_tests PRIVATE Threads::Threads)
+set_target_properties(write_watch_backing_tests PROPERTIES
+    CXX_EXTENSIONS OFF
+    RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
+
+foreach(mode shared private writable late restore)
+    add_test(NAME write_watch_backing_${mode} COMMAND write_watch_backing_tests ${mode})
+    set_tests_properties(write_watch_backing_${mode} PROPERTIES TIMEOUT 30)
+endforeach()
+
 add_executable(write_watch_tests ../WriteWatch.cpp ../../prx/libc/src/GuestWriteWatch.cpp)
 target_include_directories(write_watch_tests PRIVATE ../..)
 target_compile_features(write_watch_tests PRIVATE cxx_std_20)
@@ -15,10 +28,13 @@ set_target_properties(write_watch_tests PROPERTIES
     CXX_EXTENSIONS OFF
     RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
 
-foreach(mode collect fresh armed register mapped host empty protection overlaps threads raised)
+foreach(mode collect fresh armed register mapped host empty protection overlaps threads raised fault-ahead read-trap read-trap-threads read-trap-fault read-trap-late read-trap-fault-bound)
     add_test(NAME write_watch_${mode} COMMAND write_watch_tests ${mode})
     set_tests_properties(write_watch_${mode} PROPERTIES TIMEOUT 30)
 endforeach()
+
+add_test(NAME write_watch_fault-ahead-off COMMAND write_watch_tests fault-ahead-off)
+set_tests_properties(write_watch_fault-ahead-off PROPERTIES TIMEOUT 30 ENVIRONMENT APS5_WRITE_WATCH_FAULT_AHEAD=0)
 
 foreach(mode execute-fault read-fault)
     add_test(NAME write_watch_${mode} COMMAND write_watch_tests ${mode})

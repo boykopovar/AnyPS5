@@ -679,10 +679,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         std::vector<VkPipelineColorBlendAttachmentState> secondChannels(state.blends.begin(), state.blends.end());
         for (const auto& merged : state.colors) {
             if (merged.partialWriteMask != UnclampedBlendMask) continue;
-            for (auto* channels : {&firstChannels, &secondChannels}) {
-                channels->at(merged.exportIndex).blendEnable = VK_FALSE;
-                channels->at(merged.exportIndex).colorWriteMask = 0;
-            }
+            for (auto* channels : {&firstChannels, &secondChannels}) channels->at(merged.exportIndex) = {};
         }
         if (alternateAlpha) {
             const auto keepsStencil = [](const VkStencilOpState& face) { return face.writeMask == 0 || (face.failOp == VK_STENCIL_OP_KEEP && face.passOp == VK_STENCIL_OP_KEEP && face.depthFailOp == VK_STENCIL_OP_KEEP); };

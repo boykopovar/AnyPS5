@@ -175,6 +175,11 @@ struct SpirvEmitterState {
     std::map<std::pair<bool, std::uint32_t>, std::uint32_t> interpolateFunctions;
     std::map<std::pair<bool, std::uint32_t>, std::uint32_t> fastInterpolateFunctions;
     bool integerInterpolation = false;
+    bool integerFloat64 = false;
+    std::uint32_t integerAddF64Function = 0;
+    std::uint32_t integerMulF64Function = 0;
+    std::uint32_t integerF64FromF32Function = 0;
+    std::uint32_t integerF32FromF64Function = 0;
     std::array<std::array<std::uint32_t, 2>, 2> bdaDwordReadFunctions {};
     std::array<std::array<std::uint32_t, 2>, 2> bdaSpanReadFunctions {};
     std::unordered_map<const IrValue*, std::pair<std::uint32_t, std::uint32_t>> bdaGroupedLoads;
@@ -243,9 +248,8 @@ struct SpirvEmitterState {
     std::uint32_t currentLabel = 0;
     const IrBlock* currentBlock = nullptr;
     std::uint32_t pixelValidMaskVariable = 0;
-    std::uint32_t mergeWordVariable = 0;
-    std::uint32_t mergeTexelVariable = 0;
-    std::uint32_t mergePendingVariable = 0;
+    std::vector<std::uint32_t> mergeValueVariables;
+    std::vector<std::uint32_t> mergePendingVariables;
     std::uint32_t quadPixelUncovered = 0;
     std::uint32_t sampleMaskInputVariable = 0;
     std::uint32_t quadSampleCoverage = 0;
