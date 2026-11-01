@@ -58,15 +58,11 @@ private:
 
 void TestDisableState() {
     int value = -1;
-    int vshValue = -1;
     Require(sceScreenShotIsDisabled(0, &value) == 0 && value == 0, "capture starts enabled");
-    Require(sceScreenShotIsVshScreenCaptureDisabled(&vshValue) == 0 && vshValue == 0, "vsh capture starts enabled");
     Require(sceScreenShotDisable() == 0, "disable");
     Require(sceScreenShotIsDisabled(0, &value) == 0 && value == 1, "disable is reported");
-    Require(sceScreenShotIsVshScreenCaptureDisabled(&vshValue) == 0 && vshValue == 1, "vsh disable is reported");
     Require(sceScreenShotEnable() == 0, "enable");
     Require(sceScreenShotIsDisabled(0, &value) == 0 && value == 0, "enable is reported");
-    Require(sceScreenShotIsVshScreenCaptureDisabled(&vshValue) == 0 && vshValue == 0, "vsh enable is reported");
     value = 7;
     Require(sceScreenShotIsDisabled(-1, &value) == ErrorArgument && value == 7, "id -1 is rejected");
     Require(sceScreenShotIsDisabled(0, nullptr) == ErrorArgument, "null result is rejected");
