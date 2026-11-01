@@ -9,6 +9,8 @@
 
 extern "C" {
 
+void APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_(NKWebKit::WtfAbi::StringImpl* impl);
+
 [[noreturn]] void APS5_VABI WTFCrash();
 [[noreturn]] void APS5_VABI WTFCrashWithSecurityImplication();
 void APS5_VABI WTFGetBacktrace(void** stack, int* size);

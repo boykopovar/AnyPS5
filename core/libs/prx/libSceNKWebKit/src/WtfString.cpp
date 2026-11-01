@@ -170,13 +170,7 @@ void Deallocate(void* ptr);
 
 namespace NKWebKit::WtfAbi {
 
-void Release(StringImpl* impl) {
-    if (!impl) return;
-    if (impl->refCount != 2) {
-        impl->refCount -= 2;
-        return;
-    }
-    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) std::terminate();
+static void Destroy(StringImpl* impl) {
     switch (impl->hashAndFlags & 3) {
     case 1:
         Deallocate(const_cast<void*>(impl->data));
@@ -186,6 +180,16 @@ void Release(StringImpl* impl) {
         break;
     }
     Deallocate(impl);
+}
+
+void Release(StringImpl* impl) {
+    if (!impl) return;
+    if (impl->refCount != 2) {
+        impl->refCount -= 2;
+        return;
+    }
+    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) std::terminate();
+    Destroy(impl);
 }
 
 void Release(CStringBuffer* buffer) {
@@ -463,6 +467,13 @@ template<typename T> String IntegerString(T value) {
 }  // namespace
 
 extern "C" {
+void APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_(StringImpl* impl) {
+    if (!impl || (impl->refCount & 1)) throw std::invalid_argument("invalid WTF string destruction");
+    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3)
+        throw std::runtime_error("StringImpl::destroy: atom, symbol and external strings are not modelled");
+    NKWebKit::WtfAbi::Destroy(impl);
+}
+
 String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length) {
     return String(CopyImpl({data, length, false}));
 }
