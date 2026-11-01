@@ -108,6 +108,12 @@ int APS5_VABI _Mtxunlock_nid_postfix(PthreadMutex* mutex);
 int APS5_VABI _Mtxdst_nid_postfix(PthreadMutex* mutex);
 void* APS5_VABI sceLibcInternalAlignedArrayNewNothrow_nid_no_patch(std::size_t size, std::size_t alignment, const void* tag) noexcept;
 void APS5_VABI sceLibcInternalAlignedArrayDelete_nid_no_patch(void* pointer, std::size_t alignment);
+void APS5_VABI sceLibcInternalFutureErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalOverflowErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalUnderflowErrorBaseDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalFutureErrorDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalOverflowErrorDeletingDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalUnderflowErrorDeletingDestructor_nid_no_patch(void* self);
 
 int APS5_VABI sceLibcMspaceSetMallocCallback();
 int APS5_VABI sceLibcPafMspaceReportMemoryBlocks();
