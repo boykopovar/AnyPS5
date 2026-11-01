@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 
 static constexpr int SYSTEM_USER = 255;
@@ -61,13 +62,14 @@ int main() {
     for (const auto byte : vrr) Require(byte == std::byte{0xff});
 
     Require(Rejects(handle, nullptr));
-    Require(Rejects(-1, nullptr));
-    Require(Rejects(0, &status));
-    Require(Rejects(-1, &status));
-    Require(Rejects(NEVER_OPENED_HANDLE, &status));
+    for (const int invalidHandle : {-100, -2, -1, 0, NEVER_OPENED_HANDLE, 3, 4, 8, 100}) {
+        Require(Rejects(invalidHandle, &status));
+        Require(Rejects(invalidHandle, nullptr));
+    }
 
     Require(sceVideoOutClose(handle) == 0);
     Require(Rejects(handle, &status));
+    Require(Rejects(handle, nullptr));
     Require(sceVideoOutGetOutputStatusWithVrr(handle, vrr.data()) == static_cast<int>(0x8029000Bu));
     LibcRunShutdown_nid_postfix();
 }
