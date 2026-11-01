@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
@@ -95,62 +96,62 @@ std::uint64_t AddressOf(const void* data) {
 
 class GuestBlock {
 public:
-    explicit GuestBlock(bool watch, bool shared = false) : watched(watch) {
+    explicit GuestBlock(bool watch, bool shared = false, std::size_t size = BlockBytes) : watched(watch), bytes(size) {
 #ifdef _WIN32
         if (watched) {
-            block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
+            block = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
             if (shared) {
                 Require(block != nullptr, "cannot reserve shared test memory");
-                const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, BlockBytes, nullptr);
+                const auto section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, bytes, nullptr);
                 Require(section != nullptr, "cannot create shared test memory");
-                GuestArena::GuestArenaMap_nid_postfix(block, BlockBytes, section, 0, PAGE_READWRITE);
-                twin = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
+                GuestArena::GuestArenaMap_nid_postfix(block, bytes, section, 0, PAGE_READWRITE);
+                twin = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536));
                 Require(twin != nullptr, "cannot reserve the second mapping of shared test memory");
-                GuestArena::GuestArenaMap_nid_postfix(twin, BlockBytes, section, 0, PAGE_READWRITE);
+                GuestArena::GuestArenaMap_nid_postfix(twin, bytes, section, 0, PAGE_READWRITE);
                 CloseHandle(section);
-            } else if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, PAGE_READWRITE, BlockBytes);
+            } else if (block != nullptr) GuestArena::GuestArenaCommit_nid_postfix(block, bytes, PAGE_READWRITE, bytes);
         } else {
-            block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+            block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
         }
 #else
         Require(!shared, "shared test memory requires Windows");
         if (watched) {
             constexpr std::uintptr_t alignment = 65536;
-            void* mapped = mmap(nullptr, BlockBytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            void* mapped = mmap(nullptr, bytes + alignment, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
             if (mapped != MAP_FAILED) {
                 const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
                 const auto aligned = (begin + alignment - 1) & ~(alignment - 1);
                 if (aligned != begin) munmap(mapped, aligned - begin);
-                if (aligned + BlockBytes != begin + BlockBytes + alignment) munmap(reinterpret_cast<void*>(aligned + BlockBytes), begin + alignment - aligned);
+                if (aligned + bytes != begin + bytes + alignment) munmap(reinterpret_cast<void*>(aligned + bytes), begin + alignment - aligned);
                 block = reinterpret_cast<std::uint8_t*>(aligned);
-                GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
+                GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, bytes);
             }
         } else {
-            block = static_cast<std::uint8_t*>(std::aligned_alloc(65536, BlockBytes));
+            block = static_cast<std::uint8_t*>(std::aligned_alloc(65536, bytes));
         }
 #endif
         Require(block != nullptr, "DCC keys first write: cannot allocate the guest block");
-        Require(!watched || AgcDriver::GuestMemory::Watched(AddressOf(block), BlockBytes), "DCC keys first write: the watched guest block is not write-watched");
-        GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
+        Require(!watched || AgcDriver::GuestMemory::Watched(AddressOf(block), bytes), "DCC keys first write: the watched guest block is not write-watched");
+        GuestAllocations::Mutation().Add(block, bytes, true, true, true);
     }
 
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(block);
 #ifdef _WIN32
         if (twin != nullptr) {
-            GuestArena::GuestArenaReset_nid_postfix(twin, BlockBytes);
-            GuestArena::GuestArenaRelease_nid_postfix(twin, BlockBytes);
+            GuestArena::GuestArenaReset_nid_postfix(twin, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(twin, bytes);
         }
         if (watched) {
-            GuestArena::GuestArenaReset_nid_postfix(block, BlockBytes);
-            GuestArena::GuestArenaRelease_nid_postfix(block, BlockBytes);
+            GuestArena::GuestArenaReset_nid_postfix(block, bytes);
+            GuestArena::GuestArenaRelease_nid_postfix(block, bytes);
         } else {
             VirtualFree(block, 0, MEM_RELEASE);
         }
 #else
         if (watched) {
-            munmap(block, BlockBytes);
-            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, BlockBytes);
+            munmap(block, bytes);
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(block, bytes);
         } else {
             std::free(block);
         }
@@ -164,6 +165,7 @@ public:
 
 private:
     bool watched;
+    std::size_t bytes;
     std::uint8_t* block = nullptr;
     std::uint8_t* twin = nullptr;
 };
@@ -868,6 +870,157 @@ void RunMipmappedTarget(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
 #endif
 }
 
+void RunPartialWriteUntouchedClear(AgcDriver::VulkanDevice& device) {
+    constexpr std::size_t MultiBlockBytes = 4 * 65536;
+    GuestBlock block(false, false, MultiBlockBytes);
+    auto* texels = block.Data();
+    auto* keys = texels + 2 * 65536;
+    const auto surface = AddressOf(texels);
+    const auto meta = AddressOf(keys);
+
+    std::memset(texels, 0x55, 2 * SurfaceBytes);
+    std::memset(keys, 0xff, 2 * KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+
+    const auto metaShifted = meta >> 8u;
+    std::array<std::uint32_t, 8> arrayWords{
+        static_cast<std::uint32_t>(surface >> 8u),
+        static_cast<std::uint32_t>((surface >> 40u) & 0xffu) | (Format8888Unorm << 20u) | (((Side - 1u) & 3u) << 30u),
+        ((Side - 1u) >> 2u) | ((Side - 1u) << 14u),
+        0xfacu | (TileRenderTarget64KB << 20u) | (13u << 28u),
+        1u,
+        0u,
+        (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(metaShifted & 0xffu) << 24u),
+        static_cast<std::uint32_t>(metaShifted >> 8u),
+    };
+    std::vector<std::uint32_t> writeData(16, 0u);
+    std::copy(arrayWords.begin(), arrayWords.end(), writeData.begin() + 4);
+
+    std::shared_ptr<StorageTexture> arrayImage;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Dispatch(device, WriteCode, writeData);
+        arrayImage = StorageTexture::FindPending(surface, 2 * SurfaceBytes);
+        Require(arrayImage != nullptr && arrayImage->Descriptor().dccAddress == meta, "array texture was not created under its keys");
+        Require(arrayImage->TrackedUnits() == 2, "array texture does not track 2 units");
+
+        arrayImage->MarkSliceDirty(0, 2);
+        Require(arrayImage->LayerPending(0) && arrayImage->LayerPending(1), "both array layers should be pending initially");
+
+        std::memset(keys, 0x00, 2 * KeyBytes);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(StorageTexture::NoteKeysFill(meta, 2 * KeyBytes, 0x00) == 1, "clear key fill did not cover array texture");
+        Require(arrayImage->FilledKeys() == DccKeys::Clear0000, "filled keys not Clear0000");
+        Require(!arrayImage->HasWritesSinceFill(0) && !arrayImage->HasWritesSinceFill(1), "writes since fill not cleared after fill");
+
+        arrayImage->MarkSliceDirty(0, 1);
+        Require(arrayImage->HasWritesSinceFill(0), "layer 0 should have writes since fill");
+        Require(!arrayImage->HasWritesSinceFill(1), "untouched layer 1 should not have writes since fill");
+
+        arrayImage->Refresh();
+        device.WaitIdle();
+        const auto layer0Written = Count(texels, SurfaceBytes, 0xff);
+        const auto layer1Untouched = Count(texels + SurfaceBytes, SurfaceBytes, 0x55);
+        Require(layer0Written > 0, "partial write after clear fill: layer 0 post-fill writes were not written back");
+        Require(layer1Untouched == SurfaceBytes, "partial write after clear fill: untouched layer 1 was written back instead of dropped");
+        Require(!arrayImage->LayerPending(0) && !arrayImage->LayerPending(1), "layers should not be pending after refresh and writeback");
+    }
+    arrayImage.reset();
+
+    GuestBlock block2D(false, false, MultiBlockBytes);
+    auto* texels2D = block2D.Data();
+    auto* keys2D = texels2D + 2 * 65536;
+    const auto surface2D = AddressOf(texels2D);
+    const auto meta2D = AddressOf(keys2D);
+
+    std::memset(texels2D, 0x55, 2 * SurfaceBytes);
+    std::memset(keys2D, 0xff, 2 * KeyBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+
+    const auto meta2DShifted = meta2D >> 8u;
+    auto descriptor2D = TextureDescriptor(texels2D, keys2D);
+    descriptor2D[2] = ((Side - 1u) >> 2u) | ((2 * Side - 1u) << 14u);
+    descriptor2D[6] = (1u << 20u) | (1u << 21u) | (static_cast<std::uint32_t>(meta2DShifted & 0xffu) << 24u);
+    descriptor2D[7] = static_cast<std::uint32_t>(meta2DShifted >> 8u);
+
+    std::vector<std::uint32_t> writeData2D(16, 0u);
+    std::copy(descriptor2D.begin(), descriptor2D.end(), writeData2D.begin() + 4);
+
+    std::shared_ptr<StorageTexture> image2D;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Dispatch(device, WriteCode, writeData2D);
+        image2D = StorageTexture::FindPending(surface2D, 2 * SurfaceBytes);
+        Require(image2D != nullptr && image2D->TrackedUnits() == 2, "2D multi-block texture does not track 2 units");
+
+        image2D->MarkDirty();
+        Require(image2D->LayerPending(0) && image2D->LayerPending(1), "both 2D units should be pending initially");
+
+        std::memset(keys2D, 0x00, 2 * KeyBytes);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(StorageTexture::NoteKeysFill(meta2D, 2 * KeyBytes, 0x00) == 1, "clear key fill did not cover 2D texture");
+        Require(!image2D->HasWritesSinceFill(0) && !image2D->HasWritesSinceFill(1), "2D units writes since fill not cleared after fill");
+
+        image2D->MarkUnitsWritten(std::vector<bool>{true, false});
+        Require(image2D->HasWritesSinceFill(0), "unit 0 should have writes since fill");
+        Require(!image2D->HasWritesSinceFill(1), "untouched unit 1 should not have writes since fill");
+
+        image2D->Refresh();
+        device.WaitIdle();
+        const auto unit0Written = Count(texels2D, SurfaceBytes, 0xff);
+        const auto unit1Untouched = Count(texels2D + SurfaceBytes, SurfaceBytes, 0x55);
+        Require(unit0Written > 0, "partial write after clear fill: block unit 0 post-fill writes were not written back");
+        Require(unit1Untouched == SurfaceBytes, "partial write after clear fill: untouched block unit 1 was written back instead of dropped");
+        Require(!image2D->LayerPending(0) && !image2D->LayerPending(1), "2D units should not be pending after refresh and writeback");
+    }
+}
+
+void RunCpuWriteAfterWritebackPresent(AgcDriver::VulkanDevice& device, std::uint8_t* block) {
+    constexpr std::size_t KeyExtent = 4096;
+    auto* texels = block;
+    auto* keys = block + KeysOffset;
+    const auto surface = AddressOf(texels);
+    const auto meta = AddressOf(keys);
+    std::memset(texels, 0x11, SurfaceBytes);
+    std::memset(keys, 0xff, KeyExtent);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+
+    std::vector<std::uint32_t> writeData(16, 0u);
+    const auto words = TextureDescriptor(texels, keys);
+    std::copy(words.begin(), words.end(), writeData.begin() + 4);
+
+    std::shared_ptr<StorageTexture> image;
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Dispatch(device, WriteCode, writeData);
+        image = StorageTexture::FindPending(surface, SurfaceBytes);
+        Require(image != nullptr, "surface has no pending storage image");
+
+        StorageTexture::FlushPending(surface, SurfaceBytes, nullptr, "test writeback");
+        device.WaitIdle();
+    }
+
+    Require(StorageTexture::FindPending(surface, SurfaceBytes) == nullptr, "surface is still pending after writeback");
+    Require(StorageTexture::FindLive(surface, SurfaceBytes) == image, "live resident was lost after writeback");
+
+    std::memset(texels, 0x77, SurfaceBytes);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    AgcDriver::GuestMemory::CollectWritesUncached(surface, SurfaceBytes);
+
+    AgcDriver::DisplayBuffer buffer{surface, 0x8000000000000000ull, Side, Side};
+    buffer.dccAddress = meta;
+    try {
+        device.PresentDisplayBuffer(buffer);
+    } catch (const std::exception& error) {
+        const std::string what = error.what();
+        Require(what.find("swapchain") != std::string::npos, "unexpected presentation failure: " + what);
+    }
+
+    const auto snapshot = image->Original();
+    Require(snapshot.size() == SurfaceBytes, "resident snapshot size mismatch");
+    Require(snapshot[0] == std::byte{0x77}, "presented resident did not reflect CPU write after writeback");
+}
+
 int main() {
     try {
 #ifdef _WIN32
@@ -911,6 +1064,8 @@ int main() {
         std::optional<GuestBlock> chain;
         chain.emplace(false);
         RunMipmappedTarget(*device, chain->Data());
+        RunPartialWriteUntouchedClear(*device);
+        RunCpuWriteAfterWritebackPresent(*device, block->Data());
 #ifdef _WIN32
         shared.emplace(true, true);
         RunSharedImport(*device, shared->Data());
@@ -919,6 +1074,7 @@ int main() {
         if (AgcDriver::GuestMemory::WriteWatched()) {
             watched.emplace(true);
             Run(*device, watched->Data());
+            RunCpuWriteAfterWritebackPresent(*device, watched->Data());
             std::optional<GuestBlock> sampledWatched;
             sampledWatched.emplace(true);
             RunSingleKeysSampled(*device, sampledWatched->Data(), sampledOutput->Data(), "write-watched");

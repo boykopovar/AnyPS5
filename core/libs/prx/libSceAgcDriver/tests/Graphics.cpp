@@ -10659,8 +10659,15 @@ void unorm10_11_11TargetTests() {
     changed.context[0x31c] |= 1u << 8u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 6 number type 1");
     changed = queue;
-    changed.context[0x1e0] = 0x40010001u;
     for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = 0;
+    for (const auto replace : {0x40010001u, 0x60050001u}) {
+        changed.context[0x1e0] = replace;
+        const auto replaced = AgcDriver::Graphics::DecodeState(changed);
+        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Unorm10_11_11, "a blend that writes the source color into a 10_11_11 unorm target was refused or kept blending");
+    }
+    changed.context[0x1e0] = 0x40010101u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into a 10_11_11 unorm color target");
+    changed.context[0x1e0] = 0x40010005u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into a 10_11_11 unorm color target");
     changed = queue;
     changed.context[0x8e] = 3;
@@ -11082,9 +11089,16 @@ void float11_11_10TargetTests() {
         expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 7 number type " + std::to_string(number) + " component swap 2");
     }
     changed = queue;
-    changed.context[0x1e0] = 0x60010101u;
     for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target");
+    for (const auto replace : {0x40010001u, 0x60010001u, 0x60050001u}) {
+        changed.context[0x1e0] = replace;
+        const auto replaced = AgcDriver::Graphics::DecodeState(changed);
+        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Float11_11_10 && replaced.color.componentMapping == 0xc6u, "a blend that writes the source color into an 11_11_10 float target was refused or kept blending");
+    }
+    for (const auto blend : {0x60010101u, 0x40010005u}) {
+        changed.context[0x1e0] = blend;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target");
+    }
     changed = queue;
     changed.context[0x8e] = 6;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "partial writes of an 11_11_10 float color target");
@@ -11811,6 +11825,40 @@ void meshArgumentTests() {
     Require(same(ResolveMeshArguments(record(96 * 6, 600, 0), rules(triangles, 96 * 6)), {6, 600, 1, 96 * 6, 0}), "groups times instances at the device limit");
     Require(same(ResolveMeshArguments(record(0xffffffffu, 1, 0xfffffff0u), rules(points, 0xffffffffu)), {15, 1, 1, 15, 0xfffffff0u}), "first index near the end of a huge index buffer");
     Require(same(ResolveMeshArguments(record(0xffffffffu, 1, 0), rules(points, 0xffffffffu)), {0, 0, 0, 0xffffffffu, 0}), "groups over the device limit draw nothing");
+    context.meshLimits.maxMeshWorkGroupCount[2] = 3;
+    const auto grid = [&](std::uint32_t groups, std::uint32_t instances, std::array<std::uint32_t, 4> expected) {
+        const auto value = AgcDriver::Graphics::MeshGridFor(context, groups, instances);
+        return value.has_value() && value->groups == expected[0] && value->instances == expected[1] && value->layers == expected[2] && value->layerStride == expected[3];
+    };
+    const auto refused = [&](std::uint32_t groups, std::uint32_t instances) { return !AgcDriver::Graphics::MeshGridFor(context, groups, instances).has_value(); };
+    Require(grid(1000, 1, {1000, 1, 1, 0}), "groups at the X limit stay in one layer");
+    Require(grid(1, 1, {1, 1, 1, 0}) && grid(999, 3, {999, 3, 1, 0}), "a draw in one layer numbers its groups by X alone");
+    Require(grid(1001, 1, {501, 1, 2, 501}), "one group past the X limit splits the groups evenly over two layers");
+    Require(grid(1001, 2, {501, 2, 2, 501}), "instances keep Y when the groups take two layers");
+    Require(grid(2999, 1, {1000, 1, 3, 1000}), "three layers at the X limit");
+    Require(refused(3001, 1), "more layers than the Z limit are refused");
+    context.meshLimits.maxMeshWorkGroupCount[2] = 10;
+    Require(grid(4000, 1, {1000, 1, 4, 1000}), "groups at the total limit");
+    Require(refused(4001, 1), "groups whose layers pass the total limit are refused");
+    Require(refused(1001, 4), "groups times instances past the total limit are refused");
+    Require(refused(1, 601), "instances over the Y limit are refused");
+    Require(refused(0, 1), "no groups are refused");
+    Require(grid(1, 0, {1, 0, 1, 0}) && grid(1001, 0, {501, 0, 2, 501}), "no instances keep the split and draw nothing, as before");
+    context.meshLimits.maxMeshWorkGroupCount[0] = 4194304u;
+    context.meshLimits.maxMeshWorkGroupCount[1] = 65535u;
+    context.meshLimits.maxMeshWorkGroupCount[2] = 65535u;
+    context.meshLimits.maxMeshWorkGroupTotalCount = 4194304u;
+    Require(grid(65575, 1, {65575, 1, 1, 0}) && grid(4194304, 1, {4194304, 1, 1, 0}), "a device whose X limit holds the draw keeps it in one layer");
+    Require(refused(4194305, 1), "groups past an X limit equal to the total limit are refused");
+    context.meshLimits.maxMeshWorkGroupCount[0] = 100000u;
+    context.meshLimits.maxMeshWorkGroupTotalCount = 0xffffffffu;
+    Require(grid(100000, 1, {100000, 1, 1, 0}), "groups at an X limit past the pushed stride's range stay in one layer");
+    Require(grid(100001, 1, {50001, 1, 2, 50001}) && grid(196605, 1, {65535, 1, 3, 65535}), "layers of a draw past such an X limit fit the pushed stride");
+    context.meshLimits.maxMeshWorkGroupCount[0] = 800000000u;
+    context.meshLimits.maxMeshWorkGroupCount[1] = 0xffffffffu;
+    context.meshLimits.maxMeshWorkGroupCount[2] = 0xffffffffu;
+    context.meshLimits.maxMeshWorkGroupTotalCount = 0xffffffffu;
+    Require(refused(0xffffffffu, 0xffffffffu), "a product of groups and instances past 64 bits is refused");
 }
 
 void meshLimitTests() {
