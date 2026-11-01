@@ -2328,7 +2328,7 @@ int APS5_VABI sceNetGetMacAddress(NetEtherAddr* addr, int flags) {
     }
     // Keep guest identity stable without exposing the host adapter address.
     const std::uint8_t mac[6] = {0x02, 0x50, 0x53, 0x35, 0x00, 0x01};
-    std::memcpy(addr->data, mac, 6);
+    if (!GuestCopyOut_nid_no_patch(addr, mac, sizeof(mac))) return fail(NET_EFAULT);
     return 0;
 }
 
