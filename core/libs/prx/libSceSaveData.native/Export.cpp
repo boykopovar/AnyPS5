@@ -2,6 +2,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <deque>
 #include <fstream>
@@ -19,6 +20,12 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <utility>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -50,6 +57,7 @@ static std::string save_root() {
 // Events the title polls with sceSaveDataGetEventResult; a backup completes at once here.
 static std::mutex g_state_mutex;
 static std::deque<SaveDataEvent> g_events;
+constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_UMOUNT_BACKUP = 1;
 constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_BACKUP = 2;
 constexpr std::uint32_t SAVE_DATA_EVENT_TYPE_CONVERT = 5;
 
@@ -352,16 +360,301 @@ static bool isMountedDirectory(const std::string& path, std::error_code& error) 
     return false;
 }
 
+static constexpr char BACKUP_DIR[] = "_sd_backup";
+static constexpr char BACKUP_STAGING_DIR[] = "_sd_backup_tmp";
+static constexpr char BACKUP_OLD_DIR[] = "_sd_backup_old";
+static constexpr char RESTORE_STAGING_DIR[] = "_sd_restore_tmp";
+static constexpr char RESTORE_OLD_DIR[] = "_sd_restore_old";
+
+static std::atomic<bool (*)(const char*, const char*)> g_file_step_hook{nullptr};
+
+void SaveDataSetFileStepHook_nid_no_patch(bool (*hook)(const char* step, const char* path)) {
+    g_file_step_hook.store(hook, std::memory_order_release);
+}
+
+static void file_step(const char* step, const std::string& path) {
+    const auto hook = g_file_step_hook.load(std::memory_order_acquire);
+    if (hook != nullptr && !hook(step, path.c_str())) {
+        throw std::filesystem::filesystem_error(std::string("SaveData: ") + step + " failed", path, std::make_error_code(std::errc::io_error));
+    }
+}
+
+static bool is_link(const std::filesystem::path& path, const std::filesystem::file_status& status) {
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        return true;
+    }
+#endif
+    return std::filesystem::is_symlink(status);
+}
+
+static std::filesystem::file_type plain_type(const std::string& path) {
+    std::error_code error;
+    const auto status = std::filesystem::symlink_status(path, error);
+    if (status.type() == std::filesystem::file_type::not_found) {
+        return std::filesystem::file_type::not_found;
+    }
+    if (error) {
+        throw std::filesystem::filesystem_error("SaveData: cannot read the type of", path, error);
+    }
+    if (is_link(path, status) || (status.type() != std::filesystem::file_type::regular && status.type() != std::filesystem::file_type::directory)) {
+        throw std::filesystem::filesystem_error("SaveData: not a plain file or directory", path, std::make_error_code(std::errc::operation_not_permitted));
+    }
+    return status.type();
+}
+
+static void require_plain_tree(const std::string& path) {
+    if (plain_type(path) != std::filesystem::file_type::directory) {
+        return;
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(path)) {
+        require_plain_tree(entry.path().string());
+    }
+}
+
+static void require_inside(const std::string& root, const std::string& path) {
+    const auto base = std::filesystem::weakly_canonical(std::filesystem::absolute(root));
+    const auto target = std::filesystem::weakly_canonical(std::filesystem::absolute(path));
+    const auto [inBase, inTarget] = std::mismatch(base.begin(), base.end(), target.begin(), target.end());
+    if (inBase != base.end() || inTarget == target.end()) {
+        throw std::filesystem::filesystem_error("SaveData: a save path leaves its root", path, root, std::make_error_code(std::errc::operation_not_permitted));
+    }
+}
+
+static void copy_file_step(const char* step, const std::string& from, const std::string& to) {
+    if (plain_type(from) != std::filesystem::file_type::regular) {
+        throw std::filesystem::filesystem_error("SaveData: not a plain file", from, std::make_error_code(std::errc::operation_not_permitted));
+    }
+    file_step(step, to);
+    std::filesystem::copy_file(from, to);
+}
+
+static void copy_tree(const char* step, const std::string& from, const std::string& to) {
+    file_step(step, to);
+    std::filesystem::create_directory(to);
+    for (const auto& entry : std::filesystem::directory_iterator(from)) {
+        const std::string source = entry.path().string();
+        const std::string target = to + "/" + entry.path().filename().string();
+        if (plain_type(source) == std::filesystem::file_type::directory) {
+            copy_tree(step, source, target);
+        } else {
+            copy_file_step(step, source, target);
+        }
+    }
+}
+
+static std::map<std::string, std::uintmax_t> tree_sizes(const std::string& root) {
+    std::map<std::string, std::uintmax_t> sizes;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        sizes[entry.path().lexically_relative(root).generic_string()] = entry.is_directory() ? std::numeric_limits<std::uintmax_t>::max() : entry.file_size();
+    }
+    return sizes;
+}
+
+static void flush_path(const std::string& path, bool directory) {
+#ifdef _WIN32
+    if (directory) {
+        return;
+    }
+    const HANDLE handle = CreateFileW(std::filesystem::path(path).c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        throw std::filesystem::filesystem_error("SaveData: cannot open to flush", path, std::error_code(static_cast<int>(GetLastError()), std::system_category()));
+    }
+    const bool flushed = FlushFileBuffers(handle) != 0;
+    const DWORD error = GetLastError();
+    CloseHandle(handle);
+    if (!flushed) {
+        throw std::filesystem::filesystem_error("SaveData: cannot flush", path, std::error_code(static_cast<int>(error), std::system_category()));
+    }
+#else
+    const int descriptor = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | (directory ? O_DIRECTORY : 0));
+    if (descriptor < 0) {
+        throw std::filesystem::filesystem_error("SaveData: cannot open to flush", path, std::error_code(errno, std::generic_category()));
+    }
+    const int result = ::fsync(descriptor);
+    const int error = errno;
+    ::close(descriptor);
+    if (result != 0 && error != EINVAL) {
+        throw std::filesystem::filesystem_error("SaveData: cannot flush", path, std::error_code(error, std::generic_category()));
+    }
+#endif
+}
+
+static void flush_tree(const std::string& root) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+        flush_path(entry.path().string(), entry.is_directory());
+    }
+    flush_path(root, true);
+}
+
+struct FileSwap {
+    std::vector<std::pair<std::string, std::string>> moved;
+
+    void move(const char* step, const std::string& from, const std::string& to) {
+        file_step(step, to);
+        std::filesystem::rename(from, to);
+        moved.emplace_back(from, to);
+        flush_path(std::filesystem::path(from).parent_path().string(), true);
+        flush_path(std::filesystem::path(to).parent_path().string(), true);
+    }
+
+    void undo(const char* step) {
+        while (!moved.empty()) {
+            const auto [from, to] = moved.back();
+            file_step(step, from);
+            std::filesystem::rename(to, from);
+            moved.pop_back();
+            flush_path(std::filesystem::path(from).parent_path().string(), true);
+            flush_path(std::filesystem::path(to).parent_path().string(), true);
+        }
+    }
+};
+
+static std::string backup_entry(const char* root, const std::string& dirName) {
+    return std::string(root) + "/" + dirName;
+}
+
+static std::string entry_save(const std::string& entry) {
+    return entry + "/save";
+}
+
+static void require_plain_paths(const std::string& dirName, std::initializer_list<const char*> roots) {
+    for (const char* root : roots) {
+        if (plain_type(root) == std::filesystem::file_type::regular) {
+            throw std::filesystem::filesystem_error("SaveData: a save root is not a directory", root, std::make_error_code(std::errc::not_a_directory));
+        }
+        const std::string entry = backup_entry(root, dirName);
+        for (const std::string& path : {entry, param_path(entry), blocks_path(entry)}) {
+            require_inside(root, path);
+            require_plain_tree(path);
+        }
+    }
+}
+
+static bool parse_dir_name(const SceSaveDataDirName* name, std::string* dirName) {
+    const auto* nameEnd = static_cast<const char*>(std::memchr(name->data, '\0', sizeof(name->data)));
+    if (nameEnd == nullptr) {
+        return false;
+    }
+    dirName->assign(name->data, static_cast<std::size_t>(nameEnd - name->data));
+    return !dirName->empty() && *dirName != "." && *dirName != ".." && dirName->find_first_of("/\\:") == std::string::npos;
+}
+
+static bool running_title(const SceSaveDataTitleId* titleId) {
+    return titleId == nullptr || std::strncmp(titleId->data, GetAppTitleId_nid_postfix().value, sizeof(titleId->data)) == 0;
+}
+
+static int read_backup(const std::string& dirName, SaveDataParam* param) {
+    const std::string entry = backup_entry(BACKUP_DIR, dirName);
+    std::error_code error;
+    if (!std::filesystem::exists(entry, error)) {
+        return error ? SAVE_DATA_ERROR_INTERNAL : SAVE_DATA_ERROR_NOT_FOUND;
+    }
+    const std::string backup = entry_save(entry);
+    std::vector<char> bytes;
+    if (!std::filesystem::is_directory(backup, error) || !std::filesystem::is_regular_file(param_path(backup), error) || !read_file_all(param_path(backup), bytes) || bytes.size() != sizeof(SaveDataParam)) {
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
+    const auto blocks = std::filesystem::status(blocks_path(backup), error).type();
+    if (blocks != std::filesystem::file_type::not_found && blocks != std::filesystem::file_type::regular) {
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
+    if (param != nullptr) {
+        std::memcpy(param, bytes.data(), sizeof(SaveDataParam));
+    }
+    return SAVE_DATA_OK;
+}
+
+static void backupSave(const std::string& dirName) {
+    const std::string source = save_root() + "/" + dirName;
+    const std::string entry = backup_entry(BACKUP_DIR, dirName);
+    const std::string staged = backup_entry(BACKUP_STAGING_DIR, dirName);
+    const std::string old = backup_entry(BACKUP_OLD_DIR, dirName);
+    require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, BACKUP_STAGING_DIR, BACKUP_OLD_DIR});
+    RemoveTree(staged);
+    RemoveTree(old);
+    std::filesystem::create_directories(staged);
+    FileSwap swap;
+    try {
+        copy_tree("backup.copy", source, entry_save(staged));
+        file_step("backup.copy", param_path(entry_save(staged)));
+        if (!store_param(entry_save(staged), load_param(source))) {
+            throw std::filesystem::filesystem_error("SaveData: cannot write the backup's param file", param_path(entry_save(staged)), std::make_error_code(std::errc::io_error));
+        }
+        if (std::filesystem::exists(blocks_path(source))) {
+            copy_file_step("backup.copy", blocks_path(source), blocks_path(entry_save(staged)));
+        }
+        flush_tree(staged);
+        std::filesystem::create_directories(BACKUP_DIR);
+        if (std::filesystem::exists(entry)) {
+            std::filesystem::create_directories(BACKUP_OLD_DIR);
+            swap.move("backup.aside", entry, old);
+        }
+        swap.move("backup.place", staged, entry);
+    } catch (...) {
+        swap.undo("backup.rollback");
+        std::error_code ignored;
+        RemoveTree(staged, ignored);
+        throw;
+    }
+    std::error_code ignored;
+    RemoveTree(old, ignored);
+}
+
+static void restoreSave(const std::string& dirName) {
+    const std::string live = save_root() + "/" + dirName;
+    const std::string backupEntry = backup_entry(BACKUP_DIR, dirName);
+    const std::string backup = entry_save(backupEntry);
+    const std::string stagedEntry = backup_entry(RESTORE_STAGING_DIR, dirName);
+    const std::string oldEntry = backup_entry(RESTORE_OLD_DIR, dirName);
+    const std::string staged = entry_save(stagedEntry);
+    const std::string old = entry_save(oldEntry);
+    require_plain_paths(dirName, {SAVE_DIR, BACKUP_DIR, RESTORE_STAGING_DIR, RESTORE_OLD_DIR});
+    RemoveTree(stagedEntry);
+    RemoveTree(oldEntry);
+    std::filesystem::create_directories(stagedEntry);
+    std::filesystem::create_directories(oldEntry);
+    FileSwap swap;
+    try {
+        copy_tree("restore.copy", backup, staged);
+        copy_file_step("restore.copy", param_path(backup), param_path(staged));
+        if (std::filesystem::exists(blocks_path(backup))) {
+            copy_file_step("restore.copy", blocks_path(backup), blocks_path(staged));
+        }
+        if (tree_sizes(stagedEntry) != tree_sizes(backupEntry)) {
+            throw std::filesystem::filesystem_error("SaveData: the staged copy of the backup is incomplete", stagedEntry, std::make_error_code(std::errc::io_error));
+        }
+        flush_tree(stagedEntry);
+        swap.move("restore.aside", live, old);
+        for (const auto& [from, to] : {std::pair{param_path(live), param_path(old)}, std::pair{blocks_path(live), blocks_path(old)}}) {
+            if (std::filesystem::exists(from)) {
+                swap.move("restore.aside", from, to);
+            }
+        }
+        swap.move("restore.place", staged, live);
+        swap.move("restore.place", param_path(staged), param_path(live));
+        if (std::filesystem::exists(blocks_path(staged))) {
+            swap.move("restore.place", blocks_path(staged), blocks_path(live));
+        }
+    } catch (...) {
+        swap.undo("restore.rollback");
+        std::error_code ignored;
+        RemoveTree(stagedEntry, ignored);
+        RemoveTree(oldEntry, ignored);
+        throw;
+    }
+    std::error_code ignored;
+    RemoveTree(oldEntry, ignored);
+    RemoveTree(stagedEntry, ignored);
+}
+
 static int deleteSave(const SaveDataDelete* del) {
     if (del == nullptr || del->dir_name == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    const auto* nameEnd = static_cast<const char*>(std::memchr(del->dir_name->data, '\0', sizeof(del->dir_name->data)));
-    if (nameEnd == nullptr) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    const std::string dirName(del->dir_name->data, static_cast<std::size_t>(nameEnd - del->dir_name->data));
-    if (dirName.empty() || dirName == "." || dirName == ".." || dirName.find_first_of("/\\:") != std::string::npos) {
+    std::string dirName;
+    if (!parse_dir_name(del->dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     const std::string path = save_root() + "/" + dirName;
@@ -375,6 +668,7 @@ static int deleteSave(const SaveDataDelete* del) {
     std::error_code ec;
     std::filesystem::remove(param_path(path), ec);
     std::filesystem::remove(blocks_path(path), ec);
+    RemoveTree(backup_entry(BACKUP_DIR, dirName));
     return SAVE_DATA_OK;
 }
 
@@ -686,12 +980,8 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     if (!create && !create2 && !open) {
         throw std::runtime_error("sceSaveDataMount3: unknown mount_mode");
     }
-    const auto* nameEnd = static_cast<const char*>(std::memchr(mount->dir_name->data, '\0', sizeof(mount->dir_name->data)));
-    if (nameEnd == nullptr) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    const std::string dirName(mount->dir_name->data, static_cast<std::size_t>(nameEnd - mount->dir_name->data));
-    if (dirName.empty() || dirName == "." || dirName == ".." || dirName.find_first_of("/\\:") != std::string::npos) {
+    std::string dirName;
+    if (!parse_dir_name(mount->dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     const std::string real_path = save_root() + "/" + dirName;
@@ -744,6 +1034,7 @@ static int mount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result
     AddPathAlias_nid_no_patch(mountPoint.c_str(), absolutePath.c_str());
     std::memset(mount_result, 0, sizeof(*mount_result));
     g_slots[slot].used = true;
+    g_slots[slot].user_id = mount->user_id;
     g_slots[slot].mount_point = mountPoint;
     g_slots[slot].real_path = real_path;
     std::memcpy(mount_result->mount_point.data, mountPoint.c_str(), mountPoint.size() + 1);
@@ -1068,12 +1359,8 @@ static int convert(const SaveDataConvert* param) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     g_convertProgress = 0.0f;
-    const auto* nameEnd = static_cast<const char*>(std::memchr(param->dir_name->data, '\0', sizeof(param->dir_name->data)));
-    if (nameEnd == nullptr) {
-        return SAVE_DATA_ERROR_PARAMETER;
-    }
-    const std::string dirName(param->dir_name->data, static_cast<std::size_t>(nameEnd - param->dir_name->data));
-    if (dirName.empty() || dirName == "." || dirName == ".." || dirName.find_first_of("/\\:") != std::string::npos) {
+    std::string dirName;
+    if (!parse_dir_name(param->dir_name, &dirName)) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     if (!std::filesystem::is_directory(save_root() + "/" + dirName)) {
@@ -1195,9 +1482,38 @@ int APS5_VABI sceSaveDataChangeInternal(void) {
     return 0;
 }
 
-int APS5_VABI sceSaveDataCheckBackupData(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+static int checkBackupData(const SaveDataCheckBackupData* check) {
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    if (check == nullptr || check->dir_name == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    std::string dirName;
+    if (!parse_dir_name(check->dir_name, &dirName)) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (!running_title(check->title_id)) {
+        return SAVE_DATA_ERROR_NOT_FOUND;
+    }
+    std::lock_guard lock(g_slots_mutex);
+    std::error_code error;
+    if (isMountedDirectory(save_root() + "/" + dirName, error)) {
+        return SAVE_DATA_ERROR_BUSY;
+    }
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
+    try {
+        require_plain_paths(dirName, {BACKUP_DIR});
+    } catch (const std::filesystem::filesystem_error&) {
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
+    return read_backup(dirName, check->param);
+}
+
+int APS5_VABI sceSaveDataCheckBackupData(const SaveDataCheckBackupData* check) {
+    const int rc = checkBackupData(check);
+    SAVEDATA_TRACE("checkBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), check != nullptr && check->dir_name != nullptr ? check->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    return rc;
 }
 
 int APS5_VABI sceSaveDataCheckBackupDataForCdlg(void) {
@@ -1437,9 +1753,46 @@ int APS5_VABI sceSaveDataRegisterEventCallback() {
     return 0;
 }
 
-int APS5_VABI sceSaveDataRestoreBackupData(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+static int restoreBackupData(const SaveDataRestoreBackupData* restore) {
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    if (restore == nullptr || restore->dir_name == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    std::string dirName;
+    if (!parse_dir_name(restore->dir_name, &dirName)) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (!running_title(restore->title_id)) {
+        return SAVE_DATA_ERROR_NOT_FOUND;
+    }
+    const std::string target = save_root() + "/" + dirName;
+    std::lock_guard lock(g_slots_mutex);
+    std::error_code error;
+    if (isMountedDirectory(target, error)) {
+        return SAVE_DATA_ERROR_BUSY;
+    }
+    if (error) return SAVE_DATA_ERROR_INTERNAL;
+    const int backup = read_backup(dirName, nullptr);
+    if (backup != SAVE_DATA_OK) {
+        return backup;
+    }
+    if (!std::filesystem::is_directory(target)) {
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
+    try {
+        restoreSave(dirName);
+    } catch (const std::filesystem::filesystem_error&) {
+        return SAVE_DATA_ERROR_INTERNAL;
+    }
+    return SAVE_DATA_OK;
+}
+
+int APS5_VABI sceSaveDataRestoreBackupData(const SaveDataRestoreBackupData* restore) {
+    const int rc = restoreBackupData(restore);
+    SAVEDATA_TRACE("restoreBackupData dir=%.*s -> 0x%08x", static_cast<int>(sizeof(SceSaveDataDirName::data)), restore != nullptr && restore->dir_name != nullptr ? restore->dir_name->data : "(null)", static_cast<unsigned>(rc));
+    return rc;
 }
 
 int APS5_VABI sceSaveDataRestoreBackupDataForCdlg(void) {
@@ -1487,9 +1840,45 @@ int APS5_VABI sceSaveDataUmountSys(void) {
     return 0;
 }
 
-int APS5_VABI sceSaveDataUmountWithBackup(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+static int umountWithBackup(const SaveDataMountPoint* mount_point) {
+    if (g_initializations == 0) {
+        return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    }
+    if (mount_point == nullptr) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    SaveDataEvent event{};
+    event.type = SAVE_DATA_EVENT_TYPE_UMOUNT_BACKUP;
+    event.error_code = SAVE_DATA_OK;
+    {
+        std::lock_guard lock(g_slots_mutex);
+        const int slot = find_slot_by_mount_point(mount_point->data);
+        if (slot == -1) {
+            return SAVE_DATA_ERROR_NOT_MOUNTED;
+        }
+        const AppTitleId title = GetAppTitleId_nid_postfix();
+        const MountSlot mounted = g_slots[slot];
+        RemovePathAlias_nid_no_patch(mounted.mount_point.c_str());
+        g_slots[slot] = MountSlot{};
+        const std::string dirName = std::filesystem::path(mounted.real_path).filename().string();
+        event.user_id = mounted.user_id;
+        std::memcpy(event.title_id.data, title.value, strnlen(title.value, sizeof(event.title_id.data) - 1));
+        std::memcpy(event.dir_name.data, dirName.data(), std::min(dirName.size(), sizeof(event.dir_name.data) - 1));
+        try {
+            backupSave(dirName);
+        } catch (const std::exception&) {
+            event.error_code = SAVE_DATA_ERROR_INTERNAL;
+        }
+    }
+    std::lock_guard lock(g_state_mutex);
+    g_events.push_back(event);
+    return SAVE_DATA_OK;
+}
+
+int APS5_VABI sceSaveDataUmountWithBackup(const SaveDataMountPoint* mount_point) {
+    const int rc = umountWithBackup(mount_point);
+    SAVEDATA_TRACE("umountWithBackup point=%s -> 0x%08x", mount_point != nullptr ? mount_point->data : "(null)", static_cast<unsigned>(rc));
+    return rc;
 }
 
 int APS5_VABI sceSaveDataUnregisterEventCallback() {
