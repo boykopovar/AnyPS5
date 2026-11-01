@@ -154,6 +154,7 @@ DepthSamplingState prepareDepthSampling(const Context& context, const DepthTarge
 }
 
 std::atomic<bool> depthPlaneClearEnabled{true};
+std::atomic<bool> depthClearDispatchSkipEnabled{std::getenv("APS5_NO_DEPTH_CLEAR_DISPATCH_SKIP") == nullptr};
 
 enum DepthClearDecline : std::size_t { DeclineLayers, DeclineFormat, DeclineValue, DeclineColor, DeclinePending, DeclineCoverage, DeclineSize, DeclineCount };
 static_assert(DeclineCount <= 8, "DepthClearStatistics::declined holds eight reasons");
@@ -164,6 +165,8 @@ struct DepthClearCounters {
     std::atomic<std::uint64_t> copiesSkipped{0};
     std::atomic<std::uint64_t> clears{0};
     std::atomic<std::uint64_t> bytesSkipped{0};
+    std::atomic<std::uint64_t> dispatchesSkipped{0};
+    std::atomic<std::uint64_t> dispatchBytesCleared{0};
     std::array<std::atomic<std::uint64_t>, 8> declined{};
 };
 
@@ -676,19 +679,50 @@ public:
         return overwrite;
     }
 
-    bool StoreOverwrite(const StorageTexture& mirror) {
+    DepthPlaneOverwrite* OverwriteOf(const StorageTexture& mirror) const {
         auto* overwrite = currentOverwrite;
-        if (overwrite == nullptr || !OverwritesWholePlane(*overwrite)) return false;
+        if (overwrite == nullptr || !OverwritesWholePlane(*overwrite)) return nullptr;
         const auto& described = mirror.Descriptor();
         const auto& view = overwrite->view;
-        if (described.baseAddress != view.baseAddress || described.format != view.format || described.tileMode != view.tileMode || described.dimension != view.dimension) return false;
+        if (described.baseAddress != view.baseAddress || described.format != view.format || described.tileMode != view.tileMode || described.dimension != view.dimension || described.width != target.extent.width || described.height != target.extent.height) return nullptr;
         std::uint32_t current = 0;
         try {
             GuestMemory::Read(overwrite->colorAddress, std::as_writable_bytes(std::span(&current, 1)), 4);
         } catch (...) {
-            return false;
+            return nullptr;
         }
-        if (current != overwrite->colorBits) return false;
+        return current == overwrite->colorBits ? overwrite : nullptr;
+    }
+
+    bool MirrorClearValue(const StorageTexture& mirror, const DepthPlaneOverwrite& overwrite, VkClearColorValue& clear) const {
+        std::array<std::uint32_t, 4> pattern;
+        pattern.fill(overwrite.bits == 16u ? (overwrite.raw & 0xffffu) * 0x10001u : overwrite.raw);
+        clear = {};
+        return ClearColorForTexel(mirror.StorageFormat(), overwrite.bits / 8u, pattern, clear);
+    }
+
+    bool SkipsClearDispatch(VkImage mirrorImage) const {
+        if (depthPlane.storage == nullptr || depthPlane.storage->Image() != mirrorImage) return false;
+        const auto* overwrite = OverwriteOf(*depthPlane.storage);
+        VkClearColorValue clear;
+        return overwrite != nullptr && MirrorClearValue(*depthPlane.storage, *overwrite, clear);
+    }
+
+    void RecordMirrorClear(VkCommandBuffer commands) {
+        auto* overwrite = currentOverwrite;
+        Require(overwrite != nullptr && depthPlane.storage != nullptr, "the mirror clear in place of a depth clear dispatch needs the clear it was planned under");
+        VkClearColorValue clear;
+        Require(MirrorClearValue(*depthPlane.storage, *overwrite, clear), "the mirror clear in place of a depth clear dispatch has no exact clear value in the mirror format");
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, depthPlane.storage->Image(), VK_IMAGE_LAYOUT_GENERAL, &clear, 1, &range);
+        auto& counters = depthClearCounters();
+        ++counters.dispatchesSkipped;
+        counters.dispatchBytesCleared += static_cast<std::uint64_t>(target.extent.width) * target.extent.height * (overwrite->bits / 8u);
+    }
+
+    bool StoreOverwrite(const StorageTexture& mirror) {
+        auto* overwrite = OverwriteOf(mirror);
+        if (overwrite == nullptr) return false;
         auto* recorder = RecorderFor(context);
         Require(recorder != nullptr, "depth surface storage clears need the recorder of the surface's device");
         const bool d16 = target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT;
@@ -2624,12 +2658,41 @@ DepthClearStatistics DepthClearCounts() {
     statistics.copiesSkipped = counters.copiesSkipped.load();
     statistics.clears = counters.clears.load();
     statistics.bytesSkipped = counters.bytesSkipped.load();
+    statistics.dispatchesSkipped = counters.dispatchesSkipped.load();
+    statistics.dispatchBytesCleared = counters.dispatchBytesCleared.load();
     for (std::size_t reason = 0; reason < statistics.declined.size(); ++reason) statistics.declined[reason] = counters.declined[reason].load();
     return statistics;
 }
 
 void SetDepthPlaneClearForTest(bool enabled) {
     depthPlaneClearEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+void SetDepthClearDispatchSkipForTest(bool enabled) {
+    depthClearDispatchSkipEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool DepthClearDispatchSkipActive() {
+    return currentOverwrite != nullptr && depthClearDispatchSkipEnabled.load(std::memory_order_relaxed);
+}
+
+bool PlanDepthClearDispatchSkip(const Context& context, VkImage mirror) {
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& surface : surfaces()) {
+        if (!surface->active->load(std::memory_order_acquire) || surface->context.device != context.device || surface->retired) continue;
+        if (surface->SkipsClearDispatch(mirror)) return true;
+    }
+    return false;
+}
+
+void RecordDepthClearDispatchSkip(const Context& context, VkCommandBuffer commands, VkImage mirror) {
+    std::lock_guard lock(surfacesMutex());
+    for (const auto& surface : surfaces()) {
+        if (!surface->active->load(std::memory_order_acquire) || surface->context.device != context.device || surface->retired || !surface->SkipsClearDispatch(mirror)) continue;
+        surface->RecordMirrorClear(commands);
+        return;
+    }
+    throw std::runtime_error("the mirror of a depth clear dispatch belongs to no depth surface any more");
 }
 
 std::size_t HtileDepthClearBytes_nid_no_patch(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, const ShaderRecompiler::ShaderComputeStageInfo& compute, std::span<const std::uint32_t> packet, std::uint64_t indirectArguments) {

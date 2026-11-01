@@ -141,10 +141,16 @@ struct DepthClearStatistics {
     std::uint64_t copiesSkipped = 0;
     std::uint64_t clears = 0;
     std::uint64_t bytesSkipped = 0;
+    std::uint64_t dispatchesSkipped = 0;
+    std::uint64_t dispatchBytesCleared = 0;
     std::array<std::uint64_t, 8> declined{};
 };
 DepthClearStatistics DepthClearCounts();
 void SetDepthPlaneClearForTest(bool enabled);
+void SetDepthClearDispatchSkipForTest(bool enabled);
+bool DepthClearDispatchSkipActive();
+bool PlanDepthClearDispatchSkip(const Context& context, VkImage mirror);
+void RecordDepthClearDispatchSkip(const Context& context, VkCommandBuffer commands, VkImage mirror);
 
 }
 
