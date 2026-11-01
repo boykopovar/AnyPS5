@@ -49,5 +49,21 @@ int main() {
     Require(empty != nullptr);
     free_nid_postfix(empty);
 
+    void* aligned[16]{};
+    void* unaligned = nullptr;
+    for (int index = 0; index < 16 && unaligned == nullptr; ++index) {
+        void* candidate = reallocalign_nid_postfix(nullptr, 24, 64);
+        Require(candidate != nullptr && (reinterpret_cast<std::uintptr_t>(candidate) % 64) == 0);
+        if ((reinterpret_cast<std::uintptr_t>(candidate) % 256) != 0) unaligned = candidate;
+        else aligned[index] = candidate;
+    }
+    Require(unaligned != nullptr);
+    *__error_nid_postfix() = 1234;
+    void* moved = reallocalign_nid_postfix(unaligned, 0, 256);
+    Require(moved != nullptr && moved != unaligned && (reinterpret_cast<std::uintptr_t>(moved) % 256) == 0);
+    Require(malloc_usable_size_nid_postfix(moved) == 0 && *__error_nid_postfix() == 1234);
+    free_nid_postfix(moved);
+    for (void* block : aligned) free_nid_postfix(block);
+
     return 0;
 }
