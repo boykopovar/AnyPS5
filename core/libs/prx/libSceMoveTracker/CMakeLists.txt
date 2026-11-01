@@ -6,6 +6,7 @@ if(BUILD_TESTING)
     add_test_executable(guest_move_tracker_tests ${LIBS_INCLUDE_DIR}/tests/GuestMoveTracker.cpp)
     target_include_directories(guest_move_tracker_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_move_tracker_tests PRIVATE libSceMoveTracker)
+    configure_windows_unwind(guest_move_tracker_tests)
     add_test(NAME guest_move_tracker COMMAND guest_move_tracker_tests)
     if(WIN32)
         set_tests_properties(guest_move_tracker PROPERTIES ENVIRONMENT_MODIFICATION

@@ -24,5 +24,11 @@ int main() {
     Require(sceMoveTrackerGetWorkingMemorySize(total.data(), processing.data()) == 0);
     Require(total[0] == 0xa00000 && processing[0] == 0x800000);
     Require(total[1] == kFill && processing[1] == kFill);
+
+    std::uint32_t mem = 0;
+    Require(sceMoveTrackerInit(nullptr, 1, 0, 0) == kErrInvalidArg);
+    Require(sceMoveTrackerInit(&mem, 0, 0, 0) == kErrInvalidArg);
+    Require(sceMoveTrackerInit(&mem, 1, 8, 0) == kErrInvalidArg);
+    Require(sceMoveTrackerInit(&mem, 1, 0, 8) == kErrInvalidArg);
     return 0;
 }
