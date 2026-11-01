@@ -230,6 +230,26 @@ class Workspace:
 
 
 class ImportAuditTests(unittest.TestCase):
+    def test_soname_matched_backups_do_not_add_unused_imports(self):
+        for builder in (build_elf, build_sectionless_elf):
+            with self.subTest(builder=builder.__name__), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                for filename, symbol, index in (("canonical.prx", "provided", 1),
+                                                 ("canonical.prx.esbak", "unused_missing_function", 0)):
+                    image = bytearray(builder([(symbol, index, GLOBAL_FUNCTION)], ["canonical.prx"]))
+                    field, _ = elf_dynamic_range_fields(image)
+                    dynamic = struct.unpack_from("<Q", image, field)[0]
+                    struct.pack_into("<q", image, dynamic, 14)
+                    (root / filename).write_bytes(image)
+                imports, exports = import_audit.read_modules([root])
+                self.assertEqual(imports, {"canonical.prx": ([], [])})
+                self.assertEqual(exports, {"provided": ["canonical.prx"]})
+                alternate = bytearray((root / "canonical.prx.esbak").read_bytes())
+                alternate[alternate.index(b"canonical.prx\0")] = ord("d")
+                (root / "canonical.prx.esbak").write_bytes(alternate)
+                imports, _ = import_audit.read_modules([root])
+                self.assertIn("canonical.prx.esbak", imports)
+
     def test_cli_error_paths_are_utf8_under_an_ascii_environment(self):
         registry = self.work.root / "\u65e5\u672c\u8a9e.json"
         result = subprocess.run(
