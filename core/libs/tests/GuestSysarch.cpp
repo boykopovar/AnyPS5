@@ -72,6 +72,17 @@ int main() {
     RequireLowHalf(9, base);
     *__error_nid_postfix() = 0;
     Require(sysarch(9, nullptr) == -1 && *__error_nid_postfix() == 14);
+    void* const bad = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
+    *__error_nid_postfix() = 0;
+    Require(sysarch(7, bad) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(9, bad) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(128, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(128, bad) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(130, bad) == -1 && *__error_nid_postfix() == 14);
     std::uint64_t inherited = 0;
     Pthread child = nullptr;
     Require(scePthreadCreate(&child, nullptr, ReadGsBase, &inherited, "sysarch_gs") == 0);
@@ -89,6 +100,9 @@ int main() {
     Require(sysarch(130, &read) == 0 && read == base);
     *__error_nid_postfix() = 0;
     Require(sysarch(131, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(131, bad) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
     Require(sysarch(130, nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(sysarch(131, reinterpret_cast<void*>(1)) == -1 && *__error_nid_postfix() == 14);
     Require(sysarch(130, reinterpret_cast<void*>(1)) == -1 && *__error_nid_postfix() == 14);

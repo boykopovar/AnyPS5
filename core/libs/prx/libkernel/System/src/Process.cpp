@@ -240,6 +240,7 @@ bool hasPriorityRange(int policy) {
 }
 
 constexpr int guestNoProcess = 3;
+constexpr int guestAccess = 13;
 constexpr int guestFault = 14;
 constexpr int guestInvalid = 22;
 constexpr int guestRlimitCpu = 0;
@@ -663,18 +664,21 @@ int APS5_VABI sceKernelGetAppInfo(int pid, void* info) {
     constexpr std::size_t TitleIdOffset = 0x10;
     constexpr std::size_t TitleIdBytes = 10;
     constexpr std::size_t MarkerOffset = 0x50;
-    auto* bytes = static_cast<std::uint8_t*>(info);
-    std::memset(bytes, 0, StructureBytes);
+    std::uint8_t record[StructureBytes]{};
     if (own) {
         const auto titleId = GetAppTitleId_nid_postfix();
         char field[TitleIdBytes] = {};
         std::strncpy(field, titleId.value, sizeof(field) - 1);
         const std::uint32_t appId = 1;
-        std::memcpy(bytes, &appId, sizeof(appId));
-        std::memcpy(bytes + TitleIdOffset, field, TitleIdBytes);
+        std::memcpy(record, &appId, sizeof(appId));
+        std::memcpy(record + TitleIdOffset, field, TitleIdBytes);
     }
     const std::uint32_t marker = 0xffffffffu;
-    std::memcpy(bytes + MarkerOffset, &marker, sizeof(marker));
+    std::memcpy(record + MarkerOffset, &marker, sizeof(marker));
+    const int savedErrno = errno;
+    const bool written = WriteGuest(info, record, sizeof(record));
+    errno = savedErrno;
+    if (!written) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -1238,6 +1242,10 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
         *__error_nid_postfix() = guestNoProcess;
         return -1;
     }
+    if (niceval < 0) {
+        *__error_nid_postfix() = guestAccess;
+        return -1;
+    }
     if (which != guestPriorityProcess) {
         throw std::runtime_error(std::string("setpriority: setting the nice value of ") +
                                  (which == guestPriorityGroup ? "PRIO_PGRP" : "PRIO_USER") + " to " + std::to_string(niceval) +
@@ -1260,6 +1268,10 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
 }
 
 int APS5_VABI sceKernelIsTrinityMode(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelHasTrinityMode(void) {
     return 0;
 }
 
@@ -1335,7 +1347,7 @@ int APS5_VABI setresgid_nid_postfix(std::uint32_t rgid, std::uint32_t egid, std:
 }
 
 int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
-    if (count < 0 || count > freebsdGroupsMax) {
+    if (static_cast<std::uint32_t>(count) > static_cast<std::uint32_t>(freebsdGroupsMax) + 1) {
         *__error_nid_postfix() = errnoInvalidArgument;
         return -1;
     }
@@ -1365,8 +1377,9 @@ int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
 int APS5_VABI getgroups_nid_postfix(int capacity, std::uint32_t* groups) {
     std::lock_guard lock(supplementaryGroupsMutex);
     const int count = static_cast<int>(supplementaryGroups.size());
-    if (capacity == 0) return count;
-    if (capacity < count) {
+    const auto size = static_cast<std::uint32_t>(capacity);
+    if (size == 0) return count;
+    if (size < static_cast<std::uint32_t>(count)) {
         *__error_nid_postfix() = errnoInvalidArgument;
         return -1;
     }
