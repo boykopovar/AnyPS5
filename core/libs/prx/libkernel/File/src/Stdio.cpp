@@ -140,12 +140,22 @@ static int NativeFchmod(int descriptor, int mode) {
     const auto path = File::WindowsDescriptorPath_nid_no_patch(descriptor);
     return path ? NativeChmod(*path, mode) : -1;
 }
+static bool PrepareSparseExtension(HANDLE handle, std::int64_t length) {
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(handle, &size)) return false;
+    if (length <= size.QuadPart) return true;
+    DWORD flags = 0;
+    if (!GetVolumeInformationByHandleW(handle, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0)) return false;
+    if ((flags & FILE_SUPPORTS_SPARSE_FILES) == 0) return true;
+    DWORD returned = 0;
+    return DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr);
+}
 static int TruncateThroughWriter(HANDLE handle, std::int64_t length) {
     const auto writer = ReOpenFile(handle, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0);
     if (writer == INVALID_HANDLE_VALUE) return WindowsOpenError_nid_no_patch(GetLastError());
     FILE_END_OF_FILE_INFO end{};
     end.EndOfFile.QuadPart = length;
-    const bool truncated = SetFileInformationByHandle(writer, FileEndOfFileInfo, &end, sizeof(end));
+    const bool truncated = PrepareSparseExtension(writer, length) && SetFileInformationByHandle(writer, FileEndOfFileInfo, &end, sizeof(end));
     const DWORD error = GetLastError();
     CloseHandle(writer);
     return truncated ? 0 : WindowsOpenError_nid_no_patch(error);
@@ -161,7 +171,7 @@ static int NativeFtruncate(int descriptor, std::int64_t length) {
     if (WindowsHandleOnlyAppends_nid_no_patch(WindowsHandleAccess_nid_no_patch(handle, descriptor, "ftruncate"))) return TruncateThroughWriter(handle, length);
     FILE_END_OF_FILE_INFO end{};
     end.EndOfFile.QuadPart = length;
-    if (::SetFileInformationByHandle(handle, FileEndOfFileInfo, &end, sizeof(end))) return 0;
+    if (PrepareSparseExtension(handle, length) && ::SetFileInformationByHandle(handle, FileEndOfFileInfo, &end, sizeof(end))) return 0;
     switch (::GetLastError()) {
         case ERROR_ACCESS_DENIED: return EACCES;
         case ERROR_DISK_FULL:

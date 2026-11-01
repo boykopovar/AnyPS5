@@ -8,6 +8,10 @@
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <algorithm>
+#include <array>
+#include <fcntl.h>
+#include <io.h>
 #endif
 
 namespace {
@@ -23,12 +27,99 @@ void Cleanup() {
 
 }
 
-void Require(bool condition, const char* what) {
+void Check(bool condition, const char* what, int line) {
     if (condition) return;
-    std::fprintf(stderr, "%s (errno %d)\n", what, *__error_nid_postfix());
+    std::fflush(stdout);
+    std::fprintf(stderr, "line %d: %s (errno %d)\n", line, what, *__error_nid_postfix());
     Cleanup();
     std::abort();
 }
+
+#define Require(condition, what) Check((condition), (what), __LINE__)
+
+#ifdef _WIN32
+bool SupportsSparseFiles() {
+    const auto handle = CreateFileW(L".", 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+    Require(handle != INVALID_HANDLE_VALUE, "open test directory failed");
+    DWORD flags = 0;
+    const bool queried = GetVolumeInformationByHandleW(handle, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0);
+    CloseHandle(handle);
+    Require(queried, "query test volume failed");
+    return (flags & FILE_SUPPORTS_SPARSE_FILES) != 0;
+}
+
+void CheckSparseAllocation(bool supported) {
+    if (!supported) return;
+    DWORD high = 0;
+    SetLastError(ERROR_SUCCESS);
+    const DWORD low = GetCompressedFileSizeW(L"anyps5_truncate_extend_file", &high);
+    Require(low != INVALID_FILE_SIZE || GetLastError() == ERROR_SUCCESS, "query allocation failed");
+    const auto allocated = (static_cast<std::uint64_t>(high) << 32) | low;
+    std::printf("64 MiB extension allocated %llu bytes\n", static_cast<unsigned long long>(allocated));
+    Require(allocated < static_cast<std::uint64_t>(Length) / 16, "extension must leave a sparse hole, not reserve the new range");
+    const DWORD attributes = GetFileAttributesW(L"anyps5_truncate_extend_file");
+    Require(attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0,
+        "extended file must have FILE_ATTRIBUTE_SPARSE_FILE");
+}
+
+void CheckSparseExtension(int mode, bool supported) {
+    Cleanup();
+    std::printf("sparse extension path: %s\n", mode == 0 ? "descriptor" : mode == 1 ? "append-only reopened writer" : "path");
+    int descriptor = open_nid_postfix(FileName, Create | ReadWrite, 0644);
+    Require(descriptor >= 0, "open sparse test file failed");
+    Require(write_nid_postfix(descriptor, "head", 4) == 4, "write sparse test prefix failed");
+    if (mode == 1) {
+        Require(close_nid_postfix(descriptor) == 0, "close before append-only reopen failed");
+        const auto handle = CreateFileW(L"anyps5_truncate_extend_file", FILE_GENERIC_READ | (FILE_GENERIC_WRITE & ~FILE_WRITE_DATA),
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+        Require(handle != INVALID_HANDLE_VALUE, "open append-only handle failed");
+        descriptor = _open_osfhandle(reinterpret_cast<std::intptr_t>(handle), _O_RDWR | _O_APPEND | _O_BINARY);
+        Require(descriptor >= 0, "wrap append-only handle failed");
+    }
+    const DWORD originalAttributes = GetFileAttributesW(L"anyps5_truncate_extend_file");
+    Require(originalAttributes != INVALID_FILE_ATTRIBUTES, "query initial attributes failed");
+    Require(ftruncate_nid_postfix(descriptor, 4) == 0, "non-extending truncate failed");
+    Require(ftruncate_nid_postfix(descriptor, 2) == 0, "initial shrink failed");
+    Require((GetFileAttributesW(L"anyps5_truncate_extend_file") & FILE_ATTRIBUTE_SPARSE_FILE) ==
+        (originalAttributes & FILE_ATTRIBUTE_SPARSE_FILE), "shrinking and non-extending calls must not mark the file sparse");
+    const int checker = open_nid_postfix(FileName, ReadWrite, 0);
+    Require(checker >= 0, "open verification descriptor failed");
+    Require(sceKernelPwrite(checker, "ad", 2, 2) == 2, "restore prefix failed");
+    Require(lseek_nid_postfix(descriptor, 137, 0) == 137, "set sparse test cursor failed");
+    const auto resize = [&](std::int64_t length) {
+        return mode == 2 ? truncate_nid_postfix(FileName, length) : ftruncate_nid_postfix(descriptor, length);
+    };
+    for (int round = 0; round < 2; ++round) {
+        Require(resize(Length) == 0, "sparse extension failed");
+        Require(lseek_nid_postfix(descriptor, 0, 1) == 137, "extension changed the file position");
+        Require(lseek_nid_postfix(checker, 0, 2) == Length, "sparse extension has wrong size");
+        CheckSparseAllocation(supported);
+        char prefix[4]{};
+        const int prefixSize = round == 0 ? 4 : 2;
+        Require(pread_nid_postfix(checker, prefix, prefixSize, 0) == prefixSize && std::memcmp(prefix, "head", prefixSize) == 0,
+            "sparse extension changed original bytes");
+        std::array<char, 65536> buffer{};
+        for (std::int64_t offset = prefixSize; offset < Length;) {
+            const auto count = static_cast<std::size_t>((std::min)(Length - offset, static_cast<std::int64_t>(buffer.size())));
+            buffer.fill(1);
+            Require(pread_nid_postfix(checker, buffer.data(), count, offset) == static_cast<std::int64_t>(count), "read sparse hole failed");
+            Require(std::all_of(buffer.begin(), buffer.begin() + count, [](char byte) { return byte == 0; }), "sparse hole must read entirely as zeros");
+            offset += count;
+        }
+        Require(sceKernelPwrite(checker, "tail", 4, Length - 4) == 4, "write near sparse end failed");
+        char tail[4]{};
+        Require(pread_nid_postfix(checker, tail, 4, Length - 4) == 4 && std::memcmp(tail, "tail", 4) == 0, "write near sparse end landed incorrectly");
+        Require(lseek_nid_postfix(descriptor, 0, 1) == 137, "verification changed the original cursor");
+        Require(resize(2) == 0, "sparse shrink failed");
+        Require(lseek_nid_postfix(descriptor, 0, 1) == 137, "shrink changed the file position");
+        Require(lseek_nid_postfix(checker, 0, 2) == 2, "sparse shrink has wrong size");
+    }
+    Require(close_nid_postfix(checker) == 0, "close verification descriptor failed");
+    Require(close_nid_postfix(descriptor) == 0, "close sparse descriptor failed");
+    Cleanup();
+}
+#endif
 
 std::uint64_t BytesWritten() {
 #ifdef _WIN32
@@ -42,6 +133,11 @@ std::uint64_t BytesWritten() {
 }
 
 int main() {
+#ifdef _WIN32
+    const bool sparseSupported = SupportsSparseFiles();
+    std::printf("test volume sparse support: %s\n", sparseSupported ? "yes" : "no; allocation assertions skipped");
+    for (int mode = 0; mode < 3; ++mode) CheckSparseExtension(mode, sparseSupported);
+#endif
     Cleanup();
     const int descriptor = open_nid_postfix(FileName, Create | ReadWrite, 0644);
     Require(descriptor >= 0, "open failed");
