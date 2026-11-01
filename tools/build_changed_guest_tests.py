@@ -119,7 +119,7 @@ def run(build_dir, selected, targets_by_name):
             raise ValueError("no ctest registration resolved for: " + ", ".join(missing))
         with tempfile.TemporaryDirectory(prefix="anyps5-guest-ctest-") as directory:
             selection = Path(directory) / "selected-tests.txt"
-            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()), encoding="ascii")
+            selection.write_text("0,0,0," + ",".join(str(index) for _, index in resolutions.values()) + "\n", encoding="ascii")
             subprocess.run(["ctest", "--test-dir", str(build_dir), "--output-on-failure", "--timeout", "120",
                             "--parallel", "4", "--no-tests=error", "-I", str(selection)], check=True)
     else:

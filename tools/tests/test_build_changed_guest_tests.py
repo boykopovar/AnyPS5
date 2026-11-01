@@ -171,7 +171,7 @@ class Main(unittest.TestCase):
             code = self.main(build, ["core/libs/tests/GuestNp.cpp", "core/libs/tests/Guest.cpp"])
         self.assertEqual(code, 0)
         run_cmd = [cmd for cmd in calls if cmd[0] == "ctest" and not any("--show-only" in part for part in cmd)][0]
-        self.assertEqual(selections, ["0,0,0,1,2,3"])
+        self.assertEqual(selections, ["0,0,0,1,2,3\n"])
         self.assertIn("--no-tests=error", run_cmd)
 
     def test_large_selection_fits_windows_commands_and_preserves_every_test(self):
@@ -201,26 +201,23 @@ class Main(unittest.TestCase):
         self.assertEqual(seen_indices, list(range(2, len(tests) + 1)))
         self.assertEqual(len([cmd for cmd in calls if "-I" in cmd]), 1)
 
-    def test_ctest_index_file_runs_only_resolved_tests(self):
+    def test_ctest_index_file_runs_every_resolved_test(self):
         build = Path(self.temporary.name) / "ctest-build"
         build.mkdir()
         python = Path(sys.executable).as_posix()
-        body = f'add_test("unrelated" "cmake" "-E" "false")\n'
-        for name in ("selected [one].+", "selected two"):
-            body += f'add_test("{name}" "{python}" "-c" "pass")\n'
+        body = 'add_test("unrelated" "cmake" "-E" "touch" "unrelated")\n'
+        for index in range(11):
+            body += f'add_test("selected [{index}].+" "{python}" "-c" "open(\'ran-{index}\', \'w\')")\n'
         (build / "CTestTestfile.cmake").write_text(body)
         real_run = subprocess.run
-        executed = []
         def execute(cmd, **kwargs):
             if cmd[0] == "cmake":
                 return run_result()
-            result = real_run(cmd, **kwargs)
-            if "-I" in cmd:
-                executed.append(Path(cmd[cmd.index("-I") + 1]).read_text())
-            return result
+            return real_run(cmd, **{**kwargs, "capture_output": True})
         with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             build_changed_guest_tests.run(build, ["python_target"], {Path(sys.executable).stem: "python_target"})
-        self.assertEqual(executed, ["0,0,0,2,3"])
+        self.assertEqual(sorted(path.name for path in build.glob("ran-*")), sorted(f"ran-{index}" for index in range(11)))
+        self.assertFalse((build / "unrelated").exists())
 
     def test_a_production_only_change_still_builds_libs_and_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
@@ -248,7 +245,7 @@ class Main(unittest.TestCase):
         self.assertEqual(code, 0)
         commands = [cmd for cmd in calls if cmd[0] == "ctest" and "--show-only=json-v1" not in cmd]
         self.assertEqual(len(commands), 1)
-        self.assertEqual(selections, ["0,0,0,1"])
+        self.assertEqual(selections, ["0,0,0,1\n"])
 
     def test_an_unrelated_change_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
