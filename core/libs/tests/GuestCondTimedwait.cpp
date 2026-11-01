@@ -231,6 +231,7 @@ int main() {
         Require(scePthreadMutexUnlock(&context.mutex) == SCE_OK);
     }
     Require(pthread_cond_destroy_nid_postfix(&cond) == 0);
+    Require(pthread_cond_broadcast_nid_postfix(nullptr) == POSIX_EINVAL);
     Require(scePthreadMutexDestroy(&context.mutex) == SCE_OK);
 
     Require(sceKernelSleep(0) == SCE_OK);
