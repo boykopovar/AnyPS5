@@ -1521,6 +1521,8 @@ void DetachWithoutFinishKeepsCheckpointTest() {
     Require(collector.Start(), "the collector did not start");
     RunReport::ProcessDetachCleanup();
     Require(fs::exists(collector.CheckpointPath()), "process detach deleted the checkpoint of a run that never finished");
+#else
+    throw NotRun("process detach cleanup exists on Windows only");
 #endif
 }
 
