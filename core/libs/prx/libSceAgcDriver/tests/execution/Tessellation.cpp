@@ -161,6 +161,14 @@ alignas(256) constexpr std::array<std::uint32_t, 35> DomainCompareBranch{
     0xf800020f, 0x14131214, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 35> DomainFirstLaneCount{
+    0xf8000941, 0x00000000, 0x34020e84, 0x16020283, 0xe0341000, 0x04030a01, 0xe0341010, 0x04030c01,
+    0xe0341020, 0x04030e01, 0xbf8c3f70, 0x08040af2, 0x08040d02, 0x10201505, 0x3e201906, 0x3e201d02,
+    0x10221705, 0x3e221b06, 0x3e221f02, 0xd5510012, 0x040a0d05, 0x102424ff, 0x40400000, 0xd7650015,
+    0x000100c1, 0xd7660015, 0x00022ac1, 0x7e0c0515, 0x7e260c06, 0x7e2802f2, 0xf80008cf, 0x14131110,
+    0xf800020f, 0x14131214, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 29> LocalIndexAsData{
     0xd5480004, 0x02090502, 0xd5480005, 0x02090102, 0xd5480006, 0x02110902, 0xd5480007, 0x02111102,
     0x7e080d04, 0x7e0a0d05, 0x7e0c0d06, 0x7e0e0d07, 0x10100cff, 0x3f19999a, 0x061010ff, 0xbf666666,
@@ -1246,6 +1254,7 @@ int main(int argc, char** argv) {
         RequirePatches(*device, target, HullNextInput, "hull program reading the next of 4 input control points of 24 bytes", NextInputTriangles, LocalCodeStride24);
         RequirePatches(*device, target, HullDynamicIndex, "hull program reading a control point at a computed index");
         RequirePatches(*device, target, HullCode, "domain program reading control points at a computed index", Triangles, LocalCode, DomainComputedPoint);
+        RequirePatches(*device, target, HullCode, "domain program reading the count of active lanes below its first active lane", Triangles, LocalCode, DomainFirstLaneCount);
         RequirePatches(*device, target, HullAndSaveexec, "hull program narrowing exec with s_and_saveexec_b64");
         RequirePatches(*device, target, HullSaveexecLoop, "hull program restoring exec through loop phis");
         RequirePatches(*device, target, HullDescendingRecords, "hull program with descending patch records in 128-patch groups", {{3u, 3u, 1u, 2u, 2u, 128u}, Indices});
