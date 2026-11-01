@@ -122,6 +122,7 @@ static void CheckTiltCorrection(int handle) {
     tilted.accel = {9.80665f, 0.0f, 0.0f};
     PadPublishInput_nid_postfix(tilted);
     Require(scePadSetTiltCorrectionState(handle + 1, false) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadResetOrientation(handle + 1) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTiltCorrectionState(handle, false) == PAD_OK);
     Require(scePadResetOrientation(handle) == PAD_OK);
     Require(SettleOrientationW() == 1.0f);
