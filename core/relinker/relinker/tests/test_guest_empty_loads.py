@@ -8,6 +8,7 @@ import tempfile
 from test_guest_intel_trampolines import main_fixture
 from test_guest_module_directories import module_with_symbol
 from test_optional_plt import fixture as executable_fixture
+from test_optional_rela import fixture as sce_fixture
 
 
 TARGETS = (((), b"\x7fELF"), (("--lazy-binding",), b"\x7fELF"),
@@ -91,12 +92,56 @@ def convert_executables(relinker, work):
                     assert executed.returncode == 42, (first, address, executed.returncode, executed.stderr)
 
 
+def entry_in_empty(first):
+    image = executable(0x1000, first)
+    struct.pack_into("<Q", image, 24, 0x1000)
+    return image
+
+
+def unsupported_flags(first):
+    image = executable(0x1000, first)
+    struct.pack_into("<I", image, 64 + (0 if first else 2) * 56 + 4, 8)
+    return image
+
+
+def all_empty(first):
+    image = sce_fixture(True)
+    struct.pack_into("<QQ", image, 64 + 32, 0, 0)
+    headers = [image[64 + index * 56:120 + index * 56] for index in range(6)]
+    empty = struct.pack("<IIQQQQQQ", 1, 6, 0x1000, 0x1000, 0x1000, 0, 0, 0x1000)
+    headers.insert(0 if first else len(headers), empty)
+    image[64:64 + len(headers) * 56] = b"".join(headers)
+    struct.pack_into("<H", image, 56, len(headers))
+    return image
+
+
+REJECTIONS = ((entry_in_empty, "ELF address is not contained in PT_LOAD memory (offset 0x1000)"),
+              (unsupported_flags, "Unsupported PT_LOAD permission flags (offset 0x1000)"),
+              (all_empty, "No PT_LOAD segments found"))
+
+
+def reject_executables(relinker, work):
+    for build, error in REJECTIONS:
+        for options in (("--windows",), ("--macos",)):
+            for first in (False, True):
+                case = work / f"reject-{build.__name__}{''.join(options)}-{first}"
+                case.mkdir()
+                source = case / "input.elf"
+                source.write_bytes(build(first))
+                output = case / "output.exe"
+                converted = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
+                                           capture_output=True, text=True, timeout=10)
+                assert converted.returncode == 2 and error in converted.stderr and not output.exists(), (
+                    build.__name__, options, first, converted.returncode, converted.stderr)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-guest-empty-loads-") as directory:
         work = Path(directory)
         convert_guests(relinker, work)
         convert_executables(relinker, work)
+        reject_executables(relinker, work)
     print("Empty-load conversion tests passed")
 
 
