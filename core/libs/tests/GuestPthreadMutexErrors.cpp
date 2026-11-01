@@ -47,7 +47,7 @@ static void CheckOwnershipAndRelativeLock() {
     Require(pthread_mutex_isowned_np_nid_postfix(&adaptive) == 0 && adaptive == AdaptiveInitializer);
     Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == 0 && mutex != nullptr);
     Require(pthread_mutex_isowned_np_nid_postfix(&mutex) == 1);
-    Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == POSIX_EDEADLK);
+    Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == POSIX_ETIMEDOUT);
     OtherThread other{&mutex};
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, CheckFromOtherThread, &other, nullptr) == SCE_OK);
@@ -101,8 +101,8 @@ static void CheckLoops(PthreadMutexattr* attr) {
     Require(pthread_mutex_getspinloops_np_nid_postfix(&mutex, &count) == POSIX_EINVAL);
     Require(pthread_mutex_setspinloops_np_nid_postfix(&mutex, 1) == POSIX_EINVAL);
     Require(pthread_mutex_getyieldloops_np_nid_postfix(&mutex, &count) == POSIX_EINVAL && count == -1);
-    Require(scePthreadMutexSetyieldloops(&mutex, 1) == SCE_OK);
-    Require(pthread_mutex_setyieldloops_np_nid_postfix(&mutex, 1) == 0);
+    Require(scePthreadMutexSetyieldloops(&mutex, 1) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutex_setyieldloops_np_nid_postfix(&mutex, 1) == POSIX_EINVAL);
     Require(mutex == DestroyedMutex);
 
     for (const int type : {1, 2, 3}) {

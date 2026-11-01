@@ -1,3 +1,6 @@
+#include "prx/libSceBgft/include/LegacyExports.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceBgft/include/InventoryExports.hpp"
 #include "prx/libSceBgft/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -85,7 +88,7 @@ int APS5_VABI sceBgftServiceIntDownloadGetGameAndGameAcProgress(const char* cont
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceBgftServiceIntDownloadGetPatchProgress() {
+int APS5_VABI sceBgftServiceIntDownloadGetPatchProgress(const char* contentId, BgftProgress* progress) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -97,7 +100,7 @@ int APS5_VABI sceBgftServiceIntDownloadGetProgress(int32_t taskId, BgftProgress*
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceBgftServiceIntDownloadGetTaskInfo() {
+int APS5_VABI sceBgftServiceIntDownloadGetTaskInfo(int32_t taskId, BgftTaskInfo* taskInfo) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -417,5 +420,76 @@ int APS5_VABI sceBgftServiceIntUploadSetUploadError() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI sceBgftServiceIntDownloadClearAllInstalled() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBgftServiceIntDownloadClearInstalled() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBgftServiceIntDownloadPauseGroupTasks() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBgftServiceIntDownloadResumeGroupTasks() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBgftServiceIntDownloadStartGroupTasks() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBgftServiceIntDownloadUnregisterCompleteTask() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI sceBgftServiceIntUploadUnregisterCompleteTask() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI libSceBgftUnknown_3cvL6QTobNg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("3cvL6QTobNg", libSceBgftUnknown_3cvL6QTobNg_nid_no_patch);
+
+int APS5_VABI libSceBgftUnknown_4JQKNtsVDpg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("4JQKNtsVDpg", libSceBgftUnknown_4JQKNtsVDpg_nid_no_patch);
+
+int APS5_VABI libSceBgftUnknown_85axuUkg9eE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("85axuUkg9eE", libSceBgftUnknown_85axuUkg9eE_nid_no_patch);
+
+int APS5_VABI libSceBgftUnknown_fJnnIc5sHOU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fJnnIc5sHOU", libSceBgftUnknown_fJnnIc5sHOU_nid_no_patch);
+
+int APS5_VABI libSceBgftUnknown_tBOVSvi9EjY_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tBOVSvi9EjY", libSceBgftUnknown_tBOVSvi9EjY_nid_no_patch);
+
+}
+
+extern "C" {
+
+int APS5_VABI bgftLegacyUnknown_fuesi13BbWE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("fuesi13BbWE", bgftLegacyUnknown_fuesi13BbWE_nid_no_patch);
+
+int APS5_VABI bgftLegacyUnknown_tmiwomV8oXU_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tmiwomV8oXU", bgftLegacyUnknown_tmiwomV8oXU_nid_no_patch);
 
 }

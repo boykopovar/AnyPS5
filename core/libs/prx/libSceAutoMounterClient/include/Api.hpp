@@ -4,14 +4,18 @@
 
 struct AutoMounterUsbDeviceInfo {
     char deviceName[128];
-    std::byte metadata[22];
-    std::byte data0[256];
-    std::byte padding[2];
-    std::uint64_t data0Size;
-    std::byte data1[256];
-    std::uint64_t data1Size;
-    std::byte data2[256];
-    std::uint64_t data2Size;
+    std::uint64_t totalSpace;
+    std::uint64_t availableSpace;
+    std::uint16_t vendorId;
+    std::uint16_t productId;
+    std::uint16_t bcdDevice;
+    char manufacturer[256];
+    std::uint8_t padding[2];
+    std::uint64_t manufacturerLength;
+    char product[256];
+    std::uint64_t productLength;
+    char serialNumber[256];
+    std::uint64_t serialNumberLength;
 };
 
 extern "C" {

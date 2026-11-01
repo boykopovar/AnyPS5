@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <climits>
 #include <cstdint>
 #include <initializer_list>
 #include <cstdlib>
@@ -187,6 +188,8 @@ static void DuplicatesShareStatusFlags() {
     Require(pipe_nid_postfix(pipe) == 0);
     Require(pipe_nid_postfix(other) == 0);
     Require(fcntl_nid_postfix(pipe[0], SetDescriptorFlags, 1) == 0);
+    *__error_nid_postfix() = 0;
+    Require(fcntl_nid_postfix(pipe[0], 0, INT_MAX) == -1 && *__error_nid_postfix() == 22);
     const int duplicate = dup_nid_postfix(pipe[0]);
     Require(duplicate >= 0);
     Require(fcntl_nid_postfix(duplicate, GetDescriptorFlags) == 0);
