@@ -18,6 +18,8 @@ NOOP = (0, 0, 0)
 IGNORED = (0xffffffffffffffff, 0xffffffff00000000, -1)
 OVERLAP = (TARGET + 1, 0xffffffff00000000, -1)
 RELATIVE = (TARGET, 8, FUNCTION)
+EARLIER_RELATIVE = (TARGET, 8, FUNCTION + 4)
+SYMBOL_POINTER = (TARGET, (1 << 32) | 1, 0)
 RELATIVE_DEFINED = (TARGET, (1 << 32) | 8, FUNCTION)
 JUMP_SLOT = (TARGET, (1 << 32) | 7, 0)
 
@@ -121,7 +123,10 @@ def invalid_cases(sce):
     yield "relative-symbol-undefined", module([(TARGET, (1 << 32) | 8, 0)], sce=sce, exported=False), "RELATIVE relocation has a symbol"
     yield "invalid-symbol", module([NOOP, (TARGET, (99 << 32) | 6, 0)], sce=sce), "Unsupported relocation or symbol index"
     yield "invalid-target", module([NOOP, (0xffffffffffffffff, 8, FUNCTION)], sce=sce), "Unmapped or inaccessible guest address"
-    yield "overlapping-real", module([NOOP, RELATIVE, RELATIVE], sce=sce), "Overlapping guest relocations"
+    yield "overlapping-partial", module([NOOP, RELATIVE, (TARGET + 4, 8, FUNCTION)], sce=sce), "Overlapping guest relocations"
+    yield "relative-over-symbol", module([SYMBOL_POINTER, RELATIVE], sce=sce), "Overlapping guest relocations"
+    yield "symbol-over-relative", module([RELATIVE, SYMBOL_POINTER], sce=sce), "Overlapping guest relocations"
+    yield "relative-over-defined-relative", module([RELATIVE_DEFINED, RELATIVE], sce=sce), "Overlapping guest relocations"
     yield "invalid-plt-kind", module(plt=[NOOP, RELATIVE], sce=sce), "Unsupported relocation or symbol index"
     yield "unrelocated-lifecycle", module([(TARGET, 0, FUNCTION)], sce=sce, lifecycle=True, initial=FUNCTION), "Unrelocated guest lifecycle pointer"
     yield "plt-lifecycle", module(plt=[JUMP_SLOT], sce=sce, lifecycle=True, initial=0), "Unsupported guest lifecycle relocation"
@@ -193,6 +198,12 @@ def main():
                             executed = subprocess.run([sys.executable, __file__, "--load", str(artifact)],
                                                       capture_output=True, text=True, timeout=10)
                             assert executed.returncode == 0, (executed.stdout, executed.stderr)
+            for name, rela in (("relative-repeated", [RELATIVE, RELATIVE]), ("relative-rewritten", [EARLIER_RELATIVE, NOOP, RELATIVE])):
+                image = module(rela, sce=sce)
+                for system in ("linux", "windows", "macos"):
+                    result, artifact, output = convert(f"{sce}-{name}", system, image)
+                    assert result.returncode == 0, (sce, name, system, result.stdout, result.stderr)
+                    check_output(artifact.read_bytes(), system, [RELATIVE], [], UNCHANGED)
             for name, rela, initial in (("unsized-lifecycle", [RELATIVE], UNCHANGED),
                                         ("unsized-lifecycle-unread", [(TARGET, 0, FUNCTION)], FUNCTION)):
                 image = unsized_lifecycle(rela, sce, initial)

@@ -20,6 +20,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceNet/src/ResolverTestHooks.hpp"
 #include "SceTypes.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -29,6 +30,7 @@
 #include <cstring>
 #include <future>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -90,7 +92,7 @@ static bool Failed(std::int64_t result, int error) {
 template<typename TBody>
 static std::string CaptureStdout(TBody body) {
     std::fflush(stdout);
-    std::FILE* capture = std::tmpfile();
+    std::FILE* capture = TemporaryFile::Open();
     Require(capture != nullptr);
 #ifdef _WIN32
     const int saved = _dup(_fileno(stdout));
@@ -188,7 +190,7 @@ static void CheckStreamSender(int family) {
 
 template <typename Diagnostic>
 static std::string CaptureDiagnostic(Diagnostic diagnostic) {
-    auto* file = std::tmpfile();
+    auto* file = TemporaryFile::Open();
     Require(file != nullptr);
     Require(std::fflush(stdout) == 0);
 #ifdef _WIN32
@@ -309,6 +311,22 @@ static void CheckPoolStats() {
     Require(Failed(sceNetGetMemoryPoolStats(pool, nullptr), 22));
     Require(sceNetPoolDestroy(pool) == 0);
     Require(Failed(sceNetGetMemoryPoolStats(pool, &stats), 9));
+}
+
+static void CheckPoolErrors() {
+    for (const int size : {0, -1, std::numeric_limits<int>::min()}) {
+        *sceNetErrnoLoc() = 33;
+        Require(Failed(sceNetPoolCreate("bad", size, 0), 22));
+    }
+    const int first = sceNetPoolCreate("first", 0x1000, 0);
+    const int second = sceNetPoolCreate("second", 0x1000, 0);
+    Require(first > 0 && second > 0 && first != second);
+    Require(sceNetPoolDestroy(first) == 0);
+    for (const int id : {first, 0, -1, std::numeric_limits<int>::max()}) {
+        *sceNetErrnoLoc() = 33;
+        Require(Failed(sceNetPoolDestroy(id), 9));
+    }
+    Require(sceNetPoolDestroy(second) == 0);
 }
 
 static void CheckStatisticsInfo() {
@@ -664,6 +682,10 @@ static void CheckRejectedArguments() {
     Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), -1, 0, 0), 22));
     Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, -1, 0), 22));
     Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, 0, 2), 22));
+    for (const int timeout : {1, 999999})
+        Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), timeout, 0, 0), 22));
+    for (const int timeout : {1000000, 0x7fffffff})
+        Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), timeout, 0, 0), 9));
     for (const int flags : {0, 1, 0x10000, 0x10001})
         Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, 0, flags), 9));
 }
@@ -1191,6 +1213,22 @@ static void CheckInetPtonEx() {
         Require(sceNetInetPtonEx(2, "1.2.3", address.data(), flags) == 1);
         Require(address[0] == 1 && address[1] == 2 && address[2] == 0 && address[3] == 3);
     }
+}
+
+static void CheckEtherNtostrErrors() {
+    const NetEtherAddr address{{0, 1, 2, 10, 11, 15}};
+    std::array<char, 18> text{};
+    text.fill('#');
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(nullptr, text.data(), text.size()), 22));
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(&address, nullptr, text.size()), 22));
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(&address, text.data(), text.size() - 1), 22));
+    *sceNetErrnoLoc() = 33;
+    Require(Failed(sceNetEtherNtostr(&address, text.data(), 0), 22));
+    Require(std::all_of(text.begin(), text.end(), [](char character) { return character == '#'; }));
+    Require(sceNetEtherNtostr(&address, text.data(), text.size()) == 0);
 }
 
 static void CheckEtherAddress() {
@@ -2167,6 +2205,7 @@ static void CheckDatagramDisconnect() {
 
 int main() {
     CheckEtherAddress();
+    CheckEtherNtostrErrors();
     const auto epoch = std::chrono::steady_clock::time_point{};
     Require(KernelSocketSelect::DeadlineAfter(epoch, 2, 250000) == epoch + std::chrono::milliseconds(2250));
     Require(KernelSocketSelect::DeadlineAfter(epoch, INT64_MAX, 0) == std::chrono::steady_clock::time_point::max());
@@ -2177,7 +2216,12 @@ int main() {
     for (int i = 0; i < 16; ++i) {
         Require(in6addr_any_nid_postfix[i] == 0);
         Require(in6addr_loopback_nid_postfix[i] == (i == 15 ? 1 : 0));
+        Require(sce_net_in6addr_loopback_nid_postfix[i] == (i == 15 ? 1 : 0));
+        Require(sce_net_in6addr_nodelocal_allnodes_nid_postfix[i] == (i == 0 ? 0xff : i == 1 || i == 15 ? 1 : 0));
+        Require(sce_net_in6addr_linklocal_allrouters_nid_postfix[i] == (i == 0 ? 0xff : i == 1 || i == 15 ? 2 : 0));
     }
+    Require(sce_net_dummy_nid_postfix == 0);
+    Require(&sce_net_in6addr_loopback_nid_postfix[0] != &in6addr_loopback_nid_postfix[0]);
     for (const int flags : {0, 1, -1}) {
         Require(sceNetClearDnsCache(flags) == static_cast<int>(0x804101C8));
         Require(*sceNetErrnoLoc() == 200);
@@ -2196,6 +2240,7 @@ int main() {
     CheckSocketHostErrors();
     CheckSocketArgumentErrors();
     CheckPoolStats();
+    CheckPoolErrors();
     CheckStatisticsInfo();
     CheckIfName();
     CheckRandom();
