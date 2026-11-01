@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
 
 struct UserServiceInitParam {
  std::int32_t priority;
@@ -31,6 +32,8 @@ constexpr const char* USER_SERVICE_USER_NAMES[USER_SERVICE_MAX_USERS] = {
 };
 
 extern "C" void UserServiceSetUserConnected_nid_postfix(int userIndex, bool connected);
+
+using UserServiceEventCallback = void (APS5_VABI *)(const SceUserServiceEvent* event, void* userData);
 
 extern "C" {
 
@@ -438,7 +441,7 @@ int APS5_VABI sceUserServiceGetDefaultNewUserGroupName(void);
 int APS5_VABI sceUserServiceGetHmd2Brightness(void);
 int APS5_VABI sceUserServiceGetHoldAudioOutDevice(void);
 int APS5_VABI sceUserServiceSetVibrationStrength(void);
-int APS5_VABI sceUserServiceUnregisterEventCallback(void);
+int APS5_VABI sceUserServiceUnregisterEventCallback(UserServiceEventCallback callback, void* userData);
 int APS5_VABI sceUserServiceGetTopMenuNotificationFlag(void);
 int APS5_VABI sceUserServiceGetPbtcSundayDuration(void);
 int APS5_VABI sceUserServiceSetHearingAssistAudiogramData(void);
@@ -546,7 +549,7 @@ int APS5_VABI sceUserServiceSetImeInputSettings(void);
 int APS5_VABI sceUserServiceSetProControllerUniqueId1(void);
 int APS5_VABI sceUserServiceGetPbtcPlayTimeLastUpdated(void);
 int APS5_VABI sceUserServiceSetHmuBrightness(void);
-int APS5_VABI sceUserServiceRegisterEventCallback(void);
+int APS5_VABI sceUserServiceRegisterEventCallback(UserServiceEventCallback callback, void* userData);
 int APS5_VABI sceUserServiceGetParentalMorpheus(void);
 int APS5_VABI sceUserServiceSetPbtcTuesdayDuration(void);
 int APS5_VABI sceUserServiceGetGlsOverlayPosition(void);

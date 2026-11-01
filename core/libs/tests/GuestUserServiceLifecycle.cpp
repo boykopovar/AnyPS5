@@ -2,11 +2,101 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <initializer_list>
+#include <mutex>
+#include <thread>
 
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
+
+struct CallbackRemovalState {
+    int result{USER_SERVICE_ERROR_NOT_INITIALIZED};
+    int calls{};
+    int* removedCalls{};
+};
+
+std::condition_variable callbackChanged;
+std::mutex callbackMutex;
+bool callbackStarted{};
+bool releaseCallback{};
+
+void APS5_VABI CountCallback(const SceUserServiceEvent*, void* userData) {
+    ++*static_cast<int*>(userData);
+}
+
+void APS5_VABI RemoveNextCallback(const SceUserServiceEvent*, void* userData) {
+    auto* state = static_cast<CallbackRemovalState*>(userData);
+    ++state->calls;
+    state->result = sceUserServiceUnregisterEventCallback(CountCallback, state->removedCalls);
+}
+
+void APS5_VABI RemoveSelfCallback(const SceUserServiceEvent*, void* userData) {
+    auto* state = static_cast<CallbackRemovalState*>(userData);
+    ++state->calls;
+    state->result = sceUserServiceUnregisterEventCallback(RemoveSelfCallback, userData);
+}
+
+void APS5_VABI BlockingCallback(const SceUserServiceEvent*, void*) {
+    std::unique_lock lock(callbackMutex);
+    callbackStarted = true;
+    callbackChanged.notify_all();
+    callbackChanged.wait(lock, [] { return releaseCallback; });
+}
+
+void TestCallbackRemoval() {
+    CallbackRemovalState state;
+    int removedCalls = 0;
+    state.removedCalls = &removedCalls;
+    Require(sceUserServiceRegisterEventCallback(RemoveNextCallback, &state) == USER_SERVICE_OK);
+    Require(sceUserServiceRegisterEventCallback(CountCallback, &removedCalls) == USER_SERVICE_OK);
+    UserServiceSetUserConnected_nid_postfix(0, false);
+    Require(state.calls == 1 && state.result == USER_SERVICE_OK);
+    Require(removedCalls == 0);
+    Require(sceUserServiceUnregisterEventCallback(RemoveNextCallback, &state) == USER_SERVICE_OK);
+
+    state = {};
+    Require(sceUserServiceRegisterEventCallback(RemoveSelfCallback, &state) == USER_SERVICE_OK);
+    UserServiceSetUserConnected_nid_postfix(0, true);
+    Require(state.calls == 1 && state.result == USER_SERVICE_OK);
+    UserServiceSetUserConnected_nid_postfix(0, false);
+    Require(state.calls == 1);
+}
+
+void TestTerminateWaitsForCallback() {
+    {
+        std::lock_guard lock(callbackMutex);
+        callbackStarted = false;
+        releaseCallback = false;
+    }
+    Require(sceUserServiceRegisterEventCallback(BlockingCallback, nullptr) == USER_SERVICE_OK);
+    std::thread notifier([] { UserServiceSetUserConnected_nid_postfix(0, false); });
+    {
+        std::unique_lock lock(callbackMutex);
+        callbackChanged.wait(lock, [] { return callbackStarted; });
+    }
+    std::atomic<bool> terminateReturned{};
+    int terminateResult = USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    std::thread terminator([&] {
+        terminateResult = sceUserServiceTerminate();
+        terminateReturned = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    Require(!terminateReturned.load());
+    {
+        std::lock_guard lock(callbackMutex);
+        releaseCallback = true;
+    }
+    callbackChanged.notify_all();
+    notifier.join();
+    terminator.join();
+    Require(terminateReturned.load() && terminateResult == USER_SERVICE_OK);
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
+    UserServiceSetUserConnected_nid_postfix(0, true);
+}
 
 void RequireNotInitialized() {
     UserServiceLoginUserIdList list{};
@@ -146,6 +236,8 @@ int main() {
     Require(event.event_type == 1 && event.user_id == USER_SERVICE_INITIAL_USER_ID + 2);
 
     TestInitialUserLogout();
+    TestCallbackRemoval();
+    TestTerminateWaitsForCallback();
     Require(sceUserServiceTerminate() == USER_SERVICE_OK);
 
     TestThreadPriority();
