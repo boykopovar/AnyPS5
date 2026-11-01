@@ -48,6 +48,41 @@ class AccessTests(unittest.TestCase):
         )
         self.assertEqual(findings(source), [])
 
+    def test_a_safe_copy_does_not_hide_other_direct_accesses(self):
+        source = (
+            "int APS5_VABI sceExampleMixed(Info* p) { Info local{};\n"
+            "  GuestCopyIn_nid_no_patch(&local, p, sizeof(local)); p[1] = local; return 0; }\n"
+            "int APS5_VABI sceExampleSizeof(int* p, int* q) { int v = 0;\n"
+            "  GuestCopyOut_nid_no_patch(q, &v, sizeof(*p)); *p = 1; return 0; }\n"
+        )
+        self.assertEqual(findings(source), [("sceExampleMixed", "p", ["index"]), ("sceExampleSizeof", "p", ["dereference"])])
+
+    def test_safe_call_arguments_and_unevaluated_operands_are_not_accesses(self):
+        source = (
+            "int APS5_VABI sceExampleField(Info* out) { const int v = 1;\n"
+            "  return GuestCopyOut_nid_no_patch(&out->size, &v, sizeof(out->size)) ? 0 : 14; }\n"
+            "int APS5_VABI sceExampleSize(Info* info) { return static_cast<int>(sizeof(*info) + alignof(decltype(info[0]))); }\n"
+        )
+        self.assertEqual(findings(source), [])
+
+    def test_every_pointer_operand_of_a_copy_or_fill_is_checked(self):
+        source = (
+            "int APS5_VABI sceExampleCopyTo(const int* first, int* p) { std::copy(first, first + 2, p); return 0; }\n"
+            "int APS5_VABI sceExampleCopyN(int* p) { int v[2]{}; std::copy_n(v, 2, reinterpret_cast<int*>(p)); return 0; }\n"
+            "int APS5_VABI sceExampleNested(char* p, int n) { std::memset(Offset(n), 0, Size(p, n)); return 0; }\n"
+            "int APS5_VABI sceExampleFillValue(int** p) { int* values[2]{}; std::fill(values, values + 2, p[0]); return 0; }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleCopyTo", "first", ["library call"]),
+            ("sceExampleCopyTo", "p", ["library call"]),
+            ("sceExampleCopyN", "p", ["library call"]),
+            ("sceExampleFillValue", "p", ["index"]),
+        ])
+
+    def test_line_is_the_earliest_access_of_any_kind(self):
+        entry, = guest_pointer_audit.audit_text(progress.code("int APS5_VABI sceExampleEarly(Info* p)\n{\n  p[0] = {};\n  p->field = 1;\n  return 0;\n}\n"))
+        self.assertEqual((entry["line"], entry["kinds"]), (3, ["index", "member"]))
+
     def test_comments_and_literals_are_ignored(self):
         source = "int APS5_VABI sceExampleText(Info* info) { // info->size = 4;\n  return Log(\"info->size *info info[0]\"); }\n"
         self.assertEqual(findings(source), [])
