@@ -495,6 +495,13 @@ private:
 
     static bool MatchAffineOffset(IrValue* value, IrValue*& key, std::uint32_t& stride, std::uint32_t& addend) {
         value = value->Resolve();
+        if (value->Opcode() == IrOpcode::ReadFirstLane && value->ArgumentCount() == 2u) {
+            const auto* activeMask = value->Argument(1)->Resolve();
+            value = value->Argument(0)->Resolve();
+            while (value->Opcode() == IrOpcode::SelectU32 && value->ArgumentCount() == 3u && Detail::ActiveMaskImplies(activeMask, value->Argument(0))) {
+                value = value->Argument(1)->Resolve();
+            }
+        }
         addend = 0;
         bool matched = MatchScale(value, key, stride);
         if (!matched && value->Opcode() == IrOpcode::IAdd32 && value->ArgumentCount() == 2u) {

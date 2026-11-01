@@ -70,7 +70,10 @@ def validate_arguments(arguments):
 
 
 def compilation_database(text, source, skip_empty_commands=False):
-    database = json.loads(text)
+    try:
+        database = json.loads(text)
+    except RecursionError as error:
+        raise ValueError(f"{source}: compilation database is nested too deeply") from error
     if not isinstance(database, list):
         raise ValueError(f"{source}: expected an array of command objects")
     commands = []

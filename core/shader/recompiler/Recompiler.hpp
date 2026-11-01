@@ -339,6 +339,7 @@ struct SpirvTarget {
     bool registrationModules = false;
     std::uint32_t registrationWordLimit = 200000u;
     bool vertexSubgroups = true;
+    bool tessellationEvaluationSubgroups = true;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
     bool robustBufferAccess2 = false;
@@ -905,6 +906,7 @@ void SetDebugProbeActive(bool active);
 [[nodiscard]] bool DebugProbeActive();
 [[nodiscard]] bool RayTracingStrict();
 [[nodiscard]] bool RayTracingMiss();
+[[nodiscard]] bool ExactF32Arithmetic();
 
 struct RectListShaders {
     RecompileResult control;
