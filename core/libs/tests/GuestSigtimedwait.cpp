@@ -2,9 +2,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
@@ -99,6 +102,24 @@ static void CheckTimeoutWithUnrelatedSignals() {
     Require(sigtimedwait_nid_postfix(&pipe, nullptr, &poll) == -1 && *__error_nid_postfix() == 35);
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
 }
+static void CheckShortTimeouts() {
+    const GuestSignalSet pipe{{1u << 12, 0, 0, 0}};
+    for (const std::int64_t nanos : {100000, 1000000}) {
+        const KernelTimespec timeout{0, nanos};
+        std::array<std::chrono::nanoseconds, 31> samples{};
+        for (auto& sample : samples) {
+            const auto before = std::chrono::steady_clock::now();
+            Require(sigtimedwait_nid_postfix(&pipe, nullptr, &timeout) == -1 && *__error_nid_postfix() == 35);
+            sample = std::chrono::steady_clock::now() - before;
+            Require(sample >= std::chrono::nanoseconds(nanos));
+        }
+        std::sort(samples.begin(), samples.end());
+        const auto median = samples[samples.size() / 2];
+        std::fprintf(stderr, "sigtimedwait(%lld ns) median: %lld ns\n", static_cast<long long>(nanos),
+                     static_cast<long long>(median.count()));
+        Require(median < std::chrono::milliseconds(12));
+    }
+}
 int main() {
     const GuestSignalSet empty{{0, 0, 0, 0}};
     const GuestSignalSet pipe{{1u << 12, 0, 0, 0}};
@@ -121,6 +142,14 @@ int main() {
     Require(sigwait_nid_postfix(&empty, &taken) == 22 && *__error_nid_postfix() == 72 && taken == -1);
     *__error_nid_postfix() = 73;
     Require(sigwait_nid_postfix(&interrupt, nullptr) == 22 && *__error_nid_postfix() == 73);
+    *__error_nid_postfix() = 0;
+    Require(sigtimedwait_nid_postfix(reinterpret_cast<const GuestSignalSet*>(0x10), &info, &poll) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sigtimedwait_nid_postfix(&interrupt, &info, reinterpret_cast<const KernelTimespec*>(0x10)) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(sigwaitinfo_nid_postfix(reinterpret_cast<const GuestSignalSet*>(0x10), &info) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 74;
+    Require(sigwait_nid_postfix(reinterpret_cast<const GuestSignalSet*>(0x10), &taken) == 14 && *__error_nid_postfix() == 74);
     RequireUntouched(info);
     *__error_nid_postfix() = 0;
     Require(sigtimedwait_nid_postfix(&interrupt, &info, &poll) == -1 && *__error_nid_postfix() == 35);
@@ -145,6 +174,15 @@ int main() {
     Require(sigwaitinfo_nid_postfix(&interrupt, nullptr) == 2 && received == 0);
     Require(raise_nid_postfix(2) == 0 && received == 0);
     Require(sigtimedwait_nid_postfix(&interrupt, nullptr, nullptr) == 2 && received == 0);
+    Require(raise_nid_postfix(2) == 0 && received == 0);
+    *__error_nid_postfix() = 75;
+    Require(sigwait_nid_postfix(&interrupt, reinterpret_cast<int*>(0x10)) == 14 && *__error_nid_postfix() == 75);
+    Require(raise_nid_postfix(2) == 0 && received == 0);
+    *__error_nid_postfix() = 0;
+    Require(sigtimedwait_nid_postfix(&interrupt, reinterpret_cast<void*>(0x10), &poll) == -1 && *__error_nid_postfix() == 14);
+    Require(raise_nid_postfix(2) == 0 && received == 0);
+    *__error_nid_postfix() = 0;
+    Require(sigwaitinfo_nid_postfix(&interrupt, reinterpret_cast<void*>(0x10)) == -1 && *__error_nid_postfix() == 14);
     GuestSignalSet current{};
     Require(_sigprocmask_nid_postfix(1, nullptr, &current) == 0 && current.bits[0] == (previous.bits[0] | interrupt.bits[0]));
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
@@ -194,4 +232,5 @@ int main() {
     }
     Require(_sigprocmask_nid_postfix(3, &previous, nullptr) == 0);
     CheckTimeoutWithUnrelatedSignals();
+    CheckShortTimeouts();
 }

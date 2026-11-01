@@ -30,6 +30,7 @@ def main():
         converted = modules.parent / 'app0' / 'prx'
         images = {name: (converted / (name + '.prx.guest.prx')).read_bytes()
                   for name in ('variant', 'canonical', 'runtime', 'guest', 'empty')}
+        other = 'libkernel_web.prx' if variant == 'libkernel_sys.prx' else 'libkernel_sys.prx'
         cases = (
             ('runtime-fallback', 'empty', 'empty', 'runtime', 33),
             ('variant-first', 'variant', 'canonical', 'runtime', 11),
@@ -46,7 +47,7 @@ def main():
             libraries = case / 'libs'
             libraries.mkdir(parents=True)
             (case / 'prx').mkdir()
-            for name, image in ((variant, requested), ('libkernel.prx', canonical), ('libc.prx', runtime)):
+            for name, image in ((variant, requested), ('libkernel.prx', canonical), (other, 'empty'), ('libc.prx', runtime)):
                 (libraries / name).write_bytes(images[image])
             if label.startswith('guest-'):
                 guests = case / 'sce_module'
@@ -70,6 +71,31 @@ def main():
                 assert 'unresolved ELF import shared' in result.stderr, (label, result.stderr)
             else:
                 assert result.returncode == expected, (variant, label, result.returncode, result.stderr)
+        sibling_expected = 11 if variant == 'libkernel_sys.prx' else 22
+        for label, owner, variant_image, canonical_image, other_image, expected in (
+            ('kernel-requests-variant', 'libkernel.prx', 'variant', 'empty', 'empty', 11),
+            ('variant-requests-other', variant, 'empty', 'empty', 'guest', 44),
+            ('kernel-prefers-declared', 'libkernel.prx', 'variant', 'canonical', 'guest', 22),
+            ('kernel-declared-siblings', 'libkernel.prx', 'variant', 'empty', 'canonical', sibling_expected),
+            ('variant-missing-sibling', variant, 'variant', 'canonical', None, 11),
+            ('kernel-missing-sibling', 'libkernel.prx', 'variant', 'canonical', None, 22),
+        ):
+            case = work / label
+            libraries = case / 'libs'
+            libraries.mkdir(parents=True)
+            (case / 'prx').mkdir()
+            for name, image in ((variant, variant_image), ('libkernel.prx', canonical_image), (other, other_image), ('libc.prx', 'empty')):
+                if image is None:
+                    continue
+                (libraries / name).write_bytes(images[image])
+            source = case / 'input.elf'
+            source.write_bytes(executable(owner, 'shared#A#B'))
+            output = case / 'output.exe'
+            result = subprocess.run([str(relinker), '--windows', str(source), str(output)],
+                                    capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, (variant, label, result.stderr)
+            result = subprocess.run([str(output)], capture_output=True, text=True, timeout=30)
+            assert result.returncode == expected, (variant, label, result.returncode, result.stderr)
     print(variant + ': runtime, precedence and isolation checks passed')
 
 

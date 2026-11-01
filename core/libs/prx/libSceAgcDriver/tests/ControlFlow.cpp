@@ -1,3 +1,4 @@
+#include "ControlFlow/ControlFlowHelpers.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "ControlFlow/Structurizer.hpp"
@@ -172,6 +173,17 @@ ControlFlowGraph makeGraph(const std::vector<std::vector<std::uint32_t>>& succes
         for (const auto successor : block.successors) graph.blocks[successor].predecessors.push_back(block.id);
     }
     return graph;
+}
+
+void verifyPredecessorRebuild() {
+    auto graph = makeGraph({{2, 1, 2}, {2, 2}, {2}, {}});
+    for (auto& block : graph.blocks) block.predecessors = {3u, 3u};
+    const std::vector<std::vector<std::uint32_t>> expected{{}, {0u}, {0u, 1u, 2u}, {}};
+    for (unsigned repeat = 0; repeat < 2u; ++repeat) {
+        rebuildPredecessors(graph);
+        require(graph.blocks[0].successors == std::vector<std::uint32_t>{1u, 2u} && graph.blocks[1].successors == std::vector<std::uint32_t>{2u}, "predecessor rebuild lost successor normalization");
+        for (std::size_t index = 0; index < expected.size(); ++index) require(graph.blocks[index].predecessors == expected[index], "predecessor rebuild changed the incoming edges");
+    }
 }
 
 void verifyLoopMergeDoesNotEnterNestedSelection() {
@@ -1445,6 +1457,7 @@ done:
         }
     }
     try {
+        verifyPredecessorRebuild();
         verifyNullSwappc();
         verifyScheduledJumpTable();
         VerifyUserDataTail();

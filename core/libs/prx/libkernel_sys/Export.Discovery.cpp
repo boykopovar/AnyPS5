@@ -3,16 +3,67 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <initializer_list>
+#include <optional>
 
 namespace {
 
+constexpr std::uint32_t PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE = 0x00800000;
+
 int SceResult(int error) {
     return error == 0 ? 0 : SceKernelError(error);
+}
+
+template<class TCommand>
+int WriteAmmCommand(std::initializer_list<std::uint64_t> protections, const std::optional<TCommand>& command, void* dst, std::uint64_t* outSize) {
+    for (const auto protection : protections) {
+        if (protection > 0xFFFFFFFFu) return SCE_KERNEL_ERROR_EINVAL;
+    }
+    if (!command) return SCE_KERNEL_ERROR_EINVAL;
+    if (dst) std::memcpy(dst, &*command, sizeof(TCommand));
+    if (outSize) *outSize = sizeof(TCommand);
+    return 0;
+}
+
+constexpr std::uint64_t GuestAddressMask = 0xFFFFFFFFFFFFull;
+constexpr std::uint64_t AmmPageMask = 0x3FFFu;
+constexpr std::uint64_t AmmSizeMask = 0x1FFFFFFC000ull;
+constexpr std::uint64_t EqueueLimit = 1ull << 48u;
+
+bool InsideAmmMapRange(std::uint64_t address, std::uint64_t size) {
+    std::uint64_t start = 0, end = 0, multimapStart = 0, multimapEnd = 0;
+    AmmVirtualAddressRanges_nid_no_patch(&start, &end, &multimapStart, &multimapEnd);
+    return size != 0u && ((address | size) & AmmPageMask) == 0u && address >= start && address + size <= end;
+}
+
+template<class TCommand>
+int WriteCommand(void* dst, const TCommand& command, std::uint64_t* outSize) {
+    if (dst) std::memcpy(dst, &command, sizeof(command));
+    if (outSize) *outSize = sizeof(command);
+    return 0;
+}
+
+constexpr std::uint32_t AmmPriorities = 3;
+constexpr std::uint64_t MapperGranuleMask = 0x1FFFFF;
+constexpr std::uint64_t MapperParamBytes = 0x38;
+constexpr std::uint64_t MapperKnownBytes = 0x28;
+
+std::uint32_t CallIndirectBuffer(const char* function, std::uint32_t priority, void* base, std::uint64_t bytes) {
+    if (priority >= AmmPriorities || !base) NotImplemented_nid_no_patch(function);
+    const std::uint64_t submitted = std::uint64_t{static_cast<std::uint32_t>(bytes >> 2u)} << 2u;
+    if (submitted > 0xFFFFFFFFull) NotImplemented_nid_no_patch(function);
+    return AmmSubmit_nid_no_patch(base, static_cast<std::uint32_t>(submitted));
 }
 
 }
@@ -44,32 +95,12 @@ int APS5_VABI blockpool_unmap_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI cpuset_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI cpuset_getid_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI cpuset_setid_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI dynlib_get_obj_member_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI futimesat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI get_authinfo_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -95,8 +126,7 @@ int APS5_VABI get_self_auth_info_nid_postfix(void) {
 }
 
 int APS5_VABI get_vm_map_timestamp_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return static_cast<int>(static_cast<std::uint32_t>(GuestAllocations::GuestAllocationsGeneration_nid_postfix()));
 }
 
 int APS5_VABI getfsstat_nid_postfix(void) {
@@ -114,42 +144,7 @@ int APS5_VABI is_in_sandbox_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI kenv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldfind_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldfirstmod_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI kldload_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldnext_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldstat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldsym_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI kldunload_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -189,37 +184,7 @@ int APS5_VABI ksem_close_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI ksem_destroy_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ksem_getvalue_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ksem_init_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ksem_open_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ksem_post_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ksem_timedwait_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI ksem_trywait_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -229,17 +194,7 @@ int APS5_VABI ksem_unlink_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI ksem_wait_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI ktrace_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI lchflags_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -260,11 +215,6 @@ int APS5_VABI mount_nid_postfix(void) {
 }
 
 int APS5_VABI openintr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI profil_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -292,16 +242,6 @@ int APS5_VABI pthread_attr_setcreatesuspend_np_nid_postfix(PthreadAttr* attr) {
 }
 
 int APS5_VABI pthread_attr_setstackaddr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_barrier_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_cond_setname_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -336,23 +276,21 @@ int APS5_VABI pthread_mutex_init_for_mono_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_mutex_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI pthread_mutex_setprioceiling_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI pthread_mutexattr_getgen_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_mutexattr_getgen_np_nid_postfix(const PthreadMutexattr* attr, int* generation) {
+    if (!attr || !*attr || !generation) return PosixThread::GUEST_EINVAL;
+    *generation = (*attr)->generation & 1;
     return 0;
 }
 
-int APS5_VABI pthread_mutexattr_setgen_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI pthread_mutexattr_setgen_np_nid_postfix(PthreadMutexattr* attr, int generation) {
+    if (!attr || !*attr) return PosixThread::GUEST_EINVAL;
+    if (generation != 0 && generation != 1) return PosixThread::GUEST_ENOTSUP;
+    (*attr)->generation = generation;
     return 0;
 }
 
@@ -368,16 +306,6 @@ int APS5_VABI pthread_resume_np_nid_postfix(Pthread thread) {
 }
 
 int APS5_VABI pthread_resume_user_context_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_rwlock_setname_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI pthread_rwlockattr_settype_np_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -549,13 +477,21 @@ int APS5_VABI sceKernelBeginAppMount2(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelCallIndirectBuffer(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelCallIndirectBuffer(std::uint32_t priority, void* base, std::uint64_t bytes) {
+    CallIndirectBuffer(__func__, priority, base, bytes);
     return 0;
 }
 
-int APS5_VABI sceKernelCallIndirectBuffer2(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelCallIndirectBuffer2(std::uint32_t priority, void* base, std::uint64_t bytes, KernelMapperSubmitResult* result, std::uint32_t* id) {
+    const auto submitted = CallIndirectBuffer(__func__, priority, base, bytes);
+    if (result) *result = {0, 0};
+    if (id) *id = submitted;
+    return 0;
+}
+
+int APS5_VABI sceKernelCallIndirectBuffer3(std::uint32_t priority, void* base, std::uint64_t bytes, std::uint32_t* id) {
+    const auto submitted = CallIndirectBuffer(__func__, priority, base, bytes);
+    if (id) *id = submitted;
     return 0;
 }
 
@@ -828,7 +764,7 @@ int APS5_VABI sceKernelGetCoredumpAppInfo(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetCpuUsage(void) {
+int APS5_VABI sceKernelGetCpuUsage(void* stats, int32_t* size) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -849,11 +785,6 @@ int APS5_VABI sceKernelGetCpuUsageProc2(void) {
 }
 
 int APS5_VABI sceKernelGetCpuUsageThread(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetCpumodeGame(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -889,11 +820,6 @@ int APS5_VABI sceKernelGetDefaultToolMemorySize(void) {
 }
 
 int APS5_VABI sceKernelGetEmergencyErrorLog(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetExecutableModuleHandle(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -974,11 +900,6 @@ int APS5_VABI sceKernelGetKqueueFromEqueue(void) {
 }
 
 int APS5_VABI sceKernelGetMemoryPstate(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetOpenPsIdForSystem(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1133,7 +1054,7 @@ int APS5_VABI sceKernelGetSystemSwBeta(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetThreadName(void) {
+int APS5_VABI sceKernelGetThreadName(uint32_t id, char* name) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1143,9 +1064,8 @@ int APS5_VABI sceKernelGetUniversalMode(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGetUpdVersion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelGetUpdVersion(std::uint32_t* version) {
+    return sysKernelGetUpdVersion_nid_postfix(version);
 }
 
 int APS5_VABI sceKernelGetUtokenDataExecutionForRcmgr(void) {
@@ -1208,9 +1128,9 @@ int APS5_VABI sceKernelGetVrCaptureSize(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGiveDirectMemoryToMapper(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelGiveDirectMemoryToMapper(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset) {
+    if (size == 0u || ((size | alignment) & MapperGranuleMask) != 0u) return SCE_KERNEL_ERROR_EINVAL;
+    return AmmGiveDirectMemory_nid_no_patch(searchStart, searchEnd, size, alignment, usage, offset);
 }
 
 int APS5_VABI sceKernelHasNeoMode(void) {
@@ -1404,32 +1324,12 @@ int APS5_VABI sceKernelIsAuthenticNeo(void) {
     return 1;
 }
 
-int APS5_VABI sceKernelIsCEX(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelIsDebuggerAttached(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceKernelIsDevKit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelIsExperimentalBeta(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelIsGenuineCEX(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelIsGenuineDevKit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1442,17 +1342,7 @@ int APS5_VABI sceKernelIsGenuineN(void) {
     return 1;
 }
 
-int APS5_VABI sceKernelIsGenuineTestKit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelIsInSandbox(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelIsKratos(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1472,29 +1362,10 @@ int APS5_VABI sceKernelIsMainOnStandbyMode(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelIsModuleLoaded(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelIsNeoMode(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelIsProspero(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelIsPs4Process(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelIsTestKit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    std::uint32_t attribute = 0;
+    if (!GetAppParamSfoAttribute_nid_no_patch(&attribute)) NotImplemented_nid_no_patch(__func__);
+    return (attribute & PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE) != 0 ? 1 : 0;
 }
 
 int APS5_VABI sceKernelJitGetSharedMemoryInfo(void) {
@@ -1507,27 +1378,23 @@ int APS5_VABI sceKernelKernelHeapUsage(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelLoadStartModuleForSysmodule(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI sceKernelLoadStartModuleInternalForMono(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceKernelLwfsAllocateBlock(void) {
+int APS5_VABI sceKernelLwfsAllocateBlock(int32_t fd, int64_t size) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceKernelLwfsLseek(void) {
+int64_t APS5_VABI sceKernelLwfsLseek(int32_t fd, int64_t offset, int32_t whence) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceKernelLwfsSetAttribute(void) {
+int APS5_VABI sceKernelLwfsSetAttribute(int32_t fd, int32_t attribute) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1537,12 +1404,7 @@ int APS5_VABI sceKernelLwfsTrimBlock(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelLwfsWrite(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelMapNamedSystemFlexibleMemory(void) {
+int64_t APS5_VABI sceKernelLwfsWrite(int32_t fd, const void* data, std::size_t size) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1561,8 +1423,13 @@ int APS5_VABI sceKernelMapTraceMemory(void) {
     return static_cast<int>(0x8002004e);
 }
 
-int APS5_VABI sceKernelMapperGetParam(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelMapperGetParam(std::uint64_t* param) {
+    if (!param || *param > MapperParamBytes) return SCE_KERNEL_ERROR_EINVAL;
+    const auto bytes = *param;
+    if (bytes > MapperKnownBytes) NotImplemented_nid_no_patch(__func__);
+    std::uint64_t values[5]{MapperParamBytes};
+    AmmVirtualAddressRanges_nid_no_patch(&values[1], &values[2], &values[3], &values[4]);
+    std::memcpy(param, values, static_cast<std::size_t>(bytes));
     return 0;
 }
 
@@ -1762,17 +1629,12 @@ int APS5_VABI sceKernelSetCallRecord(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelSetCompressionAttribute(void) {
+int APS5_VABI sceKernelSetCompressionAttribute(int32_t fd, int32_t attribute) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceKernelSetCoredumpAppInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelSetCpumodeGame(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1787,7 +1649,7 @@ int APS5_VABI sceKernelSetEmergencyErrorLog(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelSetFsstParam(void) {
+int APS5_VABI sceKernelSetFsstParam(int32_t fd, void* param) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -1882,9 +1744,8 @@ int APS5_VABI sceKernelSetVmContainer(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelSettimeofday(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelSettimeofday(const KernelTimeval* tv, const KernelTimezone* tz) {
+    return settimeofday_nid_postfix(tv, tz) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
 int APS5_VABI sceKernelSflashGetWritePrio(void) {
@@ -1982,11 +1843,6 @@ int APS5_VABI sceKernelTerminateSysCore(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelTraceMemoryTypeProtect(void) {
     return static_cast<int>(0x8002004e);
 }
@@ -2000,74 +1856,70 @@ int APS5_VABI sceKernelVirtualQueryAll(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelWaitCommandBufferCompletion(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWaitCommandBufferCompletion(std::uint32_t id) {
+    return AmmSubmitted_nid_no_patch(id) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 }
 
-int APS5_VABI sceKernelWriteEventQueueOnCompletionCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteEventQueueOnCompletionCommand(void* dst, std::uint64_t equeue, std::int32_t ident, std::uint64_t data, std::uint64_t* outSize) {
+    if (equeue > EqueueLimit) return SCE_KERNEL_ERROR_EINVAL;
+    return WriteCommand(dst, Apr::WriteKernelEventQueueCommand{{Apr::Opcode::WriteKernelEventQueue, sizeof(Apr::WriteKernelEventQueueCommand)}, equeue & GuestAddressMask, static_cast<std::uint64_t>(ident), data, 0}, outSize);
 }
 
-int APS5_VABI sceKernelWriteMapCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteMapCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t* outSize) {
+    return WriteAmmCommand({protection}, Apr::EncodeAmmMap(Apr::Opcode::AmmMap, address, 0, size, static_cast<std::int32_t>(type), static_cast<std::int32_t>(protection)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteMapCommand2(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteMapCommand2(void* dst, std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection, std::int32_t prt, std::uint64_t* outSize) {
+    if (prt == 0) return sceKernelWriteMapCommand(dst, address, size, static_cast<std::uint32_t>(type), static_cast<std::uint32_t>(protection), outSize);
+    if (!InsideAmmMapRange(address, size)) return SCE_KERNEL_ERROR_EINVAL;
+    if (type != 0 || protection != 0) NotImplemented_nid_no_patch("sceKernelWriteMapCommand2: a PRT map with a type or protection");
+    return WriteCommand(dst, Apr::AmmUnmapCommand{{Apr::Opcode::AmmMapAsPrt, sizeof(Apr::AmmUnmapCommand)}, address & GuestAddressMask, size & AmmSizeMask}, outSize);
 }
 
-int APS5_VABI sceKernelWriteMapDirectCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteMapDirectCommand(void* dst, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t* outSize) {
+    return WriteAmmCommand({protection}, Apr::EncodeAmmMap(Apr::Opcode::AmmMapDirect, address, directOffset, size, static_cast<std::int32_t>(type), static_cast<std::int32_t>(protection)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteMapDirectWithGpuMaskIdCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteMapDirectWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    (void)gpuMaskId;
+    return WriteAmmCommand({protection}, Apr::EncodeAmmMap(Apr::Opcode::AmmMapDirect, address, directOffset, size, static_cast<std::int32_t>(type), static_cast<std::int32_t>(protection)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteMapWithGpuMaskIdCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteMapWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    (void)gpuMaskId;
+    return WriteAmmCommand({protection}, Apr::EncodeAmmMap(Apr::Opcode::AmmMap, address, 0, size, static_cast<std::int32_t>(type), static_cast<std::int32_t>(protection)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteModifyMtypeProtectWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t mask, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    (void)gpuMaskId;
+    return WriteAmmCommand({protection, mask}, Apr::EncodeAmmProtect(Apr::Opcode::AmmModifyMtypeProtect, address, size, static_cast<std::int32_t>(type), static_cast<std::int32_t>(protection), static_cast<std::int32_t>(mask)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteModifyProtectCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteModifyProtectCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t protection, std::uint64_t mask, std::uint64_t* outSize) {
+    return WriteAmmCommand({protection, mask}, Apr::EncodeAmmProtect(Apr::Opcode::AmmModifyProtect, address, size, 0, static_cast<std::int32_t>(protection), static_cast<std::int32_t>(mask)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteModifyProtectWithGpuMaskIdCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteModifyProtectWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t protection, std::uint64_t mask, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    (void)gpuMaskId;
+    return WriteAmmCommand({protection, mask}, Apr::EncodeAmmProtect(Apr::Opcode::AmmModifyProtect, address, size, 0, static_cast<std::int32_t>(protection), static_cast<std::int32_t>(mask)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteMultiMapCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteMultiMapCommand(void* dst, std::uint64_t address, std::uint64_t alias, std::uint64_t size, std::uint64_t protection, std::uint64_t* outSize) {
+    return WriteAmmCommand({protection}, Apr::EncodeAmmRemap(Apr::Opcode::AmmMultiMap, address, alias, size, static_cast<std::int32_t>(protection)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteMultiMapWithGpuMaskIdCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteMultiMapWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t alias, std::uint64_t size, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    (void)gpuMaskId;
+    return WriteAmmCommand({protection}, Apr::EncodeAmmRemap(Apr::Opcode::AmmMultiMap, address, alias, size, static_cast<std::int32_t>(protection)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteRemapCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteRemapCommand(void* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::uint64_t protection, std::uint64_t* outSize) {
+    return WriteAmmCommand({protection}, Apr::EncodeAmmRemap(Apr::Opcode::AmmRemap, address, source, size, static_cast<std::int32_t>(protection)), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteRemapWithGpuMaskIdCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteRemapWithGpuMaskIdCommand(void* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::uint64_t protection, std::uint64_t gpuMaskId, std::uint64_t* outSize) {
+    (void)gpuMaskId;
+    return WriteAmmCommand({protection}, Apr::EncodeAmmRemap(Apr::Opcode::AmmRemap, address, source, size, static_cast<std::int32_t>(protection)), dst, outSize);
 }
 
 int APS5_VABI sceKernelWriteSdkEventLog(void) {
@@ -2080,29 +1932,34 @@ int APS5_VABI sceKernelWriteSdkEventLogV(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelWriteUnmapCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteUnmapCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t* outSize) {
+    return WriteAmmCommand({}, Apr::EncodeAmmUnmap(address, size), dst, outSize);
 }
 
-int APS5_VABI sceKernelWriteWaitOnAddressCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteUnmapToPrtCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t* outSize) {
+    if (!InsideAmmMapRange(address, size)) return SCE_KERNEL_ERROR_EINVAL;
+    return WriteCommand(dst, Apr::AmmUnmapCommand{{Apr::Opcode::AmmUnmapToPrt, sizeof(Apr::AmmUnmapCommand)}, address & GuestAddressMask, size & AmmSizeMask}, outSize);
 }
 
-int APS5_VABI sceKernelWriteWaitOnCounterCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteWaitOnAddressCommand(void* dst, std::uint64_t address, std::uint64_t reference, std::int32_t compare, std::int32_t flush, std::uint64_t* outSize) {
+    (void)flush;
+    if (compare > 3) return SCE_KERNEL_ERROR_EINVAL;
+    if (dst && (address & 7u) != 0u) NotImplemented_nid_no_patch("sceKernelWriteWaitOnAddressCommand: a wait on an unaligned address");
+    return WriteCommand(dst, Apr::WaitCommand{{Apr::Opcode::WaitOnAddress, sizeof(Apr::WaitCommand)}, address & GuestAddressMask, reference, ~0ull, 0, static_cast<std::uint8_t>(compare & 7), Apr::CounterAccess::Size8, 0}, outSize);
 }
 
-int APS5_VABI sceKernelWriteWriteAddressCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteWaitOnCounterCommand(void* dst, std::uint8_t counter, std::uint32_t reference, std::int32_t compare, std::int32_t flush, std::uint64_t* outSize) {
+    (void)flush;
+    if (compare > 3) return SCE_KERNEL_ERROR_EINVAL;
+    return WriteCommand(dst, Apr::WaitCommand{{Apr::Opcode::WaitOnCounter, sizeof(Apr::WaitCommand)}, 0, reference, ~0ull, counter, static_cast<std::uint8_t>(compare & 7), Apr::CounterAccess::Size4, 0}, outSize);
 }
 
-int APS5_VABI sceKernelWriteWriteCounterCommand(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelWriteWriteAddressCommand(void* dst, std::uint64_t address, std::uint64_t value, std::uint64_t* outSize) {
+    return WriteCommand(dst, Apr::WriteAddressCommand{{Apr::Opcode::WriteAddress, sizeof(Apr::WriteAddressCommand)}, address & GuestAddressMask & ~std::uint64_t{7}, value, 0, 0}, outSize);
+}
+
+int APS5_VABI sceKernelWriteWriteCounterCommand(void* dst, std::uint8_t counter, std::uint32_t value, std::uint64_t* outSize) {
+    return WriteCommand(dst, Apr::WriteCounterCommand{{Apr::Opcode::WriteCounter, sizeof(Apr::WriteCounterCommand)}, counter, Apr::CounterAccess::Size4, Apr::CounterOperation::Store, 0, value}, outSize);
 }
 
 int APS5_VABI sceKernelYieldCpumode(void) {
@@ -2170,10 +2027,6 @@ int APS5_VABI scePthreadGetcpuclockid(Pthread thread, int* clockId) {
     return SceResult(pthread_getcpuclockid_nid_postfix(thread, clockId));
 }
 
-int APS5_VABI scePthreadMain(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 int APS5_VABI scePthreadMulti(void) {
     const int error = pthread_multi_np_nid_postfix();
@@ -2185,9 +2038,8 @@ int APS5_VABI scePthreadMutexGetprioceiling(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadMutexInitForInternalLibc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadMutexInitForInternalLibc(PthreadMutex* mutex, const PthreadMutexattr* attr) {
+    return SceResult(pthread_mutex_init_nid_postfix(mutex, attr));
 }
 
 int APS5_VABI scePthreadMutexIsowned(void) {
@@ -2200,29 +2052,16 @@ int APS5_VABI scePthreadMutexSetprioceiling(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadMutexattrGetgen(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadMutexattrGetgen(const PthreadMutexattr* attr, int* generation) {
+    return SceResult(pthread_mutexattr_getgen_np_nid_postfix(attr, generation));
 }
 
-int APS5_VABI scePthreadMutexattrGetkind(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadMutexattrInitForInternalLibc(PthreadMutexattr* attr) {
+    return SceResult(pthread_mutexattr_init_nid_postfix(attr));
 }
 
-int APS5_VABI scePthreadMutexattrInitForInternalLibc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI scePthreadMutexattrSetgen(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI scePthreadMutexattrSetkind(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadMutexattrSetgen(PthreadMutexattr* attr, int generation) {
+    return SceResult(pthread_mutexattr_setgen_np_nid_postfix(attr, generation));
 }
 
 int APS5_VABI scePthreadResume(Pthread thread) {
@@ -2263,42 +2102,19 @@ int APS5_VABI scePthreadTimedjoin(void) {
     return 0;
 }
 
-int APS5_VABI sched_getparam_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sched_getscheduler_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sched_setparam_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sched_setscheduler_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sem_setname_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sched_setscheduler_nid_postfix(int pid, int, const KernelSchedParam* param) {
+    constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEfault = 14;
+    const auto fail = [](int error) {
+        *__error_nid_postfix() = error;
+        return -1;
+    };
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return fail(GuestEfault);
+    if (pid != 0 && pid != getpid_nid_postfix()) return fail(GuestEsrch);
+    return fail(GuestEperm);
 }
 
 int APS5_VABI set_phys_fmem_limit_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI setlogin_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI settimeofday_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2308,9 +2124,8 @@ int APS5_VABI sigqueue_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI sigreturn_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sigreturn_nid_postfix(const UserUcontext* context) {
+    return SigreturnContext_nid_no_patch(context);
 }
 
 int APS5_VABI statfs_nid_postfix(void) {
@@ -2324,26 +2139,6 @@ int APS5_VABI swapon_nid_postfix(void) {
 }
 
 int APS5_VABI symlinkat_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sysKernelGetIntdevModeForInternalLibc_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sysKernelGetIntdevModeForRcmgr_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sysKernelGetManufacturingMode_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sysKernelGetUpdVersion_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2379,11 +2174,6 @@ int APS5_VABI unmount_nid_postfix(void) {
 }
 
 int APS5_VABI utrace_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI uuidgen_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
