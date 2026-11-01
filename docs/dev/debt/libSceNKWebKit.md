@@ -1,10 +1,14 @@
 # libSceNKWebKit technical debt
 
+Inventory prose retains historical counts; use the [generated progress report](https://boykopovar.github.io/AnyPS5/progress.html) for current totals.
+
 ### Unknown function info
 
 - [WebKit API objects](../../../core/libs/prx/libSceNKWebKit/src/Object.hpp) (libSceNKWebKit) - `WK*` objects are host objects numbered with `API::Object::Type` as [APIObject.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/APIObject.h) builds for PlayStation, with ApplicationManifest, InspectorExtension, WebExtension and WebAuthn types off and PopupMenuItem and AccessibilityObject on per [OptionsPlayStation.cmake](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/cmake/OptionsPlayStation.cmake); the console module version, its type numbers and its object layouts are unverified, so these objects cannot be passed to a console WebKit module. A null or wrong-type reference throws where WebKit dereferences it.
 - [WTF and WebCore value layouts](../../../core/libs/prx/libSceNKWebKit/src/WtfStringAbi.hpp) (libSceNKWebKit) - `WTF::String`, `StringImpl`, `StringView`, `CString`, `URL` and the WebCore geometry, transform and `Color` layouts follow the release 64-bit headers at the [pinned source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringImpl.h) and are pinned with `static_assert`; they are tested on Windows, not against console binaries. `StringImpl::destroy`, atom and symbol strings and external buffers still throw, so a string whose last reference guest code drops terminates.
 - [Media preferences](../../../core/libs/prx/libSceNKWebKit/src/Preferences.cpp) (libSceNKWebKit) - unset `MediaSourceEnabled`, `EncryptedMediaAPIEnabled` and `SourceBufferChangeTypeEnabled` getters throw, and feature-key setters for `EncryptedMediaAPIEnabled`, `SourceBufferChangeTypeEnabled` and `WebMParserEnabled` throw, because the PlayStation media player configuration behind `ENABLE_MEDIA_SOURCE` and `ENABLE_ENCRYPTED_MEDIA` is not in the pinned source. Other defaults evaluate [UnifiedWebPreferences.yaml](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/Scripts/Preferences/UnifiedWebPreferences.yaml) for PlayStation; downstream console overrides are unverified.
+
+- [FastBitVector exports](../../../core/libs/prx/libSceNKWebKit/src/WtfFastBitVector.cpp) have no console ABI or behavior verification. The 16-byte owner (word pointer at 0, 64-bit bit count at 8), range clearing, growth and copying follow the paired header and [PS5 11.x WebKit source](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/FastBitVector.cpp). `resizeSlow` preserves the stored bit count and unused bits of existing words; new words are zeroed. Allocation uses the module's `fastMalloc` and `fastFree`. Invalid ranges, null accessed storage, shrinking the word count and overflowing the upstream round-up throw instead of reproducing assertion failures or invalid memory access. Closes when: compared with a console module.
 
 ### Functional
 
@@ -1672,7 +1676,6 @@
 | `_ZN3WTF12CountingLock10unlockSlowEv` | `y9CL7tutRKQ` |
 | `_ZN3WTF12CountingLock8lockSlowEv` | `QSRjO+sqoFU` |
 | `_ZN3WTF12isMainThreadEv` | `MKhFWAdCyCw` |
-| `_ZN3WTF13FastBitVector10clearRangeEmm` | `q1+R1z2aE0E` |
 | `_ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm` | `RPLKRR7vgYE` |
 | `_ZN3WTF13MetaAllocator17currentStatisticsERKNS_6LockerINS_4LockEEE` | `3SW2Rs+BCYE` |
 | `_ZN3WTF13MetaAllocator17freeFreeSpaceNodeEPNS0_13FreeSpaceNodeE` | `sIQ2j-9PjgU` |
@@ -1880,8 +1883,6 @@
 | `_ZN3WTF22CrossThreadTaskHandlerD0Ev` | `aMwGXRZ6024` |
 | `_ZN3WTF22CrossThreadTaskHandlerD1Ev` | `RQGUZHWVCLY` |
 | `_ZN3WTF22CrossThreadTaskHandlerD2Ev` | `F9bDxOEGeA8` |
-| `_ZN3WTF22FastBitVectorWordOwner10resizeSlowEm` | `NetEd5QBLRw` |
-| `_ZN3WTF22FastBitVectorWordOwner13setEqualsSlowERKS0_` | `qY895ndHoiI` |
 | `_ZN3WTF22TextBreakIteratorCache9singletonEv` | `m9nEKMAp80k` |
 | `_ZN3WTF22isMainThreadOrGCThreadEv` | `UHbf2fZIrxk` |
 | `_ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE` | `95FhkfvoGQM` |

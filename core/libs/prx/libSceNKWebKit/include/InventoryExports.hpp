@@ -1647,7 +1647,6 @@ int APS5_VABI _ZN3WTF11setNonBlockEi();
 int APS5_VABI _ZN3WTF12CountingLock10unlockSlowEv();
 int APS5_VABI _ZN3WTF12CountingLock8lockSlowEv();
 int APS5_VABI _ZN3WTF12isMainThreadEv();
-int APS5_VABI _ZN3WTF13FastBitVector10clearRangeEmm();
 int APS5_VABI _ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm();
 int APS5_VABI _ZN3WTF13MetaAllocator17currentStatisticsERKNS_6LockerINS_4LockEEE();
 int APS5_VABI _ZN3WTF13MetaAllocator17freeFreeSpaceNodeEPNS0_13FreeSpaceNodeE();
@@ -1865,8 +1864,6 @@ int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerC2EPKcNS0_25AutodrainedPoolForRunLo
 int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerD0Ev();
 int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerD1Ev();
 int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerD2Ev();
-int APS5_VABI _ZN3WTF22FastBitVectorWordOwner10resizeSlowEm();
-int APS5_VABI _ZN3WTF22FastBitVectorWordOwner13setEqualsSlowERKS0_();
 int APS5_VABI _ZN3WTF22TextBreakIteratorCache9singletonEv();
 int APS5_VABI _ZN3WTF22isMainThreadOrGCThreadEv();
 int APS5_VABI _ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE();

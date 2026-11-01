@@ -19076,10 +19076,6 @@ int APS5_VABI _ZN3WTF12isMainThreadEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF13FastBitVector10clearRangeEmm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -19905,14 +19901,6 @@ int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerD1Ev() {
 }
 
 int APS5_VABI _ZN3WTF22CrossThreadTaskHandlerD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF22FastBitVectorWordOwner10resizeSlowEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF22FastBitVectorWordOwner13setEqualsSlowERKS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
