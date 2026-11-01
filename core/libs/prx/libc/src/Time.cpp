@@ -593,6 +593,11 @@ int64_t APS5_VABI mktime_nid_postfix(GuestTm* timeptr) {
     return libc_mktime_nid_postfix(timeptr);
 }
 
+int64_t APS5_VABI timelocal_nid_postfix(GuestTm* timeptr) {
+    if (timeptr != nullptr) timeptr->tm_isdst = -1;
+    return libc_mktime_nid_postfix(timeptr);
+}
+
 size_t APS5_VABI libc_strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr) {
     const ZoneScope zone;
     tzset_nid_postfix();
