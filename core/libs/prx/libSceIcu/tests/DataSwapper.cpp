@@ -99,6 +99,18 @@ void TestTrieSwappers() {
     udata_closeSwapper_nid_postfix(ds);
 }
 
+void TestOversizedTrie() {
+    std::int32_t status = 0;
+    auto* ds = udata_openSwapper_nid_postfix(0, 0, 0, 0, &status);
+    Check(status == 0 && ds != nullptr);
+    alignas(4) std::uint32_t header[4] = {0x54726965, 0x125, 0x3fffffe0, 0x20};
+    alignas(4) std::uint32_t out[4] = {};
+    Check(utrie_swapAnyVersion_nid_postfix(ds, header, sizeof(header), out, &status) == 0);
+    Check(status == 3);
+    Check(out[0] == 0 && out[1] == 0 && out[2] == 0 && out[3] == 0);
+    udata_closeSwapper_nid_postfix(ds);
+}
+
 }
 
 char printed[256];
@@ -132,6 +144,7 @@ int main() {
     TestSwapDataHeader();
     TestSwapInvStringBlock();
     TestTrieSwappers();
+    TestOversizedTrie();
     TestPrintError();
     std::printf("ICU DataSwapper tests passed\n");
     return 0;

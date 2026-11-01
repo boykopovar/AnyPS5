@@ -3,6 +3,7 @@
 // Copyright (C) 2003-2014, International Business Machines Corporation and others. All Rights Reserved.
 #include "DataSwapper.hpp"
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <cstdio>
 
@@ -376,7 +377,12 @@ std::int32_t SwapUTrie(const DataSwapper* ds, const void* inData, std::int32_t l
         return 0;
     }
     bool dataIs32 = (trie.options & 0x100) != 0;
-    auto size = static_cast<std::int32_t>(sizeof(UTrieHeader)) + trie.indexLength * 2 + trie.dataLength * (dataIs32 ? 4 : 2);
+    const auto fullSize = static_cast<std::int64_t>(sizeof(UTrieHeader)) + std::int64_t{trie.indexLength} * 2 + std::int64_t{trie.dataLength} * (dataIs32 ? 4 : 2);
+    if (fullSize > std::numeric_limits<std::int32_t>::max()) {
+        *errorCode = 3;
+        return 0;
+    }
+    const auto size = static_cast<std::int32_t>(fullSize);
     if (length >= 0) {
         if (length < size) {
             *errorCode = 8;
