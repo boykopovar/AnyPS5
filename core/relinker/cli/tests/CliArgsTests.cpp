@@ -52,7 +52,7 @@ void defaults() {
     const auto args = parse({"input.elf", "output.elf"});
     require(args.inputPath == "input.elf", "input path was not captured");
     require(args.outputPath == "output.elf", "output path was not captured");
-    require(!args.skipSyscallCheck && !args.trapSdkSyscallStubs && !args.skipSceModule && !args.toIntel && !args.writeRegistry &&
+    require(!args.dryRun && !args.skipSyscallCheck && !args.trapSdkSyscallStubs && !args.skipSceModule && !args.toIntel && !args.writeRegistry &&
         !args.toWindows && !args.lazyBinding && !args.autorun && !args.windowsDiagnostics && !args.windowsGui,
         "a flag defaulted to true");
     require(args.unusedFilterLevel == 0u, "unused filter level did not default to 0");
@@ -92,6 +92,25 @@ void positionalsInterleaveWithFlags() {
 void singleDashIsPositional() {
     const auto args = parse({"-x", "-o"});
     require(args.inputPath == "-x" && args.outputPath == "-o", "a single-dash argument was not treated as a positional");
+}
+
+void optionTerminator() {
+    const auto paths = parse({"--", "--help", "--version"});
+    require(paths.inputPath == "--help" && paths.outputPath == "--version" && !paths.showHelp && !paths.showVersion,
+        "options after the terminator were not treated as paths");
+    const auto target = parse({"--windows", "--", "unused-filter=2", "--registry"});
+    require(target.toWindows && target.inputPath == "unused-filter=2" && target.outputPath == "--registry" &&
+        target.unusedFilterLevel == 0 && !target.writeRegistry, "the terminator changed preceding options or parsed a following one");
+    const auto output = parse({"input.elf", "--", "--"});
+    require(output.inputPath == "input.elf" && output.outputPath == "--", "a second terminator was not a literal path");
+    const auto value = parse({"--rpath", "--", "input.elf", "output.elf"});
+    require(value.runPath == "--" && value.outputPath == "output.elf", "an option value ended option parsing");
+    const auto verify = parse({"--verify-patches", "p.toml", "--", "--windows"});
+    require(verify.inputPath == "--windows" && !verify.toWindows, "a verification path was recorded as an option");
+    expectUsage({"--"});
+    expectUsage({"--", "input.elf"});
+    expectThrows({"--", "", "output.elf"}, "input and output paths must be nonempty");
+    expectThrows({"--", "input.elf", "output.elf", "--help"}, "unexpected argument: --help");
 }
 
 void rpath() {
@@ -172,7 +191,6 @@ void unusedFilterBareWordIsUnknown() {
 
 void unknownOption() {
     expectThrows({"--nonexistent", "input.elf", "output.elf"}, "unknown option: --nonexistent");
-    expectThrows({"--", "input.elf", "output.elf"}, "unknown option: --");
 }
 
 void emptyPositionals() {
@@ -353,13 +371,29 @@ void verifyMode() {
     expectUsage({"--verify-patches", "p.toml"});
 }
 
+void dryRun() {
+    for (const auto* target : {"--windows", "--macos"}) {
+        const auto args = parse({"input.elf", "--dry-run", target, "--registry", "output"});
+        require(args.dryRun && args.writeRegistry, "dry run must preserve conversion options");
+        require(args.inputPath == "input.elf" && args.outputPath == "output", "dry run consumed a positional path");
+    }
+    require(parse({"--dry-run", "input.elf", "output"}).dryRun, "Linux dry run was ignored");
+    require(parse({"--dry-run", "--dry-run", "input.elf", "output"}).dryRun, "repeated dry run was rejected");
+    expectThrows({"--dry-run", "--autorun", "input.elf", "output"}, "--dry-run conflicts with --autorun");
+    expectThrows({"--autorun", "--dry-run", "input.elf", "output"}, "--dry-run conflicts with --autorun");
+    expectThrows({"--verify-patches", "p.toml", "--dry-run", "input.elf"}, "--dry-run cannot be used with --verify-patches");
+    expectUsage({"--dry-run", "input.elf"});
+}
+
 int main() {
     try {
         defaults();
+        dryRun();
         booleanFlags();
         trapSdkSyscallStubs();
         positionalsInterleaveWithFlags();
         singleDashIsPositional();
+        optionTerminator();
         rpath();
         rpathConsumesNextTokenVerbatim();
         rpathWithoutValue();

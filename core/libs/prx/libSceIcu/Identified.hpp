@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 extern "C" {
@@ -12,7 +13,7 @@ int APS5_VABI res_getAlias_nid_postfix();
 int APS5_VABI res_getArrayItem_nid_postfix();
 int APS5_VABI res_getBinaryNoTrace_nid_postfix();
 int APS5_VABI res_getIntVectorNoTrace_nid_postfix();
-int APS5_VABI res_getPublicType_nid_postfix();
+std::int32_t APS5_VABI res_getPublicType_nid_postfix(std::uint32_t resource);
 int APS5_VABI res_getResource_nid_postfix();
 int APS5_VABI res_getStringNoTrace_nid_postfix();
 int APS5_VABI res_getTableItemByIndex_nid_postfix();

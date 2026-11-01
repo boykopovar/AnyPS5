@@ -1,0 +1,122 @@
+#pragma once
+
+#include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
+#include <cstddef>
+#include <cstdint>
+
+extern "C" {
+
+WebCore::FloatPoint APS5_VABI _ZN7WebCore10FloatPoint15narrowPrecisionEdd(double x, double y);
+void APS5_VABI _ZN7WebCore10FloatPoint9normalizeEv(WebCore::FloatPoint* self);
+void APS5_VABI _ZN7WebCore10FloatPointC1ERKNS_8IntPointE(WebCore::FloatPoint* self, const WebCore::IntPoint& p);
+void APS5_VABI _ZN7WebCore10FloatPointC2ERKNS_8IntPointE(WebCore::FloatPoint* self, const WebCore::IntPoint& p);
+void APS5_VABI _ZN7WebCore10LayoutRect5scaleEf(WebCore::LayoutRect* self, float s);
+void APS5_VABI _ZN7WebCore10LayoutRect5uniteERKS0_(WebCore::LayoutRect* self, const WebCore::LayoutRect& other);
+void APS5_VABI _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(WebCore::LayoutRect* self, const WebCore::FloatRect& r);
+void APS5_VABI _ZN7WebCore10LayoutRectC2ERKNS_9FloatRectE(WebCore::LayoutRect* self, const WebCore::FloatRect& r);
+void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
+void APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
+WebCore::IntRect APS5_VABI _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(const WebCore::FloatRect& rect);
+void APS5_VABI _ZN7WebCore15AffineTransform12makeIdentityEv(WebCore::AffineTransform* self);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform15scaleNonUniformEdd( WebCore::AffineTransform* self, double sx, double sy);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform4skewEdd( WebCore::AffineTransform* self, double angleX, double angleY);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5flipXEv(WebCore::AffineTransform* self);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5flipYEv(WebCore::AffineTransform* self);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5scaleERKNS_9FloatSizeE( WebCore::AffineTransform* self, const WebCore::FloatSize& s);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5scaleEd(WebCore::AffineTransform* self, double s);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform5shearEdd( WebCore::AffineTransform* self, double sx, double sy);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform6rotateEd(WebCore::AffineTransform* self, double a);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform8multiplyERKS0_( WebCore::AffineTransform* self, const WebCore::AffineTransform& other);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform9translateERKNS_10FloatPointE( WebCore::AffineTransform* self, const WebCore::FloatPoint& p);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform9translateERKNS_9FloatSizeE( WebCore::AffineTransform* self, const WebCore::FloatSize& s);
+WebCore::AffineTransform& APS5_VABI _ZN7WebCore15AffineTransform9translateEdd( WebCore::AffineTransform* self, double tx, double ty);
+void APS5_VABI _ZN7WebCore16FloatRoundedRectC1ERKNS_9FloatRectERKNS0_5RadiiE( WebCore::FloatRoundedRect* self, const WebCore::FloatRect& rect, const WebCore::FloatRoundedRect::Radii& radii);
+void APS5_VABI _ZN7WebCore16FloatRoundedRectC2ERKNS_9FloatRectERKNS0_5RadiiE( WebCore::FloatRoundedRect* self, const WebCore::FloatRect& rect, const WebCore::FloatRoundedRect::Radii& radii);
+void APS5_VABI _ZN7WebCore20TransformationMatrix10makeAffineEv(WebCore::TransformationMatrix* self);
+WebCore::TransformationMatrix APS5_VABI _ZN7WebCore20TransformationMatrix10rectToRectERKNS_9FloatRectES3_( const WebCore::FloatRect& from, const WebCore::FloatRect& to);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix11translate3dEddd( WebCore::TransformationMatrix* self, double tx, double ty, double tz);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix15scaleNonUniformEdd( WebCore::TransformationMatrix* self, double sx, double sy);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix4skewEdd( WebCore::TransformationMatrix* self, double sx, double sy);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix5flipXEv(WebCore::TransformationMatrix* self);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix5flipYEv(WebCore::TransformationMatrix* self);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix5scaleEd( WebCore::TransformationMatrix* self, double s);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix6rotateEd( WebCore::TransformationMatrix* self, double a);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix8multiplyERKS0_( WebCore::TransformationMatrix* self, const WebCore::TransformationMatrix& mat);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix8rotate3dEddd( WebCore::TransformationMatrix* self, double rx, double ry, double rz);
+WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix9translateEdd( WebCore::TransformationMatrix* self, double tx, double ty);
+void APS5_VABI _ZN7WebCore20TransformationMatrixC1ERKNS_15AffineTransformE( WebCore::TransformationMatrix* self, const WebCore::AffineTransform& t);
+void APS5_VABI _ZN7WebCore20TransformationMatrixC2ERKNS_15AffineTransformE( WebCore::TransformationMatrix* self, const WebCore::AffineTransform& t);
+void APS5_VABI _ZN7WebCore27setPresentingApplicationPIDEi(int pid);
+bool APS5_VABI _ZN7WebCore30isStatusCodeCacheableByDefaultEi(int statusCode);
+bool APS5_VABI _ZN7WebCore32isStatusCodePotentiallyCacheableEi(int statusCode);
+WebCore::FloatRect APS5_VABI _ZN7WebCore36largestRectWithAspectRatioInsideRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
+WebCore::FloatRect APS5_VABI _ZN7WebCore37smallestRectWithAspectRatioAroundRectEfRKNS_9FloatRectE( float aspectRatio, const WebCore::FloatRect& srcRect);
+unsigned int APS5_VABI _ZN7WebCore43initializeMaximumHTTPConnectionCountPerHostEv();
+void APS5_VABI _ZN7WebCore5ColorC1EOS0_(WebCore::Color* self, WebCore::Color&& other);
+void APS5_VABI _ZN7WebCore5ColorC1ERKS0_(WebCore::Color* self, const WebCore::Color& other);
+void APS5_VABI _ZN7WebCore5ColorC2EOS0_(WebCore::Color* self, WebCore::Color&& other);
+void APS5_VABI _ZN7WebCore5ColorC2ERKS0_(WebCore::Color* self, const WebCore::Color& other);
+WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSEOS0_(WebCore::Color* self, WebCore::Color&& other);
+WebCore::Color& APS5_VABI _ZN7WebCore5ColoraSERKS0_(WebCore::Color* self, const WebCore::Color& other);
+void APS5_VABI _ZN7WebCore7IntRect5scaleEf(WebCore::IntRect* self, float s);
+void APS5_VABI _ZN7WebCore7IntRect5uniteERKS0_(WebCore::IntRect* self, const WebCore::IntRect& other);
+void APS5_VABI _ZN7WebCore7IntRect9intersectERKS0_(WebCore::IntRect* self, const WebCore::IntRect& other);
+void APS5_VABI _ZN7WebCore7IntRectC1ERKNS_10LayoutRectE(WebCore::IntRect* self, const WebCore::LayoutRect& r);
+void APS5_VABI _ZN7WebCore7IntRectC1ERKNS_9FloatRectE(WebCore::IntRect* self, const WebCore::FloatRect& r);
+void APS5_VABI _ZN7WebCore7IntRectC2ERKNS_10LayoutRectE(WebCore::IntRect* self, const WebCore::LayoutRect& r);
+void APS5_VABI _ZN7WebCore7IntRectC2ERKNS_9FloatRectE(WebCore::IntRect* self, const WebCore::FloatRect& r);
+void APS5_VABI _ZN7WebCore7IntSizeC1ERKNS_9FloatSizeE(WebCore::IntSize* self, const WebCore::FloatSize& s);
+void APS5_VABI _ZN7WebCore7IntSizeC2ERKNS_9FloatSizeE(WebCore::IntSize* self, const WebCore::FloatSize& s);
+void APS5_VABI _ZN7WebCore8IntPointC1ERKNS_10FloatPointE(WebCore::IntPoint* self, const WebCore::FloatPoint& p);
+void APS5_VABI _ZN7WebCore8IntPointC2ERKNS_10FloatPointE(WebCore::IntPoint* self, const WebCore::FloatPoint& p);
+void APS5_VABI _ZN7WebCore9FloatRect5scaleEff(WebCore::FloatRect* self, float sx, float sy);
+void APS5_VABI _ZN7WebCore9FloatRect5uniteERKS0_(WebCore::FloatRect* self, const WebCore::FloatRect& other);
+void APS5_VABI _ZN7WebCore9FloatRect6extendERKNS_10FloatPointE(WebCore::FloatRect* self, const WebCore::FloatPoint& p);
+void APS5_VABI _ZN7WebCore9FloatRect9intersectERKS0_(WebCore::FloatRect* self, const WebCore::FloatRect& other);
+void APS5_VABI _ZN7WebCore9FloatRectC1ERKNS_7IntRectE(WebCore::FloatRect* self, const WebCore::IntRect& r);
+void APS5_VABI _ZN7WebCore9FloatRectC2ERKNS_7IntRectE(WebCore::FloatRect* self, const WebCore::IntRect& r);
+WebCore::FloatPoint APS5_VABI _ZNK7WebCore10FloatPoint15matrixTransformERKNS_15AffineTransformE( const WebCore::FloatPoint* self, const WebCore::AffineTransform& t);
+WebCore::FloatPoint APS5_VABI _ZNK7WebCore10FloatPoint15matrixTransformERKNS_20TransformationMatrixE( const WebCore::FloatPoint* self, const WebCore::TransformationMatrix& t);
+WebCore::FloatPoint APS5_VABI _ZNK7WebCore10FloatPoint18constrainedBetweenERKS0_S2_( const WebCore::FloatPoint* self, const WebCore::FloatPoint& min, const WebCore::FloatPoint& max);
+bool APS5_VABI _ZNK7WebCore10LayoutRect8containsERKS0_(const WebCore::LayoutRect* self, const WebCore::LayoutRect& other);
+bool APS5_VABI _ZNK7WebCore11RoundedRect8containsERKNS_10LayoutRectE( const WebCore::RoundedRect* self, const WebCore::LayoutRect& other);
+bool APS5_VABI _ZNK7WebCore15AffineTransform10isIdentityEv(const WebCore::AffineTransform* self);
+WebCore::TransformationMatrix APS5_VABI _ZNK7WebCore15AffineTransform22toTransformationMatrixEv( const WebCore::AffineTransform* self);
+double APS5_VABI _ZNK7WebCore15AffineTransform6xScaleEv(const WebCore::AffineTransform* self);
+double APS5_VABI _ZNK7WebCore15AffineTransform6yScaleEv(const WebCore::AffineTransform* self);
+WebCore::FloatQuad APS5_VABI _ZNK7WebCore15AffineTransform7mapQuadERKNS_9FloatQuadE( const WebCore::AffineTransform* self, const WebCore::FloatQuad& q);
+WebCore::IntRect APS5_VABI _ZNK7WebCore15AffineTransform7mapRectERKNS_7IntRectE( const WebCore::AffineTransform* self, const WebCore::IntRect& r);
+WebCore::FloatRect APS5_VABI _ZNK7WebCore15AffineTransform7mapRectERKNS_9FloatRectE( const WebCore::AffineTransform* self, const WebCore::FloatRect& rect);
+WebCore::IntSize APS5_VABI _ZNK7WebCore15AffineTransform7mapSizeERKNS_7IntSizeE( const WebCore::AffineTransform* self, const WebCore::IntSize& size);
+WebCore::FloatSize APS5_VABI _ZNK7WebCore15AffineTransform7mapSizeERKNS_9FloatSizeE( const WebCore::AffineTransform* self, const WebCore::FloatSize& size);
+WebCore::FloatPoint APS5_VABI _ZNK7WebCore15AffineTransform8mapPointERKNS_10FloatPointE( const WebCore::AffineTransform* self, const WebCore::FloatPoint& point);
+WebCore::IntPoint APS5_VABI _ZNK7WebCore15AffineTransform8mapPointERKNS_8IntPointE( const WebCore::AffineTransform* self, const WebCore::IntPoint& point);
+bool APS5_VABI _ZNK7WebCore20TransformationMatrix12isInvertibleEv(const WebCore::TransformationMatrix* self);
+WebCore::AffineTransform APS5_VABI _ZNK7WebCore20TransformationMatrix17toAffineTransformEv( const WebCore::TransformationMatrix* self);
+WebCore::FloatQuad APS5_VABI _ZNK7WebCore20TransformationMatrix7mapQuadERKNS_9FloatQuadE( const WebCore::TransformationMatrix* self, const WebCore::FloatQuad& q);
+WebCore::IntRect APS5_VABI _ZNK7WebCore20TransformationMatrix7mapRectERKNS_7IntRectE( const WebCore::TransformationMatrix* self, const WebCore::IntRect& r);
+WebCore::FloatRect APS5_VABI _ZNK7WebCore20TransformationMatrix7mapRectERKNS_9FloatRectE( const WebCore::TransformationMatrix* self, const WebCore::FloatRect& r);
+WebCore::FloatPoint APS5_VABI _ZNK7WebCore20TransformationMatrix8mapPointERKNS_10FloatPointE( const WebCore::TransformationMatrix* self, const WebCore::FloatPoint& p);
+WebCore::TransformationMatrix APS5_VABI _ZNK7WebCore24MatrixTransformOperation6matrixEv( const WebCore::MatrixTransformOperation* self);
+WebCore::Color APS5_VABI _ZNK7WebCore5Color14colorWithAlphaEf(const WebCore::Color* self, float alpha);
+WebCore::Color APS5_VABI _ZNK7WebCore5Color8darkenedEv(const WebCore::Color* self);
+WebCore::Color APS5_VABI _ZNK7WebCore5Color9lightenedEv(const WebCore::Color* self);
+double APS5_VABI _ZNK7WebCore5Color9lightnessEv(const WebCore::Color* self);
+double APS5_VABI _ZNK7WebCore5Color9luminanceEv(const WebCore::Color* self);
+bool APS5_VABI _ZNK7WebCore7IntRect10intersectsERKS0_(const WebCore::IntRect* self, const WebCore::IntRect& other);
+bool APS5_VABI _ZNK7WebCore7IntRect8containsERKS0_(const WebCore::IntRect* self, const WebCore::IntRect& other);
+WebCore::IntSize APS5_VABI _ZNK7WebCore7IntSize18constrainedBetweenERKS0_S2_( const WebCore::IntSize* self, const WebCore::IntSize& min, const WebCore::IntSize& max);
+WebCore::IntPoint APS5_VABI _ZNK7WebCore8IntPoint18constrainedBetweenERKS0_S2_( const WebCore::IntPoint* self, const WebCore::IntPoint& min, const WebCore::IntPoint& max);
+WebCore::FloatRect APS5_VABI _ZNK7WebCore9FloatQuad11boundingBoxEv(const WebCore::FloatQuad* self);
+bool APS5_VABI _ZNK7WebCore9FloatQuad12containsQuadERKS0_(const WebCore::FloatQuad* self, const WebCore::FloatQuad& other);
+bool APS5_VABI _ZNK7WebCore9FloatQuad13containsPointERKNS_10FloatPointE(const WebCore::FloatQuad* self, const WebCore::FloatPoint& point);
+bool APS5_VABI _ZNK7WebCore9FloatQuad13isRectilinearEv(const WebCore::FloatQuad* self);
+bool APS5_VABI _ZNK7WebCore9FloatRect10intersectsERKS0_(const WebCore::FloatRect* self, const WebCore::FloatRect& other);
+bool APS5_VABI _ZNK7WebCore9FloatRect21inclusivelyIntersectsERKS0_(const WebCore::FloatRect* self, const WebCore::FloatRect& other);
+bool APS5_VABI _ZNK7WebCore9FloatRect8containsERKNS_10FloatPointENS0_12ContainsModeE( const WebCore::FloatRect* self, const WebCore::FloatPoint& point, std::uint32_t containsMode);
+bool APS5_VABI _ZNK7WebCore9FloatRect8containsERKS0_(const WebCore::FloatRect* self, const WebCore::FloatRect& other);
+WebCore::FloatSize APS5_VABI _ZNK7WebCore9FloatSize18constrainedBetweenERKS0_S2_( const WebCore::FloatSize* self, const WebCore::FloatSize& min, const WebCore::FloatSize& max);
+bool APS5_VABI _ZNK7WebCore9FloatSize6isZeroEv(const WebCore::FloatSize* self);
+
+}

@@ -6,7 +6,7 @@
 
 ### Unknown function info
 
-- [_sceUlobjmgrRegisterObject](../../../core/libs/prx/ulobjmgr/Export.cpp) (ulobjmgr) - parameters taken from shadPS4 (PS4): a nonzero 64-bit object, a nonzero 32-bit kind and a 32-bit id output; the meaning of the first two and the PS5 signature are unverified. The id bound of `_sceUlobjmgrUnregisterObject` (below 0x4000) and the raw `EINVAL` (22) return also come from shadPS4
+- [_sceUlobjmgrRegisterObject](../../../core/libs/prx/ulobjmgr/Export.cpp) (ulobjmgr) - parameters taken from shadPS4 (PS4): a nonzero 64-bit object, a nonzero 32-bit kind and a 32-bit id output; the meaning of the first two and the PS5 signature are unverified. The id bound of `_sceUlobjmgrUnregisterObject` (below 0x4000) and the raw `EINVAL` (22) return also come from shadPS4; returning `EFAULT` (14) for an unwritable `id` store is a host-safety fallback as console behavior for unwritable memory has not been measured
 
 ### Additional callable exports
 

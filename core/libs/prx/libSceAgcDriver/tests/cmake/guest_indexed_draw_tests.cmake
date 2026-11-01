@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_indexed_draw_tests ${LIBS_INCLUDE_DIR}/tests/GuestIndexedDraw.cpp)
+    target_include_directories(guest_indexed_draw_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_indexed_draw_tests PRIVATE libSceAgc libSceAgcDriver libc)
+    configure_windows_unwind(guest_indexed_draw_tests)
+    add_test(NAME guest_indexed_draw COMMAND guest_indexed_draw_tests)
+    if(WIN32)
+        set_tests_properties(guest_indexed_draw PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

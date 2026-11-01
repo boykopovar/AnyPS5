@@ -47,6 +47,7 @@ extern "C" std::uint64_t APS5_VABI sceKernelGetProcessTime(void) {
 extern "C" int SDLCALL SDL_InitSubSystem(Uint32) { return 0; }
 extern "C" Uint32 SDLCALL SDL_WasInit(Uint32) { return SDL_INIT_AUDIO; }
 extern "C" void SDLCALL SDL_PauseAudioDevice(SDL_AudioDeviceID, int) {}
+extern "C" SDL_AudioStatus SDLCALL SDL_GetAudioDeviceStatus(SDL_AudioDeviceID) { return SDL_AUDIO_PLAYING; }
 
 extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char*, int, const SDL_AudioSpec* desired, SDL_AudioSpec* obtained, int) {
     *obtained = *desired;
