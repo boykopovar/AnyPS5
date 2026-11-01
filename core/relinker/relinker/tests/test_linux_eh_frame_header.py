@@ -4,6 +4,8 @@ import subprocess
 import sys
 import tempfile
 
+from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
+
 PT_LOAD = 1
 PT_DYNAMIC = 2
 PT_GNU_EH_FRAME = 0x6474E550
@@ -85,10 +87,41 @@ def header_bounds(relinker, directory):
                     assert not output.exists(), (name, "output written for a truncated EH frame header")
 
 
+def duplicate_headers(relinker, directory):
+    image = fixture(5)
+    struct.pack_into("<Q", image, 24, 0x100)
+    image[0x4100:0x4106] = image[0x4000:0x4006]
+    struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, *EH_FRAME_HEADER)
+    source = Path(directory) / "duplicate.elf"
+    source.write_bytes(image)
+    module = guest_fixture(PLAIN_SITE)
+    struct.pack_into("<H", module, 56, 5)
+    for index in (3, 4):
+        struct.pack_into("<IIQQQQQQ", module, 64 + index * 56, PT_GNU_EH_FRAME, 4, 0x980, 0x2380, 0x2380, 16, 16, 4)
+    struct.pack_into("<BBBBQI", module, 0x980, 1, 0, 3, 0, 0x2390, 0)
+    for mode in ([], ["--windows"], ["--macos"]):
+        name = "duplicate-" + ("-".join(flag.lstrip("-") for flag in mode) or "linux")
+        output = Path(directory) / (name + ".out")
+        result = subprocess.run([str(relinker), "--skip-sce-module", *mode, str(source), str(output)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 2 and "Multiple PT_GNU_EH_FRAME segments" in result.stderr, (name, result.returncode, result.stdout, result.stderr)
+        assert not output.exists(), (name, "output written for two PT_GNU_EH_FRAME segments")
+        case = Path(directory) / ("guest-" + name)
+        (case / "prx").mkdir(parents=True)
+        (case / "prx" / "consumer.prx").write_bytes(module)
+        (case / "input.elf").write_bytes(main_fixture())
+        result = subprocess.run([str(relinker), *mode, str(case / "input.elf"), str(case / "output")],
+                                capture_output=True, text=True, timeout=30)
+        assert result.returncode == 2 and "consumer.prx: Duplicate EH frame segment" in result.stderr, ("guest-" + name, result.returncode, result.stdout, result.stderr)
+        assert not (case / "output").exists(), ("guest-" + name, "output written for a module with two PT_GNU_EH_FRAME segments")
+        assert not (case / "app0" / "prx" / "consumer.prx.guest.prx").exists(), ("guest-" + name, "module written with two PT_GNU_EH_FRAME segments")
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-eh-frame-") as directory:
         header_bounds(relinker, directory)
+        duplicate_headers(relinker, directory)
         for header_count in (7, 8):
             image = fixture(header_count)
             result, elf = relink(relinker, directory, "available-slots-" + str(header_count), image)

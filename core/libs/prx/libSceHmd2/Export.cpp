@@ -977,6 +977,11 @@ std::int32_t APS5_VABI Hmd2IndexZeroCheckSecondThenZero(std::uint64_t a0, const 
 }
 APS5_EXPORT("wiv8+7ogrq0", Hmd2IndexZeroCheckSecondThenZero);
 
+int APS5_VABI sceHmd2Unknown_CBkVZi9WhVo_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("CBkVZi9WhVo", sceHmd2Unknown_CBkVZi9WhVo_nid_no_patch);
+
 }
 
 extern "C" {
