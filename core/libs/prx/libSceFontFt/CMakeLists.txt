@@ -1,2 +1,15 @@
 include(${CMAKE_CURRENT_SOURCE_DIR}/FontFtLibrary.cmake)
 add_sce_font_ft_library(libSceFontFt)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_font_ft_backoff_tests ${LIBS_INCLUDE_DIR}/tests/GuestFontFtBackoff.cpp)
+    target_include_directories(guest_font_ft_backoff_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_font_ft_backoff_tests PRIVATE libSceFont libSceFontFt libc)
+    configure_windows_unwind(guest_font_ft_backoff_tests)
+    add_test(NAME guest_font_ft_backoff COMMAND guest_font_ft_backoff_tests)
+    set_tests_properties(guest_font_ft_backoff PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_font_ft_backoff PROPERTIES RUN_SERIAL TRUE ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
+    endif()
+endif()
