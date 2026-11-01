@@ -31,6 +31,8 @@ static constexpr int GuestEperm = 1;
 static constexpr int GuestEnoent = 2;
 static constexpr int GuestEbadf = 9;
 static constexpr int GuestEinval = 22;
+static constexpr int GuestEspipe = 29;
+static constexpr int GuestEopnotsupp = 45;
 static constexpr int GuestEpipe = 32;
 static constexpr int GuestEagain = 35;
 static constexpr int SetStatusFlags = 4;
@@ -1617,6 +1619,21 @@ static void StandardInput() {
     Require(close_nid_postfix(kq) == 0);
 }
 
+static void KqueueDescriptorOperations() {
+    const int kq = kqueue_nid_postfix();
+    Require(kq >= 0);
+    char byte = 0;
+    RequireFailure(static_cast<int>(read_nid_postfix(kq, &byte, 1)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 1)), GuestEopnotsupp);
+    Require(read_nid_postfix(kq, &byte, 0) == 0);
+    RequireFailure(static_cast<int>(write_nid_postfix(kq, "x", 0)), GuestEopnotsupp);
+    RequireFailure(static_cast<int>(lseek_nid_postfix(kq, 0, 0)), GuestEspipe);
+    RequireFailure(fsync_nid_postfix(kq), GuestEinval);
+    RequireFailure(fdatasync_nid_postfix(kq), GuestEinval);
+    RequireFailure(flock_nid_postfix(kq, 1), GuestEopnotsupp);
+    Require(close_nid_postfix(kq) == 0);
+}
+
 int main(int argc, char** argv) {
     if (argc == 2 && std::string(argv[1]) == "cleared-race") {
         ClearedKqueueKeepsConcurrentActivations();
@@ -1625,6 +1642,7 @@ int main(int argc, char** argv) {
     StandardInputReplacement();
     StandardInput();
     CreateAndClose();
+    KqueueDescriptorOperations();
     Timers();
     TimerReadd();
     UnsupportedFilters();
