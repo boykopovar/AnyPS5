@@ -42,10 +42,11 @@ elsewhere). `HW_ORACLE_HIP` and `HW_ORACLE_COMGR` name other DLLs. `ROCR_VISIBLE
 - Leave `v0` (lane id), `v1` (input offset), `v2` (output offset) and `s[4:7]` (input and output addresses) unchanged.
 - 4 KiB of LDS, or the group segment size `--lds` (Python `lds`) gives in bytes, up to 64 KiB. Rows run in workgroups of up to
   1024 lanes, padded to whole waves with zero rows.
-- Bytes passed as `extra` follow the rows of each dispatch, at `s[4:5] + 16 * rows`: buffer contents, texels, etc.
-  Build buffer and image descriptors in SGPRs from that address. A kernel that needs more than 4 input dwords per lane
-  takes the rest from there too, for example `v_lshlrev_b32 v40, 3, v0` / `v_add_nc_u32 v40, 16 * rows, v40` /
-  `global_load_dwordx2 v[8:9], v40, s[4:5]` for two more dwords per lane, with `rows` the padded count.
+- Bytes passed as `extra` start at `s[4:5] + 16 * extra_rows`, where `extra_rows` is the padded row count for one
+  dispatch and the dispatch capacity for multiple dispatches (1024 in wave32, 512 in wave64). Tail dispatches reserve
+  unused row slots so the address stays fixed. Build buffer and image descriptors in SGPRs from that address. A kernel
+  that needs more than 4 input dwords per lane takes the rest from there too, for example `v_lshlrev_b32 v40, 3, v0` /
+  `v_add_nc_u32 v40, 16 * extra_rows, v40` / `global_load_dwordx2 v[8:9], v40, s[4:5]`.
 
 Every run must explicitly set all floating-point controls, including runs of integer instructions. The CLI flags
 use hyphens; Python keywords use underscores. Record these settings alongside the GPU and measured results.
