@@ -220,6 +220,7 @@ int main() {
     Require(sceMsgDialogInitialize() == kErrAlreadyInitialized);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogGetResult(&result) == kErrNotFinished);
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrNotFinished);
     Require(sceMsgDialogGetResult(nullptr) == kErrArgNull);
     Require(sceMsgDialogOpen(nullptr) == kErrArgNull);
     Require(sceMsgDialogUpdateStatus() == kStatusInitialized);
@@ -243,6 +244,7 @@ int main() {
     Require(sceMsgDialogGetResult(&result) == 0);
     Require(result.result == 0);
     Require(result.button_id == kButtonIdOk);
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrArgNull);
 
     Require(sceMsgDialogTerminate() == 0);
     Require(sceMsgDialogTerminate() == kErrNotInitialized);
