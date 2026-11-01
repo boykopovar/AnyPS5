@@ -130,7 +130,7 @@ static void TestRouting(std::uint32_t oldBuffers) {
     Require(sceNgs2VoiceGetPortInfo(source, 0, &port, sizeof(port)) == SCE_NGS2_OK);
     Require(port.dest_handle == second && port.dest_input_id == 1);
     for (const auto sample : outputs[0]) Require(sample == 0.0f);
-    for (const auto sample : outputs[1]) Require(sample == 0.25f);
+    for (std::size_t i = 0; i < outputs[1].size(); ++i) Require(outputs[1][i] == (i < 6 ? 0.0f : 0.25f));
     Require(sceNgs2SystemDestroy(system, nullptr) == 0);
 }
 

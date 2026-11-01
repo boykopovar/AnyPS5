@@ -172,12 +172,4 @@ int APS5_VABI _ZNSt10filesystem10_Close_dirEPv_nid_postfix(void* handle) {
     return closedir_nid_postfix(handle);
 }
 
-void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcSt10error_code_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-void APS5_VABI _ZNSt10filesystem18_Xfilesystem_errorEPKcRKNS_4pathESt10error_code_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 }

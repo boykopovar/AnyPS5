@@ -162,6 +162,14 @@ int APS5_VABI wctob_nid_postfix(std::uint32_t c) {
     return unit < 0x80 ? static_cast<int>(unit) : -1;
 }
 
+std::uint32_t APS5_VABI _Btowc_nid_postfix(int c) {
+    return btowc_nid_postfix(c);
+}
+
+int APS5_VABI _Wctob_nid_postfix(std::uint32_t c) {
+    return wctob_nid_postfix(c);
+}
+
 std::uint64_t APS5_VABI wctrans_nid_postfix(const char* property) {
     if (std::strcmp(property, "tolower") == 0) return 1;
     if (std::strcmp(property, "toupper") == 0) return 2;

@@ -469,6 +469,7 @@ int APS5_VABI sceRtcGetCurrentClockLocalTime(RtcDateTime* time) {
     if (!time) return SCE_RTC_ERROR_INVALID_POINTER;
     RtcTick local{};
     const RtcTick utc{currentTick()};
+    if (utc.tick > MAX_TICK) return SCE_RTC_ERROR_INVALID_VALUE;
     if (const int result = addTicks(&local, &utc, localOffsetSeconds(utc.tick), TICKS_PER_SECOND); result != 0) return result;
     *time = fromTick(local.tick);
     return 0;
@@ -785,6 +786,7 @@ int APS5_VABI sceRtcFormatRFC3339PreciseLocalTime(char* date_time, const RtcTick
         utc = &now;
     }
     if (precision < 0 || precision > 6) return SCE_RTC_ERROR_INVALID_VALUE;
+    if (utc->tick > MAX_TICK && utc->tick - MAX_TICK > static_cast<std::uint64_t>(1439 * TICKS_PER_MINUTE)) return SCE_RTC_ERROR_INVALID_YEAR;
     return sceRtcFormatRFC3339Precise(date_time, utc, localOffsetMinutes(*utc), precision);
 }
 

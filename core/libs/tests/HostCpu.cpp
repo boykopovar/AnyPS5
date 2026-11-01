@@ -123,8 +123,23 @@ static void CheckError() {
     }
 }
 
+static void CheckExportedHelpers() {
+    const auto registers = ReadHostCpuRegisters_nid_no_patch();
+    const auto direct = ReadHostCpuRegisters();
+    Require(registers.Leaf1Ecx == direct.Leaf1Ecx && registers.Leaf7Ebx == direct.Leaf7Ebx && registers.Xcr0 == direct.Xcr0, "exported registers differ");
+    Require(std::string(HostCpuModel_nid_no_patch().value) == HostCpuModel(), "exported model differs");
+    auto none = Zen2();
+    Require(std::string(MissingHostCpuFeatures_nid_no_patch(&none).value).empty(), "exported missing list is not empty for a Zen 2 CPU");
+    auto lacking = Zen2();
+    lacking.Leaf7Ebx &= ~Bit(8);
+    Require(std::string(MissingHostCpuFeatures_nid_no_patch(&lacking).value) == "BMI2", "exported missing list is not BMI2");
+    lacking.Leaf7Ebx &= ~Bit(3);
+    Require(std::string(MissingHostCpuFeatures_nid_no_patch(&lacking).value) == "BMI1, BMI2", "exported missing list is not joined with a comma and a space");
+}
+
 int main() {
     try {
+        CheckExportedHelpers();
         CheckZen2();
         CheckIntelWithoutAmdOnlyExtensions();
         CheckSingleMissingExtension();
