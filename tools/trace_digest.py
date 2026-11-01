@@ -86,6 +86,8 @@ class Trace:
                     raise ValueError(f"trace event {index}: name must be a string")
                 ts = _event_number(event, "ts", index)
                 dur = _event_number(event, "dur", index)
+                if dur < 0:
+                    raise ValueError(f"trace event {index}: dur must be non-negative")
                 self.slices[tid].append([ts, dur, name, 0, False])
                 args = _event_args(event, index)
                 if "batch" in args:
@@ -382,8 +384,9 @@ def validate_interval(record):
     frames = record.get("frame_ms")
     if not isinstance(frames, dict):
         raise ValueError("frame_ms must be an object")
-    for field in ("p50", "p90", "p99", "max"):
-        interval_number(frames.get(field), f"frame_ms.{field}")
+    values = [interval_number(frames.get(field), f"frame_ms.{field}") for field in ("p50", "p90", "p99", "max")]
+    if values != sorted(values):
+        raise ValueError("frame_ms must satisfy p50 <= p90 <= p99 <= max")
     interval_number(record.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
     for field in ("worker_busy_pct", "top_phases_ms_per_frame"):
         values = record.get(field, {})
@@ -469,8 +472,12 @@ def main(arguments=None):
         parser.error(f"summary file not found: {options.summary}")
     if options.thread and options.trace.endswith(".jsonl"):
         parser.error("--thread requires an event trace, not interval summaries")
+    if options.stacks and options.trace.endswith(".jsonl"):
+        parser.error("--stacks requires an event trace, not interval summaries")
     if options.trace.endswith(".jsonl"):
         result = digest_intervals(load_intervals(options.trace))
+        if options.summary:
+            parser.error("--summary requires an event trace, not interval summaries")
         sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown_intervals(result))
         return 0
     try:

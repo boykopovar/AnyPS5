@@ -1,6 +1,8 @@
 import contextlib
 import io
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -10,6 +12,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_job_manager_reference as runner
 import test_import_audit as fixtures
+
+
+class ResolveCliPathTests(unittest.TestCase):
+    def test_symlink_loop_is_rejected_without_path_resolve(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = Path(directory) / "loop"
+            try:
+                loop.symlink_to(loop)
+            except OSError as error:
+                self.skipTest(f"Symlinks unavailable: {error}")
+            with self.assertRaises(ValueError) as error:
+                runner.resolve_cli_path(loop)
+            self.assertIn("symbolic link loop", str(error.exception))
 
 
 class DependencyStagingTests(unittest.TestCase):
@@ -76,6 +91,19 @@ class ReferenceErrorTests(unittest.TestCase):
         code, error = self.check_main(fixtures.build_elf([]))
         self.assertEqual(code, 0, error)
         self.assertEqual(error, "")
+
+    def test_an_artifact_path_outside_the_output_encoding_is_printed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            build = root / "build"
+            build.mkdir()
+            artifact = root / "вывод"
+            result = subprocess.run([sys.executable, runner.__file__, "--host", "--build", str(build), "--relinker", sys.executable,
+                                     "--toolchain", str(build), "--output", str(artifact)],
+                                    capture_output=True, encoding="utf-8", timeout=20, env={**os.environ, "PYTHONIOENCODING": "ascii"})
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn(f"Artifacts: {artifact.resolve()}", result.stdout)
+            self.assertIn("Build the job_manager_reference target first", result.stderr)
 
 
 if __name__ == "__main__":
