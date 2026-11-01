@@ -114,6 +114,35 @@ class PublicHeaderPackageTests(unittest.TestCase):
             self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)
         self.assertTrue((self.output / "prx-headers-v1.zip").is_file())
 
+    def test_digraph_include_directives_packaged_with_byte_parity(self):
+        digraph_nested = self.umbrella.with_name("DigraphNested.hpp")
+        digraph_nested.write_text('\t%: \tinclude <Common.hpp>\n%:include <vector>\n', encoding="utf-8")
+        self.api.write_text('  %:   include "DigraphNested.hpp"\n%:include <Common.hpp>\n#include "Windows.hpp"\n', encoding="utf-8")
+        expected = {"include/anyps5/" + path.relative_to(self.libs).as_posix(): path.read_bytes() for path in (self.umbrella, self.api, digraph_nested, self.umbrella.with_name("Windows.hpp"), self.libs / "Common.hpp")}
+        expected["LICENSE"] = (self.source / "LICENSE").read_bytes()
+        package_headers.package(self.source, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-headers-v1.zip") as archive:
+            self.assertEqual({name: archive.read(name) for name in archive.namelist()}, expected)
+            self.assertEqual(len(archive.namelist()), len(expected))
+        with tarfile.open(self.output / "prx-headers-v1.tar.gz") as archive:
+            self.assertEqual({name: archive.extractfile(name).read() for name in archive.getnames()}, expected)
+
+    def test_digraph_forbidden_or_missing_dependencies_preserve_existing_archives(self):
+        self.output.mkdir()
+        previous = self.output / "prx-headers-v1.zip"
+        previous.write_bytes(b"previous")
+        for directive in ('%:include "Missing.hpp"', '%: include <vendor.h>', '  %:  include "../../../3rdparty/vendor.hpp"', '%:include MACRO_HEADER', '%:include "invalid:name"', '%:include "c:\\invalid.hpp"'):
+            with self.subTest(directive=directive):
+                self.api.write_text(directive + "\n", encoding="utf-8")
+                with self.assertRaises(RuntimeError):
+                    package_headers.package(self.source, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"previous")
+
+    def test_digraph_in_comments_and_strings_do_not_add_dependencies(self):
+        self.api.write_text('// %:include "Missing.hpp"\n/*\n%:include "Missing.hpp"\n*/\nconst char* text = R"test(\n%:include "AlsoMissing.hpp"\n)test";\nconst char* str = "%:include <Missing.hpp>";\n', encoding="utf-8")
+        self.assertEqual(len(package_headers.public_headers(self.source)), 3)
+
 
 class ReleasePackageTests(unittest.TestCase):
     def setUp(self):
