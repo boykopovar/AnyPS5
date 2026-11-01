@@ -118,7 +118,7 @@ int main() {
     Require(scePthreadMutexattrInit(&attr) == SCE_OK);
     for (int type : {-1, 0, 5}) Require(scePthreadMutexattrSettype(&attr, type) == SCE_KERNEL_ERROR_EINVAL);
     for (int type : {1, 2, 3, 4}) Require(scePthreadMutexattrSettype(&attr, type) == SCE_OK);
-    for (int protocol : {-1, 3}) Require(scePthreadMutexattrSetprotocol(&attr, protocol) == SCE_KERNEL_ERROR_EINVAL);
+    for (int protocol : {-5, -2, -1, 3, 4, 10}) Require(scePthreadMutexattrSetprotocol(&attr, protocol) == SCE_KERNEL_ERROR_EINVAL);
     for (int protocol : {0, 1, 2}) Require(scePthreadMutexattrSetprotocol(&attr, protocol) == SCE_OK);
 
     PthreadMutexattr unset = nullptr;
