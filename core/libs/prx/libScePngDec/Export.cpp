@@ -141,10 +141,10 @@ std::uint32_t chunkCrc(const std::uint8_t* type, std::span<const std::uint8_t> d
     return ~crc;
 }
 
-void appendChunk(std::vector<std::uint8_t>& output, const char* type, std::span<const std::uint8_t> data) {
+void appendChunk(std::vector<std::uint8_t>& output, const char* type, std::span<const std::uint8_t> data, std::optional<std::uint32_t> knownCrc = std::nullopt) {
     const auto size = static_cast<std::uint32_t>(data.size());
     const auto* typeBytes = reinterpret_cast<const std::uint8_t*>(type);
-    const std::uint32_t crc = chunkCrc(typeBytes, data);
+    const std::uint32_t crc = knownCrc.value_or(chunkCrc(typeBytes, data));
     for (int shift = 24; shift >= 0; shift -= 8) output.push_back(static_cast<std::uint8_t>(size >> shift));
     output.insert(output.end(), typeBytes, typeBytes + 4);
     output.insert(output.end(), data.begin(), data.end());
@@ -157,6 +157,7 @@ struct Chunk {
     bool complete;
     std::span<const std::uint8_t> data;
     bool crcValid;
+    std::uint32_t crc = 0;
 
     bool is(const char* name) const {
         return std::equal(type, type + 4, name);
@@ -179,7 +180,8 @@ std::optional<Chunk> readChunk(std::span<const std::uint8_t> png, std::size_t of
     if (chunk.length <= available) chunk.data = png.subspan(offset + CHUNK_HEADER_SIZE, chunk.length);
     if (static_cast<std::uint64_t>(chunk.length) + CHUNK_CRC_SIZE <= available) {
         chunk.complete = true;
-        chunk.crcValid = readBigEndian32(&png[offset + CHUNK_HEADER_SIZE + chunk.length]) == chunkCrc(chunk.type, chunk.data);
+        chunk.crc = chunkCrc(chunk.type, chunk.data);
+        chunk.crcValid = readBigEndian32(&png[offset + CHUNK_HEADER_SIZE + chunk.length]) == chunk.crc;
     }
     return chunk;
 }
@@ -217,7 +219,7 @@ std::int32_t scanImageChunks(std::span<const std::uint8_t> png, std::size_t offs
                 result = SCE_PNG_DEC_ERROR_DECODE_ERROR;
                 break;
             }
-            if (chunk->data.size() == chunk->length) appendChunk(output, "IDAT", chunk->data);
+            if (chunk->data.size() == chunk->length) appendChunk(output, "IDAT", chunk->data, chunk->complete ? std::optional<std::uint32_t>(chunk->crc) : std::nullopt);
             if (!chunk->complete || !chunk->crcValid) {
                 result = SCE_PNG_DEC_ERROR_DECODE_ERROR;
                 break;
@@ -305,7 +307,7 @@ ChunkScan scanChunks(std::span<const std::uint8_t> png) {
                 return scan;
             }
             colorType = chunk->data[9];
-            appendChunk(scan.png, "IHDR", chunk->data);
+            appendChunk(scan.png, "IHDR", chunk->data, chunk->crc);
         } else if (chunk->is("PLTE")) {
             paletteSeen = true;
             if (*colorType == static_cast<std::uint8_t>(Decoder::Png::ColorType::Palette)) {
