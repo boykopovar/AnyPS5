@@ -102,6 +102,15 @@ void RejectProgramHeaders(Bytes bytes) {
     throw std::runtime_error("Invalid program header was accepted");
 }
 
+void RejectDynamicTags(Bytes bytes, const ProgramHeader& ph) {
+    try {
+        Relinker::ElfReader(std::move(bytes)).ReadDynamicTags(ph);
+    } catch (const Relinker::RelinkerException&) {
+        return;
+    }
+    throw std::runtime_error("Invalid dynamic tag was accepted");
+}
+
 }
 
 int main() {
@@ -358,6 +367,26 @@ int main() {
             Require(reader.TranslateVirtualAddress(0x1000) == 0x240);
             Require(reader.TranslateVirtualAddress(0x101f) == 0x25f);
             RejectAddress(Fixture(), 0x1020);
+        }},
+        {"unsupported DT_PLTREL type", [] {
+            auto bytes = Fixture();
+            Write<std::uint64_t>(bytes, 216, 0x240);
+            Write<std::uint64_t>(bytes, 224, 32);
+            Write<std::uint64_t>(bytes, 240, 20);
+            Write<std::uint64_t>(bytes, 248, 48);
+            Write<std::uint32_t>(bytes, 256, 1);
+            Write<std::uint32_t>(bytes, 260, 6);
+            Write<std::uint64_t>(bytes, 280, 0x240);
+            Write<std::uint64_t>(bytes, 288, 32);
+            Write<std::int64_t>(bytes, 0x240, 20);
+            Write<std::uint64_t>(bytes, 0x248, 1);
+            Write<std::int64_t>(bytes, 0x250, 0);
+            Write<std::uint64_t>(bytes, 0x258, 0);
+            ProgramHeader ph{};
+            ph.Type = 2;
+            ph.Offset = 0x240;
+            ph.FileSize = 32;
+            RejectDynamicTags(std::move(bytes), ph);
         }},
     };
     std::size_t failures = 0;

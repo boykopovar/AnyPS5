@@ -283,6 +283,12 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
             return tags;
         }
 
+        if (tag.Tag == 20 || tag.Tag == 0x6100002b) {
+            if (tag.Value != 7 && tag.Value != 17) {
+                throw RelinkerException("Unsupported DT_PLTREL type: " + std::to_string(tag.Value) + "; expected DT_RELA (7) or DT_REL (17)", offset);
+            }
+        }
+
         tags.push_back(tag);
         offset += 16;
     }
