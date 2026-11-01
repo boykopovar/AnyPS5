@@ -37,8 +37,30 @@ struct XmlNode {
     std::uint64_t state[3];
 };
 
+struct XmlMemAllocator;
+
+struct XmlMemAllocatorVtable {
+    void (APS5_VABI *destroy)(XmlMemAllocator* self);
+    void (APS5_VABI *deleteObject)(XmlMemAllocator* self);
+    void* (APS5_VABI *allocate)(XmlMemAllocator* self, std::size_t size, void* userData);
+    void (APS5_VABI *deallocate)(XmlMemAllocator* self, void* pointer, void* userData);
+};
+
+struct XmlMemAllocator {
+    const XmlMemAllocatorVtable* vtable;
+};
+
+struct XmlInitParameter {
+    XmlMemAllocator* allocator;
+    void* userData;
+    std::uint64_t stored[2];
+};
+
 static_assert(sizeof(XmlNodeId) == 0x18);
 static_assert(sizeof(XmlNode) == 0x40);
+static_assert(offsetof(XmlMemAllocatorVtable, allocate) == 0x10);
+static_assert(offsetof(XmlMemAllocatorVtable, deallocate) == 0x18);
+static_assert(sizeof(XmlInitParameter) == 0x20);
 
 extern "C" {
 
@@ -46,14 +68,14 @@ void APS5_VABI _ZN3sce3Xml10SimpleDataC1EPKcm(XmlSimpleData* self, const char* d
 void APS5_VABI _ZN3sce3Xml10SimpleDataC1Ev(XmlSimpleData* self);
 void APS5_VABI _ZN3sce3Xml10SimpleDataC2EPKcm(XmlSimpleData* self, const char* data, std::size_t size);
 void APS5_VABI _ZN3sce3Xml10SimpleDataC2Ev(XmlSimpleData* self);
-int APS5_VABI _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE();
-int APS5_VABI _ZN3sce3Xml11Initializer9terminateEv();
+int APS5_VABI _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(XmlHandle* self, const XmlInitParameter* parameter);
+int APS5_VABI _ZN3sce3Xml11Initializer9terminateEv(XmlHandle* self);
 void APS5_VABI _ZN3sce3Xml11InitializerC1Ev(XmlHandle* self);
 void APS5_VABI _ZN3sce3Xml11InitializerC2Ev(XmlHandle* self);
-int APS5_VABI _ZN3sce3Xml11InitializerD1Ev();
-int APS5_VABI _ZN3sce3Xml11InitializerD2Ev();
-int APS5_VABI _ZN3sce3Xml12MemAllocatorC2Ev();
-int APS5_VABI _ZN3sce3Xml12MemAllocatorD0Ev();
+void APS5_VABI _ZN3sce3Xml11InitializerD1Ev(XmlHandle* self);
+void APS5_VABI _ZN3sce3Xml11InitializerD2Ev(XmlHandle* self);
+void APS5_VABI _ZN3sce3Xml12MemAllocatorC2Ev(XmlMemAllocator* self);
+[[noreturn]] void APS5_VABI _ZN3sce3Xml12MemAllocatorD0Ev(XmlMemAllocator* self);
 void APS5_VABI _ZN3sce3Xml12MemAllocatorD1Ev(void*);
 void APS5_VABI _ZN3sce3Xml12MemAllocatorD2Ev(void*);
 int APS5_VABI _ZN3sce3Xml13AttributeList10initializeEPKNS0_11InitializerE();
