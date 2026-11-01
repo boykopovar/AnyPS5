@@ -99,7 +99,14 @@ std::filesystem::path WriteCertificateList(const std::filesystem::path& root) {
     using std::filesystem::perms;
     std::filesystem::permissions(temporary, perms::owner_read | perms::group_read | perms::others_read);
     std::error_code error;
-    if (std::filesystem::exists(target, error)) std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::add);
+    std::filesystem::rename(temporary, target, error);
+    if (!error) return target;
+    if (ReadFile(target) == bundle) {
+        std::filesystem::permissions(temporary, perms::owner_write, std::filesystem::perm_options::add);
+        std::filesystem::remove(temporary);
+        return target;
+    }
+    std::filesystem::permissions(target, perms::owner_write, std::filesystem::perm_options::add);
     std::filesystem::rename(temporary, target);
     return target;
 }
