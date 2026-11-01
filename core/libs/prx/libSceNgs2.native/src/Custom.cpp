@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "Ngs2Internal.hpp"
 
@@ -298,7 +299,7 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         if (index >= voice.customPitchShift.size() || voice.rack->customModuleIds[index] != SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) APS5_INVALID_ARG_EX;
         const auto& pitch = ParamAs<Ngs2CustomVoicePitchShiftParam>(param);
         auto& state = voice.customPitchShift[index];
-        state.ratio = std::exp2(static_cast<float>(std::clamp(pitch.cents, -1200, 1200)) / 1200.0f);
+        state.ratio = exp2f_nid_postfix(static_cast<float>(std::clamp(pitch.cents, -1200, 1200)) / 1200.0f);
         state.bypassMask = pitch.bypass_mask;
         state.changed = true;
         return;
