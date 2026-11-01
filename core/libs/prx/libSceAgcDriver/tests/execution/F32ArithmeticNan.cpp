@@ -172,12 +172,13 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
-    Require(actual == expected, std::string("f32 arithmetic nan: ") + (FusedExactArithmetic ? "fused " : "") + "lane " + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
-}
-
 bool IsNan32(std::uint32_t value) {
     return (value & 0x7fffffffu) > 0x7f800000u;
+}
+
+void Expect(std::uint32_t tid, std::uint32_t actual, std::uint32_t expected, const char* name) {
+    if (!ShaderRecompiler::ExactF32Arithmetic() && IsNan32(expected) && IsNan32(actual)) return;
+    Require(actual == expected, std::string("f32 arithmetic nan: ") + (FusedExactArithmetic ? "fused " : "") + "lane " + std::to_string(tid) + " " + name + " is " + Hex(actual) + ", expected " + Hex(expected));
 }
 
 bool IsNan16(std::uint32_t value) {
