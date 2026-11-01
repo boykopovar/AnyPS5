@@ -1,3 +1,4 @@
+#include "prx/libSceNpWebApi2/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -7,6 +8,8 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNpWebApi2/include/Firmware320Exports.hpp"
 
 // The PSN web API has no service behind it: handles can be created, but requests fail.
 static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80553402);
@@ -15,18 +18,7 @@ static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT = static_cast<int>(0x8
 static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_HANDLE = static_cast<int>(0x8055340D);
 static std::atomic<int> g_nextHandle{1};
 
-struct NpWebApi2PushContextId {
-    char value[37];
-};
-
 static_assert(sizeof(NpWebApi2PushContextId) == 37);
-
-struct NpWebApi2MemoryPoolStats {
-    size_t pool_size;
-    size_t max_inuse_size;
-    size_t current_inuse_size;
-    int32_t reserved;
-};
 
 static_assert(sizeof(NpWebApi2MemoryPoolStats) == 32);
 
@@ -217,7 +209,7 @@ int APS5_VABI sceNpWebApi2PushEventSetHandleTimeout(int libraryContextId, int ha
     return 0;
 }
 
-int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback() {
+int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback(std::int32_t userContextId, std::int32_t filterId, void* callback, void* userArg) {
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -245,7 +237,10 @@ int APS5_VABI sceNpWebApi2AddMultipartPart() {
 }
 
 int APS5_VABI sceNpWebApi2CreateMultipartRequest(int user_ctx_id, const char* api_group, const char* path, const char* method, int64_t* request_id) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)user_ctx_id;
+    if (!api_group || !path || !method) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    if (request_id) *request_id = created;
     return 0;
 }
 
@@ -280,13 +275,39 @@ int APS5_VABI sceNpWebApi2IntPushEventCreateDestPs4CtxIndFilter() {
 }
 
 int APS5_VABI sceNpWebApi2SendMultipartRequest(int64_t request_id, int part_index, void* data, uint64_t data_size, void* resp_info_option) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    (void)request_id;
+    (void)resp_info_option;
+    if (part_index <= 0 || !data || data_size == 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
 }
 
 int APS5_VABI sceNpWebApi2SetMultipartContentType() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceNpWebApi2Unknown_4N85o28Ifbk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("4N85o28Ifbk", libSceNpWebApi2Unknown_4N85o28Ifbk_nid_no_patch);
+
+int APS5_VABI libSceNpWebApi2Unknown_A9IoYzANK3M_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("A9IoYzANK3M", libSceNpWebApi2Unknown_A9IoYzANK3M_nid_no_patch);
+
+int APS5_VABI libSceNpWebApi2Unknown_lylvdXiq1UE_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("lylvdXiq1UE", libSceNpWebApi2Unknown_lylvdXiq1UE_nid_no_patch);
+
+int APS5_VABI libSceNpWebApi2Unknown_qaMcX2_plus_6ZiA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qaMcX2+6ZiA", libSceNpWebApi2Unknown_qaMcX2_plus_6ZiA_nid_no_patch);
 
 }

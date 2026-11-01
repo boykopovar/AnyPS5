@@ -1,3 +1,4 @@
+#include "prx/libSceHmd2/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceHmd/Hmd.hpp"
 #include "prx/libSceHmd2/Hmd2.hpp"
@@ -11,57 +12,7 @@
 #include <stdexcept>
 
 namespace Hmd2 {
-struct ReprojectionOutput;
-}
 
-extern "C" {
-std::int32_t APS5_VABI Hmd2WriteStateTwo(void* a0);
-std::int32_t APS5_VABI Hmd2WriteSize0x2000Align0x100(std::uint64_t* a0, std::uint64_t* a1);
-std::int32_t APS5_VABI Hmd2WriteFourConstants(void* a0);
-std::int32_t APS5_VABI Hmd2WriteSixHalvesThenInvalidHandle(std::uint64_t a0, void* a1);
-std::int32_t APS5_VABI Hmd2WriteTwelveHalvesThenInvalidHandle(std::uint64_t a0, void* a1);
-std::int32_t APS5_VABI Hmd2SlotUpTo3CheckSecondThirdThenZero(std::uint64_t a0, const void* a1, const void* a2);
-std::int32_t APS5_VABI Hmd2SlotUpTo1ThenError1002(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo1CheckSecondThenError1002(std::uint64_t a0, const void* a1);
-std::int32_t APS5_VABI Hmd2SlotUpTo1ThenMinusOne(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo2ThenMinusOne(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo2ThenError1002(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo2ThenError1003(std::uint64_t a0);
-std::int32_t APS5_VABI Hmd2SlotUpTo2CheckSecondThenError002C(std::uint64_t a0, const void* a1);
-std::int32_t APS5_VABI Hmd2IndexZeroCheckSecondThenZero(std::uint64_t a0, const void* a1);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError0004(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenZero(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError1002(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenMinusOne(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstTwoThenParameterInvalid(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckSecondThenError002C(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenParameterInvalid(const void*);
-std::int32_t APS5_VABI Hmd2CheckAllSixThenZero(const void*, const void*, const void*, const void*, const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckSecondThenParameterInvalid(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError800d0203(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError1003(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstThenError1010(const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstTwoThenError1002(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstTwoThenError1003(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstAndThirdThenZero(const void*, const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckFirstAndThirdThenError1003(const void*, const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckSecondThenInvalidHandle(const void*, const void*);
-std::int32_t APS5_VABI Hmd2CheckSecondThenError1002(const void*, const void*);
-std::int32_t APS5_VABI Hmd2BeforeInitializeZero();
-std::int32_t APS5_VABI Hmd2BeforeInitializeNotInitialized();
-std::int32_t APS5_VABI Hmd2BeforeInitializeError0004();
-std::int32_t APS5_VABI Hmd2BeforeInitializeParameterNull();
-std::int32_t APS5_VABI Hmd2BeforeInitializeParameterInvalid();
-std::int32_t APS5_VABI Hmd2BeforeInitializeReprojectionNotInitialized();
-std::int32_t APS5_VABI Hmd2BeforeInitializeError002C();
-std::int32_t APS5_VABI Hmd2BeforeInitializeError1002();
-std::int32_t APS5_VABI Hmd2BeforeInitializeError1003();
-std::int32_t APS5_VABI Hmd2BeforeInitializeMinusOne();
-std::int32_t APS5_VABI Hmd2BeforeInitializeValue0400();
-std::int32_t APS5_VABI Hmd2BeforeInitializeValue20000();
-int APS5_VABI sceHmd2GazeActivateGazeTracking(std::int32_t mode);
-int APS5_VABI sceHmd2ReprojectionGetCurrentOutput(Hmd2::ReprojectionOutput* output);
-int APS5_VABI sceHmd2SetFieldOfView(const Hmd2::FieldOfView* fieldOfView);
 }
 
 namespace {
@@ -72,6 +23,28 @@ void Require(bool condition, const char* message) {
     if (!condition) {
         std::fprintf(stderr, "HMD2: %s\n", message);
         std::abort();
+    }
+}
+
+void TestCallsWithoutReprojectionSession() {
+    std::array<std::uint8_t, 64> memory;
+    memory.fill(0xaa);
+    const auto untouched = memory;
+    const Hmd2::MirroringParameter mirroring{memory.data(), memory.data() + 32};
+    Require(sceHmd2ReprojectionEnableMirroring(nullptr) == Hmd2::ReprojectionNotInitialized, "mirroring with a null parameter without a reprojection session");
+    Require(sceHmd2ReprojectionEnableMirroring(&mirroring) == Hmd2::ReprojectionNotInitialized, "mirroring without a reprojection session");
+    Require(memory == untouched, "mirroring memory was written without a reprojection session");
+    constexpr std::array<std::uint64_t, 4> frameIds{0, 1, 0x123456789, ~0ull};
+    for (const std::uint64_t frameId : frameIds) {
+        std::uint64_t time = 0xaaaaaaaaaaaaaaaa;
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ReprojectionNotInitialized, "predicted display time into a null output without a reprojection session");
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, &time) == Hmd2::ReprojectionNotInitialized, "predicted display time without a reprojection session");
+        Require(time == 0xaaaaaaaaaaaaaaaa, "predicted display time was written without a reprojection session");
+    }
+    constexpr std::array<std::uint64_t, 5> flags{0, 1, 1ull << 32, 2, ~0ull};
+    for (const std::uint64_t flag : flags) {
+        Require(sceHmd2ReprojectionSetRenderConfig(flag, 0, 0) == Hmd2::ReprojectionNotInitialized, "render config without a reprojection session");
+        Require(sceHmd2ReprojectionSetRenderConfig(flag, 1, 1) == Hmd2::ReprojectionNotInitialized, "render config with nonzero reserved arguments without a reprojection session");
     }
 }
 
@@ -187,6 +160,7 @@ void TestBeforeInitialize() {
     Require(Hmd2BeforeInitializeValue0400() == 0x400, "Hmd2BeforeInitializeValue0400 before initialization");
     Require(Hmd2BeforeInitializeValue20000() == 0x20000, "Hmd2BeforeInitializeValue20000 before initialization");
     Require(sceHmd2SetVibration(0, 0) == 0, "vibration of the unopened handle 0 failed");
+    TestCallsWithoutReprojectionSession();
 }
 
 void TestWithoutHeadset() {
@@ -286,6 +260,7 @@ void TestWithoutHeadset() {
     Require(Hmd2BeforeInitializeMinusOne() == -1, "Hmd2BeforeInitializeMinusOne after the failed initialization");
     Require(Hmd2BeforeInitializeValue0400() == 0x400, "Hmd2BeforeInitializeValue0400 after the failed initialization");
     Require(Hmd2BeforeInitializeValue20000() == 0x20000, "Hmd2BeforeInitializeValue20000 after the failed initialization");
+    TestCallsWithoutReprojectionSession();
 }
 
 }

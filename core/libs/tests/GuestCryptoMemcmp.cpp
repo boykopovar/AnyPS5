@@ -1,3 +1,4 @@
+#include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstddef>
@@ -12,8 +13,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-extern "C" int APS5_VABI CRYPTO_memcmp_nid_postfix(const void*, const void*, std::size_t);
 
 namespace {
 

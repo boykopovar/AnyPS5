@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(vector_constant_factor_tininess_tests ${LIBS_INCLUDE_DIR}/tests/VectorConstantFactorTininess.cpp)
+    target_link_libraries(vector_constant_factor_tininess_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(vector_constant_factor_tininess_tests)
+    add_test(NAME vector_constant_factor_tininess COMMAND vector_constant_factor_tininess_tests)
+    if(WIN32)
+        set_tests_properties(vector_constant_factor_tininess PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

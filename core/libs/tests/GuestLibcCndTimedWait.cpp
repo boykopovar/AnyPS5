@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <chrono>
@@ -13,23 +14,6 @@
 #endif
 #include <windows.h>
 #endif
-
-struct Xtime {
-    std::int64_t sec;
-    std::int64_t nsec;
-};
-
-extern "C" {
-int APS5_VABI _Mtx_init_nid_postfix(void** handle, int type);
-void APS5_VABI _Mtx_destroy_nid_postfix(void** handle);
-int APS5_VABI _Mtx_lock_nid_postfix(void** handle);
-int APS5_VABI _Mtx_unlock_nid_postfix(void** handle);
-int APS5_VABI _Cnd_init_nid_postfix(void** handle);
-void APS5_VABI _Cnd_destroy_nid_postfix(void** handle);
-int APS5_VABI _Cnd_wait_nid_postfix(void** condition, void** mutex);
-int APS5_VABI _Cnd_broadcast_nid_postfix(void** handle);
-int APS5_VABI _Cnd_timedwait_nid_postfix(void** condition, void** mutex, const Xtime* target);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -181,4 +165,5 @@ int main() {
     RequireThrows<std::overflow_error>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, &overflowSecTime); });
     _Cnd_destroy_nid_postfix(&condition);
     _Mtx_destroy_nid_postfix(&mutex);
+
 }

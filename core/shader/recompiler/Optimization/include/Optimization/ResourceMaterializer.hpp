@@ -21,6 +21,7 @@ struct ImageTableElement {
     DescriptorBindingKind kind = DescriptorBindingKind::Buffers;
     std::uint32_t samplers = 0;
     bool atomic = false;
+    bool atomic64 = false;
 };
 
 struct ImageTableSamplerElement {

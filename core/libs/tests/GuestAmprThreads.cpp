@@ -1,3 +1,7 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceAmpr/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -16,11 +20,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
-
-struct GuestXtime {
-    std::int64_t sec;
-    std::int64_t nsec;
-};
 
 struct PadTarget {
     std::atomic<int>* order;
@@ -43,44 +42,14 @@ struct GuestSystemError {
     const void* category;
 };
 
-using GuestTerminate = void (APS5_VABI*)();
-
-struct TestPad {
-    unsigned (APS5_VABI* const* vtable)(TestPad*);
-    void* condition;
-    void* mutex;
-    bool started;
+struct TestPad : GuestPad {
     PadTarget target;
 };
 
+using GuestTerminate = void (APS5_VABI*)();
+
 extern "C" {
-void APS5_VABI _ZNSt4_PadC2Ev_nid_postfix(TestPad* pad);
-void APS5_VABI _ZNSt4_PadD2Ev_nid_postfix(TestPad* pad);
-void APS5_VABI _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(TestPad* pad, Pthread* thread);
-void APS5_VABI _ZNSt4_Pad8_ReleaseEv_nid_postfix(TestPad* pad);
-int APS5_VABI _Thrd_join_nid_postfix(Pthread thread, int* code);
-int APS5_VABI _Thrd_sleep_nid_postfix(const GuestXtime* target, GuestXtime* remaining);
-void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void);
-void APS5_VABI _Unlock_shared_ptr_spin_lock_nid_postfix(void);
-int APS5_VABI sceAmprWcstombsS(std::size_t* result, char* destination, std::size_t capacity, const std::uint16_t* source, std::size_t limit);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI pthread_detach_nid_postfix(Pthread thread);
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* tp);
-int APS5_VABI _Cnd_signal_nid_postfix(void** handle);
-int APS5_VABI _Cnd_init_with_name_nid_postfix(void** handle, const char* name);
-int APS5_VABI _Cnd_init_nid_postfix(void** handle);
-void APS5_VABI _Cnd_destroy_nid_postfix(void** handle);
-int APS5_VABI _Cnd_wait_nid_postfix(void** condition, void** mutex);
-int APS5_VABI _Cnd_broadcast_nid_postfix(void** handle);
-int APS5_VABI _Mtx_init_nid_postfix(void** handle, int type);
-void APS5_VABI _Mtx_destroy_nid_postfix(void** handle);
-int APS5_VABI _Mtx_lock_nid_postfix(void** handle);
-int APS5_VABI _Mtx_unlock_nid_postfix(void** handle);
-GuestTerminate APS5_VABI _ZSt13set_terminatePFvvE_nid_postfix(GuestTerminate handler);
-const GuestTypeInfo* APS5_VABI __cxa_current_exception_type_nid_postfix();
-void* APS5_VABI __cxa_current_primary_exception_nid_postfix();
-LibcException::Header* APS5_VABI __cxa_init_primary_exception_nid_postfix(void* object, std::type_info* type, void (*destructor)(void*));
-[[noreturn]] void APS5_VABI __cxa_call_unexpected_nid_postfix(void* unwindException);
+
 extern const unsigned char _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix[];
 }
 
@@ -107,7 +76,7 @@ static std::int64_t RealtimeNanos() {
     return now.tv_sec * NanosPerSecond + now.tv_nsec;
 }
 
-static GuestXtime XtimeAfter(std::int64_t nanos) {
+static Xtime XtimeAfter(std::int64_t nanos) {
     const auto target = RealtimeNanos() + nanos;
     return {target / NanosPerSecond, target % NanosPerSecond};
 }
@@ -135,10 +104,12 @@ static void* APS5_VABI SpinWorker(void* arg) {
     auto& context = *static_cast<SpinContext*>(arg);
     for (int iteration = 0; iteration < SpinIterations; ++iteration) {
         _Lock_shared_ptr_spin_lock_nid_postfix();
+
         if (context.inside.fetch_add(1) != 0) context.overlapped = true;
         ++context.counter;
         context.inside.fetch_sub(1);
         _Unlock_shared_ptr_spin_lock_nid_postfix();
+
     }
     return nullptr;
 }
@@ -181,12 +152,12 @@ static void TestThreadSleep() {
     Require(RealtimeNanos() - before < NanosPerSecond / 2);
 
     const auto carried = XtimeAfter(30000000);
-    const GuestXtime unnormalized{carried.sec - 2, carried.nsec + 2 * NanosPerSecond};
+    const Xtime unnormalized{carried.sec - 2, carried.nsec + 2 * NanosPerSecond};
     Require(_Thrd_sleep_nid_postfix(&unnormalized, nullptr) == 0);
     Require(RealtimeNanos() >= carried.sec * NanosPerSecond + carried.nsec);
 
     const auto borrowed = XtimeAfter(20000000);
-    const GuestXtime negative{borrowed.sec + 1, borrowed.nsec - NanosPerSecond};
+    const Xtime negative{borrowed.sec + 1, borrowed.nsec - NanosPerSecond};
     Require(_Thrd_sleep_nid_postfix(&negative, nullptr) == 0);
     Require(RealtimeNanos() >= borrowed.sec * NanosPerSecond + borrowed.nsec);
 
@@ -210,6 +181,7 @@ static void TestThreadSleep() {
     bool rejected = false;
     try {
         _Thrd_sleep_nid_postfix(nullptr, nullptr);
+
     } catch (const std::invalid_argument&) {
         rejected = true;
     }
@@ -225,6 +197,7 @@ static void TestSpinLock() {
     Require(context.counter == SpinThreads * SpinIterations);
     _Lock_shared_ptr_spin_lock_nid_postfix();
     _Unlock_shared_ptr_spin_lock_nid_postfix();
+
 }
 
 static void TestWcstombs() {
@@ -367,6 +340,7 @@ static void TestConditionSignal() {
     RequireThrows<std::invalid_argument>([&] { _Cnd_signal_nid_postfix(&context.mutex); });
     RequireThrows<std::invalid_argument>([] { _Cnd_init_with_name_nid_postfix(nullptr, "AmprSignal"); });
     _Cnd_destroy_nid_postfix(&context.condition);
+
     Require(context.condition == nullptr);
     RequireThrows<std::invalid_argument>([&] { _Cnd_signal_nid_postfix(&context.condition); });
 
@@ -374,24 +348,28 @@ static void TestConditionSignal() {
     Require(_Cnd_init_with_name_nid_postfix(&unnamed, nullptr) == ThrdSuccess && unnamed != nullptr);
     Require(_Cnd_signal_nid_postfix(&unnamed) == ThrdSuccess);
     _Cnd_destroy_nid_postfix(&unnamed);
+
     void* plain = nullptr;
     Require(_Cnd_init_nid_postfix(&plain) == ThrdSuccess);
     Require(_Cnd_signal_nid_postfix(&plain) == ThrdSuccess);
     _Cnd_destroy_nid_postfix(&plain);
     _Mtx_destroy_nid_postfix(&context.mutex);
+
 }
 
-static unsigned APS5_VABI PadGo(TestPad* pad) {
+static unsigned APS5_VABI PadGo(GuestPad* base) {
+    auto* pad = static_cast<TestPad*>(base);
     const auto local = pad->target;
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     local.order->store(local.beforeRelease);
     _ZNSt4_Pad8_ReleaseEv_nid_postfix(pad);
+
     while (!local.destroyed->load()) std::this_thread::yield();
     local.order->store(local.afterRelease);
     return local.exitCode;
 }
 
-static constexpr std::array<unsigned (APS5_VABI*)(TestPad*), 1> PadVtable{PadGo};
+static constexpr std::array<unsigned (APS5_VABI*)(GuestPad*), 1> PadVtable{PadGo};
 
 template <typename TException, typename TCall>
 static bool Throws(TCall call) {
@@ -407,6 +385,7 @@ static void ConstructPad(TestPad& pad, std::atomic<int>& order, std::atomic<bool
     std::memset(&pad, 0xCD, sizeof(pad));
     pad.vtable = PadVtable.data();
     _ZNSt4_PadC2Ev_nid_postfix(&pad);
+
     Require(pad.vtable == PadVtable.data());
     Require(pad.condition && pad.mutex && !pad.started);
     pad.target = {&order, &destroyed, 2 * index + 1, 2 * index + 2, exitCode};
@@ -418,11 +397,13 @@ static void TestPadLaunch() {
     TestPad pad;
     ConstructPad(pad, order, destroyed, 0, 0);
     Pthread thread = nullptr;
-    _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(&pad, &thread);
+    _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(&pad, reinterpret_cast<void**>(&thread));
+
     Require(thread != nullptr);
     Require(pad.started);
     Require(order.load() == 1);
     _ZNSt4_PadD2Ev_nid_postfix(&pad);
+
     Require(!pad.condition && !pad.mutex);
     Require(order.load() == 1);
     destroyed = true;
@@ -440,9 +421,11 @@ static void TestPadLaunchMany() {
     std::array<Pthread, Count> threads{};
     for (int index = 0; index < Count; ++index) {
         ConstructPad(pads[index], orders[index], destroyed, index, 100u + index);
-        _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(&pads[index], &threads[index]);
+        _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(&pads[index], reinterpret_cast<void**>(&threads[index]));
+
         Require(orders[index].load() == 2 * index + 1);
         _ZNSt4_PadD2Ev_nid_postfix(&pads[index]);
+
     }
     destroyed = true;
     for (int index = 0; index < Count; ++index) {
@@ -453,10 +436,12 @@ static void TestPadLaunchMany() {
     }
 }
 
-static unsigned APS5_VABI PadGoImmediate(TestPad* pad) {
+static unsigned APS5_VABI PadGoImmediate(GuestPad* base) {
+    auto* pad = static_cast<TestPad*>(base);
     const auto local = pad->target;
     local.order->store(local.beforeRelease);
     _ZNSt4_Pad8_ReleaseEv_nid_postfix(pad);
+
     while (!local.destroyed->load()) std::this_thread::yield();
     local.order->store(local.afterRelease);
     return local.exitCode;
@@ -464,7 +449,7 @@ static unsigned APS5_VABI PadGoImmediate(TestPad* pad) {
 
 static void TestPadConcurrentLaunch() {
     constexpr int Count = 4;
-    constexpr std::array<unsigned (APS5_VABI*)(TestPad*), 1> immediateVtable{PadGoImmediate};
+    constexpr std::array<unsigned (APS5_VABI*)(GuestPad*), 1> immediateVtable{PadGoImmediate};
     std::atomic<int> ready{0};
     std::array<std::thread, Count> parents;
     for (int index = 0; index < Count; ++index) {
@@ -477,9 +462,11 @@ static void TestPadConcurrentLaunch() {
             ready.fetch_add(1);
             while (ready.load() != Count) std::this_thread::yield();
             Pthread thread = nullptr;
-            _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(&pad, &thread);
+            _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(&pad, reinterpret_cast<void**>(&thread));
+
             Require(thread != nullptr && pad.started && order.load() == 2 * index + 1);
             _ZNSt4_PadD2Ev_nid_postfix(&pad);
+
             std::memset(&pad, 0xcd, sizeof(pad));
             destroyed = true;
             int code = 0;
@@ -506,7 +493,7 @@ static void* APS5_VABI DestroyPad(void* arg) {
 static void APS5_VABI ExitWithSystemErrorCode() {
     const auto* type = __cxa_current_exception_type_nid_postfix();
     const auto* error = static_cast<const GuestSystemError*>(__cxa_current_primary_exception_nid_postfix());
-    _exit(type && error && std::strcmp(type->name, "St12system_error") == 0 ? error->code : 1);
+    _exit(type && error && std::strcmp(type->name(), "St12system_error") == 0 ? error->code : 1);
 }
 
 template <typename TCall>
@@ -515,6 +502,7 @@ static int TerminateExitCode(GuestTerminate handler, TCall call) {
     Require(child >= 0);
     if (child == 0) {
         _ZSt13set_terminatePFvvE_nid_postfix(handler);
+
         call();
         _exit(2);
     }
@@ -527,7 +515,7 @@ static const GuestTypeInfo UnexpectedType{_ZTVN10__cxxabiv117__class_type_infoE_
 
 static void APS5_VABI ExitWithCaughtType() {
     const auto* type = __cxa_current_exception_type_nid_postfix();
-    _exit(type == &UnexpectedType ? 42 : type == nullptr ? 43 : 1);
+    _exit(type == reinterpret_cast<const std::type_info*>(&UnexpectedType) ? 42 : type == nullptr ? 43 : 1);
 }
 
 static void TestCallUnexpected() {
@@ -536,6 +524,7 @@ static void TestCallUnexpected() {
         auto* type = reinterpret_cast<std::type_info*>(const_cast<GuestTypeInfo*>(&UnexpectedType));
         LibcException::Header* header = __cxa_init_primary_exception_nid_postfix(object, type, nullptr);
         __cxa_call_unexpected_nid_postfix(&header->unwind);
+
     }) == 42);
     Require(TerminateExitCode(ExitWithCaughtType, [] { __cxa_call_unexpected_nid_postfix(nullptr); }) == 43);
 }
@@ -546,7 +535,7 @@ static void TestPadErrors() {
     Require(Throws<std::invalid_argument>([] { _ZNSt4_PadD2Ev_nid_postfix(nullptr); }));
     Require(Throws<std::invalid_argument>([] { _ZNSt4_Pad8_ReleaseEv_nid_postfix(nullptr); }));
     Pthread thread = nullptr;
-    Require(Throws<std::invalid_argument>([&] { _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(nullptr, &thread); }));
+    Require(Throws<std::invalid_argument>([&] { _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(nullptr, reinterpret_cast<void**>(&thread)); }));
 
     std::atomic<int> order{0};
     std::atomic<bool> destroyed{true};
@@ -564,6 +553,7 @@ static void TestPadErrors() {
     Require(context.rejected);
     Require(pad.condition && pad.mutex);
     _ZNSt4_PadD2Ev_nid_postfix(&pad);
+
     Require(!pad.condition && !pad.mutex);
     Require(Throws<std::invalid_argument>([&] { _ZNSt4_PadD2Ev_nid_postfix(&pad); }));
 }

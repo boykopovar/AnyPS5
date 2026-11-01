@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -8,19 +9,8 @@
 #include <fstream>
 #include <string>
 
-using GuestContextCompare = int (APS5_VABI*)(const void*, const void*, void*);
-
 extern "C" {
-void* APS5_VABI set_constraint_handler_s_nid_postfix(void*);
-void* APS5_VABI bsearch_s_nid_postfix(const void*, const void*, std::size_t, std::size_t, GuestContextCompare, void*);
-std::uint16_t* APS5_VABI wcstok_s_nid_postfix(std::uint16_t*, std::size_t*, const std::uint16_t*, std::uint16_t**);
-int APS5_VABI wctomb_s_nid_postfix(int*, char*, std::size_t, std::uint16_t);
-int APS5_VABI wcrtomb_s_nid_postfix(std::size_t*, char*, std::size_t, std::uint16_t, void*);
-int APS5_VABI mbstowcs_s_nid_postfix(std::size_t*, std::uint16_t*, std::size_t, const char*, std::size_t);
-int APS5_VABI mbsrtowcs_s_nid_postfix(std::size_t*, std::uint16_t*, std::size_t, const char**, std::size_t, void*);
-char* APS5_VABI gets_s_nid_postfix(char*, std::size_t);
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
+
 extern FileStream* __stdinp_nid_postfix;
 }
 
@@ -89,6 +79,27 @@ void CheckBsearch() {
     RequireViolation(before, "bsearch_s: bad argument", 22);
     before = constraintCalls;
     Require(bsearch_s_nid_postfix(&key, values, 0, tooLarge, CompareInts, &calls) == nullptr, "bsearch_s accepted an oversized element");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
+    struct ZeroStrideCase { std::size_t count; int lessCalls; int greaterCalls; };
+    const ZeroStrideCase zeroStrideCases[] = {{0, 0, 0}, {1, 1, 1}, {2, 2, 1}, {3, 2, 2}, {4, 3, 2}, {7, 3, 3}, {8, 4, 3}, {15, 4, 4}, {16, 5, 4}, {1023, 10, 10}, {1024, 11, 10}, {tooLarge - 1, 61, 61}};
+    for (const auto& entry : zeroStrideCases) for (const int zeroKey : {0, 1, 2}) {
+        before = constraintCalls;
+        calls = 0;
+        *__error_nid_postfix() = 97;
+        void* result = bsearch_s_nid_postfix(&zeroKey, values, entry.count, 0, CompareInts, &calls);
+        const void* expected = entry.count != 0 && zeroKey == 1 ? values : nullptr;
+        const int expectedCalls = zeroKey == 0 ? entry.lessCalls : zeroKey == 2 ? entry.greaterCalls : entry.count != 0;
+        Require(result == expected && calls == expectedCalls, "bsearch_s zero stride result or comparison count");
+        Require(constraintCalls == before && *__error_nid_postfix() == 97, "bsearch_s zero stride invoked a constraint or changed errno");
+    }
+    before = constraintCalls;
+    calls = 0;
+    Require(bsearch_s_nid_postfix(&key, values, tooLarge, 0, CompareInts, &calls) == nullptr && calls == 0, "bsearch_s searched an oversized count");
+    RequireViolation(before, "bsearch_s: bad argument", 22);
+    calls = 0;
+    Require(bsearch_s_nid_postfix(&values[0], values, 1, tooLarge - 1, CompareInts, &calls) == values && calls == 1, "bsearch_s rejected an RSIZE_MAX element size");
+    before = constraintCalls;
+    Require(bsearch_s_nid_postfix(nullptr, values, 7, 0, CompareInts, &calls) == nullptr, "bsearch_s zero stride accepted a null key");
     RequireViolation(before, "bsearch_s: bad argument", 22);
 }
 
@@ -238,6 +249,7 @@ void CheckGets(const char* path) {
     RequireViolation(before, "gets_s: bad argument", 22);
     __stdinp_nid_postfix = saved;
     fclose_nid_postfix(stream);
+
     std::remove(path);
 }
 
@@ -246,6 +258,7 @@ void CheckGets(const char* path) {
 int main(int argc, char** argv) {
     Require(argc > 1, "usage: guest_bounds_checking_tests <scratch file>");
     set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(RecordConstraint));
+
     CheckBsearch();
     CheckWcstok();
     CheckWideToMultibyte();

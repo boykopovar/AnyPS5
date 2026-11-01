@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/State/include/Configuration.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
@@ -34,8 +35,11 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-extern "C" int APS5_VABI sceAgcDriverSetTFRing(const volatile void* base, std::uint32_t size);
+#ifdef __linux__
+#include "prx/libc/include/specifics/linux/HostMapping.hpp"
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -143,11 +147,33 @@ bool committedWritable(std::uint64_t address, std::uint64_t bytes) {
         at = reinterpret_cast<std::uintptr_t>(info.BaseAddress) + info.RegionSize;
     }
     return true;
+#elif defined(__linux__)
+    auto cursor = address;
+    HostMapping::Walk(address, address + bytes, "frame replay", [&](const HostMapping::Mapping& mapping) {
+        if (mapping.start > cursor || !mapping.readable || !mapping.writable) return;
+        cursor = std::max(cursor, mapping.end);
+    });
+    return cursor >= address + bytes;
 #else
     static_cast<void>(address);
     static_cast<void>(bytes);
     return false;
 #endif
+}
+
+void commit(const FrameMemoryChunk& chunk) {
+    auto* const pointer = reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address));
+    const auto bytes = static_cast<std::size_t>(chunk.bytes);
+#ifdef __linux__
+    const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
+    const auto begin = chunk.address & ~(page - 1);
+    const auto end = (chunk.address + chunk.bytes + page - 1) & ~(page - 1);
+    if (begin != chunk.address || end != chunk.address + chunk.bytes) {
+        GuestArena::GuestArenaSetProtection_nid_postfix(static_cast<std::uintptr_t>(begin), static_cast<std::size_t>(end - begin), 0x04);
+        return;
+    }
+#endif
+    GuestArena::GuestArenaCommit_nid_postfix(pointer, bytes, 0x04, bytes);
 }
 
 std::pair<std::uint64_t, std::uint64_t> progress();
@@ -190,6 +216,31 @@ void mapHostRanges(const FrameCaptureReader& reader, Skipped& skipped) {
         if ((chunk->access & FrameRangeAccess::Gpu) != 0) throw std::runtime_error("frame replay: cannot map the GPU-visible host range at " + std::to_string(chunk->address));
         skipped.Add(*chunk);
     }
+#elif defined(__linux__)
+    const auto page = static_cast<std::uint64_t>(sysconf(_SC_PAGESIZE));
+    std::sort(host.begin(), host.end(), [](const auto* left, const auto* right) { return left->address < right->address; });
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> envelopes;
+    for (const auto* chunk : host) {
+        const auto begin = chunk->address & ~(page - 1);
+        const auto end = (chunk->address + chunk->bytes + page - 1) & ~(page - 1);
+        if (!envelopes.empty() && begin < envelopes.back().second) envelopes.back().second = std::max(envelopes.back().second, end);
+        else envelopes.emplace_back(begin, end);
+    }
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> refused;
+    for (const auto& [begin, end] : envelopes) {
+        auto* const wanted = reinterpret_cast<void*>(static_cast<std::uintptr_t>(begin));
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        void* const placed = mmap(wanted, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+        if (placed == wanted) continue;
+        if (placed != MAP_FAILED) munmap(placed, bytes);
+        refused.emplace_back(begin, end);
+    }
+    for (const auto* chunk : host) {
+        const bool blocked = std::any_of(refused.begin(), refused.end(), [&](const auto& range) { return chunk->address < range.second && range.first < chunk->address + chunk->bytes; });
+        if (!blocked) continue;
+        if ((chunk->access & FrameRangeAccess::Gpu) != 0) throw std::runtime_error("frame replay: cannot map the GPU-visible host range at " + std::to_string(chunk->address));
+        skipped.Add(*chunk);
+    }
 #else
     for (const auto* chunk : host) skipped.Add(*chunk);
 #endif
@@ -203,12 +254,15 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
     progress();
     Skipped skipped;
     mapHostRanges(reader, skipped);
+    std::vector<bool> owned;
+    for (const auto& chunk : reader.Chunks()) owned.push_back(chunk.kind == FrameMemoryKind::Range && chunk.rangeKind != FrameRangeKind::Host && committedWritable(chunk.address, chunk.bytes));
     {
         GuestAllocations::Mutation mutation;
-        for (const auto& chunk : reader.Chunks()) {
+        for (std::size_t index = 0; index < reader.Chunks().size(); ++index) {
+            const auto& chunk = reader.Chunks()[index];
             if (chunk.kind != FrameMemoryKind::Range || chunk.rangeKind == FrameRangeKind::Host) continue;
             const bool gpu = (chunk.access & FrameRangeAccess::Gpu) != 0;
-            if (committedWritable(chunk.address, chunk.bytes)) {
+            if (owned[index]) {
                 if (!gpu) skipped.Add(chunk);
                 else std::memset(reinterpret_cast<void*>(static_cast<std::uintptr_t>(chunk.address)), 0, static_cast<std::size_t>(chunk.bytes));
                 continue;
@@ -222,7 +276,7 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
                 skipped.Add(chunk);
                 continue;
             }
-            GuestArena::GuestArenaCommit_nid_postfix(pointer, bytes, 0x04, bytes);
+            commit(chunk);
             mutation.Add(pointer, bytes, (chunk.access & FrameRangeAccess::Readable) != 0, (chunk.access & FrameRangeAccess::Writable) != 0, gpu);
         }
     }

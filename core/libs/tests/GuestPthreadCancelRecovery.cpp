@@ -1,3 +1,8 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "prx/libkernel/Pthread/include/Cond.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include <array>
@@ -16,46 +21,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-extern "C" {
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI scePthreadCancel(Pthread thread);
-int APS5_VABI scePthreadSetcancelstate(int state, int* oldState);
-int APS5_VABI scePthreadSetcanceltype(int type, int* oldType);
-void APS5_VABI scePthreadTestcancel();
-int APS5_VABI scePthreadKeyCreate(PthreadKey* key, pthread_key_destructor_func_t destructor);
-int APS5_VABI scePthreadKeyDelete(PthreadKey key);
-int APS5_VABI scePthreadSetspecific(PthreadKey key, void* value);
-int APS5_VABI scePthreadMutexInit(PthreadMutex* mutex, const PthreadMutexattr* attr, const char* name);
-int APS5_VABI scePthreadMutexattrInit(PthreadMutexattr* attr);
-int APS5_VABI scePthreadMutexattrDestroy(PthreadMutexattr* attr);
-int APS5_VABI scePthreadMutexattrSettype(PthreadMutexattr* attr, int type);
-int APS5_VABI scePthreadMutexDestroy(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexLock(PthreadMutex* mutex);
-int APS5_VABI scePthreadMutexUnlock(PthreadMutex* mutex);
-int APS5_VABI scePthreadCondInit(PthreadCond* cond, const PthreadCondattr* attr, const char* name);
-int APS5_VABI scePthreadCondDestroy(PthreadCond* cond);
-int APS5_VABI scePthreadCondSignal(PthreadCond* cond);
-int APS5_VABI scePthreadCondTimedwait(PthreadCond* cond, PthreadMutex* mutex, KernelUseconds usec);
-int APS5_VABI scePthreadCondWait(PthreadCond* cond, PthreadMutex* mutex);
-int APS5_VABI pthread_cond_wait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex);
-int APS5_VABI pthread_cond_timedwait_nid_postfix(PthreadCond* cond, PthreadMutex* mutex, const KernelTimespec* abstime);
-int APS5_VABI clock_gettime_nid_postfix(int clockId, KernelTimespec* time);
-int APS5_VABI scePthreadSemInit(PthreadSem* sem, int flag, unsigned int value, const char* name);
-int APS5_VABI scePthreadSemDestroy(PthreadSem* sem);
-int APS5_VABI scePthreadSemWait(PthreadSem* sem);
-int APS5_VABI scePthreadSemTimedwait(PthreadSem* sem, KernelUseconds usec);
-int APS5_VABI scePthreadSemGetvalue(PthreadSem* sem, int* value);
-int APS5_VABI sem_init_nid_postfix(void* sem, int pshared, unsigned int value);
-int APS5_VABI sem_destroy_nid_postfix(void* sem);
-int APS5_VABI sem_wait_nid_postfix(void* sem);
-int APS5_VABI sem_reltimedwait_np_nid_postfix(void* sem, std::uint32_t usec);
-int APS5_VABI sem_getvalue_nid_postfix(void* sem, int* value);
-int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
-void APS5_VABI __pthread_cleanup_push_imp_nid_postfix(void (APS5_VABI* routine)(void*), void* argument, void* info);
-void APS5_VABI __pthread_cleanup_pop_imp_nid_postfix(int execute);
-}
 
 static constexpr int CANCEL_ENABLE = 0;
 static constexpr int CANCEL_DISABLE = 1;
@@ -121,6 +86,7 @@ static void APS5_VABI Record(void* value) {
 static void APS5_VABI CleanupWithPoints(void*) {
     Record(reinterpret_cast<void*>(std::uintptr_t{2}));
     scePthreadTestcancel();
+
     Require(sceKernelUsleep_nid_postfix(1) == 0);
     Record(reinterpret_cast<void*>(std::uintptr_t{3}));
 }
@@ -150,6 +116,7 @@ static void* APS5_VABI PendingToken(void*) {
     Require(scePthreadSetspecific(key, &normalResult) == 0);
     __pthread_cleanup_push_imp_nid_postfix(Record, reinterpret_cast<void*>(std::uintptr_t{1}), first);
     __pthread_cleanup_push_imp_nid_postfix(CleanupWithPoints, nullptr, second);
+
     Gate();
     WaitForToken();
     returned = true;
@@ -161,6 +128,7 @@ static void CheckDefaults() {
     Require(scePthreadSetcancelstate(CANCEL_ENABLE, &old) == 0 && old == CANCEL_ENABLE);
     Require(scePthreadSetcanceltype(CANCEL_DEFERRED, &old) == 0 && old == CANCEL_DEFERRED);
     scePthreadTestcancel();
+
 }
 
 static void* APS5_VABI ConsumeToken(void*) {
@@ -198,17 +166,21 @@ static void* APS5_VABI ConditionWaiter(void*) {
     Require(scePthreadMutexLock(&mutex) == 0);
     std::uintptr_t info[8];
     __pthread_cleanup_push_imp_nid_postfix(Unlock, nullptr, info);
+
     Signal(ready);
     while (!conditionReleased) Require(scePthreadCondTimedwait(&cond, &mutex, WAIT_MICROSECONDS) == 0);
     Require(scePthreadMutexUnlock(&mutex) == 0);
     __pthread_cleanup_pop_imp_nid_postfix(0);
+
     if (disabled) {
         stage = 1;
         scePthreadTestcancel();
+
         int old = -1;
         Require(scePthreadSetcancelstate(CANCEL_ENABLE, &old) == 0 && old == CANCEL_DISABLE);
         stage = 2;
         scePthreadTestcancel();
+
     }
     returned = true;
     return &normalResult;
@@ -279,6 +251,7 @@ static void* APS5_VABI SignaledConditionWaiter(void* value) {
     for (int level = 0; level < context.lockCount; ++level) Require(scePthreadMutexLock(&context.mutex) == 0);
     std::uintptr_t cleanup[8];
     __pthread_cleanup_push_imp_nid_postfix(UnlockSignaledCondition, &worker, cleanup);
+
     context.ready.fetch_add(1);
     int result = 0;
     do {
@@ -303,6 +276,7 @@ static void* APS5_VABI SignaledConditionWaiter(void* value) {
     } while (result == 0 && !context.released);
     context.results[worker.index] = result;
     __pthread_cleanup_pop_imp_nid_postfix(1);
+
     return nullptr;
 }
 

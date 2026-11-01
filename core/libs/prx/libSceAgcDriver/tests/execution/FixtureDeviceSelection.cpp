@@ -66,6 +66,12 @@ void SelectionTests() {
     Require(SelectFixtureDevice(devices, "llvmpipe") == 0u, "a requested CPU device was not selected");
     Require(!SelectFixtureDevice(devices, "missing device").has_value(), "an unmatched GPU request selected a device");
     Require(!SelectFixtureDevice(devices, "NVIDIA GeForce RTX 5080 with a longer name").has_value(), "a request longer than the device name matched");
+    const std::array radeons{
+        Properties("AMD Radeon(TM) Graphics", VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU),
+        Properties("AMD Radeon RX 7900 XTX", VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU),
+    };
+    Require(SelectFixtureDevice(radeons, {}) == 1u, "default selection did not prefer the discrete Radeon");
+    Require(SelectFixtureDevice(radeons, "radeon") == 0u, "a request matching an integrated and a later discrete GPU did not take the first match");
     devices[0] = devices[1];
     Require(SelectFixtureDevice(devices, "AMD") == 0u, "equally ranked matches did not keep enumeration order");
     devices[1].apiVersion = VK_API_VERSION_1_0;

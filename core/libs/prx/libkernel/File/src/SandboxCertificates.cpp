@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <array>
@@ -20,8 +21,6 @@
 #else
 #include <unistd.h>
 #endif
-
-extern "C" const char* APS5_VABI sceKernelGetFsSandboxRandomWord();
 
 namespace {
 constexpr char CertificateBegin[] = "-----BEGIN CERTIFICATE-----";
@@ -112,6 +111,8 @@ std::filesystem::path CertificateList(const std::filesystem::path& root) {
 
 const bool g_certificateListProvided = [] {
     AddPathProvider_nid_no_patch((std::string("/") + sceKernelGetFsSandboxRandomWord() + "/common/cert/CA_LIST.cer").c_str(), &CertificateList);
+    AddPathProvider_nid_no_patch("/system/common/cert/CA_LIST.cer", &CertificateList);
+    AddPathProvider_nid_no_patch("/common/cert/CA_LIST.cer", &CertificateList);
     return true;
 }();
 }

@@ -1,3 +1,5 @@
+#include "prx/libSceSaveData/include/Api.hpp"
+#include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdio>
@@ -7,29 +9,6 @@
 #include <random>
 #include <stdexcept>
 #include <string>
-
-struct SaveDataMountPs4 {
-    std::int32_t user_id;
-    std::int32_t pad;
-    const void* title_id;
-    const SceSaveDataDirName* dir_name;
-    const void* fingerprint;
-    std::uint64_t blocks;
-    std::uint32_t mount_mode;
-    std::uint8_t reserved[32];
-};
-
-extern "C" int APS5_VABI sceSaveDataTransferringMount(const SaveDataTransferringMount*, SaveDataMountResult*);
-extern "C" int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount*, SaveDataMountResult*);
-extern "C" int APS5_VABI sceSaveDataMount(const SaveDataMountPs4*, SaveDataMountResult*);
-extern "C" int APS5_VABI sceSaveDataUmount(const SaveDataMountPoint*);
-extern "C" int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond*, SaveDataDirNameSearchResult*);
-extern "C" int APS5_VABI sceSaveDataDirNameSearch(const SaveDataDirNameSearchCond*, SaveDataDirNameSearchResult*);
-extern "C" int APS5_VABI sceSaveDataInitialize(const void*);
-extern "C" int APS5_VABI sceSaveDataTerminate();
-extern "C" int APS5_VABI sceSaveDataSetupSaveDataMemory(std::int32_t, std::size_t, const SaveDataParam*);
-extern "C" int APS5_VABI sceSaveDataSetSaveDataMemory(std::int32_t, void*, std::size_t, std::int64_t);
-extern "C" int APS5_VABI sceSaveDataGetSaveDataMemory(std::int32_t, void*, std::size_t, std::int64_t);
 
 namespace {
 
@@ -45,16 +24,6 @@ void Check(bool condition, const std::string& what) {
     if (condition) return;
     std::fprintf(stderr, "savedata ps4 check failed: %s\n", what.c_str());
     ++failures;
-}
-
-template <typename TFunction>
-bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
 }
 
 void TestTransferringMountPs4() {
@@ -98,8 +67,8 @@ void TestDirNameSearchPs4() {
     Check(result.set_num == 0, "DirNameSearchPs4 writes zero set entries");
     Check(static_cast<unsigned char>(names[0].data[0]) == 0x5A, "DirNameSearchPs4 leaves the name buffer untouched");
 
-    Check(ThrowsRuntimeError([&] { sceSaveDataDirNameSearchPs4(nullptr, &result); }), "null cond throws");
-    Check(ThrowsRuntimeError([&] { sceSaveDataDirNameSearchPs4(&cond, nullptr); }), "null result throws");
+    Check(sceSaveDataDirNameSearchPs4(nullptr, &result) == SaveDataErrorParameter, "null cond returns PARAMETER in sceSaveDataDirNameSearchPs4");
+    Check(sceSaveDataDirNameSearchPs4(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearchPs4");
 }
 
 void TestSaveDataMemoryV1() {
@@ -128,7 +97,7 @@ void TestMountPs4() {
     std::strcpy(dir.data, "kept");
     mount.dir_name = &dir;
     mount.mount_mode = MountReadWrite;
-    Check(ThrowsRuntimeError([&] { sceSaveDataMount(&mount, nullptr); }), "null mount_result throws");
+    Check(sceSaveDataMount(&mount, nullptr) == SaveDataErrorParameter, "null mount_result is PARAMETER");
     Check(sceSaveDataMount(&mount, &result) == 0, "mount existing save directory succeeds");
     Check(result.mount_point.data[0] != '\0', "mount writes mount point");
     Check(sceSaveDataUmount(&result.mount_point) == 0, "umount mounted point succeeds");

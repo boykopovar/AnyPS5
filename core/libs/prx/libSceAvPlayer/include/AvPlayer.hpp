@@ -87,6 +87,11 @@ public:
     virtual std::uint64_t CurrentTime() = 0;
     virtual bool Finished() = 0;
     virtual void SetClockTimeForTest(double milliseconds) = 0;
+    virtual void SetHoldAudioEofForTest(bool hold) = 0;
+    virtual bool AudioEofHeldForTest() = 0;
+    virtual bool AudioEndedForTest() = 0;
+    virtual int QueuedAudioForTest() = 0;
+    virtual bool NextQueuedAudioTimestampForTest(std::uint64_t& timestamp) = 0;
 };
 
 std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::string& path, ISourceEvents& events);
@@ -94,10 +99,15 @@ std::unique_ptr<ISource> OpenSource(const SourceSettings& settings, const std::s
 std::uint32_t DetectSourceType(std::string_view path);
 
 void SetAvPlayerClockForTest_nid_no_patch(AvPlayerInternal* h, double milliseconds);
+void HoldAvPlayerAudioEofForTest_nid_no_patch(AvPlayerInternal* h, bool hold);
+bool AvPlayerAudioEofHeldForTest_nid_no_patch(AvPlayerInternal* h);
+bool AvPlayerAudioEndedForTest_nid_no_patch(AvPlayerInternal* h);
+int QueuedAvPlayerAudioForTest_nid_no_patch(AvPlayerInternal* h);
+bool NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(AvPlayerInternal* h, std::uint64_t* timestamp);
 
 class Player final : public AvPlayerInternal, private ISourceEvents {
 public:
-    Player(const AvPlayerInitData& init, std::uint32_t bufferCount, bool ps5Layout = false);
+    Player(const AvPlayerInitData& init, std::uint32_t bufferCount);
     ~Player() override;
     Player(const Player&) = delete;
     Player& operator=(const Player&) = delete;
@@ -117,6 +127,7 @@ public:
     int JumpToTime(std::uint64_t milliseconds);
     int SetLooping(bool enabled);
     int SetTrickSpeed(std::int32_t trickSpeed);
+    int SetAvailableBandwidth();
     int SetAvSyncMode(std::uint32_t mode);
     bool GetVideoData(AvPlayerFrameInfoEx& info);
     bool GetVideoData(AvPlayerFrameInfo& info);
@@ -124,6 +135,11 @@ public:
     bool IsActive();
     std::uint64_t CurrentTime();
     void SetClockTimeForTest(double milliseconds);
+    void SetHoldAudioEofForTest(bool hold);
+    bool AudioEofHeldForTest();
+    bool AudioEndedForTest();
+    int QueuedAudioForTest();
+    bool NextQueuedAudioTimestampForTest(std::uint64_t& timestamp);
 
 private:
     enum class State { Initial, Ready, Play, Pause, Stop, EndOfFile, Error };
@@ -150,7 +166,6 @@ private:
     AvPlayerMemAllocator memory{};
     AvPlayerEventReplacement callback{};
     bool autoStartEnabled = false;
-    bool ps5Layout = false;
     char language[4]{};
     std::uint32_t videoBuffers = 2;
 

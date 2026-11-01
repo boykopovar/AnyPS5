@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
@@ -34,9 +36,6 @@
 #include <unistd.h>
 #endif
 
-extern "C" int* APS5_VABI __error_nid_postfix();
-extern "C" int APS5_VABI dup2_nid_postfix(int from, int to);
-
 namespace {
 
 constexpr int GuestEintr = 4;
@@ -46,6 +45,7 @@ constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int GuestEnotty = 25;
 constexpr int GuestEagain = 35;
+constexpr int GuestEopnotsupp = 45;
 constexpr int GuestEnolck = 77;
 constexpr int GuestEoverflow = 84;
 
@@ -147,7 +147,8 @@ const char* KindName(Kind kind) {
 
 #ifdef _WIN32
 std::optional<Kind> Classify(int fd, const char* function) {
-    if (fd < 0 || !DescriptorIsOpen_nid_no_patch(fd)) return std::nullopt;
+    if (fd < 0 || (!GuestSockets::IsOpen(fd) && !DescriptorIsOpen_nid_no_patch(fd))) return std::nullopt;
+    if (GuestSockets::IsOpen(fd)) return Kind::Socket;
     if (File::IsDirectoryDescriptor(fd)) return Kind::Directory;
     if (File::IsRandomDevice(fd)) return Kind::RandomDevice;
     if (File::IsArchivedFile(fd)) return Kind::ArchivedFile;
@@ -160,6 +161,7 @@ std::optional<Kind> Classify(int fd, const char* function) {
 }
 
 int AccessMode(int fd, const char* function) {
+    if (GuestSockets::IsOpen(fd)) return ReadWrite;
     return WindowsDescriptorAccess_nid_no_patch(WindowsDescriptorHandle_nid_no_patch(fd), fd, function);
 }
 
@@ -220,6 +222,12 @@ int Readable(int fd, Kind kind, const char* function) {
         if (size < 0 || offset < 0)
             throw std::runtime_error(std::string(function) + ": cannot read the size and offset of descriptor " + std::to_string(fd) + ", errno=" + std::to_string(errno));
         return static_cast<int>(size - offset);
+    }
+    if (kind == Kind::Socket) {
+        std::int64_t data = 0;
+        bool eof = false;
+        GuestSockets::Ready(fd, false, &data, &eof);
+        return static_cast<int>(data);
     }
     if (AccessMode(fd, function) == WriteOnly) return 0;
     DWORD available = 0;
@@ -379,7 +387,6 @@ int ChangeStatus(int fd, Kind kind, int mask, int value, const char* function) {
     const int next = (status & ~mask) | (value & mask);
     const int changed = status ^ next;
     if ((changed & Asynchronous) && (kind == Kind::Pipe || kind == Kind::Socket || kind == Kind::Device)) Unsupported(function, "O_ASYNC", kind, fd);
-    if ((changed & Synchronous) && kind == Kind::File) Unsupported(function, "changing O_FSYNC", kind, fd);
     ApplyHostStatus(fd, kind, changed, next, function);
     status = next;
     return 0;
@@ -402,6 +409,7 @@ void SetCloseOnExec(int fd, bool value) {
 }
 
 int RecordLock(int fd, int command, std::intptr_t argument) {
+    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const bool old = command <= OldSetLockWait;
     const int current = old ? command + (GetLock - OldGetLock) : command;
     const std::size_t size = old ? OldGuestLockSize : sizeof(GuestLock);
@@ -490,21 +498,20 @@ FcntlArgument FcntlArgumentOf(int command) {
 
 int Fcntl(int fd, int command, std::intptr_t argument) {
     switch (command) {
-        case DuplicateCommand:
-        case DuplicateCloseOnExec: {
+        case DuplicateCommand: {
             if (fd < 0) return Fail(GuestEbadf);
             if (static_cast<int>(argument) < 0) return Fail(GuestEinval);
             if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
-            const int duplicate = DuplicateFrom(fd, static_cast<int>(argument));
-            if (duplicate >= 0 && command == DuplicateCloseOnExec) SetCloseOnExec(duplicate, true);
-            return duplicate;
+            return DuplicateFrom(fd, static_cast<int>(argument));
         }
+        case DuplicateCloseOnExec:
+            if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
+            return Fail(GuestEopnotsupp);
         case DuplicateToCommand:
-        case DuplicateToCloseOnExec: {
-            const int duplicate = dup2_nid_postfix(fd, static_cast<int>(argument));
-            if (duplicate >= 0 && command == DuplicateToCloseOnExec) SetCloseOnExec(duplicate, true);
-            return duplicate;
-        }
+            return dup2_nid_postfix(fd, static_cast<int>(argument));
+        case DuplicateToCloseOnExec:
+            if (fd < 0 || !Classify(fd, "fcntl")) return Fail(GuestEbadf);
+            return DuplicateFrom(fd, 0);
         case GetDescriptorFlags: {
             if (!Classify(fd, "fcntl")) return Fail(GuestEbadf);
             std::lock_guard lock(g_mutex);
@@ -557,6 +564,7 @@ bool IoctlRequestMalformed(std::uint64_t request) {
 
 int Ioctl(int fd, std::uint64_t request, void* argument) {
     if (IoctlRequestMalformed(request)) return Fail(GuestEnotty);
+    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const auto command = static_cast<std::uint32_t>(request);
     const std::uint32_t length = (command >> 16) & 0x1fff;
     if ((command & RequestIn) && length != 0 && argument == nullptr) return Fail(GuestEfault);
@@ -567,18 +575,16 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         return 0;
     }
     if (command == NonblockingRequest) {
-        const bool enable = *static_cast<const int*>(argument) != 0;
-        return ChangeStatus(fd, *kind, Nonblocking, enable ? Nonblocking : 0, "ioctl");
+        int enable = 0;
+        if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
+        return ChangeStatus(fd, *kind, Nonblocking, enable != 0 ? Nonblocking : 0, "ioctl");
     }
     if (command == ReadableRequest) {
         if (*kind == Kind::RandomDevice) return Fail(GuestEnotty);
         if (*kind != Kind::File && *kind != Kind::Pipe && *kind != Kind::Socket && *kind != Kind::ArchivedFile) Unsupported("ioctl", "FIONREAD", *kind, fd);
         const auto archived = File::ArchivedFileRemaining(fd);
         const int available = archived ? static_cast<int>(std::min<std::int64_t>(*archived, std::numeric_limits<int>::max())) : Readable(fd, *kind, "ioctl");
-        if (argument == nullptr) return Fail(GuestEfault);
-        const GuestArena::HostWrite destination(argument, sizeof(available));
-        if (!destination.Open()) return Fail(GuestEfault);
-        std::memcpy(argument, &available, sizeof(available));
+        if (!GuestCopyOut_nid_no_patch(argument, &available, sizeof(available))) return Fail(GuestEfault);
         return 0;
     }
     if (((command >> 8) & 0xff) == TerminalGroup) return Fail(GuestEnotty);
@@ -618,6 +624,21 @@ void ForgetDescriptor(int fd) {
     g_entries.erase(fd);
 }
 
+std::uint64_t g_synchronousWrites = 0;
+
+void SyncWrites(int fd) {
+    {
+        std::lock_guard lock(g_mutex);
+        const auto found = g_entries.find(fd);
+        if (found == g_entries.end() || !found->second.status || (*found->second.status & Synchronous) == 0) return;
+    }
+    if (Classify(fd, "write") != Kind::File) return;
+    if (const int result = sceKernelFsync(fd); result != 0)
+        throw std::runtime_error("write: syncing an O_FSYNC file failed, fd=" + std::to_string(fd) + ", error=" + std::to_string(result & 0xffff));
+    std::lock_guard lock(g_mutex);
+    ++g_synchronousWrites;
+}
+
 bool Appends(int fd) {
     std::lock_guard lock(g_mutex);
     const auto found = g_entries.find(fd);
@@ -634,8 +655,13 @@ bool IsCharacterDevice(int fd) {
 #endif
 }
 
+bool GrantsAccess(int fd, bool write) {
+    const int access = AccessMode(fd, write ? "pwrite" : "pread");
+    return access == ReadWrite || access == (write ? WriteOnly : ReadOnly);
+}
+
 bool IsVnode(int fd) {
-    if (fd < 0 || File::IsRandomDevice(fd)) return false;
+    if (fd < 0 || File::IsRandomDevice(fd) || GuestSockets::IsOpen(fd)) return false;
     if (File::IsArchivedFile(fd)) return true;
 #ifdef _WIN32
     if (!DescriptorIsOpen_nid_no_patch(fd)) return false;
@@ -650,4 +676,9 @@ bool IsVnode(int fd) {
 
 extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
     return !File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd);
+}
+
+extern "C" std::uint64_t FileSynchronousWritesForTest_nid_no_patch() {
+    std::lock_guard lock(g_mutex);
+    return File::g_synchronousWrites;
 }

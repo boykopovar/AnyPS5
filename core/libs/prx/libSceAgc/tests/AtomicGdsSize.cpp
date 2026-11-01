@@ -1,13 +1,10 @@
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
+#include "prx/libSceAgc/Acb/include/Control.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 
 #include <array>
 #include <cstdio>
 #include <cstdint>
-
-extern "C" std::uint32_t APS5_VABI sceAgcAcbAtomicGdsGetSize();
-extern "C" std::uint32_t* APS5_VABI sceAgcAcbAtomicGds_0900(CommandBuffer* buf, std::uint32_t control, std::uint32_t mode,
-    std::uint32_t gdsOp, std::uint32_t src, std::uint16_t offset, std::uint16_t index, std::uint32_t mask,
-    std::uint32_t data, std::uint64_t compareData, std::uint64_t extraData);
 
 int main() {
     constexpr std::uint32_t expectedSize = 11u * sizeof(std::uint32_t);

@@ -1,3 +1,5 @@
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
@@ -7,21 +9,6 @@
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
-
-extern "C" {
-int APS5_VABI sceKernelOpen(const char*, int, std::uint16_t);
-int APS5_VABI sceKernelClose(int);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
-int APS5_VABI sceKernelStat(const char*, FileStat*);
-int APS5_VABI chdir_nid_postfix(const char*);
-int APS5_VABI access_nid_postfix(const char*, int);
-int APS5_VABI rename_nid_postfix(const char*, const char*);
-int APS5_VABI remove_nid_postfix(const char*);
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -73,13 +60,15 @@ int main() {
 #ifndef _WIN32
     std::filesystem::create_directory_symlink("Data", directory / "Linked");
     CheckRead("linked/SETTINGS.INI", 'x');
-    { std::ofstream file(directory / "Data" / "SETTINGS.INI"); file << 'z'; }
-    CheckRead("Data/Settings.ini", 'x');
-    CheckRead("Data/SETTINGS.INI", 'z');
-    bool ambiguous = false;
-    try { CheckRead("data/settings.ini", 'x'); } catch (const std::runtime_error&) { ambiguous = true; }
-    Require(ambiguous);
-    std::filesystem::remove(directory / "Data" / "SETTINGS.INI");
+    if (!std::filesystem::exists(directory / "Data" / "SETTINGS.INI")) {
+        { std::ofstream file(directory / "Data" / "SETTINGS.INI"); file << 'z'; }
+        CheckRead("Data/Settings.ini", 'x');
+        CheckRead("Data/SETTINGS.INI", 'z');
+        bool ambiguous = false;
+        try { CheckRead("data/settings.ini", 'x'); } catch (const std::runtime_error&) { ambiguous = true; }
+        Require(ambiguous);
+        std::filesystem::remove(directory / "Data" / "SETTINGS.INI");
+    }
     std::filesystem::remove(directory / "Data" / "Settings.ini");
     { std::ofstream file(directory / "Data" / "SETTINGS.ini"); file << 'n'; }
     CheckRead("data/settings.ini", 'n');

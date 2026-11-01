@@ -1,16 +1,10 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
-
-extern "C" {
-void* APS5_VABI reallocalign_nid_postfix(void*, std::size_t, std::size_t);
-std::size_t APS5_VABI malloc_usable_size_nid_postfix(void*);
-void APS5_VABI free_nid_postfix(void*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 
@@ -50,8 +44,10 @@ int main() {
     for (int index = 0; index < 16; ++index) Require(shrunk[index] == 0x5a);
     Require(reallocalign_nid_postfix(shrunk, 0, 16) == shrunk && malloc_usable_size_nid_postfix(shrunk) == 0);
     free_nid_postfix(shrunk);
+
     void* empty = reallocalign_nid_postfix(nullptr, 0, 0);
     Require(empty != nullptr);
     free_nid_postfix(empty);
+
     return 0;
 }

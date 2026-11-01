@@ -76,6 +76,7 @@ struct DecodedInstructionInfo {
     bool IsTwoByteOpcode;
     std::uint8_t Opcode;
     std::uint8_t ModRmRegField;
+    std::size_t ModRmOffset = 0;
 };
 
 }

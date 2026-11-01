@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <barrier>
 #include <chrono>
@@ -11,25 +14,6 @@
 #include <windows.h>
 
 class FileStream;
-
-extern "C" {
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int APS5_VABI close_nid_postfix(int);
-int APS5_VABI sceKernelClose(int);
-int APS5_VABI dup_nid_postfix(int);
-int APS5_VABI dup2_nid_postfix(int, int);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-int APS5_VABI flock_nid_postfix(int, int);
-std::int64_t APS5_VABI sceKernelWrite(int, const void*, std::size_t);
-std::int64_t APS5_VABI sceKernelPread(int, void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI sceKernelPwrite(int, const void*, std::size_t, std::int64_t);
-int* APS5_VABI __error_nid_postfix();
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-FileStream* APS5_VABI fdopen_nid_postfix(int, const char*);
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-int APS5_VABI fileno_nid_postfix(FileStream*);
-}
 
 static void Require(bool condition) {
     if (!condition) std::abort();
@@ -309,7 +293,53 @@ static void Directories() {
     Require(flock_nid_postfix(descriptor, 8) == 0);
     Require(flock_nid_postfix(descriptor, 0) == -1 && *__error_nid_postfix() == 9);
     Require(flock_nid_postfix(descriptor, 4) == -1 && *__error_nid_postfix() == 9);
-    Require(close_nid_postfix(descriptor) == 0);
+    const int other = open_nid_postfix(path.c_str(), 0x20000, 0);
+    Require(other >= 0);
+    Require(flock_nid_postfix(descriptor, 2 | 4) == 0);
+    Require(!Acquires(other, 2) && !Acquires(other, 1));
+    Require(flock_nid_postfix(descriptor, 1 | 4) == 0);
+    Require(Acquires(other, 1) && !Acquires(other, 2));
+    Require(flock_nid_postfix(other, 1 | 4) == 0);
+    Require(flock_nid_postfix(descriptor, 2 | 4) == -1 && *__error_nid_postfix() == 35);
+    Require(flock_nid_postfix(other, 8) == 0 && !Acquires(other, 2));
+    Require(flock_nid_postfix(descriptor, 2 | 4) == 0);
+    const int third = open_nid_postfix(path.c_str(), 0x20000, 0);
+    Require(third >= 0);
+    auto exclusive = std::async(std::launch::async, [&] { return flock_nid_postfix(other, 2); });
+    Require(exclusive.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout);
+    Require(flock_nid_postfix(descriptor, 1 | 4) == 0);
+    Require(exclusive.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout);
+    Require(Acquires(third, 1) && !Acquires(third, 2));
+    Require(flock_nid_postfix(descriptor, 8) == 0);
+    Require(exclusive.wait_for(std::chrono::seconds(2)) == std::future_status::ready && exclusive.get() == 0);
+    Require(flock_nid_postfix(other, 1 | 4) == 0 && flock_nid_postfix(descriptor, 1 | 4) == 0);
+    auto upgrade = std::async(std::launch::async, [&] { return flock_nid_postfix(descriptor, 2); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (flock_nid_postfix(other, 2 | 4) != 0) {
+        Require(*__error_nid_postfix() == 35 && std::chrono::steady_clock::now() < deadline);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    Require(upgrade.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout && !Acquires(third, 1));
+    Require(flock_nid_postfix(other, 8) == 0);
+    Require(upgrade.wait_for(std::chrono::seconds(2)) == std::future_status::ready && upgrade.get() == 0);
+    Require(!Acquires(third, 1) && close_nid_postfix(third) == 0);
+    const int copy = dup_nid_postfix(descriptor);
+    Require(copy >= 0 && flock_nid_postfix(copy, 2 | 4) == 0);
+    Require(close_nid_postfix(descriptor) == 0 && !Acquires(other, 2));
+    std::promise<void> entered;
+    auto entry = entered.get_future();
+    auto waiting = std::async(std::launch::async, [&] {
+        entered.set_value();
+        return flock_nid_postfix(other, 2);
+    });
+    entry.wait();
+    Require(waiting.wait_for(std::chrono::milliseconds(200)) == std::future_status::timeout);
+    Require(close_nid_postfix(copy) == 0);
+    Require(waiting.wait_for(std::chrono::seconds(2)) == std::future_status::ready && waiting.get() == 0);
+    const int reopened = open_nid_postfix(path.c_str(), 0x20000, 0);
+    Require(reopened >= 0 && !Acquires(reopened, 1));
+    Require(close_nid_postfix(other) == 0 && Acquires(reopened, 2));
+    Require(close_nid_postfix(reopened) == 0);
     std::error_code ignored;
     std::filesystem::remove_all(directory, ignored);
 }
