@@ -1898,7 +1898,6 @@ int APS5_VABI _ZN3WTF31NonSharedCharacterBreakIteratorC1ENS_10StringViewE();
 int APS5_VABI _ZN3WTF31NonSharedCharacterBreakIteratorC2ENS_10StringViewE();
 int APS5_VABI _ZN3WTF31NonSharedCharacterBreakIteratorD1Ev();
 int APS5_VABI _ZN3WTF31NonSharedCharacterBreakIteratorD2Ev();
-int APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_();
 int APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb();
 int APS5_VABI _ZN3WTF37canCurrentThreadAccessThreadLocalDataERNS_6ThreadE();
 int APS5_VABI _ZN3WTF37parseDateFromNullTerminatedCharactersEPKc();
