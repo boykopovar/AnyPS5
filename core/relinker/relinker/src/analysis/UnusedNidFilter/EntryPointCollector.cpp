@@ -202,7 +202,7 @@ public:
                         std::uint16_t shndx = read16(elfBytes, sPos + 6);
                         std::uint64_t symVal = read64(elfBytes, sPos + 8);
                         if ((stBind == STB_GLOBAL || stBind == STB_WEAK) &&
-                            stType == STT_FUNC && shndx != SHN_UNDEF) {
+                            stType == STT_FUNC && shndx != SHN_UNDEF && shndx != SHN_ABS) {
                             addIfInText(symVal);
                         }
                     }
