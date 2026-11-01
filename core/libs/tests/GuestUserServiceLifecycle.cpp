@@ -196,6 +196,7 @@ void TestSerializedCrossUnregister() {
     Require(a.calls + b.calls > 0);
     Require(sceUserServiceUnregisterEventCallback(CrossUnregisterCallback, &a) == USER_SERVICE_OK);
     Require(sceUserServiceUnregisterEventCallback(CrossUnregisterCallback, &b) == USER_SERVICE_OK);
+    UserServiceSetUserConnected_nid_postfix(1, !next1);
 }
 
 void TestCallbackArguments() {
