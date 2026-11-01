@@ -40,8 +40,6 @@ struct Case {
     std::uint32_t selectors = 0xfacu;
 };
 
-std::vector<std::uint32_t> registrationModule;
-
 std::array<std::uint32_t, 4> VertexBufferDescriptor(const Case& value) {
     const auto address = reinterpret_cast<std::uintptr_t>(Element.data());
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), value.records, (0x0104dfacu & ~0xfffu) | value.selectors | (value.select << 28u)};
@@ -77,10 +75,7 @@ void Draw(AgcDriver::VulkanDevice& device, const Case& value) {
     vertexRequest.useCache = false;
     const auto vertexResult = ShaderRecompiler::Recompile(vertexRequest);
     Require(vertexResult.vertexAttributes.size() == 1u, std::string(value.what) + ": the fetch did not become a vertex attribute");
-    if (device.Target().registrationModules) {
-        if (registrationModule.empty()) registrationModule = vertexResult.spirv.Copy();
-        Require(std::ranges::equal(vertexResult.spirv.Words(), registrationModule), std::string(value.what) + ": registration modules: the V# specialized the vertex module");
-    }
+    if (device.Target().registrationModules) Require(!vertexResult.registrationModule, std::string(value.what) + ": registration modules: the vertex module was emitted in registration form");
     const auto vertexPush = static_cast<std::uint32_t>(vertexResult.pushConstants.size());
 
     ShaderRecompiler::ShaderPixelStageInfo pixel{};

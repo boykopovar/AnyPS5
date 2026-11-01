@@ -149,16 +149,13 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
             Require(after.linked == before.linked, "registration modules: a prebuild linked a pipeline");
             return std::pair{after.built[1] - before.built[1], after.built[2] - before.built[2]};
         };
-        const auto vertexOnly = prebuild(stages, {0u});
-        Require(vertexOnly.first == 1u, "registration modules: the vertex stage alone did not build its pre-rasterization library");
+        Require(stages.front().registration == nullptr && !GetPreparedArtifact(*stages.front().entry.handle).registrationModule, "registration modules: the vertex stage was prepared in registration form");
         const auto pixelOnly = prebuild(stages, {1u});
         Require(pixelOnly.second == 1u, "registration modules: the pixel stage alone did not build its fragment library");
-        const auto pair = prebuild(stages, {0u, 1u});
-        Require(pair.first == 0u && pair.second == 0u, "registration modules: the pair of stages did not find the libraries prebuilt one stage at a time");
         const auto again = PrepareGraphicsStages(prepared, target);
-        Require(again.front().registration != stages.front().registration, "registration modules: the second preparation reused the first result object");
-        const auto repeated = prebuild(again, {0u, 1u});
-        Require(repeated.first == 0u && repeated.second == 0u, "registration modules: another materialization of the same stages did not find the prebuilt libraries");
+        Require(again.back().registration != stages.back().registration, "registration modules: the second preparation reused the first result object");
+        const auto repeated = prebuild(again, {1u});
+        Require(repeated.first == 0u && repeated.second == 0u, "registration modules: another materialization of the same stage did not find the prebuilt library");
     }
     for (const auto& stage : stages) stage.snapshot->prepared->entries.push_back(stage.entry);
     const auto& pixelArtifact = GetPreparedArtifact(*stages.back().entry.handle);
@@ -351,7 +348,7 @@ void PrebuildPolicyReadback(AgcDriver::VulkanDevice& device, bool disabled) {
     Require(stages.size() == 2u, "prebuild policy lost a required graphics stage");
     for (const auto& stage : stages) {
         Require(stage.entry.handle != nullptr && stage.snapshot != nullptr, "prebuild policy lost a required source handle");
-        Require(disabled ? stage.registration == nullptr : stage.registration != nullptr, "prebuild policy retained or skipped registration-default materialization");
+        Require(disabled || stage.stage == ShaderStage::Vertex ? stage.registration == nullptr : stage.registration != nullptr, "prebuild policy retained or skipped registration-default materialization");
         stage.snapshot->prepared->entries.push_back(stage.entry);
     }
     std::vector<LinkedProgram> linked;
