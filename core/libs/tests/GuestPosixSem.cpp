@@ -42,6 +42,64 @@ static void CheckRetire() {
     poster.join();
 }
 
+static KernelTimespec RealtimeAfter(std::int64_t nanoseconds) {
+    KernelTimespec now{};
+    Require(sceKernelClockGettime(0, &now) == 0, "realtime clock must be readable");
+    const auto total = now.tv_nsec + nanoseconds;
+    return KernelTimespec{now.tv_sec + total / 1000000000, total % 1000000000};
+}
+
+static void CheckFutureDeadline() {
+    std::uintptr_t sem = 0;
+    int value = -1;
+    Require(sem_init_nid_postfix(&sem, 0, 0) == 0, "deadline semaphore must initialize");
+    const auto soon = RealtimeAfter(50000000);
+    const auto start = std::chrono::steady_clock::now();
+    *__error_nid_postfix() = 0;
+    Require(sem_timedwait_nid_postfix(&sem, &soon) == -1 && *__error_nid_postfix() == 60, "future deadline must expire with ETIMEDOUT");
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40), "future deadline expired early");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "expired deadline must preserve the count");
+
+    int waitResult = -2;
+    const auto later = RealtimeAfter(5000000000);
+    std::thread waiter([&] { waitResult = sem_timedwait_nid_postfix(&sem, &later); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto posted = std::chrono::steady_clock::now();
+    Require(sem_post_nid_postfix(&sem) == 0, "post must release a timed waiter");
+    waiter.join();
+    Require(waitResult == 0, "timed waiter must succeed after a post before its deadline");
+    Require(std::chrono::steady_clock::now() - posted < std::chrono::seconds(4), "timed waiter waited for its deadline");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "timed waiter must consume the posted count");
+    Require(sem_destroy_nid_postfix(&sem) == 0, "deadline semaphore destroy must succeed");
+}
+
+static void CheckRelativeTimeout() {
+    std::uintptr_t sem = 0;
+    int value = -1;
+    Require(sem_init_nid_postfix(&sem, 0, 2) == 0, "relative-timeout semaphore must initialize");
+    Require(sem_reltimedwait_np_nid_postfix(&sem, 50000) == 0, "relative wait on an available semaphore must succeed");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 1, "relative wait must decrement");
+    Require(sem_wait_nid_postfix(&sem) == 0, "wait on an available semaphore must succeed");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "wait must decrement");
+
+    const auto start = std::chrono::steady_clock::now();
+    *__error_nid_postfix() = 0;
+    Require(sem_reltimedwait_np_nid_postfix(&sem, 50000) == -1 && *__error_nid_postfix() == 60, "relative timeout must expire with ETIMEDOUT");
+    Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(40), "relative timeout expired early");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "expired relative timeout must preserve the count");
+
+    int waitResult = -2;
+    std::thread waiter([&] { waitResult = sem_reltimedwait_np_nid_postfix(&sem, 5000000); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto posted = std::chrono::steady_clock::now();
+    Require(sem_post_nid_postfix(&sem) == 0, "post must release a relative-timeout waiter");
+    waiter.join();
+    Require(waitResult == 0, "relative-timeout waiter must succeed after a post before its timeout");
+    Require(std::chrono::steady_clock::now() - posted < std::chrono::seconds(4), "relative-timeout waiter waited for its timeout");
+    Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "relative-timeout waiter must consume the posted count");
+    Require(sem_destroy_nid_postfix(&sem) == 0, "relative-timeout semaphore destroy must succeed");
+}
+
 int main(int argc, char** argv) {
     constexpr unsigned int maximum = 0x7fffffffu;
     std::uintptr_t sem = 0;
@@ -115,6 +173,8 @@ int main(int argc, char** argv) {
     Require(sem_timedwait_nid_postfix(&sem, &expiredTimeout) == -1 && *__error_nid_postfix() == 60, "blocked expired-timeout wait must report ETIMEDOUT");
     Require(sem_getvalue_nid_postfix(&sem, &value) == 0 && value == 0, "failed timed waits must preserve the count");
     Require(sem_destroy_nid_postfix(&sem) == 0, "blocked semaphore destroy must succeed");
+    CheckFutureDeadline();
+    CheckRelativeTimeout();
     CheckRetire();
 
     Require(sem_init_nid_postfix(&sem, 0, 1) == 0, "renamed semaphore must initialize");

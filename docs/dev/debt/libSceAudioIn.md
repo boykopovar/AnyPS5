@@ -37,6 +37,15 @@
 - [sceAudioInExtCtrl](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInInputs](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 
+- 6 additional pending imports in [InventoryExports.cpp](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) are listed in the local PS5 3.20 export inventory `libSceAudioIn.c`. Their signatures and behavior are unverified; each uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`, for import resolution only.
+
+- `sceAudioInExtClose` — NID `kFKJ3MVcDuo` — [`sceAudioInPending_001_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInExtInput` — NID `KpBKoHKVKEc` — [`sceAudioInPending_002_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInExtOpen` — NID `YZ+3seW7CyY` — [`sceAudioInPending_003_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInExtSetAecMode` — NID `FVGWf8JaHOE` — [`sceAudioInPending_004_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInSetConnectionsForUser` — NID `thLNHvkWSeg` — [`sceAudioInPending_005_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- `sceAudioInSetFocusForUser` — NID `iN3KqF-8R-w` — [`sceAudioInPending_006_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+
 ### Functional
 
 - [sceAudioInIsPadEmbeddedMic](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - returns 0 for every open port: on the console it returns 1 when the port captures from the controller's built-in microphone and 0 for another input device, but ports here capture from the host's default input device

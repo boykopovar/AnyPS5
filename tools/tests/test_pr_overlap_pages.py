@@ -63,6 +63,47 @@ class ParallelPageTests(unittest.TestCase):
         self.assertEqual(set(self.open_prs(served)), set(range(1, 43)))
         self.assertEqual(served.requested, [1])
 
+    def test_next_links_without_a_last_link_are_followed_even_on_short_pages(self):
+        pages = {1: range(1, 3), 2: range(3, 5), 3: range(5, 6)}
+        served = ServedPages(pages, last=None)
+
+        def next_only(*args):
+            result = served(*args)
+            number = int(args[2].rsplit("&page=", 1)[1])
+            if number < 3:
+                link = f'Link: <https://api.github.com/repositories/1/pulls?page={number + 1}&per_page=100>; rel="next"'
+                result = result.replace("\r\n\r\n", "\r\n" + link + "\r\n\r\n", 1)
+            return result
+
+        found = self.open_prs(next_only)
+        self.assertEqual(set(found), set(range(1, 6)))
+        self.assertEqual(served.requested, [1, 2, 3])
+
+    def test_next_only_full_final_page_checks_for_a_new_following_page(self):
+        pages = {1: range(1, 101), 2: range(101, 201), 3: range(201, 202)}
+        served = ServedPages(pages, last=None)
+
+        def next_only(*args):
+            result = served(*args)
+            number = int(args[2].rsplit("&page=", 1)[1])
+            if number == 1:
+                link = 'Link: <https://api.github.com/repositories/1/pulls?page=2&per_page=100>; rel="next"'
+                result = result.replace("\r\n\r\n", "\r\n" + link + "\r\n\r\n", 1)
+            return result
+
+        self.assertEqual(set(self.open_prs(next_only)), set(range(1, 202)))
+        self.assertEqual(served.requested, [1, 2, 3])
+
+    def test_invalid_or_repeated_next_pages_are_rejected(self):
+        for query in ("per_page=100", "page=one", "page=0", "page=1", "page=2&page=3", "page=&page=2"):
+            with self.subTest(query=query):
+                link = f'Link: <https://api.github.com/repositories/1/pulls?{query}>; rel="next"'
+                output = response(range(1, 3)).replace("\r\n\r\n", "\r\n" + link + "\r\n\r\n", 1)
+                with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
+                        patch.object(pr_overlap, "gh", return_value=output):
+                    with self.assertRaisesRegex(ValueError, "invalid next page link"):
+                        pr_overlap.open_prs("main")
+
     def test_a_full_last_page_is_followed_by_the_next_one(self):
         pages = {1: range(1, 101), 2: range(101, 201), 3: range(201, 202)}
         served = ServedPages(pages, last=2)
