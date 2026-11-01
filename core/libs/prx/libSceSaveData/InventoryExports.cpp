@@ -74,4 +74,8 @@ int APS5_VABI libSceSaveDataUnknown_yBM2vzabhEA_nid_no_patch() {
 }
 APS5_EXPORT("yBM2vzabhEA", libSceSaveDataUnknown_yBM2vzabhEA_nid_no_patch);
 
+int APS5_VABI sceSaveDataMount2() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

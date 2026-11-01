@@ -24,3 +24,7 @@
 | `Unknown` | `g1roz3Ux+3I` |
 | `Unknown` | `q8KxzjSpPVw` |
 | `Unknown` | `yBM2vzabhEA` |
+
+### Unknown function info
+
+- [sceSaveDataMount2](../../../core/libs/prx/libSceSaveData/InventoryExports.cpp) (libSceSaveData, NID `0z45PIH+SNI`) - its name and NID are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceSaveData.c) and the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv); it is declared without parameters and throws through `NotImplemented_nid_no_patch`. Mount parameters, mount-point layout and behavior are unverified; this is not an ABI claim.
