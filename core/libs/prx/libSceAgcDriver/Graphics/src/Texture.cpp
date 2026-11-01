@@ -3928,13 +3928,13 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     bool anyUnsaved = false;
     const bool trims = CommitTrims();
     if (trims) {
-        for (std::uint32_t layer = first; layer < first + count && !anyUnsaved; ++layer) anyUnsaved = !layerPending[layer] && !layerOriginal[layer] && layerGeneration[layer] == 0;
+        for (std::uint32_t layer = first; layer < first + count && !anyUnsaved; ++layer) anyUnsaved = !layerPending[layer] && !layerOriginal[layer] && (layerGeneration[layer] == 0 || keptForCpu(layer));
     }
     if (!trims || anyUnsaved) {
         unsaved.assign(trackedLayers, false);
         anyUnsaved = false;
         for (std::uint32_t layer = first; layer < first + count; ++layer) {
-            unsaved[layer] = !layerPending[layer] && !layerOriginal[layer] && layerGeneration[layer] == 0;
+            unsaved[layer] = !layerPending[layer] && !layerOriginal[layer] && (layerGeneration[layer] == 0 || keptForCpu(layer));
             anyUnsaved = anyUnsaved || unsaved[layer];
         }
     }
@@ -3944,7 +3944,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     if (newlyPending) GuestMemory::CollectWritesUncached(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
     const auto pendingSince = GuestMemory::TrackerGeneration();
     for (std::uint32_t layer = first; layer < first + count; ++layer) {
-        layerPendingSince[layer] = pendingSince;
+        if (!keptForCpu(layer)) layerPendingSince[layer] = pendingSince;
         if (!layerPending[layer] && !completionKept.empty()) {
             const auto end = layerBegin(layer) + layerBytes(layer);
             for (auto at = layerBegin(layer) & ~std::uint64_t{65535}; at < end; at += 65536) completionKept[static_cast<std::size_t>(at / 65536 - descriptor.baseAddress / 65536)] = 0;
@@ -4439,6 +4439,15 @@ void StorageTexture::forgetKeptAtUnwatch(std::uint32_t unit) {
 bool StorageTexture::keptAtUnwatchHolds(std::uint64_t from, std::uint32_t unit) const {
     const auto found = keptAtUnwatch.find(from);
     return found != keptAtUnwatch.end() && layerOriginal[unit] && found->second == layerGeneration[unit];
+}
+
+bool StorageTexture::keptForCpu(std::uint32_t unit) const {
+    const auto begin = layerBegin(unit);
+    const auto end = begin + layerBytes(unit);
+    for (auto it = keptAtUnwatch.lower_bound(begin); it != keptAtUnwatch.end() && it->first < end; ++it) {
+        if (it->second == layerGeneration[unit]) return true;
+    }
+    return false;
 }
 
 void StorageTexture::forgetSavedOver(std::uint64_t address, std::size_t bytes) {
@@ -6087,6 +6096,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     // may have reused the memory for something else entirely (see layerGeneration). A generation of
     // zero means no tracking, and the layer is stored whole.
     std::vector<std::pair<std::uint64_t, std::uint64_t>> keep;
+    std::vector<std::pair<std::uint64_t, std::uint32_t>> keptBlocks;
     std::vector<bool> skippedLayer(trackedLayers, false);
     bool skippedAny = false;
     std::size_t skipped = 0;
@@ -6157,6 +6167,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             if (written && (!drawn.rect || (tracked && !kept && !unknown && cpuBlocks[index] == 0))) {
                 skippedAny = true;
                 skippedLayer[layer] = true;
+                keptBlocks.emplace_back(from, layer);
                 ++skipped;
                 continue;
             }
@@ -6168,6 +6179,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
         if (layers[layer]) forgetKeptAtUnwatch(layer);
     }
+    for (const auto& [from, layer] : keptBlocks) keptAtUnwatch.emplace(from, layerGeneration[layer]);
     // Debug aid: APS5_TRACE_FLUSH also names the blocks a write-back leaves to the CPU.
     static const bool traceKept = std::getenv("APS5_TRACE_FLUSH") != nullptr;
     if (traceKept && skippedAny) {
