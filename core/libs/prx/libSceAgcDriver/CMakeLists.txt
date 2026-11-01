@@ -103,6 +103,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcStagingCopyBackShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/StagingCopyBack.comp)
+set(agcStagingCopyBackShaderSpv ${agcTextureDetileGeneratedDir}/StagingCopyBack.spv)
+set(agcStagingCopyBackShaderHeader ${agcTextureDetileGeneratedDir}/StagingCopyBack_spv.h)
+add_custom_command(
+        OUTPUT "${agcStagingCopyBackShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcStagingCopyBackShaderSpv}" "${agcStagingCopyBackShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcStagingCopyBackShaderSpv} -DOUTPUT=${agcStagingCopyBackShaderHeader}
+        -DSYMBOL=STAGING_COPY_BACK_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcStagingCopyBackShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcCmaskClearShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/CmaskClear.comp)
 set(agcCmaskClearShaderSpv ${agcTextureDetileGeneratedDir}/CmaskClear.spv)
 set(agcCmaskClearShaderHeader ${agcTextureDetileGeneratedDir}/CmaskClear_spv.h)
@@ -370,6 +383,7 @@ set(agcDriverSources
         ${agcMultisampleUploadHeader}
         ${agcCmaskClearShaderHeader}
         ${agcMeshArgumentsShaderHeader}
+        ${agcStagingCopyBackShaderHeader}
         ${agcTextureDetileImageShaderHeader}
         ${agcTextureRepackShaderHeader}
         ${agcDispatchArgumentsShaderHeader}

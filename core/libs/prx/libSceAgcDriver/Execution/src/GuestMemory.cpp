@@ -2909,7 +2909,7 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
     WriteChanged(address, current, original, ChangedByteStoreLimit());
 }
 
-void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit) {
+static void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit, bool keepGuest) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs();
     if (current.empty()) return;
@@ -2929,7 +2929,9 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
         std::size_t at = 0;
         for (; at + 16 <= size; at += 16) {
             const auto bytes = _mm_loadu_si128(reinterpret_cast<const __m128i*>(current.data() + at));
-            const auto same = _mm_cmpeq_epi8(bytes, _mm_loadu_si128(reinterpret_cast<const __m128i*>(original.data() + at)));
+            const auto uploaded = _mm_loadu_si128(reinterpret_cast<const __m128i*>(original.data() + at));
+            auto same = _mm_cmpeq_epi8(bytes, uploaded);
+            if (keepGuest) same = _mm_or_si128(same, _mm_xor_si128(_mm_cmpeq_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(destination + at)), uploaded), _mm_set1_epi8(-1)));
             const auto equal = static_cast<std::uint32_t>(_mm_movemask_epi8(same));
             if (equal == 0xffffu) continue;
             const auto changed = ~equal & 0xffffu;
@@ -2948,13 +2950,21 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
         }
         if (masked) _mm_sfence();
         for (; at < size; ++at) {
-            if (current[at] == original[at]) continue;
+            if (current[at] == original[at] || (keepGuest && destination[at] != original[at])) continue;
             destination[at] = current[at];
             firstChanged = std::min(firstChanged, at);
             lastChanged = std::max(lastChanged, at + 1);
         }
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     });
+}
+
+void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit) {
+    writeChanged(address, current, original, byteStoreLimit, false);
+}
+
+void WriteChangedKeepingGuest(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original) {
+    writeChanged(address, current, original, ChangedByteStoreLimit(), true);
 }
 
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment) {
