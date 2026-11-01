@@ -9980,6 +9980,142 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     std::cout << "Multisampled target guest access tests passed\n";
 }
 
+void multisampleTargetOverPendingStorageTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || !device.NullDescriptors()) {
+        std::cout << "4x color targets or nullDescriptor unavailable: storage results under a multisampled target not tested\n";
+        return;
+    }
+    constexpr std::uint32_t side = 256;
+    constexpr std::uint32_t targetSide = 64;
+    constexpr std::size_t surfaceBytes = side * side * 4;
+    constexpr std::size_t bytes = surfaceBytes + 65536;
+    void* block = AllocateWatched(bytes, 65536);
+    if (block == nullptr) {
+        std::cout << "no write watching: storage results under a multisampled target not tested\n";
+        return;
+    }
+    auto* texels = static_cast<std::uint32_t*>(block);
+    std::memset(block, 0x55, bytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        ~Unregister() {
+            ClearMultisampleTargets(context.device);
+            ClearCachedTextures(context.device);
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            ReleaseWatched(block, bytes);
+        }
+    } unregister{base, block};
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    context.nullDescriptors = true;
+    context.hostImportAlignment = 0;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    ColorTarget target{};
+    target.address = address + surfaceBytes - 65536;
+    target.surfaceAddress = target.address;
+    target.extent = {targetSide, targetSide};
+    target.surfaceExtent = target.extent;
+    target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.elementBytes = 4;
+    target.bytes = targetSide * targetSide * 4;
+    target.samples = 4;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> surface{{{address, address + surfaceBytes}}};
+    const auto settle = [&] {
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    auto image = StorageTexture::Create(context, detiler, resource, 0);
+    settle();
+    const auto clear = [&](VkClearColorValue value) {
+        std::lock_guard gpu(GpuMutex());
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        image->MarkWholeWritten();
+        settle();
+        Require(StorageTexture::AnyPendingOverlaps(surface), "the recorded clear left no results pending");
+    };
+    const auto draw = [&] {
+        std::lock_guard gpu(GpuMutex());
+        Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the multisampled target has no view");
+        settle();
+    };
+    const auto idleStore = [&] {
+        std::string message;
+        try {
+            std::lock_guard gpu(GpuMutex());
+            StorageTexture::FlushAllPending("idle");
+        } catch (const std::exception& error) {
+            message = error.what();
+        }
+        settle();
+        return message;
+    };
+    const auto refused = [](const std::string& message) { return message.find("a CPU read") != std::string::npos && message.find("multisampled color target") != std::string::npos; };
+    const auto targetRead = [&] {
+        std::array<std::byte, 64> bytesRead{};
+        try {
+            AgcDriver::GuestMemory::Read(target.address + 256u, bytesRead);
+        } catch (const std::exception& error) {
+            return std::string(error.what());
+        }
+        return std::string();
+    };
+    clear({{1.0f, 0.0f, 0.0f, 1.0f}});
+    draw();
+    auto message = idleStore();
+    Require(message.empty(), "an idle store after a multisampled target's draw over earlier storage results threw: " + message);
+    Require(!StorageTexture::AnyPendingOverlaps(surface), "storage results recorded before a multisampled target's draw over their memory were still pending after it");
+    Require(texels[0] == 0xff0000ffu, "storage results recorded before a multisampled target's draw did not reach guest memory");
+    Require(refused(targetRead()), "a CPU read of a multisampled target's memory passed after earlier storage results were stored under it");
+    ClaimMultisampleTargetStore(target.address, 65536);
+    clear({{0.0f, 1.0f, 0.0f, 1.0f}});
+    draw();
+    message = idleStore();
+    Require(message.empty(), "an idle store after a multisampled target's next draw over a claiming store's results threw: " + message);
+    Require(!StorageTexture::AnyPendingOverlaps(surface), "the results of a store that claimed a multisampled target were still pending after the target's next draw");
+    Require(texels[0] == 0xff00ff00u, "the results of a store that claimed a multisampled target did not reach guest memory at its next draw");
+    Require(refused(targetRead()), "a CPU read of a multisampled target's memory passed after it was drawn again");
+    clear({{0.0f, 0.0f, 1.0f, 1.0f}});
+    message = idleStore();
+    Require(refused(message), "an idle store of storage results recorded after a multisampled target's last draw, by a writer that did not claim it, read the target's memory: " + message);
+    Require(StorageTexture::AnyPendingOverlaps(surface), "refused storage results under a multisampled target were dropped");
+    Require(refused(targetRead()), "a refused idle store retired the multisampled target");
+    ClearMultisampleTargets(context.device);
+    message = idleStore();
+    Require(message.empty(), "an idle store with no multisampled target left threw: " + message);
+    Require(texels[0] == 0xffff0000u, "storage results refused under a multisampled target did not reach guest memory once the target was gone");
+    image.reset();
+    settle();
+    std::cout << "Storage results under a multisampled target: passed\n";
+}
+
 void repeatStorageGuardTests(const Device& device, Recorder& recorder) {
     const auto& base = device.GetContext();
     if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || !device.NullDescriptors()) {
@@ -13021,6 +13157,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--multisample-only") {
             multisampleGuestAccessTests(device, recorder);
+            multisampleTargetOverPendingStorageTests(device, recorder);
             oneFragmentFmaskGuardTests(device);
             fmaskDecompressMsaaTests(device, recorder);
             return 0;
@@ -13085,6 +13222,7 @@ int main(int argc, char** argv) {
         bdaStagingTests(device, recorder);
         depthSurfaceProofTests(device, recorder);
         multisampleGuestAccessTests(device, recorder);
+        multisampleTargetOverPendingStorageTests(device, recorder);
         repeatStorageGuardTests(device, recorder);
         oneFragmentFmaskGuardTests(device);
         tiledResolveTests(device, recorder);

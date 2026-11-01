@@ -27,6 +27,8 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace AgcDriver {
 
@@ -46,34 +48,34 @@ constexpr std::size_t AllocationBytes = 2 * BlockBytes;
 
 class GuestBlock {
 public:
-    GuestBlock() {
+    explicit GuestBlock(std::size_t bytes = AllocationBytes) : bytes(bytes) {
 #ifdef _WIN32
-        data = GuestArena::GuestArenaAllocate_nid_postfix(AllocationBytes, BlockBytes);
-        if (data != nullptr) GuestArena::GuestArenaCommit_nid_postfix(data, AllocationBytes, PAGE_READWRITE, AllocationBytes);
+        data = GuestArena::GuestArenaAllocate_nid_postfix(bytes, BlockBytes);
+        if (data != nullptr) GuestArena::GuestArenaCommit_nid_postfix(data, bytes, PAGE_READWRITE, bytes);
 #else
-        void* mapped = mmap(nullptr, AllocationBytes + BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        void* mapped = mmap(nullptr, bytes + BlockBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (mapped != MAP_FAILED) {
             const auto begin = reinterpret_cast<std::uintptr_t>(mapped);
             const auto aligned = (begin + BlockBytes - 1) & ~(static_cast<std::uintptr_t>(BlockBytes) - 1);
             if (aligned != begin) munmap(mapped, aligned - begin);
-            if (aligned + AllocationBytes != begin + AllocationBytes + BlockBytes) munmap(reinterpret_cast<void*>(aligned + AllocationBytes), begin + BlockBytes - aligned);
+            if (aligned + bytes != begin + bytes + BlockBytes) munmap(reinterpret_cast<void*>(aligned + bytes), begin + BlockBytes - aligned);
             data = reinterpret_cast<void*>(aligned);
-            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(data, AllocationBytes);
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(data, bytes);
         }
 #endif
         Require(data != nullptr, "cannot allocate tracked image memory");
-        std::memset(data, 0, AllocationBytes);
-        GuestAllocations::Mutation().Add(data, AllocationBytes, true, true, true);
+        std::memset(data, 0, bytes);
+        GuestAllocations::Mutation().Add(data, bytes, true, true, true);
     }
 
     ~GuestBlock() {
         GuestAllocations::Mutation().Remove(data);
 #ifdef _WIN32
-        GuestArena::GuestArenaReset_nid_postfix(data, AllocationBytes);
-        GuestArena::GuestArenaRelease_nid_postfix(data, AllocationBytes);
+        GuestArena::GuestArenaReset_nid_postfix(data, bytes);
+        GuestArena::GuestArenaRelease_nid_postfix(data, bytes);
 #else
-        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(data, AllocationBytes);
-        munmap(data, AllocationBytes);
+        GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(data, bytes);
+        munmap(data, bytes);
 #endif
     }
 
@@ -82,6 +84,7 @@ public:
     std::uint64_t Address() const { return reinterpret_cast<std::uintptr_t>(data); }
 
 private:
+    std::size_t bytes;
     void* data = nullptr;
 };
 
@@ -163,6 +166,113 @@ void CheckCachedImage(AgcDriver::VulkanDevice& device, bool sampled, bool draw) 
     Require(revalidate(), "retiring the multisample targets did not restore image reuse");
 }
 
+ColorTarget MultisampleTargetAt(std::uint64_t address) {
+    ColorTarget target{};
+    target.address = address;
+    target.surfaceAddress = address;
+    target.extent = {Side, Side};
+    target.surfaceExtent = target.extent;
+    target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.tileMode = ColorTileMode::RenderTarget;
+    target.elementBytes = 4;
+    target.bytes = Side * Side * 4u;
+    target.samples = 4;
+    return target;
+}
+
+bool HostOnly(std::uint64_t address) {
+    return !HostOnlySampleRanges(address, BlockBytes).empty();
+}
+
+void CheckStoredImage(AgcDriver::VulkanDevice& device, bool draw, std::vector<bool> written, bool fmask) {
+    const bool stores = !written.empty() && written.front();
+    std::printf("checking a %s storage image %s over %s\n", draw ? "draw" : "compute", written.empty() ? "of unknown use" : stores ? "store" : "read", fmask ? "a one-fragment target's FMASK" : "part of a 4x target");
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    GuestBlock block(3 * BlockBytes);
+    struct Cleanup {
+        VkDevice device;
+        ~Cleanup() {
+            ClearMultisampleTargets(device);
+            ClearCachedTextures(device);
+        }
+    } cleanup{context.device};
+    const auto target = MultisampleTargetAt(block.Address() + BlockBytes);
+    const auto image = target.address - Side * Side * 2u;
+    ShaderRecompiler::DescriptorBinding binding{};
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageWritten = std::move(written);
+    binding.imageSamplers = {0u};
+    binding.guestDescriptor = {static_cast<std::uint32_t>(image >> 8u), static_cast<std::uint32_t>((image >> 40u) & 0xffu) | (20u << 20u) | (((Side - 1u) & 3u) << 30u), ((Side - 1u) >> 2u) | ((Side - 1u) << 14u), 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u};
+    ShaderRecompiler::RecompileResult vertex;
+    ShaderRecompiler::RecompileResult program;
+    program.bindings.push_back(binding);
+    const CompiledShader shader{draw ? ShaderRecompiler::ShaderStage::Fragment : ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    const std::array<CompiledShader, 2> stages{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, shader}};
+    const auto build = [&] {
+        if (draw) return std::make_unique<ShaderResources>(context, stages, ColorTarget{}, 0, 0, 0);
+        return std::make_unique<ShaderResources>(context, shader);
+    };
+    auto resources = build();
+    Require(resources->Reusable(), "the storage image resources are not reusable");
+    const auto revalidate = [&] { return draw ? resources->Revalidate(stages) : resources->Revalidate(shader); };
+    Require(revalidate(), "the unchanged storage image resources failed their initial proof");
+    const auto drawTarget = [&] {
+        if (fmask) {
+            auto oneFragment = target;
+            oneFragment.samples = 1;
+            oneFragment.coverageSamples = 4;
+            oneFragment.fmaskAddress = target.address;
+            GuardOneFragmentFmask(context, oneFragment);
+            return;
+        }
+        Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the overlapped multisample target has no view");
+        device.SubmitRecorded(true);
+        device.WaitIdle();
+    };
+    const auto requireGuarded = [&](const char* failure) {
+        bool refused = false;
+        try {
+            RequireNoMultisampleColorTarget(target.address + BlockBytes / 2u, 4096u, "a CPU read");
+        } catch (const std::runtime_error& error) {
+            refused = std::string_view(error.what()).find(fmask ? "FMASK" : "multisampled color target") != std::string_view::npos;
+            if (!refused) throw;
+        }
+        Require(refused, failure);
+    };
+    const auto requireRefused = [&](auto&& call, const char* failure) {
+        bool refused = false;
+        try {
+            call();
+        } catch (const std::runtime_error& error) {
+            refused = std::string_view(error.what()).find(fmask ? "FMASK" : "multisampled color target") != std::string_view::npos;
+            if (!refused) throw;
+        }
+        Require(refused, failure);
+    };
+    drawTarget();
+    requireGuarded("the overlapped target is not guarded before the store");
+    if (!stores || fmask) {
+        requireRefused([&] { revalidate(); }, "a cached storage image that does not store over the guarded memory was accepted");
+        requireRefused([&] { build(); }, "a fresh storage image that does not store over the guarded memory was accepted");
+        requireGuarded("a refused storage image access retired the guard");
+        return;
+    }
+    Require(HostOnly(target.address), "the drawn 4x target does not report host-only samples");
+    Require(revalidate(), "a cached store over part of a 4x target's memory was refused");
+    Require(!HostOnly(target.address), "a 4x target that a cached store claimed is still guarded");
+    RequireNoMultisampleColorTarget(target.address + BlockBytes / 2u, 4096u, "a CPU read");
+    drawTarget();
+    requireGuarded("a 4x target drawn again after a store is not guarded");
+    static_cast<void>(build());
+    Require(!HostOnly(target.address), "a 4x target that a fresh store claimed is still guarded");
+    drawTarget();
+    requireGuarded("a 4x target drawn again after a fresh store is not guarded");
+}
+
 void CheckMultisampleTable(AgcDriver::VulkanDevice& device) {
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
@@ -237,6 +347,12 @@ int main() {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         for (const bool draw : {false, true}) {
             for (const bool sampled : {false, true}) CheckCachedImage(*device, sampled, draw);
+        }
+        for (const bool draw : {false, true}) {
+            CheckStoredImage(*device, draw, {true}, false);
+            CheckStoredImage(*device, draw, {false}, false);
+            CheckStoredImage(*device, draw, {}, false);
+            CheckStoredImage(*device, draw, {true}, true);
         }
         CheckMultisampleTable(*device);
         std::puts("cached image multisample guard tests passed");

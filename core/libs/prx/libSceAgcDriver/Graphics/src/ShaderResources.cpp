@@ -1230,6 +1230,11 @@ static WrittenStorage WrittenStorageBytes(const GuestTextureResource& viewed, st
     return written;
 }
 
+static void claimStoredMultisampleMemory(const Context& context, const GuestTextureResource& resource, std::uint64_t guestBytes, std::uint32_t mip) {
+    if (!MultisampleColorTargetOverlaps(resource.baseAddress, guestBytes)) return;
+    for (const auto& [begin, end] : WrittenStorageBytes(ArrayLayerWindow(resource, context.limits.maxImageArrayLayers), mip).bytes) ClaimMultisampleTargetStore(begin, end - begin);
+}
+
 // `guestBytes` is the surface size when the caller described the surface already (0: described here).
 std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std::span<const std::uint32_t> words, const GuestTextureResource& requested, std::uint32_t mip, std::uint64_t guestBytes, bool written, std::optional<std::pair<std::uint32_t, std::uint32_t>> layers) {
     const auto viewed = ArrayLayerWindow(requested, context.limits.maxImageArrayLayers);
@@ -3631,7 +3636,10 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
     }
     for (const auto& range : describedRanges) {
-        if (!range.imageTable) RequireNoMultisampleColorTarget(range.address, static_cast<std::size_t>(range.bytes), "a cached image access");
+        if (!range.imageTable) {
+            if (range.storedWords) claimStoredMultisampleMemory(context, DecodeTextureResource(*range.storedWords), range.bytes, range.storedMip);
+            RequireNoMultisampleColorTarget(range.address, static_cast<std::size_t>(range.bytes), "a cached image access");
+        }
         CompletePendingCpuWrites(context, range.address, static_cast<std::size_t>(range.bytes));
         if (range.dccAddress != 0) CompletePendingCpuWrites(context, range.dccAddress, DccKeyBytes(range.bytes));
     }
@@ -5116,6 +5124,8 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         if (resource.dccAddress != 0) CompletePendingCpuWrites(context, resource.dccAddress, DccKeyBytes(guestBytes));
         // Images the shader only reads have nothing to store back.
         const bool written = element >= binding.imageWritten.size() || binding.imageWritten[element];
+        const bool stored = element < binding.imageWritten.size() && binding.imageWritten[element];
+        if (stored) claimStoredMultisampleMemory(context, resource, guestBytes, mip);
         // The same surface as the previous element: its image was just looked up and refreshed.
         if (sameAsPrevious && StorageDedupeEnabled()) storageTextures.push_back(storageTextures.back());
         else storageTextures.push_back(cachedStorageTexture(context, words, resource, mip, guestBytes, written));
@@ -5126,6 +5136,11 @@ void ShaderResources::resolveImageBinding(const ShaderRecompiler::DescriptorBind
         storageAtomic.push_back(element < binding.imageAtomic.size() && binding.imageAtomic[element]);
         storageAtomic64.push_back(element < binding.imageAtomic64.size() && binding.imageAtomic64[element]);
         describedRanges.push_back({"storage", resource.baseAddress, guestBytes, resource.width, resource.height, resource.format, static_cast<int>(resource.tileMode), resource.dccAddress});
+        if (stored) {
+            describedRanges.back().storedWords.emplace();
+            std::copy(words.begin(), words.end(), describedRanges.back().storedWords->begin());
+            describedRanges.back().storedMip = mip;
+        }
         item.imageAllocations.push_back(storageTextures.size() - 1);
     }
 }
