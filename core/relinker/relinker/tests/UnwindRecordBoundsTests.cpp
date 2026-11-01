@@ -352,6 +352,16 @@ int main() {
             lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaS2Rejected);
-        std::cout << "30 unwind record cases passed\n";
+        auto cieReturnAddressOverflow = Fixture();
+        Io::WriteU32(cieReturnAddressOverflow, 0, 8);
+        Domain::ProgramHeader cieReturnLoad{}; cieReturnLoad.Type = 1; cieReturnLoad.MappedAddress = 0xFFFFFFFFFFFFF000ULL; cieReturnLoad.FileSize = 128;
+        Domain::ProgramHeader cieReturnEh = cieReturnLoad; cieReturnEh.Type = 0x6474E550; cieReturnEh.FileSize = 32;
+        bool cieReturnRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(cieReturnAddressOverflow, {cieReturnLoad, cieReturnEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            cieReturnRejected = true;
+        }
+        Require(cieReturnRejected);
+        std::cout << "31 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
