@@ -2169,7 +2169,11 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
     if (exp.kind == ExportTargetKind::Null || exp.en == 0u) {
         return;
     }
-    EmitIfCondition(state, exec, [&]() {
+    const bool readsHelperLanes = state.requirements.neighbourLaneReads ||
+        std::ranges::any_of(state.program.Info().inputs, [](const StageInput& input) { return BarycentricInputOf(input.kind) != input.kind; });
+    const bool preserveInactive = state.program.Resources().stage == IrShaderStage::Pixel && exp.kind == ExportTargetKind::Mrt && readsHelperLanes &&
+        std::ranges::none_of(PixelInfo(state).merges, [&](const auto& merge) { return merge.target == exp.index; });
+    const auto store = [&]() {
         const auto data = ctx.Arg(inst, 0);
         if (exp.kind == ExportTargetKind::Primitive) {
             if (state.program.Resources().stage == IrShaderStage::Mesh) {
@@ -2234,7 +2238,13 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
             };
             constexpr std::uint32_t identityMapping = 0xe4u;
             value = state.registrationModules ? EmitValueIfElse(state, EmitCompareU32Constant(state, spv::OpIEqual, EmitAndConstant(state, mapping, 0xffu), identityMapping), vectorType, [&] { return exported; }, mapped) : mapped();
-            if (exp.index == 0u && !uintOutput && AlphaToCoverage(state)) StoreAlphaCoverage(state, value);
+            if (exp.index == 0u && !uintOutput && AlphaToCoverage(state)) {
+                if (preserveInactive) {
+                    EmitIfCondition(state, exec, [&]() { StoreAlphaCoverage(state, value); });
+                } else {
+                    StoreAlphaCoverage(state, value);
+                }
+            }
             const auto mode = MrtOutputMode(state, exp);
             const auto& merges = PixelInfo(state).merges;
             if (const auto merge = std::ranges::find(merges, exp.index, &TargetMerge::target); merge != merges.end()) {
@@ -2264,10 +2274,29 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
             const auto pointer = state.module.AllocateId();
             state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassOutput, TypeF32Vector(state, 4u)), pointer, variable, ConstantU32(state, 0u));
             state.module.AddFunction(spv::OpStore, pointer, value);
+        } else if (preserveInactive) {
+            auto& shadow = state.exportShadowVariables[variable];
+            if (shadow == 0u) {
+                const auto zero = state.module.Constant(spv::OpConstantNull, vectorType);
+                shadow = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, vectorType), spv::StorageClassPrivate, zero);
+                if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(shadow);
+            }
+            const auto previous = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, vectorType, previous, shadow);
+            const auto lanes = state.module.AllocateId();
+            state.module.AddFunction(spv::OpCompositeConstruct, TypeBoolVector(state, 4u), lanes, exec, exec, exec, exec);
+            const auto selected = Select(state, vectorType, lanes, value, previous);
+            state.module.AddFunction(spv::OpStore, shadow, selected);
+            state.module.AddFunction(spv::OpStore, variable, selected);
         } else {
             state.module.AddFunction(spv::OpStore, variable, value);
         }
-    });
+    };
+    if (preserveInactive) {
+        store();
+    } else {
+        EmitIfCondition(state, exec, store);
+    }
 }
 
 std::uint32_t EmitGetShaderBase(SpirvValueEmitContext& ctx) {

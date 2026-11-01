@@ -9821,6 +9821,34 @@ void verifyQuadMaskNeighbourReads() {
         return false;
     };
     require(declares(compile(constant, true, false), spv::OpKill), "a quad mask without neighbour reads did not retain its kill fallback");
+    const auto outputStoresNested = [](const RecompileResult& result) {
+        const auto& words = result.spirv.Words();
+        std::set<std::uint32_t> outputs;
+        std::vector<std::uint32_t> merges;
+        bool stored = false;
+        bool nested = false;
+        for (std::size_t cursor = 5; cursor < words.size();) {
+            const auto count = words[cursor] >> 16u;
+            require(count != 0 && count <= words.size() - cursor, "quad mask: truncated SPIR-V instruction");
+            const auto opcode = static_cast<spv::Op>(words[cursor] & 0xffffu);
+            if (opcode == spv::OpVariable && words[cursor + 3] == spv::StorageClassOutput) outputs.insert(words[cursor + 2]);
+            if (opcode == spv::OpAccessChain && outputs.contains(words[cursor + 3])) outputs.insert(words[cursor + 2]);
+            if (opcode == spv::OpFunction) merges.clear();
+            if (opcode == spv::OpSelectionMerge || opcode == spv::OpLoopMerge) merges.push_back(words[cursor + 1]);
+            if (opcode == spv::OpLabel && !merges.empty() && merges.back() == words[cursor + 1]) merges.pop_back();
+            if (opcode == spv::OpStore && outputs.contains(words[cursor + 1])) {
+                stored = true;
+                nested = nested || !merges.empty();
+            }
+            cursor += count;
+        }
+        require(stored, "quad mask: the pixel program stores no output");
+        return nested;
+    };
+    constexpr std::array<std::uint32_t, 6> livePermute{0x7e040284u, 0xdac80000u, 0x01000002u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    for (const bool masked : {false, true}) {
+        require(!outputStoresNested(compile(livePermute, masked, true)), "a color export of a pixel program that reads neighbour lanes is stored inside an EXEC branch, which lets drivers move those reads out of uniform control flow");
+    }
     for (const auto code : {std::span<const std::uint32_t>(explicitExec), std::span<const std::uint32_t>(constantWqm), std::span<const std::uint32_t>(permute)}) {
         const auto unmasked = compile(code, false, false);
         require(declares(unmasked, spv::OpGroupNonUniformShuffle), "the neighbour-read test did not retain its cross-lane shuffle");

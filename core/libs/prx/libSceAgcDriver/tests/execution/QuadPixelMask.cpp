@@ -43,6 +43,11 @@ alignas(256) constexpr std::array<std::uint32_t, 13> SampledPixelCode{
     0xbf8c3f70, 0x87fe0c7e, 0xf800180f, 0x05040302, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 11> ReactivatedPixelCode{
+    0x7e0002f2, 0x7e020280, 0xf800000f, 0x00010100, 0xbefe0480, 0xf800100f, 0x00010001, 0xbefe04c1,
+    0xf8001890, 0x00000000, 0xbf810000,
+};
+
 std::array<std::uint8_t, 4> LevelColor(std::uint32_t level) {
     return {static_cast<std::uint8_t>(32u * (level + 1u)), static_cast<std::uint8_t>(255u - 16u * level), static_cast<std::uint8_t>(0x40u + level), 255u};
 }
@@ -164,6 +169,8 @@ int main() {
         const auto capabilities = device->Target().supportedCapabilities;
         const bool demote = std::find(capabilities.begin(), capabilities.end(), DemoteToHelperInvocation) != capabilities.end();
         FillTexture();
+        Draw(*device, ReactivatedPixelCode, 0xf);
+        Check("an MRT export with EXEC clear before a later valid-mask export reactivates the lane", 0xf, {255u, 0u, 0u, 255u});
         for (const std::uint8_t mask : {std::uint8_t{0xf}, std::uint8_t{0x2}, std::uint8_t{0x9}}) {
             Draw(*device, ConstantPixelCode, mask);
             Check("constant color", mask, {255u, 255u, 255u, 255u});
