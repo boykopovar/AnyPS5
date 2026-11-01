@@ -173,16 +173,13 @@ private:
             if (terminator.kind != TerminatorKind::ConditionalBranch || terminator.loopHeader || info[index].condition == nullptr || terminator.trueBlock == terminator.falseBlock) continue;
             const IrValue* condition = info[index].condition->Resolve();
             if (!condition->IsPhi() || condition->Type() != IrType::Bool) continue;
-            const auto junction = m_index.find(condition->Parent());
-            if (junction == m_index.end()) continue;
             for (const auto& [target, value] : {std::pair{terminator.trueBlock, true}, std::pair{terminator.falseBlock, false}}) {
                 const auto block = byId.find(target);
                 if (block == byId.end() || block->second->Predecessors().size() != 1u || block->second->Predecessors().front() != programOrder[index]) continue;
                 const auto edge = m_index.find(block->second);
                 if (edge == m_index.end()) continue;
-                const auto& stale = ReachableAvoiding(junction->second, edge->second);
                 for (std::size_t position = 0; position < m_order.size(); ++position) {
-                    if (Dominates(edge->second, position) && !stale[position]) facts[position].push_back(Fact{condition, value});
+                    if (Dominates(edge->second, position)) facts[position].push_back(Fact{condition, value});
                 }
             }
         }
