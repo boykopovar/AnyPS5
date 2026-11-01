@@ -280,8 +280,18 @@ int main() {
 
     Require(ReadCpuset(pthread_self_nid_postfix()) == available);
     std::uint8_t rawSet[GUEST_CPUSET_BYTES]{};
-    for (const std::size_t size : {std::size_t{32}, std::size_t{33}, std::size_t{64}})
+    for (const std::size_t size : {std::size_t{24}, std::size_t{32}, std::size_t{33}, std::size_t{64}})
         Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), size, rawSet) == GUEST_ERANGE);
+    for (const std::size_t size : {std::size_t{0}, std::size_t{1}, std::size_t{4}, std::size_t{7}})
+        Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), size, rawSet) == GUEST_ERANGE);
+    for (const std::size_t size : {std::size_t{9}, std::size_t{12}, std::size_t{15}}) {
+        std::memset(rawSet, 0xff, sizeof(rawSet));
+        Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), size, rawSet) == 0);
+        KernelCpumask narrow = 0;
+        std::memcpy(&narrow, rawSet, sizeof(narrow));
+        Require(narrow == available);
+        for (std::size_t index = sizeof(narrow); index < sizeof(rawSet); ++index) Require(rawSet[index] == (index < size ? 0 : 0xff));
+    }
     Require(pthread_getaffinity_np_nid_postfix(nullptr, GUEST_CPUSET_BYTES, rawSet) == GUEST_EINVAL);
     Require(pthread_getaffinity_np_nid_postfix(nullptr, 0, rawSet) == GUEST_EINVAL);
     Require(pthread_getaffinity_np_nid_postfix(pthread_self_nid_postfix(), 16, nullptr) == GUEST_EFAULT);
