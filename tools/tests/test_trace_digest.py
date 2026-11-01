@@ -113,6 +113,16 @@ class TraceJsonNestingTests(unittest.TestCase):
                 self.assertEqual(path.read_bytes(), original)
 
 class TraceDigestTests(unittest.TestCase):
+    def test_folded_counters_follow_the_selected_frame_window(self):
+        events = [{"name": "present", "ph": "i", "ts": ts, "args": {"present": index}}
+                  for index, ts in enumerate((0, 10000))]
+        events += [{"name": "worker folded", "ph": "C", "ts": ts, "tid": 1, "args": {"ms": value}}
+                   for ts, value in ((-1, 7), (0, 1.5), (9999, 2), (10000, 11), (20000, 5))]
+        result = trace_digest.digest(trace_digest.Trace(events))
+        self.assertEqual(result["threads"][0]["folded_ms_per_frame"], 3.5)
+        result = trace_digest.digest(trace_digest.Trace(events[:1] + events[2:]), {"window": {"ms": 10}})
+        self.assertEqual(result["threads"][0]["folded_ms_per_frame"], 3.5)
+
     def test_summary_jsonl_excessive_nesting_reports_line_without_traceback(self):
         path = Path(self.directory.name) / "deep.jsonl"
         path.write_text('{}\n\n{"extra":' + excessive_trace_json('[', ']') + '}\n', encoding="utf-8")
