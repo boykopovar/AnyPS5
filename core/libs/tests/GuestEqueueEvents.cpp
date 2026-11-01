@@ -305,6 +305,11 @@ int main() {
     Require(sceKernelGetEventId(&timerEvent) == 9);
     Require(sceKernelGetEventFilter(&timerEvent) == EVFILT_HRTIMER);
     Require(sceKernelGetEventUserData(&timerEvent) == &payload);
+    const KernelTimespec later{60, 0};
+    Require(sceKernelAddHRTimerEvent(eq, 16, &later, &payload) == SCE_OK);
+    Require(sceKernelDeleteTimerEvent(eq, 16) == SCE_KERNEL_ERROR_ENOENT);
+    Require(sceKernelDeleteHRTimerEvent(eq, 16) == SCE_OK);
+    Require(sceKernelDeleteHRTimerEvent(eq, 16) == SCE_KERNEL_ERROR_ENOENT);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 
     KernelEvent rawEvent{};
