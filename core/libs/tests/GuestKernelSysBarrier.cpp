@@ -38,6 +38,8 @@ int main() {
     Require(scePthreadBarrierattrInit(&attr) == 0 && attr != nullptr);
     int pshared = -1;
     Require(scePthreadBarrierattrGetpshared(&attr, &pshared) == 0 && pshared == PROCESS_PRIVATE);
+    Require(scePthreadBarrierattrSetpshared(&attr, 2) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierattrSetpshared(&attr, -1) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrSetpshared(&attr, PROCESS_SHARED) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadBarrierattrSetpshared(&attr, PROCESS_PRIVATE) == 0);
 
