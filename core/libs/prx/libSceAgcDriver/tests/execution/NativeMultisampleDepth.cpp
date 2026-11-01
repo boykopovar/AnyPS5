@@ -1084,7 +1084,7 @@ void CheckWrittenPublication(std::uint32_t samples, VkExtent2D extent, bool dept
     Require(device != nullptr, "native depth publication requires Vulkan");
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
     const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
-    TargetMemory memory(depthBytes), metadata(65536u);
+    TargetMemory memory(depthBytes), metadata(65536u), nextMemory(depthBytes), nextMetadata(65536u), lastMemory(depthBytes), lastMetadata(65536u);
     std::memset(metadata.Data(), 0, 65536u);
     const auto guestByte = [](std::size_t offset) { return static_cast<std::byte>(offset * 7u + 3u); };
     for (std::size_t offset = 0u; offset < depthBytes; ++offset) memory.Data()[offset] = guestByte(offset);
@@ -1121,6 +1121,9 @@ void CheckWrittenPublication(std::uint32_t samples, VkExtent2D extent, bool dept
     device->Draw(state, draw, shaders);
     device->WaitIdle();
     Require(DepthSurfaceAt(depth.address), "a draw left no resident native depth surface");
+    const auto words = DepthSampleWords(depth);
+    auto held = DepthSurfaceTexture(device->graphicsContext(), words, DecodeTextureResource(words), VkComponentMapping{});
+    Require(held != nullptr, "published owner fixture has no held native view");
     std::array<std::byte, 1> probe{};
     AgcDriver::GuestMemory::Read(depth.address, probe);
     Require(!DepthSurfaceAt(depth.address), "publishing a written native depth surface left it resident");
@@ -1147,6 +1150,30 @@ void CheckWrittenPublication(std::uint32_t samples, VkExtent2D extent, bool dept
         Require(word == htile, "publishing native depth did not expand its HTILE");
     }
     std::printf("Native depth publication samples=%u extent=%ux%u depthOnly=%u xor=0x%x: samples, HTILE and padding checked\n", samples, extent.width, extent.height, depthOnly, pipeBankXor);
+    const auto released = DepthSurfacesReleased();
+    std::memset(nextMetadata.Data(), 0, 65536u);
+    auto next = depth;
+    next.address = nextMemory.Address();
+    next.htileAddress = nextMetadata.Address();
+    auto nextState = state;
+    nextState.depth = next;
+    device->Draw(nextState, draw, shaders);
+    device->WaitIdle();
+    Require(DepthSurfacesReleased() == released, "a published native owner was released while its view was held");
+    held.reset();
+    std::memset(lastMetadata.Data(), 0, 65536u);
+    next.address = lastMemory.Address();
+    next.htileAddress = lastMetadata.Address();
+    nextState.depth = next;
+    device->Draw(nextState, draw, shaders);
+    device->WaitIdle();
+    Require(DepthSurfacesReleased() == released + 1u, "a published inactive native owner remained cached without held views");
+    std::memset(metadata.Data(), 0, 65536u);
+    AgcDriver::GuestMemory::MarkWritten(metadata.Address(), metadataBytes);
+    device->Draw(state, draw, shaders);
+    device->WaitIdle();
+    Require(DepthSurfaceAt(depth.address), "a released native owner prevented rebinding its old address");
+    std::puts("Published native depth owner retained its held view, released its maps and rebound its old address");
 }
 
 void CheckDepthAttachmentAlias() {
