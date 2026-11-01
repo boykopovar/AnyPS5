@@ -265,6 +265,7 @@ void* APS5_VABI memalign_nid_postfix(size_t alignment, size_t size);
 void* APS5_VABI aligned_alloc_nid_postfix(size_t alignment, size_t size);
 void* APS5_VABI reallocalign_nid_postfix(void* ptr, size_t size, size_t alignment);
 void* APS5_VABI calloc_nid_postfix(size_t count, size_t size);
+void* APS5_VABI __std_calloc_crt_nid_postfix(size_t count, size_t size);
 int APS5_VABI posix_memalign_nid_postfix(void** pointer, size_t alignment, size_t size);
 void* APS5_VABI bsearch_nid_postfix(const void* key, const void* base, size_t count, size_t size, int (APS5_VABI *compare)(const void*, const void*));
 int APS5_VABI mergesort_nid_postfix(void* base, size_t count, size_t size, GuestCompare compare);
