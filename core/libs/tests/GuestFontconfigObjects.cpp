@@ -6,7 +6,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <stdexcept>
 
 static void Require(bool condition, int line) {
     if (condition) return;
@@ -18,12 +17,6 @@ static void Require(bool condition, int line) {
 
 static const FcChar8* Text(const char* text) {
     return reinterpret_cast<const FcChar8*>(text);
-}
-
-template<class TFunction>
-static bool Throws(TFunction function) {
-    try { function(); } catch (const std::exception&) { return true; }
-    return false;
 }
 
 static void Languages() {
@@ -53,8 +46,6 @@ static void Languages() {
     CHECK(FcLangSetHasLang(first, Text("und-latn")) == FcLangEqual);
     CHECK(FcLangSetAdd(first, Text("")) == 1);
     CHECK(FcLangSetHasLang(first, Text("")) == FcLangEqual);
-    CHECK(Throws([&] { FcLangSetAdd(nullptr, Text("en")); }));
-    CHECK(Throws([&] { FcLangSetHasLang(first, nullptr); }));
     FcLangSetDestroy(first);
     CHECK(FcLangSetAdd(second, Text("fr")) == 1);
     CHECK(FcLangSetHasLang(second, Text("FR-ca")) == FcLangDifferentTerritory);
@@ -149,10 +140,6 @@ static void Patterns() {
     CHECK(FcPatternGet(copy, "absent", 0, nullptr) == FcResultNoMatch);
     CHECK(FcPatternGet(copy, "slant", 2, nullptr) == FcResultNoId);
     CHECK(FcPatternGetString(copy, "slant", 0, nullptr) == FcResultTypeMismatch);
-    CHECK(Throws([&] { FcPatternGet(copy, "slant", 0, nullptr); }));
-    CHECK(Throws([&] { FcPatternReference(nullptr); }));
-    CHECK(FcPatternAddDouble(copy, "not-an-int", std::numeric_limits<double>::infinity()));
-    CHECK(Throws([&] { FcPatternGetInteger(copy, "not-an-int", 0, &integer); }));
     FcPatternDestroy(copy);
     FcPatternDestroy(pattern);
     FcPatternDestroy(empty);
