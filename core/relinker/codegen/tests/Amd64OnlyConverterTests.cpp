@@ -1193,6 +1193,21 @@ void converterJumpTableTargets() {
     requireFailure([&] { (void)convert(leaTable, {{0x300, table(0x3000, {0x1010, 0x1018})}}, {code, {1, 4, 0x300, 0x3000, 0, 0x1000, 0x1000, 16}}); }, "A jump table was read from a segment that exceeds the file");
 }
 
+void converterDataRanges() {
+    const auto convert = [](const Codegen::Amd64OnlyTarget target, const Bytes& text, const std::vector<Domain::CodeRange>& dataRanges) {
+        Bytes file(0x300 + text.size(), 0xCC);
+        std::copy(text.begin(), text.end(), file.begin() + 0x200);
+        return std::pair{file, Codegen::MakeAmd64OnlyConverter(target)->Convert(file, {segmentHeader(text.size())}, dataRanges)};
+    };
+    const Bytes storeBeforeTable = {0x48, 0x89, 0xD8, 0xC5, 0xFC, 0x11, 0x07, 0x0F, 0x78, 0x33, 0x1E, 0x0F, 0x78, 0x33, 0x1E, 0xC3};
+    requireFailure([&] { (void)convert(Codegen::Amd64OnlyTarget::Rosetta, storeBeforeTable, {}); }, "Undecodable bytes outside every data range were converted");
+    const auto [file, result] = convert(Codegen::Amd64OnlyTarget::Rosetta, storeBeforeTable, {{0x1007, 0x100F}});
+    require(result.Trampolines.size() == 1 && result.KeptCount == 0 && result.Bytes == file, "A 256-bit store before a data range was not lowered, or the range was changed");
+    require(result.Trampolines[0].Offset == 0x200 && result.Trampolines[0].Length == 7, "A stub site covers a data range");
+    const auto [insertqFile, insertq] = convert(Codegen::Amd64OnlyTarget::Intel, {0xF2, 0x44, 0x0F, 0x78, 0xCC, 0x10, 0x10, 0x90, 0x90, 0xC3}, {{0x1003, 0x1007}});
+    require(insertq.Reports.empty() && insertq.Trampolines.empty() && insertq.Bytes == insertqFile, "An instruction that runs into a data range was converted");
+}
+
 void converterRosetta() {
     const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
     Bytes file(0x300, 0xCC);
@@ -2463,6 +2478,7 @@ int main() {
         converterIslandInTrapPadding();
         converterClaimedFollower();
         converterJumpTableTargets();
+        converterDataRanges();
         converterReciprocal();
         converterStrayRex();
         rewriterStrayRex();

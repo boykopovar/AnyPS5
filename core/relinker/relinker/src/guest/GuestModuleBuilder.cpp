@@ -1,5 +1,4 @@
 #include <relinker/guest/GuestImage.hpp>
-#include <relinker/analysis/RelativeJumpTables.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
@@ -395,32 +394,26 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         progress.Report({Domain::ProgressStage::Modules, Io::Utf8Path(image.SourcePath), artifacts.size(), order.size()});
         std::vector<Domain::ProgramHeader> codeHeaders;
         for (const auto& header : image.Headers) if (header.Type == 1 && (header.Flags & 1) != 0) codeHeaders.push_back(header);
+        const bool sceImage = std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x61000000; });
+        const bool hasEhFrame = sceImage || std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x6474e550; });
+        const auto unwindFunctions = hasEhFrame ? UnusedNidFilter::ReadExceptionFunctions(image.Bytes, image.Headers, {}, {}) : std::vector<UnusedNidFilter::StrictCodeRegion>{};
+        const auto dataTables = DataTableRanges(image.Bytes, image.Headers, unwindFunctions, image.Got, image.Dynamic.RelaPltData.size());
         if (toIntel) {
-            auto converted = Codegen::MakeAmd64OnlyConverter(toRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); })->Convert(std::move(image.Bytes), image.Headers);
+            auto converted = Codegen::MakeAmd64OnlyConverter(toRosetta ? Codegen::Amd64OnlyTarget::Rosetta : Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, Io::Utf8Path(image.SourcePath), completed, total}); })->Convert(std::move(image.Bytes), image.Headers, dataTables);
             image.Trampolines = std::move(converted.Trampolines);
             image.Bytes = std::move(converted.Bytes);
             if (!image.PatchedRanges.empty()) GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.Reports = converted.Reports, .Trampolines = image.Trampolines});
         }
         if (!image.PatchedRanges.empty()) GamePatch::CheckOverlaps(Io::Utf8Path(image.SourcePath), image.PatchedRanges, {.RelaData = image.Dynamic.RelaData, .RelaPltData = image.Dynamic.RelaPltData});
-        const bool sceImage = std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x61000000; });
-        const bool hasEhFrame = sceImage || std::any_of(image.Headers.begin(), image.Headers.end(), [](const Domain::ProgramHeader& header) { return header.Type == 0x6474e550; });
-        const auto unwindFunctions = hasEhFrame ? UnusedNidFilter::ReadExceptionFunctions(image.Bytes, image.Headers, {}, {}) : std::vector<UnusedNidFilter::StrictCodeRegion>{};
-        std::vector<std::pair<VirtualAddress, VirtualAddress>> unwindRanges;
-        for (const auto& function : unwindFunctions) unwindRanges.emplace_back(function.Begin, function.End);
-        std::sort(unwindRanges.begin(), unwindRanges.end());
         for (const auto& header : codeHeaders) {
             std::vector<std::uint8_t> code(image.Bytes.begin() + header.Offset, image.Bytes.begin() + header.Offset + header.FileSize);
             if (sceImage)
                 if (const auto end = FindSceCodeEnd(code, header.MappedAddress, unwindFunctions, image.Got, image.Dynamic.RelaPltData.size()))
                     code.resize(*end - header.MappedAddress);
             auto scanCode = code;
-            for (const auto& table : FindRelativeJumpTables(code, header.MappedAddress, unwindRanges)) {
-                if (table.Begin >= header.MappedAddress && table.End >= table.Begin) {
-                    const auto maskEnd = std::min<std::size_t>(table.End - header.MappedAddress, scanCode.size());
-                    const auto maskBegin = std::min<std::size_t>(table.Begin - header.MappedAddress, maskEnd);
-                    std::fill(scanCode.begin() + static_cast<std::ptrdiff_t>(maskBegin), scanCode.begin() + static_cast<std::ptrdiff_t>(maskEnd), std::uint8_t{0x90});
-                }
-            }
+            for (const auto& table : dataTables)
+                if (table.Begin >= header.MappedAddress && table.End <= header.MappedAddress + scanCode.size())
+                    std::fill(scanCode.begin() + static_cast<std::ptrdiff_t>(table.Begin - header.MappedAddress), scanCode.begin() + static_cast<std::ptrdiff_t>(table.End - header.MappedAddress), std::uint8_t{0x90});
             const auto scanUnwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
             for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges)) {
                 if (offset > code.size() || code.size() - offset < 2u)
