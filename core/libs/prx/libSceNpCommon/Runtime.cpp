@@ -134,6 +134,21 @@ bool IsTitleIdDigit(char c) {
     return c >= '0' && c <= '9';
 }
 
+constexpr std::size_t NP_TITLE_SECRET_SIZE = sizeof(NpTitleSecret);
+
+void* const NpTitleSecretVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np13NpTitleSecretD1Ev), reinterpret_cast<void*>(&_ZN3sce2np13NpTitleSecretD0Ev),
+};
+
+bool SameTitleSecret(const NpTitleSecret* lhs, const void* rhs) {
+    return std::memcmp(lhs->data, rhs, NP_TITLE_SECRET_SIZE) == 0;
+}
+
+int OnlyFailure(int result) {
+    return result < 0 ? result : 0;
+}
+
 int StoreTitleId(NpTitleIdObject* out, const char* text, std::size_t length, std::size_t expected) {
     if (length != expected) return NP_ERROR_TITLE_ID_INVALID;
     if (!std::all_of(text, text + 4, IsTitleIdLetter) || !std::all_of(text + 4, text + NP_TITLE_ID_CODE_LENGTH, IsTitleIdDigit))
@@ -1357,6 +1372,107 @@ bool APS5_VABI _ZN3sce2npneERK12SceNpTitleIdRKNS0_9NpTitleIdE(const NpTitleId* l
 
 bool APS5_VABI _ZN3sce2npneERKNS0_9NpTitleIdERK12SceNpTitleId(const NpTitleIdObject* lhs, const NpTitleId* rhs) {
     return !SameTitleId(lhs->titleId.data, rhs->data);
+}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1Ev(NpTitleSecretObject* self) {
+    self->vtable = &NpTitleSecretVtable[2];
+    self->secret = {};
+}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2Ev(NpTitleSecretObject* self) {
+    _ZN3sce2np13NpTitleSecretC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1ERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other) {
+    self->vtable = &NpTitleSecretVtable[2];
+    self->secret = other->secret;
+}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other) {
+    _ZN3sce2np13NpTitleSecretC1ERKS1_(self, other);
+}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1ERK16SceNpTitleSecret(NpTitleSecretObject* self, const NpTitleSecret* secret) {
+    self->vtable = &NpTitleSecretVtable[2];
+    self->secret = *secret;
+}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2ERK16SceNpTitleSecret(NpTitleSecretObject* self, const NpTitleSecret* secret) {
+    _ZN3sce2np13NpTitleSecretC1ERK16SceNpTitleSecret(self, secret);
+}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretC1EPKvm(NpTitleSecretObject* self, const void* data, std::size_t size) {
+    self->vtable = &NpTitleSecretVtable[2];
+    if (size != NP_TITLE_SECRET_SIZE) throw std::invalid_argument("sce::np::NpTitleSecret: the size is not 128");
+    std::memcpy(self->secret.data, data, NP_TITLE_SECRET_SIZE);
+}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretC2EPKvm(NpTitleSecretObject* self, const void* data, std::size_t size) {
+    _ZN3sce2np13NpTitleSecretC1EPKvm(self, data, size);
+}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretD1Ev(NpTitleSecretObject*) {}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretD2Ev(NpTitleSecretObject*) {}
+
+void APS5_VABI _ZN3sce2np13NpTitleSecretD0Ev(NpTitleSecretObject* self) {
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+NpTitleSecretObject* APS5_VABI _ZN3sce2np13NpTitleSecretaSERKS1_(NpTitleSecretObject* self, const NpTitleSecretObject* other) {
+    self->secret = other->secret;
+    return self;
+}
+
+int APS5_VABI _ZN3sce2np13NpTitleSecret13SetSecretDataEPvm(NpTitleSecretObject* self, const void* data, std::size_t size) {
+    if (size != NP_TITLE_SECRET_SIZE) return NP_ERROR_TITLE_ID_INVALID;
+    std::memcpy(self->secret.data, data, NP_TITLE_SECRET_SIZE);
+    return 0;
+}
+
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret7IsEmptyEv(const NpTitleSecretObject* self) {
+    const NpTitleSecret empty {};
+    return SameTitleSecret(&self->secret, empty.data);
+}
+
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsEPvm(const NpTitleSecretObject* self, const void* data, std::size_t size) {
+    return size == NP_TITLE_SECRET_SIZE && SameTitleSecret(&self->secret, data);
+}
+
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsERKS1_(const NpTitleSecretObject* self, const NpTitleSecretObject* other) {
+    return SameTitleSecret(&self->secret, other->secret.data);
+}
+
+bool APS5_VABI _ZNK3sce2np13NpTitleSecret6EqualsERK16SceNpTitleSecret(const NpTitleSecretObject* self, const NpTitleSecret* secret) {
+    return SameTitleSecret(&self->secret, secret->data);
+}
+
+int APS5_VABI _ZN3sce2np13NpTitleSecret8ParseHexEPS1_PKcm(NpTitleSecretObject* out, const char* hex, std::size_t length) {
+    return OnlyFailure(sceNpStrnParseHex(hex, length, out->secret.data, NP_TITLE_SECRET_SIZE));
+}
+
+int APS5_VABI _ZN3sce2np13NpTitleSecret8BuildHexERKS1_Pcmb(const NpTitleSecretObject* secret, char* hex, std::size_t size, bool uppercase) {
+    return OnlyFailure(sceNpStrBuildHex(hex, size, secret->secret.data, NP_TITLE_SECRET_SIZE, uppercase));
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_13NpTitleSecretES3_(const NpTitleSecretObject* lhs, const NpTitleSecretObject* rhs) {
+    return SameTitleSecret(&lhs->secret, rhs->secret.data);
+}
+
+bool APS5_VABI _ZN3sce2npeqERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(const NpTitleSecret* lhs, const NpTitleSecretObject* rhs) {
+    return SameTitleSecret(lhs, rhs->secret.data);
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_13NpTitleSecretERK16SceNpTitleSecret(const NpTitleSecretObject* lhs, const NpTitleSecret* rhs) {
+    return SameTitleSecret(&lhs->secret, rhs->data);
+}
+
+bool APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretES3_(const NpTitleSecretObject* lhs, const NpTitleSecretObject* rhs) {
+    return !SameTitleSecret(&lhs->secret, rhs->secret.data);
+}
+
+bool APS5_VABI _ZN3sce2npneERK16SceNpTitleSecretRKNS0_13NpTitleSecretE(const NpTitleSecret* lhs, const NpTitleSecretObject* rhs) {
+    return !SameTitleSecret(lhs, rhs->secret.data);
 }
 
 int APS5_VABI _ZN3sce2np12StreamReader4ReadEPNS0_6HandleEPNS0_9StreamCtxEPvmPm(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
