@@ -657,8 +657,11 @@ void WatchMapping(std::uintptr_t address, std::size_t len) {
             const auto first = std::max(addedPhys, other.phys);
             const auto last = std::min(addedPhysEnd, other.phys + (other.end - base));
             if (first >= last) continue;
-            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(added->first + (first - addedPhys)), last - first);
-            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(base + (first - other.phys)), last - first);
+            const auto* addedAt = reinterpret_cast<const void*>(added->first + (first - addedPhys));
+            const auto* otherAt = reinterpret_cast<const void*>(base + (first - other.phys));
+            if (GuestWriteWatch::GuestWriteWatchAlias_nid_postfix(addedAt, otherAt, last - first)) continue;
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(addedAt, last - first);
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(otherAt, last - first);
         }
     }
 }
