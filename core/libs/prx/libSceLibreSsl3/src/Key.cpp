@@ -41,4 +41,24 @@ int APS5_VABI RSA_up_ref_nid_postfix(LibreSsl3Rsa* rsa) {
     return Retain_nid_no_patch(rsa->references);
 }
 
+void APS5_VABI RSA_get0_factors_nid_postfix(const LibreSsl3Rsa* rsa, const void** p, const void** q) {
+    if (!rsa && (p || q))
+        throw std::invalid_argument("RSA_get0_factors requires a key when outputs are requested");
+    if (p)
+        *p = rsa->p;
+    if (q)
+        *q = rsa->q;
+}
+
+void APS5_VABI RSA_get0_crt_params_nid_postfix(const LibreSsl3Rsa* rsa, const void** dmp1, const void** dmq1, const void** iqmp) {
+    if (!rsa && (dmp1 || dmq1 || iqmp))
+        throw std::invalid_argument("RSA_get0_crt_params requires a key when outputs are requested");
+    if (dmp1)
+        *dmp1 = rsa->dmp1;
+    if (dmq1)
+        *dmq1 = rsa->dmq1;
+    if (iqmp)
+        *iqmp = rsa->iqmp;
+}
+
 }
