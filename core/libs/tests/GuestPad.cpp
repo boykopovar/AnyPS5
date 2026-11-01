@@ -1075,9 +1075,11 @@ int main() {
     const PadVibrationParam vibZero{0, 0};
     const PadVibrationParam vibFull{255, 255};
     const PadVibrationParam vibMixed{128, 64};
+    const PadVibrationParam vibOutOfBounds{255, 300};
     Require(scePadSetVibration(handle2, &vibZero) == PAD_OK);
     Require(scePadSetVibration(handle2, &vibFull) == PAD_OK);
     Require(scePadSetVibration(handle2, &vibMixed) == PAD_OK);
+    Require(scePadSetVibration(handle2, &vibOutOfBounds) == PAD_OK);
     Require(scePadSetVibration(handle2 + 99, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetVibration(-1, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetVibration(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
@@ -1156,6 +1158,7 @@ int main() {
     Require(scePadClose_nid_postfix(handle2) == 0);
     Require(scePadGetHandle(user2, 0, 0) == noHandle);
     Require(!scePadIsValidHandle(handle2, PAD_PORT_TYPE_STANDARD));
+    Require(scePadSetVibration(handle2, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetAngularVelocityDeadbandState(handle2, false) == PAD_OK);
     Require(scePadSetAngularVelocityDeadbandState(handle2 + 1, false) == PAD_ERROR_INVALID_HANDLE);
     CheckPortZeroWithdrawn();
