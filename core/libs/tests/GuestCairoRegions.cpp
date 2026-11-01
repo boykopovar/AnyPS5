@@ -105,6 +105,8 @@ static void TestBounds() {
     const CairoRectangleInt overflow{maximum, 0, 2, 2};
     Require(cairo_region_union_rectangle(region, &overflow) == 32);
     Require(cairo_region_num_rectangles(region) == 0);
+    Require(cairo_region_reference(region) == region);
+    cairo_region_destroy(region);
     CairoRectangleInt rectangle{1, 1, 1, 1};
     cairo_region_get_rectangle(region, 0, &rectangle);
     Require(Equal(rectangle, {0, 0, 0, 0}));

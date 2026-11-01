@@ -148,7 +148,7 @@ CairoRegion* APS5_VABI cairo_region_create() {
 
 CairoRegion* APS5_VABI cairo_region_reference(CairoRegion* region) {
     if (region == nullptr || region == ErrorRegion())
-        return region;
+        return nullptr;
     Storage(region)->refCount.fetch_add(1, std::memory_order_relaxed);
     return region;
 }
