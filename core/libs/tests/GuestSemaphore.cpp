@@ -56,6 +56,8 @@ static void RequireInvalidArguments() {
     Require(sceKernelSignalSema(sem, 3) == SCE_OK);
     Require(sceKernelPollSema(sem, 3) == SCE_OK);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
+    *__error_nid_postfix() = 0;
+    Require(sem_unlink_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == 22);
 }
 
 int main() {

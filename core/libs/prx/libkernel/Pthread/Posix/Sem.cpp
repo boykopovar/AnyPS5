@@ -268,6 +268,7 @@ int APS5_VABI sem_close_nid_postfix(void* sem) {
 }
 
 int APS5_VABI sem_unlink_nid_postfix(const char* name) {
+    if (!name) return Fail(GUEST_EINVAL);
     if (const int error = NamedPathError("sem_unlink", name, GUEST_ENOENT)) return Fail(error);
     if (const int error = NamedFileError("sem_unlink", name)) return Fail(error);
     auto& named = Named();
