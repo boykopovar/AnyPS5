@@ -1,5 +1,6 @@
 #include "prx/libSceVrServiceDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
@@ -44,6 +45,9 @@ int main() {
     Require(sceVrServiceDialogUpdateStatus() == kStatusFinished);
 
     Require(sceVrServiceDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceVrServiceDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceVrServiceDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
@@ -63,6 +67,9 @@ int main() {
     result[0] = -1;
     Require(sceVrServiceDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
+    errno = 71;
+    Require(sceVrServiceDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceVrServiceDialogTerminate() == 0);
     Require(sceVrServiceDialogTerminate() == kErrNotInitialized);
     Require(sceVrServiceDialogOpen(nullptr) == kErrNotInitialized);
