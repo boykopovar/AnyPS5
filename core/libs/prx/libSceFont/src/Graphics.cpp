@@ -11,10 +11,12 @@ namespace {
 constexpr int FONT_GRAPHICS_ERROR_UNINITIALIZED = static_cast<int>(0x80460001);
 constexpr int FONT_GRAPHICS_ERROR_SEALED = static_cast<int>(0x8046005c);
 constexpr int FONT_GRAPHICS_ERROR_INVALID_OBJECT = static_cast<int>(0x80460084);
+constexpr int FONT_GRAPHICS_ERROR_INVALID_GRADIENT = static_cast<int>(0x80460020);
 constexpr int FONT_GRAPHICS_ERROR_INVALID_FILL = static_cast<int>(0x80460086);
 constexpr int FONT_GRAPHICS_ERROR_INVALID_REGION = static_cast<int>(0x80460087);
 constexpr int FONT_GRAPHICS_ERROR_INVALID_FILL_PLOT = static_cast<int>(0x80460088);
 constexpr int FONT_GRAPHICS_ERROR_INVALID_FILL_RATES = static_cast<int>(0x80460089);
+constexpr int FONT_GRAPHICS_ERROR_NO_SEGMENT_SPACE = static_cast<int>(0x804600a0);
 constexpr int FONT_GRAPHICS_ERROR_NO_RECORD_SPACE = static_cast<int>(0x804600a2);
 constexpr int FONT_GRAPHICS_ERROR_STICKY = static_cast<int>(0x804600a9);
 
@@ -94,10 +96,13 @@ struct FontDrawupPoolOwner {
     FontDrawupPool* pool;
 };
 
+struct FontSegmentResource;
+
 struct FontDrawupObject {
     std::uint64_t reserved0;
     FontDrawupPoolOwner* owner;
-    std::uint64_t reserved10[3];
+    FontSegmentResource* resource;
+    std::uint64_t reserved18[2];
     FontDrawupRecord* head;
     FontDrawupRecord* tail;
 };
@@ -107,8 +112,55 @@ struct FontDrawupFrame {
     std::uint16_t reserved2;
     int error;
     FontDrawupObject* object;
-    std::uint64_t reserved10[3];
+    std::uint32_t unitSize;
+    std::uint32_t unitUsed;
+    void* unitHead;
+    std::uint8_t* unit;
     std::uint32_t sequence;
+};
+
+struct FontSegmentNode {
+    std::uint32_t head;
+    std::uint32_t next;
+    std::uint32_t end;
+};
+
+struct FontSegmentArena {
+    std::uint8_t* memory;
+    std::uint32_t size;
+    std::uint32_t slotSize;
+    std::uint32_t total;
+    std::uint32_t used;
+    FontSegmentNode* nodes;
+    FontSegmentNode* sentinel;
+    FontSegmentNode* scan;
+    FontSegmentNode spare;
+    std::uint32_t reserved3c;
+    PthreadMutex* mutex;
+    std::uint32_t statUsed;
+    std::uint32_t statMaximum;
+};
+
+struct FontSegmentResource {
+    std::uint8_t reserved[0xc0];
+    FontSegmentArena arena;
+};
+
+struct FontSegmentLink {
+    std::uint8_t type;
+    std::uint8_t reserved1[3];
+    std::uint32_t epoch;
+    FontSegmentLink* next;
+};
+
+struct FontSegmentStop {
+    std::uint8_t type;
+    std::uint8_t reserved1;
+    std::uint16_t reserved2;
+    std::uint32_t epoch;
+    FontSegmentStop* next;
+    float position;
+    std::uint32_t color;
 };
 
 static_assert(sizeof(FontDrawupRecord) == DrawupRecordHeader);
@@ -116,7 +168,19 @@ static_assert(sizeof(FontDrawupPoolEntry) == 0x30);
 static_assert(offsetof(FontDrawupPoolEntry, slotSize) == 0x0c);
 static_assert(offsetof(FontDrawupPool, entries) == 0x18);
 static_assert(offsetof(FontDrawupPoolOwner, pool) == 0x160);
+static_assert(offsetof(FontDrawupObject, resource) == 0x10);
 static_assert(offsetof(FontDrawupObject, head) == 0x28 && offsetof(FontDrawupObject, tail) == 0x30);
+static_assert(offsetof(FontDrawupFrame, unitSize) == 0x10 && offsetof(FontDrawupFrame, unitUsed) == 0x14);
+static_assert(offsetof(FontDrawupFrame, unitHead) == 0x18 && offsetof(FontDrawupFrame, unit) == 0x20);
+static_assert(sizeof(FontSegmentNode) == 0x0c);
+static_assert(sizeof(FontSegmentArena) == 0x50);
+static_assert(offsetof(FontSegmentArena, slotSize) == 0x0c && offsetof(FontSegmentArena, total) == 0x10);
+static_assert(offsetof(FontSegmentArena, used) == 0x14 && offsetof(FontSegmentArena, nodes) == 0x18);
+static_assert(offsetof(FontSegmentArena, sentinel) == 0x20 && offsetof(FontSegmentArena, scan) == 0x28);
+static_assert(offsetof(FontSegmentArena, mutex) == 0x40 && offsetof(FontSegmentArena, statUsed) == 0x48);
+static_assert(offsetof(FontSegmentResource, arena) == 0xc0);
+static_assert(offsetof(FontSegmentStop, position) == 0x10);
+static_assert(sizeof(FontSegmentStop) == 0x18);
 static_assert(offsetof(FontDrawupFrame, object) == 0x8 && offsetof(FontDrawupFrame, sequence) == 0x28);
 
 FontDrawupRecord* DrawupPoolAllocate(FontDrawupPoolEntry* entry, std::uint32_t slots) {
@@ -418,6 +482,98 @@ bool DrawupColorValid(const float* color) {
     return true;
 }
 
+std::uint8_t* SegmentArenaAllocate(FontSegmentArena* arena, std::uint32_t slots) {
+    if (!arena || !slots || slots > arena->total) return nullptr;
+    FontSegmentNode* const nodes = arena->nodes;
+    FontSegmentNode* node = arena->scan;
+    FontSegmentNode* const sentinel = arena->sentinel;
+    const std::uint32_t total = arena->total;
+    std::uint32_t index = node == sentinel ? 0 : static_cast<std::uint32_t>(node - nodes);
+    std::uint32_t spanEnd = 0;
+    for (;;) {
+        const std::uint32_t head = node->head;
+        if (!(head & 0x3fffff)) {
+            spanEnd = node->end & 0x1fffff;
+            if (!spanEnd) spanEnd = total;
+            if (static_cast<std::int32_t>(spanEnd - index) >= static_cast<std::int32_t>(slots)) break;
+        }
+        if (!index) return nullptr;
+        index = node->next & 0x1fffff;
+        node = index ? nodes + index : sentinel;
+    }
+    const std::uint32_t chain = node->next & 0x1fffff;
+    FontSegmentNode* const next = chain ? nodes + chain : sentinel;
+    std::uint32_t result = index;
+    if (spanEnd - index == slots) {
+        node->head = (node->head & 0xffc00000) | (slots & 0x3fffff);
+        const std::uint32_t end = index + slots;
+        if (end < total) {
+            const std::uint32_t after = nodes[end].end & 0x1fffff;
+            next->end = (next->end & 0xffe00000) | after;
+            if (after >= total || !after) {
+                arena->scan = next;
+            } else {
+                nodes[after].next = (nodes[after].next & 0xffe00000) | chain;
+            }
+        } else {
+            next->end = (next->end & 0xffe00000) | (total & 0x1fffff);
+        }
+    } else {
+        const std::uint32_t carved = spanEnd - slots;
+        node->end = (node->end & 0xffe00000) | (carved & 0x1fffff);
+        FontSegmentNode* const fresh = nodes + carved;
+        fresh->head = (fresh->head & 0xffc00000) | (slots & 0x3fffff);
+        fresh->next = (fresh->next & 0xffe00000) | (index & 0x1fffff);
+        std::uint32_t follow = spanEnd;
+        if (spanEnd < total) follow = nodes[spanEnd].end & 0x1fffff;
+        fresh->end = (fresh->end & 0xffe00000) | (follow & 0x1fffff);
+        if (follow < total && follow) {
+            nodes[follow].next = (nodes[follow].next & 0xffe00000) | carved;
+        } else {
+            arena->scan = fresh;
+        }
+        result = carved;
+    }
+    arena->used += slots;
+    return arena->memory + static_cast<std::size_t>(result) * arena->slotSize;
+}
+
+bool SegmentWrite(FontDrawupFrame* frame, FontSegmentArena* arena,
+        const std::uint8_t* source, std::uint32_t bytes, std::uint8_t** first) {
+    for (std::uint32_t remaining = bytes; remaining;) {
+        const std::uint32_t offset = frame->unitUsed % frame->unitSize;
+        std::uint8_t* unit = frame->unit;
+        if (!unit || !offset) {
+            if (scePthreadMutexLock(arena->mutex) != 0) return false;
+            const std::uint32_t slots = (frame->unitSize + 7 + arena->slotSize) / arena->slotSize;
+            std::uint8_t* const memory = SegmentArenaAllocate(arena, slots);
+            if (memory) {
+                arena->statUsed = arena->used;
+                if (arena->used > arena->statMaximum) arena->statMaximum = arena->used;
+            }
+            scePthreadMutexUnlock(arena->mutex);
+            if (!memory) return false;
+            *reinterpret_cast<void**>(memory) = nullptr;
+            if (unit) *reinterpret_cast<void**>(unit) = memory;
+            else frame->unitHead = memory;
+            unit = memory;
+            frame->unit = memory;
+        }
+        std::uint32_t chunk = frame->unitSize - offset;
+        if (chunk > remaining) chunk = remaining;
+        std::uint8_t* const target = unit + offset + 8;
+        std::uint8_t* const limit = arena->memory + static_cast<std::size_t>(arena->total) * arena->slotSize;
+        const std::size_t room = target < limit ? static_cast<std::size_t>(limit - target) : 0;
+        if (room < chunk) return false;
+        std::memcpy(target, source, chunk);
+        if (first && !*first) *first = target;
+        source += chunk;
+        frame->unitUsed += chunk;
+        remaining -= chunk;
+    }
+    return true;
+}
+
 int DrawupFrameError(FontDrawupFrame* frame, int error) {
     return frame ? DrawupRecordError(frame, error) : Fail(error);
 }
@@ -567,6 +723,64 @@ int GraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, co
     std::memcpy(record->texture.payload, fillObject, mode);
     DrawupEnqueue(frame, record);
     *output = record;
+    return SCE_FONT_OK;
+}
+
+int GraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradient,
+        float position, const void* color) {
+    auto* const frame = reinterpret_cast<FontDrawupFrame*>(graphicsObject);
+    if (!frame || frame->tag != DrawupFrameTag)
+        return DrawupFrameError(frame, FONT_GRAPHICS_ERROR_INVALID_OBJECT);
+    if (frame->error)
+        return DrawupRecordError(frame, FONT_GRAPHICS_ERROR_STICKY);
+    if (reinterpret_cast<std::uintptr_t>(gradient) + 1 < 2)
+        return DrawupRecordError(frame, FONT_GRAPHICS_ERROR_INVALID_GRADIENT);
+    auto* const record = reinterpret_cast<FontSegmentLink*>(gradient);
+    if (record->type != DrawupTypeLinearGradient && record->type != DrawupTypeRadialGradient)
+        return DrawupRecordError(frame, FONT_GRAPHICS_ERROR_INVALID_FILL);
+    if (0.0f > position || position > 1.0f)
+        return DrawupRecordError(frame, SCE_FONT_ERROR_INVALID_PARAMETER);
+    const auto* const rgba = static_cast<const float*>(color);
+    if (!rgba || !DrawupColorValid(rgba))
+        return DrawupRecordError(frame, SCE_FONT_ERROR_INVALID_PARAMETER);
+    FontSegmentLink* previous = record;
+    FontSegmentLink* next = record->next;
+    while (next && next->epoch == record->epoch
+            && position >= reinterpret_cast<FontSegmentStop*>(next)->position) {
+        previous = next;
+        next = next->next;
+    }
+    FontSegmentStop stop{};
+    stop.type = record->type;
+    stop.epoch = previous->epoch;
+    stop.next = reinterpret_cast<FontSegmentStop*>(next);
+    stop.position = position;
+    stop.color = DrawupPackColor(rgba);
+    auto* const object = frame->object;
+    auto* const arena = &object->resource->arena;
+    if (!frame->unitSize)
+        return DrawupRecordError(frame, FONT_GRAPHICS_ERROR_NO_SEGMENT_SPACE);
+    std::uint32_t offset = frame->unitUsed % frame->unitSize;
+    if (!frame->unit) offset = 0;
+    const std::uint32_t space = frame->unitSize - offset;
+    if (space <= 0x17) {
+        const std::uint8_t pad[] = {0xff, static_cast<std::uint8_t>(space), 0, 0};
+        SegmentWrite(frame, arena, pad, sizeof(pad), nullptr);
+        offset = frame->unitUsed % frame->unitSize;
+        if (frame->unit && offset) {
+            const std::uint32_t tail = frame->unitSize - offset;
+            std::uint8_t* const tailTarget = frame->unit + offset + 8;
+            std::uint8_t* const limit = arena->memory + static_cast<std::size_t>(arena->total) * arena->slotSize;
+            const std::size_t tailRoom = tailTarget < limit ? static_cast<std::size_t>(limit - tailTarget) : 0;
+            std::memset(tailTarget, 0, tail < tailRoom ? tail : tailRoom);
+            frame->unitUsed += tail;
+        }
+    }
+    std::uint8_t* first = nullptr;
+    if (!SegmentWrite(frame, arena, reinterpret_cast<const std::uint8_t*>(&stop),
+            sizeof(stop), &first))
+        return DrawupRecordError(frame, FONT_GRAPHICS_ERROR_NO_SEGMENT_SPACE);
+    previous->next = reinterpret_cast<FontSegmentLink*>(first);
     return SCE_FONT_OK;
 }
 
