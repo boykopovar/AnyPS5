@@ -6366,6 +6366,53 @@ bool smallTiledShadowLabelTests(const Device& device, Recorder& recorder) {
         StorageTexture::StoreReadbackBeforeLabel("readback before label");
         Require(HostPageProtection(pageBytes) == VM_PROT_NONE, "a label did not trap the image a neighbouring CPU store left pending");
         Require(readUnlocked([&] { return holdsIn(linearA, static_cast<std::size_t>(layoutA.guestBytes), 0x63); }), "a read of the re-trapped image did not see its pending results");
+
+        auto outer = resource;
+        outer.baseAddress = address;
+        outer.width = 256;
+        outer.height = 256;
+        outer.tileMode = TextureTileMode::kR64KBX;
+        const auto outerLayout = DescribeSurface(outer);
+        Require(outerLayout.guestBytes > StorageTexture::SmallStoreBytes && outer.baseAddress + outerLayout.guestBytes <= resource.baseAddress, "the large tiled surface does not fit below the small one");
+        auto inner = linearA;
+        inner.baseAddress = address + 0x20000;
+        const auto innerLayout = DescribeSurface(inner);
+        auto outerImage = StorageTexture::Create(context, detiler, outer, 0);
+        auto innerImage = StorageTexture::Create(context, detiler, inner, 0);
+        outerImage->Refresh();
+        innerImage->Refresh();
+        settle();
+        auto* innerBytes = memory + (inner.baseAddress - address);
+        const auto innerHolds = [&](std::uint8_t value) { return holdsIn(inner, static_cast<std::size_t>(innerLayout.guestBytes), value); };
+        const auto storeOuterBlock = [&] {
+            Require(StorageTexture::FlushPending(address + 0x28000, 256, nullptr, "memory access", PublishScope::None), "a store of the large image's block stored nothing");
+            settle();
+        };
+        rewriteImage(outerImage, 256u, 0x71);
+        rewriteImage(innerImage, 8u, 0x72);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label stored a small image inside a pending large tiled one instead of trapping its reads");
+        storeOuterBlock();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE, "a store of a large image's block left a trapped image inside it trapped");
+        Require(innerHolds(0x72), "a store of a large image's block over a trapped image did not leave the bytes a label store leaves");
+        rewriteImage(outerImage, 256u, 0x73);
+        rewriteImage(innerImage, 8u, 0x75);
+        rewriteImage(outerImage, 256u, 0x74);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image again");
+        storeOuterBlock();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x75), "a large image written again after a trapped one was stored before it");
+        rewriteImage(outerImage, 256u, 0x76);
+        rewriteImage(innerImage, 8u, 0x77);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image a third time");
+        outerImage->Flush();
+        settle();
+        Require(HostPageProtection(innerBytes) != VM_PROT_NONE && innerHolds(0x77), "evicting a large image did not store the trapped image inside it first");
+        rewriteImage(innerImage, 8u, 0x78);
+        StorageTexture::StoreReadbackBeforeLabel("readback before label");
+        Require(HostPageProtection(innerBytes) == VM_PROT_NONE, "a label did not trap the small image after the large one was evicted");
+        Require(readUnlocked([&] { return innerHolds(0x78); }), "a read of a trapped image inside an evicted large one did not see its results");
     }
 #endif
     auto large = resource;

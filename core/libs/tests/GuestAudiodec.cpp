@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <numbers>
+#include <stdexcept>
 #include <vector>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -238,8 +239,8 @@ struct M4aacExtendedParam {
     std::uint32_t surroundChannelInterleaveOrder;
 };
 
-void TestAac(bool adts, std::uint32_t maxChannels = 2, std::uint32_t paramSize = sizeof(AudiodecParamM4aac), std::uint32_t enableNondelayOutput = 0) {
-    M4aacExtendedParam param{{paramSize, 1, adts ? 1u : 2u, 3, maxChannels, 0}, enableNondelayOutput, 0};
+void TestAac(bool adts, std::uint32_t maxChannels = 2, std::uint32_t paramSize = sizeof(AudiodecParamM4aac), std::uint32_t enableNondelayOutput = 0, std::uint32_t surroundChannelInterleaveOrder = 0) {
+    M4aacExtendedParam param{{paramSize, 1, adts ? 1u : 2u, 3, maxChannels, 0}, enableNondelayOutput, surroundChannelInterleaveOrder};
     AudiodecM4aacInfo info{sizeof(info), 0, 0, 0, 0};
     AudiodecCtrl ctrl{&param, &info, nullptr, nullptr};
     const std::int32_t handle = sceAudiodecCreateDecoder(&ctrl, 3);
@@ -472,6 +473,8 @@ int main() {
     TestAac(true, 2, 28, 1);
     TestAac(false, 2, 32, 1);
     TestAac(false, 8, 28, 1);
+    TestAac(false, 8, 32, 0, 2);
+    TestAac(true, 2, 32, 1, 1);
     TestAacRaw51(6);
     TestAacRaw51(8);
     for (const bool adts : {true, false}) {
