@@ -24,7 +24,7 @@
 
 <sub>* 系统库：项目目前已知函数（在 [core/libs/prx](../../core/libs/prx) 中声明）的百分比，而非 PS5 全部系统函数的百分比。随着声明的函数增多，总数会增长。</sub>
 
-不支持或意外的状态一律抛出 `std::runtime_error`。`what()` 会输出到 stderr，然后进程终止。
+不支持或意外的状态会抛出 C++ 异常，通常是 `std::runtime_error`。没有被捕获的异常会把其 `what()` 输出到 stderr，然后进程终止。
 
 [着色器重编译器](../../core/shader/recompiler/Recompiler.cpp)可成功生成 SPIR-V（使用 `ANYPS5_ENABLE_SPIRV_TOOLS` 构建时通过 [Spirv-Tools](../../3rdparty/SPIRV-Tools) 验证）。
 

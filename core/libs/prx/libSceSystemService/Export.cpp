@@ -82,8 +82,7 @@ constexpr wchar_t MainExecutableVariableWide[] = L"APS5_EBOOT";
 #endif
 
 [[noreturn]] void UnconvertedExecutable(const std::string& message) {
-    NotImplemented_nid_no_patch(("sceSystemServiceLoadExec: " + message).c_str());
-    std::abort();
+    throw std::runtime_error("sceSystemServiceLoadExec: " + message);
 }
 
 std::string ConvertedExecutableName(const char* path) {
@@ -543,33 +542,33 @@ int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended
 
 int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
  if (path == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
- if (path[0] == '\0') NotImplemented_nid_no_patch("sceLncUtilLoadExec: empty path");
+ if (path[0] == '\0') throw std::runtime_error("sceLncUtilLoadExec: empty path");
  return sceSystemServiceLoadExec(path, argv);
 }
 
 int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {
  if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) {
-  NotImplemented_nid_no_patch("sceSystemServiceKillApp: application other than the running title");
+  throw std::runtime_error("sceSystemServiceKillApp: application other than the running title");
  }
  if (how != -1 || reason != 0 || coreDump != 0) {
-  NotImplemented_nid_no_patch("sceSystemServiceKillApp: arguments other than -1, 0 and 0");
+  throw std::runtime_error("sceSystemServiceKillApp: arguments other than -1, 0 and 0");
  }
  LibcExit_nid_no_patch(0);
 }
 
 int APS5_VABI sceLncUtilKillApp(uint32_t appId) {
  if (appId != static_cast<uint32_t>(SYSTEM_SERVICE_RUNNING_APP_ID)) {
-  NotImplemented_nid_no_patch("sceLncUtilKillApp: application other than the running title");
+  throw std::runtime_error("sceLncUtilKillApp: application other than the running title");
  }
  LibcExit_nid_no_patch(0);
 }
 
 int APS5_VABI sceLncUtilKillAppWithReason(uint32_t appId, int reason) {
  if (appId != static_cast<uint32_t>(SYSTEM_SERVICE_RUNNING_APP_ID)) {
-  NotImplemented_nid_no_patch("sceLncUtilKillAppWithReason: application other than the running title");
+  throw std::runtime_error("sceLncUtilKillAppWithReason: application other than the running title");
  }
  if (reason != 0) {
-  NotImplemented_nid_no_patch("sceLncUtilKillAppWithReason: a reason other than 0");
+  throw std::runtime_error("sceLncUtilKillAppWithReason: a reason other than 0");
  }
  LibcExit_nid_no_patch(0);
 }

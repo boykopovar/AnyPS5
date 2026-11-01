@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(interpolation_reference_range_tests ${LIBS_INCLUDE_DIR}/tests/InterpolationReferenceRange.cpp)
+    target_link_libraries(interpolation_reference_range_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(interpolation_reference_range_tests)
+    add_test(NAME interpolation_reference_range COMMAND interpolation_reference_range_tests)
+    if(WIN32)
+        set_tests_properties(interpolation_reference_range PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
