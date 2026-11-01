@@ -2165,6 +2165,27 @@ class ImportAuditTests(unittest.TestCase):
         with self.assertRaisesRegex(import_audit.AuditError, "not terminated by DT_NULL"):
             import_audit.elf_program_dynamic_symbols(Path("cut.prx"), cut)
 
+    def test_dynamic_tables_can_span_contiguous_load_segments(self):
+        original = build_sectionless_elf([("required", 0, GLOBAL_FUNCTION), ("provided", 1, GLOBAL_FUNCTION)], ["libc.prx"])
+        dynamic = struct.unpack_from("<IIQQQQQQ", original, 120)
+        tags = dict(struct.unpack_from("<qQ", original, offset) for offset in range(dynamic[2], dynamic[2] + dynamic[5], 16))
+        expected = import_audit.elf_program_dynamic_symbols(Path("control.prx"), original)
+        for cut in (tags[5] - 0x400000 + 5, tags[6] - 0x400000 + 25, tags[4] - 0x400000 + 5):
+            for gap, mapping in ((0, 0), (1, 0), (0, 1)):
+                with self.subTest(cut=cut, gap=gap, mapping=mapping):
+                    image = bytearray(original)
+                    table = len(image)
+                    headers = ((1, 4, 0, 0x400000, 0x400000, cut, cut, 1),
+                               (1, 6, cut + mapping, 0x400000 + cut + gap, 0, len(original) - cut, len(original) - cut, 1), dynamic)
+                    image.extend(b"".join(struct.pack("<IIQQQQQQ", *header) for header in headers))
+                    struct.pack_into("<Q", image, 32, table)
+                    struct.pack_into("<H", image, 56, 3)
+                    if gap or mapping:
+                        with self.assertRaises(import_audit.AuditError):
+                            import_audit.elf_program_dynamic_symbols(Path("gap.prx"), image)
+                    else:
+                        self.assertEqual(import_audit.elf_program_dynamic_symbols(Path("split.prx"), image), expected)
+
     def test_module_dependencies_stop_at_dynamic_terminator(self):
         work = self.work
         (work.libs / "libc.prx").write_bytes(exporting())
