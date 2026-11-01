@@ -757,7 +757,25 @@ static void LowWaterMarks() {
     Require(Poll(kq, events, 4) == 1 && events[0].ident == writer && events[0].data == freeSpace);
     Require(Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, freeSpace + 1)) == 0);
     Require(Poll(kq, events, 4) == 0);
-    Require(Throws([kq, reader] { Apply(kq, Change(reader, EvfiltRead, EvAdd, NoteLowat, 0)); }));
+    Require(Apply(kq, Change(reader, EvfiltRead, EvAdd, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == reader && events[0].data == 4);
+    Require(Apply(kq, Change(reader, EvfiltRead, EvAdd, NoteLowat, 8)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Throws([kq, writer] { Apply(kq, Change(writer, EvfiltWrite, EvAdd, NoteLowat, 0)); }));
+    int idle[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, idle) == 0);
+    const auto idleReader = static_cast<std::uintptr_t>(idle[0]);
+    Require(Apply(kq, Change(idleReader, EvfiltRead, EvAdd, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == idleReader && events[0].data == 0 && (events[0].flags & EvEof) == 0);
+    Require(send_nid_postfix(idle[1], "abc", 3, 0) == 3);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == idleReader && events[0].data == 3);
+    char drained[3];
+    Require(recv_nid_postfix(idle[0], drained, sizeof(drained), 0) == 3);
+    Require(Apply(kq, Change(idleReader, EvfiltRead, EvAdd, NoteLowat, -1)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == idleReader && events[0].data == 0);
+    Require(Apply(kq, Change(idleReader, EvfiltRead, EvAdd, NoteLowat, 1)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(close_nid_postfix(idle[0]) == 0 && close_nid_postfix(idle[1]) == 0);
     int datagrams[2];
     Require(socketpair_nid_postfix(Unix, 2, 0, datagrams) == 0);
     const auto datagram = static_cast<std::uintptr_t>(datagrams[0]);
@@ -887,6 +905,16 @@ static void EdgeTriggeredSocketRead() {
     Require(Poll(kq, events, 4) == 1 && events[0].ident == markedReader && events[0].data == 4);
     Require(Poll(kq, events, 4) == 0);
     Require(close_nid_postfix(marked[0]) == 0 && close_nid_postfix(marked[1]) == 0);
+    int always[2];
+    Require(socketpair_nid_postfix(Unix, Stream, 0, always) == 0);
+    const auto alwaysReader = static_cast<std::uintptr_t>(always[0]);
+    Require(Apply(kq, Change(alwaysReader, EvfiltRead, EvAdd | EvClear, NoteLowat, 0)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == alwaysReader && events[0].data == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(send_nid_postfix(always[1], "ab", 2, 0) == 2);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == alwaysReader && events[0].data == 2);
+    Require(Poll(kq, events, 4) == 0);
+    Require(close_nid_postfix(always[0]) == 0 && close_nid_postfix(always[1]) == 0);
     Require(close_nid_postfix(kq) == 0);
 }
 
