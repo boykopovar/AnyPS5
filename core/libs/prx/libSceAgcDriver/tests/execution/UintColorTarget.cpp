@@ -20,6 +20,7 @@
 #else
 #include <sys/mman.h>
 #endif
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -58,6 +59,9 @@ constexpr TargetFormat R32{"R32_UINT", 0x410u, VK_FORMAT_R32_UINT, 1, 4};
 constexpr TargetFormat R32G32{"R32G32_UINT", 0x42cu, VK_FORMAT_R32G32_UINT, 2, 4};
 constexpr TargetFormat R32G32B32A32{"R32G32B32A32_UINT", 0x438u, VK_FORMAT_R32G32B32A32_UINT, 4, 4};
 constexpr TargetFormat R8{"R8_UINT", 0x404u, VK_FORMAT_R8_UINT, 1, 1};
+constexpr TargetFormat R16{"R16_UINT", 0x408u, VK_FORMAT_R16_UINT, 1, 2};
+constexpr TargetFormat R8G8B8A8{"R8G8B8A8_UINT", 0x428u, VK_FORMAT_R8G8B8A8_UINT, 4, 1};
+constexpr TargetFormat R16G16B16A16{"R16G16B16A16_UINT", 0x430u, VK_FORMAT_R16G16B16A16_UINT, 4, 2};
 
 struct ExportCase {
     const char* name;
@@ -69,6 +73,7 @@ constexpr ExportCase Export32R{"32_R", 1, VK_COLOR_COMPONENT_R_BIT};
 constexpr ExportCase Export32GR{"32_GR", 2, VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT};
 constexpr ExportCase Export32AR{"32_AR", 3, VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_A_BIT};
 constexpr ExportCase Export32ABGR{"32_ABGR", 9, VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
+constexpr ExportCase ExportFp16ABGR{"FP16_ABGR", 4, VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT};
 
 alignas(256) constexpr std::array<std::uint32_t, 6> VertexCode{
     0xe0382000, 0x80000005, 0xbf8c3f70, 0xf80008cf, 0x03020100, 0xbf810000,
@@ -78,7 +83,7 @@ constexpr std::array<std::array<float, 4>, 3> Triangle{{
     {-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}
 }};
 
-alignas(256) std::array<std::array<std::uint32_t, 64>, 128> Programs{};
+alignas(256) std::array<std::array<std::uint32_t, 64>, 256> Programs{};
 std::size_t programCount = 0;
 
 std::span<const std::uint32_t> Program(const std::array<std::uint32_t, 4>& vgprs, bool compressed) {
@@ -157,7 +162,7 @@ struct Block {
     std::uint8_t* data = nullptr;
 };
 
-AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::size_t bytes, const TargetFormat& target, std::uint32_t attrib3) {
+AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::size_t bytes, const TargetFormat& target, std::uint32_t attrib3, ShaderRecompiler::ColorExportPacking packing) {
     AgcDriver::Registers cx;
     cx[0x318] = static_cast<std::uint32_t>(block.Address() >> 8u);
     cx[0x31b] = 0;
@@ -168,6 +173,7 @@ AgcDriver::Graphics::ColorTarget DecodeTarget(const Block& block, std::size_t by
     cx[0x390] = static_cast<std::uint32_t>(block.Address() >> 40u);
     auto color = AgcDriver::Graphics::DecodeColorBuffer(cx, 0);
     Require(color.format == target.format && color.elementBytes == target.channels * target.channelBytes && color.componentMapping == 0xe4u && color.packing == ShaderRecompiler::ColorExportPacking::Uint && color.bytes == bytes, std::string("the UINT target did not decode as an ") + target.name + " surface with the unsigned integer packing");
+    color.packing = packing;
     return color;
 }
 
@@ -234,6 +240,11 @@ void Draw(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarge
     const auto plain = materialize(unpacked);
     Require(pixelResult->variantId == ShaderRecompiler::GetPreparedArtifact(*handle).variantId && plain->variantId == pixelResult->variantId, "the draw did not use the registered pixel shader");
     Require(plain->PipelineVariantId() != pixelResult->PipelineVariantId() && materialize(fragment)->PipelineVariantId() == pixelResult->PipelineVariantId(), "the unsigned integer packing did not key its own specialization");
+    if (color.packing != ShaderRecompiler::ColorExportPacking::Uint) {
+        auto unclamped = fragment;
+        unclamped.context.pixel->targetExportPacking[color.exportIndex] = ShaderRecompiler::ColorExportPacking::Uint;
+        Require(materialize(unclamped)->PipelineVariantId() != pixelResult->PipelineVariantId(), "the clamping unsigned integer packing did not key its own specialization");
+    }
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{
         {ShaderStage::Vertex, &vertexResult, 0},
         {ShaderStage::Fragment, pixelResult.get(), PixelPushOffset(vertexPush, target)}
@@ -286,24 +297,47 @@ std::array<std::uint32_t, 4> Expected(const ExportCase& exported, const std::arr
     return vgprs;
 }
 
-void TargetTests(AgcDriver::VulkanDevice& device, const TargetFormat& target, const ExportCase& exported, std::span<const std::array<std::uint32_t, 4>> values, ColorTileMode mode, const char* kind) {
+std::uint32_t WidenedHalf(std::uint32_t half) {
+    const auto sign = (half & 0x8000u) << 16u;
+    const auto exponent = (half >> 10u) & 0x1fu;
+    auto mantissa = half & 0x3ffu;
+    if (exponent == 0x1fu) return sign | 0x7f800000u | (mantissa << 13u);
+    if (exponent != 0u) return sign | ((exponent + 112u) << 23u) | (mantissa << 13u);
+    if (mantissa == 0u) return sign;
+    std::uint32_t shift = 0;
+    while ((mantissa & 0x400u) == 0u) {
+        mantissa <<= 1u;
+        ++shift;
+    }
+    return sign | ((113u - shift) << 23u) | ((mantissa & 0x3ffu) << 13u);
+}
+
+std::array<std::uint32_t, 4> HalfExpected(const TargetFormat& target, const std::array<std::uint32_t, 4>& vgprs) {
+    const auto limit = target.channelBytes == 4u ? 0xffffffffu : (1u << (8u * target.channelBytes)) - 1u;
+    std::array<std::uint32_t, 4> expected{};
+    for (std::uint32_t channel = 0; channel < expected.size(); ++channel) expected[channel] = std::min(WidenedHalf((vgprs[channel / 2u] >> (16u * (channel % 2u))) & 0xffffu), limit);
+    return expected;
+}
+
+void TargetTests(AgcDriver::VulkanDevice& device, const TargetFormat& target, const ExportCase& exported, std::span<const std::array<std::uint32_t, 4>> values, ColorTileMode mode, const char* kind, ShaderRecompiler::ColorExportPacking packing) {
     const auto elementBytes = target.channels * target.channelBytes;
     const ColorTargetLayout layout(Width, Height, mode, elementBytes);
     Block block((layout.Bytes() + BlockBytes - 1) / BlockBytes * BlockBytes);
-    const auto color = DecodeTarget(block, layout.Bytes(), target, mode == ColorTileMode::Linear ? LinearAttrib3 : TiledAttrib3);
+    const auto color = DecodeTarget(block, layout.Bytes(), target, mode == ColorTileMode::Linear ? LinearAttrib3 : TiledAttrib3, packing);
+    const bool halves = exported.format == ExportFp16ABGR.format;
     auto before = Fill(block);
     for (const auto& vgprs : values) {
-        Draw(device, color, exported, WordProgram(vgprs));
+        Draw(device, color, exported, Program(vgprs, halves));
         char what[160];
         std::snprintf(what, sizeof(what), "a %s export of 0x%08x 0x%08x 0x%08x 0x%08x into a %s %s target", exported.name, vgprs[0], vgprs[1], vgprs[2], vgprs[3], kind, target.name);
-        ExpectSurface(device, block, target, layout, before, exported, Expected(exported, vgprs), what);
+        ExpectSurface(device, block, target, layout, before, exported, halves ? HalfExpected(target, vgprs) : Expected(exported, vgprs), what);
         before = ReadBack(device, block);
     }
 }
 
-void FormatTests(AgcDriver::VulkanDevice& device, const TargetFormat& target, const ExportCase& exported, std::span<const std::array<std::uint32_t, 4>> values) {
-    TargetTests(device, target, exported, values, ColorTileMode::RenderTarget, "tiled");
-    TargetTests(device, target, exported, values, ColorTileMode::Linear, "linear");
+void FormatTests(AgcDriver::VulkanDevice& device, const TargetFormat& target, const ExportCase& exported, std::span<const std::array<std::uint32_t, 4>> values, ShaderRecompiler::ColorExportPacking packing = ShaderRecompiler::ColorExportPacking::Uint) {
+    TargetTests(device, target, exported, values, ColorTileMode::RenderTarget, "tiled", packing);
+    TargetTests(device, target, exported, values, ColorTileMode::Linear, "linear", packing);
 }
 
 }
@@ -323,6 +357,19 @@ int main() {
         FormatTests(*device, R32G32B32A32, Export32ABGR, wide);
         const std::vector<std::array<std::uint32_t, 4>> narrow{{0u, 0x11111111u, 0x22222222u, 0x33333333u}, {1u, 0u, 0u, 0u}, {0x7fu, 0u, 0u, 0u}, {0xa5u, 0u, 0u, 0u}, {0xffu, 0u, 0u, 0u}};
         FormatTests(*device, R8, Export32R, narrow);
+        constexpr std::array<std::uint32_t, 10> halves{{0x0000u, 0x8000u, 0x3c00u, 0xbc00u, 0x3800u, 0x0001u, 0x83ffu, 0x7bffu, 0x7c00u, 0xfc00u}};
+        std::vector<std::array<std::uint32_t, 4>> packed;
+        for (std::size_t index = 0; index < halves.size(); ++index) {
+            const auto half = [&](std::size_t offset) { return halves[(index + offset) % halves.size()]; };
+            packed.push_back({half(0) | (half(3) << 16u), half(5) | (half(7) << 16u), 0u, 0u});
+        }
+        using ShaderRecompiler::ColorExportPacking;
+        FormatTests(*device, R32, ExportFp16ABGR, packed);
+        FormatTests(*device, R32G32B32A32, ExportFp16ABGR, packed);
+        FormatTests(*device, R16, ExportFp16ABGR, packed, ColorExportPacking::UintClamp16);
+        FormatTests(*device, R16G16B16A16, ExportFp16ABGR, packed, ColorExportPacking::UintClamp16);
+        FormatTests(*device, R8, ExportFp16ABGR, packed, ColorExportPacking::UintClamp8);
+        FormatTests(*device, R8G8B8A8, ExportFp16ABGR, packed, ColorExportPacking::UintClamp8);
         std::puts("UINT color target tests passed");
         return 0;
     } catch (const std::exception& error) {

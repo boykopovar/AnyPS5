@@ -10635,7 +10635,11 @@ void uintTargetTests() {
     Require(uint16.color.packing == ColorExportPacking::None && uint16.color.uintExport, "a UINT16_ABGR export into a UINT target was retyped twice");
     auto halves = queue;
     halves.context[0x1c5] = 4u;
-    expectFailure([&] { static_cast<void>(AgcDriver::Graphics::DecodeState(halves)); }, "color export format 4 into an unsigned integer target is unsupported");
+    for (const auto& [format, vkFormat, packing] : std::array<std::tuple<std::uint32_t, VkFormat, ColorExportPacking>, 5>{{{4u, VK_FORMAT_R32_UINT, ColorExportPacking::Uint}, {1u, VK_FORMAT_R8_UINT, ColorExportPacking::UintClamp8}, {10u, VK_FORMAT_R8G8B8A8_UINT, ColorExportPacking::UintClamp8}, {2u, VK_FORMAT_R16_UINT, ColorExportPacking::UintClamp16}, {12u, VK_FORMAT_R16G16B16A16_UINT, ColorExportPacking::UintClamp16}}}) {
+        halves.context[0x31c] = (queue.context.at(0x31c) & ~0x1f7cu) | (format << 2u) | (4u << 8u);
+        const auto half = AgcDriver::Graphics::DecodeState(halves);
+        Require(half.color.format == vkFormat && half.color.packing == packing && !half.color.uintExport && AgcDriver::Graphics::ExportPackings(half)[0] == packing && !half.blends.at(0).blendEnable, "an FP16_ABGR export into a UINT target did not get the packing that clamps to its channel width");
+    }
     auto unorm = queue;
     unorm.context[0x31c] = (unorm.context.at(0x31c) & ~0x1f7cu) | (4u << 2u) | (7u << 8u);
     Require(AgcDriver::Graphics::DecodeState(unorm).color.packing == ColorExportPacking::None, "a 32-bit float target got the unsigned integer export packing");
@@ -11118,7 +11122,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(5);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(7);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 

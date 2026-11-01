@@ -244,7 +244,7 @@ ConservativeZExport readConservativeZExport(Reader& reader) {
 
 ColorExportPacking readColorExportPacking(Reader& reader) {
     const auto value = reader.ReadU8();
-    if (value > static_cast<std::uint8_t>(ColorExportPacking::Uint)) {
+    if (value > static_cast<std::uint8_t>(ColorExportPacking::UintClamp16)) {
         throw std::runtime_error("RequestSerializer: invalid ColorExportPacking value");
     }
     return static_cast<ColorExportPacking>(value);

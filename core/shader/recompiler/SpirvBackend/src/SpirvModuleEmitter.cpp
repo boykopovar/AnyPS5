@@ -453,7 +453,7 @@ std::uint32_t PackExport(SpirvEmitterState& state, IrBufferFormat format, std::u
     return packed;
 }
 
-std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target, std::uint32_t color) {
+std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target, std::uint32_t color, bool half) {
     const auto packing = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::ExportPackingBase + target, static_cast<std::uint32_t>(ColorExportPacking::None));
     const auto unorm = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Unorm10_11_11));
     const auto floating = EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::Float11_11_10));
@@ -461,10 +461,16 @@ std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target
     const auto wide = Select(state, TypeU32(state), floating, PackExport(state, IrBufferFormat::Format10_11_11Float, color), PackExport(state, IrBufferFormat::Format11_11_10UNorm, color));
     const auto word = Select(state, TypeU32(state), small, PackExport(state, IrBufferFormat::Format4_4_4_4UNorm, color), wide);
     const auto packed = Binary(state, spv::OpLogicalOr, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), unorm, floating), small);
+    const auto limit = half ? Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::UintClamp8)), ConstantU32(state, 0xffu), Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ColorExportPacking::UintClamp16)), ConstantU32(state, 0xffffu), ConstantU32(state, 0xffffffffu))) : 0u;
     std::array<std::uint32_t, 4> components{};
     for (std::uint32_t component = 0; component < components.size(); ++component) {
-        const auto unpacked = state.module.AllocateId();
+        auto unpacked = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), unpacked, color, component);
+        if (half) {
+            const auto clamped = state.module.AllocateId();
+            state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, Unary(state, spv::OpBitcast, TypeU32(state), unpacked), limit);
+            unpacked = Unary(state, spv::OpBitcast, TypeF32(state), clamped);
+        }
         components[component] = Select(state, TypeF32(state), packed, component == 0u ? Unary(state, spv::OpBitcast, TypeF32(state), word) : ConstantF32(state, 0u), unpacked);
     }
     const auto result = state.module.AllocateId();
@@ -2241,7 +2247,7 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 if (uintOutput || mode == 5u || mode == 6u) FailEmit(std::string(merge->blend.enabled ? "blending into an unclamped normalized color target" : "a partial write of a packed color target") + " cannot take an integer or 16-bit normalized export");
                 MergeColorTarget(state, static_cast<std::size_t>(merge - merges.begin()), value);
             }
-            if (!uintOutput && mode != 5u && mode != 6u) value = SelectExportPacking(state, exp.index, value);
+            if (!uintOutput && mode != 5u && mode != 6u) value = SelectExportPacking(state, exp.index, value, mode == 4u);
         }
         if (exp.kind == ExportTargetKind::Position) {
             if (state.inputInfo.vertex == nullptr) {
