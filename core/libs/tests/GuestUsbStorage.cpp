@@ -312,6 +312,7 @@ void TestNoDevice() {
     Require(sceUsbStorageGetDeviceList(nullptr, &count) == UsbStorage::InvalidArgument, "get the device list without a device array");
     Require(sceUsbStorageGetDeviceList(devices, nullptr) == UsbStorage::InvalidArgument, "get the device list without a count");
     Require(sceUsbStorageGetDeviceList(nullptr, nullptr) == UsbStorage::InvalidArgument, "get device list without buffers");
+    Require(sceUsbStorageGetDeviceList(devices, reinterpret_cast<std::int32_t*>(0x10)) == UsbStorage::InvalidArgument, "get device list with unwritable count");
 
     UsbStorageDeviceInfo info;
     std::memset(&info, 0x5a, sizeof(info));
@@ -405,6 +406,8 @@ void TestDeviceInfo(const FakeHost& host) {
     Require(info.reserved == 0 && info.padding[0] == 0 && info.padding[1] == 0, "the device info cleared its unknown fields");
     Require(info.volumeSize == FirstVolumeSize, "the device info holds the volume size");
     Require(sceUsbStorageGetDeviceInfo(1, &info) == UsbStorage::DeviceNotFound, "get device info of an absent device");
+    Require(sceUsbStorageGetDeviceInfo(0, reinterpret_cast<UsbStorageDeviceInfo*>(0x10)) == UsbStorage::InvalidArgument, "get device info with unwritable info");
+    Require(sceUsbStorageGetDeviceList(reinterpret_cast<std::uint32_t*>(0x10), &count) == UsbStorage::InvalidArgument, "get device list with unwritable devices");
 
     char mountPoint[UsbStorage::MountPointSize];
     std::memset(mountPoint, 0x5a, sizeof(mountPoint));

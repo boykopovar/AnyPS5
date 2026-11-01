@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <cstddef>
+#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <limits>
@@ -392,7 +393,12 @@ std::int32_t APS5_VABI sceUsbStorageGetDeviceInfo(std::uint32_t device, UsbStora
     record.productLength = CopyString(record.product, volume.product, __func__);
     record.serialNumberLength = CopyString(record.serialNumber, volume.serialNumber, __func__);
     record.flags = Flags(volume);
-    std::memcpy(info, &record, sizeof(record));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(info, &record, sizeof(record));
+    errno = savedErrno;
+    if (!copied) {
+        return UsbStorage::InvalidArgument;
+    }
     return 0;
 }
 
@@ -402,11 +408,28 @@ std::int32_t APS5_VABI sceUsbStorageGetDeviceList(std::uint32_t* devices, std::i
     }
     auto& service = State();
     std::lock_guard lock(service.mutex);
-    std::int32_t listed = 0;
+    std::vector<std::uint32_t> listedDevices;
     for (std::size_t slot = 0; slot < service.devices.size(); ++slot) {
-        if (service.devices[slot]) devices[listed++] = static_cast<std::uint32_t>(slot);
+        if (service.devices[slot]) listedDevices.push_back(static_cast<std::uint32_t>(slot));
     }
-    *count = listed;
+    std::int32_t originalCount = 0;
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&originalCount, count, sizeof(originalCount))) {
+        errno = savedErrno;
+        return UsbStorage::InvalidArgument;
+    }
+    if (!listedDevices.empty()) {
+        if (!GuestCopyOut_nid_no_patch(devices, listedDevices.data(), sizeof(std::uint32_t) * listedDevices.size())) {
+            errno = savedErrno;
+            return UsbStorage::InvalidArgument;
+        }
+    }
+    const std::int32_t listed = static_cast<std::int32_t>(listedDevices.size());
+    if (!GuestCopyOut_nid_no_patch(count, &listed, sizeof(listed))) {
+        errno = savedErrno;
+        return UsbStorage::InvalidArgument;
+    }
+    errno = savedErrno;
     return 0;
 }
 
