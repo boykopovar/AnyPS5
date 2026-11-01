@@ -7948,7 +7948,11 @@ void unchangedCpuStampTests(const Device& device, Recorder& recorder) {
     std::cout << "unchanged CPU stamps: ok\n";
 }
 
-void rewrittenBlockTests(const Device& device, Recorder& recorder) {
+bool rewrittenBlockTests(const Device& device, Recorder& recorder) {
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "no write watching: rewritten blocks not tested\n";
+        return false;
+    }
     const auto& base = device.GetContext();
     constexpr std::uint32_t side = 256;
     constexpr std::size_t surfaceBytes = side * side * 4;
@@ -7965,10 +7969,7 @@ void rewrittenBlockTests(const Device& device, Recorder& recorder) {
     for (const bool after : {true, false}) {
         const std::string what = after ? "a CPU store of the baseline bytes after the GPU results" : "a CPU store of the baseline bytes before the GPU results";
         void* memoryBlock = AllocateWatched(bytes, block);
-        if (memoryBlock == nullptr) {
-            std::cout << "no write watching: rewritten blocks not tested\n";
-            return;
-        }
+        Require(memoryBlock != nullptr, "no watched block although write watching is on: rewritten blocks");
         auto* memory = static_cast<std::uint8_t*>(memoryBlock);
         for (std::size_t i = 0; i < bytes; ++i) memory[i] = pattern(i);
         const auto address = reinterpret_cast<std::uint64_t>(memoryBlock);
@@ -8049,10 +8050,14 @@ void rewrittenBlockTests(const Device& device, Recorder& recorder) {
         recorder.Sync();
     }
     std::cout << "rewritten blocks: ok\n";
+    return true;
 }
 
-void rewrittenStaleUnitTests(const Device& device, Recorder& recorder) {
-    Require(AgcDriver::GuestMemory::WriteWatched(), "(r) stale unit tests require host write watching");
+bool rewrittenStaleUnitTests(const Device& device, Recorder& recorder) {
+    if (!AgcDriver::GuestMemory::WriteWatched()) {
+        std::cout << "no write watching: stale unit tests not run\n";
+        return false;
+    }
     const auto& base = device.GetContext();
     constexpr std::uint32_t width = 512;
     constexpr std::uint32_t height = 256;
@@ -8164,6 +8169,7 @@ void rewrittenStaleUnitTests(const Device& device, Recorder& recorder) {
         }
         std::cout << "a unit kept for the CPU and written again before a re-upload, in " << what << ": ok\n";
     }
+    return true;
 }
 
 std::uint64_t publishRaceAddress = 0;
@@ -12782,14 +12788,8 @@ int main(int argc, char** argv) {
             unchangedCpuStampTests(device, recorder);
             return 0;
         }
-        if (argc == 2 && std::string_view(argv[1]) == "--rewritten-blocks-only") {
-            rewrittenBlockTests(device, recorder);
-            return 0;
-        }
-        if (argc == 2 && std::string_view(argv[1]) == "--rewritten-stale-units-only") {
-            rewrittenStaleUnitTests(device, recorder);
-            return 0;
-        }
+        if (argc == 2 && std::string_view(argv[1]) == "--rewritten-blocks-only") return rewrittenBlockTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--rewritten-stale-units-only") return rewrittenStaleUnitTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--idle-writeback-race-only") {
             idleWriteBackRaceTests(device, recorder);
             return 0;
