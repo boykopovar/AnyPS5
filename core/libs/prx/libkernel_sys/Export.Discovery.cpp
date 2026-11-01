@@ -1,5 +1,6 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
 #include "prx/libkernel/include/Api.hpp"
@@ -19,6 +20,7 @@
 
 namespace {
 
+constexpr int GuestClockRealtime = 0;
 constexpr std::uint32_t PARAM_SFO_ATTRIBUTE_SUPPORT_NEO_MODE = 0x00800000;
 
 int SceResult(int error) {
@@ -2098,9 +2100,18 @@ int APS5_VABI scePthreadSuspendAll(void) {
     return 0;
 }
 
-int APS5_VABI scePthreadTimedjoin(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI scePthreadTimedjoin(Pthread thread, void** value, KernelUseconds usec) {
+    KernelTimespec abstime{};
+    if (clock_gettime_nid_postfix(GuestClockRealtime, &abstime) != 0) {
+        return SCE_KERNEL_ERROR_EINVAL;
+    }
+    abstime.tv_sec += static_cast<std::int64_t>(usec / 1000000ULL);
+    abstime.tv_nsec += static_cast<std::int64_t>((usec % 1000000ULL) * 1000ULL);
+    if (abstime.tv_nsec >= 1000000000LL) {
+        abstime.tv_sec += 1;
+        abstime.tv_nsec -= 1000000000LL;
+    }
+    return SceResult(pthread_timedjoin_np_nid_postfix(thread, value, &abstime));
 }
 
 int APS5_VABI sched_setscheduler_nid_postfix(int pid, int, const KernelSchedParam* param) {
