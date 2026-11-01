@@ -203,6 +203,18 @@ int main() {
     Require(sceRudpRead(ctx, nullptr, 0, 0, nullptr) == connReset);
 
     Require(sceRudpSetEventHandler(Handler, nullptr) == 0);
+    {
+        int listener = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &listener) == 0);
+        Require(sceRudpBind(listener, 6, 0, 2) == 0);
+        Require(sceRudpListen(listener, 1) == 0);
+        unsigned char status[0x30];
+        std::memset(status, 0x5a, sizeof(status));
+        Require(sceRudpGetContextStatus(listener, status, sizeof(status)) == 0);
+        for (std::size_t i = 0; i < sizeof(status); ++i) Require(status[i] == (i == 0 ? 6 : i >= 4 && i < 8 ? 0xFF : 0));
+        Require(sceRudpTerminate(listener) == 0);
+        Require(sceRudpProcessEvents(0) == 0);
+    }
 
     Require(sceRudpTerminate(ctx) == 0);
     Require(sceRudpGetOption(ctx, 1, nullptr, 4) == invalidContextId);

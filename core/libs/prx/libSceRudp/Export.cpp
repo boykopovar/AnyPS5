@@ -53,6 +53,8 @@ constexpr std::uintptr_t RUDP_POOL_ALIGNMENT = 8;
 constexpr std::size_t RUDP_STATUS_SIZE = 0xF8;
 constexpr std::size_t RUDP_CONTEXT_STATUS_SIZE = 0x30;
 constexpr std::size_t RUDP_CONTEXT_STATUS_PARENT = 4;
+constexpr std::size_t RUDP_CONTEXT_STATUS_STATE = 0;
+constexpr std::int32_t RUDP_CONTEXT_STATE_LISTENING = 6;
 constexpr std::size_t RUDP_STATUS_CURRENT_CONTEXTS = 0x64;
 constexpr std::size_t RUDP_CONTEXT_BUFFER_STATUS_SIZE = 16;
 constexpr uint16_t RUDP_MAX_SEGMENT_SIZE = 1410;
@@ -408,6 +410,9 @@ int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, std::size_t size
     }
     unsigned char report[RUDP_CONTEXT_STATUS_SIZE] = {};
     std::memset(report + RUDP_CONTEXT_STATUS_PARENT, 0xFF, sizeof(std::int32_t));
+    if (g_ctx.at(ctx_id).listening) {
+        std::memcpy(report + RUDP_CONTEXT_STATUS_STATE, &RUDP_CONTEXT_STATE_LISTENING, sizeof(RUDP_CONTEXT_STATE_LISTENING));
+    }
     std::memcpy(status, report, size);
     return 0;
 }
