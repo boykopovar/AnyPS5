@@ -3,11 +3,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
 namespace {
+
+constexpr auto sceUserServiceGetAgeRestriction = sceUserServiceGetAgeLevel;
 
 void Require(bool value) { if (!value) std::abort(); }
 
@@ -54,6 +57,10 @@ int main() {
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserColor(123, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, &color) == USER_SERVICE_OK);
+    for (const int invalid_id : {USER_SERVICE_USER_ID_INVALID, 0, 1, 123, -1, 0x12345678, USER_SERVICE_INITIAL_USER_ID + 4}) {
+        Require(sceUserServiceGetUserColor(invalid_id, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetUserColor(invalid_id, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    }
 
     SetLanguage(nullptr);
     using KeyboardSetting = decltype(&sceUserServiceGetKeyboardType);
@@ -108,11 +115,16 @@ int main() {
 
     std::uint32_t age_level = 0x5a5a5a5au;
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-    const int absent_users[] = {0, USER_SERVICE_USER_ID_INVALID, 0xff, 0x12345678};
+    Require(sceUserServiceGetAgeRestriction(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    const int absent_users[] = {0, USER_SERVICE_USER_ID_INVALID, 0xff, 0x12345678, 1, 123, -1, USER_SERVICE_INITIAL_USER_ID + 4};
     for (int user_id : absent_users) {
         Require(sceUserServiceGetAgeLevel(user_id, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
         Require(age_level == 0x5a5a5a5au);
         Require(sceUserServiceGetAgeLevel(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        std::uint32_t age_restriction = 0x5a5a5a5au;
+        Require(sceUserServiceGetAgeRestriction(user_id, &age_restriction) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+        Require(age_restriction == 0x5a5a5a5au);
+        Require(sceUserServiceGetAgeRestriction(user_id, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
         privacy = 0x5a5a;
         Require(sceUserServiceGetPlatformPrivacyWs1(user_id, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
         Require(privacy == 0x5a5a);
@@ -124,6 +136,9 @@ int main() {
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID, &age_level) == USER_SERVICE_OK);
     Require(age_level == 0xffffffffu);
+    std::uint32_t age_restriction = 0;
+    Require(sceUserServiceGetAgeRestriction(USER_SERVICE_INITIAL_USER_ID, &age_restriction) == USER_SERVICE_OK);
+    Require(age_restriction == 0xffffffffu);
 
     struct Setting {
         int (APS5_VABI *get)(int, std::int32_t*);
@@ -148,6 +163,10 @@ int main() {
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID, &value) == USER_SERVICE_OK);
         Require(value == setting.value);
     }
+    std::int32_t chat_transcription = -1;
+    Require(sceUserServiceGetAccessibilityChatTranscription(USER_SERVICE_INITIAL_USER_ID, &chat_transcription) == USER_SERVICE_OK);
+    Require(chat_transcription == 0);
+
     int initialUser = -1;
     Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK && initialUser == USER_SERVICE_INITIAL_USER_ID);
@@ -175,6 +194,21 @@ int main() {
 
     char name[32]{};
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, 0) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    for (const int user_id : {USER_SERVICE_INITIAL_USER_ID,
+                              USER_SERVICE_INITIAL_USER_ID + 1,
+                              USER_SERVICE_INITIAL_USER_ID + 2,
+                              USER_SERVICE_INITIAL_USER_ID + 3,
+                              USER_SERVICE_INITIAL_USER_ID + 4,
+                              USER_SERVICE_USER_ID_INVALID,
+                              0,
+                              1,
+                              123,
+                              -1,
+                              0x12345678}) {
+        Require(sceUserServiceGetUserName(user_id, nullptr, 0) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(sceUserServiceGetUserName(user_id, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    }
     Require(sceUserServiceGetUserName(123, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, 5) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_OK);
@@ -195,6 +229,8 @@ int main() {
 
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetAgeRestriction(USER_SERVICE_INITIAL_USER_ID + 1, &age_restriction) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetAgeRestriction(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     privacy = 0x5a5a;
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(privacy == 0x5a5a);
@@ -219,6 +255,8 @@ int main() {
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_OK);
     Require(age_level == 0xffffffffu);
+    Require(sceUserServiceGetAgeRestriction(USER_SERVICE_INITIAL_USER_ID + 1, &age_restriction) == USER_SERVICE_OK);
+    Require(age_restriction == 0xffffffffu);
     privacy = 0x5a5a;
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_OK);
@@ -241,6 +279,8 @@ int main() {
     }
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetAgeRestriction(USER_SERVICE_INITIAL_USER_ID + 1, &age_restriction) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
+    Require(sceUserServiceGetAgeRestriction(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     privacy = 0x5a5a;
     Require(sceUserServiceGetPlatformPrivacyWs1(USER_SERVICE_INITIAL_USER_ID + 1, &privacy) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(privacy == 0x5a5a);
