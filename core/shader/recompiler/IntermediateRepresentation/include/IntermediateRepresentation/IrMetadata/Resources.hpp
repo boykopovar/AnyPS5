@@ -124,6 +124,7 @@ enum SamplerUse : std::uint16_t {
     SamplerUseQueryLod = 1u << 6u,
     SamplerUseAdjust = 1u << 7u,
     SamplerUseNonZeroLod = 1u << 8u,
+    SamplerUseGatherLod = 1u << 9u,
 };
 
 inline bool ImageSampleExplicitLod(std::uint32_t flags, IrShaderStage stage) {
