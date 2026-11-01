@@ -121,11 +121,6 @@ int APS5_VABI _ZN3sce2np9Semaphore4WaitEj(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZThn8_N3sce2np10MemoryFile4ReadEPNS0_6HandleEPvmPm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -196,17 +191,7 @@ int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTyp
     return 0;
 }
 
-int APS5_VABI sceNpUtilParseJid(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np9Semaphore6CreateEiiPKc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -371,11 +356,6 @@ int APS5_VABI _ZN3sce2np6Thread4InitEPKcimm(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2np4Time18ConvertToPosixTimeEPl(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np7Callout10IsTimedoutEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -476,11 +456,6 @@ int APS5_VABI _sceNpAllocatorMalloc(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np13RingBufMemory6IsInitEv(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -551,11 +526,6 @@ int APS5_VABI _ZN3sce2np6Thread4dtorEv(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np4Time8AddHoursEl(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3sce2np12WorkerThreadD0Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -577,11 +547,6 @@ int APS5_VABI _ZN3sce2np10EventQueueD0Ev(void) {
 }
 
 int APS5_VABI _ZN3sce2np8JsonNull5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3sce2np4Time12GetUserClockEPS1_(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

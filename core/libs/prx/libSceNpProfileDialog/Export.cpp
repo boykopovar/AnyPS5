@@ -7,6 +7,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 
 namespace {
 
@@ -74,6 +75,7 @@ int OpenDialog(const TParam* param, const char* function) {
     }
     dialog.userData = param->userData;
     dialog.status = COMMON_DIALOG_STATUS_FINISHED;
+    PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return COMMON_DIALOG_OK;
 }
 

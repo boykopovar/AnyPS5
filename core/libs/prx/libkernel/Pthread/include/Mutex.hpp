@@ -2,11 +2,14 @@
 #define CORE_LIBS_PRX_LIBKERNEL_PTHREAD_MUTEX_HPP
 
 #include "SceTypes.hpp"
+#include <mutex>
 
 class MutexOperations {
 public:
     static int Timedlock(PthreadMutex* mutex, const KernelTimespec* abstime);
     static bool IsOwned(const PthreadMutex* mutex);
+    static bool SpinAcquire(PthreadMutex mutex, std::timed_mutex& native);
+    static bool SpinAcquire(PthreadMutex mutex, std::recursive_timed_mutex& native);
 
     template<typename TTry, typename TPause, typename TYield>
     static bool SpinAcquire(int spins, int yields, TTry tryAcquire, TPause pause, TYield yield) {

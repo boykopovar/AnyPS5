@@ -8,10 +8,12 @@
 #include <iterator>
 #include <mutex>
 #include <random>
+#include <stdexcept>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/MallocManagedSize.hpp"
 #include "prx/libc/include/General.hpp"
@@ -94,6 +96,16 @@ bool IsOnlineIdText(const char* text) {
 }
 
 constexpr int NP_ERROR_BUFFER_TOO_SMALL = static_cast<int>(0x80558008);
+
+int ReadClock(RtcTick* time, int result) {
+    if (result >= 0) return 0;
+    time->tick = 0;
+    return result;
+}
+
+void RequireTimeAdd(int result, const char* function) {
+    if (result < 0) throw std::invalid_argument(std::string(function) + ": the tick is out of range");
+}
 
 constexpr int NP_ERROR_TITLE_ID_INVALID = static_cast<int>(0x80559E11);
 constexpr int NP_ERROR_TITLE_ID_BUFFER_TOO_SMALL = static_cast<int>(0x80559E0D);
@@ -273,17 +285,17 @@ constexpr std::size_t NP_STREAM_CHUNK = 0x100;
 
 int StreamRead(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read) {
     using Read = int(APS5_VABI*)(NpStreamReader*, void*, void*, std::size_t, std::size_t*);
-    return reinterpret_cast<Read>(self->vtable[2])(self, handle, out, size, read);
+    return reinterpret_cast<Read>(const_cast<void*>(self->vtable[2]))(self, handle, out, size, read);
 }
 
 int StreamWrite(NpStreamWriter* self, void* handle, const void* data, std::size_t size, std::size_t* written) {
     using Write = int(APS5_VABI*)(NpStreamWriter*, void*, const void*, std::size_t, std::size_t*);
-    return reinterpret_cast<Write>(self->vtable[2])(self, handle, data, size, written);
+    return reinterpret_cast<Write>(const_cast<void*>(self->vtable[2]))(self, handle, data, size, written);
 }
 
 int StreamNotify(NpStreamCtx* ctx, const void* data, std::size_t size) {
     using Notify = int(APS5_VABI*)(NpStreamCtx*, const void*, std::size_t);
-    return ctx == nullptr ? 0 : reinterpret_cast<Notify>(ctx->vtable[2])(ctx, data, size);
+    return ctx == nullptr ? 0 : reinterpret_cast<Notify>(const_cast<void*>(ctx->vtable[2]))(ctx, data, size);
 }
 
 int ReadAll(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
@@ -809,6 +821,179 @@ int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seco
     return NpResult(sceRtcGetTime_t(&time, seconds));
 }
 
+int APS5_VABI _ZN3sce2np4Time12GetUserClockEPS1_(NpTime* time) {
+    return ReadClock(time, sceRtcGetCurrentTick(time));
+}
+
+int APS5_VABI _ZN3sce2np4Time15GetNetworkClockEPS1_(NpTime* time) {
+    return ReadClock(time, sceRtcGetCurrentNetworkTick(time));
+}
+
+int APS5_VABI _ZN3sce2np4Time20GetDebugNetworkClockEPS1_(NpTime* time) {
+    return ReadClock(time, sceRtcGetCurrentDebugNetworkTick(time));
+}
+
+int APS5_VABI _ZN3sce2np4Time11SetDateTimeERKNS0_8DateTimeE(NpTime* self, const RtcDateTime* dateTime) {
+    const RtcDateTime copy = *dateTime;
+    const int result = sceRtcGetTick(&copy, self);
+    return result < 0 ? result : 0;
+}
+
+int APS5_VABI _ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(const NpTime* self, RtcDateTime* dateTime) {
+    RtcDateTime converted {};
+    const int result = sceRtcSetTick(&converted, self);
+    if (result < 0) return result;
+    *dateTime = converted;
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2np4Time18ConvertToPosixTimeEPl(const NpTime* self, std::int64_t* seconds) {
+    const int result = sceNpRtcConvertToPosixTime(self, seconds);
+    return result < 0 ? result : 0;
+}
+
+NpTime* APS5_VABI _ZN3sce2np4Time15AddMicroSecondsEl(NpTime* self, std::int64_t microseconds) {
+    RequireTimeAdd(sceRtcTickAddMicroseconds(self, self, microseconds), "sce::np::Time::AddMicroSeconds");
+    return self;
+}
+
+NpTime* APS5_VABI _ZN3sce2np4Time10AddSecondsEl(NpTime* self, std::int64_t seconds) {
+    RequireTimeAdd(sceRtcTickAddSeconds(self, self, seconds), "sce::np::Time::AddSeconds");
+    return self;
+}
+
+NpTime* APS5_VABI _ZN3sce2np4Time10AddMinutesEl(NpTime* self, std::int64_t minutes) {
+    RequireTimeAdd(sceRtcTickAddMinutes(self, self, minutes), "sce::np::Time::AddMinutes");
+    return self;
+}
+
+NpTime* APS5_VABI _ZN3sce2np4Time8AddHoursEl(NpTime* self, std::int64_t hours) {
+    RequireTimeAdd(sceRtcTickAddHours(self, self, static_cast<std::int32_t>(hours)), "sce::np::Time::AddHours");
+    return self;
+}
+
+NpTime* APS5_VABI _ZN3sce2np4Time7AddDaysEl(NpTime* self, std::int64_t days) {
+    RequireTimeAdd(sceRtcTickAddDays(self, self, static_cast<std::int32_t>(days)), "sce::np::Time::AddDays");
+    return self;
+}
+
+bool APS5_VABI _ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_lPl(const NpTime* self, const NpTime* since, std::int64_t timeout,
+    std::int64_t* remaining) {
+    const auto limit = static_cast<std::uint64_t>(timeout);
+    const std::uint64_t elapsed = self->tick - since->tick;
+    const bool timedOut = timeout < 0 || self->tick < since->tick || limit <= elapsed;
+    if (remaining != nullptr) *remaining = timedOut ? 0 : static_cast<std::int64_t>(limit - elapsed);
+    return timedOut;
+}
+
+bool APS5_VABI _ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_jPj(const NpTime* self, const NpTime* since, std::uint32_t timeout,
+    std::uint32_t* remaining) {
+    const std::uint64_t elapsed = self->tick - since->tick;
+    const bool before = self->tick < since->tick;
+    if (remaining != nullptr) *remaining = before || elapsed > timeout ? 0 : timeout - static_cast<std::uint32_t>(elapsed);
+    return before || timeout <= elapsed;
+}
+
+bool APS5_VABI _ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(const NpTime* self, const NpTime* since, std::int64_t timeout,
+    std::int64_t* remaining) {
+    bool timedOut = true;
+    std::uint64_t left = 0;
+    if (timeout >= 0 && self->tick >= since->tick) {
+        const std::uint64_t elapsed = self->tick - since->tick;
+        const std::uint64_t limit = static_cast<std::uint64_t>(timeout) * 1000000;
+        timedOut = limit <= elapsed;
+        left = (elapsed <= limit ? limit - elapsed : 0) / 1000000;
+    }
+    if (remaining != nullptr) *remaining = static_cast<std::int64_t>(left);
+    return timedOut;
+}
+
+int APS5_VABI _ZNK3sce2np4Time13FormatRFC3339EPcmi(const NpTime* self, char* text, std::size_t size, int timeZoneMinutes) {
+    return sceNpRtcFormatRFC3339(text, size, self, timeZoneMinutes);
+}
+
+NpTime* APS5_VABI _ZN3sce2np4TimeplERKS1_(NpTime* self, const NpTime* other) {
+    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(other->tick)), "sce::np::Time::operator+");
+    return self;
+}
+
+NpTime* APS5_VABI _ZN3sce2np4TimeplERK10SceRtcTick(NpTime* self, const RtcTick* tick) {
+    RequireTimeAdd(sceRtcTickAddTicks(self, self, static_cast<std::int64_t>(tick->tick)), "sce::np::Time::operator+");
+    return self;
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
+    return lhs->tick == rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npeqERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
+    return lhs->tick == rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
+    return lhs->tick == rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npneERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
+    return lhs->tick != rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npneERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
+    return lhs->tick != rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npneERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
+    return lhs->tick != rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npleERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
+    return lhs->tick <= rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npleERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
+    return lhs->tick <= rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npleERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
+    return lhs->tick <= rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npgeERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
+    return lhs->tick >= rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npgeERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
+    return lhs->tick >= rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npgeERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
+    return lhs->tick >= rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npltERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
+    return lhs->tick < rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npltERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
+    return lhs->tick < rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npltERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
+    return lhs->tick < rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npgtERKNS0_4TimeES3_(const NpTime* lhs, const NpTime* rhs) {
+    return lhs->tick > rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npgtERK10SceRtcTickRKNS0_4TimeE(const RtcTick* lhs, const NpTime* rhs) {
+    return lhs->tick > rhs->tick;
+}
+
+bool APS5_VABI _ZN3sce2npgtERKNS0_4TimeERK10SceRtcTick(const NpTime* lhs, const RtcTick* rhs) {
+    return lhs->tick > rhs->tick;
+}
+
 int APS5_VABI sceNpRtcFormatRFC3339(char* text, std::size_t size, const RtcTick* utc, int timeZoneMinutes) {
     if (size < NP_RFC3339_BUFFER_MIN) return NP_ERROR_BUFFER_TOO_SMALL;
     const int result = sceRtcFormatRFC3339(text, utc, timeZoneMinutes);
@@ -1292,7 +1477,7 @@ int APS5_VABI _ZN3sce2np9RefObject6AddRefEv(NpRefObject* self) {
 int APS5_VABI _ZN3sce2np9RefObject7ReleaseEv(NpRefObject* self) {
     using Destroy = void(APS5_VABI*)(NpRefObject*);
     const int count = static_cast<int>(static_cast<std::uint32_t>(sceNpAtomicDec32(&self->refCount)) - 1);
-    if (count == 0) reinterpret_cast<Destroy>(self->vtable[1])(self);
+    if (count == 0) reinterpret_cast<Destroy>(const_cast<void*>(self->vtable[1]))(self);
     return count;
 }
 
