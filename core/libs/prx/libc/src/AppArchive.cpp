@@ -4,12 +4,15 @@
 #include <zarchive/zarchivereader.h>
 
 #include <algorithm>
+#include <array>
+#include <cerrno>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
+#include <system_error>
 
 namespace {
 
@@ -231,6 +234,15 @@ bool AppArchiveDescriptor_nid_no_patch(int descriptor, AppArchiveNode* node, std
     return true;
 }
 
+bool AppArchiveMappingDescriptor_nid_no_patch(int descriptor, std::uint64_t offset, std::uint64_t length, int* backing) {
+    const auto file = Attached(descriptor);
+    if (!file) return false;
+    if (backing == nullptr) throw std::invalid_argument("AppArchiveMappingDescriptor: null output");
+    std::lock_guard lock(file->mutex);
+    *backing = AppArchiveMaterialize_nid_no_patch(file->node, offset, length);
+    return true;
+}
+
 bool AppArchiveDescriptorRead_nid_no_patch(int descriptor, const AppArchiveBuffer* buffers, int count, const std::int64_t* offset, std::uint64_t* read) {
     const auto file = Attached(descriptor);
     if (!file) return false;
@@ -239,15 +251,36 @@ bool AppArchiveDescriptorRead_nid_no_patch(int descriptor, const AppArchiveBuffe
     std::lock_guard lock(file->mutex);
     auto cursor = offset != nullptr ? static_cast<std::uint64_t>(*offset) : file->position;
     std::uint64_t total = 0;
+    std::array<unsigned char, 4096> storage{};
+    const auto finish = [&] {
+        if (offset == nullptr) file->position = cursor;
+        *read = total;
+        return true;
+    };
     for (int i = 0; i < count; ++i) {
-        const auto done = AppArchiveRead_nid_no_patch(file->node.Handle, cursor, buffers[i].Base, buffers[i].Length);
-        cursor += done;
-        total += done;
-        if (done < buffers[i].Length) break;
+        std::size_t done = 0;
+        const auto base = reinterpret_cast<std::uintptr_t>(buffers[i].Base);
+        while (done < buffers[i].Length && cursor < file->node.Size) {
+            if (done > UINTPTR_MAX - base) {
+                if (total != 0) return finish();
+                throw std::system_error(EFAULT, std::generic_category(), "read app0.zar: destination overflow");
+            }
+            const auto address = base + done;
+            const auto amount = std::min({buffers[i].Length - done, storage.size() - (address & (storage.size() - 1)),
+                static_cast<std::size_t>(std::min<std::uint64_t>(storage.size(), file->node.Size - cursor))});
+            const auto copied = AppArchiveRead_nid_no_patch(file->node.Handle, cursor, storage.data(), amount);
+            if (copied != amount) throw std::runtime_error("read app0.zar: inconsistent entry size");
+            if (!GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address), storage.data(), static_cast<std::size_t>(copied))) {
+                if (total != 0) return finish();
+                throw std::system_error(EFAULT, std::generic_category(), "read app0.zar: unwritable destination");
+            }
+            cursor += copied;
+            total += copied;
+            done += static_cast<std::size_t>(copied);
+        }
+        if (done != buffers[i].Length) break;
     }
-    if (offset == nullptr) file->position = cursor;
-    *read = total;
-    return true;
+    return finish();
 }
 
 bool AppArchiveDescriptorSeek_nid_no_patch(int descriptor, std::int64_t offset, int whence, std::int64_t* position) {
