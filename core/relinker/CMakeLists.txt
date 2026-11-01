@@ -1,5 +1,3 @@
-option(ANYPS5_RELINKER_CLI "Build the native relinker command line" ON)
-
 add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxGuestModuleWriter.cpp
@@ -97,6 +95,11 @@ if(WIN32)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_load_ranges_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestLoadRangesTests.cpp)
+    target_link_libraries(guest_load_ranges_tests PRIVATE relinker_core)
+    add_test(NAME guest_load_ranges COMMAND guest_load_ranges_tests)
+    set_tests_properties(guest_load_ranges PROPERTIES TIMEOUT 20)
+
     add_test_executable(andn_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/AndnLoweringTests.cpp)
     target_link_libraries(andn_lowering_tests PRIVATE relinker_core)
     add_test(NAME andn_lowering COMMAND andn_lowering_tests)
@@ -188,8 +191,12 @@ if(WIN32)
     add_library(relinker_resources OBJECT ${CMAKE_CURRENT_SOURCE_DIR}/relinker.rc)
     set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/relinker.rc PROPERTIES OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/relinker.manifest)
     target_sources(relinker PRIVATE $<TARGET_OBJECTS:relinker_resources>)
-    target_compile_options(relinker PRIVATE -municode)
-    target_link_options(relinker PRIVATE -municode)
+    if(MSVC)
+        set_target_properties(relinker PROPERTIES LINK_FLAGS "/MANIFEST:NO")
+    else()
+        target_compile_options(relinker PRIVATE -municode)
+        target_link_options(relinker PRIVATE -municode)
+    endif()
 endif()
 
 if(WIN32)
@@ -497,6 +504,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/ProgramHeaderLayoutBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SectionHeaderTableBuilder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/StubBodyBuilder.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/DecodedInstruction.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ByteWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libs/nid/src/NidCompute.cpp
@@ -590,6 +598,9 @@ if(BUILD_TESTING)
         add_test(NAME linux_gnu_segments COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_gnu_segments.py $<TARGET_FILE:relinker>)
         set_tests_properties(linux_gnu_segments PROPERTIES TIMEOUT 20)
+        add_test(NAME linux_tls_alignment COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_tls_alignment.py $<TARGET_FILE:relinker>)
+        set_tests_properties(linux_tls_alignment PROPERTIES TIMEOUT 20)
         add_test(NAME elf_offsets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_elf_offsets.py $<TARGET_FILE:relinker>)
         add_test(NAME conversion_diagnostics COMMAND ${Python3_EXECUTABLE}
@@ -804,6 +815,11 @@ if(BUILD_TESTING)
         add_test(NAME guest_export_lookup COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_export_lookup.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_export_lookup PROPERTIES TIMEOUT 30)
+        add_test(NAME guest_zero_finalizer COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_zero_finalizer.py
+            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host> ${CMAKE_CXX_COMPILER})
+        set_tests_properties(guest_zero_finalizer PROPERTIES TIMEOUT 30)
+        add_asan_test_options(guest_zero_finalizer verify_asan_link_order=0)
         add_test(NAME guest_module_fini COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_module_fini.py
             $<TARGET_FILE:relinker> $<TARGET_FILE:guest_module_args_host>)
@@ -939,6 +955,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_gnu_hash COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_gnu_hash.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_gnu_hash PROPERTIES TIMEOUT 20)
+        add_test(NAME guest_empty_loads COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_empty_loads.py $<TARGET_FILE:relinker>)
+        set_tests_properties(guest_empty_loads PROPERTIES TIMEOUT 30)
         add_test(NAME mulx_conversion COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_mulx_conversion.py $<TARGET_FILE:relinker>)
         set_tests_properties(mulx_conversion PROPERTIES TIMEOUT 20)
@@ -989,6 +1008,14 @@ if(BUILD_TESTING)
     target_link_libraries(entry_stub_tests PRIVATE relinker_core)
     add_test(NAME entry_stub COMMAND entry_stub_tests)
 
+    add_test_executable(windows_entry_stub_bounds_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsEntryStubBoundsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/tests/WindowsEntryStubAllocation.cpp
+    )
+    target_link_libraries(windows_entry_stub_bounds_tests PRIVATE relinker_core)
+    add_test(NAME windows_entry_stub_bounds COMMAND windows_entry_stub_bounds_tests)
+    set_tests_properties(windows_entry_stub_bounds PROPERTIES TIMEOUT 20)
+
     add_test_executable(control_flow_graph_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ControlFlowGraphTests.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/RelativeJumpTables.cpp
@@ -1030,10 +1057,11 @@ if(BUILD_TESTING)
     )
     add_test(NAME strict_nid_filter COMMAND strict_nid_filter_tests)
 
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    if((CMAKE_SYSTEM_NAME STREQUAL "Linux" OR WIN32) AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         add_test_executable(to_intel_linux_stubs_tests
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ToIntelLinuxStubsTests.cpp
         )
+        target_include_directories(to_intel_linux_stubs_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
         add_test(NAME to_intel_linux_stubs COMMAND to_intel_linux_stubs_tests $<TARGET_FILE:relinker>)
 
         add_test_executable(rela_bounds_tests
@@ -1048,6 +1076,7 @@ if(BUILD_TESTING)
         add_test_executable(guest_intel_trampolines_tests
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestIntelTrampolinesTests.cpp
         )
+        target_include_directories(guest_intel_trampolines_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
         add_test(NAME guest_intel_trampolines_execution COMMAND guest_intel_trampolines_tests $<TARGET_FILE:relinker>)
 
         add_test_executable(dynamic_table_bounds_tests
