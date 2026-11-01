@@ -80,7 +80,7 @@ private:
     static void observeDriverStore(std::uint64_t begin, std::uint64_t end, std::uint64_t serial);
     void noteDriverStore(std::uint64_t begin, std::uint64_t end, std::uint64_t serial);
     std::uint32_t holdMask(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks);
-    void countUnwatched(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks);
+    void countUnwatched(std::vector<std::pair<std::uint64_t, std::uint64_t>>& unwatched, std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks);
     void recordUnwatched(std::uint64_t address, std::span<const std::byte> bytes, std::uint64_t stores);
     void arm(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks, std::uint64_t group, std::uint64_t accepted);
     bool stopOnHazard();
