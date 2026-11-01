@@ -1,4 +1,5 @@
 #include "prx/libSceSysUtil/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "tests/TemporaryFile.hpp"
 
@@ -96,6 +97,7 @@ int main() {
         Require(false, "the notification output differs from the sent texts");
     }
 
+    Require(sceKernelSendNotificationRequest(0, reinterpret_cast<const void*>(0x10), 3120, 0) == static_cast<int>(0x8002000eu), "invalid request memory must return badAddress");
     std::puts("SysUtil notification tests passed");
     return 0;
 }
