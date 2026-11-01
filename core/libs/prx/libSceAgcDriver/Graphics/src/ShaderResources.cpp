@@ -648,8 +648,9 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0) 
 std::size_t storageEntries() {
     static const std::size_t entries = [] {
         const char* text = std::getenv("APS5_STORAGE_CACHE_ENTRIES");
-        const auto parsed = text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
-        return parsed != 0 ? static_cast<std::size_t>(parsed) : std::size_t{2048};
+        if (text == nullptr || *text == '\0') return std::size_t{2048};
+        const auto parsed = std::strtoull(text, nullptr, 10);
+        return parsed != 0 ? static_cast<std::size_t>(parsed) : std::numeric_limits<std::size_t>::max();
     }();
     return entries;
 }

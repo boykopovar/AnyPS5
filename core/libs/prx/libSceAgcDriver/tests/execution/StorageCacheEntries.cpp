@@ -79,9 +79,11 @@ void SetVariable(const char* name, const char* value) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
-        SetVariable("APS5_STORAGE_CACHE_ENTRIES", "4");
+        const bool unlimited = argc > 1 && std::string(argv[1]) == "--unlimited";
+        const std::string limit = unlimited ? "no entry limit" : "a limit of " + std::to_string(Entries) + " entries";
+        SetVariable("APS5_STORAGE_CACHE_ENTRIES", unlimited ? "0" : "4");
         SetVariable("APS5_TEXTURE_CACHE_MIB", "1024");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
@@ -111,7 +113,7 @@ int main() {
             for (std::uint32_t surface = Entries; surface < Surfaces; ++surface) images[surface] = Store(*device, base, surface);
             for (std::uint32_t surface = 0; surface < Surfaces; ++surface) {
                 const bool cached = StorageTexture::FindLive(base + surface * Stride, SurfaceBytes) != nullptr;
-                Require(cached == (surface >= Surfaces - Entries), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(Surfaces) + " small surfaces under a limit of " + std::to_string(Entries) + " entries and a 1024 MiB budget");
+                Require(cached == (unlimited || surface >= Surfaces - Entries), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(Surfaces) + " small surfaces under " + limit + " and a 1024 MiB budget");
                 Require(cached == !images[surface].expired(), "surface " + std::to_string(surface) + (cached ? " is cached but its weak image expired" : " was evicted but its image is still alive"));
             }
         } catch (...) {
@@ -119,7 +121,7 @@ int main() {
             throw;
         }
         release();
-        std::puts("storage cache entry limit tests passed");
+        std::puts(unlimited ? "storage cache without an entry limit tests passed" : "storage cache entry limit tests passed");
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
