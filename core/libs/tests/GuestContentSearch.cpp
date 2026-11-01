@@ -110,6 +110,8 @@ int main() {
     Require(size == -1);
     Require(sceContentSearchGetTotalContentSize(nullptr, 0, &size, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
     Require(size == 0);
+    count = -1;
+    size = -1;
     std::int32_t metadataType = 0, fieldSize = 0;
     Require(sceContentSearchGetMetadataFieldInfo(1, nullptr, nullptr, nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetMetadataFieldInfo(1, "field", nullptr, &fieldSize) == ErrorInvalidArgument);
