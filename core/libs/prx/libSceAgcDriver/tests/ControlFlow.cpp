@@ -560,6 +560,20 @@ void verifyScheduledJumpTable() {
             require(refusal(clobbered).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted a clobbered index or base");
         }
     }
+    auto baseFirst = code;
+    std::rotate(baseFirst.begin(), baseFirst.begin() + 4, baseFirst.begin() + 8);
+    baseFirst[2] += 16u;
+    verifyJumpTable("scheduled table with base before bound", baseFirst, 0x20u, {0xcu, 0x14u, 0x1cu}, {0x3cu, 0x44u, 0x4cu});
+    static_cast<void>(recompile("scheduled table with base before bound", baseFirst, 32u));
+    static_cast<void>(recompile("scheduled table with base before bound", baseFirst, 64u));
+    auto entersBase = baseFirst;
+    entersBase.insert(entersBase.begin(), 0xbf820000u);
+    verifyJumpTable("scheduled table entered at base setup", entersBase, 0x24u, {0xcu, 0x14u, 0x1cu}, {0x40u, 0x48u, 0x50u});
+    for (const auto entry : {0xbf820001u, 0xbf820004u, 0xbf820005u}) {
+        auto skipsBase = baseFirst;
+        skipsBase.insert(skipsBase.begin(), entry);
+        require(refusal(skipsBase).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted a branch that skipped its base setup");
+    }
     const std::vector<std::vector<std::uint32_t>> refused{
         patched(code, 1, {0xbe880380u}),
         patched(code, 3, {0xbe880380u}),

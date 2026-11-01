@@ -246,14 +246,15 @@ bool resolveJumpTable(const RdnaProgram& program, std::uint32_t index, BoundedJu
             bound.op != RdnaOpcode::SMinU32 || !sameRegister(bound.destination, load.source1) ||
             !sameRegister(bound.source0, load.source1) || !isImmediate(bound.source1, maximum) || maximum > 255u) return false;
         if (load.source1.kind == RdnaOperandKind::ScalarRegister && load.source1.reg >= baseReg && load.source1.reg <= baseReg + 1u) return false;
+        const auto firstProgramCounter = std::min(basePc.programCounter, bound.programCounter);
         for (const auto& instruction : program.instructions) {
-            if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > bound.programCounter && instruction.branchTarget <= branch.programCounter) return false;
+            if (IsDirectBranchOpcode(instruction.op) && instruction.branchTarget > firstProgramCounter && instruction.branchTarget <= branch.programCounter) return false;
         }
         const std::uint64_t table = static_cast<std::uint64_t>(instructionEndProgramCounter(basePc)) + displacement + load.memoryOffset;
         const std::uint64_t byteCount = (static_cast<std::uint64_t>(maximum) + 1u) * 8u;
         if ((table & 3u) != 0u || table > program.code.size_bytes() || byteCount > program.code.size_bytes() - table) return false;
         result.load.programCounter = load.programCounter;
-        result.firstProgramCounter = bound.programCounter;
+        result.firstProgramCounter = firstProgramCounter;
         for (std::uint32_t entry = 0; entry <= maximum; ++entry) {
             const auto word = static_cast<std::size_t>(table / 4u) + entry * 2u;
             const std::uint64_t value = program.code[word] | (static_cast<std::uint64_t>(program.code[word + 1u]) << 32u);
