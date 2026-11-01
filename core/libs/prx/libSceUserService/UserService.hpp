@@ -34,32 +34,32 @@ extern "C" void UserServiceSetUserConnected_nid_postfix(int userIndex, bool conn
 
 extern "C" {
 
-int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int userId, int32_t* chatTranscription);
+int APS5_VABI sceUserServiceGetAccessibilityChatTranscription(int user_id, int32_t* chat_transcription);
 int APS5_VABI sceUserServiceGetAccessibilityKeyremapEnable(std::int32_t userId, std::int32_t* enabled);
-int APS5_VABI sceUserServiceGetAccessibilityPressAndHoldDelay(int userId, int32_t* pressAndHoldDelay);
-int APS5_VABI sceUserServiceGetAccessibilityTriggerEffect(int userId, int32_t* triggerEffect);
-int APS5_VABI sceUserServiceGetAccessibilityVibration(int userId, int32_t* vibration);
+int APS5_VABI sceUserServiceGetAccessibilityPressAndHoldDelay(int user_id, int32_t* press_and_hold_delay);
+int APS5_VABI sceUserServiceGetAccessibilityTriggerEffect(int user_id, int32_t* trigger_effect);
+int APS5_VABI sceUserServiceGetAccessibilityVibration(int user_id, int32_t* vibration);
 int APS5_VABI sceUserServiceGetAccessibilityZoom(std::int32_t userId, std::int32_t* zoom);
-int APS5_VABI sceUserServiceGetAccessibilityZoomEnabled(int userId, int32_t* zoomEnabled);
-int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int userId, int32_t* zoomFollowFocus);
-int APS5_VABI sceUserServiceGetAgeLevel(int userId, uint32_t* ageLevel);
+int APS5_VABI sceUserServiceGetAccessibilityZoomEnabled(int user_id, int32_t* zoom_enabled);
+int APS5_VABI sceUserServiceGetAccessibilityZoomFollowFocus(int user_id, int32_t* zoom_follow_focus);
+int APS5_VABI sceUserServiceGetAgeLevel(int user_id, uint32_t* age_level);
 int APS5_VABI sceUserServiceGetEvent(SceUserServiceEvent* event);
-int APS5_VABI sceUserServiceGetGamePresets(int userId, UserServiceGamePresets* presets);
-int APS5_VABI sceUserServiceGetInitialUser(int* userId);
-int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* userIdList);
-int APS5_VABI sceUserServiceGetUserName(int userId, char* name, size_t size);
-int APS5_VABI sceUserServiceGetUserNumber(int userId, int32_t* number);
+int APS5_VABI sceUserServiceGetGamePresets(int user_id, UserServiceGamePresets* presets);
+int APS5_VABI sceUserServiceGetInitialUser(int* user_id);
+int APS5_VABI sceUserServiceGetLoginUserIdList(UserServiceLoginUserIdList* user_id_list);
+int APS5_VABI sceUserServiceGetUserName(int user_id, char* name, size_t size);
+int APS5_VABI sceUserServiceGetUserNumber(int user_id, int32_t* number);
 int APS5_VABI sceUserServiceInitialize(const UserServiceInitParam* params);
 int APS5_VABI sceUserServiceInitialize2(std::int32_t priority, KernelCpumask affinityMask);
 int APS5_VABI sceUserServiceTerminate(void);
-int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t userId, int32_t* value);
-int APS5_VABI sceUserServiceGetForegroundUser(int* userId);
-int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdList* userIdList);
-int APS5_VABI sceUserServiceGetUserColor(int userId, int* color);
-int APS5_VABI sceUserServiceGetKeyboardType(int userId, int32_t* type);
-int APS5_VABI sceUserServiceGetJapaneseInputType(int userId, int32_t* type);
-int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int userId, int32_t* type);
-int APS5_VABI sceUserServiceGetNpAccountId(int userId, uint64_t* accountId);
+int APS5_VABI sceUserServiceGetPlatformPrivacyWs1(int32_t user_id, int32_t* value);
+int APS5_VABI sceUserServiceGetForegroundUser(int* user_id);
+int APS5_VABI sceUserServiceGetRegisteredUserIdList(UserServiceRegisteredUserIdList* user_id_list);
+int APS5_VABI sceUserServiceGetUserColor(int user_id, int* color);
+int APS5_VABI sceUserServiceGetKeyboardType(int user_id, int32_t* type);
+int APS5_VABI sceUserServiceGetJapaneseInputType(int user_id, int32_t* type);
+int APS5_VABI sceUserServiceGetTraditionalChineseInputType(int user_id, int32_t* type);
+int APS5_VABI sceUserServiceGetNpAccountId(int user_id, uint64_t* account_id);
 
 int APS5_VABI sceUserServiceSetGlsCameraContrast(int userId, std::int32_t value);
 int APS5_VABI sceUserServiceSetParentalDvdRegion(int userId, std::uint32_t value);
