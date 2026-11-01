@@ -13,7 +13,7 @@ add_library(libSceNpTrophy2 SHARED EXCLUDE_FROM_ALL
 target_include_directories(libSceNpTrophy2 PRIVATE
         ${LIBS_INCLUDE_DIR}
 )
-target_link_libraries(libSceNpTrophy2 PRIVATE libc)
+target_link_libraries(libSceNpTrophy2 PRIVATE libc system_service_host_locale)
 configure_windows_unwind(libSceNpTrophy2)
 
 if(BUILD_TESTING)
