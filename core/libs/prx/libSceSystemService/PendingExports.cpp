@@ -1,8 +1,10 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 
@@ -121,7 +123,12 @@ static_assert(offsetof(AppMessagingMessage, timestamp) == 8208);
 extern "C" {
 
 int APS5_VABI sceAppMessagingClearEventFlag(std::int32_t appId, std::uint64_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    char name[32];
+    std::snprintf(name, sizeof(name), "SceAppMessaging%x", static_cast<std::uint32_t>(appId));
+    KernelEventFlag eventFlag = nullptr;
+    if (sceKernelOpenEventFlag(&eventFlag, name) != 0) return static_cast<int>(0x80c50007);
+    sceKernelClearEventFlag(eventFlag, ~flags);
+    sceKernelCloseEventFlag(eventFlag);
     return 0;
 }
 
@@ -146,7 +153,12 @@ int APS5_VABI sceAppMessagingSendMsgToShellUI(std::uint32_t messageId, const voi
 }
 
 int APS5_VABI sceAppMessagingSetEventFlag(std::int32_t appId, std::uint64_t flags) {
-    NotImplemented_nid_no_patch(__func__);
+    char name[32];
+    std::snprintf(name, sizeof(name), "SceAppMessaging%x", static_cast<std::uint32_t>(appId));
+    KernelEventFlag eventFlag = nullptr;
+    if (sceKernelOpenEventFlag(&eventFlag, name) != 0) return static_cast<int>(0x80c50007);
+    sceKernelSetEventFlag(eventFlag, flags);
+    sceKernelCloseEventFlag(eventFlag);
     return 0;
 }
 
