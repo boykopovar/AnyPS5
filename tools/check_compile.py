@@ -284,7 +284,7 @@ def syntax_arguments(arguments, directory, source):
         if compiler in ("cl", "clang-cl") or any(argument in ("--driver-mode=cl", "--rsp-quoting=windows") for argument in arguments):
             raise ValueError("Windows-style compiler response files are unsupported; provide expanded arguments")
     arguments = [arguments[0], *expand_response_files(arguments[1:], directory)]
-    wanted = source.resolve()
+    wanted = real(source)
     trimmed = [arguments[0]]
     index = 1
     positional = False
