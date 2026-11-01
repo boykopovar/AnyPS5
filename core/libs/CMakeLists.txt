@@ -680,6 +680,13 @@ if(BUILD_TESTING)
         set_tests_properties(windows_crash_text PROPERTIES TIMEOUT 20
             PASS_REGULAR_EXPRESSION "faulting[^~]*FATAL: unhandled exception 0xc0000005[^~]*  \\[r12\\] \"allocation failed in the heap\"[\r\n]+  \\[r13\\] u\"LowLevelFatalError \\[File:Unknown\\] \\[Line: 42\\] Out of memory\"[\r\n]+  \\[r14\\] \"PAGE END\"[.][.][.]"
             FAIL_REGULAR_EXPRESSION "\\[rbx\\] u?\"|did not fault")
+        add_test_executable(windows_integer_overflow_report_tests tests/WindowsIntegerOverflowReport.cpp)
+        add_dependencies(windows_integer_overflow_report_tests libc)
+        configure_host_test_executable(windows_integer_overflow_report_tests)
+        add_test(NAME windows_integer_overflow_report COMMAND windows_integer_overflow_report_tests $<TARGET_FILE:libc>)
+        set_tests_properties(windows_integer_overflow_report PROPERTIES TIMEOUT 20
+            PASS_REGULAR_EXPRESSION "dividing[^~]*FATAL: unhandled exception 0xc0000095"
+            FAIL_REGULAR_EXPRESSION "did not fault")
     endif()
 
     add_test_executable(guest_voice_port_attr_tests tests/GuestVoicePortAttr.cpp)
