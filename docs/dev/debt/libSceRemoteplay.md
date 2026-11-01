@@ -8,6 +8,7 @@
 ### Silent stubs
 
 - [sceRemoteplayGetConnectionStatus](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID: on the console the value comes from the session service, and the wrapper retries once through another internal query when that answers `0x80020003`; this tree has no session, so the value and the retry path are unmodelled
+- [sceRemoteplayGetConnectionStatus](../../../core/libs/prx/libSceRemoteplay/Export.cpp) - returning `0x80FC0001` for an unwritable status pointer is a host-safety fallback with console behavior unmeasured.
 
 ### Functional
 

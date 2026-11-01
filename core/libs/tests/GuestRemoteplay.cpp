@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cerrno>
 #include <cstdlib>
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -20,6 +21,9 @@ int main() {
 
     Require(sceRemoteplayInitialize(nullptr, 0) == 0);
     Require(sceRemoteplayGetConnectionStatus(0, nullptr) == invalidArgument);
+    errno = 71;
+    Require(sceRemoteplayGetConnectionStatus(0, reinterpret_cast<int*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     status = -1;
     Require(sceRemoteplayGetConnectionStatus(0, &status) == 0 && status == connectionStatusDisconnect);
     Require(sceRemoteplayInitialize(nullptr, 0) == alreadyInitialized);
