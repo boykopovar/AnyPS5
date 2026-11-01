@@ -377,10 +377,12 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 void TestPrintStreams();
+void TestTimeDumps();
 
 int main() {
     TestAdditionalWtf();
     TestPrintStreams();
+    TestTimeDumps();
     TestMemoryAllocations();
     TestAllocationBoundaries();
     TestTime();
@@ -1061,26 +1063,31 @@ struct CapturingPrintStream {
     unsigned beginCount{};
     unsigned endCount{};
     unsigned printCount{};
+    std::string events;
 };
 
 void APS5_VABI CapturePrint(PrintStream* stream, const char* format, void* args) {
     auto& capture = *reinterpret_cast<CapturingPrintStream*>(stream);
     ++capture.printCount;
+    capture.events += 'P';
     _ZN3WTF17StringPrintStream7vprintfEPKcP13__va_list_tag(&capture.output, format, args);
 }
 
 PrintStream& APS5_VABI CaptureBegin(PrintStream* stream) {
     ++reinterpret_cast<CapturingPrintStream*>(stream)->beginCount;
+    reinterpret_cast<CapturingPrintStream*>(stream)->events += 'B';
     return *stream;
 }
 
 void APS5_VABI CaptureEnd(PrintStream* stream) {
     ++reinterpret_cast<CapturingPrintStream*>(stream)->endCount;
+    reinterpret_cast<CapturingPrintStream*>(stream)->events += 'E';
 }
 
 PrintStream& APS5_VABI CaptureRedirect(PrintStream* stream) {
     auto& capture = *reinterpret_cast<CapturingPrintStream*>(stream);
     ++capture.beginCount;
+    capture.events += 'B';
     return capture.output.stream;
 }
 
@@ -1200,4 +1207,46 @@ void TestPrintStreams() {
     _ZN3WTF13printInternalERNS_11PrintStreamEb(&capture.stream, true); check("true");
     Check(capture.beginCount == 6 && capture.endCount == 6 && capture.printCount == 24);
     destroy(&capture.output);
+}
+
+void TestTimeDumps() {
+    using namespace Wtf2Tests;
+    constexpr auto construct = _ZN3WTF17StringPrintStreamC1Ev;
+    constexpr auto destroy = _ZN3WTF17StringPrintStreamD1Ev;
+    constexpr auto reset = _ZN3WTF17StringPrintStream5resetEv;
+    constexpr auto string = _ZN3WTF17StringPrintStream8toStringEv;
+    StringPrintStream output{};
+    CapturingPrintStream capture{};
+    construct(&output);
+    construct(&capture.output);
+    void* const vtable[]{nullptr, nullptr, reinterpret_cast<void*>(&CapturePrint), nullptr, reinterpret_cast<void*>(&CaptureBegin), reinterpret_cast<void*>(&CaptureEnd)};
+    void* const redirect[]{nullptr, nullptr, reinterpret_cast<void*>(&CapturePrint), nullptr, reinterpret_cast<void*>(&CaptureRedirect), reinterpret_cast<void*>(&CaptureEnd)};
+    auto check = [&](auto dump, const auto& value, const char* expected, const char* events) {
+        dump(&value, output.stream);
+        Text(string(&output), expected);
+        reset(&output);
+        capture.stream.vtable = vtable;
+        capture.events.clear();
+        dump(&value, capture.stream);
+        Text(string(&capture.output), expected);
+        Check(capture.events == events);
+        reset(&capture.output);
+        capture.stream.vtable = redirect;
+        capture.events.clear();
+        dump(&value, capture.stream);
+        Text(string(&capture.output), expected);
+        Check(capture.events == "BE");
+        reset(&capture.output);
+    };
+    check(_ZNK3WTF13MonotonicTime4dumpERNS_11PrintStreamE, WTF::MonotonicTime{1.23456789}, "Monotonic(1.234568 sec)", "BPPPE");
+    check(_ZNK3WTF8WallTime4dumpERNS_11PrintStreamE, WTF::WallTime{-2.5}, "Wall(-2.500000 sec)", "BPPPE");
+    check(_ZNK3WTF7Seconds4dumpERNS_11PrintStreamE, WTF::Seconds{-0.0}, "-0.000000 sec", "BPPE");
+    check(_ZNK3WTF7Seconds4dumpERNS_11PrintStreamE, WTF::Seconds{1e20}, "100000000000000000000.000000 sec", "BPPE");
+    check(_ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE, WTF::TimeWithDynamicClockType{0.25, WTF::ClockType::Wall}, "Wall(0.250000 sec)", "BBPEPPPE");
+    check(_ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE, WTF::TimeWithDynamicClockType{-1.25, WTF::ClockType::Monotonic}, "Monotonic(-1.250000 sec)", "BBPEPPPE");
+    check(_ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE, WTF::TimeWithDynamicClockType{42, WTF::ClockType::Approximate}, "Approximate(42.000000 sec)", "BBPEPPPE");
+    check(_ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE, ASCIILiteral{"literal %s"}, "literal %s", "BPE");
+    check(_ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE, ASCIILiteral{""}, "", "BPE");
+    destroy(&capture.output);
+    destroy(&output);
 }

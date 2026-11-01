@@ -106,6 +106,13 @@ struct CString {
     ~CString() { Release(buffer); }
 };
 
+struct ASCIILiteral {
+    const char* characters;
+};
+
+static_assert(sizeof(ASCIILiteral) == 8);
+static_assert(offsetof(ASCIILiteral, characters) == 0);
+
 struct ProcessPrivileges {
     unsigned storage;
 };

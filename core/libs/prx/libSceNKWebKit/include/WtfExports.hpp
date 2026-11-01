@@ -279,4 +279,10 @@ WTF::MonotonicTime APS5_VABI _ZNK3WTF7SecondsplENS_13MonotonicTimeE(const WTF::S
 WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* self, WTF::WallTime other);
 WTF::MonotonicTime APS5_VABI _ZNK3WTF8WallTime24approximateMonotonicTimeEv(const WTF::WallTime* self);
 
+void APS5_VABI _ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE(const NKWebKit::WtfAbi::ASCIILiteral* self, NKWebKit::WtfAbi::PrintStream& out);
+void APS5_VABI _ZNK3WTF13MonotonicTime4dumpERNS_11PrintStreamE(const WTF::MonotonicTime* self, NKWebKit::WtfAbi::PrintStream& out);
+void APS5_VABI _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE(const WTF::TimeWithDynamicClockType* self, NKWebKit::WtfAbi::PrintStream& out);
+void APS5_VABI _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE(const WTF::Seconds* self, NKWebKit::WtfAbi::PrintStream& out);
+void APS5_VABI _ZNK3WTF8WallTime4dumpERNS_11PrintStreamE(const WTF::WallTime* self, NKWebKit::WtfAbi::PrintStream& out);
+
 }

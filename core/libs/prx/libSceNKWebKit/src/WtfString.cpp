@@ -1089,12 +1089,19 @@ void StreamVprintf(PrintStream* self, const char* format, void* args) {
     reinterpret_cast<void (APS5_VABI *)(PrintStream*, const char*, void*)>(stream.vtable[2])(self, format, args);
 }
 
-void StreamAtomicText(PrintStream* self, const char* text) {
+template <typename Function>
+void StreamAtomically(PrintStream* self, const Function& function) {
     auto& stream = Checked(self);
     if (!stream.vtable || !stream.vtable[4] || !stream.vtable[5]) throw std::invalid_argument("WTF PrintStream has no begin/end callbacks");
     auto& output = reinterpret_cast<PrintStream& (APS5_VABI *)(PrintStream*)>(stream.vtable[4])(self);
-    _ZN3WTF11PrintStream6printfEPKcz(&output, "%s", text);
+    function(output);
     reinterpret_cast<void (APS5_VABI *)(PrintStream*)>(stream.vtable[5])(self);
+}
+
+void StreamAtomicText(PrintStream* self, const char* text) {
+    StreamAtomically(self, [&](PrintStream& output) {
+        _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&output, text);
+    });
 }
 
 void StreamPrintString(PrintStream* self, StringView view, const char* type) {
@@ -1335,6 +1342,48 @@ void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE(NKWeb
 
 void APS5_VABI _ZN3WTF13dumpCharacterERNS_11PrintStreamEc(NKWebKit::WtfAbi::PrintStream* self, char value) {
     _ZN3WTF11PrintStream6printfEPKcz(self, "%c", static_cast<int>(value));
+}
+
+}
+
+extern "C" {
+
+void APS5_VABI _ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE(const NKWebKit::WtfAbi::ASCIILiteral* self, NKWebKit::WtfAbi::PrintStream& out) {
+    StreamAtomically(&out, [&](PrintStream& output) {
+        _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&output, Checked(self).characters);
+    });
+}
+
+void APS5_VABI _ZNK3WTF13MonotonicTime4dumpERNS_11PrintStreamE(const WTF::MonotonicTime* self, NKWebKit::WtfAbi::PrintStream& out) {
+    StreamAtomically(&out, [&](PrintStream& output) {
+        _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&output, "Monotonic(");
+        _ZN3WTF13printInternalERNS_11PrintStreamEd(&output, Checked(self).m_value);
+        _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&output, " sec)");
+    });
+}
+
+void APS5_VABI _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE(const WTF::TimeWithDynamicClockType* self, NKWebKit::WtfAbi::PrintStream& out) {
+    StreamAtomically(&out, [&](PrintStream& output) {
+        _ZN3WTF13printInternalERNS_11PrintStreamENS_9ClockTypeE(&output, Checked(self).m_type);
+        _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&output, "(");
+        _ZN3WTF13printInternalERNS_11PrintStreamEd(&output, Checked(self).m_value);
+        _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&output, " sec)");
+    });
+}
+
+void APS5_VABI _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE(const WTF::Seconds* self, NKWebKit::WtfAbi::PrintStream& out) {
+    StreamAtomically(&out, [&](PrintStream& output) {
+        _ZN3WTF13printInternalERNS_11PrintStreamEd(&output, Checked(self).m_value);
+        _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&output, " sec");
+    });
+}
+
+void APS5_VABI _ZNK3WTF8WallTime4dumpERNS_11PrintStreamE(const WTF::WallTime* self, NKWebKit::WtfAbi::PrintStream& out) {
+    StreamAtomically(&out, [&](PrintStream& output) {
+        _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&output, "Wall(");
+        _ZN3WTF13printInternalERNS_11PrintStreamEd(&output, Checked(self).m_value);
+        _ZN3WTF13printInternalERNS_11PrintStreamEPKc(&output, " sec)");
+    });
 }
 
 }

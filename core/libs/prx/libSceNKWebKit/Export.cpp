@@ -36328,14 +36328,6 @@ int APS5_VABI _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF12ASCIILiteral4dumpERNS_11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF13MonotonicTime4dumpERNS_11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3WTF13StringBuilder11reifyStringEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -36357,10 +36349,6 @@ int APS5_VABI _ZNK3WTF17double_conversion23DoubleToStringConverter13ToExponentia
 }
 
 int APS5_VABI _ZNK3WTF19MetaAllocatorHandle4dumpERNS_11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF24TimeWithDynamicClockType4dumpERNS_11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -36468,10 +36456,6 @@ int APS5_VABI _ZNK3WTF7RunLoop9TimerBase8isActiveEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK3WTF7Seconds4dumpERNS_11PrintStreamE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK3WTF8Collator11collateUTF8EPKcS2_() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -36529,10 +36513,6 @@ int APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase5beginEv() {
 }
 
 int APS5_VABI _ZNK3WTF8JSONImpl9ArrayBase9writeJSONERNS_13StringBuilderE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF8WallTime4dumpERNS_11PrintStreamE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
