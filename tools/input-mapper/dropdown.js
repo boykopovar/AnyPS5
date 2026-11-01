@@ -8,11 +8,15 @@ let active;
 let visible = [];
 let focused = 0;
 
+export function normalizeSearch(value) {
+    return value.toLowerCase();
+}
+
 function renderOptions() {
-    const query = search.value.trim().toLocaleLowerCase();
-    visible = active.choices.filter(item => `${item.label} ${item.value}`.toLocaleLowerCase().includes(query));
+    const query = normalizeSearch(search.value.trim());
+    visible = active.choices.filter(item => normalizeSearch(`${item.label} ${item.value}`).includes(query));
     list.replaceChildren();
-    const exactMatch = query ? visible.findIndex(item => item.label.toLocaleLowerCase() === query || item.value.toLocaleLowerCase() === query) : -1;
+    const exactMatch = query ? visible.findIndex(item => normalizeSearch(item.label) === query || normalizeSearch(item.value) === query) : -1;
     focused = Math.max(0, exactMatch >= 0 ? exactMatch : visible.findIndex(item => item.value === active.select.value));
     visible.forEach((item, index) => {
         const option = document.createElement('button');

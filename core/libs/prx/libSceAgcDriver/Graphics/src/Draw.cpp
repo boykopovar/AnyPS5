@@ -950,6 +950,8 @@ void countCache(std::uint64_t DrawProfile::*counter) {
     ++(stats.*counter);
 }
 
+}
+
 // ValidateShaders decodes every SPIR-V instruction of every stage on every draw. Its outcome depends
 // only on the stages' compiled variants (a variant id names identical SPIR-V and binding layout),
 // their push constant placement and vertex attribute shapes, and the state fields it checks, so the
@@ -967,10 +969,12 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
     if (keyed) {
         key.reserve(40 + shaders.size() * 12);
         add(shaders.size());
+        const bool patches = BarycentricPatches(state, shaders);
+        add(patches ? static_cast<std::uint64_t>(state.provokingVertexMode) + 1u : 0u);
         for (const auto& shader : shaders) {
             Require(shader.program != nullptr, "missing compiled shader");
             const auto& program = *shader.program;
-            const bool generated = (state.rectList && (shader.stage == Stage::TessellationControl || shader.stage == Stage::TessellationEvaluation)) || shader.stage == Stage::Geometry;
+            const bool generated = ((state.rectList || patches) && (shader.stage == Stage::TessellationControl || shader.stage == Stage::TessellationEvaluation)) || shader.stage == Stage::Geometry;
             if (!generated && program.PipelineVariantId() == 0) {
                 keyed = false;
                 break;
@@ -1036,6 +1040,8 @@ bool ValidationKey(const Context& context, std::span<const CompiledShader> shade
     }
     return keyed;
 }
+
+namespace {
 
 AgcDriver::Mutex& validationMutex() {
     static AgcDriver::Mutex mutex;
@@ -2941,6 +2947,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
         const ColorTargetLayout colorLayout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
         static_cast<void>(FlushDepthPlanes(color.address, colorLayout.Bytes(), DepthPlaneScope::Whole));
         RetireDepthSurfaces(context.device, color.address, colorLayout.Bytes());
+        ClaimMultisampleTargetMemory(color.address, colorLayout.Bytes());
         if (color.fmaskAddress != 0) GuardOneFragmentFmask(context, color);
         constexpr VkBufferUsageFlags copies = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
         timer.phase(PhaseSetup);

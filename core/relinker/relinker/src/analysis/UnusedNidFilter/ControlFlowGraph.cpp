@@ -133,7 +133,7 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
                         std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
                         VirtualAddress slotVaddr = nextVaddr + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp));
                         if (info.AddressSize32) slotVaddr = static_cast<std::uint32_t>(slotVaddr);
-                        auto resolved = relativeRelocations.TargetOfSlot(slotVaddr);
+                        auto resolved = info.SegmentPrefix == 0 ? relativeRelocations.TargetOfSlot(slotVaddr) : std::nullopt;
                         if (resolved.has_value())
                             enqueue(*resolved);
                     } else if (info.HasBranchTarget) {
@@ -146,7 +146,7 @@ void buildGraph(std::span<const std::uint8_t> text, VirtualAddress textVaddr, Vi
                         std::memcpy(&disp, text.data() + bufOff + info.RipRelativeDispOffset, 4);
                         VirtualAddress slotVaddr = nextVaddr + static_cast<VirtualAddress>(static_cast<std::int64_t>(disp));
                         if (info.AddressSize32) slotVaddr = static_cast<std::uint32_t>(slotVaddr);
-                        auto resolved = relativeRelocations.TargetOfSlot(slotVaddr);
+                        auto resolved = info.SegmentPrefix == 0 ? relativeRelocations.TargetOfSlot(slotVaddr) : std::nullopt;
                         if (resolved.has_value())
                             enqueue(*resolved);
                     } else if (info.HasBranchTarget) {
