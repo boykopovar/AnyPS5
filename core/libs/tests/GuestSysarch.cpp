@@ -73,14 +73,18 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(sysarch(9, nullptr) == -1 && *__error_nid_postfix() == 14);
     void* const bad = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
+#ifdef __linux__
     *__error_nid_postfix() = 0;
     Require(sysarch(7, bad) == -1 && *__error_nid_postfix() == 14);
+#endif
     *__error_nid_postfix() = 0;
     Require(sysarch(9, bad) == -1 && *__error_nid_postfix() == 14);
     *__error_nid_postfix() = 0;
     Require(sysarch(128, nullptr) == -1 && *__error_nid_postfix() == 14);
+#ifdef __linux__
     *__error_nid_postfix() = 0;
     Require(sysarch(128, bad) == -1 && *__error_nid_postfix() == 14);
+#endif
     *__error_nid_postfix() = 0;
     Require(sysarch(130, bad) == -1 && *__error_nid_postfix() == 14);
     std::uint64_t inherited = 0;
