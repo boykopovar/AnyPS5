@@ -795,22 +795,33 @@ FrameCheck compareFrames(const FrameCaptureReader& reader, const Options& option
 }
 
 #ifdef _WIN32
+constexpr int RelaunchAttempts = 8;
+
+int relaunchAttempt() {
+    const char* const text = std::getenv("APS5_FRAME_REPLAY_ATTEMPT");
+    if (text == nullptr) return 0;
+    const std::string_view value = text;
+    int attempt = 0;
+    const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), attempt);
+    if (error != std::errc{} || end != value.data() + value.size() || attempt < 0 || attempt > RelaunchAttempts)
+        throw std::runtime_error("frame replay: APS5_FRAME_REPLAY_ATTEMPT must be a whole number from 0 to " + std::to_string(RelaunchAttempts) + ", not '" + std::string(value) + "'");
+    return attempt;
+}
+
 void relaunchIfHostRegionBlocks(const FrameCaptureReader& reader) {
-    constexpr int Attempts = 8;
+    const int attempt = relaunchAttempt() + 1;
     const auto& chunks = reader.Chunks();
     const auto blocked = std::find_if(chunks.begin(), chunks.end(), [](const FrameMemoryChunk& chunk) {
         return chunk.kind == FrameMemoryKind::Range && chunk.rangeKind != FrameRangeKind::Host && (chunk.access & FrameRangeAccess::Gpu) != 0 &&
                GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(static_cast<std::uintptr_t>(chunk.address), static_cast<std::size_t>(chunk.bytes));
     });
     if (blocked == chunks.end()) return;
-    const char* const previous = std::getenv("APS5_FRAME_REPLAY_ATTEMPT");
-    const int attempt = previous == nullptr ? 1 : std::atoi(previous) + 1;
-    if (attempt > Attempts) return;
+    if (attempt > RelaunchAttempts) return;
     std::fprintf(stderr, "[frame-replay] a host region sits in the captured GPU range 0x%llx+0x%llx; relaunching (%d of %d)\n", static_cast<unsigned long long>(blocked->address),
-                 static_cast<unsigned long long>(blocked->bytes), attempt, Attempts);
+                 static_cast<unsigned long long>(blocked->bytes), attempt, RelaunchAttempts);
     std::fflush(stdout);
     std::fflush(stderr);
-    _putenv_s("APS5_FRAME_REPLAY_ATTEMPT", std::to_string(attempt).c_str());
+    if (_putenv_s("APS5_FRAME_REPLAY_ATTEMPT", std::to_string(attempt).c_str()) != 0) throw std::runtime_error("frame replay: cannot pass the relaunch count to the next process");
     std::wstring commandLine = GetCommandLineW();
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
