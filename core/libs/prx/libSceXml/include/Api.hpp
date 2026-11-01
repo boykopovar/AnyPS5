@@ -37,8 +37,30 @@ struct XmlNode {
     std::uint64_t state[3];
 };
 
+struct XmlMemAllocator;
+
+struct XmlMemAllocatorVtable {
+    void (APS5_VABI *destroy)(XmlMemAllocator* self);
+    void (APS5_VABI *deleteObject)(XmlMemAllocator* self);
+    void* (APS5_VABI *allocate)(XmlMemAllocator* self, std::size_t size, void* userData);
+    void (APS5_VABI *deallocate)(XmlMemAllocator* self, void* pointer, void* userData);
+};
+
+struct XmlMemAllocator {
+    const XmlMemAllocatorVtable* vtable;
+};
+
+struct XmlInitParameter {
+    XmlMemAllocator* allocator;
+    void* userData;
+    std::uint64_t stored[2];
+};
+
 static_assert(sizeof(XmlNodeId) == 0x18);
 static_assert(sizeof(XmlNode) == 0x40);
+static_assert(offsetof(XmlMemAllocatorVtable, allocate) == 0x10);
+static_assert(offsetof(XmlMemAllocatorVtable, deallocate) == 0x18);
+static_assert(sizeof(XmlInitParameter) == 0x20);
 
 extern "C" {
 
@@ -46,14 +68,14 @@ void APS5_VABI _ZN3sce3Xml10SimpleDataC1EPKcm(XmlSimpleData* self, const char* d
 void APS5_VABI _ZN3sce3Xml10SimpleDataC1Ev(XmlSimpleData* self);
 void APS5_VABI _ZN3sce3Xml10SimpleDataC2EPKcm(XmlSimpleData* self, const char* data, std::size_t size);
 void APS5_VABI _ZN3sce3Xml10SimpleDataC2Ev(XmlSimpleData* self);
-int APS5_VABI _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE();
-int APS5_VABI _ZN3sce3Xml11Initializer9terminateEv();
+int APS5_VABI _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(XmlHandle* self, const XmlInitParameter* parameter);
+int APS5_VABI _ZN3sce3Xml11Initializer9terminateEv(XmlHandle* self);
 void APS5_VABI _ZN3sce3Xml11InitializerC1Ev(XmlHandle* self);
 void APS5_VABI _ZN3sce3Xml11InitializerC2Ev(XmlHandle* self);
-int APS5_VABI _ZN3sce3Xml11InitializerD1Ev();
-int APS5_VABI _ZN3sce3Xml11InitializerD2Ev();
-int APS5_VABI _ZN3sce3Xml12MemAllocatorC2Ev();
-int APS5_VABI _ZN3sce3Xml12MemAllocatorD0Ev();
+void APS5_VABI _ZN3sce3Xml11InitializerD1Ev(XmlHandle* self);
+void APS5_VABI _ZN3sce3Xml11InitializerD2Ev(XmlHandle* self);
+void APS5_VABI _ZN3sce3Xml12MemAllocatorC2Ev(XmlMemAllocator* self);
+[[noreturn]] void APS5_VABI _ZN3sce3Xml12MemAllocatorD0Ev(XmlMemAllocator* self);
 void APS5_VABI _ZN3sce3Xml12MemAllocatorD1Ev(void*);
 void APS5_VABI _ZN3sce3Xml12MemAllocatorD2Ev(void*);
 int APS5_VABI _ZN3sce3Xml13AttributeList10initializeEPKNS0_11InitializerE();
@@ -68,17 +90,17 @@ int APS5_VABI _ZN3sce3Xml13AttributeListD1Ev();
 int APS5_VABI _ZN3sce3Xml13AttributeListD2Ev();
 void APS5_VABI _ZN3sce3Xml18SerializeParameterC1Ev(XmlSerializeParameter* self);
 void APS5_VABI _ZN3sce3Xml18SerializeParameterC2Ev(XmlSerializeParameter* self);
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder10initializeEPKNS0_11InitializerE();
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv();
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder16setResolveEntityEb();
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder20setSkipIgnorableTextEb();
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder26setSkipIgnorableWhiteSpaceEb();
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder5parseEPKNS0_6StringEb();
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder9terminateEv();
+int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer);
+XmlHandle* APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv(XmlHandle* result, XmlHandle* self);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder16setResolveEntityEb(XmlHandle* self, bool value);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder20setSkipIgnorableTextEb(XmlHandle* self, bool value);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder26setSkipIgnorableWhiteSpaceEb(XmlHandle* self, bool value);
+int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder5parseEPKNS0_6StringEb(XmlHandle* self, const XmlString* text, bool last);
+int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder9terminateEv(XmlHandle* self);
 void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderC1Ev(XmlHandle* self);
 void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderC2Ev(XmlHandle* self);
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD1Ev();
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD2Ev();
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD1Ev(XmlHandle* self);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD2Ev(XmlHandle* self);
 int APS5_VABI _ZN3sce3Xml3Dom4Node11appendChildENS1_6NodeIdE();
 int APS5_VABI _ZN3sce3Xml3Dom4Node11removeChildENS1_6NodeIdE();
 int APS5_VABI _ZN3sce3Xml3Dom4Node12insertBeforeENS1_6NodeIdES3_();
@@ -118,14 +140,14 @@ int APS5_VABI _ZN3sce3Xml3Dom8Document16removeAttributesENS1_6NodeIdE();
 int APS5_VABI _ZN3sce3Xml3Dom8Document16setAttributeListENS1_6NodeIdEPKNS0_13AttributeListE();
 int APS5_VABI _ZN3sce3Xml3Dom8Document7setTextENS1_6NodeIdEPKNS0_6StringE();
 int APS5_VABI _ZN3sce3Xml3Dom8Document9serializeEPKNS0_18SerializeParameterEPNS0_6StringE();
-int APS5_VABI _ZN3sce3Xml3Dom8Document9terminateEv();
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentC1ERKS2_();
+int APS5_VABI _ZN3sce3Xml3Dom8Document9terminateEv(XmlHandle* self);
+void APS5_VABI _ZN3sce3Xml3Dom8DocumentC1ERKS2_(XmlHandle* self, const XmlHandle* other);
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentC1Ev(XmlHandle* self);
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentC2ERKS2_();
+void APS5_VABI _ZN3sce3Xml3Dom8DocumentC2ERKS2_(XmlHandle* self, const XmlHandle* other);
 void APS5_VABI _ZN3sce3Xml3Dom8DocumentC2Ev(XmlHandle* self);
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentD1Ev();
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentD2Ev();
-int APS5_VABI _ZN3sce3Xml3Dom8DocumentaSERKS2_();
+void APS5_VABI _ZN3sce3Xml3Dom8DocumentD1Ev(XmlHandle* self);
+void APS5_VABI _ZN3sce3Xml3Dom8DocumentD2Ev(XmlHandle* self);
+XmlHandle* APS5_VABI _ZN3sce3Xml3Dom8DocumentaSERKS2_(XmlHandle* self, const XmlHandle* other);
 int APS5_VABI _ZN3sce3Xml3Dom8NodeList10initializeEPKNS0_11InitializerE();
 int APS5_VABI _ZN3sce3Xml3Dom8NodeList10insertLastENS1_6NodeIdE();
 int APS5_VABI _ZN3sce3Xml3Dom8NodeList10removeItemENS1_6NodeIdE();
@@ -190,7 +212,30 @@ int APS5_VABI _ZNK3sce3Xml3Dom4Node13hasAttributesEv();
 int APS5_VABI _ZNK3sce3Xml3Dom4Node13hasChildNodesEv();
 int APS5_VABI _ZNK3sce3Xml3Dom4Node14getNextSiblingEv();
 int APS5_VABI _ZNK3sce3Xml3Dom4Node16getOwnerDocumentEv();
-int APS5_VABI _ZNK3sce3Xml3Dom8Document10getDocRootEv();
-int APS5_VABI _ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE();
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document10getDocRootEv(XmlNodeId* result, const XmlHandle* self);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node);
+
+bool APS5_VABI _ZNK3sce3Xml3Dom8Document11isAvailableEv(const XmlHandle* self);
+int APS5_VABI _ZNK3sce3Xml3Dom8Document9getStatusEv(const XmlHandle* self);
+bool APS5_VABI _ZNK3sce3Xml3Dom8Document10isReadOnlyEv(const XmlHandle* self);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document7getRootEv(XmlNodeId* result, const XmlHandle* self);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document9getParentENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document12getLastChildENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node);
+XmlNodeId* APS5_VABI _ZNK3sce3Xml3Dom8Document11getNextAttrENS1_6NodeIdE(XmlNodeId* result, const XmlHandle* self, XmlNodeId node);
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeNameENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node);
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document7getTextENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node);
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document14getSkippedTextENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node);
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document11getAttrNameENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node);
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttrValueENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node);
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document9getEntityENS1_6NodeIdE(XmlString* result, const XmlHandle* self, XmlNodeId node);
+XmlString* APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttributeENS1_6NodeIdEPKNS0_6StringE(XmlString* result, const XmlHandle* self, XmlNodeId node, const XmlString* name);
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeTypeENS1_6NodeIdE(const XmlHandle* self, XmlNodeId node);
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getEntityTypeENS1_6NodeIdE(const XmlHandle* self, XmlNodeId node);
+bool APS5_VABI _ZNK3sce3Xml3Dom8Document13hasChildNodesENS1_6NodeIdE(const XmlHandle* self, XmlNodeId node);
+bool APS5_VABI _ZNK3sce3Xml3Dom8Document13hasAttributesENS1_6NodeIdE(const XmlHandle* self, XmlNodeId node);
+
+extern XmlNodeId _ZN3sce3Xml3Dom13invalidNodeIdE;
 
 }
