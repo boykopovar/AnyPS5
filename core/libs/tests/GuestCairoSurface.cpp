@@ -6,6 +6,7 @@
 #include <climits>
 #include <cstdint>
 #include <cstdio>
+#include <limits>
 #include <new>
 #include <type_traits>
 
@@ -58,9 +59,16 @@ void CheckStrideAndErrors() {
     }
     assert(cairo_format_stride_for_width(0, -1) == -1);
     assert(cairo_format_stride_for_width(0, INT_MAX) == -1);
-    assert(cairo_format_stride_for_width(3, INT_MAX) == 268435456);
+    assert(cairo_format_stride_for_width(3, INT_MAX) == -1);
+    assert(cairo_format_stride_for_width(3, 1000000000) == 125000000);
     CairoSurface* empty = cairo_image_surface_create(0, 0, 4);
     assert(empty && cairo_surface_status(empty) == 0);
+    assert(cairo_image_surface_get_data(empty) == nullptr);
+    cairo_surface_destroy(empty);
+    empty = cairo_image_surface_create(0, 7, 0);
+    assert(empty && cairo_surface_status(empty) == 0);
+    assert(cairo_image_surface_get_width(empty) == 7);
+    assert(cairo_image_surface_get_stride(empty) == 0);
     assert(cairo_image_surface_get_data(empty) == nullptr);
     cairo_surface_destroy(empty);
     CairoSurface* oversized = cairo_image_surface_create(0, 32768, 0);
@@ -91,15 +99,34 @@ void CheckBorrowedDataAndLifetime() {
     cairo_surface_destroy(surface);
     assert(pixels[4] == 123);
 
+    surface = cairo_image_surface_create_for_data(pixels.data() + 8, 0, 1, 2, -4);
+    assert(surface && cairo_surface_status(surface) == 0);
+    assert(cairo_image_surface_get_data(surface) == pixels.data() + 8);
+    assert(cairo_image_surface_get_stride(surface) == -4);
+    cairo_surface_destroy(surface);
+
     for (int stride : {0, 4, 8, 11, 13, -1}) {
         surface = cairo_image_surface_create_for_data(pixels.data(), 0, 3, 4, stride);
         assert(surface && cairo_surface_status(surface) == 24);
         assert(cairo_image_surface_get_data(surface) == nullptr);
         cairo_surface_destroy(surface);
     }
+    surface = cairo_image_surface_create_for_data(pixels.data(), 0, -1, 2, -1);
+    assert(surface && cairo_surface_status(surface) == 24);
+    cairo_surface_destroy(surface);
     surface = cairo_image_surface_create_for_data(nullptr, 0, 3, 4, 16);
     assert(surface && cairo_surface_status(surface) == 0);
+    assert(cairo_image_surface_get_data(surface) != nullptr);
+    assert(cairo_image_surface_get_stride(surface) == 12);
+    for (int n = 0; n < 48; ++n) assert(cairo_image_surface_get_data(surface)[n] == 0);
+    cairo_surface_destroy(surface);
+    surface = cairo_image_surface_create_for_data(nullptr, 0, 2, 0, 16);
+    assert(surface && cairo_surface_status(surface) == 0);
     assert(cairo_image_surface_get_data(surface) == nullptr);
+    assert(cairo_image_surface_get_stride(surface) == 16);
+    cairo_surface_destroy(surface);
+    surface = cairo_image_surface_create_for_data(nullptr, 7, 0, 2, 4);
+    assert(surface && cairo_surface_status(surface) == 1);
     cairo_surface_destroy(surface);
 }
 
@@ -113,8 +140,10 @@ void CheckSimilarAndSubsurfaces() {
         assert(cairo_surface_get_content(similar) == content);
         assert(cairo_image_surface_get_format(similar) ==
                (content == 0x1000 ? 1 : content == 0x2000 ? 2 : 0));
-        assert(cairo_image_surface_get_width(similar) == 5);
-        assert(cairo_image_surface_get_height(similar) == 4);
+        assert(cairo_image_surface_get_width(similar) == 10);
+        assert(cairo_image_surface_get_height(similar) == 12);
+        assert(cairo_image_surface_get_stride(similar) ==
+               (content == 0x2000 ? 12 : 40));
         double sx = 0, sy = 0;
         cairo_surface_get_device_scale(similar, &sx, &sy);
         assert(sx == 2 && sy == 3);
@@ -126,6 +155,31 @@ void CheckSimilarAndSubsurfaces() {
     cairo_surface_destroy(bad);
     assert(cairo_surface_status(bad) == 15);
     cairo_surface_destroy(bad);
+    bad = cairo_surface_create_similar(parent, 0, -1, 2);
+    assert(bad && cairo_surface_status(bad) == 32);
+    cairo_surface_destroy(bad);
+
+    cairo_surface_set_device_scale(parent, 1.5, 2.5);
+    CairoSurface* fractional = cairo_surface_create_similar(parent, 0x3000, 3, 2);
+    assert(fractional && cairo_surface_status(fractional) == 0);
+    assert(cairo_image_surface_get_width(fractional) == 4);
+    assert(cairo_image_surface_get_height(fractional) == 5);
+    assert(cairo_image_surface_get_stride(fractional) == 16);
+    cairo_surface_destroy(fractional);
+    cairo_surface_set_device_scale(parent, 2, 3);
+
+    for (const auto [format, content, stride] :
+         {std::array{3, 0x2000, 4}, std::array{4, 0x1000, 8},
+          std::array{5, 0x1000, 12}, std::array{6, 0x1000, 36},
+          std::array{7, 0x3000, 48}}) {
+        CairoSurface* image = cairo_image_surface_create(format, 3, 2);
+        CairoSurface* similar = cairo_surface_create_similar(image, content, 3, 2);
+        assert(similar && cairo_surface_status(similar) == 0);
+        assert(cairo_image_surface_get_format(similar) == format);
+        assert(cairo_image_surface_get_stride(similar) == stride);
+        cairo_surface_destroy(similar);
+        cairo_surface_destroy(image);
+    }
     CairoSurface* subsection = cairo_surface_create_for_rectangle(parent, 1.5, 2.5, 3.5, 4.5);
     assert(subsection && cairo_surface_status(subsection) == 0);
     assert(cairo_surface_get_type(subsection) == 0);
@@ -143,6 +197,10 @@ void CheckSimilarAndSubsurfaces() {
     CairoSurface* live = cairo_image_surface_create(0, 4, 4);
     bad = cairo_surface_create_for_rectangle(live, 0, 0, -2, 2);
     assert(bad && cairo_surface_status(bad) == 32);
+    cairo_surface_destroy(bad);
+    bad = cairo_surface_create_for_rectangle(
+        live, 0, 0, std::numeric_limits<double>::quiet_NaN(), 2);
+    assert(bad && cairo_surface_status(bad) == 0);
     cairo_surface_destroy(bad);
     cairo_surface_destroy(live);
     bad = cairo_surface_create_for_rectangle(nullptr, 0, 0, 2, 2);

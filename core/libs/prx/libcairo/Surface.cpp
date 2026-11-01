@@ -1,6 +1,7 @@
 #include "prx/libcairo/include/Surface.hpp"
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <new>
@@ -53,7 +54,9 @@ int Stride(int format, int width) {
     const int bits = BitsPerPixel(format);
     if (!bits || width < 0) return -1;
 
-    const auto n = (static_cast<std::int64_t>(width) * bits + 31) / 32 * 4;
+    const auto bitCount = static_cast<std::int64_t>(width) * bits + 31;
+    if (bitCount > std::numeric_limits<int>::max()) return -1;
+    const auto n = bitCount / 32 * 4;
     return n > std::numeric_limits<int>::max() ? -1 : static_cast<int>(n);
 }
 
@@ -132,13 +135,20 @@ CairoSurface* MakeImage(int format, int width, int height,
                         int suppliedStride, unsigned char* externalData, bool borrowed) {
     if (!BitsPerPixel(format)) return ErrorSurface(kInvalidFormat);
     const int minimumStride = Stride(format, width);
-
+    const std::int64_t magnitude = suppliedStride < 0
+                                       ? -static_cast<std::int64_t>(suppliedStride)
+                                       : suppliedStride;
+    if (borrowed && (suppliedStride % 4 != 0 ||
+                     (minimumStride >= 0 && magnitude < minimumStride)))
+        return ErrorSurface(kInvalidStride);
     if (minimumStride < 0 || width > 32767 || height < 0 || height > 32767)
         return ErrorSurface(kInvalidSize);
-    if (borrowed && (suppliedStride < minimumStride || (suppliedStride & 3) != 0))
-        return ErrorSurface(kInvalidStride);
+    if (borrowed && format == 7 && width == 0 && magnitude > 0 && magnitude < 16)
+        return ErrorSurface(kNoMemory);
 
-    const int stride = borrowed ? suppliedStride : minimumStride;
+    const bool ownsPixels = !borrowed || (!externalData && width > 0 && height > 0);
+    const int stride = !borrowed && (!width || !height) ? 0 :
+                       ownsPixels ? minimumStride : suppliedStride;
     if (height && static_cast<std::uint64_t>(height) * stride >
                       std::numeric_limits<std::size_t>::max())
         return ErrorSurface(kInvalidSize);
@@ -151,7 +161,7 @@ CairoSurface* MakeImage(int format, int width, int height,
     result->stride = stride;
     result->extentWidth = width;
     result->extentHeight = height;
-    if (borrowed) {
+    if (!ownsPixels) {
         result->data = externalData;
     } else {
         const auto size = static_cast<std::size_t>(stride) * height;
@@ -252,9 +262,19 @@ CairoSurface* APS5_VABI cairo_surface_create_similar(CairoSurface* other, int co
                                                      int width, int height) {
     if (!other) return ErrorSurface(kNullPointer);
     if (State(other)->status != kSuccess) return ErrorSurface(State(other)->status);
-    const int format = FormatForContent(content);
+    if (width < 0 || height < 0) return ErrorSurface(kInvalidSize);
+    int format = FormatForContent(content);
     if (format < 0) return ErrorSurface(kInvalidContent);
-    auto* result = MakeImage(format, width, height, 0, nullptr, false);
+    if (State(other)->isImage && content == State(other)->content)
+        format = State(other)->format;
+    const double deviceWidth = static_cast<double>(width) * State(other)->scaleX;
+    const double deviceHeight = static_cast<double>(height) * State(other)->scaleY;
+    if (!std::isfinite(deviceWidth) || !std::isfinite(deviceHeight) ||
+        deviceWidth < 0 || deviceHeight < 0 ||
+        deviceWidth > 32767 || deviceHeight > 32767)
+        return ErrorSurface(kInvalidSize);
+    auto* result = MakeImage(format, static_cast<int>(deviceWidth),
+                            static_cast<int>(deviceHeight), 0, nullptr, false);
     if (result && State(result)->status == kSuccess) {
         State(result)->scaleX = State(other)->scaleX;
         State(result)->scaleY = State(other)->scaleY;
@@ -267,7 +287,7 @@ CairoSurface* APS5_VABI cairo_surface_create_for_rectangle(CairoSurface* target,
                                                            double width, double height) {
     if (!target) return ErrorSurface(kNullPointer);
     if (State(target)->status != kSuccess) return ErrorSurface(State(target)->status);
-    if (!(width >= 0 && height >= 0)) return ErrorSurface(kInvalidSize);
+    if (width < 0 || height < 0) return ErrorSurface(kInvalidSize);
     auto* result = NewSurface();
     if (!result) return ErrorSurface(kNoMemory);
 
