@@ -460,6 +460,54 @@ std::uint32_t APS5_VABI stdc_count_ones_us_nid_postfix(std::uint16_t value);
 std::uint32_t APS5_VABI stdc_count_ones_ui_nid_postfix(std::uint32_t value);
 std::uint32_t APS5_VABI stdc_count_ones_ul_nid_postfix(std::uint64_t value);
 std::uint32_t APS5_VABI stdc_count_ones_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_first_leading_zero_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_first_leading_zero_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_first_leading_zero_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_first_leading_zero_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_first_leading_zero_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_first_leading_one_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_first_leading_one_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_first_leading_one_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_first_leading_one_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_first_leading_one_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_first_trailing_zero_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_zero_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_zero_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_first_trailing_one_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_one_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_one_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_one_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_first_trailing_one_ull_nid_postfix(std::uint64_t value);
+
+bool APS5_VABI stdc_has_single_bit_uc_nid_postfix(std::uint8_t value);
+bool APS5_VABI stdc_has_single_bit_us_nid_postfix(std::uint16_t value);
+bool APS5_VABI stdc_has_single_bit_ui_nid_postfix(std::uint32_t value);
+bool APS5_VABI stdc_has_single_bit_ul_nid_postfix(std::uint64_t value);
+bool APS5_VABI stdc_has_single_bit_ull_nid_postfix(std::uint64_t value);
+
+std::uint32_t APS5_VABI stdc_bit_width_uc_nid_postfix(std::uint8_t value);
+std::uint32_t APS5_VABI stdc_bit_width_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_bit_width_ui_nid_postfix(std::uint32_t value);
+std::uint32_t APS5_VABI stdc_bit_width_ul_nid_postfix(std::uint64_t value);
+std::uint32_t APS5_VABI stdc_bit_width_ull_nid_postfix(std::uint64_t value);
+
+std::uint8_t APS5_VABI stdc_bit_floor_uc_nid_postfix(std::uint8_t value);
+std::uint16_t APS5_VABI stdc_bit_floor_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_bit_floor_ui_nid_postfix(std::uint32_t value);
+std::uint64_t APS5_VABI stdc_bit_floor_ul_nid_postfix(std::uint64_t value);
+std::uint64_t APS5_VABI stdc_bit_floor_ull_nid_postfix(std::uint64_t value);
+
+std::uint8_t APS5_VABI stdc_bit_ceil_uc_nid_postfix(std::uint8_t value);
+std::uint16_t APS5_VABI stdc_bit_ceil_us_nid_postfix(std::uint16_t value);
+std::uint32_t APS5_VABI stdc_bit_ceil_ui_nid_postfix(std::uint32_t value);
+std::uint64_t APS5_VABI stdc_bit_ceil_ul_nid_postfix(std::uint64_t value);
+std::uint64_t APS5_VABI stdc_bit_ceil_ull_nid_postfix(std::uint64_t value);
 int APS5_VABI __cmpdi2_nid_postfix(std::int64_t a, std::int64_t b);
 int APS5_VABI __cmpti2_nid_postfix(Int128 a, Int128 b);
 int APS5_VABI __ucmpdi2_nid_postfix(std::uint64_t a, std::uint64_t b);
