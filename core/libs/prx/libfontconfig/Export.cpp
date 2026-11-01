@@ -217,8 +217,10 @@ int APS5_VABI FcPatternDestroy() {
 
 int APS5_VABI FcCharSetAddChar(FcCharSet* set, uint32_t character) {
     if (!set) return 0;
+    const uint16_t number = static_cast<uint16_t>(character >> 8);
+    if (character > 0x00ffffff && !set->leaves.contains(number)) return 0;
     try {
-        CharSetLeaf& leaf = set->leaves[static_cast<uint16_t>(character >> 8)];
+        CharSetLeaf& leaf = set->leaves[number];
         leaf[(character & 0xff) >> 5] |= uint32_t{1} << (character & 0x1f);
     } catch (const std::bad_alloc&) {
         return 0;

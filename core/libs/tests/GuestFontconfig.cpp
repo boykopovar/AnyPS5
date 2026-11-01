@@ -70,12 +70,32 @@ static void CheckSubtract() {
     FcCharSetDestroy(first);
 }
 
-static void CheckLeafNumberWraps() {
+static void CheckCharacterRange() {
+    FcCharSet* set = FcCharSetCreate();
+    FcCharSet* empty = FcCharSetCreate();
+    Check(FcCharSetAddChar(set, 0x01000000) == 0);
+    Check(FcCharSetAddChar(set, 0x01000041) == 0);
+    Check(FcCharSetAddChar(set, 0xFFFFFFFF) == 0);
+    Check(FcCharSetSubtractCount(set, empty) == 0);
+    Check(FcCharSetAddChar(set, 0x00FFFFFF) == 1);
+    Check(FcCharSetSubtractCount(set, empty) == 1);
+    Check(FcCharSetAddChar(set, 0x01000041) == 0);
+    Check(FcCharSetSubtractCount(set, empty) == 1);
+    Check(FcCharSetAddChar(set, 0x41) == 1);
+    Check(FcCharSetSubtractCount(set, empty) == 2);
+    FcCharSetDestroy(empty);
+    FcCharSetDestroy(set);
+}
+
+static void CheckCharacterAliasesExistingLeaf() {
     FcCharSet* set = FcCharSetCreate();
     FcCharSet* low = FcCharSetCreate();
+    Check(FcCharSetAddChar(set, 0x42) == 1);
     Check(FcCharSetAddChar(set, 0x01000041) == 1);
     Check(FcCharSetAddChar(low, 0x41) == 1);
+    Check(FcCharSetAddChar(low, 0x42) == 1);
     Check(FcCharSetSubtractCount(set, low) == 0);
+    Check(FcCharSetSubtractCount(low, set) == 0);
     FcCharSetDestroy(low);
     FcCharSetDestroy(set);
 }
@@ -112,7 +132,8 @@ int main() {
     CheckMatrix();
     CheckNullSets();
     CheckSubtract();
-    CheckLeafNumberWraps();
+    CheckCharacterRange();
+    CheckCharacterAliasesExistingLeaf();
     CheckMerge();
     return 0;
 }
