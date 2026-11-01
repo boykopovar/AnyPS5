@@ -290,6 +290,7 @@ bool SetIp(int descriptor, int option, int value) {
 }
 
 void IpLevelFollowsThePs5() {
+    constexpr int IpHdrIncl = 2;
     constexpr int IpTypeOfService = 3;
     constexpr int IpTimeToLive = 4;
     constexpr int IpMulticastTimeToLive = 10;
@@ -305,6 +306,7 @@ void IpLevelFollowsThePs5() {
     Require(SetIp(datagram, IpTimeToLive, 0) && GetIp(datagram, IpTimeToLive) == 0, "IP_TTL of 0 is kept");
     const unsigned char byte = 9;
     Require(SetFails(datagram, 0, IpTimeToLive, &byte, 1, ErrorInvalid), "a one-byte IP_TTL must fail with EINVAL (22)");
+    Require(SetFails(datagram, 0, IpHdrIncl, &byte, 1, ErrorInvalid), "an IP_HDRINCL shorter than an int must fail with EINVAL (22)");
     Require(SetIp(datagram, IpTypeOfService, 0x1ff) && GetIp(datagram, IpTypeOfService) == 0xff, "IP_TOS keeps the low byte");
     const unsigned char seven = 7;
     Require(setsockopt_nid_postfix(datagram, 0, IpMulticastTimeToLive, &seven, 1) == 0 && GetIp(datagram, IpMulticastTimeToLive) == 7, "a one-byte IP_MULTICAST_TTL is accepted");
