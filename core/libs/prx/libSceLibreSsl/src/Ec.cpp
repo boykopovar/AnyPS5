@@ -177,14 +177,23 @@ int RandomRangeWords(const mbedtls_mpi& order) {
     return static_cast<int>(((bits + 7) / 8 + sizeof(std::uint64_t) - 1) / sizeof(std::uint64_t));
 }
 
+std::size_t OrderWords(const EcGroup& group) {
+    return (mbedtls_mpi_bitlen(&group.group.N) + 63) / 64;
+}
+
+std::string UnusablePrivateKey(const char* function) {
+    return std::string(function) + ": a private key that is zero, negative, at least the group order or has zero high words";
+}
+
+bool ReadBelowOrder(const EcGroup& group, const EcBignum& stored, mbedtls_mpi& out, const char* function) {
+    const bool normalized = stored.top > 0 && !stored.neg && static_cast<std::size_t>(stored.top) <= OrderWords(group) && stored.d[stored.top - 1] != 0;
+    if (!normalized) NotImplemented_nid_no_patch(UnusablePrivateKey(function).c_str());
+    Check(mbedtls_mpi_read_binary_le(&out, reinterpret_cast<const unsigned char*>(stored.d), static_cast<std::size_t>(stored.top) * sizeof(stored.d[0])), function);
+    return mbedtls_mpi_cmp_mpi(&out, &group.group.N) < 0;
+}
+
 void ReadPrivateKey(const EcGroup& group, const EcBignum& stored, mbedtls_mpi& out, const char* function) {
-    const mbedtls_mpi& order = group.group.N;
-    const std::size_t orderWords = (mbedtls_mpi_bitlen(&order) + 63) / 64;
-    const bool normalized = stored.top > 0 && !stored.neg && static_cast<std::size_t>(stored.top) <= orderWords && stored.d[stored.top - 1] != 0;
-    if (normalized) Check(mbedtls_mpi_read_binary_le(&out, reinterpret_cast<const unsigned char*>(stored.d), static_cast<std::size_t>(stored.top) * sizeof(stored.d[0])), function);
-    if (!normalized || mbedtls_mpi_cmp_mpi(&out, &order) >= 0) {
-        NotImplemented_nid_no_patch((std::string(function) + ": a private key that is zero, negative, at least the group order or has zero high words").c_str());
-    }
+    if (!ReadBelowOrder(group, stored, out, function)) NotImplemented_nid_no_patch(UnusablePrivateKey(function).c_str());
 }
 
 int DerLengthSize(int length) {
@@ -307,6 +316,7 @@ void RequireUsablePublicKey(const EcGroup& group, const EcPoint& point, const ch
 
 void EcBignumDeleter::operator()(EcBignum* number) const {
     if (number->d && !(number->flags & BignumFlagStaticData)) {
+        if (number->dmax < 0) throw std::invalid_argument("BN_clear_free: negative word capacity");
         Wipe(number->d, static_cast<std::size_t>(number->dmax) * sizeof(number->d[0]));
         free_nid_postfix(number->d);
     }
@@ -513,8 +523,10 @@ int APS5_VABI EC_KEY_check_key_nid_postfix(const EcKey* key) {
     const mbedtls_ecp_point& publicKey = key->publicKey->point;
     if (AtInfinity(publicKey) || mbedtls_ecp_check_pubkey(&group.group, &publicKey) != 0) return 0;
     if (key->privateKey) {
+        const EcBignum& stored = *key->privateKey;
+        if (!stored.neg && (stored.top == 0 || (stored.top > 0 && static_cast<std::size_t>(stored.top) > OrderWords(group)))) return 0;
         Mpi secret;
-        ReadPrivateKey(group, *key->privateKey, secret.value, "EC_KEY_check_key");
+        if (!ReadBelowOrder(group, stored, secret.value, "EC_KEY_check_key")) return 0;
         Point product;
         Check(mbedtls_ecp_mul(&group.group, &product.value, &secret.value, &group.group.G, HostRandom, nullptr), __func__);
         if (mbedtls_ecp_point_cmp(&product.value, &publicKey) != 0) return 0;

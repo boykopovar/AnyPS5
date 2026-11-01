@@ -424,6 +424,37 @@ static void CheckStoredKeyUse() {
     EC_KEY_free_nid_postfix(first);
 }
 
+static void CheckKeyRange() {
+    std::uint64_t rfcWords[] = {0x7b8a622b120f6721, 0x4e50c3db36e89b12, 0x6b5c215767b1d693, 0xc9afa9d845ba7516};
+    std::uint64_t orderWords[] = {0xf3b9cac2fc632551, 0xbce6faada7179e84, 0xffffffffffffffff, 0xffffffff00000000};
+    std::uint64_t belowOrderWords[] = {0xf3b9cac2fc632550, 0xbce6faada7179e84, 0xffffffffffffffff, 0xffffffff00000000};
+    std::uint64_t fiveWords[] = {1, 2, 3, 4, 5};
+    std::uint64_t zeroHighFive[] = {1, 0, 0, 0, 0};
+    std::uint64_t zeroHighFour[] = {1, 0, 0, 0};
+    const TestBignum zero{nullptr, 0, 0, 0, 0};
+    const TestBignum order{orderWords, 4, 4, 0, 0};
+    const TestBignum belowOrder{belowOrderWords, 4, 4, 0, 0};
+    const TestBignum longKey{fiveWords, 5, 5, 0, 0};
+    const TestBignum longZeroHigh{zeroHighFive, 5, 5, 0, 0};
+    const TestBignum negative{rfcWords, 4, 4, 1, 0};
+    const TestBignum shortZeroHigh{zeroHighFour, 4, 4, 0, 0};
+    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(415);
+    EcPoint* rfcPoint = EC_POINT_new_nid_postfix(EC_KEY_get0_group_nid_postfix(key));
+    Require(EC_POINT_oct2point_nid_postfix(EC_KEY_get0_group_nid_postfix(key), rfcPoint, P256RfcPublicKey, sizeof(P256RfcPublicKey), nullptr) == 1, "the RFC 6979 public key for the range checks");
+    Require(EC_KEY_set_public_key_nid_postfix(key, rfcPoint) == 1, "the RFC 6979 public key on the key");
+    Require(EC_KEY_set_private_key_nid_postfix(key, &zero) == 1 && EC_KEY_check_key_nid_postfix(key) == 0, "EC_KEY_check_key of a zero private key");
+    Require(EC_KEY_set_private_key_nid_postfix(key, &order) == 1 && EC_KEY_check_key_nid_postfix(key) == 0, "EC_KEY_check_key of a private key equal to the order");
+    Require(EC_KEY_set_private_key_nid_postfix(key, &longKey) == 1 && EC_KEY_check_key_nid_postfix(key) == 0, "EC_KEY_check_key of a private key with more words than the order");
+    Require(EC_KEY_set_private_key_nid_postfix(key, &longZeroHigh) == 1 && EC_KEY_check_key_nid_postfix(key) == 0, "EC_KEY_check_key of a five-word private key with zero high words");
+    Require(EC_KEY_set_private_key_nid_postfix(key, &belowOrder) == 1 && EC_KEY_check_key_nid_postfix(key) == 0, "EC_KEY_check_key of the order minus one with another public key");
+    Require(EC_KEY_set_private_key_nid_postfix(key, &negative) == 1, "EC_KEY_set_private_key of a negative key");
+    RequireThrows([&] { EC_KEY_check_key_nid_postfix(key); }, "EC_KEY_check_key of a negative private key");
+    Require(EC_KEY_set_private_key_nid_postfix(key, &shortZeroHigh) == 1, "EC_KEY_set_private_key of a key with a zero top word");
+    RequireThrows([&] { EC_KEY_check_key_nid_postfix(key); }, "EC_KEY_check_key of a private key with a zero top word");
+    EC_POINT_free_nid_postfix(rfcPoint);
+    EC_KEY_free_nid_postfix(key);
+}
+
 int main() {
     InitializeHeap();
     CheckNewKeys();
@@ -441,5 +472,7 @@ int main() {
     CheckGenerateOverLongKey();
     CheckGenerateOverStaticKey();
     CheckStoredKeyUse();
+    CheckKeyRange();
+    Require(live.empty(), "no guest block is left at the end");
     return 0;
 }
