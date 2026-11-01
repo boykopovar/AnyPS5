@@ -345,6 +345,12 @@ Set `APS5_THREAD_PRIORITY=high` to raise the AGC driver's queue workers and the 
 
 The shader recompilation logic in [core/shader/recompiler](../../core/shader/recompiler) is isolated from the rest of the project and is a pure function of its input data, designed for integration into any other project. The current CMake target also includes cache support and links a supplied runtime target, glslang, and optionally SPIRV-Tools.
 
+## Patched MoltenVK on macOS
+
+To build an x86-64 MoltenVK ICD for the Rosetta-hosted emulator, set `VULKAN_SDK` to a macOS Vulkan SDK and run `tools/macos/build-moltenvk.sh [work-directory]` on macOS with Xcode, CMake, Ninja, Git, Python 3 and `glslangValidator` available. The script builds pinned UTM MoltenVK and SPIRV-Cross sources, applies the attributed SPIRV-Cross subgroup-scope patch, checks its MSL output with a subgroup-barrier shader, creates that compute pipeline through the staged ICD under Rosetta, then stages `libMoltenVK.dylib`, its ICD manifest, headers and component licenses. The x86-64 slice is required because an x86-64 process under Rosetta cannot load an arm64-only ICD.
+
+The staged library is optional; it does not replace the Vulkan SDK. Select its ICD manifest with `VK_DRIVER_FILES` when running the macOS emulator. The patch fixes SPIRV-Cross emitting `thread_scope_subgroup` for MSL 3.2 subgroup memory fences; Metal names this scope `thread_scope_simdgroup`. The patch and source pins are documented under `tools/macos/`.
+
 ## Register context tests
 
 The x86-64 register capture and restore tests can be built separately on Linux and macOS, without submodules or the prx libraries. On macOS:

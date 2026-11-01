@@ -1,0 +1,16 @@
+SPIRV-Cross MSL subgroup-scope patch
+------------------------------------
+
+The patch in patches/spirv-cross/0001-MSL-use-Metal-SIMD-group-fence-scope.patch.txt
+is copied from fxgl/steamac, host/moltenvk/patches/spirv-cross/0049-MSL-Use-the-Metal-SIMD-group-fence-scope.patch.
+
+Original commit: 26c1d87d3f08da75cd71cf5487cd66ea47da9e46
+Original author: georgii pl <gp@fx.gl>
+Original subject: MSL: Use the Metal SIMD-group fence scope
+Source project: https://github.com/fxgl/steamac
+Target component: SPIRV-Cross, Apache-2.0
+
+The patch header retains its original attribution and description. MoltenVK and
+SPIRV-Cross are fetched from the pinned UTM commits listed in
+tools/macos/build-moltenvk.sh. Their respective license files are copied beside
+the staged ICD by the build script.

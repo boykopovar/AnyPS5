@@ -1,0 +1,17 @@
+From 26c1d87d3f08da75cd71cf5487cd66ea47da9e46 Mon Sep 17 00:00:00 2001
+From: georgii pl <gp@fx.gl>
+Date: Sun, 1 Nov 2026 11:13:00 +0300
+Subject: [PATCH] MSL: Use the Metal SIMD-group fence scope
+
+STEAMAC-5C: atomic_thread_fence was gated correctly to MSL 3.2, but emitted the SPIR-V spelling thread_scope_subgroup. Metal names this scope thread_scope_simdgroup. A compute shader with subgroupMemoryBarrier and subgroupMemoryBarrierShared reproduces both reported undeclared-identifier diagnostics.
+---
+ spirv_msl.cpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/spirv_msl.cpp b/spirv_msl.cpp
+index 413b6e6..b637df4 100644
+--- a/spirv_msl.cpp
++++ b/spirv_msl.cpp
+@@ -12211,1 +12211,1 @@
+-			bar_stmt += ", thread_scope_subgroup";
++			bar_stmt += ", thread_scope_simdgroup";

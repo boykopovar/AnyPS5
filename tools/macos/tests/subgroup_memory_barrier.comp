@@ -1,0 +1,14 @@
+#version 450
+#extension GL_KHR_shader_subgroup_basic : require
+
+layout(local_size_x = 32) in;
+shared uint value[32];
+
+void main()
+{
+    value[gl_LocalInvocationIndex] = gl_LocalInvocationIndex;
+    subgroupBarrier();
+    subgroupMemoryBarrier();
+    subgroupMemoryBarrierShared();
+    value[gl_LocalInvocationIndex] += value[(gl_LocalInvocationIndex + 1u) & 31u];
+}
