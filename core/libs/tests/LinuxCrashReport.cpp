@@ -14,6 +14,7 @@
 #include <poll.h>
 #include <string>
 #include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -261,6 +262,7 @@ Outcome RunChild(const std::string& name, const std::filesystem::path& log) {
         close(pipeEnds[0]);
         close(pipeEnds[1]);
         observationFd = dup(STDERR_FILENO);
+        Check(prctl(PR_SET_DUMPABLE, 0) == 0, "cannot disable fixture core dumps\n");
         if (log.empty()) unsetenv("ANYPS5_LOG_FILE");
         else setenv("ANYPS5_LOG_FILE", log.c_str(), 1);
         Scenario(name);
