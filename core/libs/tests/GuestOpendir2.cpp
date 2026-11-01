@@ -115,6 +115,13 @@ int main() {
     s_fakeOffset = 0;
     void* fakeDir = OpenDescriptorDirectory_nid_no_patch("/virtual", 100, FakeClose, 0, FakeRead, FakeSeek);
     Require(fakeDir != nullptr);
+    auto* readdirEntry = readdir_nid_postfix(fakeDir);
+    Require(readdirEntry != nullptr && readdirEntry->fileNumber == 42 && std::strcmp(readdirEntry->name, "active") == 0);
+    _seekdir_nid_postfix(fakeDir, 0);
+    GuestDirectoryEntry readdirREntry{};
+    GuestDirectoryEntry* readdirRResult = nullptr;
+    Require(readdir_r_nid_postfix(fakeDir, &readdirREntry, &readdirRResult) == 0 && readdirRResult == &readdirREntry && readdirREntry.fileNumber == 42 && std::strcmp(readdirREntry.name, "active") == 0);
+    _seekdir_nid_postfix(fakeDir, 0);
     auto* skipped = _readdir_unlocked_nid_postfix(fakeDir, 1);
     Require(skipped != nullptr && skipped->fileNumber == 42 && std::strcmp(skipped->name, "active") == 0);
     _seekdir_nid_postfix(fakeDir, 0);
