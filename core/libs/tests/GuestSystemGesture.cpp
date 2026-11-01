@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +33,11 @@ static void TestTouchRecognizerInformation(std::int32_t handle, int invalidArgum
     const SystemGestureRectangle moved{40.0f, 50.0f, 60.0f, 70.0f, {}};
 
     SystemGestureTouchRecognizer recognizer{};
+    errno = 0;
+    Require(sceSystemGestureCreateTouchRecognizer(handle, reinterpret_cast<SystemGestureTouchRecognizer*>(0x10), gestureType, &area, nullptr) == invalidArgument);
+    Require(errno == 0);
+    Require(sceSystemGestureCreateTouchRecognizer(handle, &recognizer, gestureType, reinterpret_cast<const SystemGestureRectangle*>(0x10), nullptr) == invalidArgument);
+    Require(errno == 0);
     Require(sceSystemGestureCreateTouchRecognizer(handle, &recognizer, gestureType, &area, nullptr) == 0);
 
     SystemGestureTouchRecognizerInformation information;
@@ -109,6 +115,17 @@ static void TestPrimitiveTouchEvents(std::int32_t handle, int invalidArgument, i
     Require(event.current_position.x == 480.0f && event.current_position.y == 471.0f);
     Require(event.delta_vector.x == 0.0f && event.delta_vector.y == 0.0f);
     Require(event.delta_time == 0 && event.elapsed_time == 0);
+    errno = 0;
+    Require(sceSystemGestureGetPrimitiveTouchEventByIndex(handle, 0, reinterpret_cast<SystemGesturePrimitiveTouchEvent*>(0x10)) == invalidArgument);
+    Require(errno == 0);
+    uint32_t numEvents = 0;
+    Require(sceSystemGestureGetPrimitiveTouchEvents(handle, reinterpret_cast<SystemGesturePrimitiveTouchEvent*>(0x10), 1, &numEvents) == invalidArgument);
+    Require(errno == 0);
+    SystemGesturePrimitiveTouchEvent evBuf{};
+    Require(sceSystemGestureGetPrimitiveTouchEvents(handle, &evBuf, 1, reinterpret_cast<uint32_t*>(0x10)) == invalidArgument);
+    Require(errno == 0);
+    Require(sceSystemGestureGetTouchEvents(handle, nullptr, nullptr, 0, reinterpret_cast<uint32_t*>(0x10)) == invalidArgument);
+    Require(errno == 0);
 
     const PadData moved = TouchReport(2000, {{7, 500, 480}});
     Require(UpdateWithReports(handle, &moved, 1) == 0);
