@@ -198,13 +198,13 @@ def run_scripts(root, files):
             scopes = []
             for index, (command, arguments) in enumerate(commands(content)):
                 if command in SCOPE_START:
-                    scopes.append((index, index))
+                    scopes.append((index, index, command))
                 elif command.removeprefix("end") in SCOPE_START:
                     if scopes:
                         scopes.pop()
                 elif command in {"else", "elseif"}:
                     if scopes:
-                        scopes[-1] = (scopes[-1][0], index)
+                        scopes[-1] = (scopes[-1][0], index, scopes[-1][2])
                 elif command == "add_test" and arguments:
                     if arguments and arguments[0] == "NAME":
                         if "COMMAND" not in arguments[2:]:
@@ -225,8 +225,14 @@ def run_scripts(root, files):
                         if key == "DISABLED":
                             for test in tests:
                                 if test[0] in arguments[:properties]:
-                                    if any(left[0] == right[0] and left[1] != right[1]
-                                           for left, right in zip(test[3], scopes)):
+                                    exclusive = False
+                                    for left, right in zip(test[3], scopes):
+                                        if left[0] != right[0] or left[2] in {"foreach", "while", "function", "macro"}:
+                                            break
+                                        if left[1] != right[1]:
+                                            exclusive = True
+                                            break
+                                    if exclusive:
                                         continue
                                     disabled = value.upper() in ("1", "ON", "YES", "TRUE", "Y")
                                     if test[3][:len(scopes)] == scopes:

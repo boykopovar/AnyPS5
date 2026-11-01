@@ -650,6 +650,34 @@ class DisabledScriptRegistrationTests(unittest.TestCase):
         self.assertIn("registration-probe-ran", output)
         self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
 
+    def test_later_loop_iteration_can_reenable_a_registration(self):
+        output, audit = self.run_project(
+            'foreach(toggle IN ITEMS TRUE FALSE)\nif(toggle)\n' + self.registration +
+            'set_tests_properties(probe PROPERTIES DISABLED TRUE)\nelse()\n'
+            'set_tests_properties(probe PROPERTIES DISABLED OFF)\nendif()\nendforeach()\n')
+        self.assertIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_repeated_callable_scopes_preserve_possible_reenable(self):
+        for kind in ("function", "macro"):
+            with self.subTest(kind=kind):
+                output, audit = self.run_project(
+                    f'{kind}(configure_probe toggle)\nif(${{toggle}})\n' + self.registration +
+                    'set_tests_properties(probe PROPERTIES DISABLED TRUE)\nelse()\n'
+                    'set_tests_properties(probe PROPERTIES DISABLED OFF)\nendif()\n' +
+                    f'end{kind}()\nconfigure_probe(TRUE)\nconfigure_probe(FALSE)\n')
+                self.assertIn("registration-probe-ran", output)
+                self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
+    def test_later_while_iteration_can_reenable_a_registration(self):
+        output, audit = self.run_project(
+            'set(toggle TRUE)\nwhile(TRUE)\nif(toggle)\n' + self.registration +
+            'set_tests_properties(probe PROPERTIES DISABLED TRUE)\nelse()\n'
+            'set_tests_properties(probe PROPERTIES DISABLED OFF)\nendif()\n'
+            'if(toggle)\nset(toggle FALSE)\nelse()\nbreak()\nendif()\nendwhile()\n')
+        self.assertIn("registration-probe-ran", output)
+        self.assertEqual(audit.returncode, 0, audit.stdout + audit.stderr)
+
     def test_conditional_disable_preserves_a_previously_disabled_test(self):
         for condition in ("TRUE", "FALSE"):
             with self.subTest(condition=condition):
