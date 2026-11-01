@@ -1,0 +1,16 @@
+add_library(libSceOpusSilkEnc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libSceOpusSilkEnc PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceOpusSilkEnc PRIVATE opus)
+configure_windows_unwind(libSceOpusSilkEnc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_opus_silk_enc_tests ${LIBS_INCLUDE_DIR}/tests/GuestOpusSilkEnc.cpp)
+    target_include_directories(guest_opus_silk_enc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_opus_silk_enc_tests PRIVATE libSceOpusSilkEnc libc opus)
+    configure_windows_unwind(guest_opus_silk_enc_tests)
+    add_test(NAME guest_opus_silk_enc COMMAND guest_opus_silk_enc_tests)
+    if(WIN32)
+        set_tests_properties(guest_opus_silk_enc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceOpusSilkEnc>")
+    endif()
+endif()
