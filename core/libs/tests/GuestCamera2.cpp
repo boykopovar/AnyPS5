@@ -1,4 +1,5 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
+#include "prx/libSceCamera/include/Camera.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <chrono>
@@ -7,11 +8,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 
 namespace {
 
 constexpr int ErrorParam = static_cast<int>(0x8A760000);
+constexpr int ErrorNotInit = static_cast<int>(0x8A760002);
 constexpr int ErrorCameraOpen = static_cast<int>(0x8A760015);
 
 using NoArgumentFn = int (APS5_VABI*)();
@@ -27,6 +30,15 @@ void Require(bool condition, const char* message) {
 template <typename Function, typename Export>
 Function As(Export function) {
     return reinterpret_cast<Function>(function);
+}
+
+bool InitializeThrows(NoArgumentFn initialize) {
+    try {
+        initialize();
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 }
@@ -76,6 +88,26 @@ int main() {
     Require(finalize() == ErrorCameraOpen, "sceCamera2Finalize ran while a camera was open");
     Require(sceCameraClose(camera) == 0, "sceCameraClose failed");
     Require(finalize() == 0, "sceCamera2Finalize failed after the camera closed");
+
+    const std::uint32_t checked = 0;
+    SetCamera2AppCategoryForTest_nid_no_patch(&checked);
+    for (const auto call : handleCalls) Require(call(1) == ErrorNotInit, "a category below 0x1000000 skipped the initialization check");
+    Require(finalize() == ErrorNotInit && open(0xFF, 0, 0, nullptr) == ErrorNotInit, "a checked category finalized or opened before sceCamera2Initialize");
+    Require(InitializeThrows(initialize), "sceCamera2Initialize answered for a checked category it doesn't model");
+
+    const std::uint32_t exempt = 0x20F00;
+    SetCamera2AppCategoryForTest_nid_no_patch(&exempt);
+    for (const auto call : handleCalls) Require(call(1) == ErrorParam, "category 0x20F00 was checked for initialization");
+    Require(initialize() == 0, "sceCamera2Initialize failed for category 0x20F00");
+    SetCamera2AppCategoryForTest_nid_no_patch(&checked);
+    for (const auto call : handleCalls) Require(call(1) == ErrorParam, "a checked category stayed uninitialized after sceCamera2Initialize");
+    Require(finalize() == 0, "sceCamera2Finalize failed for an initialized checked category");
+
+    const std::uint32_t unchecked = 0x1000000;
+    SetCamera2AppCategoryForTest_nid_no_patch(&unchecked);
+    for (const auto call : handleCalls) Require(call(1) == ErrorParam, "category 0x1000000 was checked for initialization");
+    Require(initialize() == 0 && finalize() == 0, "sceCamera2Initialize or Finalize failed for category 0x1000000");
+    SetCamera2AppCategoryForTest_nid_no_patch(nullptr);
 
     std::filesystem::current_path(original);
     std::filesystem::remove_all(directory);

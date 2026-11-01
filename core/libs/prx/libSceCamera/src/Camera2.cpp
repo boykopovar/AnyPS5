@@ -17,8 +17,11 @@ constexpr std::uint32_t UNCHECKED_CATEGORY_START = 0x1000000;
 constexpr std::uint32_t UNCHECKED_CATEGORY = 0x20F00;
 
 std::atomic<bool> initialized{false};
+std::atomic<bool> categoryOverridden{false};
+std::atomic<std::uint32_t> categoryOverride{0};
 
 std::uint32_t AppCategory() {
+    if (categoryOverridden.load()) return categoryOverride.load();
     constexpr std::size_t AppInfoBytes = 0x58;
     constexpr std::size_t CategoryOffset = 0x50;
     std::uint8_t info[AppInfoBytes];
@@ -41,6 +44,11 @@ int RejectHandle() {
     return SCE_CAMERA2_ERROR_PARAM;
 }
 
+}
+
+extern "C" void SetCamera2AppCategoryForTest_nid_no_patch(const std::uint32_t* category) {
+    if (category != nullptr) categoryOverride.store(*category);
+    categoryOverridden.store(category != nullptr);
 }
 
 extern "C" {
