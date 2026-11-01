@@ -286,6 +286,41 @@ void TestObjects() {
         "a failed allocation returns null");
 }
 
+void TestAllocatorEx() {
+    NpMemoryHeap memoryHeap {};
+    Require(sceNpMemoryHeapInit(&memoryHeap, 0x1000, "np-test") == 0, "a memory heap is created");
+    NpAllocatorEx allocator {};
+    sceNpMemoryHeapGetAllocatorEx(&memoryHeap, 0x1234, &allocator);
+
+    Require(_sceNpAllocatorExConvertAllocator(&allocator) == &allocator.allocator, "the extended allocator converts to its allocator");
+    auto* block = static_cast<std::uint8_t*>(_sceNpAllocatorExMalloc(&allocator, 16));
+    Require(block != nullptr, "the extended allocator hands out memory");
+    block[15] = 0x5A;
+    block = static_cast<std::uint8_t*>(_sceNpAllocatorExRealloc(&allocator, block, 128));
+    Require(block != nullptr && block[15] == 0x5A, "reallocation keeps the contents");
+    _sceNpAllocatorExFree(&allocator, block);
+    char* copy = _sceNpAllocatorExStrdup(&allocator, "np-common");
+
+    Require(copy != nullptr && std::strcmp(copy, "np-common") == 0, "a string is duplicated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np-common", 2);
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a duplicated prefix is terminated");
+    _sceNpAllocatorExFree(&allocator, copy);
+    copy = _sceNpAllocatorExStrndup(&allocator, "np", 16);
+
+    Require(copy != nullptr && std::strcmp(copy, "np") == 0, "a short string is duplicated whole");
+    _sceNpAllocatorExFree(&allocator, copy);
+    sceNpMemoryHeapDestroy(&memoryHeap);
+    AllocatorRecord record {};
+    record.fail = true;
+    NpAllocatorEx failing {{RecordAllocate, nullptr, RecordRelease, &record}, 0};
+
+    Require(_sceNpAllocatorExStrdup(&failing, "abc") == nullptr && record.size == 4, "a failed duplicate returns null after asking for the string and its terminator");
+    Require(_sceNpAllocatorExStrndup(&failing, "abcdef", 3) == nullptr && record.size == 4, "a failed prefix duplicate returns null");
+    _sceNpAllocatorExFree(&failing, record.block.data());
+    Require(record.released == record.block.data(), "freeing goes through the allocator");
+}
+
 void TestObjectsThroughStoredAllocator() {
     AllocatorRecord record {};
     NpAllocator allocator {RecordAllocate, nullptr, RecordRelease, &record};
@@ -316,6 +351,67 @@ void TestObjectsThroughStoredAllocator() {
     record.fail = true;
     Require(_ZN3sce2np6ObjectnaEmR14SceNpAllocator(8, &allocator) == nullptr && _ZN3sce2np6ObjectnaEmR16SceNpAllocatorEx(8, &allocatorEx) == nullptr,
         "a failed array allocation returns null");
+}
+
+struct ExRecord {
+    std::array<std::uint8_t, 64> block {};
+    int allocations = 0;
+    int reallocations = 0;
+    int releases = 0;
+    void* reallocated = nullptr;
+    std::size_t size = 0;
+    void* released = nullptr;
+    bool fail = false;
+};
+
+void* APS5_VABI ExAllocate(std::size_t size, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->allocations;
+    record->size = size;
+    return record->fail ? nullptr : record->block.data();
+}
+
+void* APS5_VABI ExReallocate(void* pointer, std::size_t size, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->reallocations;
+    record->reallocated = pointer;
+    record->size = size;
+    return record->fail ? nullptr : record->block.data() + 8;
+}
+
+void APS5_VABI ExRelease(void* pointer, void* context) {
+    auto* record = static_cast<ExRecord*>(context);
+    ++record->releases;
+    record->released = pointer;
+}
+
+void TestAllocatorExRecorded() {
+    ExRecord record {};
+    NpAllocatorEx allocator {{ExAllocate, ExReallocate, ExRelease, &record}, 0x1234};
+    std::uint8_t old = 0;
+
+    Require(_sceNpAllocatorExRealloc(&allocator, &old, 96) == record.block.data() + 8 && record.reallocated == &old && record.size == 96
+            && record.reallocations == 1 && record.allocations == 0 && record.releases == 0,
+        "reallocation is one call to the allocator's reallocate with the pointer and size");
+    record.fail = true;
+    Require(_sceNpAllocatorExRealloc(&allocator, &old, 32) == nullptr && record.reallocations == 2 && record.releases == 0,
+        "a failed reallocation returns null and keeps the old block");
+    Require(_sceNpAllocatorExMalloc(&allocator, 24) == nullptr && record.allocations == 1 && record.size == 24,
+        "a failed allocation is one call to allocate");
+    _sceNpAllocatorExFree(&allocator, nullptr);
+    Require(record.releases == 1 && record.released == nullptr, "freeing null still calls release");
+
+    record.fail = false;
+    record.size = 0;
+    Require(_sceNpAllocatorExStrndup(&allocator, "abc", 10) != nullptr && record.size == 4,
+        "a short string asks for its length and terminator, not the limit");
+    Require(_sceNpAllocatorExStrndup(&allocator, "abc", SIZE_MAX) != nullptr && record.size == 4
+            && std::memcmp(record.block.data(), "abc", 4) == 0,
+        "an unbounded limit duplicates the whole string");
+    const char unterminated[3] = {'x', 'y', 'z'};
+    Require(_sceNpAllocatorExStrndup(&allocator, unterminated, sizeof(unterminated)) != nullptr && record.size == 4
+            && std::memcmp(record.block.data(), "xyz", 4) == 0,
+        "the limit bounds the read of an unterminated buffer");
 }
 
 void TestTitleIdObjects() {
@@ -1191,7 +1287,9 @@ int main() {
     TestConditionWakeups();
     TestHeaps();
     TestObjects();
+    TestAllocatorEx();
     TestObjectsThroughStoredAllocator();
+    TestAllocatorExRecorded();
     TestMemoryStreams();
     TestTitleIdObjects();
     TestStreamHelpers();
