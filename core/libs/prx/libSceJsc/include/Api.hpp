@@ -22,14 +22,14 @@ template<typename Unit> constexpr bool GuestJSStringValidLength(std::size_t leng
 
 extern "C" {
 
-GuestJSString* APS5_VABI JSStringCreateWithCharacters(const std::uint16_t* characters, std::size_t count);
-GuestJSString* APS5_VABI JSStringCreateWithUTF8CString(const char* text);
-GuestJSString* APS5_VABI JSStringRetain(GuestJSString* string);
-void APS5_VABI JSStringRelease(GuestJSString* string);
-std::size_t APS5_VABI JSStringGetLength(const GuestJSString* string);
-const std::uint16_t* APS5_VABI JSStringGetCharactersPtr(const GuestJSString* string);
-std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize(const GuestJSString* string);
-std::size_t APS5_VABI JSStringGetUTF8CString(const GuestJSString* string, char* buffer, std::size_t bufferSize);
+GuestJSString* APS5_VABI JSStringCreateWithCharacters_nid_postfix(const std::uint16_t* characters, std::size_t count);
+GuestJSString* APS5_VABI JSStringCreateWithUTF8CString_nid_postfix(const char* text);
+GuestJSString* APS5_VABI JSStringRetain_nid_postfix(GuestJSString* string);
+void APS5_VABI JSStringRelease_nid_postfix(GuestJSString* string);
+std::size_t APS5_VABI JSStringGetLength_nid_postfix(const GuestJSString* string);
+const std::uint16_t* APS5_VABI JSStringGetCharactersPtr_nid_postfix(const GuestJSString* string);
+std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize_nid_postfix(const GuestJSString* string);
+std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* string, char* buffer, std::size_t bufferSize);
 bool APS5_VABI JSStringIsEqual(const GuestJSString* first, const GuestJSString* second);
 bool APS5_VABI JSStringIsEqualToUTF8CString(const GuestJSString* string, const char* text);
 

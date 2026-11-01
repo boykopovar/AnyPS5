@@ -21,6 +21,9 @@ int APS5_VABI sceNpGameIntentLaunchApp2();
 int APS5_VABI sceNpGameIntentNotifyAppLaunched();
 int APS5_VABI sceNpSessionServiceGetJoinedPartySession();
 int APS5_VABI sceNpSessionServiceGetRunningGamePlayerSession();
+int APS5_VABI sceNpSessionServiceInitialize();
 int APS5_VABI sceNpSessionServiceSendPlayerSessionInvitations();
+int APS5_VABI sceNpSessionServiceSendPlayerSessionRequestToJoin();
+int APS5_VABI sceNpSessionServiceTerminate();
 
 }

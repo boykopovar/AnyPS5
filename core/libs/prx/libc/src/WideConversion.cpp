@@ -44,17 +44,17 @@ std::size_t ReadErrorMessage(int error, char (&message)[128]) {
     return std::strlen(message);
 }
 
-void ErrorMessageConstraint(char* buffer) {
+void ErrorMessageConstraint() {
     SonyConstraintHandler handler;
     {
         std::lock_guard<std::mutex> lock(SonyConstraintMutex());
         handler = SonyConstraintHandlerSlot();
     }
     if (handler == SonyDefaultConstraintHandler) {
-        SonyDefaultConstraintHandler("strerror_s", buffer, 22);
+        SonyDefaultConstraintHandler("strerror_s: bad argument", nullptr, 22);
     } else {
         using GuestHandler = void (APS5_VABI *)(const char*, void*, int);
-        reinterpret_cast<GuestHandler>(handler)("strerror_s", buffer, 22);
+        reinterpret_cast<GuestHandler>(handler)("strerror_s: bad argument", nullptr, 22);
     }
 }
 
@@ -66,8 +66,8 @@ extern "C" std::size_t APS5_VABI strerrorlen_s_nid_postfix(int error) {
 }
 
 extern "C" int APS5_VABI strerror_s_nid_postfix(char* buffer, std::size_t capacity, int error) {
-    if (!buffer || capacity == 0 || capacity > (std::numeric_limits<std::size_t>::max() >> 1)) {
-        ErrorMessageConstraint(buffer);
+    if (!buffer || capacity == 0 || capacity > (std::numeric_limits<std::size_t>::max() >> 3)) {
+        ErrorMessageConstraint();
         return 22;
     }
     char message[128];

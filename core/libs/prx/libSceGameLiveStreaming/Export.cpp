@@ -78,8 +78,9 @@ int APS5_VABI sceGameLiveStreamingScreenInitialize(void) {
     return 0;
 }
 
-int APS5_VABI sceGameLiveStreamingScreenInitializeSeparateModeParameter(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceGameLiveStreamingScreenInitializeSeparateModeParameter(void* parameter) {
+    if (parameter == nullptr) return ErrorInvalidArgument;
+    std::memset(parameter, 0, 0x44);
     return 0;
 }
 

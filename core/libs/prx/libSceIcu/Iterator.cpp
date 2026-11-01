@@ -15,14 +15,6 @@ constexpr std::int32_t IllegalArgumentError = 1;
 constexpr std::int32_t IndexOutOfBoundsError = 8;
 constexpr std::int32_t UnsupportedError = 16;
 
-enum Origin : std::int32_t {
-    Start,
-    Current,
-    Limit,
-    Zero,
-    Length
-};
-
 constexpr std::uint8_t Lead3Trail1[16] = {0x20, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x10, 0x30, 0x30};
 constexpr std::uint8_t Lead4Trail1[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0x1e, 0x0f, 0x0f, 0x0f, 0, 0, 0, 0};
 
@@ -146,11 +138,11 @@ const char16_t* Units(const UCharIterator& iterator) {
     return static_cast<const char16_t*>(iterator.context);
 }
 
-std::int32_t APS5_VABI NoopGetIndex_nid_no_patch(UCharIterator*, std::int32_t) {
+std::int32_t APS5_VABI NoopGetIndex_nid_no_patch(UCharIterator*, UCharIteratorOrigin) {
     return 0;
 }
 
-std::int32_t APS5_VABI NoopMove_nid_no_patch(UCharIterator*, std::int32_t, std::int32_t) {
+std::int32_t APS5_VABI NoopMove_nid_no_patch(UCharIterator*, std::int32_t, UCharIteratorOrigin) {
     return 0;
 }
 
@@ -171,27 +163,27 @@ void APS5_VABI NoopSetState_nid_no_patch(UCharIterator*, std::uint32_t, std::int
     *error = UnsupportedError;
 }
 
-std::int32_t APS5_VABI StringGetIndex_nid_no_patch(UCharIterator* handle, std::int32_t origin) {
+std::int32_t APS5_VABI StringGetIndex_nid_no_patch(UCharIterator* handle, UCharIteratorOrigin origin) {
     const auto& iterator = Check(handle);
     switch (origin) {
-    case Zero: return 0;
-    case Start: return iterator.start;
-    case Current: return iterator.index;
-    case Limit: return iterator.limit;
-    case Length: return iterator.length;
+    case UITER_ZERO: return 0;
+    case UITER_START: return iterator.start;
+    case UITER_CURRENT: return iterator.index;
+    case UITER_LIMIT: return iterator.limit;
+    case UITER_LENGTH: return iterator.length;
     default: return -1;
     }
 }
 
-std::int32_t APS5_VABI StringMove_nid_no_patch(UCharIterator* handle, std::int32_t delta, std::int32_t origin) {
+std::int32_t APS5_VABI StringMove_nid_no_patch(UCharIterator* handle, std::int32_t delta, UCharIteratorOrigin origin) {
     auto& iterator = Check(handle);
     std::int32_t position;
     switch (origin) {
-    case Zero: position = delta; break;
-    case Start: position = Wrap(std::int64_t{iterator.start} + delta); break;
-    case Current: position = Wrap(std::int64_t{iterator.index} + delta); break;
-    case Limit: position = Wrap(std::int64_t{iterator.limit} + delta); break;
-    case Length: position = Wrap(std::int64_t{iterator.length} + delta); break;
+    case UITER_ZERO: position = delta; break;
+    case UITER_START: position = Wrap(std::int64_t{iterator.start} + delta); break;
+    case UITER_CURRENT: position = Wrap(std::int64_t{iterator.index} + delta); break;
+    case UITER_LIMIT: position = Wrap(std::int64_t{iterator.limit} + delta); break;
+    case UITER_LENGTH: position = Wrap(std::int64_t{iterator.length} + delta); break;
     default: return -1;
     }
     if (position < iterator.start) position = iterator.start;
@@ -246,13 +238,13 @@ std::int32_t Utf16Units(const std::uint8_t* text, std::int32_t& byte, std::int32
     return units;
 }
 
-std::int32_t APS5_VABI Utf8GetIndex_nid_no_patch(UCharIterator* handle, std::int32_t origin) {
+std::int32_t APS5_VABI Utf8GetIndex_nid_no_patch(UCharIterator* handle, UCharIteratorOrigin origin) {
     auto& iterator = Check(handle);
     switch (origin) {
-    case Zero:
-    case Start:
+    case UITER_ZERO:
+    case UITER_START:
         return 0;
-    case Current:
+    case UITER_CURRENT:
         if (iterator.index < 0) {
             std::int32_t byte = 0;
             std::int32_t index = Utf16Units(Bytes(iterator), byte, iterator.start);
@@ -262,8 +254,8 @@ std::int32_t APS5_VABI Utf8GetIndex_nid_no_patch(UCharIterator* handle, std::int
             iterator.index = index;
         }
         return iterator.index;
-    case Limit:
-    case Length:
+    case UITER_LIMIT:
+    case UITER_LENGTH:
         if (iterator.length < 0) {
             std::int32_t byte;
             std::int32_t length;
@@ -285,22 +277,22 @@ std::int32_t APS5_VABI Utf8GetIndex_nid_no_patch(UCharIterator* handle, std::int
     }
 }
 
-std::int32_t APS5_VABI Utf8Move_nid_no_patch(UCharIterator* handle, std::int32_t delta, std::int32_t origin) {
+std::int32_t APS5_VABI Utf8Move_nid_no_patch(UCharIterator* handle, std::int32_t delta, UCharIteratorOrigin origin) {
     auto& iterator = Check(handle);
     std::int32_t position;
     bool havePosition;
     switch (origin) {
-    case Zero:
-    case Start:
+    case UITER_ZERO:
+    case UITER_START:
         position = delta;
         havePosition = true;
         break;
-    case Current:
+    case UITER_CURRENT:
         havePosition = iterator.index >= 0;
         position = havePosition ? Wrap(std::int64_t{iterator.index} + delta) : 0;
         break;
-    case Limit:
-    case Length:
+    case UITER_LIMIT:
+    case UITER_LENGTH:
         if (iterator.length >= 0) {
             position = Wrap(std::int64_t{iterator.length} + delta);
             havePosition = true;

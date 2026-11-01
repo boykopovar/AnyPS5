@@ -8,11 +8,12 @@
 
 namespace {
 
-constexpr std::int32_t Start = 0;
-constexpr std::int32_t Current = 1;
-constexpr std::int32_t Limit = 2;
-constexpr std::int32_t Zero = 3;
-constexpr std::int32_t Length = 4;
+constexpr UCharIteratorOrigin Start = UITER_START;
+constexpr UCharIteratorOrigin Current = UITER_CURRENT;
+constexpr UCharIteratorOrigin Limit = UITER_LIMIT;
+constexpr UCharIteratorOrigin Zero = UITER_ZERO;
+constexpr UCharIteratorOrigin Length = UITER_LENGTH;
+constexpr auto UnknownOrigin = static_cast<UCharIteratorOrigin>(9);
 constexpr std::int32_t Sentinel = -1;
 constexpr std::int32_t UnknownIndex = -2;
 constexpr std::uint32_t NoState = 0xffffffff;
@@ -100,7 +101,7 @@ void Strings() {
     Require(iterator.context == text.c_str() && iterator.length == 5 && iterator.limit == 5 && iterator.start == 0 && iterator.index == 0, "string fields");
     Require(iterator.reservedFn == nullptr && iterator.reservedField == 0, "string reserved members");
     Require(iterator.getIndex(&iterator, Length) == 5 && iterator.getIndex(&iterator, Limit) == 5 && iterator.getIndex(&iterator, Start) == 0, "string bounds");
-    Require(iterator.getIndex(&iterator, Zero) == 0 && iterator.getIndex(&iterator, 9) == -1, "string zero and invalid origins");
+    Require(iterator.getIndex(&iterator, Zero) == 0 && iterator.getIndex(&iterator, UnknownOrigin) == -1, "string zero and invalid origins");
     Require(iterator.hasPrevious(&iterator) == 0 && iterator.hasNext(&iterator) == 1 && iterator.current(&iterator) == 0x61, "string start");
     Require(Forward(iterator) == Units{0x61, 0xe9, 0xd83d, 0xde00, 0x7a}, "string units");
     Require(iterator.hasNext(&iterator) == 0 && iterator.current(&iterator) == Sentinel && iterator.getIndex(&iterator, Current) == 5, "string end");
@@ -109,7 +110,7 @@ void Strings() {
     Require(iterator.move(&iterator, 2, Zero) == 2 && iterator.current(&iterator) == 0xd83d, "string move from zero");
     Require(iterator.move(&iterator, 1, Current) == 3 && iterator.move(&iterator, -1, Limit) == 4 && iterator.move(&iterator, -3, Length) == 2, "string relative moves");
     Require(iterator.move(&iterator, 1, Start) == 1 && iterator.move(&iterator, 9, Current) == 5 && iterator.move(&iterator, -9, Current) == 0, "string moves are clamped");
-    Require(iterator.move(&iterator, 0x7fffffff, Limit) == 0 && iterator.move(&iterator, 3, 9) == -1 && iterator.index == 0, "string moves wrap and reject unknown origins");
+    Require(iterator.move(&iterator, 0x7fffffff, Limit) == 0 && iterator.move(&iterator, 3, UnknownOrigin) == -1 && iterator.index == 0, "string moves wrap and reject unknown origins");
     iterator.move(&iterator, 3, Zero);
     const std::uint32_t state = iterator.getState(&iterator);
     Require(state == 3, "string state is the index");
