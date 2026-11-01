@@ -1613,31 +1613,6 @@ int APS5_VABI _ZN6webrtc17AudioDeviceBuffer22SetRecordingSampleRateEj_nid_postfi
     return 0;
 }
 
-int APS5_VABI WebRtcVad_Create_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcVad_Free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcVad_Init_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcVad_set_mode_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI WebRtcVad_Process_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNK6webrtc18AudioDeviceGeneric21BuiltInAECIsAvailableEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;

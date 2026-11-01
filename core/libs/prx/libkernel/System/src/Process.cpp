@@ -239,6 +239,7 @@ bool hasPriorityRange(int policy) {
 }
 
 constexpr int guestNoProcess = 3;
+constexpr int guestAccess = 13;
 constexpr int guestFault = 14;
 constexpr int guestInvalid = 22;
 constexpr int guestRlimitCpu = 0;
@@ -662,18 +663,21 @@ int APS5_VABI sceKernelGetAppInfo(int pid, void* info) {
     constexpr std::size_t TitleIdOffset = 0x10;
     constexpr std::size_t TitleIdBytes = 10;
     constexpr std::size_t MarkerOffset = 0x50;
-    auto* bytes = static_cast<std::uint8_t*>(info);
-    std::memset(bytes, 0, StructureBytes);
+    std::uint8_t record[StructureBytes]{};
     if (own) {
         const auto titleId = GetAppTitleId_nid_postfix();
         char field[TitleIdBytes] = {};
         std::strncpy(field, titleId.value, sizeof(field) - 1);
         const std::uint32_t appId = 1;
-        std::memcpy(bytes, &appId, sizeof(appId));
-        std::memcpy(bytes + TitleIdOffset, field, TitleIdBytes);
+        std::memcpy(record, &appId, sizeof(appId));
+        std::memcpy(record + TitleIdOffset, field, TitleIdBytes);
     }
     const std::uint32_t marker = 0xffffffffu;
-    std::memcpy(bytes + MarkerOffset, &marker, sizeof(marker));
+    std::memcpy(record + MarkerOffset, &marker, sizeof(marker));
+    const int savedErrno = errno;
+    const bool written = WriteGuest(info, record, sizeof(record));
+    errno = savedErrno;
+    if (!written) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -1023,7 +1027,10 @@ int APS5_VABI sysarch(int operation, void* parameters) {
     }
     std::uint64_t base = 0;
     if (operation == setGsBase) {
-        std::memcpy(&base, parameters, sizeof(base));
+        if (!GuestCopyIn_nid_no_patch(&base, parameters, sizeof(base))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
         if (base >= userAddressEnd) {
             *__error_nid_postfix() = guestInvalid;
             return -1;
@@ -1036,10 +1043,16 @@ int APS5_VABI sysarch(int operation, void* parameters) {
         throw std::system_error(errno, std::generic_category(), "sysarch: reading a segment base");
     if (i386) {
         const auto low = static_cast<std::uint32_t>(base);
-        std::memcpy(parameters, &low, sizeof(low));
+        if (!GuestCopyOut_nid_no_patch(parameters, &low, sizeof(low))) {
+            *__error_nid_postfix() = guestFault;
+            return -1;
+        }
         return 0;
     }
-    std::memcpy(parameters, &base, sizeof(base));
+    if (!GuestCopyOut_nid_no_patch(parameters, &base, sizeof(base))) {
+        *__error_nid_postfix() = guestFault;
+        return -1;
+    }
     return 0;
 #else
     static_cast<void>(parameters);
@@ -1217,6 +1230,10 @@ int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval) {
                                                   : who == 0 || who == getpid_nid_postfix();
     if (!found) {
         *__error_nid_postfix() = guestNoProcess;
+        return -1;
+    }
+    if (niceval < 0) {
+        *__error_nid_postfix() = guestAccess;
         return -1;
     }
     if (which != guestPriorityProcess) {
