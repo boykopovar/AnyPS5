@@ -148,12 +148,12 @@ jobs:
     permissions:
       contents: write
     env:
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
           pattern: release-*
@@ -172,11 +172,15 @@ jobs:
           chmod +x "dist/relinker-$RELEASE_TAG"
       - name: Prepare release notes
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh api --method POST "repos/$GH_REPO/releases/generate-notes" -f tag_name="$RELEASE_TAG" > "$RUNNER_TEMP/release-notes.json"
           python tools/prepare_release_notes.py --input "$RUNNER_TEMP/release-notes.json" --body "$RUNNER_TEMP/release-body.md" --full dist/release-notes.md
       - name: Create or refresh draft and upload files
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           release_marker="<!-- anyps5-release-workflow:$GITHUB_SHA -->"
           printf '\n%s\n' "$release_marker" >> "$RUNNER_TEMP/release-body.md"
@@ -213,4 +217,6 @@ jobs:
             exit 1
           fi
       - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: gh release edit "$RELEASE_TAG" --draft=false
