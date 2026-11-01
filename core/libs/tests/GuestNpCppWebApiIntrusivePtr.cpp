@@ -118,6 +118,7 @@ static void TestAssign(const AssignCase& testCase) {
     testCase.assign(&pointer, &pointer);
     Require(pointer.object == first && pointer.deleter == RecordDelete && pointer.libContext == &context);
     Require(ReadCount(first, offset) == 1);
+    Require(deleterCalls == 0);
 
     const IntrusivePtr alias{first, nullptr, nullptr};
     testCase.assign(&pointer, &alias);
@@ -520,6 +521,7 @@ int main(int argc, char** argv) {
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V113PlayerSessionEEaSERS7_, 0},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V113PlayerSessionEEEEEEaSERKSA_, VectorReferenceCountOffset},
         {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_13InGameCatalog2V59ContainerEEEEEEaSERKSA_, VectorReferenceCountOffset},
+        {_ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEaSERS6_, ScalarVectorReferenceCountOffset},
     };
     for (const auto& testCase : assignments) TestAssign(testCase);
 

@@ -5968,8 +5968,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev(In
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEaSERS6_(IntrusivePtr* self, const IntrusivePtr* source) {
-    ReleaseIntrusivePtr(self, ScalarVectorReferenceCountOffset, __func__);
-    CopyIntrusivePtr(self, source, ScalarVectorReferenceCountOffset);
+    AssignIntrusivePtr(self, source, ScalarVectorReferenceCountOffset, __func__);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5emptyEv(const CommonString* self) {
