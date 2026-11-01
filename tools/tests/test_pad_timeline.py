@@ -256,6 +256,23 @@ class TimelineTests(unittest.TestCase):
             self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
             self.assertIn("200 100 18432\n", output.read_text(encoding="utf-8"))
 
+    def test_unencodable_command_path_still_reports_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            timeline, output = root / "sequence.json", root / "command\udcff"
+            timeline.write_text(json.dumps(self.document), encoding="utf-8")
+            try:
+                output.touch()
+                output.unlink()
+            except (OSError, UnicodeError):
+                self.skipTest("the file system cannot name a file with a lone surrogate")
+            env = dict(os.environ, PYTHONIOENCODING="utf-8:backslashreplace")
+            result = subprocess.run([sys.executable, str(Path(pad_timeline.__file__)), str(timeline), str(output)],
+                                    capture_output=True, text=True, timeout=5, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(output.read_text(encoding="utf-8").startswith("APS5_PAD_TIMELINE 1 "))
+            self.assertIn("\\udcff", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

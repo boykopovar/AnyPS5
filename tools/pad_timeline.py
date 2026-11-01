@@ -82,7 +82,7 @@ def queue_timeline(path, text):
 def main(argv=None):
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8")
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Queue a timed controller button sequence for APS5_PAD_INPUT_FILE.")
     parser.add_argument("timeline", type=Path)
     parser.add_argument("path", type=Path)
