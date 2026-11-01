@@ -13,6 +13,7 @@ static constexpr std::uint32_t AUDIO_OUT2_PAD_SPEAKER_RIGHT = 1;
 static constexpr std::uint32_t AUDIO_OUT2_PAD_VIBRATION_LEFT = 2;
 static constexpr std::uint32_t AUDIO_OUT2_PAD_VIBRATION_RIGHT = 3;
 static constexpr std::uint32_t AUDIO_OUT2_PAD_DEVICE_CHANNELS_MAX = 6;
+static constexpr const char* AUDIO_PAD_SPEAKER_FALLBACK_ENV = "APS5_PAD_SPEAKER_FALLBACK_DB";
 
 enum class AudioOut2Route {
     Main,
@@ -25,6 +26,8 @@ struct AudioOut2PadLayout {
     std::uint32_t position[AUDIO_OUT2_PAD_CHANNELS] = {0, 1, 2, 3};
 };
 
+float AudioPadSpeakerFallbackGainFrom(const char* dbText);
+float AudioPadSpeakerFallbackGain();
 AudioOut2Route AudioOut2RouteForPort(std::uint16_t type, std::uint32_t channels);
 bool AudioOut2IsPadAudioDevice(const char* name);
 void AudioOut2AccumulatePadFrame(AudioOut2Route route, const float* in, std::uint32_t channels, const float* volume, float* pad);

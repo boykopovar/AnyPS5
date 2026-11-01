@@ -173,5 +173,12 @@ int APS5_VABI sceNpTrophySystemWrapGetTrophyTitleIdsByNpTitleId();
 int APS5_VABI sceNpTrophySystemWrapRemoveAll();
 int APS5_VABI sceNpTrophySystemWrapRemoveTitleData();
 int APS5_VABI sceNpTrophySystemWrapRemoveUserData();
+int APS5_VABI sceNpTrophySystemWrapGetGroupData();
+int APS5_VABI sceNpTrophySystemWrapGetGroupDataArray();
+int APS5_VABI sceNpTrophySystemWrapGetGroupDetailsArray();
+int APS5_VABI sceNpTrophySystemWrapGetTitleData();
+int APS5_VABI sceNpTrophySystemWrapGetTrophyData();
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDataArray();
+int APS5_VABI sceNpTrophySystemWrapGetTrophyDetails();
 }
 

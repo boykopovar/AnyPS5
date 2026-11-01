@@ -11,6 +11,8 @@
 #include FT_CID_H
 #include FT_SIZES_H
 #include FT_SYSTEM_H
+#include FT_MODULE_H
+#include FT_DRIVER_H
 
 #include <algorithm>
 #include <array>
@@ -1571,7 +1573,41 @@ static void SizeObjects(const std::vector<unsigned char>& font) {
     std::printf("FreeType size objects: %d lifecycles, %d rendered glyphs, %d allocation failures compared with native\n", scenarios, rendered, failures);
 }
 
+static void CheckGlyphToScriptMap() {
+    const auto font = SquareGlyphFont('A', 700);
+    GuestLibrary* library = nullptr;
+    GuestFaceRec* face = nullptr;
+    FT_Library nativeLibrary = nullptr;
+    FT_Face nativeFace = nullptr;
+    Require(FT_Init_FreeType_nid_postfix(&library) == 0 && FT_Init_FreeType(&nativeLibrary) == 0);
+    Require(FT_New_Memory_Face_nid_postfix(library, font.data(), font.size(), 0, &face) == 0);
+    Require(FT_New_Memory_Face(nativeLibrary, font.data(), static_cast<FT_Long>(font.size()), 0, &nativeFace) == 0);
+    struct GuestMap { GuestFaceRec* face; std::uint16_t* map; };
+    GuestMap guest{face, nullptr};
+    FT_Prop_GlyphToScriptMap expected{nativeFace, nullptr};
+    const int nativeResult = FT_Property_Get(nativeLibrary, "autofitter", "glyph-to-script-map", &expected);
+    Require(FT_Property_Get_nid_postfix(library, "autofitter", "glyph-to-script-map", &guest) == nativeResult);
+    Require(nativeResult == 0 && guest.face == face && guest.map && expected.map);
+    Require(std::equal(guest.map, guest.map + face->num_glyphs, expected.map));
+    std::array<unsigned char, sizeof(GuestMap) + 1> storage{};
+    GuestMap unaligned{face, nullptr};
+    std::memcpy(storage.data() + 1, &unaligned, sizeof(unaligned));
+    Require(FT_Property_Get_nid_postfix(library, "autofitter", "glyph-to-script-map", storage.data() + 1) == 0);
+    std::memcpy(&unaligned, storage.data() + 1, sizeof(unaligned));
+    Require(unaligned.face == face && unaligned.map == guest.map);
+    Require(FT_Property_Set_nid_postfix(library, "autofitter", "glyph-to-script-map", &guest) ==
+        FT_Property_Set(nativeLibrary, "autofitter", "glyph-to-script-map", &expected));
+    GuestMap invalid{nullptr, reinterpret_cast<std::uint16_t*>(1)};
+    FT_Prop_GlyphToScriptMap nativeInvalid{nullptr, reinterpret_cast<FT_UShort*>(1)};
+    Require(FT_Property_Get_nid_postfix(library, "autofitter", "glyph-to-script-map", &invalid) ==
+        FT_Property_Get(nativeLibrary, "autofitter", "glyph-to-script-map", &nativeInvalid));
+    Require(invalid.map == reinterpret_cast<std::uint16_t*>(1));
+    Require(FT_Done_Face_nid_postfix(face) == 0 && FT_Done_Face(nativeFace) == 0);
+    Require(FT_Done_FreeType_nid_postfix(library) == 0 && FT_Done_FreeType(nativeLibrary) == 0);
+}
+
 int main() {
+    CheckGlyphToScriptMap();
     SizeObjects(SquareGlyphFont('A', 700));
     {
         const auto referenceFont = SquareGlyphFont('A', 700);

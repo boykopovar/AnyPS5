@@ -955,6 +955,10 @@ int APS5_VABI sceUltUlthreadRuntimeDestroy(void* runtime) {
     return ULT_OK;
 }
 
+int APS5_VABI _sceUltWaitingQueueResourcePoolOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltWaitingQueueResourcePoolOptParamInitialize(optParam, buildVersion);
+}
+
 int APS5_VABI _sceUltWaitingQueueResourcePoolCreate(void* pool, const char* name, std::uint32_t numThreads, std::uint32_t numSyncObjects, void* workArea, const void* optParam) {
     if (pool == nullptr) return ULT_ERROR_NULL;
     if ((reinterpret_cast<std::uintptr_t>(pool) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
@@ -964,6 +968,10 @@ int APS5_VABI _sceUltWaitingQueueResourcePoolCreate(void* pool, const char* name
     if ((reinterpret_cast<std::uintptr_t>(workArea) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
     if (workArea == nullptr) return ULT_ERROR_NULL;
     return sceUltWaitingQueueResourcePoolCreate(pool, name, numThreads, numSyncObjects, workArea, optParam, 0);
+}
+
+int APS5_VABI _sceUltSemaphoreOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltSemaphoreOptParamInitialize(optParam, buildVersion);
 }
 
 int APS5_VABI _sceUltSemaphoreCreate(void* semaphore, const char* name, std::uint32_t numInitialResource, void* waitingQueueResourcePool, const void* optParam) {
@@ -990,6 +998,10 @@ int APS5_VABI _sceUltMutexCreate(void* mutex, const char* name, void* waitingQue
     return sceUltMutexCreate(mutex, name, waitingQueueResourcePool, optParam, 0);
 }
 
+int APS5_VABI _sceUltQueueDataResourcePoolOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltQueueDataResourcePoolOptParamInitialize(optParam, buildVersion);
+}
+
 int APS5_VABI _sceUltQueueDataResourcePoolCreate(void* pool, const char* name, std::uint32_t numData, std::uint64_t dataSize, std::uint32_t numQueueObject, void* waitingQueueResourcePool, void* workArea, const void* optParam) {
     if (pool == nullptr) return ULT_ERROR_NULL;
     if ((reinterpret_cast<std::uintptr_t>(pool) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
@@ -999,6 +1011,10 @@ int APS5_VABI _sceUltQueueDataResourcePoolCreate(void* pool, const char* name, s
     if (workArea == nullptr || name == nullptr) return ULT_ERROR_NULL;
     if ((reinterpret_cast<std::uintptr_t>(waitingQueueResourcePool) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
     return sceUltQueueDataResourcePoolCreate(pool, name, numData, dataSize, numQueueObject, waitingQueueResourcePool, workArea, optParam, 0);
+}
+
+int APS5_VABI _sceUltQueueOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltQueueOptParamInitialize(optParam, buildVersion);
 }
 
 int APS5_VABI _sceUltQueueCreate(void* queue, const char* name, std::uint64_t dataSize, void* waitingQueueResourcePool, void* queueDataResourcePool, const void* optParam) {
@@ -1020,6 +1036,10 @@ int APS5_VABI _sceUltUlthreadRuntimeOptParamInitialize(UltUlthreadRuntimeOptPara
 
 int APS5_VABI _sceUltUlthreadRuntimeCreate(void* runtime, const char* name, std::uint32_t maxNumUlthread, std::uint32_t numWorkerThread, void* workArea, const void* optParam) {
     return sceUltUlthreadRuntimeCreate(runtime, name, maxNumUlthread, numWorkerThread, workArea, optParam, 0);
+}
+
+int APS5_VABI _sceUltUlthreadOptParamInitialize(UltOptParam* optParam, std::uint32_t buildVersion) {
+    return sceUltUlthreadOptParamInitialize(optParam, buildVersion);
 }
 
 int APS5_VABI _sceUltUlthreadCreate(void* ulthread, const char* name, UltUlthreadEntry entry, std::uint64_t arg, void* context, std::uint64_t sizeContext, void* runtime, const void* optParam) {

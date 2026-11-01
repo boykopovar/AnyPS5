@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceIme/include/InventoryExports.hpp"
 #include "prx/libSceIme/include/Api.hpp"
 #include <atomic>
 #include <algorithm>
@@ -833,5 +835,19 @@ int APS5_VABI InitializeImeModule_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceImeUnknown_NbbzN9GRg_plus_c_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("NbbzN9GRg+c", libSceImeUnknown_NbbzN9GRg_plus_c_nid_no_patch);
+
+int APS5_VABI libSceImeUnknown_aChMGUoc7QI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aChMGUoc7QI", libSceImeUnknown_aChMGUoc7QI_nid_no_patch);
 
 }
