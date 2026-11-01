@@ -1,5 +1,9 @@
 # libSceOpusCeltDec technical debt
 
+### Additional callable exports
+
+- [sceOpusCeltDecGetAjmContext](../../../core/libs/prx/libSceOpusCeltDec/Export.cpp) hashes to `Z4-1fNubfUo`; the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv#L158809) supplies the candidate name. The public 3.20 catalogue does not list it. The `libSceOpusCeltDec.sprx` module in each image labelled 3.20 and 13.60 contains the function record `Z4-1fNubfUo#D#A`. Its dynamic metadata maps library ID 3 and module ID 0 to `libSceOpusCeltDec`, and its SONAME is `libSceOpusCeltDec.prx`. The 3.20-labelled module words are `0x08540001` and `0x03200004`; the 13.60-labelled module words are `0x13590001` and `0x13600007`. Both contain 12 unique function NIDs; sorted-LF SHA-256: `0345b648176b4e4eef2379d4b4f60ef71ee8389c8b2998fa795e1445b4ce0d86`, using the [static ELF membership procedure](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298). Labels do not authenticate retail provenance; the digest identifies the NID set only. Independent verification requires a matching image. The signature and behavior remain unverified; the declaration throws.
+
 ### Unknown function info
 
 - [sceOpusCeltDecCreate, sceOpusCeltDecCtl](../../../core/libs/prx/libSceOpusCeltDec/Export.cpp) (libSceOpusCeltDec) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceOpusCeltDec.c), but no credible prototypes were found. They are declared without parameters solely to resolve known imports; this is not an ABI claim.
