@@ -121,6 +121,7 @@ static void CheckTiltCorrection(int handle) {
     tilted.hasMotion = true;
     tilted.accel = {9.80665f, 0.0f, 0.0f};
     PadPublishInput_nid_postfix(tilted);
+    Require(scePadSetMotionSensorState(handle + 1, true) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTiltCorrectionState(handle + 1, false) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetTiltCorrectionState(handle, false) == PAD_OK);
     Require(scePadResetOrientation(handle) == PAD_OK);
