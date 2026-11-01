@@ -1,6 +1,7 @@
 add_library(libSceNpManager SHARED EXCLUDE_FROM_ALL Export.cpp)
 target_include_directories(libSceNpManager PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceNpManager)
+target_sources(libSceNpManager PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/AdditionalExports.cpp)
 
 if(MINGW)
     foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
@@ -20,7 +21,8 @@ if(BUILD_TESTING)
     endif()
     add_test_executable(guest_np_manager_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpManager.cpp)
     target_include_directories(guest_np_manager_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_np_manager_tests PRIVATE libSceNpManager)
+    target_link_libraries(guest_np_manager_tests PRIVATE libSceNpManager libc)
+    configure_windows_unwind(guest_np_manager_tests)
     add_test(NAME guest_np_manager COMMAND guest_np_manager_tests)
     if(WIN32)
         set_tests_properties(guest_np_manager PROPERTIES ENVIRONMENT_MODIFICATION

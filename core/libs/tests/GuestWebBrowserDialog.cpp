@@ -1,16 +1,10 @@
+#include "prx/libSceWebBrowserDialog/include/Api.hpp"
+#include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-extern "C" {
-int APS5_VABI sceWebBrowserDialogInitialize(void);
-int APS5_VABI sceWebBrowserDialogTerminate(void);
-int APS5_VABI sceWebBrowserDialogOpen(const void* param);
-int APS5_VABI sceWebBrowserDialogClose(void);
-int APS5_VABI sceWebBrowserDialogGetStatus(void);
-int APS5_VABI sceWebBrowserDialogUpdateStatus(void);
-int APS5_VABI sceWebBrowserDialogGetResult(void* result);
-}
 
 namespace {
 
@@ -19,50 +13,181 @@ constexpr int COMMON_DIALOG_STATUS_INITIALIZED = 1;
 constexpr int COMMON_DIALOG_STATUS_FINISHED = 3;
 constexpr int COMMON_DIALOG_RESULT_USER_CANCELED = 1;
 constexpr int COMMON_DIALOG_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B80003u);
-constexpr int COMMON_DIALOG_ERROR_ALREADY_INITIALIZED = static_cast<int>(0x80B80004u);
 constexpr int COMMON_DIALOG_ERROR_NOT_FINISHED = static_cast<int>(0x80B80005u);
+constexpr int COMMON_DIALOG_ERROR_INVALID_STATE = static_cast<int>(0x80B80006u);
+constexpr int COMMON_DIALOG_ERROR_PARAMETER = static_cast<int>(0x80B8000Au);
 constexpr int COMMON_DIALOG_ERROR_ARG_NULL = static_cast<int>(0x80B8000Du);
 
 void Require(bool value) { if (!value) std::abort(); }
+
+
+bool GenericNoticeShown() {
+    ModalDialogView view;
+    if (!ModalDialogReadView_nid_postfix(view)) return false;
+    return view.message == PsnDialogNoticeRequest(PsnDialogNoticeKind::GenericFeature).message;
+}
+
+void RequireNotices(const void* param) {
+    WebBrowserDialogAllowList allowList{};
+    allowList.size = sizeof(allowList);
+    allowList.addresses[0] = "test.invalid";
+    ModalDialogSetPresenter_nid_postfix(true);
+    Require(sceWebBrowserDialogInitialize() == 0);
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceWebBrowserDialogOpen(param) == 0);
+    Require(!GenericNoticeShown() && !ModalDialogCapturesInput_nid_postfix());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(!GenericNoticeShown());
+    Require(sceWebBrowserDialogOpen(param) == 0);
+    Require(GenericNoticeShown());
+
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Show);
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == 0);
+    Require(GenericNoticeShown());
+
+    ModalDialogReset_nid_postfix(ModalDialogAnyOwner);
+    ModalDialogSetPresenter_nid_postfix(false);
+    PsnDialogNoticeSetMode_nid_postfix(PsnDialogNoticeMode::Silent);
+    Require(sceWebBrowserDialogTerminate() == 0);
+}
 
 }
 
 int main() {
     std::uint8_t param[64] = {};
-    std::int32_t result = 0x5a5a5a5a;
+    WebBrowserDialogAllowList allowList{};
+    allowList.size = sizeof(allowList);
+    allowList.addresses[0] = "test.invalid";
+    WebBrowserDialogResult result{};
+    result.result = 0x5a5a5a5a;
 
     Require(sceWebBrowserDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogResetCookie(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
     Require(sceWebBrowserDialogClose() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
     Require(sceWebBrowserDialogOpen(param) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogGetResult(&result) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
-    Require(result == 0x5a5a5a5a);
+    Require(result.result == 0x5a5a5a5a);
 
     Require(sceWebBrowserDialogInitialize() == 0);
     Require(sceWebBrowserDialogInitialize() == COMMON_DIALOG_ERROR_ALREADY_INITIALIZED);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_INITIALIZED);
     Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_INITIALIZED);
     Require(sceWebBrowserDialogGetResult(&result) == COMMON_DIALOG_ERROR_NOT_FINISHED);
-    Require(result == 0x5a5a5a5a);
+    Require(result.result == 0x5a5a5a5a);
+    Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(sceWebBrowserDialogResetCookie(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    WebBrowserDialogCookieParam badCookie{};
+    badCookie.size = 1;
+    Require(sceWebBrowserDialogSetCookie(&badCookie) == COMMON_DIALOG_ERROR_PARAMETER);
+    WebBrowserDialogResetCookieParam badReset{};
+    badReset.size = 1;
+    Require(sceWebBrowserDialogResetCookie(&badReset) == COMMON_DIALOG_ERROR_PARAMETER);
 
     Require(sceWebBrowserDialogTerminate() == 0);
     Require(sceWebBrowserDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
 
     Require(sceWebBrowserDialogInitialize() == 0);
     Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogOpen(param) == 0);
+    Require(sceWebBrowserDialogSetCookie(nullptr) == COMMON_DIALOG_ERROR_INVALID_STATE);
+    Require(sceWebBrowserDialogResetCookie(&badReset) == COMMON_DIALOG_ERROR_INVALID_STATE);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
     Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
 
     Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogGetResult(&result) == 0);
-    Require(result == COMMON_DIALOG_RESULT_USER_CANCELED);
+    Require(result.result == COMMON_DIALOG_RESULT_USER_CANCELED);
 
-    Require(sceWebBrowserDialogClose() == 0);
+    Require(sceWebBrowserDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceWebBrowserDialogTerminate() == 0);
     Require(sceWebBrowserDialogTerminate() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
     Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
 
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogInitialize() == 0);
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(nullptr, &allowList) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    WebBrowserDialogAllowList badSizeAllowList = allowList;
+    badSizeAllowList.size = sizeof(badSizeAllowList) - 1;
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &badSizeAllowList) == static_cast<int>(0x80B8000Au));
+    allowList.addresses[0] = nullptr;
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == static_cast<int>(0x80B8000Au));
+    allowList.addresses[19] = "test.invalid";
+    allowList.reserved[255] = 1;
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == static_cast<int>(0x80B8000Au));
+    allowList.reserved[255] = 0;
+    allowList.addresses[19] = "";
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == static_cast<int>(0x80B8000Au));
+    char longAddress[257];
+    std::fill(std::begin(longAddress), std::end(longAddress), 'a');
+    longAddress[256] = '\0';
+    allowList.addresses[19] = longAddress;
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == static_cast<int>(0x80B8000Au));
+    longAddress[255] = '\0';
+    Require(sceWebBrowserDialogOpenForPredeterminedContent(param, &allowList) == 0);
+    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
+    Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
+
+    result.result = 0x5a5a5a5a;
+    Require(sceWebBrowserDialogGetResult(&result) == 0);
+    Require(result.result == COMMON_DIALOG_RESULT_USER_CANCELED);
+
+    Require(sceWebBrowserDialogClose() == static_cast<int>(0x80B8000Bu));
+    Require(sceWebBrowserDialogTerminate() == 0);
+    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
+
+    Require(sceWebBrowserDialogInitialize() == 0);
+    Require(sceWebBrowserDialogClose() == static_cast<int>(0x80B8000Bu));
+    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(&result) == COMMON_DIALOG_ERROR_NOT_FINISHED);
+    Require(sceWebBrowserDialogTerminate() == 0);
+    Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    result.reserved[239] = 1;
+    Require(sceWebBrowserDialogGetResult(&result) == static_cast<int>(0x80B8000Au));
+    result.reserved[239] = 0;
+    WebBrowserDialogExtendedResult extended{};
+    result.extended = &extended;
+    Require(sceWebBrowserDialogGetResult(&result) == static_cast<int>(0x80B8000Au));
+    extended.size = sizeof(extended);
+    Require(sceWebBrowserDialogGetResult(&result) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogInitialize() == 0);
+    Require(sceWebBrowserDialogOpen(param) == 0);
+    extended.reserved0[3] = 1;
+    Require(sceWebBrowserDialogGetResult(&result) == static_cast<int>(0x80B8000Au));
+    extended.reserved0[3] = 0;
+    extended.reserved1[19] = 1;
+    Require(sceWebBrowserDialogGetResult(&result) == static_cast<int>(0x80B8000Au));
+    extended.reserved1[19] = 0;
+    extended.type = 0x5a5a5a5a;
+    extended.content[2047] = 'x';
+    result.padding = 0x5a5a5a5a;
+    Require(sceWebBrowserDialogGetResult(&result) == 0);
+    Require(result.result == COMMON_DIALOG_RESULT_USER_CANCELED);
+    Require(result.padding == 0x5a5a5a5a && result.extended == &extended);
+    Require(extended.type == 0x5a5a5a5a && extended.content[2047] == 'x');
+    Require(sceWebBrowserDialogTerminate() == 0);
+    Require(sceWebBrowserDialogOpen(nullptr) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogOpen(param) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogClose() == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(&result) == COMMON_DIALOG_ERROR_NOT_INITIALIZED);
+    Require(sceWebBrowserDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    Require(sceWebBrowserDialogGetStatus() == COMMON_DIALOG_STATUS_NONE);
+    Require(sceWebBrowserDialogUpdateStatus() == COMMON_DIALOG_STATUS_NONE);
+    RequireNotices(param);
     return 0;
 }

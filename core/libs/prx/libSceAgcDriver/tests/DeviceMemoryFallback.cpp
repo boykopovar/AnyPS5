@@ -53,6 +53,51 @@ void Choose(const char* what, bool budgetExtension, std::uint64_t budget, std::u
     Expect(type == expected, std::string(what) + ": chose memory type " + std::to_string(type) + ", expected " + std::to_string(expected));
 }
 
+VkDeviceSize reclaimAsked = 0;
+VkDeviceSize reclaimReturns = 0;
+VkDeviceSize reclaimUsageAfter = 0;
+bool reclaimNewImage = false;
+
+VkDeviceSize mockReclaim(VkDeviceSize bytes, bool newImage) {
+    reclaimAsked = bytes;
+    reclaimNewImage = newImage;
+    reportedUsage = reclaimUsageAfter;
+    return reclaimReturns;
+}
+
+void ReclaimTests() {
+    const std::uint32_t both = (1u << HostType) | (1u << DeviceType);
+    Context context = mockContext(true);
+    context.cacheReclaim = mockReclaim;
+    const auto choose = [&](const char* what, std::uint64_t budget, std::uint64_t usage, VkDeviceSize returns, std::uint64_t usageAfter, std::uint32_t expected, VkDeviceSize asked) {
+        reportedBudget = budget;
+        reportedUsage = usage;
+        reclaimAsked = 0;
+        reclaimReturns = returns;
+        reclaimUsageAfter = usageAfter;
+        const auto type = context.DeviceMemoryType(both, 64 * MiB, "test");
+        Expect(type == expected, std::string(what) + ": chose memory type " + std::to_string(type) + ", expected " + std::to_string(expected));
+        Expect(reclaimAsked == asked, std::string(what) + ": asked the caches for " + std::to_string(reclaimAsked) + " bytes, expected " + std::to_string(asked));
+    };
+    choose("room in the budget leaves the caches alone", 3000 * MiB, 2000 * MiB, 0, 2000 * MiB, DeviceType, 0);
+    choose("caches release the whole allocation", 3000 * MiB, 2937 * MiB, 64 * MiB, 2937 * MiB, DeviceType, 64 * MiB);
+    Expect(reclaimNewImage, "the budget reclaim did not ask for a new image's room");
+    choose("caches release the allocation and the overage", 2952 * MiB, 3633 * MiB, 745 * MiB, 3633 * MiB, DeviceType, 745 * MiB);
+    choose("a partial release that the budget then shows", 3000 * MiB, 2990 * MiB, 32 * MiB, 2900 * MiB, DeviceType, 64 * MiB);
+    choose("a partial release the budget does not show", 3000 * MiB, 2990 * MiB, 32 * MiB, 2990 * MiB, HostType, 64 * MiB);
+    choose("caches release nothing", 3000 * MiB, 2990 * MiB, 0, 2990 * MiB, HostType, 64 * MiB);
+}
+
+void RefusedFallbackTests() {
+    const auto context = mockContext(true);
+    const std::uint32_t both = (1u << HostType) | (1u << DeviceType);
+    const auto refused = context.RefusedDeviceMemoryFallback(both, DeviceType);
+    Expect(refused.has_value() && *refused == HostType, "a device-local type out of device memory did not fall back to the host type");
+    Expect(!context.RefusedDeviceMemoryFallback(both, HostType).has_value(), "a host type out of memory was given a fallback");
+    Expect(!context.RefusedDeviceMemoryFallback(1u << DeviceType, DeviceType).has_value(), "a fallback was chosen outside the allowed type mask");
+    Expect(!context.RefusedDeviceMemoryFallback(both, 7).has_value(), "an unknown memory type was given a fallback");
+}
+
 void BufferPlacementTests() {
     constexpr auto coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
     Context context = mockContext(true);
@@ -106,6 +151,8 @@ int main() {
         Choose("usage already over the budget", true, 2952 * MiB, 3633 * MiB, both, HostType);
         Choose("no host type allowed", true, 3000 * MiB, 3000 * MiB, 1u << DeviceType, DeviceType);
         BufferPlacementTests();
+        RefusedFallbackTests();
+        ReclaimTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;

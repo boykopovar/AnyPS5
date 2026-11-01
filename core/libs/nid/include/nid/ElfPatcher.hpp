@@ -22,6 +22,17 @@ struct Elf64_Ehdr {
     std::uint16_t e_shstrndx;
 };
 
+struct Elf64_Phdr {
+    std::uint32_t p_type;
+    std::uint32_t p_flags;
+    std::uint64_t p_offset;
+    std::uint64_t p_vaddr;
+    std::uint64_t p_paddr;
+    std::uint64_t p_filesz;
+    std::uint64_t p_memsz;
+    std::uint64_t p_align;
+};
+
 struct Elf64_Shdr {
     std::uint32_t sh_name;
     std::uint32_t sh_type;
@@ -91,6 +102,7 @@ inline bool IsDynamicNameTag(std::int64_t tag) {
     return tag == kDtNeeded || tag == kDtSoname || tag == kDtRpath || tag == kDtRunpath;
 }
 constexpr std::uint32_t kShtDynamic = 6u;
+constexpr std::uint32_t kShtHash = 5u;
 constexpr std::uint32_t kShtGnuVerdef = 0x6ffffffdu;
 constexpr std::uint32_t kShtGnuVerneed = 0x6ffffffeu;
 constexpr std::uint32_t kShtDynsym = 11u;
@@ -102,7 +114,7 @@ constexpr std::uint16_t kShnUndef = 0u;
 
 class ElfNidPatcher final : public IBinaryPatcher {
 public:
-    void PatchNids(std::vector<std::uint8_t>& binary, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports) const override;
+    void PatchNids(std::vector<std::uint8_t>& binary, const std::string& libraryName, const std::unordered_set<std::string>& excludedExports, const PatchOptions& options = {}) const override;
 };
 
 }

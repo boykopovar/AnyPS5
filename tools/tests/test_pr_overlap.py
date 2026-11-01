@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pr_overlap
@@ -45,8 +46,8 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value="[]") as gh:
             self.assertEqual(pr_overlap.open_prs("topic/one&two"), {})
         gh.assert_called_once_with(
-            "api", "--paginate",
-            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100",
+            "api", "--include",
+            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100&page=1",
         )
 
     def test_single_page_preserves_author_head_and_dependencies(self):
@@ -227,6 +228,45 @@ class ConflictTests(unittest.TestCase):
 
 
 class UnicodePathTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX filenames containing control characters")
+    def test_control_characters_keep_exact_paths_in_scans_and_conflicts(self):
+        previous = os.getcwd()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-c", "user.name=Overlap Test", "-c", "user.email=test@example.com",
+                     "-c", "commit.gpgsign=false", *args], cwd=root,
+                    capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
+            filenames = {"core/libs/prx/libExample/return\r.cpp", "core/libs/prx/libExample/tab\t.cpp", "core/libs/prx/libExample/line\n.cpp",
+                         "core/libs/prx/libExample/quote\".cpp"}
+            for filename in filenames:
+                source = root / filename
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("int value = 0;\n", encoding="utf-8")
+            git("init", "-q")
+            git("add", ".")
+            git("commit", "-qm", "test: create base")
+            base = git("rev-parse", "HEAD")
+            git("update-ref", "refs/pr/base", base)
+            for branch, value in (("left", 1), ("right", 2)):
+                git("checkout", "-qb", branch, base)
+                for filename in filenames:
+                    (root / filename).write_text(f"int value = {value};\n", encoding="utf-8")
+                git("add", ".")
+                git("commit", "-qm", "fix: change value")
+            try:
+                os.chdir(root)
+                left, right = {"ref": "left"}, {"ref": "right"}
+                pr_overlap.scan(left)
+                pr_overlap.scan(right)
+                self.assertEqual(left["files"], filenames)
+                self.assertEqual(right["files"], filenames)
+                self.assertEqual(pr_overlap.conflicts(left, right), {name: [(1, 1)] for name in filenames})
+            finally:
+                os.chdir(previous)
+
+
     def test_scans_and_reports_conflicts_with_git_path_quoting_enabled(self):
         previous = os.getcwd()
         with tempfile.TemporaryDirectory() as directory:
@@ -238,7 +278,7 @@ class UnicodePathTests(unittest.TestCase):
                      "-c", "commit.gpgsign=false", *args], cwd=root,
                     capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
 
-            filename = "core/libs/prx/libSceExample/caf\u00e9.cpp"
+            filename = "core/libs/prx/libSceExample/caf\u00e9 #1 (%20).cpp"
             source = root / filename
             source.parent.mkdir(parents=True)
             source.write_text("int value = 0;\n", encoding="utf-8")
@@ -261,9 +301,113 @@ class UnicodePathTests(unittest.TestCase):
                 self.assertEqual(left["files"], {filename})
                 self.assertEqual(right["files"], {filename})
                 self.assertEqual(pr_overlap.conflicts(left, right), {filename: [(1, 1)]})
+                blob = f"https://github.com/owner/project/blob/{base}"
+                message = pr_overlap.report({7: {"conflicts": pr_overlap.conflicts(left, right), "added": set()}}, blob)
+                link = message.split("[L1](", 1)[1].split(")", 1)[0]
+                parsed = urlsplit(link)
+                self.assertEqual(unquote(parsed.path), f"/owner/project/blob/{base}/{filename}")
+                self.assertEqual(parsed.fragment, "L1")
+                self.assertEqual(parsed.query, "")
             finally:
                 os.chdir(previous)
 
+
+class SubdirectoryTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "fake gh is a shell script")
+    def test_branch_report_from_a_subdirectory_matches_the_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve() / "repo"
+            fake = Path(directory) / "bin"
+            fake.mkdir()
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", "-c", "user.name=Overlap Test", "-c", "user.email=test@example.com",
+                     "-c", "commit.gpgsign=false", *args], cwd=root,
+                    capture_output=True, text=True, encoding="utf-8", check=True).stdout.strip()
+
+            filename = "core/libs/prx/libSceExample/Export.cpp"
+            source = root / filename
+            source.parent.mkdir(parents=True)
+            source.write_text("int value = 0;\n", encoding="utf-8")
+            (root / "tools").mkdir()
+            (root / "tools" / "tool.py").write_text("print()\n", encoding="utf-8")
+            git("init", "-q", "-b", "main")
+            git("add", ".")
+            git("commit", "-qm", "test: create base")
+            heads = {}
+            for branch, value in (("theirs", 1), ("mine", 2)):
+                git("checkout", "-qb", branch, "main")
+                source.write_text(f"int value = {value};\nint APS5_VABI sceExample() {{ return {value}; }}\n", encoding="utf-8")
+                git("add", ".")
+                git("commit", "-qm", "fix: change value")
+                heads[branch] = git("rev-parse", "HEAD")
+            pulls = [{"number": 7, "user": {"login": "someone"}, "head": {"sha": heads["theirs"]}, "body": "Depends on: none"}]
+            (fake / "pulls.json").write_text(json.dumps(pulls), encoding="utf-8")
+            (fake / "gh").write_text(f"#!/bin/sh\ncat '{fake / 'pulls.json'}'\n", encoding="utf-8")
+            (fake / "gh").chmod(0o755)
+            environment = {**os.environ, "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}", "GIT_CONFIG_COUNT": "1",
+                           "GIT_CONFIG_KEY_0": f"url.{root.as_uri()}.insteadOf", "GIT_CONFIG_VALUE_0": "https://github.com/owner/project.git"}
+            environment.pop("GITHUB_REPOSITORY", None)
+            script = Path(pr_overlap.__file__).resolve()
+            outputs = {}
+            for subdirectory in (".", "tools", "core/libs/prx"):
+                result = subprocess.run([sys.executable, str(script), "--repo", "owner/project", "--branch", "mine"],
+                                        cwd=root / subdirectory, env=environment, capture_output=True, text=True,
+                                        encoding="utf-8", timeout=60)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                outputs[subdirectory] = result.stdout
+            self.assertIn(f"`{filename}` [L1](", outputs["."])
+            self.assertIn("| `sceExample` |", outputs["."])
+            self.assertEqual(outputs["tools"], outputs["."])
+            self.assertEqual(outputs["core/libs/prx"], outputs["."])
+            result = subprocess.run([sys.executable, str(script), "--repo", "owner/project", "--out", "reports"],
+                                    cwd=root / "tools", env=environment, capture_output=True, text=True,
+                                    encoding="utf-8", timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((root / "tools" / "reports" / "7.md").is_file())
+
+
+class MarkdownCellTests(unittest.TestCase):
+    def test_regular_filename_is_unchanged(self):
+        self.assertEqual(
+            pr_overlap.cell({"normal.cpp"}),
+            "`normal.cpp`",
+        )
+
+    def test_single_backtick_in_filename(self):
+        self.assertEqual(
+            pr_overlap.cell({"example`file.cpp"}),
+            "`` example`file.cpp ``",
+        )
+
+    def test_multiple_backticks_in_filename(self):
+        self.assertEqual(
+            pr_overlap.cell({"example``file.cpp"}),
+            "``` example``file.cpp ```",
+        )
+
+    def test_multiple_filenames_are_sorted(self):
+        self.assertEqual(
+            pr_overlap.cell({"normal.cpp", "example`file.cpp"}),
+            "`` example`file.cpp ``<br>`normal.cpp`",
+        )
+
+
+    def test_conflict_spans_with_backticks(self):
+        result = pr_overlap.spans(
+            {"example`file.cpp": [(5, 5)]},
+            "https://github.com/boykopovar/AnyPS5/blob/main",
+        )
+
+        self.assertIn(
+            "`` example`file.cpp ``",
+            result,
+        )
+        self.assertIn(
+            "example%60file.cpp#L5",
+            result,
+        )
 
 class CommentStateTests(unittest.TestCase):
     def setUp(self):
@@ -292,8 +436,8 @@ class CommentStateTests(unittest.TestCase):
         return pr_overlap.report(found, f"https://github.com/owner/project/blob/{commit}")
 
     def run_step(self, report, comment):
-        (self.root / "overlap" / "42.md").write_text(report, encoding="utf-8", newline="\n")
-        (self.root / "comment").write_text(json.dumps([5, comment]) + "\n" if comment else "", encoding="utf-8", newline="\n")
+        (self.root / "overlap" / "42.md").write_bytes(report.encode("utf-8"))
+        (self.root / "comment").write_bytes((json.dumps([5, comment]) + "\n" if comment else "").encode("utf-8"))
         calls = self.root / "calls"
         calls.write_text("", encoding="utf-8")
         script = "\n".join([
@@ -302,7 +446,7 @@ class CommentStateTests(unittest.TestCase):
             'gh() { printf \'%s\\n\' "$*" >> "$RUNNER_TEMP/calls"; case "$*" in "api repos/"*) cat "$RUNNER_TEMP/comment";; esac; }',
             self.step,
         ])
-        (self.root / "step.sh").write_text(script, encoding="utf-8", newline="\n")
+        (self.root / "step.sh").write_bytes(script.encode("utf-8"))
         environment = dict(os.environ, RUNNER_TEMP=str(self.root), GH_REPO="owner/project")
         result = subprocess.run(["bash", "step.sh"], cwd=self.root, env=environment, capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

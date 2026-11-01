@@ -1,6 +1,8 @@
 #include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <io/ByteWriter.hpp>
 #include <io/BufferUtils.hpp>
+#include <algorithm>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -29,7 +31,31 @@ int main() {
         auto empty = valid; empty.StubOffset = 384; empty.StubSize = 0;
         bytes = Fixture(); builder.WriteTable(bytes, empty);
         Require(Io::ReadU64(bytes, Io::ReadU64(bytes, 40) + 5 * 64 + 16) == 0x1100);
-        for (int kind = 0; kind < 8; ++kind) {
+        for (std::size_t tail = 0; tail < 8; ++tail) {
+            bytes = Fixture();
+            bytes.resize(512 + tail, 0xa5);
+            const auto original = bytes;
+            const auto originalSize = bytes.size();
+            builder.WriteTable(bytes, valid);
+            const auto alignedTable = Io::ReadU64(bytes, 40);
+            if (alignedTable % 8 != 0)
+                throw std::runtime_error("ELF64 section header table is not 8-byte aligned");
+            const auto stringOffset = Io::ReadU64(bytes, alignedTable + 64 + 24);
+            const auto stringSize = Io::ReadU64(bytes, alignedTable + 64 + 32);
+            const auto stringEnd = stringOffset + stringSize;
+            Require(stringOffset == originalSize && stringSize == sizeof(Elfpatcher::kShStrTabBlob));
+            Require(stringEnd <= alignedTable && alignedTable - stringEnd < 8);
+            Require(bytes[stringOffset] == 0 && bytes[stringEnd - 1] == 0);
+            Require(std::equal(original.begin() + 64, original.end(), bytes.begin() + 64));
+            Require(std::all_of(bytes.begin() + stringEnd, bytes.begin() + alignedTable,
+                                [](const auto byte) { return byte == 0; }));
+            Require(bytes.size() == alignedTable + Io::ReadU16(bytes, 60) * 64);
+            Require(Io::ReadU64(bytes, alignedTable + 2 * 64 + 24) == valid.DynStrOffset);
+            Require(Io::ReadU64(bytes, alignedTable + 3 * 64 + 24) == valid.DynSymOffset);
+            Require(Io::ReadU64(bytes, alignedTable + 4 * 64 + 24) == valid.DynamicSegmentOffset);
+            Require(Io::ReadU64(bytes, alignedTable + 5 * 64 + 24) == valid.StubOffset);
+        }
+        for (int kind = 0; kind < 11; ++kind) {
             bytes = Fixture(); auto request = valid;
             switch (kind) {
                 case 0: request.DynStrSize = 257; break;
@@ -40,12 +66,15 @@ int main() {
                 case 5: Io::WriteU64(bytes, 32, std::numeric_limits<std::uint64_t>::max()); break;
                 case 6: Io::WriteU64(bytes, 80, std::numeric_limits<std::uint64_t>::max() - 4); break;
                 case 7: Io::WriteU16(bytes, 56, 20); break;
+                case 8: request.DynStrSize = 16; break;
+                case 9: bytes.resize(40); break;
+                case 10: Io::WriteU64(bytes, 32, 48); Io::WriteU32(bytes, 48, 1); Io::WriteU64(bytes, 56, 128); break;
             }
             const auto before = bytes;
             bool rejected = false;
-            try { builder.WriteTable(bytes, request); } catch (const std::exception&) { rejected = true; }
+            try { builder.WriteTable(bytes, request); } catch (const std::runtime_error&) { rejected = true; }
             Require(rejected && bytes == before);
         }
-        std::cout << "10 section range cases passed\n";
+        std::cout << "21 section range and alignment cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

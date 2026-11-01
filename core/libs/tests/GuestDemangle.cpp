@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -8,12 +9,6 @@
 #include <limits>
 #include <new>
 #include <stdexcept>
-
-extern "C" {
-char* APS5_VABI __cxa_demangle_nid_postfix(const char*, char*, std::size_t*, int*);
-void* APS5_VABI malloc_nid_postfix(std::size_t);
-void APS5_VABI free_nid_postfix(void*);
-}
 
 namespace {
 
@@ -159,12 +154,13 @@ void RegisterAllocator() {
 void ReleaseIfReturned(void* result, void* original = nullptr) {
     ForgetIfMoved(original, result);
     free_nid_postfix(result != nullptr ? result : original);
+
 }
 
 void TestNullOutputBuffer() {
     std::size_t length = 0;
     int status = 99;
-    char* result = __cxa_demangle_nid_postfix(MangledName, nullptr, &length, &status);
+    char* result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, nullptr, &length, &status));
     Check(result != nullptr, "null output buffer did not demangle");
     Check(status == 0, "null output buffer returned the wrong status");
     Check(result != nullptr && std::strcmp(result, DemangledName) == 0, "null output buffer returned the wrong string");
@@ -174,7 +170,7 @@ void TestNullOutputBuffer() {
 }
 
 void TestOptionalStatus() {
-    char* result = __cxa_demangle_nid_postfix(MangledName, nullptr, nullptr, nullptr);
+    char* result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, nullptr, nullptr, nullptr));
     Check(result != nullptr && std::strcmp(result, DemangledName) == 0, "optional status output failed");
     Check(result != nullptr && Owns(result), "optional status output was not guest-owned");
     ReleaseIfReturned(result);
@@ -185,7 +181,7 @@ void TestLargeBufferReuse() {
     const std::size_t originalLength = 128;
     std::size_t length = originalLength;
     int status = 99;
-    char* result = __cxa_demangle_nid_postfix(MangledName, buffer, &length, &status);
+    char* result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, static_cast<char*>(buffer), &length, &status));
     Check(result == buffer, "sufficient guest buffer was not reused");
     Check(status == 0, "sufficient guest buffer returned the wrong status");
     Check(result != nullptr && std::strcmp(result, DemangledName) == 0, "sufficient guest buffer returned the wrong string");
@@ -198,7 +194,7 @@ void TestSmallBufferGrowth() {
     std::size_t length = 1;
     const std::size_t reallocationsBefore = reallocationCalls;
     int status = 99;
-    char* result = __cxa_demangle_nid_postfix(MangledName, buffer, &length, &status);
+    char* result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, static_cast<char*>(buffer), &length, &status));
     Check(result != nullptr, "too-small guest buffer did not grow");
     Check(status == 0, "grown guest buffer returned the wrong status");
     Check(result != nullptr && std::strcmp(result, DemangledName) == 0, "grown guest buffer returned the wrong string");
@@ -210,18 +206,19 @@ void TestSmallBufferGrowth() {
 
 void TestInvalidInputs() {
     int status = 99;
-    char* result = __cxa_demangle_nid_postfix("not_a_mangled_name", nullptr, nullptr, &status);
+    char* result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix("not_a_mangled_name", nullptr, nullptr, &status));
     Check(result == nullptr && status == -2, "invalid mangled name did not return status -2");
     status = 99;
-    result = __cxa_demangle_nid_postfix(nullptr, nullptr, nullptr, &status);
+    result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(nullptr, nullptr, nullptr, &status));
     Check(result == nullptr && status == -3, "null mangled name did not return status -3");
 
     auto* buffer = static_cast<char*>(malloc_nid_postfix(32));
     std::memcpy(buffer, "unchanged", sizeof("unchanged"));
-    result = __cxa_demangle_nid_postfix(MangledName, buffer, nullptr, &status);
+    result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, static_cast<char*>(buffer), nullptr, &status));
     Check(result == nullptr && status == -3, "missing length for a supplied buffer did not return status -3");
     Check(std::strcmp(buffer, "unchanged") == 0, "invalid supplied-buffer arguments modified the buffer");
     free_nid_postfix(buffer);
+
 }
 
 void TestAllocationFailure() {
@@ -229,7 +226,7 @@ void TestAllocationFailure() {
     failNextAllocation = true;
     std::size_t length = 0;
     int status = 99;
-    char* result = __cxa_demangle_nid_postfix(MangledName, nullptr, &length, &status);
+    char* result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, nullptr, &length, &status));
     Check(result == nullptr, "guest allocation failure returned a buffer");
     Check(status == -1, "guest allocation failure did not return status -1");
     Check(allocationFailures == failuresBefore + 1, "demangler bypassed failed guest allocation");
@@ -243,7 +240,7 @@ void TestReallocationFailure() {
     const std::size_t failuresBefore = reallocationFailures;
     failNextReallocation = true;
     int status = 99;
-    char* result = __cxa_demangle_nid_postfix(MangledName, buffer, &length, &status);
+    char* result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, static_cast<char*>(buffer), &length, &status));
     Check(result == nullptr, "guest reallocation failure returned a buffer");
     Check(status == -1, "guest reallocation failure did not return status -1");
     Check(reallocationFailures == failuresBefore + 1, "demangler bypassed failed guest reallocation");
@@ -257,7 +254,7 @@ void TestAllocatorDiagnostics() {
     bool allocationDiagnostic = false;
     char* result = nullptr;
     try {
-        result = __cxa_demangle_nid_postfix(MangledName, nullptr, nullptr, nullptr);
+        result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, nullptr, nullptr, nullptr));
     } catch (const std::runtime_error& error) {
         allocationDiagnostic = std::strcmp(error.what(), "guest allocator callback failure") == 0;
     }
@@ -271,7 +268,7 @@ void TestAllocatorDiagnostics() {
     bool reallocationDiagnostic = false;
     result = nullptr;
     try {
-        result = __cxa_demangle_nid_postfix(MangledName, buffer, &length, nullptr);
+        result = reinterpret_cast<char*>(__cxa_demangle_nid_postfix(MangledName, static_cast<char*>(buffer), &length, nullptr));
     } catch (const std::runtime_error& error) {
         reallocationDiagnostic = std::strcmp(error.what(), "guest reallocator callback failure") == 0;
     }

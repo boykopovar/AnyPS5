@@ -1,5 +1,8 @@
+#include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -16,17 +19,6 @@
 #include <thread>
 #include <vector>
 
-extern "C" {
-int APS5_VABI sceAudioOut2ContextResetParam(AudioOut2ContextParam*);
-int APS5_VABI sceAudioOut2ContextCreate(const AudioOut2ContextParam*, void*, std::size_t, AudioOut2ContextHandle*);
-int APS5_VABI sceAudioOut2ContextDestroy(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2ContextAdvance(AudioOut2ContextHandle);
-int APS5_VABI sceAudioOut2ContextPush(AudioOut2ContextHandle, std::uint32_t);
-int APS5_VABI sceAudioOut2PortCreate(AudioOut2ContextHandle, const AudioOut2PortParam*, AudioOut2PortHandle*);
-int APS5_VABI sceAudioOut2PortDestroy(AudioOut2PortHandle);
-int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle, const AudioOut2Attribute*, std::uint32_t);
-}
-
 static void Require(bool value) { if (!value) std::abort(); }
 
 static void SetEnvironment(const char* name, const std::string& value) {
@@ -34,6 +26,14 @@ static void SetEnvironment(const char* name, const std::string& value) {
     _putenv_s(name, value.c_str());
 #else
     setenv(name, value.c_str(), 1);
+#endif
+}
+
+static void UnsetEnvironment(const char* name) {
+#ifdef _WIN32
+    _putenv_s(name, "");
+#else
+    unsetenv(name);
 #endif
 }
 
@@ -54,7 +54,7 @@ void SetData(AudioOut2PortHandle port, const void* data) {
     Require(sceAudioOut2PortSetAttributes(port, &attribute, 1) == 0);
 }
 
-std::vector<float> Play(const std::function<void(AudioOut2ContextHandle, AudioOut2PortHandle)>& feed, bool advanced = false) {
+std::vector<float> Play(const std::function<void(AudioOut2ContextHandle, AudioOut2PortHandle)>& feed, bool advanced = false, std::uint32_t queueDepth = 1) {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_audio_out2_port_buffers-" + std::to_string(std::random_device{}()) + ".raw");
     std::filesystem::remove(path);
     SetEnvironment("SDL_DISKAUDIOFILE", path.string());
@@ -62,7 +62,7 @@ std::vector<float> Play(const std::function<void(AudioOut2ContextHandle, AudioOu
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0);
     params.num_grains = grain;
-    params.queue_depth = 1;
+    params.queue_depth = queueDepth;
     AudioOut2ContextHandle context = 0;
     Require(sceAudioOut2ContextCreate(&params, nullptr, 0, &context) == 0);
     AudioOut2PortParam portParams{};
@@ -189,6 +189,43 @@ void TestAdvanceRetainsRewrittenBuffer() {
     RequirePlayed(played, {&first, &second});
 }
 
+void TestAdvanceKeepsTheGrainSetBeforeTheBufferIsCleared() {
+    auto buffer = Grain(0.01f);
+    const auto first = buffer;
+    const auto second = Grain(0.02f);
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        SetData(port, buffer.data());
+        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        std::copy(second.begin(), second.end(), buffer.begin());
+        SetData(port, buffer.data());
+        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    RequirePlayed(played, {&first, &second});
+}
+
+void TestAdvancedRegivenBufferPlaysSilenceWithoutANewSet() {
+    auto buffer = Grain(0.01f);
+    const auto first = buffer;
+    const auto second = Grain(0.02f);
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        SetData(port, buffer.data());
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        buffer = second;
+        SetData(port, buffer.data());
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        std::fill(buffer.begin(), buffer.end(), 0.5f);
+        Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    RequirePlayed(played, {&first, &second});
+}
+
 void TestAdvanceRetainsVolume() {
     const auto buffer = Grain(0.02f);
     auto reduced = buffer;
@@ -205,6 +242,26 @@ void TestAdvanceRetainsVolume() {
         Require(sceAudioOut2ContextPush(context, 1) == 0);
     }, true);
     RequirePlayed(played, {&buffer, &reduced});
+}
+
+void TestAdvanceBurstRetainsEveryGrain() {
+    std::vector<std::vector<float>> expected;
+    for (std::uint32_t index = 0; index < 64; ++index) expected.push_back(Grain(0.001f * static_cast<float>(index + 1)));
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        std::thread producer([&] {
+            auto buffer = Grain(0.0f);
+            for (const auto& data : expected) {
+                buffer = data;
+                SetData(port, buffer.data());
+                Require(sceAudioOut2ContextAdvance(context) == 0);
+            }
+        });
+        producer.join();
+        for (std::size_t index = 0; index < expected.size(); ++index) Require(sceAudioOut2ContextPush(context, 1) == 0);
+    }, true);
+    std::vector<const std::vector<float>*> grains;
+    for (const auto& data : expected) grains.push_back(&data);
+    RequirePlayed(played, grains);
 }
 
 void TestPushingThreadWaitsForAdvance() {
@@ -232,16 +289,77 @@ void TestPushingThreadWaitsForAdvance() {
     RequirePlayed(played, {&first, &second});
 }
 
+void TestRenderingSizedByLevelStaysWithinQueueDepth() {
+    constexpr std::uint32_t queueDepth = 4;
+    constexpr std::uint32_t grains = 48;
+    std::vector<std::vector<float>> expected;
+    for (std::uint32_t index = 0; index < grains; index++) expected.push_back(Grain(0.001f * static_cast<float>(index + 1)));
+    std::uint32_t mostAwaiting = 0;
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        std::uint32_t advanced = 0;
+        std::uint32_t pushed = 0;
+        while (pushed < grains) {
+            std::uint32_t available = 0;
+            Require(sceAudioOut2ContextGetQueueLevel(context, nullptr, &available) == 0);
+            for (std::uint32_t index = 0; index < available && advanced < grains; index++) {
+                SetData(port, expected[advanced].data());
+                Require(sceAudioOut2ContextAdvance(context) == 0);
+                advanced++;
+            }
+            mostAwaiting = std::max(mostAwaiting, advanced - pushed);
+            if (advanced == pushed) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            Require(sceAudioOut2ContextPush(context, 1) == 0);
+            pushed++;
+        }
+    }, true, queueDepth);
+    Require(mostAwaiting <= queueDepth);
+    std::vector<const std::vector<float>*> order;
+    for (const auto& data : expected) order.push_back(&data);
+    RequirePlayed(played, order);
+}
+
+void TestBufferReusedAcrossPortsKeepsEachPortsGrain(bool advanced) {
+    const auto voice = Grain(0.01f);
+    const std::vector<float> silence(voice.size(), 0.0f);
+    auto shared = voice;
+    const auto played = Play([&](AudioOut2ContextHandle context, AudioOut2PortHandle port) {
+        AudioOut2PortParam portParams{};
+        portParams.port_type = portTypeMain;
+        portParams.data_format = formatStereoFloat;
+        portParams.sampling_freq = frequency;
+        AudioOut2PortHandle other = 0;
+        Require(sceAudioOut2PortCreate(context, &portParams, &other) == 0);
+        SetData(port, shared.data());
+        shared = silence;
+        SetData(other, shared.data());
+        if (advanced) Require(sceAudioOut2ContextAdvance(context) == 0);
+        Require(sceAudioOut2ContextPush(context, 1) == 0);
+        SetData(port, nullptr);
+        SetData(other, nullptr);
+    }, advanced);
+    RequirePlayed(played, {&voice});
+}
+
 }
 
 int main() {
+    UnsetEnvironment(AUDIO_PAD_SPEAKER_FALLBACK_ENV);
     SetEnvironment("SDL_AUDIODRIVER", "disk");
     TestAdvanceRetainsRewrittenBuffer();
     TestAdvanceRetainsVolume();
+    TestAdvanceKeepsTheGrainSetBeforeTheBufferIsCleared();
+    TestAdvanceBurstRetainsEveryGrain();
     TestPushingThreadWaitsForAdvance();
     TestBuffersSetBeforeOnePushPlayInOrder();
     TestBurstThenGapKeepsEveryBuffer();
     TestAdvancingPortWithoutNewBufferPlaysSilence();
     TestRewrittenBufferRepeats();
+    TestAdvancedRegivenBufferPlaysSilenceWithoutANewSet();
+    TestRenderingSizedByLevelStaysWithinQueueDepth();
+    TestBufferReusedAcrossPortsKeepsEachPortsGrain(false);
+    TestBufferReusedAcrossPortsKeepsEachPortsGrain(true);
     return 0;
 }

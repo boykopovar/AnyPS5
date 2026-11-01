@@ -187,7 +187,7 @@ int main() {
             const auto written = Count(texels, SurfaceBytes, 0xff);
             const auto cleared = Count(texels, SurfaceBytes, 0x00);
             char message[320];
-            std::snprintf(message, sizeof(message), "the sampled read stored %zu written and %zu cleared bytes of %zu, expected %u written", written, cleared, SurfaceBytes, Threads * 4u + SampleTexelBytes);
+            std::snprintf(message, sizeof(message), "the sampled read stored %zu written and %zu cleared bytes of %zu, expected %zu written", written, cleared, SurfaceBytes, Threads * 4u + SampleTexelBytes);
             Require(written == Threads * 4u + SampleTexelBytes && cleared == SurfaceBytes - written, message);
             for (std::uint32_t index = 0; index < Threads * 4u; ++index) {
                 std::snprintf(message, sizeof(message), "component %u of thread %u is 0x%08x, expected the drawn 0x3f800000 the staged clear does not cover", index % 4u, index / 4u, outputData[index]);

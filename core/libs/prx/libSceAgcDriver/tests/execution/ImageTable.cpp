@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "tests/TemporaryFile.hpp"
 #include "Recompiler.hpp"
 #include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
@@ -47,6 +48,7 @@ constexpr std::uint32_t MaxGroups = 8;
 constexpr std::uint32_t Format32UInt = 20;
 constexpr std::uint32_t Format32SInt = 21;
 constexpr std::uint32_t Format32Float = 22;
+constexpr std::uint32_t Format32_32UInt = 62;
 constexpr std::uint32_t Format11_11_10UInt = 34;
 constexpr std::uint32_t Format8_8Srgb = 129;
 constexpr std::uint32_t Type2D = 9;
@@ -56,6 +58,7 @@ constexpr std::uint32_t DepthSwizzleMode = 0x18;
 alignas(256) std::array<float, Width * Height> FloatTexels{};
 alignas(256) std::array<float, Width * Height> OtherFloatTexels{};
 alignas(256) std::array<std::uint32_t, Width * Height> UintTexels{};
+alignas(256) std::array<std::uint64_t, Width * Height> Uint64Texels{};
 alignas(256) std::array<std::int32_t, Width * Height> SintTexels{};
 alignas(4096) std::array<std::uint32_t, 49152> DepthStorage{};
 alignas(256) std::array<std::uint32_t, Records * Stride / 4> Table{};
@@ -108,6 +111,20 @@ alignas(256) constexpr std::array<std::uint32_t, 32> TableWave32Code{
     0x8f118202u, 0x81101110u, 0x8f108210u, 0xf4200444u, 0x20000000u, 0x9312b011u, 0xf42c0802u, 0x24000000u,
     0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c8f08u,
     0x01090401u, 0x7e120202u, 0x34101287u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 29> SelectedTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4000400u, 0xfa000060u,
+    0xf4200444u, 0x20000000u, 0x9312b011u, 0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u,
+    0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0xf09c8f08u, 0x01090401u, 0x7e120202u, 0x34101286u,
+    0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 31> SelectedTableCutCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4000400u, 0xfa000060u,
+    0xf4200444u, 0x20000000u, 0x9312b011u, 0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e020d01u, 0x060202f0u,
+    0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u, 0x7da400ffu, 0x00001000u, 0xf09c8f08u, 0x01090401u,
+    0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 22> DirectCode{
@@ -184,10 +201,45 @@ alignas(256) constexpr std::array<std::uint32_t, 15> StoreTableCode{
     0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0xf0208f08u, 0x00090401u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 16> StoreLaneTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0xf0208f08u, 0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 16> AtomicAddLaneTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0xf0448108u, 0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 18> AtomicAdd64LaneTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0x7e0a02ffu, 0x00000000u, 0xf0448308u,
+    0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 16> AtomicSwapLaneTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0xf03c8108u, 0x00090401u, 0xbf810000u,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 18> AtomicCmpSwapLaneTableCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
+    0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e080301u, 0x7e0a0304u, 0x3a080881u, 0xf0408308u,
+    0x00090401u, 0xbf810000u,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 17> StoreTableCutCode{
     0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u,
     0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7da400ffu, 0x00001000u, 0xf0208f08u, 0x00090401u,
     0xbf810000u,
+};
+
+constexpr std::uint32_t SelectedStoreValue = 0xc0de5eedu;
+
+alignas(256) constexpr std::array<std::uint32_t, 18> SelectedStoreCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4000400u, 0xfa000060u, 0xf4200444u, 0x20000000u,
+    0x9312b011u, 0xf42c0802u, 0x24000000u, 0x360200bfu, 0x7e040280u, 0x7e0802ffu, SelectedStoreValue, 0xf0208f08u,
+    0x00090401u, 0xbf810000u,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 30> PointerCode{
@@ -251,7 +303,16 @@ alignas(256) constexpr std::array<std::uint32_t, 32> IndirectRecordCode{
     0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u, 0x80070408u, 0xbf810000u,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 34> PointerChainRecordCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u,
+    0x8f108202u, 0xf4200444u, 0x20000000u, 0x9312b011u, 0xf4240b02u, 0x24000008u, 0xf4040b96u, 0xfa000010u,
+    0xf40c0917u, 0xfa000020u, 0x360200bfu, 0x7e020d01u, 0x060202f0u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu,
+    0x3e000000u, 0xf09c0f08u, 0x01090401u, 0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u, 0xe0781000u,
+    0x80070408u, 0xbf810000u,
+};
+
 alignas(256) std::array<std::uint32_t, Records * 16> Indirect{};
+alignas(256) std::array<std::uint32_t, Records * 8> Links{};
 
 constexpr std::array<std::uint32_t, 4> PointClamp{0x92u, (4u * 256u) << 12u, 0u, 0u};
 constexpr std::array<std::uint32_t, 4> LinearWrap{0u, (4u * 256u) << 12u, (1u << 20u) | (1u << 22u), 0u};
@@ -295,7 +356,7 @@ class StderrCapture {
 public:
     StderrCapture() {
         std::fflush(stderr);
-        file = std::tmpfile();
+        file = TemporaryFile::Open();
         Require(file != nullptr, "cannot open a temporary file for stderr");
 #ifdef _WIN32
         saved = _dup(_fileno(stderr));
@@ -368,7 +429,7 @@ Outcome Execute(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> 
     outcome.cacheable = AgcDriver::DriverDetail::CacheableResult(result);
     outcome.imageTableReadRanges = result.imageTableReadRanges;
     for (const auto& binding : result.bindings) {
-        if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable) outcome.imageTableCount = binding.count;
+        if (binding.role == ShaderRecompiler::DescriptorRole::ImageTable || binding.role == ShaderRecompiler::DescriptorRole::ImageStorageTable) outcome.imageTableCount = binding.count;
         if (binding.role == ShaderRecompiler::DescriptorRole::GuestSamplers) outcome.samplers = SamplerWords(binding.guestDescriptor);
         if (binding.role == ShaderRecompiler::DescriptorRole::SamplerTable) outcome.samplerTable = SamplerWords(binding.guestDescriptor);
     }
@@ -433,12 +494,13 @@ Outcome RunIndirectRecords(AgcDriver::VulkanDevice& device, const std::array<std
     std::copy(output.begin(), output.end(), Srt.begin() + 8);
     std::copy(PointClamp.begin(), PointClamp.end(), Srt.begin() + 12);
     const std::span<const std::uint32_t> span(code);
-    const std::array<ShaderRecompiler::MemoryRegion, 5> memory{{
+    const std::array<ShaderRecompiler::MemoryRegion, 6> memory{{
         {reinterpret_cast<std::uintptr_t>(span.data()), std::as_bytes(span)},
         {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))},
         {reinterpret_cast<std::uintptr_t>(Table.data()), std::as_bytes(std::span(Table))},
         {reinterpret_cast<std::uintptr_t>(Keys.data()), std::as_bytes(std::span(Keys))},
         {reinterpret_cast<std::uintptr_t>(Indirect.data()), std::as_bytes(std::span(Indirect))},
+        {reinterpret_cast<std::uintptr_t>(Links.data()), std::as_bytes(std::span(Links))},
     }};
     return Execute(device, span, Srt.data(), memory, groups, Lanes, 64);
 }
@@ -606,6 +668,19 @@ void RunBorderSwizzleTests(AgcDriver::VulkanDevice& device) {
             const auto activeSampler = tableImage ? RunDirectCode(device, TableCode, PointClamp, image) : RunDirectCode(device, TableSamplerCode, PointClamp, image);
             requireFault(activeSampler, "sampler table entry with an opaque black border", pair);
         }
+        auto secondOpaqueBlack = opaqueBlack;
+        secondOpaqueBlack[1] = (3u * 256u) << 12u;
+        SetRecord(0, opaqueBlack, image);
+        SetRecord(1, secondOpaqueBlack, image);
+        for (const std::uint32_t record : {0u, 1u}) {
+            Keys[0] = record;
+            Keys[1] = record;
+            requireFault(RunDirectCode(device, TableCode, PointClamp, image), "sampler table entry with an opaque black border", name + " rejected S# " + std::to_string(record) + " of two with the same reason");
+        }
+        SetRecord(0, PointClamp, image);
+        SetRecord(1, opaqueBlack, image);
+        Keys[0] = 1;
+        Keys[1] = 0;
     }
     const auto cut = Run(device, TableCutCode, 1, Lanes, 64);
     Require(Holds(cut.samplerTable, opaqueBlack), "image table border: the EXEC-clear opaque-black S# was not included in the snapshot");
@@ -713,6 +788,28 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto classes = Run(device, TableCode, 6, Lanes, 64);
     Require(!Faulted(classes), "image table: valid entries faulted:\n" + classes.log);
     Require(classes.imageTableCount == 3u, "image table: the table binding does not hold one element per distinct T# (" + std::to_string(classes.imageTableCount) + ")");
+
+    const auto invariantPhiCode = [] {
+        std::array<std::uint32_t, 39> code{};
+        std::copy_n(TableCode.begin(), 19, code.begin());
+        code[19] = 0xbea80380u;
+        std::copy_n(TableCode.begin() + 19, 8, code.begin() + 20);
+        const std::array<std::uint32_t, 11> tail{0xbf068028u, 0xbf850003u, 0xf42c0802u, 0x24000000u, 0xbf820002u, 0xf42c0802u, 0x24000000u, 0x80288128u, 0xbf0a8228u, 0xbf85ffeeu, 0xbf810000u};
+        std::copy(tail.begin(), tail.end(), code.begin() + 28);
+        return code;
+    }();
+    const auto controlPhiCode = [&] {
+        std::array<std::uint32_t, 32> code{};
+        std::copy_n(invariantPhiCode.begin(), 28, code.begin());
+        const std::array<std::uint32_t, 4> tail{0x80288128u, 0xbf0a8228u, 0xbf85fff5u, 0xbf810000u};
+        std::copy(tail.begin(), tail.end(), code.begin() + 28);
+        return code;
+    }();
+    const auto controlPhi = Run(device, controlPhiCode, 6, Lanes, 64);
+    const auto invariantPhi = Run(device, invariantPhiCode, 6, Lanes, 64);
+    Require(!Faulted(invariantPhi) && !Faulted(controlPhi), "image table: invariant descriptor Phis faulted");
+    Require(invariantPhi.imageTableCount == classes.imageTableCount, "image table: invariant descriptor Phis changed the distinct table elements");
+    Require(invariantPhi.words == controlPhi.words, "image table: invariant descriptor Phis changed GPU sample results");
     for (std::uint32_t group = 0; group < 6; ++group) {
         if (group == 4u) continue;
         const auto* words = Table.data() + group * (Stride / 4u);
@@ -814,7 +911,7 @@ void RunTests(AgcDriver::VulkanDevice& device) {
     const auto sintControl = RunDirect(device, LinearWrap, sintImage);
     const auto floatControl = RunDirect(device, LinearWrap, floatImage);
     const auto uintControl = RunDirect(device, LinearWrap, uintImage);
-    Require(floatControl.samplers == std::vector{LinearWrap} && uintControl.samplers == std::vector{LinearWrap} && sintControl.samplers == std::vector{PointWrap}, "image table: the direct bindings under a linear S# changed their sampler copies");
+    Require(floatControl.samplers == std::vector{LinearWrap} && uintControl.samplers == std::vector{PointWrap} && sintControl.samplers == std::vector{PointWrap}, "image table: the direct bindings under a linear S# changed their sampler copies");
     Require(Group(integerLinear, 0) == Group(sintControl, 0) && Group(integerLinear, 1) == Group(floatControl, 0), "image table: an entry under a linear direct S# differs from the direct binding");
     RequireRed(integerLinear, 0, Lanes, [](std::uint32_t x) { return static_cast<std::uint32_t>(SintTexels[x]); }, "sint texels through a linear direct sampler");
     RequireRed(integerLinear, 2, Lanes, [](std::uint32_t x) { return UintTexels[x]; }, "uint texels through a linear direct sampler");
@@ -934,6 +1031,43 @@ void RunGuardedTableTests(AgcDriver::VulkanDevice& device) {
     SetClassRecords();
 }
 
+void RunSelectedRecordTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    SetClassRecords();
+    Keys = {};
+    Srt[24] = 12u;
+    Outcome first;
+    for (const auto record : {2u, 0u, 1u}) {
+        Keys[3] = record;
+        const auto selected = Run(device, SelectedTableCode, 1, Lanes, 64);
+        Require(!Faulted(selected) && selected.imageTableCount == 1u, "image table selected record: record " + std::to_string(record) + " faulted or bound other entries:\n" + selected.log);
+        const auto* words = Table.data() + record * (Stride / 4u);
+        const auto control = RunDirect(device, {words[0], words[1], words[2], words[3]}, {words[4], words[5], words[6], words[7]});
+        Require(Group(selected, 0) == Group(control, 0), "image table selected record: record " + std::to_string(record) + " differs from the direct binding of the same words");
+        if (record == 2u) first = selected;
+        Require(selected.artifactId == first.artifactId && selected.variantId == first.variantId, "image table selected record: another key changed the module");
+    }
+
+    Keys[3] = 1000u;
+    const auto beyond = Run(device, SelectedTableCode, 1, Lanes, 64);
+    Require(!Faulted(beyond) && Zeros(beyond), "image table selected record: a key past the table faulted or did not sample zeros:\n" + beyond.log);
+
+    Keys[3] = 7u;
+    const auto cut = Run(device, SelectedTableCutCode, 1, Lanes, 64);
+    Require(!Faulted(cut), "image table selected record: an invalid record selected with EXEC clear faulted:\n" + cut.log);
+    const auto invalid = Run(device, SelectedTableCode, 1, Lanes, 64);
+    const auto tableAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(Table.data())) + 7u * Stride + 16u;
+    char address[32];
+    std::snprintf(address, sizeof(address), "0x%llx", static_cast<unsigned long long>(tableAddress));
+    Require(Faulted(invalid) && invalid.log.find("not an image") != std::string::npos && invalid.log.find(address) != std::string::npos && invalid.log.find("00001234") != std::string::npos && Zeros(invalid), "image table selected record: an invalid record selected with EXEC set did not report its address, words and reason:\n" + invalid.log);
+
+    Keys[3] = 0u;
+    const auto aliased = Run(device, SelectedTableCode, 1, Lanes, 64, true);
+    Require(Faulted(aliased) && aliased.log.find("is written by its own dispatch") != std::string::npos, "image table selected record: a dispatch storing over its selected record did not fault on use:\n" + aliased.log);
+    SetClassRecords();
+    Srt[24] = 0u;
+}
+
 template <std::size_t TableWords, std::size_t DirectWords>
 void RequireModeEntry(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, TableWords>& tableCode, const std::array<std::uint32_t, DirectWords>& directCode, std::uint32_t record, std::span<const std::uint32_t> image, const std::string& what) {
     Keys = {};
@@ -988,15 +1122,122 @@ void RunModeTests(AgcDriver::VulkanDevice& device) {
 }
 
 void RunStoreTests(AgcDriver::VulkanDevice& device) {
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registeredUint(UintTexels.data(), sizeof(UintTexels)), registeredFloat(FloatTexels.data(), sizeof(FloatTexels)), registeredSint(SintTexels.data(), sizeof(SintTexels));
     SetClassRecords();
-    const auto saved = UintTexels;
+    const auto savedUint = UintTexels;
+    const auto savedFloat = FloatTexels;
+    const auto savedSint = SintTexels;
+    const auto untouched = [&] { return UintTexels == savedUint && FloatTexels == savedFloat && SintTexels == savedSint; };
     Keys = {};
     Keys[0] = 1;
     const auto cut = Run(device, StoreTableCutCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table store test");
     Require(!Faulted(cut), "image table store: a store with EXEC clear faulted:\n" + cut.log);
-    const auto stored = Run(device, StoreTableCode, 1, Lanes, 64);
-    Require(Faulted(stored) && stored.log.find("unsupported operation") != std::string::npos, "image table store: an image_store through a table did not fault as an unsupported operation:\n" + stored.log);
-    Require(UintTexels == saved, "image table store: an unsupported store reached the image");
+    Require(untouched(), "image table store: a store with EXEC clear reached an image");
+    const auto stored = Run(device, StoreLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table store test");
+    Require(!Faulted(stored), "image table store: a store through a table faulted:\n" + stored.log);
+    Require(stored.imageTableCount == 2u, "image table store: the storage table does not hold one element per distinct T# (" + std::to_string(stored.imageTableCount) + ")");
+    for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == x, "image table store: texel " + std::to_string(x) + " of the selected image is " + Hex(UintTexels[x]) + ", expected " + Hex(x));
+    Require(std::equal(UintTexels.begin() + Width, UintTexels.end(), savedUint.begin() + Width), "image table store: a store to row 0 reached another row");
+    Require(FloatTexels == savedFloat && SintTexels == savedSint, "image table store: a store through key 1 reached another entry's image");
+    UintTexels = savedUint;
+    const auto restored = Run(device, StoreTableCutCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table store test");
+    Require(!Faulted(restored) && untouched(), "image table store: restoring the image failed:\n" + restored.log);
+    Keys[0] = 6;
+    const auto null = Run(device, StoreLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table store test");
+    Require(untouched(), "image table store: a store through a null entry reached an image:\n" + null.log);
+}
+
+void RunAtomicTests(AgcDriver::VulkanDevice& device) {
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registeredUint(UintTexels.data(), sizeof(UintTexels)), registeredFloat(FloatTexels.data(), sizeof(FloatTexels)), registeredSint(SintTexels.data(), sizeof(SintTexels));
+    SetClassRecords();
+    for (std::uint32_t x = 0; x < Width; ++x) UintTexels[x] = 0x5000u + x;
+    for (std::uint32_t x = 0; x < Width; ++x) FloatTexels[x] = 1.0f;
+    Keys = {};
+    Keys[0] = 1;
+    const auto added = Run(device, AtomicAddLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    Require(!Faulted(added), "image table atomic: an add through a table faulted:\n" + added.log);
+    Require(added.imageTableCount != 0u, "image table atomic: the add bound no storage table elements");
+    for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == 0x5000u + x + x, "image table atomic: texel " + std::to_string(x) + " of the selected image is " + Hex(UintTexels[x]) + ", expected " + Hex(0x5000u + x + x));
+    const auto swapped = Run(device, AtomicSwapLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    Require(!Faulted(swapped), "image table atomic: an exchange through a table faulted:\n" + swapped.log);
+    for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == x, "image table atomic: texel " + std::to_string(x) + " of the selected image is " + Hex(UintTexels[x]) + ", expected " + Hex(x));
+    const auto compared = Run(device, AtomicCmpSwapLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    Require(!Faulted(compared), "image table atomic: a compare exchange through a table faulted:\n" + compared.log);
+    for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == (x ^ 1u), "image table atomic: texel " + std::to_string(x) + " of the selected image is " + Hex(UintTexels[x]) + ", expected " + Hex(x ^ 1u));
+    Keys[0] = 8;
+    const auto addedFloat = Run(device, AtomicAddLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    Require(!Faulted(addedFloat), "image table atomic: an add on a float record through a table faulted:\n" + addedFloat.log);
+    for (std::uint32_t x = 0; x < Width; ++x) Require(std::bit_cast<std::uint32_t>(FloatTexels[x]) == 0x3f800000u + x, "image table atomic: float texel " + std::to_string(x) + " is " + Hex(std::bit_cast<std::uint32_t>(FloatTexels[x])) + ", expected " + Hex(0x3f800000u + x));
+    Keys[0] = 6;
+    const auto null = Run(device, AtomicAddLaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic test");
+    for (std::uint32_t x = 0; x < Width; ++x) Require(UintTexels[x] == (x ^ 1u) && std::bit_cast<std::uint32_t>(FloatTexels[x]) == 0x3f800000u + x, "image table atomic: an add through a null entry reached an image:\n" + null.log);
+}
+
+void RunAtomic64Tests(AgcDriver::VulkanDevice& device) {
+    if (!TargetHasCapability(device.Target(), spv::CapabilityInt64ImageEXT)) {
+        std::puts("skipped the 64-bit table atomic rows, the device has no shaderImageInt64Atomics");
+        return;
+    }
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registered(Uint64Texels.data(), sizeof(Uint64Texels));
+    SetClassRecords();
+    for (std::uint32_t x = 0; x < Width; ++x) Uint64Texels[x] = 0x5000000000000000ull + x;
+    SetRecord(9, PointClamp, Image(Uint64Texels.data(), Format32_32UInt));
+    Keys = {};
+    Keys[0] = 9;
+    const auto added = Run(device, AtomicAdd64LaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic64 test");
+    Require(!Faulted(added), "image table atomic64: an add through a table faulted:\n" + added.log);
+    Require(added.imageTableCount != 0u, "image table atomic64: the add bound no storage table elements");
+    for (std::uint32_t x = 0; x < Width; ++x) Require(Uint64Texels[x] == 0x5000000000000000ull + x + x, "image table atomic64: texel " + std::to_string(x) + " is wrong");
+    Keys[0] = 6;
+    const auto null = Run(device, AtomicAdd64LaneTableCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushAllPending("image table atomic64 test");
+    for (std::uint32_t x = 0; x < Width; ++x) Require(Uint64Texels[x] == 0x5000000000000000ull + x + x, "image table atomic64: an add through a null entry reached an image:\n" + null.log);
+}
+
+void RunSelectedStoreTests(AgcDriver::VulkanDevice& device) {
+    alignas(256) static std::array<std::uint32_t, Width * Height> storeTexels{};
+    struct Registration {
+        void* data;
+        Registration(void* data, std::size_t bytes) : data(data) { GuestAllocations::Mutation().Add(data, bytes, true, true, true); }
+        ~Registration() { GuestAllocations::Mutation().Remove(data); }
+    } registered(storeTexels.data(), sizeof(storeTexels));
+    for (std::uint32_t texel = 0; texel < storeTexels.size(); ++texel) storeTexels[texel] = 0x5000u + texel;
+    const auto saved = storeTexels;
+    SetClassRecords();
+    SetRecord(9, PointClamp, Image(storeTexels.data(), Format32UInt));
+    Keys = {};
+    Keys[3] = 9u;
+    Srt[24] = 12u;
+    const auto stored = Run(device, SelectedStoreCode, 1, Lanes, 64);
+    AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(storeTexels.data()), sizeof(storeTexels), nullptr, "test");
+    device.WaitIdle();
+    Require(!Faulted(stored) && stored.imageTableCount == 0u, "image table selected store: an image_store through a T# whose record the CPU evaluates faulted or was bound through an image table:\n" + stored.log);
+    for (std::uint32_t texel = 0; texel < storeTexels.size(); ++texel) {
+        const auto expected = texel < Lanes ? SelectedStoreValue : saved[texel];
+        Require(storeTexels[texel] == expected, "image table selected store: texel " + std::to_string(texel) + " holds " + std::to_string(storeTexels[texel]) + " after an image_store through a T# whose record the CPU evaluates, expected " + std::to_string(expected));
+    }
 }
 
 void RunPointerTests(AgcDriver::VulkanDevice& device) {
@@ -1104,6 +1345,45 @@ void RunPointerRecordTests(AgcDriver::VulkanDevice& device) {
     std::copy(floatImage.begin(), floatImage.end(), entry + 8u);
     const auto changed = RunIndirectRecords(device, IndirectRecordCode, 3);
     RequireRed(changed, 1, Lanes, texels[0], "float texels after the T# behind record 1's pointer changed");
+}
+
+void RunPointerChainRecordTests(AgcDriver::VulkanDevice& device) {
+    Fill();
+    const auto floatImage = Image(FloatTexels.data(), Format32Float);
+    const auto uintImage = Image(UintTexels.data(), Format32UInt);
+    const auto sintImage = Image(SintTexels.data(), Format32SInt);
+    const std::array<std::array<std::uint32_t, 4>, 3> images{floatImage, uintImage, sintImage};
+    const std::array<std::function<std::uint32_t(std::uint32_t)>, 3> texels{
+        [](std::uint32_t x) { return std::bit_cast<std::uint32_t>(FloatTexels[x]); },
+        [](std::uint32_t x) { return UintTexels[x]; },
+        [](std::uint32_t x) { return static_cast<std::uint32_t>(SintTexels[x]); },
+    };
+    const std::array<const char*, 3> names{"float", "uint", "sint"};
+    const auto store = [](std::uint32_t* at, const void* pointer) {
+        const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
+        at[0] = static_cast<std::uint32_t>(address);
+        at[1] = static_cast<std::uint32_t>(address >> 32u);
+    };
+
+    Table = {};
+    Indirect = {};
+    Links = {};
+    Keys = {};
+    for (std::uint32_t group = 0; group < 3; ++group) Keys[group] = 2u - group;
+    for (std::uint32_t record = 0; record < 3; ++record) {
+        const std::uint32_t entry = 2u - record;
+        std::copy(images[record].begin(), images[record].end(), Indirect.data() + entry * 16u + 8u);
+        store(Links.data() + record * 8u + 4u, Indirect.data() + entry * 16u);
+        store(Table.data() + record * (Stride / 4u) + 2u, Links.data() + record * 8u);
+    }
+    const auto chained = RunIndirectRecords(device, PointerChainRecordCode, 3);
+    Require(!Faulted(chained), "image table: a T# behind two pointers from its record faulted:\n" + chained.log);
+    Require(chained.imageTableCount == 3u, "image table: T#s behind two pointers from their records do not hold one element per distinct T# (" + std::to_string(chained.imageTableCount) + ")");
+    for (std::uint32_t group = 0; group < 3; ++group) RequireRed(chained, group, Lanes, texels[2u - group], std::string(names[2u - group]) + " texels of a T# behind two pointers from its record");
+
+    store(Links.data() + 8u + 4u, Indirect.data() + 2u * 16u);
+    const auto relinked = RunIndirectRecords(device, PointerChainRecordCode, 3);
+    RequireRed(relinked, 1, Lanes, texels[0], "float texels after record 1's second pointer moved to another T#");
 }
 
 void RunSplitRecordTests(AgcDriver::VulkanDevice& device) {
@@ -1219,11 +1499,19 @@ constexpr std::uint32_t TargetWidth = 64;
 constexpr std::uint32_t TargetHeight = 32;
 alignas(256) std::array<std::byte, TargetWidth * TargetHeight * 4> Pixels{};
 alignas(256) std::array<std::uint32_t, 4 * 4> VertexResults{};
-alignas(256) std::array<std::uint32_t, 4> PixelResults{};
+alignas(256) std::array<std::uint32_t, 8> PixelResults{};
 alignas(256) std::array<std::uint32_t, 4 * 4> GraphicsTable{};
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
-std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& device, std::uint32_t vertexKey, std::uint32_t pixelKey) {
+alignas(256) constexpr std::array<std::uint32_t, 25> SharedSamplerCode{
+    0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u, 0xf4080900u, 0xfa000040u, 0xf4080a00u, 0xfa000050u,
+    0x7e0202ffu, 0x3c400000u, 0x7e0402ffu, 0x3e000000u,
+    0xf09c8f08u, 0x01090401u, 0xf09c8f08u, 0x010a0c01u,
+    0x7e100280u, 0xe0781000u, 0x80070408u, 0xe0781010u, 0x80070c08u,
+    0x7e0e02f2u, 0xf800180fu, 0x07070707u, 0xbf810000u,
+};
+
+std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& device, std::uint32_t vertexKey, std::uint32_t pixelKey, bool sharedSampler = false) {
     const auto target = device.Target();
     Pixels.fill(std::byte{0});
     VertexResults.fill(0xdeadbeefu);
@@ -1258,9 +1546,15 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     std::copy(table.begin(), table.end(), pixelUserData.begin());
     pixelUserData[4] = pixelKey;
     std::copy(pixelOutput.begin(), pixelOutput.end(), pixelUserData.begin() + 8);
-    const std::array<ShaderRecompiler::MemoryRegion, 2> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelTableCode.data()), std::as_bytes(std::span(PixelTableCode))}, {reinterpret_cast<std::uintptr_t>(GraphicsTable.data()), std::as_bytes(std::span(GraphicsTable))}}};
+    const std::span<const std::uint32_t> pixelCode = sharedSampler ? std::span<const std::uint32_t>(SharedSamplerCode) : std::span<const std::uint32_t>(PixelTableCode);
+    if (sharedSampler) {
+        const auto root = reinterpret_cast<std::uintptr_t>(Srt.data());
+        pixelUserData = {static_cast<std::uint32_t>(root), static_cast<std::uint32_t>(root >> 32u)};
+        std::copy(pixelOutput.begin(), pixelOutput.end(), Srt.begin() + 8);
+    }
+    const std::array<ShaderRecompiler::MemoryRegion, 3> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}, {reinterpret_cast<std::uintptr_t>(GraphicsTable.data()), std::as_bytes(std::span(GraphicsTable))}, {reinterpret_cast<std::uintptr_t>(Srt.data()), std::as_bytes(std::span(Srt))}}};
     ShaderRecompiler::RecompileRequest fragment{
-        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelTableCode.data()), PixelTableCode, 0, {}},
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {64, 0, pixelUserData, std::nullopt, pixel, std::nullopt, pixelMemory},
         target,
         PixelPushLayout(vertexPush, target)
@@ -1291,6 +1585,41 @@ std::pair<std::uint64_t, std::uint64_t> DrawTables(AgcDriver::VulkanDevice& devi
     return {vertexResult.PipelineVariantId(), pixelResult.PipelineVariantId()};
 }
 
+void RunSharedSamplerTests(AgcDriver::VulkanDevice& device, const std::string& mode, bool draw) {
+    Require(mode == "uint" || mode == "sint" || mode == "point", "unknown shared sampler mode");
+    Fill();
+    const auto floatImage = Image(FloatTexels.data(), Format32Float);
+    const auto integerImage = mode == "sint" ? Image(SintTexels.data(), Format32SInt) : Image(UintTexels.data(), Format32UInt);
+    const auto& sampler = mode == "point" ? PointClamp : LinearWrap;
+    std::array<std::uint32_t, 8> images{};
+    std::copy(integerImage.begin(), integerImage.end(), images.begin());
+    std::copy(floatImage.begin(), floatImage.end(), images.begin() + 4);
+    std::copy(sampler.begin(), sampler.end(), Srt.begin() + 12);
+    std::copy(images.begin(), images.end(), Srt.begin() + 16);
+    const auto integer = mode == "sint" ? static_cast<std::uint32_t>(SintTexels[0]) : UintTexels[0];
+    const auto filtered = std::bit_cast<std::uint32_t>(mode == "point" ? FloatTexels[0] : 0.5f);
+    if (draw) {
+        std::copy(floatImage.begin(), floatImage.end(), GraphicsTable.begin());
+        DrawTables(device, 0u, 0u, true);
+        Require(PixelResults[0] == integer, "shared sampler draw: integer texel changed");
+        Require(PixelResults[4] == filtered, "shared sampler draw: float filtering changed");
+    } else {
+        alignas(256) constexpr std::array<std::uint32_t, 29> code{
+            0xf4080700u, 0xfa000020u, 0xf4080800u, 0xfa000030u, 0xf4080900u, 0xfa000040u, 0xf4080a00u, 0xfa000050u,
+            0x360200bfu, 0x7e020d01u, 0x060202ffu, 0x3f400000u, 0x100202ffu, 0x3c800000u, 0x7e0402ffu, 0x3e000000u,
+            0xf09c8f08u, 0x01090401u, 0xf09c8f08u, 0x010a0c01u,
+            0x7e120202u, 0x34101286u, 0x4a101100u, 0x34101084u,
+            0xe0781000u, 0x80070408u, 0xe0781400u, 0x80070c08u, 0xbf810000u,
+        };
+        const auto result = RunDirectCode(device, code, sampler, images);
+        Require(Output[0] == integer, "shared sampler dispatch: integer texel changed");
+        Require(Output[256] == filtered, "shared sampler dispatch: float filtering changed");
+        Require(Holds(result.samplers, sampler), "shared sampler dispatch: original sampler missing");
+        Require(Holds(result.samplers, mode == "point" ? PointClamp : PointWrap), "shared sampler dispatch: point sampler missing");
+    }
+    std::printf("shared sampler %s %s: integer=%u float_bits=%u passed\n", draw ? "draw" : "dispatch", mode.c_str(), integer, filtered);
+}
+
 void RunGraphicsTests(AgcDriver::VulkanDevice& device) {
     const auto floatImage = Image(FloatTexels.data(), Format32Float);
     const auto uintImage = Image(UintTexels.data(), Format32UInt);
@@ -1306,6 +1635,9 @@ void RunGraphicsTests(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t vertex = 0; vertex < 3u; ++vertex) Require(VertexResults[vertex * 4u] == static_cast<std::uint32_t>(SintTexels[0]), "image table graphics: the vertex stage read the wrong entry after the keys changed");
     Require(PixelResults[0] == std::bit_cast<std::uint32_t>(FloatTexels[0]), "image table graphics: the pixel stage read the wrong entry after the keys changed");
     Require(first == second, "image table graphics: other table keys built another pipeline");
+    for (const auto* mode : {"uint", "sint", "point"}) {
+        for (const bool draw : {false, true}) RunSharedSamplerTests(device, mode, draw);
+    }
 }
 
 }
@@ -1325,10 +1657,15 @@ int main() {
         RunReadTests(*device);
         RunLoopKeyTests(*device);
         RunGuardedTableTests(*device);
+        RunSelectedRecordTests(*device);
         RunModeTests(*device);
         RunStoreTests(*device);
+        RunAtomicTests(*device);
+        RunAtomic64Tests(*device);
+        RunSelectedStoreTests(*device);
         RunPointerTests(*device);
         RunPointerRecordTests(*device);
+        RunPointerChainRecordTests(*device);
         RunSplitRecordTests(*device);
         RunPointerStorageWriteTests(*device);
         RunGraphicsTests(*device);

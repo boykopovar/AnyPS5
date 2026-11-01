@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameDumpIo.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <array>
 #include <chrono>
 #include <csignal>
@@ -54,7 +55,7 @@ std::FILE* Pipe(int& reader) {
 }
 
 void SuccessfulBytes() {
-    auto* file = std::tmpfile();
+    auto* file = TemporaryFile::Open();
     Check(file != nullptr, "cannot create BMP test file");
     const std::array<std::byte, 16> pixels{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}};
     Check(!AgcDriver::WriteBmpStream_nid_no_patch(file, 2, 2, pixels), "valid BMP write failed");
@@ -96,8 +97,8 @@ void PixelFailure() {
         }
         Close(reader);
     });
-    const std::vector<std::byte> pixels(128 * 128 * 4);
-    const auto failure = AgcDriver::WriteBmpAndClose_nid_no_patch(file, 128, 128, pixels);
+    const std::vector<std::byte> pixels(512 * 512 * 4);
+    const auto failure = AgcDriver::WriteBmpAndClose_nid_no_patch(file, 512, 512, pixels);
     consumer.join();
     Check(received == 54, "pixel failure did not follow a complete BMP header");
     Check(failure && std::strcmp(failure.operation, "pixels") == 0, "closed pipe pixel write was accepted");
@@ -120,13 +121,15 @@ void DisableAfterFailure() {
     AgcDriver::FrameDumpOutput output;
     const std::array<std::byte, 16> pixels{};
     Check(output.Enabled_nid_no_patch(), "BMP output was disabled before any failure");
-    const auto blocked = directory.string();
+    const auto previous = std::filesystem::current_path();
+    std::filesystem::current_path(directory.parent_path());
+    const auto blocked = directory.filename().string();
     Check(!output.Write_nid_no_patch(blocked.c_str(), 2, 2, pixels), "BMP output accepted a directory as a file");
     Check(!output.Enabled_nid_no_patch(), "failed BMP output remained enabled");
-    const auto skipped = directory / "must-not-exist.bmp";
-    const auto path = skipped.string();
+    const auto path = (directory.filename() / "must-not-exist.bmp").string();
     for (unsigned i = 0; i < 64; ++i) Check(!output.Write_nid_no_patch(path.c_str(), 2, 2, pixels), "disabled BMP output wrote another file");
-    Check(!std::filesystem::exists(skipped), "disabled BMP output created a file");
+    std::filesystem::current_path(previous);
+    Check(!std::filesystem::exists(directory / "must-not-exist.bmp"), "disabled BMP output created a file");
     Check(std::filesystem::remove(directory), "cannot remove empty fixture directory");
 }
 

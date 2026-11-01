@@ -28,6 +28,11 @@ class StubgenStdoutNewlineTests(unittest.TestCase):
         self.assertIn(b"\n", result.stdout)
         self.assertNotIn(b"\r\n", result.stdout)
 
+    def test_td_on_stderr_uses_lf(self):
+        result = self.run_stubgen()
+        self.assertIn(b"\n", result.stderr)
+        self.assertNotIn(b"\r\n", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

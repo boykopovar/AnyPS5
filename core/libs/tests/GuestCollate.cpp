@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include <array>
@@ -10,8 +11,7 @@
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
-std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
-std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale);
+
 }
 
 namespace {
@@ -147,30 +147,44 @@ void CheckWideGetcat(const GuestLocale::Implementation* const* classic, const Gu
     GuestLocale::String result;
     std::memset(&result, 0xcd, sizeof(result));
     require(TransformWide(wide, &result, text) == &result);
-    require(result.reserved == 0xcdcdcdcdcdcdcdcdull && result.size == 6 && result.capacity == 14 && allocations == before + 1);
+    require(result.reserved == 0xcdcdcdcdcdcdcdcdull && result.size == 3 && result.capacity == 7 && allocations == before + 1);
     const auto* inlineUnits = reinterpret_cast<const std::uint16_t*>(result.buffer);
     require(inlineUnits[0] == u'a' && inlineUnits[1] == u'b' && inlineUnits[2] == u'c' && inlineUnits[3] == 0);
 
     std::memset(&result, 0xcd, sizeof(result));
     require(Vtable(facet).transform(&result, wide, nullptr, nullptr) == &result);
-    require(result.size == 0 && result.capacity == 14 && reinterpret_cast<const std::uint16_t*>(result.buffer)[0] == 0);
+    require(result.size == 0 && result.capacity == 7 && reinterpret_cast<const std::uint16_t*>(result.buffer)[0] == 0);
 
     const std::u16string seven(7, u'q');
     require(TransformWide(wide, &result, seven) == &result);
-    require(result.size == 14 && result.capacity == 14 && allocations == before + 1);
+    require(result.size == 7 && result.capacity == 7 && allocations == before + 1);
     const auto* inlineSeven = reinterpret_cast<const std::uint16_t*>(result.buffer);
     require(inlineSeven[6] == u'q' && inlineSeven[7] == 0);
 
     const std::u16string eight(8, u'y');
     require(TransformWide(wide, &result, eight) == &result);
-    require(allocations == before + 2 && lastSize == 33 && result.size == 16 && result.capacity == 31 && result.pointer == lastAllocation);
+    require(allocations == before + 2 && lastSize == 32 && result.size == 8 && result.capacity == 15 && result.pointer == lastAllocation);
     require(reinterpret_cast<const std::uint16_t*>(result.pointer)[0] == u'y' && reinterpret_cast<const std::uint16_t*>(result.pointer)[8] == 0);
     std::free(result.pointer);
+
+    for (const std::size_t length : {2039, 2040}) {
+        const std::u16string large(length, u'\u0100');
+        require(TransformWide(wide, &result, large) == &result);
+        require(result.size == length && result.capacity == (length | 7));
+        const auto* units = reinterpret_cast<const char16_t*>(result.pointer);
+        require(std::u16string(units, result.size) == large && units[result.size] == 0);
+        require(lastSize == (length == 2039 ? 4080 : 4096 + 0x27));
+        if (length == 2040) {
+            require(reinterpret_cast<std::uintptr_t>(units) % 0x20 == 0);
+            require(reinterpret_cast<void* const*>(units)[-1] == lastAllocation);
+        } else require(result.pointer == lastAllocation);
+        std::free(lastAllocation);
+    }
 
     const std::u16string embeddedText(u"a\0b", 3);
     reject([&] { TransformWide(wide, &result, embeddedText); });
     reject([&] { Vtable(facet).transform(nullptr, wide, Characters(seven.data()), Characters(seven.data() + seven.size())); });
-    require(allocations == before + 2);
+    require(allocations == before + 4);
     reject([&] { Vtable(facet).compare(wide, Characters(text.data() + 2), Characters(text.data()), Characters(text.data()), Characters(text.data() + 1)); });
     reject([&] { Vtable(facet).compare(wide, nullptr, Characters(text.data() + 1), Characters(text.data()), Characters(text.data() + 1)); });
     reject([&] { Vtable(facet).hash(wide, Characters(text.data() + 1), Characters(text.data())); });
@@ -183,7 +197,7 @@ void CheckWideGetcat(const GuestLocale::Implementation* const* classic, const Gu
     require(frees == freed);
     Vtable(facet).facet.deleteObject(facet);
     require(frees == freed + 1 && lastFree == wide);
-    require(allocations == before + 2);
+    require(allocations == before + 4);
 }
 
 }
@@ -284,6 +298,6 @@ int main() {
     require(frees == 1);
     Vtable(facet).facet.deleteObject(facet);
     require(frees == 2 && lastFree == collate);
-    require(allocations == 6);
+    require(allocations == 8);
     return 0;
 }

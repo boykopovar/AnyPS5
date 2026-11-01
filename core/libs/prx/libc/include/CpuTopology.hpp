@@ -54,6 +54,24 @@ inline std::uint64_t MaskFromCpuList(const char* path) {
 }
 #endif
 
+inline Layout LayoutFromClasses(const std::uint64_t* byClass, const bool* seen, std::size_t count) {
+    Layout result{};
+    int lowest = -1;
+    int highest = -1;
+    for (std::size_t cls = 0; cls < count; ++cls) {
+        if (!seen[cls]) continue;
+        if (lowest < 0) lowest = static_cast<int>(cls);
+        highest = static_cast<int>(cls);
+    }
+    if (lowest < 0 || lowest == highest) return result;
+    for (int cls = 0; cls < highest; ++cls) {
+        if (seen[cls]) result.efficient |= byClass[cls];
+    }
+    result.performant = byClass[highest];
+    result.hybrid = result.efficient != 0 && result.performant != 0;
+    return result;
+}
+
 inline const Layout& Get() {
     static const Layout layout = [] {
         Layout result{};
@@ -78,17 +96,10 @@ inline const Layout& Get() {
             }
             offset += entry->Size;
         }
-        int lowest = -1;
-        int highest = -1;
-        for (int cls = 0; cls < 256; ++cls) {
-            if (!seen[cls]) continue;
-            if (lowest < 0) lowest = cls;
-            highest = cls;
-        }
-        if (lowest < 0 || lowest == highest) return result;
-        result.efficient = byClass[lowest];
-        result.performant = byClass[highest];
-        result.hybrid = result.efficient != 0 && result.performant != 0;
+        const auto classified = LayoutFromClasses(byClass, seen, 256);
+        result.efficient = classified.efficient;
+        result.performant = classified.performant;
+        result.hybrid = classified.hybrid;
 #elif defined(__linux__)
         cpu_set_t set;
         CPU_ZERO(&set);

@@ -1,3 +1,4 @@
+#include "prx/libSceAgc/DcbState/include/ContextState.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -6,9 +7,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
-
-extern "C" std::uint64_t APS5_VABI sceAgcDcbContextStateOpGetSize(std::uint32_t operation);
-extern "C" std::uint32_t* APS5_VABI sceAgcDcbContextStateOp_0100(CommandBuffer* buf, std::uint32_t operation);
 
 namespace {
 
@@ -37,12 +35,25 @@ void testSizes() {
         check(sceAgcDcbContextStateOp_0100(&buffer, operation) == words.data(), "context state op did not start at the cursor");
         const auto written = static_cast<std::uint64_t>(buffer.cursor_up - words.data()) * sizeof(std::uint32_t);
         check(written == sizes[operation], "context state size differs from the written packets");
+
+        std::array<std::uint32_t, 64> unversionedWords{};
+        CommandBuffer unversionedBuffer{unversionedWords.data(), unversionedWords.data() + unversionedWords.size(),
+                                        unversionedWords.data(), unversionedWords.data() + unversionedWords.size(),
+                                        nullptr, nullptr, 0};
+        check(sceAgcDcbContextStateOp(&unversionedBuffer, operation) == unversionedWords.data(), "context state op did not start at the cursor");
+        const auto unversionedWritten = static_cast<std::uint64_t>(unversionedBuffer.cursor_up - unversionedWords.data()) * sizeof(std::uint32_t);
+        check(unversionedWritten == sizes[operation], "context state size differs from the written packets");
+        check(words == unversionedWords, "unversioned context state op mismatch with versioned op");
     }
 }
 
-void testRejections() {
-    expectFailure([] { sceAgcDcbContextStateOpGetSize(4); });
-    expectFailure([] { sceAgcDcbContextStateOpGetSize(0xffffffffu); });
+void testInvalidOperations() {
+    for (const std::uint32_t operation : {4u, 15u, 16u, 0xffu, 0x100u, 0x103u, 0xffffffffu}) {
+        check(sceAgcDcbContextStateOpGetSize(operation) == 0, "an invalid context state operation did not return size 0");
+    }
+    std::array<std::uint32_t, 64> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+    expectFailure([&] { sceAgcDcbContextStateOp_0100(&buffer, 4); });
 }
 
 }
@@ -50,7 +61,7 @@ void testRejections() {
 int main() {
     try {
         testSizes();
-        testRejections();
+        testInvalidOperations();
         LibcRunShutdown_nid_postfix();
         std::puts("AGC context state size tests passed");
         return 0;

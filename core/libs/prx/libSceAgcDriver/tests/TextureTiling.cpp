@@ -1,4 +1,6 @@
 #include "GraphicsTests.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
@@ -32,6 +34,7 @@ struct ElementAddress {
     std::uint32_t y;
     std::uint32_t z;
     std::uint64_t address;
+    std::uint32_t pipeBankXor = 0;
 };
 
 std::uint64_t equationOffset(const TextureSwizzleEquation& equation, std::uint32_t x, std::uint32_t y, std::uint32_t z) {
@@ -60,7 +63,7 @@ void requireThickAddresses(const GuestTextureResource& resource, std::uint32_t b
     const auto geometry = DescribeSurface(resource);
     Require(geometry.thick && geometry.mips.size() == resource.mipCount && geometry.guestBytes == guestBytes, what + ": guest size differs from addrlib");
     for (std::uint32_t level = 0; level < resource.mipCount; ++level) Require(geometry.mips[level].tail == (level >= firstTailLevel), what + ": mip " + std::to_string(level) + " is on the wrong side of the mip tail");
-    const auto blockBytes = resource.tileMode == TextureTileMode::kStandard4KB ? 4096u : 65536u;
+    const auto blockBytes = resource.tileMode == TextureTileMode::kStandard4KB || resource.tileMode == TextureTileMode::kS4KBX ? 4096u : 65536u;
     const auto* equation = FindTextureSwizzleEquation(0x100u | (resource.tileMode == TextureTileMode::kStandard4KB ? 5u : resource.tileMode == TextureTileMode::kStandard64KB ? 9u : XorSwizzleMode(resource.tileMode)), bytesPerElement);
     Require(equation != nullptr, what + ": missing thick swizzle equation");
     const auto block = ThickBlockExtent(resource.tileMode, bytesPerElement);
@@ -73,6 +76,7 @@ void requireThickAddresses(const GuestTextureResource& resource, std::uint32_t b
         } else {
             address += (static_cast<std::uint64_t>(element.y / block[1]) * mip.blocksPerRow + element.x / block[0]) * blockBytes + equationOffset(*equation, element.x, element.y, element.z);
         }
+        address ^= element.pipeBankXor;
         Require(address == element.address, what + ": mip " + std::to_string(element.mip) + " element (" + std::to_string(element.x) + ", " + std::to_string(element.y) + ", " + std::to_string(element.z) + ") detiles from " + std::to_string(address) + " instead of addrlib's " + std::to_string(element.address));
     }
 }
@@ -136,9 +140,185 @@ void requireSliceAddresses(const GuestTextureResource& resource, std::uint32_t b
     }
 }
 
+std::uint64_t referenceGcnAddress(TextureTileMode mode, std::uint32_t bytes, std::uint32_t pitch, std::uint32_t height, std::uint32_t x, std::uint32_t y, std::uint32_t slice = 0u) {
+    const auto bit = [](std::uint32_t value, std::uint32_t index) { return (value >> index) & 1u; };
+    const std::uint32_t x0 = bit(x, 0), x1 = bit(x, 1), x2 = bit(x, 2), y0 = bit(y, 0), y1 = bit(y, 1), y2 = bit(y, 2);
+    std::array<std::uint32_t, 6> pixel{x0, y0, x1, y1, x2, y2};
+    if (mode == TextureTileMode::kGcnDisplay1D || mode == TextureTileMode::kGcnDisplay2D || mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnDisplay2DPrt) {
+        switch (bytes) {
+            case 1u: pixel = {x0, x1, x2, y1, y0, y2}; break;
+            case 2u: pixel = {x0, x1, x2, y0, y1, y2}; break;
+            case 4u: pixel = {x0, x1, y0, x2, y1, y2}; break;
+            case 8u: pixel = {x0, y0, x1, x2, y1, y2}; break;
+            default: pixel = {x0, y0, x1, y1, x2, y2}; break;
+        }
+    }
+    std::uint32_t pixelIndex = 0;
+    for (std::uint32_t index = 0; index < 6u; ++index) pixelIndex |= pixel[index] << index;
+    std::uint64_t microBytes = 64u * bytes;
+    std::uint64_t elementOffset = static_cast<std::uint64_t>(pixelIndex) * bytes;
+    if (mode == TextureTileMode::kGcnThin1D || mode == TextureTileMode::kGcnDisplay1D) {
+        return (static_cast<std::uint64_t>(y / 8u) * (pitch / 8u) + x / 8u) * microBytes + elementOffset;
+    }
+    std::uint32_t tileSplit = std::min(1024u, std::max(256u, 2u * static_cast<std::uint32_t>(microBytes)));
+    if (mode >= TextureTileMode::kGcnDepth2D64 && mode <= TextureTileMode::kGcnDepth2D1K) tileSplit = 64u << (static_cast<std::uint32_t>(mode) - static_cast<std::uint32_t>(TextureTileMode::kGcnDepth2D64));
+    if (mode == TextureTileMode::kGcnDepthPrt256) tileSplit = 256u;
+    if (mode == TextureTileMode::kGcnDepthPrt1K) tileSplit = 1024u;
+    const bool prt = IsGcnPrtTiled(mode);
+    const auto macroMode = std::bit_width(std::min<std::uint64_t>(tileSplit, microBytes) / 64u) - 1u + (prt ? 8u : 0u);
+    std::uint64_t splitSlice = 0;
+    if (microBytes > tileSplit) {
+        splitSlice = elementOffset / tileSplit;
+        elementOffset %= tileSplit;
+        microBytes = tileSplit;
+    }
+    constexpr std::uint32_t bankHeights[] = {4u, 2u, 1u, 1u, 1u, 0u, 0u, 0u, 8u, 4u, 2u, 1u, 1u}, bankCounts[] = {16u, 16u, 16u, 16u, 8u, 0u, 0u, 0u, 16u, 16u, 16u, 16u, 8u}, aspects[] = {4u, 2u, 2u, 2u, 1u, 0u, 0u, 0u, 4u, 4u, 2u, 2u, 1u};
+    const std::uint32_t pipes = 8u, bankWidth = 1u, bankHeight = bankHeights[macroMode], banks = bankCounts[macroMode], aspect = aspects[macroMode];
+    const std::uint32_t macroPitch = 8u * bankWidth * pipes * aspect;
+    const std::uint32_t macroHeight = 8u * bankHeight * banks / aspect;
+    const std::uint64_t macroBytes = microBytes * (macroPitch / 8u) * (macroHeight / 8u) / (pipes * banks);
+    const std::uint64_t macroOffset = (static_cast<std::uint64_t>(y / macroHeight) * (pitch / macroPitch) + x / macroPitch) * macroBytes;
+    const std::uint32_t tileIndex = ((y / 8u) % bankHeight) * bankWidth + ((x / 8u) / pipes) % bankWidth;
+    const std::uint64_t sliceBytes = static_cast<std::uint64_t>(pitch / macroPitch) * (height / macroHeight) * macroBytes;
+    const std::uint64_t total = splitSlice * sliceBytes + macroOffset + elementOffset + static_cast<std::uint64_t>(tileIndex) * microBytes;
+    const std::uint32_t px = prt ? x % macroPitch : x, py = prt ? y % macroHeight : y;
+    const std::uint32_t tx = px / 8u, ty = py / 8u;
+    const bool pipe8x16 = mode == TextureTileMode::kGcnDisplayPrt || mode == TextureTileMode::kGcnThinPrt;
+    const std::uint32_t pipe = pipe8x16 ? (bit(tx, 1) ^ bit(ty, 0) ^ bit(tx, 2)) | ((bit(tx, 0) ^ bit(ty, 1)) << 1u) | ((bit(tx, 2) ^ bit(ty, 2)) << 2u)
+                                        : (bit(tx, 0) ^ bit(ty, 0) ^ bit(tx, 1)) | ((bit(tx, 1) ^ bit(ty, 1)) << 1u) | ((bit(tx, 2) ^ bit(ty, 2)) << 2u);
+    const std::uint32_t bx = px / 8u / (bankWidth * pipes), by = py / 8u / bankHeight;
+    std::uint32_t bank = 0;
+    if (banks == 16u) bank = (bit(bx, 0) ^ bit(by, 3)) | ((bit(bx, 1) ^ bit(by, 2) ^ bit(by, 3)) << 1u) | ((bit(bx, 2) ^ bit(by, 1)) << 2u) | ((bit(bx, 3) ^ bit(by, 0)) << 3u);
+    else bank = (bit(bx, 0) ^ bit(by, 2)) | ((bit(bx, 1) ^ bit(by, 1) ^ bit(by, 2)) << 1u) | ((bit(bx, 2) ^ bit(by, 0)) << 2u);
+    if (!prt) bank ^= (banks / 2u - 1u) * slice;
+    if (!pipe8x16) bank ^= static_cast<std::uint32_t>((banks / 2u + 1u) * splitSlice);
+    bank &= banks - 1u;
+    const std::uint32_t bankBits = static_cast<std::uint32_t>(std::countr_zero(banks));
+    return ((total >> 8u) << (8u + 3u + bankBits)) | (static_cast<std::uint64_t>(bank) << 11u) | (static_cast<std::uint64_t>(pipe) << 8u) | (total & 0xffu);
+}
+
+void gcnTilingTests() {
+    using enum TextureTileMode;
+    for (const auto mode : {kGcnThin1D, kGcnDisplay1D, kGcnDisplay2D, kGcnThin2D, kGcnDepth2D64, kGcnDepth2D128, kGcnDepth2D256, kGcnDepth2D512, kGcnDepth2D1K, kGcnDepthPrt256, kGcnDepthPrt1K, kGcnDisplayPrt, kGcnDisplay2DPrt, kGcnThinPrt, kGcnThin2DPrt}) {
+        for (std::uint32_t bytes = 1u; bytes <= 16u; bytes <<= 1u) {
+            const auto geometry = GcnTiling(mode, bytes);
+            const auto what = "PS4 tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes";
+            Require(geometry.blockBytes * geometry.splitSlices == geometry.blockWidth * geometry.blockHeight * bytes, what + ": a block holds its elements exactly");
+            const auto splitStride = 16u * geometry.blockBytes;
+            const auto pitch = geometry.blockWidth * 4u;
+            const auto height = geometry.blockHeight * 4u;
+            std::vector<std::uint8_t> seen(static_cast<std::size_t>(pitch) * height, 0u);
+            for (std::uint32_t y = 0; y < height; ++y) {
+                for (std::uint32_t x = 0; x < pitch; ++x) {
+                    std::uint32_t inBlock = 0;
+                    for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= static_cast<std::uint32_t>(std::popcount((x & geometry.equation[bit] & 0xfffu) ^ ((y << 12u) & geometry.equation[bit] & 0xfff000u)) & 1) << bit;
+                    const auto block = static_cast<std::uint64_t>(y / geometry.blockHeight) * (pitch / geometry.blockWidth) + x / geometry.blockWidth;
+                    std::uint32_t split = 0;
+                    for (std::uint32_t bit = 0; bit < 4u; ++bit) split |= static_cast<std::uint32_t>(std::popcount((x & geometry.splitMasks[bit] & 0xfffu) ^ ((y << 12u) & geometry.splitMasks[bit] & 0xfff000u)) & 1) << bit;
+                    const auto address = block * geometry.blockBytes + inBlock + static_cast<std::uint64_t>(split) * splitStride;
+                    if (address != referenceGcnAddress(mode, bytes, pitch, height, x, y)) Require(false, what + ": element " + std::to_string(x) + "," + std::to_string(y) + " is at " + std::to_string(address) + ", addrlib places it at " + std::to_string(referenceGcnAddress(mode, bytes, pitch, height, x, y)));
+                    Require(address % bytes == 0 && address / bytes < seen.size() && seen[address / bytes]++ == 0, what + ": two elements share an address or one leaves the surface");
+                }
+            }
+        }
+    }
+    for (const auto mode : {kGcnDisplay2D, kGcnThin2D, kGcnDepth2D64, kGcnDepth2D256, kGcnDepth2D1K, kGcnDepthPrt256, kGcnDisplayPrt, kGcnThin2DPrt}) {
+        for (std::uint32_t bytes = 1u; bytes <= 16u; bytes <<= 1u) {
+            const auto geometry = GcnTiling(mode, bytes);
+            constexpr std::array<std::uint32_t, 5> formats{1u, 7u, 20u, 62u, 75u};
+            for (const auto mipCount : {1u, 2u}) {
+                GuestTextureResource array{};
+                array.width = geometry.blockWidth * 4u;
+                array.height = geometry.blockHeight * 4u;
+                array.depthOrLastArray = 5u;
+                array.mipCount = mipCount;
+                array.lastLevel = mipCount - 1u;
+                array.tileMode = mode;
+                array.dimension = TextureDimension::k2DArray;
+                array.format = formats[std::countr_zero(bytes)];
+                array.gcnPitch = array.width;
+                const auto surface = DescribeSurface(array);
+                const auto what = "PS4 tile mode " + std::to_string(static_cast<int>(mode)) + " at " + std::to_string(bytes) + " bytes with " + std::to_string(mipCount) + " mips";
+                for (std::uint32_t level = 0; level < mipCount; ++level) {
+                    const auto& mip = surface.mips[level];
+                    Require(!mip.gcnMicroTiled, what + ": level " + std::to_string(level) + " is micro-tiled");
+                    const auto width = mip.blocksPerRow * geometry.blockWidth;
+                    const auto height = ((array.height >> level) + geometry.blockHeight - 1u) / geometry.blockHeight * geometry.blockHeight;
+                    for (std::uint32_t layer = 0; layer < surface.layers; ++layer) {
+                        for (std::uint32_t y = 0; y < height; ++y) {
+                            for (std::uint32_t x = 0; x < width; ++x) {
+                                std::uint32_t inBlock = 0, split = 0;
+                                for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= static_cast<std::uint32_t>(std::popcount((x & geometry.equation[bit] & 0xfffu) ^ ((y << 12u) & geometry.equation[bit] & 0xfff000u)) & 1) << bit;
+                                for (std::uint32_t bit = 0; bit < 4u; ++bit) split |= static_cast<std::uint32_t>(std::popcount((x & geometry.splitMasks[bit] & 0xfffu) ^ ((y << 12u) & geometry.splitMasks[bit] & 0xfff000u)) & 1) << bit;
+                                const auto block = static_cast<std::uint64_t>(y / geometry.blockHeight) * mip.blocksPerRow + x / geometry.blockWidth;
+                                const auto address = surface.GuestOffset(layer, mip) + block * geometry.blockBytes + (inBlock ^ GcnLayerBankXor(geometry, layer)) + static_cast<std::uint64_t>(split) * mip.gcnSplitStride;
+                                const auto expected = surface.GuestOffset(layer, mip) + referenceGcnAddress(mode, bytes, width, height, x, y, layer);
+                                if (address != expected) Require(false, what + ": element " + std::to_string(x) + "," + std::to_string(y) + " of level " + std::to_string(level) + ", array layer " + std::to_string(layer) + " is at " + std::to_string(address) + ", addrlib places it at " + std::to_string(expected));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 5> display2DPrt{{{256u, 256u}, {256u, 128u}, {128u, 128u}, {128u, 64u}, {64u, 64u}}};
+    for (std::uint32_t log2 = 0; log2 < 5u; ++log2) {
+        const auto geometry = GcnTiling(TextureTileMode::kGcnDisplay2DPrt, 1u << log2);
+        Require(geometry.blockWidth == display2DPrt[log2].first && geometry.blockHeight == display2DPrt[log2].second, "PS4 Display2DThinPrt macro tile extent changed");
+    }
+    {
+        Require(ComputeGcnMipLayout(TextureTileMode::kLinear, 20u, 100u, 3u, 100u, false, 1u, true)[0].pitchBytes == 400u, "PS4 linear general pitch changed");
+        reject([] { ComputeGcnMipLayout(TextureTileMode::kLinear, 20u, 100u, 3u, 100u, false, 1u); }, "is not padded the way its tile mode pads a row");
+    }
+    constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 5> display2D{{{256u, 128u}, {128u, 128u}, {128u, 64u}, {128u, 64u}, {64u, 64u}}};
+    for (std::uint32_t log2 = 0; log2 < 5u; ++log2) {
+        const auto geometry = GcnTiling(TextureTileMode::kGcnDisplay2D, 1u << log2);
+        Require(geometry.blockWidth == display2D[log2].first && geometry.blockHeight == display2D[log2].second, "PS4 Display2DThin macro tile extent changed");
+    }
+    {
+        GuestTextureResource array{};
+        array.baseAddress = 0x10000;
+        array.width = 16u;
+        array.height = 16u;
+        array.depthOrLastArray = 2u;
+        array.mipCount = 3u;
+        array.lastLevel = 2u;
+        array.tileMode = TextureTileMode::kGcnThin1D;
+        array.dimension = TextureDimension::k2DArray;
+        array.format = 20u;
+        array.gcnPitch = 16u;
+        const auto geometry = DescribeSurface(array);
+        Require(geometry.levelMajor && geometry.layers == 3u && geometry.guestBytes == 4608u, "PS4 layered mip chain size changed");
+        Require(geometry.mips[1].tiledOffset == 3072u && geometry.mips[2].tiledOffset == 3840u && geometry.mips[1].tiledSize == 256u, "PS4 levels do not follow every slice of the level before");
+        Require(geometry.GuestOffset(2u, geometry.mips[1]) == 3584u && geometry.GuestOffset(1u, geometry.mips[0]) == 1024u, "PS4 slice of a level is misplaced");
+        Require(geometry.mips[1].linearOffset == 1024u && geometry.mips[2].linearOffset == 1280u, "PS4 linear staging is not per slice");
+        array.mipCount = 1u;
+        array.lastLevel = 0u;
+        Require(!DescribeSurface(array).levelMajor, "a single-level PS4 array is slice-major");
+    }
+    {
+        const auto mips = ComputeGcnMipLayout(TextureTileMode::kGcnDepth2D64, 20u, 2048u, 1152u, 2048u, false, 1u);
+        Require(mips[0].tiledSize == 2048u * 1152u * 4u && mips[0].gcnSplitStride == 2048u * 1152u, "PS4 tile-split depth layout changed");
+        Require(GcnTiling(TextureTileMode::kGcnDepth2D64, 4u).splitSlices == 4u && GcnTiling(TextureTileMode::kGcnDepth2D256, 4u).splitSlices == 1u, "PS4 depth split slice count changed");
+    }
+    {
+        const auto mips = ComputeGcnMipLayout(TextureTileMode::kGcnThin1D, 14u, 212u, 35u, 224u, false, 1u);
+        Require(mips[0].tiledSize == 224u * 40u * 2u && mips[0].blocksPerRow == 28u && mips[0].pitchBytes == 448u && !mips[0].gcnMicroTiled, "PS4 1D thin texture layout changed");
+        reject([] { ComputeGcnMipLayout(TextureTileMode::kGcnThin1D, 14u, 212u, 35u, 216u, false, 1u); }, "is not padded the way its tile mode pads a row");
+    }
+    {
+        const auto mips = ComputeGcnMipLayout(TextureTileMode::kGcnDisplay2D, 56u, 256u, 256u, 256u, false, 4u);
+        Require(!mips[0].gcnMicroTiled && !mips[1].gcnMicroTiled && mips[2].gcnMicroTiled && mips[3].gcnMicroTiled, "PS4 2D tiled mips switch to 1D tiling below one macro tile");
+        Require(mips[0].tiledOffset == 0u && mips[1].tiledOffset == 256u * 256u * 4u && mips[1].blocksPerRow == 1u, "PS4 mips follow level 0 in order");
+        Require(mips[2].tiledOffset == mips[1].tiledOffset + 128u * 128u * 4u && mips[2].blocksPerRow == 8u, "PS4 1D tiled mip after the 2D levels");
+        Require(MipTileMode(TextureTileMode::kGcnDisplay2D, mips[2]) == TextureTileMode::kGcnDisplay1D, "a 1D tiled level of a 2D surface uses the 1D display mode");
+    }
+}
+
 }
 
 void RunTextureTilingTests() {
+    gcnTilingTests();
     {
         const auto mips = ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 2);
         Require(mips.size() == 2, "linear mip chain must contain the requested mip count");
@@ -259,6 +439,22 @@ void RunTextureTilingTests() {
     }
 
     {
+        constexpr ElementAddress s4xTail1[] = {{0, 0, 0, 0, 0x3000, 0x0}, {0, 32, 19, 11, 0x843c, 0x0}, {0, 8, 9, 8, 0x3e08, 0x0}, {0, 15, 2, 8, 0x3163, 0x700}, {1, 0, 0, 0, 0x1000, 0x0}, {1, 15, 9, 5, 0x1acf, 0x0}, {1, 12, 4, 0, 0x1340, 0x0}, {1, 7, 2, 5, 0x17e7, 0x700}, {2, 0, 0, 0, 0x800, 0x0}, {2, 7, 4, 2, 0x953, 0x0}, {2, 2, 2, 0, 0x822, 0x0}, {2, 0, 1, 1, 0xf0c, 0x700}, {3, 0, 0, 0, 0x300, 0x0}, {3, 3, 1, 0, 0x30b, 0x0}, {3, 3, 1, 0, 0x30b, 0x0}, {3, 0, 0, 0, 0x400, 0x700}, {4, 0, 0, 0, 0x200, 0x0}, {4, 1, 0, 0, 0x201, 0x0}, {4, 0, 0, 0, 0x200, 0x0}, {4, 0, 0, 0, 0x500, 0x700}, {5, 0, 0, 0, 0x100, 0x0}, {5, 0, 0, 0, 0x100, 0x0}, {5, 0, 0, 0, 0x100, 0x0}, {5, 0, 0, 0, 0x600, 0x700}};
+        requireThickAddresses(thickVolume(TextureTileMode::kS4KBX, 1, 33, 20, 12, 6), 1, 2, 36864, s4xTail1, "SW_4KB_S_X 8 bpp 33x20x12, 6 levels");
+        constexpr ElementAddress s4xTail2[] = {{0, 0, 0, 0, 0x6000, 0x0}, {0, 32, 19, 11, 0xf13c, 0x0}, {0, 8, 9, 8, 0x7408, 0x0}, {0, 15, 2, 8, 0x7962, 0x700}, {1, 0, 0, 0, 0x3000, 0x0}, {1, 15, 9, 5, 0x42ce, 0x0}, {1, 12, 4, 0, 0x4b00, 0x0}, {1, 7, 2, 5, 0x35e6, 0x700}, {2, 0, 0, 0, 0x1000, 0x0}, {2, 7, 4, 2, 0x1352, 0x0}, {2, 2, 2, 0, 0x1060, 0x0}, {2, 0, 1, 1, 0x170c, 0x700}, {3, 0, 0, 0, 0x800, 0x0}, {3, 3, 1, 0, 0x84a, 0x0}, {3, 3, 1, 0, 0x84a, 0x0}, {3, 0, 0, 0, 0xf00, 0x700}, {4, 0, 0, 0, 0x300, 0x0}, {4, 1, 0, 0, 0x302, 0x0}, {4, 0, 0, 0, 0x300, 0x0}, {4, 0, 0, 0, 0x400, 0x700}, {5, 0, 0, 0, 0x200, 0x0}, {5, 0, 0, 0, 0x200, 0x0}, {5, 0, 0, 0, 0x200, 0x0}, {5, 0, 0, 0, 0x500, 0x700}};
+        requireThickAddresses(thickVolume(TextureTileMode::kS4KBX, 12, 33, 20, 12, 6), 2, 3, 65536, s4xTail2, "SW_4KB_S_X 16 bpp 33x20x12, 6 levels");
+        constexpr ElementAddress s4xWide4[] = {{0, 0, 0, 0, 0x20000, 0x0}, {0, 127, 127, 7, 0x9f4fc, 0x0}, {0, 24, 93, 0, 0x73108, 0x0}, {0, 42, 22, 4, 0x35f60, 0x700}, {1, 0, 0, 0, 0x0, 0x0}, {1, 63, 63, 3, 0x1f0fc, 0x0}, {1, 28, 38, 2, 0x13da0, 0x0}, {1, 55, 52, 1, 0x1e754, 0x700}};
+        requireThickAddresses(thickVolume(TextureTileMode::kS4KBX, 56, 128, 128, 8, 2), 4, 2, 655360, s4xWide4, "SW_4KB_S_X 32 bpp 128x128x8, 2 levels");
+        constexpr ElementAddress s4xTail4[] = {{0, 0, 0, 0, 0x6000, 0x0}, {0, 32, 19, 11, 0x1fdb8, 0x0}, {0, 8, 9, 8, 0x17808, 0x0}, {0, 15, 2, 8, 0x17564, 0x700}, {1, 0, 0, 0, 0x3000, 0x0}, {1, 15, 9, 5, 0x465c, 0x0}, {1, 12, 4, 0, 0x4b00, 0x0}, {1, 7, 2, 5, 0x3174, 0x700}, {2, 0, 0, 0, 0x1000, 0x0}, {2, 7, 4, 2, 0x13c4, 0x0}, {2, 2, 2, 0, 0x1060, 0x0}, {2, 0, 1, 1, 0x1718, 0x700}, {3, 0, 0, 0, 0x800, 0x0}, {3, 3, 1, 0, 0x84c, 0x0}, {3, 3, 1, 0, 0x84c, 0x0}, {3, 0, 0, 0, 0xf00, 0x700}, {4, 0, 0, 0, 0x300, 0x0}, {4, 1, 0, 0, 0x304, 0x0}, {4, 0, 0, 0, 0x300, 0x0}, {4, 0, 0, 0, 0x400, 0x700}, {5, 0, 0, 0, 0x200, 0x0}, {5, 0, 0, 0, 0x200, 0x0}, {5, 0, 0, 0, 0x200, 0x0}, {5, 0, 0, 0, 0x500, 0x700}};
+        requireThickAddresses(thickVolume(TextureTileMode::kS4KBX, 56, 33, 20, 12, 6), 4, 3, 131072, s4xTail4, "SW_4KB_S_X 32 bpp 33x20x12, 6 levels");
+        constexpr ElementAddress s4xTail8[] = {{0, 0, 0, 0, 0x9000, 0x0}, {0, 32, 19, 11, 0x2fab0, 0x0}, {0, 8, 9, 8, 0x27420, 0x0}, {0, 15, 2, 8, 0x22448, 0x700}, {1, 0, 0, 0, 0x3000, 0x0}, {1, 15, 9, 5, 0x7a78, 0x0}, {1, 12, 4, 0, 0x4200, 0x0}, {1, 7, 2, 5, 0x3058, 0x700}, {2, 0, 0, 0, 0x1000, 0x0}, {2, 7, 4, 2, 0x1ac8, 0x0}, {2, 2, 2, 0, 0x1140, 0x0}, {2, 0, 1, 1, 0x1730, 0x700}, {3, 0, 0, 0, 0x800, 0x0}, {3, 3, 1, 0, 0x868, 0x0}, {3, 3, 1, 0, 0x868, 0x0}, {3, 0, 0, 0, 0xf00, 0x700}, {4, 0, 0, 0, 0x300, 0x0}, {4, 1, 0, 0, 0x308, 0x0}, {4, 0, 0, 0, 0x300, 0x0}, {4, 0, 0, 0, 0x400, 0x700}, {5, 0, 0, 0, 0x200, 0x0}, {5, 0, 0, 0, 0x200, 0x0}, {5, 0, 0, 0, 0x200, 0x0}, {5, 0, 0, 0, 0x500, 0x700}};
+        requireThickAddresses(thickVolume(TextureTileMode::kS4KBX, 71, 33, 20, 12, 6), 8, 3, 196608, s4xTail8, "SW_4KB_S_X 64 bpp 33x20x12, 6 levels");
+        constexpr ElementAddress s4xTail16[] = {{0, 0, 0, 0, 0x10000, 0x0}, {0, 32, 19, 11, 0x55bb0, 0x0}, {0, 8, 9, 8, 0x46820, 0x0}, {0, 15, 2, 8, 0x3e040, 0x700}, {1, 0, 0, 0, 0x6000, 0x0}, {1, 15, 9, 5, 0xee70, 0x0}, {1, 12, 4, 0, 0x9400, 0x0}, {1, 7, 2, 5, 0x7850, 0x700}, {2, 0, 0, 0, 0x3000, 0x0}, {2, 7, 4, 2, 0x42c0, 0x0}, {2, 2, 2, 0, 0x3300, 0x0}, {2, 0, 1, 1, 0x3730, 0x700}, {3, 0, 0, 0, 0x1000, 0x0}, {3, 3, 1, 0, 0x1260, 0x0}, {3, 3, 1, 0, 0x1260, 0x0}, {3, 0, 0, 0, 0x1700, 0x700}, {4, 0, 0, 0, 0x800, 0x0}, {4, 1, 0, 0, 0x840, 0x0}, {4, 0, 0, 0, 0x800, 0x0}, {4, 0, 0, 0, 0xf00, 0x700}, {5, 0, 0, 0, 0x300, 0x0}, {5, 0, 0, 0, 0x300, 0x0}, {5, 0, 0, 0, 0x300, 0x0}, {5, 0, 0, 0, 0x400, 0x700}};
+        requireThickAddresses(thickVolume(TextureTileMode::kS4KBX, 77, 33, 20, 12, 6), 16, 4, 352256, s4xTail16, "SW_4KB_S_X 128 bpp 33x20x12, 6 levels");
+        requireBlockVolumeLayout(TextureTileMode::kS4KBX, 169, 71, 60, 36, 20, 5, "SW_4KB_S_X BC1 60x36x20, 5 levels");
+    }
+
+    {
         constexpr ElementAddress chainInTail[] = {{0, 0, 0, 0, 0x800}, {0, 7, 7, 7, 0xffc}, {0, 4, 2, 4, 0xe20}, {0, 2, 7, 0, 0x968}, {0, 7, 0, 7, 0xed4}, {1, 0, 0, 0, 0x300}, {1, 3, 3, 3, 0x3fc}, {1, 2, 1, 2, 0x3c8}, {1, 1, 3, 0, 0x32c}, {1, 3, 0, 3, 0x3d4}};
         requireThickAddresses(thickVolume(TextureTileMode::kStandard4KB, 56, 8, 8, 8, 2), 4, 0, 4096, chainInTail, "SW_4KB_S 32 bpp 8x8x8, 2 levels");
         requireBlockVolumeLayout(TextureTileMode::kStandard4KB, 175, 71, 128, 128, 128, 8, "SW_4KB_S BC4 128x128x128, 8 levels");
@@ -368,6 +564,165 @@ void RunTextureTilingTests() {
         Require(dense.pitchBytes == 1024 && CoveredMipBytes(TextureTileMode::kLinear, 4, dense) == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{0, 3072}}, "linear rows without padding are not one range");
     }
 
+    {
+        const auto* equation = FindTextureSwizzleEquation(XorSwizzleMode(TextureTileMode::kZ64KBX), 4u);
+        Require(equation != nullptr, "missing the 64KB Z_X swizzle equation of 4-byte elements");
+        for (const auto mask : equation->bits) Require((mask & 0x00f80f80u) == 0u, "a 64KB Z_X address bit of a 4-byte element reads x or y bits past one 128x128 tile");
+        GuestTextureResource plane{};
+        plane.width = 3840;
+        plane.height = 2160;
+        plane.mipCount = 1;
+        plane.tileMode = TextureTileMode::kZ64KBX;
+        plane.dimension = TextureDimension::k2D;
+        plane.format = 22;
+        const auto geometry = DescribeSurface(plane);
+        const auto& mip = geometry.mips.front();
+        const auto block = ThinBlockLayout(TextureTileMode::kZ64KBX, 4u);
+        Require(block[0] == 65536u && block[1] == 128u && block[2] == 128u, "a 64KB Z_X tile of 4-byte elements is not 128x128");
+        Require(!mip.tail && mip.tiledOffset == 0u && mip.blocksPerRow == 30u && geometry.guestBytes == 510ull * 65536ull, "a 3840x2160 D32 Z_X plane is not 30x17 tiles");
+        const std::array<std::pair<std::uint32_t, std::uint32_t>, 8> samples{{{0, 0}, {127, 127}, {128, 0}, {3839, 0}, {0, 128}, {1000, 700}, {2047, 1151}, {3839, 2159}}};
+        for (const auto& [x, y] : samples) {
+            const auto offset = mip.tiledOffset + (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0] + equationOffset(*equation, x, y, 0);
+            Require(offset / 65536u == static_cast<std::uint64_t>(y >> 7u) * 30u + (x >> 7u), "element (" + std::to_string(x) + ", " + std::to_string(y) + ") of a 3840x2160 D32 Z_X plane lies outside the 64 KiB unit of its 128x128 tile");
+        }
+    }
+
     reject([] { ComputeSurfaceSize({}, 1); }, "empty mip chain");
     reject([] { ComputeSurfaceSize(ComputeMipLayout(TextureTileMode::kLinear, 1, 4, 4, 1), 0); }, "zero array layers");
+
+    {
+        GuestTextureResource array{};
+        array.baseAddress = 0x10000000ull;
+        array.width = 3328;
+        array.height = 1872;
+        array.format = 1;
+        array.mipCount = 2;
+        array.dimension = TextureDimension::k2DArray;
+        array.tileMode = TextureTileMode::kR64KBX;
+        array.depthOrLastArray = 1536;
+        array.baseArray = 1536;
+        const auto layerBytes = DescribeSurface(array).layerBytes;
+        const auto window = ViewedArrayWindow(array, false);
+        Require(window.baseAddress == array.baseAddress + 1536ull * layerBytes && window.depthOrLastArray == 0 && window.baseArray == 0, "a sampled view of one slice at 1536 of an R_X array must start at that slice");
+        Require(DescribeSurface(window).layerBytes == layerBytes && DescribeSurface(window).layers == 1, "a sampled array window must keep the slice layout");
+
+        auto unaligned = array;
+        unaligned.baseArray = 1530;
+        const auto mixed = ViewedArrayWindow(unaligned, false);
+        Require(mixed.baseAddress == array.baseAddress + 1520ull * layerBytes && mixed.baseArray == 10 && mixed.depthOrLastArray == 16, "an R_X view at a slice the swizzle mixes in must start its window at the last slice before it with those bits clear");
+        auto low = array;
+        low.baseArray = 9;
+        Require(ViewedArrayWindow(low, false).baseAddress == array.baseAddress, "an R_X view below the first slice with those bits clear keeps the whole array");
+
+        auto plain = array;
+        plain.tileMode = TextureTileMode::kStandard64KB;
+        plain.baseArray = 1530;
+        Require(ViewedArrayWindow(plain, false).baseAddress == array.baseAddress + 1530ull * DescribeSurface(plain).layerBytes && ViewedArrayWindow(plain, false).depthOrLastArray == 6, "a non-XOR window may start at any slice");
+
+        auto fromZero = array;
+        fromZero.baseArray = 0;
+        Require(ViewedArrayWindow(fromZero, false).baseAddress == array.baseAddress && ViewedArrayWindow(fromZero, false).depthOrLastArray == 1536, "a view from slice 0 keeps its descriptor");
+
+        auto compressed = array;
+        compressed.dccAddress = 0x20000000ull;
+        Require(ViewedArrayWindow(compressed, false).baseAddress == array.baseAddress, "a view with DCC metadata keeps its descriptor");
+        const auto stored = ViewedArrayWindow(compressed, true);
+        Require(stored.baseAddress == window.baseAddress && stored.depthOrLastArray == 0 && stored.baseArray == 0 && stored.dccAddress == 0, "a view whose DCC keys read as stored is cut to its slices without metadata");
+        auto compressedFromZero = compressed;
+        compressedFromZero.baseArray = 0;
+        Require(ViewedArrayWindow(compressedFromZero, true).baseAddress == array.baseAddress && ViewedArrayWindow(compressedFromZero, true).dccAddress == compressed.dccAddress, "a view with DCC metadata from slice 0 keeps its descriptor");
+
+        GuestTextureResource cube{};
+        cube.baseAddress = 0x30000000ull;
+        cube.width = 256;
+        cube.height = 256;
+        cube.format = 71;
+        cube.mipCount = 1;
+        cube.dimension = TextureDimension::kCube;
+        cube.tileMode = TextureTileMode::kStandard4KB;
+        cube.depthOrLastArray = 7232;
+        cube.baseArray = 7227;
+        const auto faces = ViewedArrayWindow(cube, false);
+        Require(faces.baseAddress == cube.baseAddress + 7227ull * DescribeSurface(cube).layerBytes && faces.depthOrLastArray == 5 && faces.baseArray == 0 && faces.dimension == TextureDimension::kCube, "a cube view of six faces at 7227 must start at its first face");
+
+        auto compressedVolume = cube;
+        compressedVolume.dimension = TextureDimension::k3D;
+        compressedVolume.baseArray = 0;
+        compressedVolume.dccAddress = 0x20000000ull;
+        Require(ViewedArrayWindow(compressedVolume, true).dccAddress == compressedVolume.dccAddress, "a volume with DCC metadata keeps its descriptor");
+
+        auto volume = cube;
+        volume.dimension = TextureDimension::k3D;
+        volume.baseArray = 0;
+        Require(ViewedArrayWindow(volume, false).baseAddress == cube.baseAddress, "a volume keeps its descriptor");
+    }
+
+    {
+        const std::array<std::uint32_t, 8> words{0x027c0000u, 0xc1600000u, 0x00ffc0ffu, 0xd1800924u, 0x027cc27cu, 0xc1400000u, 0x00704018u, 0x91b00204u};
+        const auto view = DecodeTextureResource(words);
+        Require(view.baseAddress == 0x27c000000ull && view.dccAddress == 0x91b002040000ull && view.dimension == TextureDimension::k2DArray && view.baseArray == 636 && view.depthOrLastArray == 636 && view.width == 1024 && view.height == 1024 && view.format == 22, "the title's DCC array view decodes to slice 636 of 637");
+        const auto whole = DescribeSurface(view);
+        Require(whole.guestBytes == 2671771648ull, "the uncut DCC array view covers all 637 slices (" + std::to_string(whole.guestBytes) + " bytes)");
+        Require(TextureClearKeys(view, whole.guestBytes) == DccKeys::Uncompressed, "unreadable DCC keys of the uncut view read the texels as stored");
+        Require(ViewedArrayWindow(view, false).baseAddress == view.baseAddress, "a DCC view whose keys are not known to read as stored keeps its descriptor");
+        const auto window = ViewedArrayWindow(view, true);
+        const auto cut = DescribeSurface(window);
+        Require(window.baseAddress == view.baseAddress + whole.GuestLayerOffset(624) && window.dccAddress == 0 && window.baseArray == 12 && window.depthOrLastArray == 12, "the window of a stored-keys DCC view starts at the slice-swizzle boundary below its slice without metadata");
+        Require(cut.layers == 13 && cut.layerBytes == whole.layerBytes && window.baseAddress + cut.guestBytes == view.baseAddress + whole.guestBytes, "the window covers slices 624..636 (" + std::to_string(cut.guestBytes) + " bytes)");
+        for (std::uint32_t slice = 0; slice < cut.layers; ++slice) Require(window.baseAddress + cut.GuestLayerOffset(slice) == view.baseAddress + whole.GuestLayerOffset(624 + slice), "a window slice lies where the uncut surface keeps it");
+        const auto* equation = FindTextureSwizzleEquation(XorSwizzleMode(view.tileMode), 4);
+        const auto block = ThinBlockLayout(view.tileMode, 4);
+        Require(equation != nullptr && whole.mips.size() == 1 && !whole.mips[0].tail, "the title's DCC array is one untailed Z_X level");
+        const auto texel = [&](const GuestTextureResource& surface, const SurfaceGeometry& geometry, std::uint32_t x, std::uint32_t y, std::uint32_t slice) {
+            const auto& mip = geometry.mips[0];
+            return surface.baseAddress + geometry.GuestLayerOffset(slice) + mip.tiledOffset + (static_cast<std::uint64_t>(y / block[2]) * mip.blocksPerRow + x / block[1]) * block[0] + equationOffset(*equation, x, y, slice);
+        };
+        for (std::uint32_t y = 0; y < 1024; y += 7) {
+            for (std::uint32_t x = 0; x < 1024; x += 5) Require(texel(window, cut, x, y, window.baseArray) == texel(view, whole, x, y, view.baseArray), "a texel of the viewed slice detiles from the same guest byte in the window as in the uncut surface");
+        }
+        Require(TextureClearKeys(window, cut.guestBytes) == DccKeys::Uncompressed, "the window reads its texels as stored, as the uncut view does");
+    }
+
+    {
+        GuestTextureResource array{};
+        array.baseAddress = 0x10000000ull;
+        array.width = 16;
+        array.height = 16;
+        array.depthOrLastArray = 3200;
+        array.baseArray = 1536;
+        array.mipCount = 2;
+        array.tileMode = TextureTileMode::kStandard64KB;
+        array.dimension = TextureDimension::k2DArray;
+        array.format = 56;
+        const auto geometry = DescribeSurface(array);
+        const auto window = ArrayLayerWindow(array, 2048);
+        Require(window.baseAddress == array.baseAddress + 1536ull * geometry.layerBytes, "a storage view past maxImageArrayLayers must start at its first viewed slice");
+        Require(window.baseArray == 0 && window.depthOrLastArray == 1664, "a storage view past maxImageArrayLayers must hold exactly its viewed slices");
+        Require(DescribeSurface(window).layerBytes == geometry.layerBytes && DescribeSurface(window).mips[1].tiledOffset == geometry.mips[1].tiledOffset, "a viewed slice must keep the layout of the whole array's slice");
+
+        auto fitting = array;
+        fitting.depthOrLastArray = 2047;
+        const auto kept = ArrayLayerWindow(fitting, 2048);
+        Require(kept.baseAddress == fitting.baseAddress && kept.baseArray == fitting.baseArray && kept.depthOrLastArray == fitting.depthOrLastArray, "an array within maxImageArrayLayers must keep its descriptor");
+
+        auto linear = array;
+        linear.tileMode = TextureTileMode::kLinear;
+        Require(ArrayLayerWindow(linear, 2048).baseAddress == linear.baseAddress + 1536ull * DescribeSurface(linear).layerBytes, "a linear storage view past maxImageArrayLayers must start at its first viewed slice");
+
+        auto wide = array;
+        wide.baseArray = 1000;
+        reject([&] { static_cast<void>(ArrayLayerWindow(wide, 2048)); }, "more array slices than maxImageArrayLayers");
+        auto xorSwizzle = array;
+        xorSwizzle.tileMode = TextureTileMode::kR64KBX;
+        reject([&] { static_cast<void>(ArrayLayerWindow(xorSwizzle, 2048)); }, "depends on the slice");
+        auto volume = array;
+        volume.dimension = TextureDimension::k3D;
+        Require(ArrayLayerWindow(volume, 2048).baseAddress == volume.baseAddress && ArrayLayerWindow(volume, 2048).depthOrLastArray == volume.depthOrLastArray, "a volume deeper than maxImageArrayLayers is not an array and keeps its descriptor");
+        auto flat = array;
+        flat.dimension = TextureDimension::k2D;
+        Require(ArrayLayerWindow(flat, 2048).baseAddress == flat.baseAddress && ArrayLayerWindow(flat, 2048).depthOrLastArray == flat.depthOrLastArray, "a 2D image is one layer whatever its last array field holds and keeps its descriptor");
+        auto cube = array;
+        cube.dimension = TextureDimension::kCube;
+        reject([&] { static_cast<void>(ArrayLayerWindow(cube, 2048)); }, "not a 1D or 2D array");
+    }
 }

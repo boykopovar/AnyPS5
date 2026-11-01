@@ -5,7 +5,13 @@
 
 namespace Agc::Command {
 
-void* GetRegisterDefaults(std::uint32_t version, bool internal, const char* function);
+enum class RegisterDefaultsTypeLayout {
+    Compact,
+    KeyBankPairs,
+};
+
+void* GetRegisterDefaults(std::uint32_t version, bool internal, const char* function,
+                          RegisterDefaultsTypeLayout typeLayout = RegisterDefaultsTypeLayout::Compact);
 int GetDefaultCxStateFlat(void* destination, std::uint32_t size);
 
 }
