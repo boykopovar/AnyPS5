@@ -144,6 +144,7 @@ void Driver::run(std::uint32_t id) noexcept {
     StartWorkerSampler(id);
     Submission submission;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    static const bool idleStore = std::getenv("APS5_NO_IDLE_STORE") == nullptr;
     auto& costs = submissionCosts(id);
     try {
         PerformanceTrace::BindThread(role);
@@ -183,7 +184,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         && std::all_of(workers.begin(), workers.end(), [](const auto& item) { return item.second.pending.empty(); });
                 };
                 const auto idleResultsPending = [&] {
-                    return id == 0 && Graphics::StorageTexture::AnyPending() && allQueuesIdle() && !completionsPending();
+                    return idleStore && id == 0 && Graphics::StorageTexture::AnyPending() && allQueuesIdle() && !completionsPending();
                 };
                 const auto poll = [&](const auto& done) {
 #ifdef _WIN32
@@ -221,7 +222,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         lock.lock();
                         if (ready()) break;
                         if (id == 0 && allQueuesIdle() && !completionsPending()
-                            && ((!storeIdleResults && Graphics::StorageTexture::AnyPending()) || idleEpoch.load(std::memory_order_acquire) != idleEpochAtCheck)) continue;
+                            && ((idleStore && !storeIdleResults && Graphics::StorageTexture::AnyPending()) || idleEpoch.load(std::memory_order_acquire) != idleEpochAtCheck)) continue;
                         if (id == 0) queue0Dormant.store(true, std::memory_order_relaxed);
                         const auto idleEpochAtWait = idleEpoch.load(std::memory_order_acquire);
                         changed.wait(lock, [&] { return ready() || (id == 0 && (idleEpoch.load(std::memory_order_acquire) != idleEpochAtWait || completionsPending())); });
