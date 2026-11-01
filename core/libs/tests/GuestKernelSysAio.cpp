@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,6 +13,16 @@
 #include <limits>
 #include <source_location>
 #include <string>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -63,6 +74,36 @@ void Wait(GuestAiocb& request) {
     Require(aio_suspend_nid_postfix(list, 1, nullptr) == 0);
 }
 
+std::size_t PageSize() {
+#ifdef _WIN32
+    SYSTEM_INFO system{};
+    GetSystemInfo(&system);
+    return system.dwPageSize;
+#else
+    return static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+#endif
+}
+
+char* Pages(std::size_t bytes) {
+#ifdef _WIN32
+    auto* memory = static_cast<char*>(VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr);
+#else
+    auto* memory = static_cast<char*>(::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+    Require(memory != MAP_FAILED);
+#endif
+    return memory;
+}
+
+void Protect(void* address, std::size_t size, bool readable) {
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(address, size, readable ? PAGE_READONLY : PAGE_NOACCESS, &previous) != 0);
+#else
+    Require(::mprotect(address, size, readable ? PROT_READ : PROT_NONE) == 0);
+#endif
+}
+
 void BeforeUse() {
     GuestAiocb request{};
     const GuestAiocb* list[] = {&request};
@@ -74,6 +115,26 @@ void BeforeUse() {
 void Validation(int file, int readOnly) {
     char buffer[8] = {};
     Require(aio_read_nid_postfix(nullptr) == -1 && Error() == Efault);
+    Require(aio_read_nid_postfix(reinterpret_cast<GuestAiocb*>(std::uintptr_t{0x10})) == -1 && Error() == Efault);
+
+    const std::size_t page = PageSize();
+    char* memory = Pages(page * 4);
+    Protect(memory + page, page, false);
+    auto* straddling = reinterpret_cast<GuestAiocb*>(memory + page + 40 - sizeof(GuestAiocb));
+    Require(aio_read_nid_postfix(straddling) == -1 && Error() == Efault && straddling->status == -1 && straddling->error == Efault);
+
+    auto* locked = reinterpret_cast<GuestAiocb*>(memory + page * 2);
+    *locked = Request(file, buffer, sizeof(buffer));
+    Protect(locked, page, true);
+    Require(aio_read_nid_postfix(locked) == -1 && Error() == Einval && locked->status == 0 && aio_error_nid_postfix(locked) == Einval);
+
+    auto* finished = reinterpret_cast<GuestAiocb*>(memory + page * 3);
+    *finished = Request(file, buffer, sizeof(buffer));
+    Require(aio_read_nid_postfix(finished) == 0);
+    Wait(*finished);
+    Protect(finished, page, true);
+    Require(aio_return_nid_postfix(finished) == 0 && finished->status == -1 && finished->error == Einprogress);
+    Require(aio_return_nid_postfix(finished) == -1 && Error() == Einval);
 
     auto bad = Request(-1, buffer, sizeof(buffer));
     Require(aio_read_nid_postfix(&bad) == -1 && Error() == Ebadf);
