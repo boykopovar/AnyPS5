@@ -28,7 +28,6 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `_ZNSt10moneypunctIwLb1EED1Ev` | `OM0FnA7Tldk` |
 | `_ZNSt10moneypunctIwLb1EED2Ev` | `uVOxy7dQTFc` |
 | `_ZNSt12future_errorD0Ev` | `rNYLEsL7M0k` |
-| `_ZNSt12future_errorD2Ev` | `XFh0C66aEms` |
 | `_ZNSt12system_errorC2ESt10error_codePKc` | `oly3wSwEJ2A` |
 | `_ZNSt13bad_exceptionD0Ev` | `lX9M5u0e48k` |
 | `_ZNSt13bad_exceptionD1Ev` | `t6egllDqQ2M` |
@@ -54,14 +53,12 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `_ZNSt13basic_ostreamIwSt11char_traitsIwEE6sentryD2Ev` | `MB1VCygerRU` |
 | `_ZNSt13basic_ostreamIwSt11char_traitsIwEED0Ev` | `7VRfkz22vPk` |
 | `_ZNSt13basic_ostreamIwSt11char_traitsIwEED1Ev` | `EYZJsnX58DE` |
-| `_ZNSt14overflow_errorD2Ev` | `OypvNf3Uq3c` |
 | `_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsgetnEPci` | `VpwymQiS4ck` |
 | `_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsputnEPKci` | `sXaxl1QGorg` |
 | `_ZNSt15basic_streambufIcSt11char_traitsIcEE9showmanycEv` | `IAEl1Ta7yVU` |
 | `_ZNSt15basic_streambufIwSt11char_traitsIwEE6xsgetnEPwi` | `lZVehk7yFok` |
 | `_ZNSt15basic_streambufIwSt11char_traitsIwEE6xsputnEPKwi` | `041c37QfoUc` |
 | `_ZNSt15basic_streambufIwSt11char_traitsIwEE9showmanycEv` | `olsoiZsezkk` |
-| `_ZNSt15underflow_errorD2Ev` | `xiqd+QkuYXc` |
 | `_ZNSt16nested_exceptionD1Ev` | `+qKS53qzWdA` |
 | `_ZNSt16nested_exceptionD2Ev` | `8R00hgzXQDY` |
 | `_ZNSt22_Future_error_categoryD0Ev` | `WDKzMM-uuLE` |
@@ -345,6 +342,7 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 - [inet_aton, inet_addr, inet_ntoa and inet_ntoa_r](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal) follow the FreeBSD code in the console's `libSceLibcInternal.sprx` (SDK 4.5x build of `J03950001`, 0x8ADE0 to 0x8B3D0) and matched it on a PS5 (firmware 13.60) for 20 `inet_aton` inputs; a null text, which the console dereferences, throws. `inet_ntoa_r` formats through libkernel's `__inet_ntop`, so a null buffer with room for the text throws and a null buffer that is too small sets `ENOSPC`, as `__inet_ntop` does for a null destination; the console's `inet_ntoa_r` was not measured with a null buffer
 - [__inet_ntoa_r](../../../core/libs/prx/libSceLibcInternal/Inet.cpp) (libSceLibcInternal) was not measured on the console: it runs `inet_ntoa_r`, as FreeBSD 11.4 names the function `__inet_ntoa_r` ([arpa/inet.h](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/include/arpa/inet.h#L129)) and makes `inet_ntoa_r` a weak alias of it ([inet_ntoa.c](https://github.com/freebsd/freebsd-src/blob/8c639945a44588f6cfdddfb057bb5aad88735da0/lib/libc/inet/inet_ntoa.c#L62-L76))
 - [_ZnamSt11align_val_tRKSt9nothrow_t and _ZdaPvSt11align_val_t](../../../core/libs/prx/libSceLibcInternal/AlignedNew.cpp) (libSceLibcInternal, NIDs `s2eGsgUF9vk` and `v09ZcAhZzSc`) take the standard C++17 signatures their mangled names give, the aligned `nothrow` array `operator new` and the aligned array `operator delete`, and run the same code as the `libc` exports of those names, on the same application heap and new handler. The console's `libSceLibcInternal.sprx` was not read and no title was seen calling them, so whether it allocates from the same heap as `libc.prx` is unverified
+- [_ZNSt12future_errorD2Ev, _ZNSt14overflow_errorD2Ev and _ZNSt15underflow_errorD2Ev](../../../core/libs/prx/libSceLibcInternal/ExceptionDestructors.cpp) (libSceLibcInternal, NIDs `XFh0C66aEms`, `OypvNf3Uq3c` and `xiqd+QkuYXc`) are the base-object destructors of classes without virtual bases, which the [Itanium C++ ABI](https://itanium-cxx-abi.github.io/cxx-abi/abi.html#definitions) makes do the same work as the complete-object `D1` destructors, so they run the `libc` exports of those `D1` names. The console's `libSceLibcInternal.sprx` was not read and no title was seen calling them, so whether it frees the message from the same heap as `libc.prx` is unverified
 - [_Mtxinit, _Mtxlock, _Mtxunlock, _Mtxdst](../../../core/libs/prx/libSceLibcInternal/Mutex.cpp) (libSceLibcInternal) follow the PS4 code of [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/860d73b7e99559106a3ffa3d3d69f0f9237e115e/src/core/libraries/libc_internal/libc_internal_threads.cpp#L10-L62) and [fpPS4](https://github.com/red-prig/fpPS4/blob/04cefd43e6fddd1ab033e7980cd356d14c964905/src/libcinternal/ps4_mtx_internal.pas#L47-L99): the argument points to a pointer-sized libkernel mutex handle, `_Mtxinit` creates it recursive, a zeroed handle becomes an error-checking mutex on its first lock as with the POSIX calls, and each returns 0 on success and 1 on any failure. A null handle pointer throws in libkernel. The `SceLibcI_` name goes to `scePthreadMutexInit`, which drops it. For PS5 only the names are known (NID hashes, ps5sdk stubs); layout, signatures, mutex type and results are not verified on a PS5
 
 ### Additional PS5 3.20 imports (xdCloudy #9498)
