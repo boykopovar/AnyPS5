@@ -21,27 +21,7 @@ static bool IsSubset(const FcCharSet& subset, const FcCharSet& superset) {
 
 extern "C" {
 
-int APS5_VABI FcLangSetDestroy() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternRemove() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternGetInteger() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcConfigGetCurrent() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternGetBool() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternAddBool() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -57,10 +37,6 @@ int APS5_VABI FcConfigSubstitute() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcPatternGetMatrix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcInit() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -69,19 +45,7 @@ int APS5_VABI FcInitBringUptoDate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcPatternGetString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcFontRenderPrepare() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternAddDouble() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-FcPattern* APS5_VABI FcPatternDuplicate(const FcPattern*) {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -101,10 +65,6 @@ int APS5_VABI FcPatternGetFTFace() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI FcPatternEqual() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSet* second) {
     if (!first || !second) return 0;
     uint32_t count = 0;
@@ -116,14 +76,6 @@ uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSe
         }
     }
     return count;
-}
-
-int APS5_VABI FcPatternAddInteger() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcLangSetAdd() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI FcFontSort() {
@@ -155,31 +107,7 @@ void APS5_VABI FcCharSetDestroy(FcCharSet* set) {
     delete set;
 }
 
-int APS5_VABI FcPatternDel() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcConfigDestroy() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternReference() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternGet() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternAddMatrix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternAddString() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcLangSetHasLang() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -187,15 +115,7 @@ FcCharSet* APS5_VABI FcCharSetCreate() {
     return new (std::nothrow) FcCharSet;
 }
 
-int APS5_VABI FcLangSetCreate() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI FcFreeTypeCharIndex() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-void APS5_VABI FcPatternDestroy(FcPattern*) {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -235,10 +155,6 @@ int APS5_VABI FcPatternAddLangSet() {
 }
 
 int APS5_VABI FcPatternGetLangSet() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI FcPatternCreate() {
     NotImplemented_nid_no_patch(__func__);
 }
 
