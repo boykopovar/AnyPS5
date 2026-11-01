@@ -514,8 +514,8 @@ int main(int argc, char** argv) {
         if (!device) return VulkanTestSkipped;
         Require(GuestMemory::WriteIndexEnabled(), "the write index is not enabled");
         if (!GuestMemory::WriteWatched()) {
-            std::puts("table index validation skipped: no write watch");
-            return 0;
+            std::puts("skipped, guest memory has no write watch");
+            return VulkanTestSkipped;
         }
         TargetBytes = AgcDriver::Graphics::ColorTargetLayout(TargetWidth, TargetHeight, AgcDriver::Graphics::ColorTileMode::RenderTarget, 4).Bytes();
         GuestBlocks target((TargetBytes + BlockBytes - 1) / BlockBytes * BlockBytes);
