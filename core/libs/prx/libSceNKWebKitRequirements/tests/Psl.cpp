@@ -83,29 +83,36 @@ void TestStringConversionAndFileLoading() {
     AssertTrue(lower != nullptr && std::strcmp(lower, "example.com") == 0, "lowercase mismatch");
     psl_free_string_nid_postfix(lower);
 
-    const char* datPath = "3rdparty/libpsl/list/public_suffix_list.dat";
+    const char* datPath = "guest_nk_req_psl.dat";
+    FILE* out = std::fopen(datPath, "wb");
+    AssertTrue(out != nullptr, "cannot create the test list");
+    std::fputs("// ===BEGIN ICANN DOMAINS===\ncom\norg\nnet\n*.ck\n!www.ck\n// ===END ICANN DOMAINS===\n", out);
+    std::fclose(out);
+
     NKWebKit::GuestPslCtx* loadedPsl = psl_load_file_nid_postfix(datPath);
-    if (loadedPsl) {
-        AssertTrue(psl_is_public_suffix_nid_postfix(loadedPsl, "com") == 1, "loaded psl 'com' failed");
-        AssertTrue(psl_is_public_suffix_nid_postfix(loadedPsl, "example.com") == 0, "loaded psl 'example.com' failed");
-        psl_free_nid_postfix(loadedPsl);
-    }
+    AssertTrue(loadedPsl != nullptr, "psl_load_file failed");
+    AssertTrue(psl_is_public_suffix_nid_postfix(loadedPsl, "com") == 1, "loaded psl 'com' failed");
+    AssertTrue(psl_is_public_suffix_nid_postfix(loadedPsl, "example.com") == 0, "loaded psl 'example.com' failed");
+    AssertTrue(psl_is_public_suffix_nid_postfix(loadedPsl, "foo.ck") == 1, "loaded psl wildcard failed");
+    AssertTrue(psl_is_public_suffix_nid_postfix(loadedPsl, "www.ck") == 0, "loaded psl exception failed");
+    AssertTrue(psl_suffix_count_nid_postfix(loadedPsl) == 4, "loaded psl suffix count mismatch");
+    AssertTrue(psl_suffix_exception_count_nid_postfix(loadedPsl) == 1, "loaded psl exception count mismatch");
+    AssertTrue(psl_suffix_wildcard_count_nid_postfix(loadedPsl) == 1, "loaded psl wildcard count mismatch");
+    psl_free_nid_postfix(loadedPsl);
 
     FILE* fp = std::fopen(datPath, "r");
-    if (fp) {
-        NKWebKit::GuestPslCtx* fpPsl = psl_load_fp_nid_postfix(fp);
-        std::fclose(fp);
-        if (fpPsl) {
-            AssertTrue(psl_is_public_suffix_nid_postfix(fpPsl, "org") == 1, "fp psl 'org' failed");
-            psl_free_nid_postfix(fpPsl);
-        }
-    }
+    AssertTrue(fp != nullptr, "cannot reopen the test list");
+    NKWebKit::GuestPslCtx* fpPsl = psl_load_fp_nid_postfix(fp);
+    std::fclose(fp);
+    AssertTrue(fpPsl != nullptr, "psl_load_fp failed");
+    AssertTrue(psl_is_public_suffix_nid_postfix(fpPsl, "org") == 1, "fp psl 'org' failed");
+    psl_free_nid_postfix(fpPsl);
 
     NKWebKit::GuestPslCtx* latestPsl = psl_latest_nid_postfix(datPath);
-    if (latestPsl) {
-        AssertTrue(psl_is_public_suffix_nid_postfix(latestPsl, "net") == 1, "latest psl 'net' failed");
-        psl_free_nid_postfix(latestPsl);
-    }
+    AssertTrue(latestPsl != nullptr, "psl_latest failed");
+    AssertTrue(psl_is_public_suffix_nid_postfix(latestPsl, "net") == 1, "latest psl 'net' failed");
+    psl_free_nid_postfix(latestPsl);
+    std::remove(datPath);
 }
 
 } // namespace
