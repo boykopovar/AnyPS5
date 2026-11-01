@@ -65,6 +65,11 @@ using NtTestAlertFunction = LONG(NTAPI*)();
 
 void DrainApcs() {
     static const auto testAlert = reinterpret_cast<NtTestAlertFunction>(reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtTestAlert")));
+    auto* state = WaitState().bound;
+    state->fetch_add(1, std::memory_order_seq_cst);
+    if (testAlert) testAlert();
+    else SleepEx(0, TRUE);
+    state->fetch_sub(1, std::memory_order_seq_cst);
     if (testAlert) testAlert();
     else SleepEx(0, TRUE);
 }
@@ -530,10 +535,14 @@ void SleepUntil(std::uint64_t deadlineNanos) {
         if (!TimerWait(timer, deadlineNanos - now - LEAD_NANOS)) AlertableSleep(WholeMilliseconds(deadlineNanos - now - LEAD_NANOS));
         now = NowNanos();
     }
-    while (now < deadlineNanos) {
-        YieldProcessor();
-        now = NowNanos();
+    {
+        DeliveryDeferral deferral;
+        while (now < deadlineNanos) {
+            YieldProcessor();
+            now = NowNanos();
+        }
     }
+    DrainApcs();
 #else
     const std::uint64_t now = NowNanos();
     if (deadlineNanos > now) SleepNanos(deadlineNanos - now);
@@ -580,12 +589,20 @@ bool SleepNanosUnlessChanged(std::uint64_t nanos, const std::atomic<std::uint64_
         if (counter.load(std::memory_order_seq_cst) != observed) return true;
         now = NowNanos();
     }
-    while (now < deadlineNanos) {
-        if (counter.load(std::memory_order_seq_cst) != observed) return true;
-        YieldProcessor();
-        now = NowNanos();
+    bool changed = false;
+    {
+        DeliveryDeferral deferral;
+        while (now < deadlineNanos) {
+            if (counter.load(std::memory_order_seq_cst) != observed) {
+                changed = true;
+                break;
+            }
+            YieldProcessor();
+            now = NowNanos();
+        }
     }
-    return false;
+    DrainApcs();
+    return changed;
 #else
     std::unique_lock lock(ChangeSleepersMutex());
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::nanoseconds(nanos);
