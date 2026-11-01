@@ -9678,7 +9678,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         std::cout << "4x color targets or nullDescriptor unavailable: multisampled target guest access not tested\n";
         return;
     }
-    constexpr std::uint32_t side = 64;
+    constexpr std::uint32_t side = 128;
     constexpr std::size_t targetBytes = 65536u;
     constexpr std::size_t bytes = 5u * 65536u;
 #ifdef _WIN32
@@ -9737,6 +9737,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     target.extent = {side, side};
     target.surfaceExtent = target.extent;
     target.format = VK_FORMAT_R8G8B8A8_UNORM;
+    target.tileMode = ColorTileMode::RenderTarget;
     target.bytes = targetBytes;
     target.samples = 4;
     const bool ordered = MayReorderSamples(context, target.samples) && SampleOrderStorageFormat(context, target.format, target.elementBytes, target.samples) != VK_FORMAT_UNDEFINED;
@@ -9749,9 +9750,20 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         recorder.Sync();
     }
     std::array<std::byte, 64> texels{};
-    refused([&] { AgcDriver::GuestMemory::Read(address + 256u, texels); }, "a CPU read", "a CPU read");
-    refused([&] { AgcDriver::GuestMemory::ReadCommitted(address + 256u, texels); }, "a CPU read", "a committed CPU read");
-    refused([&] { AgcDriver::GuestMemory::ReadCommittedUnsynced(address + 256u, texels); }, "a CPU read", "a committed CPU read without the flush hook");
+    const auto published = [&](const std::function<void()>& access, const std::string& what) {
+        access();
+        RequireNoMultisampleTarget(address, bytes, what.c_str());
+        const auto* begin = static_cast<const std::byte*>(block);
+        Require(std::all_of(begin, begin + bytes, [](std::byte value) { return value == std::byte{}; }), what + " changed zero samples, padding or neighboring bytes");
+        std::lock_guard gpu(GpuMutex());
+        Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, what + " could not recreate its published target");
+        recorder.Submit();
+        device.WaitQueue();
+        recorder.Sync();
+    };
+    published([&] { AgcDriver::GuestMemory::Read(address + 256u, texels); }, "a CPU read");
+    published([&] { AgcDriver::GuestMemory::ReadCommitted(address + 256u, texels); }, "a committed CPU read");
+    published([&] { AgcDriver::GuestMemory::ReadCommittedUnsynced(address + 256u, texels); }, "a committed CPU read without the flush hook");
     refused([&] { RequireNoMultisampleTarget(address, 64u, "a DMA copy"); }, "a DMA copy", "a DMA copy");
     const auto captureSrt = [](std::uint64_t srt, AgcDriver::ShaderMemory::PendingWriteQuery pendingWrite) {
         static constexpr std::array<std::uint32_t, 6> code{0xf4080100u, 0xfa000000u, 0xbf8cc07fu, 0xe0700000u, 0x80010000u, 0xbf810000u};
@@ -9770,13 +9782,13 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         AgcDriver::ShaderMemory memory({}, pendingWrite);
         static_cast<void>(memory.Capture(request));
     };
-    refused([&] { captureSrt(address + 256u, nullptr); }, "a CPU read", "a shader capture");
+    published([&] { captureSrt(address + 256u, nullptr); }, "a shader capture");
     captureSrt(address + 4u * 65536u + 256u, nullptr);
-    refused([&] { captureSrt(address + 256u, nullptr); }, "a CPU read", "a shader capture on a pooled page");
+    published([&] { captureSrt(address + 256u, nullptr); }, "a shader capture on a pooled page");
     const auto raw = [](std::uint64_t, std::size_t, std::span<std::byte>) { return AgcDriver::ShaderMemory::PendingWrite::Raw; };
     const auto synced = [](std::uint64_t, std::size_t, std::span<std::byte>) { return AgcDriver::ShaderMemory::PendingWrite::Sync; };
-    refused([&] { captureSrt(address + 256u, raw); }, "a CPU read", "a shader capture's raw word read");
-    refused([&] { captureSrt(address + 256u, synced); }, "a CPU read", "a shader capture's synced word read");
+    published([&] { captureSrt(address + 256u, raw); }, "a shader capture's raw word read");
+    published([&] { captureSrt(address + 256u, synced); }, "a shader capture's synced word read");
     captureSrt(address + 4u * 65536u + 256u, raw);
     ShaderRecompiler::RecompileResult program;
     ShaderRecompiler::DescriptorBinding binding;
@@ -9854,7 +9866,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         ShaderResources arraySecond(context, sampledArrayCompute);
         ShaderResources combined(context, bothShapesCompute);
         Require(first.SampledTextures().size() == 1 && first.SampledTextures().front() != nullptr, "the multisampled target was not bound as a sampled texture");
-        Require(first.SampledTextures().front()->Layout() == VK_IMAGE_LAYOUT_GENERAL && first.SampledTextures().front()->ViewFormat() == target.format, "the sampled multisampled target is not a view of the target's image in its layout");
+        Require(first.SampledTextures().front()->Layout() == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL && first.SampledTextures().front()->ViewFormat() == target.format, "the sampled multisampled target is not a read-only view of the target's image");
         Require(first.SampledTextures().front()->SampledViewRange(false).type == VK_IMAGE_VIEW_TYPE_2D, "Image2DMultisample did not bind a 2D image view");
         Require(second.SampledTextures().front() == first.SampledTextures().front(), "a second lookup of the multisampled target made another texture");
         Require(arrayFirst.SampledTextures().size() == 1 && arrayFirst.SampledTextures().front() != nullptr, "the multisampled array target was not bound as a sampled texture");
@@ -9867,8 +9879,8 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         device.WaitQueue();
         recorder.Sync();
     }
-    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 3u, address), "as a 64x64 texture of 8 samples", "sampling a 4x target as an 8x texture");
-    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side / 2u, 2u, address), "as a 32x64 texture of 4 samples", "sampling a 4x target as a narrower texture");
+    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 3u, address), "as a 128x128 texture of 8 samples", "sampling a 4x target as an 8x texture");
+    refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side / 2u, 2u, address), "as a 64x128 texture of 4 samples", "sampling a 4x target as a narrower texture");
     refusedSample(ShaderRecompiler::DescriptorKind::SampledImage, multisampledWords(side, 2u, address + 4u * 65536u), "which no draw rendered to and whose tile mode 0 has no modeled multisampled color footprint", "sampling a linear multisampled texture no draw rendered to");
     if (context.storageImageMultisample) {
         const auto stored = sampledProgram(ShaderRecompiler::DescriptorKind::StorageImage, multisampledWords(side, 2u, address));
@@ -9884,10 +9896,12 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
     } else {
         refusedSample(ShaderRecompiler::DescriptorKind::StorageImage, multisampledWords(side, 2u, address), "as a storage image at its sample count", "storage access to a multisampled target without shaderStorageImageMultisample");
     }
-    refused([&] { AgcDriver::GuestMemory::Read(address + 3u * 65536u + 256u, texels); }, "a CPU read", "a CPU read in the padding of a later sample plane");
+    published([&] { AgcDriver::GuestMemory::Read(address + 3u * 65536u + 256u, texels); }, "a CPU read in the last block of the 4x target");
     AgcDriver::GuestMemory::Read(address + 4u * 65536u, texels);
+    refused([&] { RequireNoMultisampleTarget(address, targetBytes, "a DMA copy"); }, "a DMA copy", "a DMA copy after an adjacent CPU read");
     clearTargets();
-    target.tileMode = ColorTileMode::RenderTarget;
+    target.extent = {side / 2u, side / 2u};
+    target.surfaceExtent = target.extent;
     {
         std::lock_guard gpu(GpuMutex());
         Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the tiled multisampled target has no view");
@@ -9895,7 +9909,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
         device.WaitQueue();
         recorder.Sync();
     }
-    refused([&] { AgcDriver::GuestMemory::Read(address + targetBytes - texels.size(), texels); }, "a CPU read", "a CPU read inside the tiled multisampled target");
+    published([&] { AgcDriver::GuestMemory::Read(address + targetBytes - texels.size(), texels); }, "a CPU read inside the tiled multisampled target");
     AgcDriver::GuestMemory::Read(address + targetBytes, texels);
     clearTargets();
     if ((base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_2_BIT) != 0) {
@@ -9909,7 +9923,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
             device.WaitQueue();
             recorder.Sync();
         }
-        refused([&] { AgcDriver::GuestMemory::Read(address + 2u * targetBytes - texels.size(), texels); }, "a CPU read", "a CPU read inside the 2x tile-height padding");
+        published([&] { AgcDriver::GuestMemory::Read(address + 2u * targetBytes - texels.size(), texels); }, "a CPU read inside the 2x tile-height padding");
         AgcDriver::GuestMemory::Read(address + 2u * targetBytes, texels);
         clearTargets();
     }
@@ -9924,7 +9938,7 @@ void multisampleGuestAccessTests(const Device& device, Recorder& recorder) {
             device.WaitQueue();
             recorder.Sync();
         }
-        refused([&] { AgcDriver::GuestMemory::Read(address + 2u * targetBytes - texels.size(), texels); }, "a CPU read", "a CPU read inside the 8x tile-height padding");
+        published([&] { AgcDriver::GuestMemory::Read(address + 2u * targetBytes - texels.size(), texels); }, "a CPU read inside the 8x tile-height padding");
         AgcDriver::GuestMemory::Read(address + 2u * targetBytes, texels);
         clearTargets();
     }
@@ -10048,6 +10062,8 @@ void repeatStorageGuardTests(const Device& device, Recorder& recorder) {
         target.format = VK_FORMAT_R8G8B8A8_UNORM;
         target.bytes = targetBytes;
         target.samples = 4;
+        target.tileMode = ColorTileMode::RenderTarget;
+        Require(MultisampledColorBytes(target) == targetBytes, "the guarding multisampled target has an unexpected footprint");
         std::lock_guard gpu(GpuMutex());
         Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the guarding multisampled target has no view");
         recorder.Submit();
