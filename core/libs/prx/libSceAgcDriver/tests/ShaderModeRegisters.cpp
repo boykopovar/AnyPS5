@@ -3,6 +3,7 @@
 #include "Recompiler.hpp"
 #include "Translation/InstructionTranslator.hpp"
 #include "BdaAbi.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -52,7 +53,8 @@ void expectRejected(std::span<const std::uint32_t> code, std::optional<ShaderFlo
         static_cast<void>(translate(code, mode));
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
-        require(message.find(diagnostic) != std::string::npos && message.find("at pc " + std::to_string(pc) + " ") != std::string::npos,
+        const std::string location = "at pc " + std::to_string(pc);
+        require(message.find(diagnostic) != std::string::npos && (message.find(location + " ") != std::string::npos || message.find(location + ":") != std::string::npos),
                 "unexpected MODE diagnostic: " + message);
         return;
     }
@@ -60,12 +62,13 @@ void expectRejected(std::span<const std::uint32_t> code, std::optional<ShaderFlo
 }
 
 void verifyReads() {
-    constexpr std::array<std::uint32_t, 11> code{
+    constexpr std::array<std::uint32_t, 16> code{
         0xb9140001, 0xb9150801, 0xb9161001, 0xb9171801, 0xb9180041,
-        0xb9190841, 0xb91a1041, 0xb91b0081, 0xb91c0881, 0xb91d00c1, 0xbf810000
+        0xb9190841, 0xb91a1041, 0xb91b0081, 0xb91c0881, 0xb91d00c1,
+        0xb91e0901, 0xb91f0981, 0xb9201901, 0xb9213801, 0xb9221881, 0xbf810000
     };
-    constexpr std::array<std::uint32_t, 10> offsets{0, 0, 0, 0, 1, 1, 1, 2, 2, 3};
-    constexpr std::array<std::uint32_t, 10> masks{1, 3, 7, 15, 1, 3, 7, 1, 3, 1};
+    constexpr std::array<std::uint32_t, 15> offsets{0, 0, 0, 0, 1, 1, 1, 2, 2, 3, 4, 6, 4, 0, 2};
+    constexpr std::array<std::uint32_t, 15> masks{1, 3, 7, 15, 1, 3, 7, 1, 3, 1, 3, 3, 15, 255, 15};
     for (const auto waveSize : {32u, 64u}) {
         for (std::uint32_t mode = 0; mode < 256; ++mode) {
             const auto program = translate(code, ShaderFloatMode{mode, true, true, true}, waveSize);
@@ -73,8 +76,11 @@ void verifyReads() {
                 expectRegister(program, 20 + index, (mode >> offsets[index]) & masks[index]);
             }
         }
-        const auto legacy = translate(code, std::nullopt, waveSize);
-        for (std::uint32_t index = 0; index < offsets.size(); ++index) expectRegister(legacy, 20 + index, 0);
+        std::array<std::uint32_t, 11> roundingCode{};
+        std::copy_n(code.begin(), 10, roundingCode.begin());
+        roundingCode[10] = code.back();
+        const auto legacy = translate(roundingCode, std::nullopt, waveSize);
+        for (std::uint32_t index = 0; index < 10; ++index) expectRegister(legacy, 20 + index, 0);
     }
 }
 
@@ -186,10 +192,52 @@ void verifyRoundInstruction() {
 }
 
 void verifyUnsupportedReads() {
-    for (const auto instruction : {0xb9140002u, 0xb9140101u, 0xb91408c1u, 0xb914f801u}) {
+    for (const auto instruction : {0xb9140002u, 0xb9140201u, 0xb91409c1u, 0xb914f801u}) {
         const std::array<std::uint32_t, 2> code{instruction, endProgram};
         expectRejected(code, ShaderFloatMode{0xc0}, "s_getreg_b32");
     }
+    for (const auto instruction : {0xb9140901u, 0xb9140981u, 0xb9141901u, 0xb9143801u, 0xb9141881u}) {
+        const std::array<std::uint32_t, 2> code{instruction, endProgram};
+        expectRejected(code, std::nullopt, "without a declared FLOAT_MODE");
+    }
+}
+
+void verifyDenormalReadsAfterRoundingWrites() {
+    constexpr std::array<std::uint32_t, 5> offsets{4, 6, 4, 0, 2};
+    constexpr std::array<std::uint32_t, 5> masks{3, 3, 15, 255, 15};
+    for (std::uint32_t mode = 0; mode < 256; ++mode) {
+        const std::array<std::uint32_t, 5> dynamic{0xb9801801, 0xb9140901, 0xb9150981, 0xb9161901, endProgram};
+        const auto unknownRounding = translate(dynamic, ShaderFloatMode{mode});
+        for (std::uint32_t index = 0; index < 3; ++index) {
+            expectRegister(unknownRounding, 20 + index, (mode >> offsets[index]) & masks[index]);
+        }
+        const std::array<std::uint32_t, 3> mixed{0xb9801801, 0xb9141881, endProgram};
+        expectRejected(mixed, ShaderFloatMode{mode}, "reads MODE rounding bits", 4);
+        for (std::uint32_t rounding = 0; rounding < 16; ++rounding) {
+            const std::array<std::uint32_t, 8> immediate{0xba801801, rounding, 0xb9140901, 0xb9150981, 0xb9161901, 0xb9173801, 0xb9181881, endProgram};
+            const auto program = translate(immediate, ShaderFloatMode{mode});
+            const std::array<std::uint32_t, 7> instruction{roundMode(rounding), 0xb9140901, 0xb9150981, 0xb9161901, 0xb9173801, 0xb9181881, endProgram};
+            const auto rounded = translate(instruction, ShaderFloatMode{mode});
+            const std::uint32_t expected = (mode & 0xf0u) | rounding;
+            for (std::uint32_t index = 0; index < offsets.size(); ++index) {
+                expectRegister(program, 20 + index, (expected >> offsets[index]) & masks[index]);
+                expectRegister(rounded, 20 + index, (expected >> offsets[index]) & masks[index]);
+            }
+        }
+    }
+}
+
+void verifyDenormalWritesRejected() {
+    for (const std::uint32_t field : {0x0901u, 0x0981u, 0x1901u, 0x3801u, 0x1881u}) {
+        const std::array<std::uint32_t, 3> dynamic{0xb9800000u | field, 0xb9141901, endProgram};
+        expectRejected(dynamic, ShaderFloatMode{0xc0}, "s_setreg_b32");
+        const std::array<std::uint32_t, 4> immediate{0xba800000u | field, 0u, 0xb9141901, endProgram};
+        expectRejected(immediate, ShaderFloatMode{0xc0}, "s_setreg_imm32_b32");
+        const std::array<std::uint32_t, 4> branch{0xbf840001, 0xb9800000u | field, 0xb9141901, endProgram};
+        expectRejected(branch, ShaderFloatMode{0xc0}, "s_setreg_b32", 4);
+    }
+    const std::array<std::uint32_t, 3> denorm{0xbfa50000, 0xb9141901, endProgram};
+    expectRejected(denorm, ShaderFloatMode{0xc0}, "s_denorm_mode");
 }
 
 void verifyBranch() {
@@ -309,13 +357,14 @@ int main() {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 16> checks{{
+    constexpr std::array<Check, 18> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"roundInstruction", verifyRoundInstruction}, {"unsupportedReads", verifyUnsupportedReads}, {"branch", verifyBranch},
         {"diamond", verifyDiamond}, {"directed32", verifyRoundingBeforeDirected32Use}, {"restored", verifyRoundingRestoredBeforeUse},
         {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
         {"directedF16", verifyDirectedF16Conversion}, {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation},
+        {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites}, {"denormalWrites", verifyDenormalWritesRejected},
     }};
     int failures = 0;
     for (const auto& check : checks) {
