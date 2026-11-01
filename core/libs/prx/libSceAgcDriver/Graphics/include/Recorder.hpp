@@ -454,6 +454,8 @@ public:
     // when not profiling): a caller reads it around a span of its own work to learn how much of
     // that span waited for the GPU (a resource build's nested flush-hook waits, a draw's).
     static double ThreadWaitedMs();
+    static std::uint64_t ThreadWaitCount();
+    static void CountWait(double ms);
     // The calling thread's flush-hook syncs (SyncThrough) that waited for a target batch whose
     // fence had not signaled when the wait began: a read whose bytes are compared around such a
     // sync observed the GPU's work; one that found the fence signaled already read the GPU's bytes

@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
@@ -104,7 +106,10 @@ void DestroyDeferredAtIdle(const Context& context, std::chrono::steady_clock::ti
         const auto objects = found->second.buffers.size() + found->second.memory.size();
         if (objects == 0 || (objects < DrainObjects && now - found->second.oldest < DrainAge)) return;
     }
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto idle = context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue);
+    if (profile) Recorder::CountWait(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
     if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) throw std::runtime_error("AGC graphics: vkQueueWaitIdle before destroying deferred objects: Vulkan result " + std::to_string(idle));
     Deferred taken;
     {

@@ -139,9 +139,11 @@ AgcDriver::Mutex threadSyncsMutex;
 // This thread's fence and timeline waits in total (Recorder::ThreadWaitedMs): a caller times a span
 // of its own work and reads the difference to learn how much of it was waiting for the GPU.
 thread_local double threadWaitedMs = 0;
+thread_local std::uint64_t threadWaitCount = 0;
 
 void CountThreadSync(int source, double ms) {
     threadWaitedMs += ms;
+    ++threadWaitCount;
     const auto tag = GuestMemory::GpuLockThreadTag();
     std::lock_guard lock(threadSyncsMutex);
     auto it = std::find_if(threadSyncs.begin(), threadSyncs.end(), [&](const ThreadSyncs& thread) { return thread.tag == tag; });
@@ -1452,6 +1454,15 @@ void Recorder::AnnounceSyncSite(const void* site) {
 
 double Recorder::ThreadWaitedMs() {
     return threadWaitedMs;
+}
+
+std::uint64_t Recorder::ThreadWaitCount() {
+    return threadWaitCount;
+}
+
+void Recorder::CountWait(double ms) {
+    threadWaitedMs += ms;
+    ++threadWaitCount;
 }
 
 std::uint64_t Recorder::ReapsWithWork() {
@@ -3825,6 +3836,7 @@ void Recorder::WaitSerial(std::uint64_t serial) {
     const UnlockedWaiter waiter{id};
     const auto result = WaitTimeline(context.device, timeline, context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR"), serial);
     if (profile) {
+        CountWait(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
         unlockedWaits.fetch_add(1, std::memory_order_relaxed);
         unlockedWaitedUs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
     }
@@ -3839,7 +3851,10 @@ bool Recorder::WaitSerialFor(std::uint64_t serial, std::uint64_t timeoutNanos) {
     wait.semaphoreCount = 1;
     wait.pSemaphores = &timeline;
     wait.pValues = &serial;
+    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const auto result = context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR")(context.device, &wait, timeoutNanos);
+    if (profile) CountWait(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
     if (result == VK_TIMEOUT) return false;
     Check(result, "vkWaitSemaphoresKHR submission progress");
     return true;

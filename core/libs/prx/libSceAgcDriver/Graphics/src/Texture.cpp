@@ -344,7 +344,7 @@ std::uint64_t SampledTextureMemory() {
 }
 
 Texture::Texture(const Context& context, TextureDetiler& detiler, const GuestTextureResource& descriptor, VkComponentMapping components, std::span<const std::byte> snapshot, bool depthCompare, const VkClearColorValue* clear) : context(context) {
-
+    const LookupOutcomes::Scope uploadTiming(LookupOutcomes::SnapshotUpload);
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     PhaseTimer timer;
     try {
@@ -953,6 +953,7 @@ bool Texture::refreshSrgbExpand() {
 bool Texture::RefreshDepthCopy() {
     if (perUseCopy != PerUseCopy::RefreshedOnReuse || storageSource == nullptr) return false;
     if (copiedOnce && storageSource->Version() == copiedVersion) return false;
+    const LookupOutcomes::Scope refreshTiming(LookupOutcomes::CopyRefresh);
     if (blockFormat != VK_FORMAT_UNDEFINED) return refreshBlockCopy();
     if (srgbExpand) return refreshSrgbExpand();
     std::uint64_t linearBytes = 0;
@@ -2152,7 +2153,7 @@ VkImageView StorageTexture::Atomic64View(std::uint32_t mip, bool firstLayer) {
 }
 
 const char* LookupOutcomes::Name(Kind kind) {
-    static constexpr const char* names[Count] = {"sampled fast hit", "sampled fast miss", "sampled hit view", "sampled hit cleared view", "sampled hit snapshot", "sampled made view", "sampled made snapshot", "storage hit", "storage made", "refresh unchanged", "refresh compared", "refresh proved", "upload direct", "upload cpu", "upload clear", "dcc scan", "pending flush"};
+    static constexpr const char* names[Count] = {"sampled fast hit", "sampled fast miss", "sampled hit view", "sampled hit cleared view", "sampled hit snapshot", "sampled made view", "sampled made snapshot", "storage hit", "storage made", "refresh unchanged", "refresh compared", "refresh proved", "upload direct", "upload cpu", "upload clear", "dcc scan", "pending flush", "refresh", "snapshot upload", "copy refresh", "depth refresh"};
     return kind < Count ? names[kind] : "?";
 }
 
@@ -2199,6 +2200,7 @@ bool StorageTexture::RefreshLayers(std::uint32_t first, std::uint32_t count) {
 }
 
 bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) {
+    const LookupOutcomes::Scope refreshTiming(LookupOutcomes::Refresh);
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const bool scoped = firstLayer != 0 || lastLayer != trackedLayers;

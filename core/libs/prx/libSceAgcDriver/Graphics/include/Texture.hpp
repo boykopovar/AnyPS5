@@ -800,11 +800,17 @@ private:
 // element (a fast miss is followed by a full lookup); the refresh, upload, DCC scan and pending
 // flush rows lie inside the storage and sampled rows.
 struct LookupOutcomes {
-    enum Kind : std::size_t { SampledFast, SampledFastMiss, SampledHitView, SampledHitClearedView, SampledHitSnapshot, SampledMadeView, SampledMadeSnapshot, StorageHit, StorageMade, RefreshUnchanged, RefreshCompared, RefreshProved, UploadDirect, UploadCpu, UploadClear, DccScan, PendingFlush, Count };
+    enum Kind : std::size_t { SampledFast, SampledFastMiss, SampledHitView, SampledHitClearedView, SampledHitSnapshot, SampledMadeView, SampledMadeSnapshot, StorageHit, StorageMade, RefreshUnchanged, RefreshCompared, RefreshProved, UploadDirect, UploadCpu, UploadClear, DccScan, PendingFlush, Refresh, SnapshotUpload, CopyRefresh, DepthRefresh, Count };
     static const char* Name(Kind kind);
     static bool Profiled();
     // Charges the time since `start` to `kind` on this thread and returns now.
     static std::chrono::steady_clock::time_point Add(Kind kind, std::chrono::steady_clock::time_point start);
+    struct Scope {
+        explicit Scope(Kind kind) : kind(kind), start(Profiled() ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}) {}
+        ~Scope() { if (start != std::chrono::steady_clock::time_point{}) Add(kind, start); }
+        Kind kind;
+        std::chrono::steady_clock::time_point start;
+    };
     std::array<std::uint64_t, Count> counts{};
     std::array<double, Count> ms{};
 };

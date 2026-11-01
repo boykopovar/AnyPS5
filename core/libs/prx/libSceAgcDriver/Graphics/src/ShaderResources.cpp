@@ -2923,11 +2923,19 @@ namespace {
 // of the reused ones, fast = every image proved current from stamps, full = the lookups were repeated.
 // Why the fast path left an object to the full walk (the "fast-fail by reason" counts).
 using FastFail = ShaderResources::FastFail;
-constexpr std::array<const char*, static_cast<std::size_t>(FastFail::Count)> FastFailNames{"no record", "collect", "pending image", "evicted image", "memory changed", "keys", "cleared view", "storage keys", "depth surface", "replaced texture", "audit"};
+constexpr std::array<const char*, static_cast<std::size_t>(FastFail::Count)> FastFailNames{"no record", "collect", "pending image", "evicted image", "memory changed", "keys", "cleared view", "storage keys", "depth surface", "sampled depth surface", "replaced texture", "audit"};
 using OwnRefreshFallback = ShaderResources::OwnRefreshFallback;
 constexpr std::array<const char*, static_cast<std::size_t>(OwnRefreshFallback::Count)> OwnRefreshFallbackNames{"disabled", "snapshot texture", "cleared view", "foreign view", "surface key", "not imported", "uncached", "re-run failed"};
 
+struct RevalidateWork {
+    std::atomic<std::uint64_t> calls{0};
+    std::atomic<std::uint64_t> walks{0}, nanoseconds{0}, maxNanoseconds{0}, descriptors{0}, bytes{0};
+    std::atomic<std::uint64_t> uploads{0}, uploadNanoseconds{0}, refreshes{0}, refreshNanoseconds{0};
+    std::atomic<std::uint64_t> waits{0}, waitNanoseconds{0}, walkWaits{0}, walkWaitNanoseconds{0};
+};
+
 struct RevalidateProfile {
+    std::array<RevalidateWork, static_cast<std::size_t>(FastFail::Count) + 1> work{};
     std::atomic<std::uint64_t> calls{0};
     std::atomic<std::uint64_t> nanoseconds{0};
     std::atomic<std::uint64_t> fast{0};
@@ -3003,9 +3011,63 @@ void countKeysProven(bool storage) {
     if (BuildProfiled()) (storage ? Revalidations().storageKeysProven : Revalidations().keysProven).fetch_add(1, std::memory_order_relaxed);
 }
 
-void countFullWalk(FastFail reason) {
-    if (BuildProfiled() && reason != FastFail::Count) Revalidations().fullByReason[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
-}
+struct RevalidateTiming {
+    RevalidateTiming(const FastFail& reason, const GuestTextureResource& fallback) : reason(reason), texture(fallback) {}
+    ~RevalidateTiming();
+    const FastFail& reason;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    std::uint64_t waitsBefore = Recorder::ThreadWaitCount();
+    double waitMsBefore = Recorder::ThreadWaitedMs();
+    bool fast = false, ok = false;
+    double walkMs = 0, textureMs = 0;
+    GuestTextureResource texture{};
+    bool lookedUp = false;
+};
+
+struct RevalidateLookupTiming {
+    RevalidateTiming& timing;
+    GuestTextureResource resource;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~RevalidateLookupTiming() {
+        const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        if (ms >= timing.textureMs) {
+            timing.texture = resource;
+            timing.textureMs = ms;
+            timing.lookedUp = true;
+        }
+    }
+};
+
+struct RevalidateWalkTiming {
+    RevalidateTiming& timing;
+    FastFail reason;
+    LookupOutcomes outcomes = ThreadLookupOutcomes();
+    std::uint64_t waits = Recorder::ThreadWaitCount();
+    double waitMs = Recorder::ThreadWaitedMs();
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~RevalidateWalkTiming() {
+        auto& profile = Revalidations();
+        auto& work = profile.work[static_cast<std::size_t>(reason)];
+        const auto ns = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+        timing.walkMs += ns / 1e6;
+        work.walks.fetch_add(1, std::memory_order_relaxed);
+        work.nanoseconds.fetch_add(ns, std::memory_order_relaxed);
+        auto maximum = work.maxNanoseconds.load(std::memory_order_relaxed);
+        while (maximum < ns && !work.maxNanoseconds.compare_exchange_weak(maximum, ns, std::memory_order_relaxed)) {}
+        if (reason != FastFail::Count) profile.fullByReason[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
+        work.walkWaits.fetch_add(Recorder::ThreadWaitCount() - waits, std::memory_order_relaxed);
+        work.walkWaitNanoseconds.fetch_add(static_cast<std::uint64_t>((Recorder::ThreadWaitedMs() - waitMs) * 1e6), std::memory_order_relaxed);
+        const auto& after = ThreadLookupOutcomes();
+        for (const auto kind : {LookupOutcomes::UploadDirect, LookupOutcomes::UploadCpu, LookupOutcomes::UploadClear, LookupOutcomes::SnapshotUpload}) {
+            work.uploads.fetch_add(after.counts[kind] - outcomes.counts[kind], std::memory_order_relaxed);
+            work.uploadNanoseconds.fetch_add(static_cast<std::uint64_t>((after.ms[kind] - outcomes.ms[kind]) * 1e6), std::memory_order_relaxed);
+        }
+        for (const auto kind : {LookupOutcomes::Refresh, LookupOutcomes::CopyRefresh, LookupOutcomes::DepthRefresh}) {
+            work.refreshes.fetch_add(after.counts[kind] - outcomes.counts[kind], std::memory_order_relaxed);
+            work.refreshNanoseconds.fetch_add(static_cast<std::uint64_t>((after.ms[kind] - outcomes.ms[kind]) * 1e6), std::memory_order_relaxed);
+        }
+    }
+};
 
 void countFullWalkTime(FastFail reason, std::chrono::steady_clock::time_point start) {
     if (!BuildProfiled() || reason == FastFail::Count) return;
@@ -3066,6 +3128,15 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
     const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
     auto last = profile.lastReport.load();
     if (nowMs - last < 10000 || !profile.lastReport.compare_exchange_strong(last, nowMs)) return;
+    for (std::size_t i = 0; i < profile.work.size(); ++i) {
+        auto& work = profile.work[i];
+        const auto take = [](auto& value) { return static_cast<unsigned long long>(value.exchange(0, std::memory_order_relaxed)); };
+        const auto calls = take(work.calls);
+        const auto walks = take(work.walks);
+        const auto waits = take(work.waits);
+        if (calls == 0 && walks == 0 && waits == 0) continue;
+        AgcDriver::ProfilePrint_nid_no_patch("[revalidate-work] window_s=10 reason=\"%s\" calls=%llu walks=%llu walk_ms=%.3f walk_max_ms=%.3f descriptors=%llu bytes=%llu uploads=%llu upload_ms=%.3f refreshes=%llu refresh_ms=%.3f waits=%llu wait_ms=%.3f walk_waits=%llu walk_wait_ms=%.3f\n", i < FastFailNames.size() ? FastFailNames[i] : "none/forced/verify", calls, walks, take(work.nanoseconds) / 1e6, take(work.maxNanoseconds) / 1e6, take(work.descriptors), take(work.bytes), take(work.uploads), take(work.uploadNanoseconds) / 1e6, take(work.refreshes), take(work.refreshNanoseconds) / 1e6, waits, take(work.waitNanoseconds) / 1e6, take(work.walkWaits), take(work.walkWaitNanoseconds) / 1e6);
+    }
     const auto byReason = [](auto& counts, const auto& names) {
         std::string reasons;
         for (std::size_t i = 0; i < names.size(); ++i) {
@@ -3095,6 +3166,19 @@ void countRevalidate(bool fast, bool ok, std::chrono::steady_clock::time_point s
         profile.refusedSurfaces.clear();
     }
     AgcDriver::ProfilePrint_nid_no_patch("[rescache] revalidate (10 s): %llu calls %.1f ms: fast %llu, full %llu, failed %llu; fast-fail by reason:%s; full walks: T1 refreshed %llu (%llu storage images, %llu view sources, %llu views served by their own pending source, %llu overlaps left by the refresh accepted), full by reason:%s, T1 fallback by reason:%s, proofs verified %llu; fast-fail pending image: own 0 (the query excepts the own object), foreign %llu, snapshot %llu, T1 eligible %llu; keys proven: %llu sampled, %llu storage; epoch gate: %llu registry scans skipped, %llu import loops skipped; lookup log: %llu builds and full walks kept their records past the bound; full walk ms by reason:%s; collect refusals: sampled %llu, storage %llu (uncommitted pages %llu, unwatched %llu, other %llu) over %llu surfaces, %.1f MiB\n", static_cast<unsigned long long>(profile.calls.exchange(0, std::memory_order_relaxed)), profile.nanoseconds.exchange(0, std::memory_order_relaxed) / 1e6, static_cast<unsigned long long>(profile.fast.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.full.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.failed.exchange(0, std::memory_order_relaxed)), reasons.c_str(), static_cast<unsigned long long>(profile.ownRefreshed.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownStorageRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownViewRefreshes.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.ownSourceViews.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refreshedOverlaps.exchange(0, std::memory_order_relaxed)), fullReasons.c_str(), fallbacks.c_str(), static_cast<unsigned long long>(profile.proofsVerified.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingForeign.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingSnapshot.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.pendingT1Eligible.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.keysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.storageKeysProven.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.serialSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.importSkips.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(lookupBuildsPastBound.exchange(0, std::memory_order_relaxed)), walkMs.c_str(), static_cast<unsigned long long>(profile.refusedSampled.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedStorage.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUncommitted.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedUnwatched.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(profile.refusedOther.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(refusedSurfaces), static_cast<double>(refusedBytes) / 1048576.0);
+}
+
+RevalidateTiming::~RevalidateTiming() {
+    const auto waitMs = Recorder::ThreadWaitedMs() - waitMsBefore;
+    auto& work = Revalidations().work[static_cast<std::size_t>(reason)];
+    work.calls.fetch_add(1, std::memory_order_relaxed);
+    work.waits.fetch_add(Recorder::ThreadWaitCount() - waitsBefore, std::memory_order_relaxed);
+    work.waitNanoseconds.fetch_add(static_cast<std::uint64_t>(waitMs * 1e6), std::memory_order_relaxed);
+    const auto ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    if (ms > 20.0) {
+        AgcDriver::ProfilePrint_nid_no_patch("[revalidate-slow] texture=0x%llx extent=%ux%u format=%u reason=\"%s\" revalidate_ms=%.3f walk_ms=%.3f wait_ms=%.3f texture_ms=%.3f texture_scope=%s\n", static_cast<unsigned long long>(texture.baseAddress), texture.width, texture.height, texture.format, reason == FastFail::Count ? "none/forced/verify" : FastFailNames[static_cast<std::size_t>(reason)], ms, walkMs, waitMs, textureMs, lookedUp ? "slowest_lookup" : "first_bound");
+    }
+    countRevalidate(fast, ok, start);
 }
 
 // APS5_NO_EPOCH_REVALIDATE=1: the per-element registry, cache and stamp checks and the per-region
@@ -3216,7 +3300,7 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     reason = FastFail::Count;
     overlapping.clear();
     accepted = false;
-    if (!EpochRevalidate()) return fastRevalidateEach();
+    if (!EpochRevalidate()) return fastRevalidateEach(reason);
     const auto fail = [&reason](FastFail why) {
         reason = why;
         countFastFail(why);
@@ -3373,6 +3457,11 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
         Revalidations().serialSkips.fetch_add(1, std::memory_order_relaxed);
     }
     if (!GuestMemory::UnchangedSinceAll(queries)) return fail(FastFail::Changed);
+    for (const auto& surface : validatedTextures) {
+        if (surface.depth) continue;
+        if (DepthSurfaceCanSample(context, surface.resource)) return fail(FastFail::SampledDepth);
+        if (DepthSurfaceOverlaps(context.device, surface.resource.baseAddress, surface.bytes, true)) return fail(FastFail::Depth);
+    }
     if (!StorageImagesCached(context, images)) return fail(FastFail::Evicted);
     for (const auto* image : images) image->NoteProved();
     for (std::size_t i = 0; i < validatedTextures.size(); ++i) {
@@ -3383,42 +3472,50 @@ bool ShaderResources::fastRevalidate(std::uint64_t serialBefore, std::span<const
     return true;
 }
 
-bool ShaderResources::fastRevalidateEach() {
-    if (validatedTextures.size() != textures.size()) return false;
+bool ShaderResources::fastRevalidateEach(FastFail& reason) {
+    const auto fail = [&](FastFail why) {
+        reason = why;
+        countFastFail(why);
+        return false;
+    };
+    if (validatedTextures.size() != textures.size()) return fail(FastFail::NoRecord);
     for (std::size_t i = 0; i < textures.size(); ++i) {
         auto& surface = validatedTextures[i];
-        if (!surface.valid) return false;
+        if (!surface.valid) return fail(FastFail::NoRecord);
         if (surface.depth) {
-            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return false;
+            if (!DepthSurfaceHolds(context, surface.resource, textures[i].get())) return fail(FastFail::Depth);
             continue;
         }
-        if (textures[i]->Released()) return false;
+        if (textures[i]->Released()) return fail(FastFail::Replaced);
         const auto address = surface.resource.baseAddress;
         const auto bytes = static_cast<std::size_t>(surface.bytes);
-        if (!FlushDepthPlanes(address, bytes).empty()) return false;
+        if (!FlushDepthPlanes(address, bytes).empty()) return fail(FastFail::Changed);
         surface.collected = GuestMemory::CollectWrites(address, bytes);
-        if (surface.collected == 0) return false;
-        if (PendingStorageOverlaps(address, bytes, surface.source)) return false;
-        if (surface.source != nullptr && surface.resource.dccAddress != 0 && surface.resource.dccAddress != surface.source->Descriptor().dccAddress) return false;
+        if (surface.collected == 0) return fail(FastFail::Collect);
+        if (PendingStorageOverlaps(address, bytes, surface.source)) return fail(FastFail::Pending);
+        if (surface.source != nullptr && surface.resource.dccAddress != 0 && surface.resource.dccAddress != surface.source->Descriptor().dccAddress) return fail(FastFail::Keys);
         if (surface.source != nullptr) {
             // The view follows the image: it needs the image current with guest memory, as the
             // lookup's Refresh would make it.
-            if (!StorageImageCached(context, surface.source) || !GuestMemory::UnchangedSince(address, bytes, surface.source->GenerationFor(address, bytes))) return false;
+            if (!StorageImageCached(context, surface.source)) return fail(FastFail::Evicted);
+            if (!GuestMemory::UnchangedSince(address, bytes, surface.source->GenerationFor(address, bytes))) return fail(FastFail::Changed);
         } else if (!GuestMemory::UnchangedSince(address, bytes, surface.generation)) {
-            return false;
+            return fail(FastFail::Changed);
         }
-        if (surface.resource.dccAddress != 0 && TextureClearKeys(surface.resource, surface.bytes) != surface.keys) return false;
+        if (surface.resource.dccAddress != 0 && TextureClearKeys(surface.resource, surface.bytes) != surface.keys) return fail(FastFail::Keys);
         // A view made under fast-clear keys stays one only while its image still has results pending
         // over the surface (the lookup prefers them to the clear); once they are flushed the clear
         // the image cannot see wins and the lookup makes a snapshot (cachedTexture's hit rule).
-        if (surface.source != nullptr && surface.keys != DccKeys::Uncompressed && StorageTexture::FindPending(address, surface.bytes).get() != surface.source) return false;
+        if (surface.source != nullptr && surface.keys != DccKeys::Uncompressed && StorageTexture::FindPending(address, surface.bytes).get() != surface.source) return fail(FastFail::ClearedView);
+        if (DepthSurfaceCanSample(context, surface.resource)) return fail(FastFail::SampledDepth);
+        if (DepthSurfaceOverlaps(context.device, address, bytes, true)) return fail(FastFail::Depth);
     }
     for (std::size_t i = 0; i < storageTextures.size(); ++i) {
-        if (storageTextures[i] != nullptr && (i >= storageKeys.size() || (storageKeys[i] != 0 && storageKeys[i] != storageTextures[i]->Descriptor().dccAddress))) return false;
+        if (storageTextures[i] != nullptr && (i >= storageKeys.size() || (storageKeys[i] != 0 && storageKeys[i] != storageTextures[i]->Descriptor().dccAddress))) return fail(FastFail::StorageKeys);
         // Consecutive elements of one mip chain share the image (see addStorageImageBinding).
         if (i != 0 && storageTextures[i] == storageTextures[i - 1]) continue;
         const auto* image = storageTextures[i].get();
-        if (image == nullptr) return false;
+        if (image == nullptr) return fail(FastFail::NoRecord);
         // StorageTexture::Refresh checks the image's own surface, not the element's descriptor (one
         // image serves every descriptor of its memory, with or without a DCC address), and compares
         // its keys with the keys it was uploaded under, which only the image knows (they move to
@@ -3427,17 +3524,17 @@ bool ShaderResources::fastRevalidateEach() {
         // the full walk. Without a DCC address both sides of that compare are Uncompressed whatever
         // happened, and the memory checks below are Refresh's.
         const auto& own = image->Descriptor();
-        if (own.dccAddress != 0) return false;
+        if (own.dccAddress != 0) return fail(FastFail::StorageKeys);
         const auto address = own.baseAddress;
         const auto bytes = static_cast<std::size_t>(image->GuestBytes());
         if (DepthSurfaceOverlaps(context.device, address, bytes)) {
             depthGuardRefusals.fetch_add(1, std::memory_order_relaxed);
-            return false;
+            return fail(FastFail::Depth);
         }
-        if (GuestMemory::CollectWrites(address, bytes) == 0) return false;
-        if (PendingStorageOverlaps(address, bytes, image)) return false;
-        if (!StorageImageCached(context, image)) return false;
-        if (!GuestMemory::UnchangedSince(address, bytes, image->GenerationFor(address, bytes))) return false;
+        if (GuestMemory::CollectWrites(address, bytes) == 0) return fail(FastFail::Collect);
+        if (PendingStorageOverlaps(address, bytes, image)) return fail(FastFail::Pending);
+        if (!StorageImageCached(context, image)) return fail(FastFail::Evicted);
+        if (!GuestMemory::UnchangedSince(address, bytes, image->GenerationFor(address, bytes))) return fail(FastFail::Changed);
     }
     // Every check passed: snapshot textures are current at the collects issued before them. Storage
     // images keep their own generation: nothing was stamped above it, so the blocks a later write
@@ -3625,7 +3722,9 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
     if (!reusable || shaders.empty()) return false;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    FastFail reason = FastFail::Count;
+    std::optional<RevalidateTiming> timing;
+    if (profile) timing.emplace(reason, !validatedTextures.empty() ? validatedTextures.front().resource : !storageTextures.empty() && storageTextures.front() != nullptr ? storageTextures.front()->Descriptor() : GuestTextureResource{});
     for (const auto& region : directRegions) {
         static_cast<void>(FlushDepthPlanes(region.begin, static_cast<std::size_t>(region.end - region.begin)));
         CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
@@ -3642,7 +3741,10 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     // APS5_NO_FAST_REVALIDATE=1 always repeats the lookups.
     static const bool noFast = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
     const auto finish = [&](bool fast, bool ok, ProofFailure failure = ProofFailure::Other) {
-        if (profile) countRevalidate(fast, ok, start);
+        if (profile) {
+            timing->fast = fast;
+            timing->ok = ok;
+        }
         if (report != nullptr) report->failure = ok ? ProofFailure::None : failure;
         return ok;
     };
@@ -3654,6 +3756,19 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     // they must hand back the very objects the set's views belong to. The build appended them stage
     // by stage, binding by binding, so the walk repeats that order.
     const auto fullWalk = [&] {
+        if (report != nullptr) ++report->fullWalks;
+        std::optional<RevalidateWalkTiming> walkTiming;
+        if (profile) walkTiming.emplace(*timing, reason);
+        const auto lookup = [&](const GuestTextureResource& resource, std::uint64_t bytes, auto&& run) {
+            std::optional<RevalidateLookupTiming> lookupTiming;
+            if (profile) {
+                auto& work = Revalidations().work[static_cast<std::size_t>(reason)];
+                work.descriptors.fetch_add(1, std::memory_order_relaxed);
+                work.bytes.fetch_add(bytes, std::memory_order_relaxed);
+                lookupTiming.emplace(*timing, resource);
+            }
+            return run();
+        };
         lastFullWalk = std::chrono::steady_clock::now();
         lookupLog().clear();
         BuildLookups lookups;
@@ -3673,7 +3788,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                         const auto resource = DecodeTextureResource(words);
                         const VkComponentMapping components = ViewComponents(resource);
                         const VkImageViewType multisampleViewType = binding.imageShape == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-                        if (textureIndex >= textures.size() || cachedTexture(context, words, resource, components, 0, !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element), multisampleViewType) != textures[textureIndex]) return false;
+                        if (textureIndex >= textures.size() || lookup(resource, profile && textureIndex < validatedTextures.size() ? validatedTextures[textureIndex].bytes : 0, [&] { return cachedTexture(context, words, resource, components, 0, !binding.imageDepthCompare.empty() && binding.imageDepthCompare.at(element), multisampleViewType); }) != textures[textureIndex]) return false;
                         ++textureIndex;
                     }
                 } else if (binding.kind == ShaderRecompiler::DescriptorKind::StorageImage) {
@@ -3682,8 +3797,13 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                         if (IsNullTextureResource(words)) continue;
                         if (storageIndex >= storageTextures.size()) return false;
                         std::shared_ptr<StorageTexture> expected;
-                        if (SameAsPreviousStorageElement(binding, element) && StorageDedupeEnabled()) expected = storageTextures[storageIndex - 1];
-                        else expected = cachedStorageTexture(context, words, DecodeTextureResource(words), storageMips[storageIndex], 0, storageWritten[storageIndex]);
+                        if (SameAsPreviousStorageElement(binding, element) && StorageDedupeEnabled()) {
+                            expected = storageTextures[storageIndex - 1];
+                            if (profile) Revalidations().work[static_cast<std::size_t>(reason)].descriptors.fetch_add(1, std::memory_order_relaxed);
+                        } else {
+                            const auto resource = DecodeTextureResource(words);
+                            expected = lookup(resource, profile ? storageTextures[storageIndex]->GuestBytes() : 0, [&] { return cachedStorageTexture(context, words, resource, storageMips[storageIndex], 0, storageWritten[storageIndex]); });
+                        }
                         if (expected != storageTextures[storageIndex]) return false;
                         ++storageIndex;
                     }
@@ -3699,6 +3819,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                 auto next = cached.begin();
                 bool same = true;
                 for (std::uint32_t element = 0; same && element < images->count; ++element) {
+                    if (profile) Revalidations().work[static_cast<std::size_t>(reason)].descriptors.fetch_add(1, std::memory_order_relaxed);
                     const auto& entry = reused->elements[element];
                     const auto index = table.elementTextures[element];
                     if (entry.rejected) {
@@ -3721,7 +3842,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                 const auto words = firstLayerWords(raw, images->imageShapes.at(element), narrowed, false);
                 const auto resource = DecodeTextureResource(words);
                 const VkImageViewType multisampleViewType = images->imageShapes.at(element) == ShaderRecompiler::DescriptorImageShape::Image2DMultisampleArray ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D;
-                if (textureIndex >= textures.size() || table.elementTextures[element] != textureIndex || cachedTexture(context, words, resource, ViewComponents(resource), 0, images->imageDepthCompare.at(element), multisampleViewType) != textures[textureIndex]) return false;
+                if (textureIndex >= textures.size() || table.elementTextures[element] != textureIndex || lookup(resource, profile && textureIndex < validatedTextures.size() ? validatedTextures[textureIndex].bytes : 0, [&] { return cachedTexture(context, words, resource, ViewComponents(resource), 0, images->imageDepthCompare.at(element), multisampleViewType); }) != textures[textureIndex]) return false;
                 ++textureIndex;
             }
         }
@@ -3737,7 +3858,6 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
     thread_local std::vector<PendingOverlap>* refreshedSlot = nullptr;
     auto& refreshed = ShaderRecompiler::ThreadOwned(refreshedSlot);
     refreshed.clear();
-    FastFail reason = FastFail::Count;
     bool accepted = false;
     bool fast = !noFast && fastRevalidate(serialBefore, refreshed, reason, overlapping, accepted);
     // T1 (design_cpu_final M3, rule RT1): a Pending failure whose overlapping images are foreign
@@ -3766,8 +3886,8 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         reason = FastFail::Audit;
     }
     if (report != nullptr) report->path = !fast ? ProofPath::Full : ownRefreshed ? ProofPath::OwnRefreshed : ProofPath::Fast;
+    if (!fast && reason == FastFail::SampledDepth) return finish(false, false);
     if (!fast) {
-        countFullWalk(reason);
         const auto walkStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         const bool walked = fullWalk();
         countFullWalkTime(reason, walkStart);

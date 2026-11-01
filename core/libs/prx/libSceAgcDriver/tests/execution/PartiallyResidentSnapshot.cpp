@@ -1,10 +1,13 @@
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "FixtureDeviceSelection.hpp"
@@ -24,6 +27,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -37,6 +41,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -561,6 +566,222 @@ void ComparedShared(const Context& context) {
 }
 #endif
 
+ShaderRecompiler::RecompileResult SampledProgram(const std::array<std::uint32_t, 8>& words) {
+    ShaderRecompiler::DescriptorBinding binding{};
+    binding.kind = ShaderRecompiler::DescriptorKind::SampledImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.descriptorSet = 0;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstImageBinding + PlaceholderDimensionsPerClass + 2u;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageWritten.assign(1, false);
+    binding.imageSamplers.assign(1, 0u);
+    binding.guestDescriptor.assign(words.begin(), words.end());
+    ShaderRecompiler::RecompileResult program;
+    program.bindings.push_back(std::move(binding));
+    return program;
+}
+
+void DepthTransition(Context context, ReservedSurface& surface) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    surface.Commit(0, SurfaceBytes);
+    std::memset(surface.Data(), 0, SurfaceBytes);
+    const auto address = surface.Address();
+    auto words = Descriptor(address);
+    constexpr std::uint32_t Format32Float = 22;
+    words[1] = (words[1] & ~(0x3ffu << 20u)) | (Format32Float << 20u);
+    auto program = SampledProgram(words);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    const auto generation = AgcDriver::GuestMemory::CollectWrites(address, SurfaceBytes);
+    Require(generation != 0, "the depth transition surface is not write-tracked");
+    ShaderResources resources(context, shader);
+    Require(resources.Reusable() && resources.Revalidate(shader), "the ordinary sampled resources did not reuse before depth registration");
+    const auto before = resources.SampledTextures().front();
+    try {
+        const DepthTarget target{address, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+        Require(DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, "the depth owner was not registered");
+        Require(FlushDepthPlanes(address, SurfaceBytes).empty(), "the depth registration unexpectedly made the guest bytes stale");
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        Require(AgcDriver::GuestMemory::CollectWrites(address, SurfaceBytes) != 0 && AgcDriver::GuestMemory::UnchangedSince(address, SurfaceBytes, generation), "the depth registration changed the guest bytes");
+        ShaderResources::ProofReport report;
+        Require(!resources.Revalidate(shader, &report), "sampled resources reused a stale texture after depth registration without a guest write");
+        Require(report.fullWalks == 0, "the definitive stale depth refusal ran an unnecessary full walk");
+        ShaderResources rebuilt(context, shader);
+        const auto after = rebuilt.SampledTextures().front();
+        Require(after != before && DepthSurfaceHolds(context, DecodeTextureResource(words), after.get()), "the new depth owner did not replace the ordinary sampled texture");
+        Require(rebuilt.Revalidate(shader), "the rebuilt depth resources did not reuse");
+    } catch (...) {
+        ClearDepthSurfaces(context.device);
+        throw;
+    }
+    ClearDepthSurfaces(context.device);
+}
+
+void DepthOverlap(Context context, ReservedSurface& surface) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    surface.Commit(0, SurfaceBytes);
+    std::memset(surface.Data(), 0, SurfaceBytes);
+    const auto address = surface.Address() + BlockBytes;
+    const auto words = Descriptor(address, Side / 2u);
+    const auto bytes = DescribeSurface(DecodeTextureResource(words)).guestBytes;
+    auto program = SampledProgram(words);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    try {
+        const DepthTarget target{surface.Address(), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+        Require(DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, "the overlapping depth owner was not registered");
+        Require(DepthSurfaceOverlaps(context.device, address, bytes) && !DepthSurfaceAt(address), "the sampled texture does not overlap a depth surface at a different base");
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        ShaderResources resources(context, shader);
+        Require(resources.Reusable(), "the overlapping sampled resources are not reusable");
+        const auto texture = resources.SampledTextures().front();
+        Require(texture != nullptr && !texture->ViewsStorageImage() && !DepthSurfaceHolds(context, DecodeTextureResource(words), texture.get()), "the overlapping sampled texture did not remain an ordinary snapshot");
+        Require(CachedSampledTexture(context, words) == texture, "the full lookup replaced the overlapping sampled texture");
+        for (std::size_t use = 0; use < 3; ++use) {
+            Require(DepthSurfaceAt(target.address) && DepthSurfaceOverlaps(context.device, address, bytes), "the overlapping depth surface did not stay live");
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            ShaderResources::ProofReport report;
+            Require(resources.Revalidate(shader, &report), "the overlapping sampled resources failed revalidation");
+            Require(report.path == ShaderResources::ProofPath::Fast, "the overlapping sampled texture left the fast proof for the full walk");
+            Require(resources.SampledTextures().front() == texture, "the fast proof replaced the overlapping sampled texture");
+        }
+    } catch (...) {
+        ClearDepthSurfaces(context.device);
+        throw;
+    }
+    ClearDepthSurfaces(context.device);
+}
+
+void DepthNonservable(Context context, ReservedSurface& surface, bool dimensions, bool retry, bool ownSource = false) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    surface.Commit(0, SurfaceBytes);
+    std::memset(surface.Data(), 0, SurfaceBytes);
+    auto words = Descriptor(surface.Address(), dimensions ? Side / 2u : Side);
+    if (dimensions) words[1] = (words[1] & ~(0x3ffu << 20u)) | (22u << 20u);
+    auto program = SampledProgram(words);
+    ReservedSurface storage(SurfaceBytes);
+    storage.Commit(0, SurfaceBytes);
+    std::memset(storage.Data(), 0, SurfaceBytes);
+    const auto storageWords = Descriptor(storage.Address());
+    if (retry) {
+        auto binding = program.bindings.front();
+        binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+        binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+        binding.imageWritten.assign(1, true);
+        binding.guestDescriptor.assign(storageWords.begin(), storageWords.end());
+        program.bindings.push_back(std::move(binding));
+    }
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    std::shared_ptr<StorageTexture> source;
+    if (ownSource) {
+        source = CachedStorageSurface(context, DecodeTextureResource(words));
+        source->MarkDirty();
+    }
+    ShaderResources resources(context, shader);
+    Require(resources.Reusable(), "the non-servable depth fixture is not reusable");
+    const auto texture = resources.SampledTextures().front();
+    try {
+        const DepthTarget target{surface.Address(), 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 1.0f, 0};
+        Require(DepthSurfaceView(context, target, false) != VK_NULL_HANDLE, "the non-servable depth owner was not registered");
+        const auto resource = DecodeTextureResource(words);
+        Require(DepthSurfaceAt(surface.Address()), "the non-servable depth owner has another base");
+        Require(DepthSurfaceTexture(context, words, resource, {}) == nullptr, "the depth owner unexpectedly serves the sampled descriptor");
+        if (!ownSource) Require(!PendingStorageOverlaps(surface.Address(), DescribeSurface(resource).guestBytes, nullptr), "the sampled fixture has a pending overlap");
+        std::shared_ptr<StorageTexture> foreign;
+        if (ownSource) {
+            Require(texture->StorageSource() == source.get(), "the sampled fixture does not view its own source");
+            foreign = StorageTexture::Create(context, *context.detiler, DecodeTextureResource(Descriptor(surface.Address() + BlockBytes, Side / 2u)), 0);
+            foreign->MarkDirty();
+            source->MarkDirty();
+            Require(PendingStorageOverlaps(surface.Address(), DescribeSurface(resource).guestBytes, source.get()), "the own-source fixture has no foreign overlap");
+            Require(StorageTexture::FindPending(surface.Address(), DescribeSurface(resource).guestBytes) == source, "the sampled lookup does not select its own source");
+        } else if (retry) {
+            foreign = StorageTexture::Create(context, *context.detiler, DecodeTextureResource(storageWords), 0);
+            foreign->MarkDirty();
+            Require(PendingStorageOverlaps(storage.Address(), SurfaceBytes, nullptr), "the T1 fixture has no foreign pending storage");
+        }
+        for (std::size_t use = 0; use < 3; ++use) {
+            AgcDriver::GuestMemory::BumpCollectEpoch();
+            ShaderResources::ProofReport report;
+            Require(resources.Revalidate(shader, &report), "a non-servable depth owner refused sampled reuse");
+            const auto expected = retry && use == 0 ? ShaderResources::ProofPath::OwnRefreshed : ShaderResources::ProofPath::Fast;
+            Require(report.path == expected, "a non-servable depth owner bypassed the fast or T1 proof");
+            Require(report.fullWalks == 0, "an empty sampled overlap caused an unnecessary full walk");
+            Require(resources.SampledTextures().front() == texture, "a non-servable depth owner replaced the sampled texture");
+        }
+    } catch (...) {
+        ClearDepthSurfaces(context.device);
+        ClearCachedTextures(context.device);
+        throw;
+    }
+    ClearDepthSurfaces(context.device);
+    ClearCachedTextures(context.device);
+}
+
+PFN_vkGetDeviceProcAddr profileResolver = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL ProfileWait(VkDevice device, std::uint32_t count, const VkFence* fences, VkBool32 all, std::uint64_t timeout) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    return reinterpret_cast<PFN_vkWaitForFences>(profileResolver(device, "vkWaitForFences"))(device, count, fences, all, timeout);
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL ProfileResolve(VkDevice device, const char* name) {
+    if (std::strcmp(name, "vkWaitForFences") == 0) return reinterpret_cast<PFN_vkVoidFunction>(&ProfileWait);
+    return profileResolver(device, name);
+}
+
+void RevalidationProfile(Context context, ReservedSurface& surface) {
+    Require(LookupOutcomes::Profiled(), "the revalidation profiling test needs APS5_PROFILE_DRAW");
+    profileResolver = context.deviceProc;
+    context.deviceProc = &ProfileResolve;
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    surface.Commit(0, SurfaceBytes);
+    std::memset(surface.Data(), 0, SurfaceBytes);
+    const auto words = Descriptor(surface.Address());
+    auto program = SampledProgram(words);
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    ShaderResources resources(context, shader);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    surface.Data()[0] = 1;
+    const auto uploads = ThreadLookupOutcomes().counts[LookupOutcomes::SnapshotUpload];
+    const auto waits = Recorder::ThreadWaitCount();
+    const auto waitMs = Recorder::ThreadWaitedMs();
+    ShaderResources::ProofReport report;
+    Require(!resources.Revalidate(shader, &report) && report.fullWalks == 1, "changed sampled bytes did not run one rejecting full walk");
+    Require(ThreadLookupOutcomes().counts[LookupOutcomes::SnapshotUpload] == uploads + 1, "the full walk did not count its snapshot upload");
+    Require(Recorder::ThreadWaitCount() > waits && Recorder::ThreadWaitedMs() - waitMs >= 20.0, "the full walk did not count its CommandBatch wait");
+    ShaderResources rebuilt(context, shader);
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    Require(rebuilt.Revalidate(shader, &report) && report.fullWalks == 0, "the unchanged sampled proof ran a full walk");
+    Require(rebuilt.Revalidate(shader, &report) && report.fullWalks == 0, "epoch proof reuse counted as a full walk");
+    {
+        Recorder recorder(context);
+        recorder.Activate();
+        recorder.Keep(std::make_shared<int>(0), 3 * Recorder::KeptBytesBudget);
+        AgcDriver::GuestMemory::MarkWritten(surface.Address(), 4);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        const auto before = Recorder::ThreadWaitCount();
+        const auto beforeMs = Recorder::ThreadWaitedMs();
+        Require(rebuilt.Revalidate(shader, &report) && report.fullWalks == 1, "a stamped snapshot did not run its comparison walk");
+        Require(Recorder::ThreadWaitCount() > before && Recorder::ThreadWaitedMs() - beforeMs >= 20.0, "the full walk did not count its retained-budget recorder wait");
+        Require(recorder.InFlightKeptBytes() <= 2 * Recorder::KeptBytesBudget, "the full lookup did not bound retained bytes");
+        recorder.Sync();
+    }
+}
+
 void PendingStores(const Context& context, ReservedSurface& surface) {
     const auto address = surface.Address();
     const auto words = Descriptor(address);
@@ -629,6 +850,13 @@ int main(int argc, char** argv) {
                 LargeTracked(context, surface, LargeSurfaceBytes);
                 LargeTracked(context, surface, BlockBytes);
             } else if (argc == 2 && std::string_view(argv[1]) == "--pending-stores") PendingStores(context, surface);
+            else if (argc == 2 && std::string_view(argv[1]) == "--depth-transition") DepthTransition(context, surface);
+            else if (argc == 2 && std::string_view(argv[1]) == "--depth-overlap") DepthOverlap(context, surface);
+            else if (argc == 2 && std::string_view(argv[1]) == "--depth-size") DepthNonservable(context, surface, true, false);
+            else if (argc == 2 && std::string_view(argv[1]) == "--depth-format") DepthNonservable(context, surface, false, false);
+            else if (argc == 2 && std::string_view(argv[1]) == "--depth-retry") DepthNonservable(context, surface, false, true);
+            else if (argc == 2 && std::string_view(argv[1]) == "--depth-own-source") DepthNonservable(context, surface, false, false, true);
+            else if (argc == 2 && std::string_view(argv[1]) == "--revalidation-profile") RevalidationProfile(context, surface);
             else if (argc == 2 && std::string_view(argv[1]) == "--compared-shared") {
 #ifdef _WIN32
                 ComparedShared(context);
