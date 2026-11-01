@@ -9,6 +9,7 @@
 ### Functional
 
 - [Constant-return exports](../../../core/libs/prx/libSceNKWebKit/src/ConstantExports.cpp) (libSceNKWebKit) - 137 exports answer with a fixed value in the PS5 11.00 module: 111 execute `xor eax,eax; ret`, 13 `mov eax,imm32; ret` and 13 `mov al,1; ret` (addresses and bodies from the 11.00 `libSceNKWebKit.sprx`, SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`; NIDs recomputed from the declared names). The 124 EAX-writing bodies measure the 32-bit return; the 13 `mov al,1` bodies write only the low byte, so for them only AL is measured and the upper bits are unspecified. The declared prototypes stay the no-parameter `int` placeholders, so no other width, pointer or floating-point return is claimed. Only 11.00 was measured.
+- [Field setters](../../../core/libs/prx/libSceNKWebKit/src/FieldSetters.cpp) (libSceNKWebKit) - 55 exports store an argument into a fixed field of the object in the PS5 11.00 module: 43 store the second argument at offset 0, 9 store it at offsets 8 to 56, and 3 store a 32-bit value at offsets 8, 16 and 32. The bodies, sizes and offsets come from the 11.00 `libSceNKWebKit.sprx` (SHA-256 `3af992253665387feeb5df90ff27dff683e3aa270cc4d92a0535b46ab18fa20d`); object layouts, field meanings, wider values and other ABI cases are unverified, and the minimum object size (offset plus width) is not measured, so a shorter object is written past its end. Only the measured store width is covered; a null object throws.
 
 - [JavaScriptCore C API](../../../core/libs/prx/libSceNKWebKit/src/JscContext.cpp) (libSceNKWebKit) - `JS*` runs on QuickJS-NG (`3rdparty/quickjs`), not JavaScriptCore: there is no JIT and no conservative stack scan, and error messages, stack traces and property order come from QuickJS. An unprotected `JSObjectRef` held only in a native variable or heap structure across `JSGarbageCollect` is collected, where JavaScriptCore keeps it through its stack scan; `JSValueProtect`, a marking constraint, a JavaScript reference or an active callback frame keep it alive. `JSStringRef` values are `libSceJsc` strings.
 - [Dictionary key order](../../../core/libs/prx/libSceNKWebKit/src/Dictionary.cpp) (libSceNKWebKit) - `WKDictionaryCopyKeys` returns keys sorted by UTF-16 code unit, not in the `WTF::HashMap` iteration order of [WKDictionary.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/Shared/API/c/WKDictionary.cpp).
@@ -27,7 +28,7 @@
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/d44995f181e1818977bd38f0e6fc0f34/8afcb14b0707a09b6274ff7f7bcf33ef46cfe2e7) records the module, library, symbol type and NIDs for the declarations in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp); it is a metadata summary rather than independent verification. For the 255 absent from the public catalogue, [per-image ELF records](https://gist.github.com/kyon-eth/147be8dd556e9cced2577ccbed548972/1a659ecfe819e724675991a574a1aebb5fbb48e5) include the raw qualified names, module and library identities, symbol type, values and sizes; the record file SHA-256 is `44bdc4d6073192a8f41b7be359b75364b3d41dbbd11ce649924b8cebdd4ffe51`. Image labels are not authenticated.
 
-- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7439 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
+- [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 7384 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 
 | Name | NID |
 | --- | --- |
@@ -1035,14 +1036,8 @@
 | `_ZN3JSC14JSRunLoopTimerD1Ev` | `nJNBTl3iOL0` |
 | `_ZN3JSC14JSRunLoopTimerD2Ev` | `4mOMvysd4IA` |
 | `_ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE` | `qgS+x1WhS-c` |
-| `_ZN3JSC14ProtoCallFrame12setCodeBlockEPNS_9CodeBlockE` | `ql2w-SrRGbI` |
-| `_ZN3JSC14ProtoCallFrame12setThisValueENS_7JSValueE` | `fF-B+-kmzuU` |
 | `_ZN3JSC14ProtoCallFrame15clearCurrentVPCEv` | `qiuiYDTTSv0` |
-| `_ZN3JSC14ProtoCallFrame15setGlobalObjectEPNS_14JSGlobalObjectE` | `rbqZK23Mr1M` |
-| `_ZN3JSC14ProtoCallFrame17setPaddedArgCountEj` | `PaG1xovlZvk` |
-| `_ZN3JSC14ProtoCallFrame29setArgumentCountIncludingThisEi` | `UrIl1bIUtak` |
 | `_ZN3JSC14ProtoCallFrame8argumentEm` | `sq4hb-Vo1+0` |
-| `_ZN3JSC14ProtoCallFrame9setCalleeEPNS_8JSObjectE` | `1tKwS9K7BZA` |
 | `_ZN3JSC14ProtoCallFrameC1Ev` | `CIszVLmspgo` |
 | `_ZN3JSC14ProtoCallFrameC2Ev` | `SJJia2hm2ig` |
 | `_ZN3JSC14ProtoCallFrameaSERKS0_` | `WfbtnyN65i0` |
@@ -2499,7 +2494,6 @@
 | `_ZN7WebCore13GraphicsLayer54noteDeviceOrPageScaleFactorChangedIncludingDescendantsEv` | `ZjPWlTi4iXM` |
 | `_ZN7WebCore13GraphicsLayer6createEPNS_20GraphicsLayerFactoryERNS_19GraphicsLayerClientENS0_4TypeE` | `HqUX52XTFc4` |
 | `_ZN7WebCore13GraphicsLayer7setSizeERKNS_9FloatSizeE` | `FwXIWwbIPrI` |
-| `_ZN7WebCore13GraphicsLayer9setClientERNS_19GraphicsLayerClientE` | `k7Sga5WS4zU` |
 | `_ZN7WebCore13GraphicsLayerC2ENS0_4TypeERNS_19GraphicsLayerClientE` | `OEdu+lsMIho` |
 | `_ZN7WebCore13GraphicsLayerD0Ev` | `5Rj2MyJZATM` |
 | `_ZN7WebCore13GraphicsLayerD1Ev` | `Qf7JVe4YMQ8` |
@@ -3452,7 +3446,6 @@
 | `_ZN7WebCore18TextureMapperLayer14setAnchorPointERKNS_12FloatPoint3DE` | `490GyRIQAu0` |
 | `_ZN7WebCore18TextureMapperLayer14setPreserves3DEb` | `s7YLdo2-V3E` |
 | `_ZN7WebCore18TextureMapperLayer14syncAnimationsEN3WTF13MonotonicTimeE` | `0W9b8BHz5k8` |
-| `_ZN7WebCore18TextureMapperLayer15setBackingStoreEPNS_25TextureMapperBackingStoreE` | `nqR3CLMiJoM` |
 | `_ZN7WebCore18TextureMapperLayer15setContentsRectERKNS_9FloatRectE` | `iaaAR8GaGaU` |
 | `_ZN7WebCore18TextureMapperLayer15setDebugVisualsEbRKNS_5ColorEf` | `jMFGWezg5Sc` |
 | `_ZN7WebCore18TextureMapperLayer15setDrawsContentEb` | `hP0LBvbf3IY` |
@@ -3460,7 +3453,6 @@
 | `_ZN7WebCore18TextureMapperLayer16removeFromParentEv` | `lR6b+yl6u3c` |
 | `_ZN7WebCore18TextureMapperLayer16replicaTransformEv` | `xXZXZyGw65E` |
 | `_ZN7WebCore18TextureMapperLayer16setBackdropLayerEPS0_` | `xZposkLLevs` |
-| `_ZN7WebCore18TextureMapperLayer16setContentsLayerEPNS_26TextureMapperPlatformLayerE` | `GtdVS0krX2M` |
 | `_ZN7WebCore18TextureMapperLayer16setMasksToBoundsEb` | `Kky+pXcoHFY` |
 | `_ZN7WebCore18TextureMapperLayer17removeAllChildrenEv` | `kozdUl5szDE` |
 | `_ZN7WebCore18TextureMapperLayer17setContentsOpaqueEb` | `3MoxakHN9Eg` |
@@ -4034,10 +4026,8 @@
 | `_ZN7WebCore22strictCSSParserContextEv` | `HdE+dwXD45U` |
 | `_ZN7WebCore22throwArgumentTypeErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEjPKcS6_S6_S6_` | `NaGc6KEsNxs` |
 | `_ZN7WebCore22throwSequenceTypeErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeE` | `ZrUUA39Xu+Q` |
-| `_ZN7WebCore23ApplicationCacheStorage14setMaximumSizeEl` | `btgimHAqS2Y` |
 | `_ZN7WebCore23ApplicationCacheStorage15deleteAllCachesEv` | `CtO0q0-CWfY` |
 | `_ZN7WebCore23ApplicationCacheStorage16deleteAllEntriesEv` | `ydF4H0hkWJI` |
-| `_ZN7WebCore23ApplicationCacheStorage21setDefaultOriginQuotaEl` | `Iq-nLBtQE7U` |
 | `_ZN7WebCore23ApplicationCacheStorage23calculateQuotaForOriginERKNS_14SecurityOriginERl` | `mQxh1QCEoG8` |
 | `_ZN7WebCore23ApplicationCacheStorage26storeUpdatedQuotaForOriginEPKNS_14SecurityOriginEl` | `1xchZd188u0` |
 | `_ZN7WebCore23ApplicationCacheStorage5emptyEv` | `BWMWo+5rLW0` |
@@ -4333,9 +4323,7 @@
 | `_ZN7WebCore28throwRequiredMemberTypeErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeEPKcS6_S6_` | `1oeM2V1M67o` |
 | `_ZN7WebCore28topPrivatelyControlledDomainERKN3WTF6StringE` | `GxVDSv5dIws` |
 | `_ZN7WebCore29SQLiteStatementAutoResetScopeC1EOS0_` | `EiOhI0xdnqs` |
-| `_ZN7WebCore29SQLiteStatementAutoResetScopeC1EPNS_15SQLiteStatementE` | `uYdGxAnSrr4` |
 | `_ZN7WebCore29SQLiteStatementAutoResetScopeC2EOS0_` | `I6BK+r-jqhk` |
-| `_ZN7WebCore29SQLiteStatementAutoResetScopeC2EPNS_15SQLiteStatementE` | `db4-SF3n8lE` |
 | `_ZN7WebCore29SQLiteStatementAutoResetScopeD1Ev` | `-D-Dsk4CZXA` |
 | `_ZN7WebCore29SQLiteStatementAutoResetScopeD2Ev` | `W4vhaG7GsbI` |
 | `_ZN7WebCore29SQLiteStatementAutoResetScopeaSEOS0_` | `5Z7z4XjqxcA` |
@@ -5354,8 +5342,6 @@
 | `_ZN9Inspector21CSSFrontendDispatcher17styleSheetChangedERKN3WTF6StringE` | `ki3Vuu7oPhg` |
 | `_ZN9Inspector21CSSFrontendDispatcher17styleSheetRemovedERKN3WTF6StringE` | `OxDS41BqXws` |
 | `_ZN9Inspector21CSSFrontendDispatcher23mediaQueryResultChangedEv` | `PQ3n7JgVcUw` |
-| `_ZN9Inspector21CSSFrontendDispatcherC1ERNS_14FrontendRouterE` | `KWYqIOv7gJk` |
-| `_ZN9Inspector21CSSFrontendDispatcherC2ERNS_14FrontendRouterE` | `Sr+YQoaMQds` |
 | `_ZN9Inspector21CSSFrontendDispatcherdaEPv` | `kCyuvXqGXu0` |
 | `_ZN9Inspector21CSSFrontendDispatcherdlEPv` | `TumAKF0QLX0` |
 | `_ZN9Inspector21CSSFrontendDispatchernaEmPv` | `QABMTc77l10` |
@@ -5374,8 +5360,6 @@
 | `_ZN9Inspector21DOMFrontendDispatcher25customElementStateChangedEiNS_8Protocol3DOM18CustomElementStateE` | `GYqyvAJtRdw` |
 | `_ZN9Inspector21DOMFrontendDispatcher34powerEfficientPlaybackStateChangedEidb` | `B-fuSvib9CA` |
 | `_ZN9Inspector21DOMFrontendDispatcher7inspectEi` | `JcUZCNbdFGA` |
-| `_ZN9Inspector21DOMFrontendDispatcherC1ERNS_14FrontendRouterE` | `UqhA2SigBj8` |
-| `_ZN9Inspector21DOMFrontendDispatcherC2ERNS_14FrontendRouterE` | `Eb3SYtDAAj0` |
 | `_ZN9Inspector21DOMFrontendDispatcherdaEPv` | `a1S5ypgxOOI` |
 | `_ZN9Inspector21DOMFrontendDispatcherdlEPv` | `UvxHBngd1H8` |
 | `_ZN9Inspector21DOMFrontendDispatchernaEmPv` | `kihUpacjs+I` |
@@ -5409,7 +5393,6 @@
 | `_ZN9Inspector21InjectedScriptManagernwEm` | `y6xETTqSGWM` |
 | `_ZN9Inspector21InspectorConsoleAgent10countResetEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `1UFWAsaTuXg` |
 | `_ZN9Inspector21InspectorConsoleAgent10stopTimingEPN3JSC14JSGlobalObjectERKN3WTF6StringE` | `C3uEVqmgg48` |
-| `_ZN9Inspector21InspectorConsoleAgent12setHeapAgentEPNS_18InspectorHeapAgentE` | `OGrbPHHcWHM` |
 | `_ZN9Inspector21InspectorConsoleAgent13discardValuesEv` | `Jw82p29mYBk` |
 | `_ZN9Inspector21InspectorConsoleAgent16takeHeapSnapshotERKN3WTF6StringE` | `HSY0-IPlV4k` |
 | `_ZN9Inspector21InspectorConsoleAgent27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE` | `Vo3OWY+Pr9Q` |
@@ -5464,8 +5447,6 @@
 | `_ZN9Inspector22ContentSearchUtilities29countRegularExpressionMatchesERKN3JSC4Yarr17RegularExpressionERKN3WTF6StringE` | `jmHSpqaEYMI` |
 | `_ZN9Inspector22ContentSearchUtilities38createRegularExpressionForSearchStringERKN3WTF6StringEbNS0_16SearchStringTypeE` | `UlQSBk8DDBg` |
 | `_ZN9Inspector22HeapFrontendDispatcher16trackingCompleteEdRKN3WTF6StringE` | `kD4ppqGHUsI` |
-| `_ZN9Inspector22HeapFrontendDispatcherC1ERNS_14FrontendRouterE` | `FZacimxYLYc` |
-| `_ZN9Inspector22HeapFrontendDispatcherC2ERNS_14FrontendRouterE` | `JYuYFcPEJhw` |
 | `_ZN9Inspector22HeapFrontendDispatcherdaEPv` | `MYopeEAoQeU` |
 | `_ZN9Inspector22HeapFrontendDispatcherdlEPv` | `lz5UM9uG8w0` |
 | `_ZN9Inspector22HeapFrontendDispatchernaEmPv` | `Bea-ElS5IZA` |
@@ -5511,8 +5492,6 @@
 | `_ZN9Inspector22PageFrontendDispatcher19frameStoppedLoadingERKN3WTF6StringE` | `SNxP9g4ifrE` |
 | `_ZN9Inspector22PageFrontendDispatcher20domContentEventFiredEd` | `hk2Vi4aJODY` |
 | `_ZN9Inspector22PageFrontendDispatcher24frameScheduledNavigationERKN3WTF6StringEd` | `e50w9CgqAVM` |
-| `_ZN9Inspector22PageFrontendDispatcherC1ERNS_14FrontendRouterE` | `w-J2Q4evZwQ` |
-| `_ZN9Inspector22PageFrontendDispatcherC2ERNS_14FrontendRouterE` | `wWyRB5M4a3Y` |
 | `_ZN9Inspector22PageFrontendDispatcherdaEPv` | `wvB-vvrz6Es` |
 | `_ZN9Inspector22PageFrontendDispatcherdlEPv` | `QHTLo69uRWI` |
 | `_ZN9Inspector22PageFrontendDispatchernaEmPv` | `u3NmAGMYF2E` |
@@ -5557,8 +5536,6 @@
 | `_ZN9Inspector24CanvasFrontendDispatcher16recordingStartedERKN3WTF6StringENS_8Protocol9Recording9InitiatorE` | `16iE1U5SFuk` |
 | `_ZN9Inspector24CanvasFrontendDispatcher18clientNodesChangedERKN3WTF6StringE` | `6Ah3qEzF5fg` |
 | `_ZN9Inspector24CanvasFrontendDispatcher19canvasMemoryChangedERKN3WTF6StringEd` | `XrTJtDbKnHg` |
-| `_ZN9Inspector24CanvasFrontendDispatcherC1ERNS_14FrontendRouterE` | `zv7EBvM-xCQ` |
-| `_ZN9Inspector24CanvasFrontendDispatcherC2ERNS_14FrontendRouterE` | `z8TY8SaPtIw` |
 | `_ZN9Inspector24CanvasFrontendDispatcherdaEPv` | `NVkKQ0n1t8U` |
 | `_ZN9Inspector24CanvasFrontendDispatcherdlEPv` | `1O9g6WFku7c` |
 | `_ZN9Inspector24CanvasFrontendDispatchernaEmPv` | `9uLllMP6nhU` |
@@ -5576,7 +5553,6 @@
 | `_ZN9Inspector24NetworkBackendDispatcherD0Ev` | `6SKAMuUgdIg` |
 | `_ZN9Inspector24NetworkBackendDispatcherD1Ev` | `x6aTU6zBgYg` |
 | `_ZN9Inspector24NetworkBackendDispatcherD2Ev` | `15Cz0VyipAQ` |
-| `_ZN9Inspector24RemoteControllableTarget19setTargetIdentifierEj` | `8LNY0wNMOFo` |
 | `_ZN9Inspector24RemoteControllableTarget4initEv` | `B6OMnyK7ouA` |
 | `_ZN9Inspector24RemoteControllableTarget6updateEv` | `mGd9i+ILujA` |
 | `_ZN9Inspector24RemoteControllableTargetC2ERKS0_` | `XRmIkQ5gbwA` |
@@ -5594,8 +5570,6 @@
 | `_ZN9Inspector24TargetFrontendDispatcher15targetDestroyedERKN3WTF6StringE` | `eVUG1wzRuAA` |
 | `_ZN9Inspector24TargetFrontendDispatcher25dispatchMessageFromTargetERKN3WTF6StringES4_` | `E6XSG7zCNk8` |
 | `_ZN9Inspector24TargetFrontendDispatcher26didCommitProvisionalTargetERKN3WTF6StringES4_` | `NWZbcznrH4E` |
-| `_ZN9Inspector24TargetFrontendDispatcherC1ERNS_14FrontendRouterE` | `vxx2FqLL02Y` |
-| `_ZN9Inspector24TargetFrontendDispatcherC2ERNS_14FrontendRouterE` | `IqvI72sPVyw` |
 | `_ZN9Inspector24TargetFrontendDispatcherdaEPv` | `b3LcL-LNpus` |
 | `_ZN9Inspector24TargetFrontendDispatcherdlEPv` | `LrKTHvwbMM0` |
 | `_ZN9Inspector24TargetFrontendDispatchernaEmPv` | `4rIiwRN5juk` |
@@ -5604,24 +5578,18 @@
 | `_ZN9Inspector24WorkerFrontendDispatcher13workerCreatedERKN3WTF6StringES4_S4_` | `Nk-XIvILlUQ` |
 | `_ZN9Inspector24WorkerFrontendDispatcher16workerTerminatedERKN3WTF6StringE` | `apl6KD3oTLg` |
 | `_ZN9Inspector24WorkerFrontendDispatcher25dispatchMessageFromWorkerERKN3WTF6StringES4_` | `4Mbb6GJcxos` |
-| `_ZN9Inspector24WorkerFrontendDispatcherC1ERNS_14FrontendRouterE` | `9LcAvVHbGqg` |
-| `_ZN9Inspector24WorkerFrontendDispatcherC2ERNS_14FrontendRouterE` | `qyEX-fuiboI` |
 | `_ZN9Inspector24WorkerFrontendDispatcherdaEPv` | `qYjc+6V1cmo` |
 | `_ZN9Inspector24WorkerFrontendDispatcherdlEPv` | `ZAWn29mGSe8` |
 | `_ZN9Inspector24WorkerFrontendDispatchernaEmPv` | `5I8V274Iw9Y` |
 | `_ZN9Inspector24WorkerFrontendDispatchernaEm` | `y7Y2k8D6Bv4` |
 | `_ZN9Inspector24WorkerFrontendDispatchernwEmPv` | `X3xFNY5k+MQ` |
 | `_ZN9Inspector24WorkerFrontendDispatchernwEm` | `Yy7p8z0z7Nk` |
-| `_ZN9Inspector25BrowserFrontendDispatcherC1ERNS_14FrontendRouterE` | `TuNDnlmOxTw` |
-| `_ZN9Inspector25BrowserFrontendDispatcherC2ERNS_14FrontendRouterE` | `kbzzvMGjXIA` |
 | `_ZN9Inspector25BrowserFrontendDispatcherdaEPv` | `er6KKExFGgc` |
 | `_ZN9Inspector25BrowserFrontendDispatcherdlEPv` | `eWWZEruU6eQ` |
 | `_ZN9Inspector25BrowserFrontendDispatchernaEmPv` | `BQyTr76CMQc` |
 | `_ZN9Inspector25BrowserFrontendDispatchernaEm` | `oYJAITu1ga8` |
 | `_ZN9Inspector25BrowserFrontendDispatchernwEm` | `Fa3M9vt2GNg` |
 | `_ZN9Inspector25BrowserFrontendDispatchernwEmPv` | `8p8NfEvYtak` |
-| `_ZN9Inspector25ConsoleFrontendDispatcherC1ERNS_14FrontendRouterE` | `gHW1YCnRe9s` |
-| `_ZN9Inspector25ConsoleFrontendDispatcherC2ERNS_14FrontendRouterE` | `nVn730pUTh4` |
 | `_ZN9Inspector25ConsoleFrontendDispatcherdaEPv` | `7ht8b5GNMMY` |
 | `_ZN9Inspector25ConsoleFrontendDispatcherdlEPv` | `tkfkwdKXdSM` |
 | `_ZN9Inspector25ConsoleFrontendDispatchernaEmPv` | `XjmU-UvchPg` |
@@ -5644,16 +5612,12 @@
 | `_ZN9Inspector25NetworkFrontendDispatcher15webSocketClosedERKN3WTF6StringEd` | `NgTYaNYsSsk` |
 | `_ZN9Inspector25NetworkFrontendDispatcher16webSocketCreatedERKN3WTF6StringES4_` | `X9OuYB-jm2A` |
 | `_ZN9Inspector25NetworkFrontendDispatcher19webSocketFrameErrorERKN3WTF6StringEdS4_` | `RZsx7hJC89c` |
-| `_ZN9Inspector25NetworkFrontendDispatcherC1ERNS_14FrontendRouterE` | `Y7kPU5plvt4` |
-| `_ZN9Inspector25NetworkFrontendDispatcherC2ERNS_14FrontendRouterE` | `XFo3ZOD4wKo` |
 | `_ZN9Inspector25NetworkFrontendDispatcherdaEPv` | `HH3KJFVK2Kg` |
 | `_ZN9Inspector25NetworkFrontendDispatcherdlEPv` | `C5ifI-ABvq0` |
 | `_ZN9Inspector25NetworkFrontendDispatchernaEm` | `LJj90HDolFE` |
 | `_ZN9Inspector25NetworkFrontendDispatchernaEmPv` | `SJZPlWOFp24` |
 | `_ZN9Inspector25NetworkFrontendDispatchernwEm` | `JHBmUO0py9w` |
 | `_ZN9Inspector25NetworkFrontendDispatchernwEmPv` | `a39DFeFUxK0` |
-| `_ZN9Inspector25RuntimeFrontendDispatcherC1ERNS_14FrontendRouterE` | `Fcve1msoJH0` |
-| `_ZN9Inspector25RuntimeFrontendDispatcherC2ERNS_14FrontendRouterE` | `CpHAdNB7hs4` |
 | `_ZN9Inspector25RuntimeFrontendDispatcherdaEPv` | `fO2b1mAdv+w` |
 | `_ZN9Inspector25RuntimeFrontendDispatcherdlEPv` | `IT-rstTbKL8` |
 | `_ZN9Inspector25RuntimeFrontendDispatchernaEmPv` | `LCPCX6fHPQY` |
@@ -5672,8 +5636,6 @@
 | `_ZN9Inspector26AnimationBackendDispatcherD0Ev` | `pQ+OGYuSoTM` |
 | `_ZN9Inspector26AnimationBackendDispatcherD1Ev` | `RuRXBh3D8E0` |
 | `_ZN9Inspector26AnimationBackendDispatcherD2Ev` | `q1HXJrqXhwQ` |
-| `_ZN9Inspector26DatabaseFrontendDispatcherC1ERNS_14FrontendRouterE` | `knYA790Sgto` |
-| `_ZN9Inspector26DatabaseFrontendDispatcherC2ERNS_14FrontendRouterE` | `QpFhGrmIqhE` |
 | `_ZN9Inspector26DatabaseFrontendDispatcherdaEPv` | `DB4go2kMtxo` |
 | `_ZN9Inspector26DatabaseFrontendDispatcherdlEPv` | `vEGSpl7lJQY` |
 | `_ZN9Inspector26DatabaseFrontendDispatchernaEmPv` | `crUhCyhBS3k` |
@@ -5684,8 +5646,6 @@
 | `_ZN9Inspector26DebuggerFrontendDispatcher19scriptFailedToParseERKN3WTF6StringES4_iiS4_` | `a-YNP4O13AU` |
 | `_ZN9Inspector26DebuggerFrontendDispatcher25playBreakpointActionSoundEi` | `nz2Vn7gXKYE` |
 | `_ZN9Inspector26DebuggerFrontendDispatcher7resumedEv` | `CNQLeYqffyw` |
-| `_ZN9Inspector26DebuggerFrontendDispatcherC1ERNS_14FrontendRouterE` | `cWsZ0K-ZAJU` |
-| `_ZN9Inspector26DebuggerFrontendDispatcherC2ERNS_14FrontendRouterE` | `ItO4km85h7E` |
 | `_ZN9Inspector26DebuggerFrontendDispatcherdaEPv` | `bjbrUuq+lso` |
 | `_ZN9Inspector26DebuggerFrontendDispatcherdlEPv` | `jk04YK+R0HU` |
 | `_ZN9Inspector26DebuggerFrontendDispatchernaEm` | `EZOP9rEdz30` |
@@ -5706,8 +5666,6 @@
 | `_ZN9Inspector26TimelineFrontendDispatcher16recordingStartedEd` | `zptosxCqOgw` |
 | `_ZN9Inspector26TimelineFrontendDispatcher16recordingStoppedEd` | `MzZ1vXfWlaY` |
 | `_ZN9Inspector26TimelineFrontendDispatcher18autoCaptureStartedEv` | `gSjDXUEB5Uk` |
-| `_ZN9Inspector26TimelineFrontendDispatcherC1ERNS_14FrontendRouterE` | `mhBjKWf7rGE` |
-| `_ZN9Inspector26TimelineFrontendDispatcherC2ERNS_14FrontendRouterE` | `zWP0d9r9zl4` |
 | `_ZN9Inspector26TimelineFrontendDispatcherdaEPv` | `DJLMNkz6oP8` |
 | `_ZN9Inspector26TimelineFrontendDispatcherdlEPv` | `15DNj4tGe8c` |
 | `_ZN9Inspector26TimelineFrontendDispatchernaEm` | `JsiXZ27Fmcg` |
@@ -5718,8 +5676,6 @@
 | `_ZN9Inspector27AnimationFrontendDispatcher13trackingStartEd` | `bb5o-YHu8vM` |
 | `_ZN9Inspector27AnimationFrontendDispatcher16trackingCompleteEd` | `RZHQT5QnVPQ` |
 | `_ZN9Inspector27AnimationFrontendDispatcher18animationDestroyedERKN3WTF6StringE` | `bMlLM2uzdB8` |
-| `_ZN9Inspector27AnimationFrontendDispatcherC1ERNS_14FrontendRouterE` | `zn4MCC35uZw` |
-| `_ZN9Inspector27AnimationFrontendDispatcherC2ERNS_14FrontendRouterE` | `RZ5glqNEI6g` |
 | `_ZN9Inspector27AnimationFrontendDispatcherdaEPv` | `mcHjNU1s-LI` |
 | `_ZN9Inspector27AnimationFrontendDispatcherdlEPv` | `GnqKwm4KHMA` |
 | `_ZN9Inspector27AnimationFrontendDispatchernaEm` | `G7yXWAlfjTw` |
@@ -5743,8 +5699,6 @@
 | `_ZN9Inspector27DOMStorageBackendDispatcherD1Ev` | `2RVtNYjCrT0` |
 | `_ZN9Inspector27DOMStorageBackendDispatcherD2Ev` | `o-CU61gUP2A` |
 | `_ZN9Inspector27InspectorFrontendDispatcher25evaluateForTestInFrontendERKN3WTF6StringE` | `jALEBkxiGfU` |
-| `_ZN9Inspector27InspectorFrontendDispatcherC1ERNS_14FrontendRouterE` | `5-aNCKDNRNs` |
-| `_ZN9Inspector27InspectorFrontendDispatcherC2ERNS_14FrontendRouterE` | `72Xc-Zdql7E` |
 | `_ZN9Inspector27InspectorFrontendDispatcherdaEPv` | `OX-s5D0nKW8` |
 | `_ZN9Inspector27InspectorFrontendDispatcherdlEPv` | `3040bxCvolo` |
 | `_ZN9Inspector27InspectorFrontendDispatchernaEmPv` | `up4R3KfldIo` |
@@ -5752,8 +5706,6 @@
 | `_ZN9Inspector27InspectorFrontendDispatchernwEm` | `4PQ+-MoYPRw` |
 | `_ZN9Inspector27InspectorFrontendDispatchernwEmPv` | `EPdBkepv-2k` |
 | `_ZN9Inspector27LayerTreeFrontendDispatcher18layerTreeDidChangeEv` | `eS6QfGn5eCY` |
-| `_ZN9Inspector27LayerTreeFrontendDispatcherC1ERNS_14FrontendRouterE` | `ZI4mwckKD1s` |
-| `_ZN9Inspector27LayerTreeFrontendDispatcherC2ERNS_14FrontendRouterE` | `7WjTCZdhnXE` |
 | `_ZN9Inspector27LayerTreeFrontendDispatcherdaEPv` | `lMjUdn4xQqk` |
 | `_ZN9Inspector27LayerTreeFrontendDispatcherdlEPv` | `ETSlSSaZxGw` |
 | `_ZN9Inspector27LayerTreeFrontendDispatchernaEm` | `EyqqC2OwC9M` |
@@ -5775,8 +5727,6 @@
 | `_ZN9Inspector28DOMDebuggerBackendDispatcherC2ERNS_17BackendDispatcherEPNS_35DOMDebuggerBackendDispatcherHandlerE` | `a-1bf8VqyHk` |
 | `_ZN9Inspector28DOMDebuggerBackendDispatcherD1Ev` | `dA7DMksqQNo` |
 | `_ZN9Inspector28DOMDebuggerBackendDispatcherD2Ev` | `pyTwHOBu94E` |
-| `_ZN9Inspector28DOMStorageFrontendDispatcherC1ERNS_14FrontendRouterE` | `TUf9SbYk2cs` |
-| `_ZN9Inspector28DOMStorageFrontendDispatcherC2ERNS_14FrontendRouterE` | `HMX8NtsKaC4` |
 | `_ZN9Inspector28DOMStorageFrontendDispatcherdaEPv` | `zN1Nt4FdDG0` |
 | `_ZN9Inspector28DOMStorageFrontendDispatcherdlEPv` | `nClGsf5G8Bs` |
 | `_ZN9Inspector28DOMStorageFrontendDispatchernaEm` | `GgSXKx2xATk` |
@@ -5877,8 +5827,6 @@
 | `_ZN9Inspector32DebuggerBackendDispatcherHandlerD0Ev` | `TI5ES3rnuTI` |
 | `_ZN9Inspector32DebuggerBackendDispatcherHandlerD1Ev` | `Ea6Vodkv13Q` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatcher13trackingStartEd` | `wf6EuM9IZW0` |
-| `_ZN9Inspector32ScriptProfilerFrontendDispatcherC1ERNS_14FrontendRouterE` | `lbC468bO8Xs` |
-| `_ZN9Inspector32ScriptProfilerFrontendDispatcherC2ERNS_14FrontendRouterE` | `ui4s+3Sg6is` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatcherdaEPv` | `wn316XLYBO8` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatcherdlEPv` | `C-PgX-qZLhk` |
 | `_ZN9Inspector32ScriptProfilerFrontendDispatchernaEmPv` | `eIWOmJNeKUs` |
@@ -5910,8 +5858,6 @@
 | `_ZN9Inspector33LayerTreeBackendDispatcherHandlerD2Ev` | `PYfXsUMOaic` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcher19networkStateUpdatedEb` | `hMmahzTAYpo` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcher29applicationCacheStatusUpdatedERKN3WTF6StringES4_i` | `WuHl28C+7k0` |
-| `_ZN9Inspector34ApplicationCacheFrontendDispatcherC1ERNS_14FrontendRouterE` | `kbFaB1rGobk` |
-| `_ZN9Inspector34ApplicationCacheFrontendDispatcherC2ERNS_14FrontendRouterE` | `PZnzfneCpcI` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcherdaEPv` | `im5DNzT35to` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatcherdlEPv` | `hoAwJetLmro` |
 | `_ZN9Inspector34ApplicationCacheFrontendDispatchernaEmPv` | `eaUO-kQF49o` |
