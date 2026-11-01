@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -7,8 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <system_error>
-
-extern "C" const std::error_category* _ZSt17iostream_categoryv_nid_postfix();
 
 namespace {
 

@@ -7,8 +7,6 @@
 
 extern "C" {
 
-const std::error_category* _ZSt17iostream_categoryv_nid_postfix();
-
 void APS5_VABI sceLibcInternalSizedNothrowDelete_nid_no_patch(void* pointer, std::size_t size, const void*) noexcept {
     _ZdlPvm_nid_postfix(pointer, size);
 }
