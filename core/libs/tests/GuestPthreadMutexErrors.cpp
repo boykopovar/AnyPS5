@@ -62,6 +62,8 @@ static void CheckOwnershipAndRelativeLock() {
     Require(pthread_mutex_isowned_np_nid_postfix(&mutex) == 0);
     Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == POSIX_EINVAL);
     Require(Throws([] { pthread_mutex_isowned_np_nid_postfix(nullptr); }));
+    Require(pthread_mutex_trylock_nid_postfix(nullptr) == POSIX_EINVAL);
+    Require(scePthreadMutexTrylock(nullptr) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 static void CheckLoops(PthreadMutexattr* attr) {
@@ -128,6 +130,9 @@ int main() {
     Require(scePthreadMutexattrSettype(nullptr, 1) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadMutexattrDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
+    Require(pthread_mutex_trylock_nid_postfix(nullptr) == POSIX_EINVAL);
+    Require(scePthreadMutexTrylock(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+
     PthreadMutex mutex = nullptr;
     Require(scePthreadMutexInit(&mutex, &unset, "unset") == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_OK);
@@ -136,6 +141,8 @@ int main() {
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
     Require(mutex == reinterpret_cast<PthreadMutex>(std::uintptr_t{2}));
     Require(scePthreadMutexDestroy(&mutex) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutex_trylock_nid_postfix(nullptr) == POSIX_EINVAL);
+    Require(scePthreadMutexTrylock(nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
     Require(scePthreadMutexInit(&mutex, &attr, "attr") == SCE_OK);
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
