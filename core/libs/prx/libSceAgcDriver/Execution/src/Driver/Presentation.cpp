@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/WorkerAffinity.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include <algorithm>
 #include "prx/libSceAgcDriver/Execution/include/TracyZone.hpp"
 #include <cstdlib>
@@ -68,6 +69,8 @@ void Driver::AttachWindow(const PresentationWindow& window) {
         replacedDevices.push_back(device);
     }
     device = std::make_shared<VulkanDevice>(&window);
+    const auto mapped = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
+    device->ImportGuestMemory(GuestAllocations::Mapped(mapped.begin(), mapped.end()), GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
 }
 
 void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buffer, const DisplayBuffer* plane, bool opaque, void (*gpuReady)(void*), void* context) {
