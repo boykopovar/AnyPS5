@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import unwrap_self
 from package_release import windows_runtime
-OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "blank", "rendering")
+OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict}
 FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-base"}
@@ -107,6 +107,8 @@ def classify(relinked, exit_code, summary_age, framed, last_frame_uniform):
         return "crashed" if exit_code != 0 else "exited"
     if summary_age is None or summary_age > STALL_SECONDS or not framed:
         return "stalled"
+    if last_frame_uniform is None:
+        return "frame-unreadable"
     if last_frame_uniform:
         return "blank"
     return "rendering"
@@ -216,6 +218,23 @@ def link_tree(source, target, skip):
         else:
             (target / relative).parent.mkdir(parents=True, exist_ok=True)
             link_file(path, target / relative)
+
+
+def lock_work(path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = path.open("a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
 
 
 def prepare(title_id, found, entry, platform, build, work):
@@ -504,6 +523,10 @@ def main(argv=None):
     missing = [title_id for title_id in ids if title_id not in found]
     if missing:
         raise SystemExit(f"not found under --games: {', '.join(missing)}")
+    locks = {title_id: lock_work(args.out.resolve() / "work" / f"{title_id}.lock") for title_id in ids}
+    busy = [title_id for title_id, handle in locks.items() if handle is None]
+    if busy:
+        raise SystemExit(f"already running in {args.out.resolve() / 'work'}: {', '.join(busy)}")
     if previous and args.ids:
         previous["titles"] = {title_id: title for title_id, title in previous["titles"].items() if title_id in ids}
     source = source_root(args.build)
