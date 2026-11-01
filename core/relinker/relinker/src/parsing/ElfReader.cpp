@@ -257,6 +257,9 @@ std::string ElfReader::_resolveShdrName(std::uint32_t nameOffset, const ElfHeade
     if (nameOffset >= strTableSize) {
         throw RelinkerException("Section name offset out of bounds", nameOffset);
     }
+    if (_fileBuffer[strTableOffset] != 0 || _fileBuffer[strTableOffset + strTableSize - 1] != 0) {
+        throw RelinkerException("Section name string table must begin and end with a null byte", strTableOffset);
+    }
     const auto first = _fileBuffer.begin() + strTableOffset + nameOffset;
     const auto end = _fileBuffer.begin() + strTableOffset + strTableSize;
     const auto terminator = std::find(first, end, 0);
