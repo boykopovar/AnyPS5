@@ -106,7 +106,10 @@ template <class TNative>
 struct WakingLock {
     PthreadMutex mutex;
     TNative& native;
-    void lock() { native.lock(); }
+    void lock() {
+        if (!MutexOperations::SpinAcquire(mutex, native))
+            native.lock();
+    }
     void unlock() {
         native.unlock();
 #ifdef _WIN32
@@ -256,6 +259,8 @@ int APS5_VABI scePthreadCondSignalto(PthreadCond* cond, Pthread thread) {
     const auto resolved = resolveCond(cond);
     if (!resolved || !thread)
         return SCE_KERNEL_ERROR_EINVAL;
+    if (!GuestThreadIsLive(thread))
+        return SCE_KERNEL_ERROR_ESRCH;
     if (!IsWaiting(resolved.get(), thread))
         return SCE_KERNEL_ERROR_EPERM;
     resolved->NotifyAll();

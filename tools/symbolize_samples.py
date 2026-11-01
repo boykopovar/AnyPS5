@@ -1,6 +1,7 @@
 import argparse
 import bisect
 import collections
+import os
 import shutil
 import struct
 import subprocess
@@ -271,6 +272,8 @@ def load(path, thread=None):
         frames, _, count = line.rpartition(" ")
         if not frames or not count.isdigit():
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        if thread is not None:
+            raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")
         samples.stacks[frames] += int(count)
     return samples
 
@@ -342,9 +345,11 @@ def symbolize(parser, args):
         for source in (args.samples, args.since):
             if source is not None:
                 source = Path(source)
-                if source.resolve() == output.resolve() or (source.exists() and output.exists() and source.samefile(output)):
+                if os.path.realpath(source) == os.path.realpath(output) or (source.exists() and output.exists() and source.samefile(output)):
                     parser.error("symbolized output must be separate from the sample captures")
     samples = load(args.samples, args.thread)
+    if args.out and not samples.stacks:
+        parser.error("--out needs a collapsed-stack file")
     if args.since:
         samples = window(samples, load(args.since, args.thread))
     if args.out and samples.stacks:
@@ -358,7 +363,7 @@ def symbolize(parser, args):
         module_output_alias = False
         for directory in args.libs:
             for source in Path(directory).iterdir():
-                if not source.is_file() or not (source.resolve() == output.resolve() or
+                if not source.is_file() or not (os.path.realpath(source) == os.path.realpath(output) or
                                                 (source.exists() and output.exists() and source.samefile(output))):
                     continue
                 if source.name.lower() in referenced_modules or source.suffix.lower() in (".prx", ".dll", ".exe"):
