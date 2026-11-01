@@ -338,7 +338,7 @@ bool BufferPool::DeviceTierEnabled() {
     return enabled;
 }
 
-VkDeviceSize BufferPool::DeviceBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported) {
+VkDeviceSize BufferPool::DeviceBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, bool integratedGpu) {
     static const char* value = std::getenv("APS5_STAGING_POOL_MIB");
     if (value != nullptr) return static_cast<VkDeviceSize>(std::strtoull(value, nullptr, 10)) << 20u;
     std::optional<std::uint32_t> largest;
@@ -347,18 +347,18 @@ VkDeviceSize BufferPool::DeviceBudget(const VkPhysicalDeviceMemoryProperties& me
     }
     VkDeviceSize size = largest ? memory.memoryHeaps[*largest].size : 0;
     if (largest && reported != nullptr && reported->heapBudget[*largest] != 0) size = std::min(size, reported->heapBudget[*largest]);
-    if (largest && systemMemoryHeap(memory, *largest)) return std::max<VkDeviceSize>(VkDeviceSize{128} << 20u, size / 64u);
+    if (largest && (integratedGpu || systemMemoryHeap(memory, *largest))) return std::max<VkDeviceSize>(VkDeviceSize{128} << 20u, size / 64u);
     return std::max<VkDeviceSize>(VkDeviceSize{512} << 20u, size / 8u);
 }
 
 VkDeviceSize BufferPool::deviceBudget(const Context& context) {
     if (!DeviceTierEnabled()) return 0;
-    if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return DeviceBudget(context.memory);
+    if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return DeviceBudget(context.memory, nullptr, context.integratedGpu);
     VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
     properties.pNext = &reported;
     context.memoryProperties2(context.physical, &properties);
-    return DeviceBudget(context.memory, &reported);
+    return DeviceBudget(context.memory, &reported, context.integratedGpu);
 }
 
 VkDeviceSize BufferPool::destroy(const BufferAllocation& allocation, bool retained) noexcept {
