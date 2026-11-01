@@ -577,6 +577,13 @@ set(SKIP_INSTALL_ALL ON CACHE BOOL "" FORCE)
 if(NOT ANYPS5_USE_SYSTEM_DEPS)
     add_subdirectory(3rdparty/freetype EXCLUDE_FROM_ALL)
     set_target_properties(freetype PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_sources(freetype PRIVATE
+        3rdparty/freetype/src/gxvalid/gxvalid.c
+        3rdparty/freetype/src/otvalid/otvalid.c)
+    set(freetypeModules "${CMAKE_CURRENT_BINARY_DIR}/freetype-validation-modules.h")
+    file(GENERATE OUTPUT "${freetypeModules}" CONTENT
+        "#include \"${CMAKE_CURRENT_SOURCE_DIR}/3rdparty/freetype/include/freetype/config/ftmodule.h\"\nFT_USE_MODULE(FT_Module_Class, gxv_module_class)\nFT_USE_MODULE(FT_Module_Class, otv_module_class)\n")
+    target_compile_definitions(freetype PRIVATE "FT_CONFIG_MODULES_H=\"${freetypeModules}\"")
     if(WIN32)
         get_target_property(freetypeSources freetype SOURCES)
         list(FILTER freetypeSources EXCLUDE REGEX "ftver\\.rc$")

@@ -1,5 +1,6 @@
 add_library(libSceFreeType SHARED EXCLUDE_FROM_ALL
         Export.cpp
+        src/Validation.cpp
         src/Bitmap.cpp
         src/Outline.cpp
         src/Charmap.cpp
@@ -26,6 +27,21 @@ if(BUILD_TESTING)
 endif()
 
 target_link_libraries(libSceFreeType PRIVATE freetype)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_validation_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypeValidation.cpp)
+    target_include_directories(guest_freetype_validation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_freetype_validation_tests PRIVATE libSceFreeType freetype libc)
+    target_compile_definitions(guest_freetype_validation_tests PRIVATE
+        ANYPS5_FREETYPE_BUNDLED=$<NOT:$<BOOL:${ANYPS5_USE_SYSTEM_DEPS}>>)
+    configure_windows_unwind(guest_freetype_validation_tests)
+    add_test(NAME guest_freetype_validation COMMAND guest_freetype_validation_tests)
+    set_tests_properties(guest_freetype_validation PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_validation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeType>")
+    endif()
+endif()
 target_sources(libSceFreeType PRIVATE src/SizeRequest.cpp)
 
 if(BUILD_TESTING)
