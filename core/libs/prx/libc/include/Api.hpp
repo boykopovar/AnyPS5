@@ -1213,6 +1213,10 @@ const void* APS5_VABI __std_find_trivial_1_nid_postfix(const void* first, const 
 const void* APS5_VABI __std_find_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value);
 const void* APS5_VABI __std_find_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value);
 const void* APS5_VABI __std_find_trivial_8_nid_postfix(const void* first, const void* last, std::uint64_t value);
+const void* APS5_VABI __std_find_last_trivial_1_nid_postfix(const void* first, const void* last, std::uint8_t value);
+const void* APS5_VABI __std_find_last_trivial_2_nid_postfix(const void* first, const void* last, std::uint16_t value);
+const void* APS5_VABI __std_find_last_trivial_4_nid_postfix(const void* first, const void* last, std::uint32_t value);
+const void* APS5_VABI __std_find_last_trivial_8_nid_postfix(const void* first, const void* last, std::uint64_t value);
 const void* APS5_VABI __std_find_trivial_unsized_1_nid_postfix(const void* first, std::uint8_t value);
 const void* APS5_VABI __std_find_trivial_unsized_2_nid_postfix(const void* first, std::uint16_t value);
 const void* APS5_VABI __std_find_trivial_unsized_4_nid_postfix(const void* first, std::uint32_t value);
