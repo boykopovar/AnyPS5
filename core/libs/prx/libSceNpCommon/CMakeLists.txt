@@ -8,6 +8,16 @@ target_link_libraries(libSceNpCommon PRIVATE libc libkernel libSceRtc libSceUser
 configure_windows_unwind(libSceNpCommon)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_np_common_state_predicate_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCommonStatePredicates.cpp)
+    target_include_directories(guest_np_common_state_predicate_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_np_common_state_predicate_tests PRIVATE libSceNpCommon libc)
+    configure_windows_unwind(guest_np_common_state_predicate_tests)
+    add_test(NAME guest_np_common_state_predicates COMMAND guest_np_common_state_predicate_tests)
+    if(WIN32)
+        set_tests_properties(guest_np_common_state_predicates PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
+    endif()
+
     add_test_executable(guest_np_common_rtc_tests ${LIBS_INCLUDE_DIR}/tests/GuestNpCommonRtc.cpp)
     target_include_directories(guest_np_common_rtc_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_np_common_rtc_tests PRIVATE libSceNpCommon libSceRtc libc)
