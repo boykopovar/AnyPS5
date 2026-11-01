@@ -1,3 +1,4 @@
+#include "prx/libSceXml/include/InventoryExports.hpp"
 #include "prx/libSceXml/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -649,6 +650,142 @@ int APS5_VABI _ZNK3sce3Xml3Dom8Document10getDocRootEv() {
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom8Document10getSiblingENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeTypeENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document12getLastChildENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document7getTextENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getChildNodesENS1_6NodeIdEPNS1_8NodeListE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNodeNameENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document20getElementsByTagNameENS1_6NodeIdEPKNS0_6StringEPNS1_8NodeListE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getEntityTypeENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml4Attr7getNameEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getAttributesENS1_6NodeIdEPNS1_8NodeListE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13getFirstChildENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList4itemEj() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml4Attr8getValueEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getAttrNameENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeListixEj() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document9getStatusEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document14getSkippedTextENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemEPKNS0_6StringE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document9getEntityENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11getNextAttrENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttrValueENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document12getFirstAttrENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList11isAvailableEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document7getRootEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document12getAttributeENS1_6NodeIdEPKNS0_6StringE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document10getXmlMetaEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document11isAvailableEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document9getParentENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8NodeList9getLengthEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document10isReadOnlyEv() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13hasChildNodesENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml3Dom8Document13hasAttributesENS1_6NodeIdE() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
+int APS5_VABI _ZNK3sce3Xml4Attr11isAvailableEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
