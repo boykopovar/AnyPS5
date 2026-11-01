@@ -58,7 +58,7 @@
  *
  * Developed at SunSoft, a Sun Microsystems, Inc. business.
  * Permission to use, copy, modify, and distribute this
- * software is freely granted, provided that this notice 
+ * software is freely granted, provided that this notice
  * is preserved.
  * ====================================================
  */
@@ -742,7 +742,84 @@ long double APS5_VABI frexpl_nid_postfix(long double x, int* exponent) {
     if (!std::isfinite(x)) return x;
     return std::frexp(x, exponent);
 }
-double APS5_VABI exp_nid_postfix(double x) { return std::exp(x); }
+/*
+ * ====================================================
+ * Copyright (C) 2004 by Sun Microsystems, Inc. All rights reserved.
+ *
+ * Permission to use, copy, modify, and distribute this
+ * software is freely granted, provided that this notice
+ * is preserved.
+ * ====================================================
+ */
+/* Adapted from FreeBSD release/11.4.0 lib/msun/src/e_exp.c: https://github.com/freebsd/freebsd-src/blob/release/11.4.0/lib/msun/src/e_exp.c */
+double APS5_VABI exp_nid_postfix(double x) {
+    static constexpr double halF[2] = {0.5, -0.5};
+    static constexpr double ln2HI[2] = {6.93147180369123816490e-01, -6.93147180369123816490e-01};
+    static constexpr double ln2LO[2] = {1.90821492927058770002e-10, -1.90821492927058770002e-10};
+    static volatile double huge = 1.0e+300;
+    static volatile double twom1000 = 9.33263618503218878990e-302;
+    const double invln2 = 1.44269504088896338700e+00;
+    const double P1 = 1.66666666666666019037e-01;
+    const double P2 = -2.77777777770155933842e-03;
+    const double P3 = 6.61375632143793436117e-05;
+    const double P4 = -1.65339022054652515390e-06;
+    const double P5 = 4.13813679705723846039e-08;
+    double hi = 0.0;
+    double lo = 0.0;
+    std::int32_t k = 0;
+    const std::uint64_t bits = std::bit_cast<std::uint64_t>(x);
+    std::uint32_t hx = static_cast<std::uint32_t>(bits >> 32);
+    const std::int32_t xsb = (hx >> 31) & 1;
+    hx &= 0x7fffffff;
+    if (hx >= 0x40862e42) {
+        if (hx >= 0x7ff00000) {
+            if (((hx & 0xfffff) | static_cast<std::uint32_t>(bits)) != 0) {
+                return x + x;
+            }
+            return xsb == 0 ? x : 0.0;
+        }
+        if (x > 7.09782712893383973096e+02) {
+            errno = ERANGE;
+            return huge * huge;
+        }
+        if (x < -7.45133219101941108420e+02) {
+            errno = ERANGE;
+            return twom1000 * twom1000;
+        }
+    }
+    if (x == 1.0) {
+        return std::bit_cast<double>(std::uint64_t{0x4005bf0a8b145769});
+    }
+    if (hx > 0x3fd62e42) {
+        if (hx < 0x3ff0a2b2) {
+            hi = x - ln2HI[xsb];
+            lo = ln2LO[xsb];
+            k = 1 - xsb - xsb;
+        } else {
+            k = static_cast<std::int32_t>(invln2 * x + halF[xsb]);
+            const double t = k;
+            hi = x - t * ln2HI[0];
+            lo = t * ln2LO[0];
+        }
+        x = hi - lo;
+    } else if (hx < 0x3e300000) {
+        return 1.0 + x;
+    }
+    const double t = x * x;
+    const double twopk = std::bit_cast<double>(static_cast<std::uint64_t>(0x3ff + (k >= -1021 ? k : k + 1000)) << 52);
+    const double c = x - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+    if (k == 0) {
+        return 1.0 - ((x * c) / (c - 2.0) - x);
+    }
+    const double y = 1.0 - ((lo - (x * c) / (2.0 - c)) - hi);
+    if (k >= -1021) {
+        if (k == 1024) {
+            return y * 2.0 * 0x1p1023;
+        }
+        return y * twopk;
+    }
+    return y * twopk * twom1000;
+}
 double APS5_VABI atan_nid_postfix(double x) { return std::atan(x); }
 double APS5_VABI tan_nid_postfix(double x) { return std::tan(x); }
 double APS5_VABI log2_nid_postfix(double x) { return std::log2(x); }
@@ -1015,8 +1092,124 @@ float APS5_VABI expm1f_nid_postfix(float x) {
     return result;
 }
 float APS5_VABI erff_nid_postfix(float x) { return std::erf(x); }
-double APS5_VABI erf_nid_postfix(double x) { return std::erf(x); }
-double APS5_VABI erfc_nid_postfix(double x) { return std::erfc(x); }
+static double ErfSmallRatio(double z) {
+    const double pp0 = 1.28379167095512558561e-01;
+    const double pp1 = -3.25042107247001499370e-01;
+    const double pp2 = -2.84817495755985104766e-02;
+    const double pp3 = -5.77027029648944159157e-03;
+    const double pp4 = -2.37630166566501626084e-05;
+    const double qq1 = 3.97917223959155352819e-01;
+    const double qq2 = 6.50222499887672944485e-02;
+    const double qq3 = 5.08130628187576562776e-03;
+    const double qq4 = 1.32494738004321644526e-04;
+    const double qq5 = -3.96022827877536812320e-06;
+    const double r = pp0 + z * (pp1 + z * (pp2 + z * (pp3 + z * pp4)));
+    const double s = 1.0 + z * (qq1 + z * (qq2 + z * (qq3 + z * (qq4 + z * qq5))));
+    return r / s;
+}
+
+static double ErfNearOneRatio(double s) {
+    const double pa0 = -2.36211856075265944077e-03;
+    const double pa1 = 4.14856118683748331666e-01;
+    const double pa2 = -3.72207876035701323847e-01;
+    const double pa3 = 3.18346619901161753674e-01;
+    const double pa4 = -1.10894694282396677476e-01;
+    const double pa5 = 3.54783043256182359371e-02;
+    const double pa6 = -2.16637559486879084300e-03;
+    const double qa1 = 1.06420880400844228286e-01;
+    const double qa2 = 5.40397917702171048937e-01;
+    const double qa3 = 7.18286544141962662868e-02;
+    const double qa4 = 1.26171219808761642112e-01;
+    const double qa5 = 1.36370839120290507362e-02;
+    const double qa6 = 1.19844998467991074170e-02;
+    const double P = pa0 + s * (pa1 + s * (pa2 + s * (pa3 + s * (pa4 + s * (pa5 + s * pa6)))));
+    const double Q = 1.0 + s * (qa1 + s * (qa2 + s * (qa3 + s * (qa4 + s * (qa5 + s * qa6)))));
+    return P / Q;
+}
+
+static double ErfTail(double x, bool nearSplit) {
+    const double s = 1.0 / (x * x);
+    double R;
+    double S;
+    if (nearSplit) {
+        R = -9.86494403484714822705e-03 + s * (-6.93858572707181764372e-01 + s * (-1.05586262253232909814e+01 + s * (-6.23753324503260060396e+01 + s * (-1.62396669462573470355e+02 + s * (-1.84605092906711035994e+02 + s * (-8.12874355063065934246e+01 + s * -9.81432934416914548592e+00))))));
+        S = 1.0 + s * (1.96512716674392571292e+01 + s * (1.37657754143519042600e+02 + s * (4.34565877475229228821e+02 + s * (6.45387271733267880336e+02 + s * (4.29008140027567833386e+02 + s * (1.08635005541779435134e+02 + s * (6.57024977031928170135e+00 + s * -6.04244152148580987438e-02)))))));
+    } else {
+        R = -9.86494292470009928597e-03 + s * (-7.99283237680523006574e-01 + s * (-1.77579549177547519889e+01 + s * (-1.60636384855821916062e+02 + s * (-6.37566443368389627722e+02 + s * (-1.02509513161107724954e+03 + s * -4.83519191608651397019e+02)))));
+        S = 1.0 + s * (3.03380607434824582924e+01 + s * (3.25792512996573918826e+02 + s * (1.53672958608443695994e+03 + s * (3.19985821950859553908e+03 + s * (2.55305040643316442583e+03 + s * (4.74528541206955367215e+02 + s * -2.24409524465858183362e+01))))));
+    }
+    const double z = std::bit_cast<double>(std::bit_cast<std::uint64_t>(x) & 0xffffffff00000000ull);
+    return exp_nid_postfix(-z * z - 0.5625) * exp_nid_postfix((z - x) * (z + x) + R / S);
+}
+
+double APS5_VABI erf_nid_postfix(double x) {
+    const double erx = 8.45062911510467529297e-01;
+    const double efx = 1.28379167095512586316e-01;
+    const double efx8 = 1.02703333676410069053e+00;
+    static volatile double tiny = 1e-300;
+    const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if (ix >= 0x7ff00000) {
+        return static_cast<double>(1 - static_cast<std::int32_t>((static_cast<std::uint32_t>(hx) >> 31) << 1)) + 1.0 / x;
+    }
+    if (ix < 0x3feb0000) {
+        if (ix < 0x3e300000) {
+            if (ix < 0x00800000) {
+                return (8 * x + efx8 * x) / 8;
+            }
+            return x + efx * x;
+        }
+        return x + x * ErfSmallRatio(x * x);
+    }
+    if (ix < 0x3ff40000) {
+        const double ratio = ErfNearOneRatio(std::fabs(x) - 1.0);
+        return hx >= 0 ? erx + ratio : -erx - ratio;
+    }
+    if (ix >= 0x40180000) {
+        return hx >= 0 ? 1.0 - tiny : tiny - 1.0;
+    }
+    const double magnitude = std::fabs(x);
+    const double r = ErfTail(magnitude, ix < 0x4006db6e);
+    return hx >= 0 ? 1.0 - r / magnitude : r / magnitude - 1.0;
+}
+
+double APS5_VABI erfc_nid_postfix(double x) {
+    const double erx = 8.45062911510467529297e-01;
+    static volatile double tiny = 1e-300;
+    const std::int32_t hx = static_cast<std::int32_t>(std::bit_cast<std::uint64_t>(x) >> 32);
+    const std::int32_t ix = hx & 0x7fffffff;
+    if (ix >= 0x7ff00000) {
+        return static_cast<double>((static_cast<std::uint32_t>(hx) >> 31) << 1) + 1.0 / x;
+    }
+    if (ix < 0x3feb0000) {
+        if (ix < 0x3c700000) {
+            return 1.0 - x;
+        }
+        const double y = ErfSmallRatio(x * x);
+        if (hx < 0x3fd00000) {
+            return 1.0 - (x + x * y);
+        }
+        double r = x * y;
+        r += x - 0.5;
+        return 0.5 - r;
+    }
+    if (ix < 0x3ff40000) {
+        const double ratio = ErfNearOneRatio(std::fabs(x) - 1.0);
+        if (hx >= 0) {
+            return (1.0 - erx) - ratio;
+        }
+        return 1.0 + (erx + ratio);
+    }
+    if (ix >= 0x403c0000) {
+        return hx > 0 ? tiny * tiny : 2.0 - tiny;
+    }
+    if (hx < 0 && ix >= 0x40180000) {
+        return 2.0 - tiny;
+    }
+    const double magnitude = std::fabs(x);
+    const double r = ErfTail(magnitude, ix < 0x4006db6d);
+    return hx > 0 ? r / magnitude : 2.0 - r / magnitude;
+}
 float APS5_VABI erfcf_nid_postfix(float x) { return std::erfc(x); }
 int signgam_nid_postfix = 0;
 
@@ -1352,7 +1545,7 @@ static double SinhLdexpExpHalf(double x) {
  *
  * Developed at SunSoft, a Sun Microsystems, Inc. business.
  * Permission to use, copy, modify, and distribute this
- * software is freely granted, provided that this notice 
+ * software is freely granted, provided that this notice
  * is preserved.
  * ====================================================
  */
