@@ -898,3 +898,7 @@ unsigned int APS5_VABI sceKernelSleep(unsigned int seconds) {
 }
 
 }
+
+namespace {
+const bool clockResolutionRegistered = (RegisterClockGetres_nid_no_patch(&sceKernelClockGetres), true);
+}
