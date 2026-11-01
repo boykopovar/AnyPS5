@@ -104,6 +104,11 @@ int main() {
     Require(ToneMap().max_tone_map_luminance == 100.0f && AgcDriver::CurrentHostHdr().reportedToneMapPeak == 100.0f, "SDR reference white is not reported after the display left HDR mode");
 
     Require(sceVideoOutClose(handle) == 0, "sceVideoOutClose failed");
+    VideoOutOutputStatus nullStatusTest{};
+    Require(sceVideoOutGetOutputStatus(-1, &nullStatusTest) != 0, "invalid handle");
+    Require(sceVideoOutGetOutputStatus(handle, nullptr) != 0, "null status");
+    Require(sceVideoOutGetOutputStatusWithVrr(-1, nullStatusTest.reserved) != 0, "invalid handle vrr");
+    Require(sceVideoOutGetOutputStatusWithVrr(handle, nullptr) != 0, "null status vrr");
     Require(sceKernelDeleteEqueue(queue) == 0, "event queue deletion failed");
     std::printf("guest VideoOut HDR tests passed\n");
     LibcRunShutdown_nid_postfix();
