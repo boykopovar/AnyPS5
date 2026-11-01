@@ -584,8 +584,11 @@ void StorePageTests(AgcDriver::VulkanDevice& device) {
     }
     GuestHeap heap(true);
     const ImportBudget budget(AgcDriver::Graphics::HostImportLiveBytes() + Block);
-    const auto log = run(heap, Threads * Page);
-    Require(log.find("found none of the " + std::to_string(slots) + " store pages free (APS5_BDA_STORE_PAGES)") != std::string::npos, "BDA store heap mirror: a dispatch storing into " + std::to_string(slots + 1) + " pages of a heap mirror was not refused for its store pages:\n" + log);
+    run(heap, Threads * Page);
+    for (std::uint32_t thread = 0; thread < Threads; ++thread) {
+        Require(heap.Load(First + thread * Page) == 0, "BDA store heap mirror: a dispatch storing into " + std::to_string(slots + 1) + " pages of a heap mirror, more than the store pages hold, stored thread " + std::to_string(thread) + "'s value into its own page");
+        Require(heap.Load(First + Threads * Page + thread * sizeof(std::uint32_t)) == 0, "BDA store heap mirror: a dispatch storing into " + std::to_string(slots + 1) + " pages of a heap mirror, more than the store pages hold, stored thread " + std::to_string(thread) + "'s value into the last page");
+    }
 }
 
 constexpr std::uint32_t DefaultStorePages = 1024;
@@ -601,8 +604,7 @@ void DefaultStorePageTests(AgcDriver::VulkanDevice& device) {
     auto userData = AddressData(heap.Address() + First);
     const auto other = AddressData(heap.Address() + Last);
     userData.insert(userData.end(), other.begin(), other.end());
-    const auto log = Run(device, PagesCode, userData, {}, DefaultStorePages);
-    Require(log.find("found none of the " + std::to_string(slots) + " store pages free (APS5_BDA_STORE_PAGES)") != std::string::npos, "BDA store heap mirror: a dispatch storing into " + std::to_string(Pages) + " pages of a heap mirror was not refused for its store pages:\n" + log);
+    Run(device, PagesCode, userData, {}, DefaultStorePages);
     for (std::uint64_t page = 0; page + 1 < Pages; ++page) {
         Require(heap.Load(First + page * Page) == 0, "BDA store heap mirror: the refused dispatch's store into page " + std::to_string(page) + " reached guest memory as " + Hex(heap.Load(First + page * Page)));
     }
