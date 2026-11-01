@@ -339,4 +339,8 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(getifaddrs_nid_postfix(nullptr) == -1);
     Require(*__error_nid_postfix() == 14);
+
+    *__error_nid_postfix() = 0;
+    Require(getifaddrs_nid_postfix(reinterpret_cast<GuestInterfaceAddress**>(static_cast<std::uintptr_t>(0x10))) == -1);
+    Require(*__error_nid_postfix() == 14);
 }
