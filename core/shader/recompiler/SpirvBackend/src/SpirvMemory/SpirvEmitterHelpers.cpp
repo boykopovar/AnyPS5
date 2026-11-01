@@ -457,7 +457,12 @@ void DefineOutputs(SpirvEmitterState& state) {
         BuiltIn(state.clipDistanceVariable, F32ArrayType(state, clipDistanceCount), "gl_ClipDistance", spv::BuiltInClipDistance);
     }
     if (state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->psAlphaToCoverage) {
-        if (state.inputInfo.pixel->psSampleMaskExportEnable) throw std::runtime_error("alpha-to-coverage with a sample-mask export is unsupported");
+        if (state.inputInfo.pixel->psSampleMaskExportEnable) {
+            for (auto* variable : {&state.alphaCoverageVariable, &state.exportedCoverageVariable}) {
+                *variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeI32(state)), spv::StorageClassPrivate);
+                if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(*variable);
+            }
+        }
         BuiltIn(state.sampleMaskVariable, SampleMaskArrayType(state), "gl_SampleMask", spv::BuiltInSampleMask);
     }
     if (state.program.Resources().stage == IrShaderStage::Pixel && state.inputInfo.pixel != nullptr && state.inputInfo.pixel->QuadSampleMaskPartial()) {
