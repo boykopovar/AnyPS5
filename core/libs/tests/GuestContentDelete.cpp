@@ -24,9 +24,12 @@ std::string LogicErrorMessage(TAction action) {
 }
 
 int main() {
+    const std::int64_t id = 1;
     Require(sceContentDeleteTerminate() == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteInitialize(nullptr) == static_cast<int>(0x809D5001u));
     Require(sceContentDeleteById(1) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(&id, 1) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
 
@@ -40,12 +43,16 @@ int main() {
     Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5003u));
     Require(sceContentDeleteInitialize(nullptr) == static_cast<int>(0x809D5001u));
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5001u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 1) == static_cast<int>(0x809D5001u));
+    Require(sceContentDeleteByIdListForSf(&id, 0) == static_cast<int>(0x809D5001u));
+    Require(sceContentDeleteByIdListForSf(nullptr, 0) == static_cast<int>(0x809D5001u));
 
     Require(LogicErrorMessage([] { sceContentDeleteByPath(nullptr); }) == "invalid argument");
 
     Require(sceContentDeleteTerminate() == 0);
     Require(sceContentDeleteTerminate() == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteById(1) == static_cast<int>(0x809D5002u));
+    Require(sceContentDeleteByIdListForSf(&id, 1) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("/user/av_contents/photo/a.png") == static_cast<int>(0x809D5002u));
     Require(sceContentDeleteByPath("") == static_cast<int>(0x809D5002u));
