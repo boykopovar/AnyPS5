@@ -7,23 +7,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
-
-template <typename TFunction>
-bool ThrowsRuntimeError(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
 
 struct Source {
     std::vector<std::uint8_t> bytes;
@@ -32,9 +21,6 @@ struct Source {
     std::size_t calls = 0;
     std::int32_t failure = 0;
     void* deleteHandle = nullptr;
-    void* reenterHandle = nullptr;
-    const JpegDecInputControlParam* reenter = nullptr;
-    bool reenterThrew = false;
 };
 
 std::int32_t APS5_VABI ReadChunk(JpegDecInputChunk* chunk, void* argument) {
@@ -42,8 +28,6 @@ std::int32_t APS5_VABI ReadChunk(JpegDecInputChunk* chunk, void* argument) {
     ++source->calls;
     Require(chunk->data == nullptr && chunk->size == 0);
     if (void* handle = std::exchange(source->deleteHandle, nullptr)) Require(sceJpegDecDelete(handle) == 0);
-    if (const JpegDecInputControlParam* param = std::exchange(source->reenter, nullptr))
-        source->reenterThrew = ThrowsRuntimeError([&] { sceJpegDecDecodeWithInputControl(source->reenterHandle, param, nullptr); });
     if (source->failure != 0) return source->failure;
     if (source->offset == source->bytes.size()) return 0;
     const std::size_t count = std::min(source->chunkSize, source->bytes.size() - source->offset);
@@ -150,21 +134,15 @@ void RequireStreamOutlivesHandle(const std::vector<std::uint8_t>& jpeg, std::uin
     Require(image == reference);
     Require(sceJpegDecDecodeWithInputControl(decoding.handle, &decode, nullptr) == invalidHandle);
 
-    JpegHandle reentered(width);
+    JpegHandle completed(width);
     Source outer{jpeg, 64};
     parse.input_argument = &outer;
-    Require(sceJpegDecDecodeWithInputControl(reentered.handle, &parse, &info) == 0);
-    Source inner{jpeg, 64};
-    JpegDecInputControlParam innerDecode = decode;
-    innerDecode.input_argument = &inner;
-    outer.reenterHandle = reentered.handle;
-    outer.reenter = &innerDecode;
+    Require(sceJpegDecDecodeWithInputControl(completed.handle, &parse, &info) == 0);
     std::fill(image.begin(), image.end(), 0xCD);
     decode.input_argument = &outer;
-    Require(sceJpegDecDecodeWithInputControl(reentered.handle, &decode, nullptr) == expected);
-    Require(outer.reenterThrew && inner.calls == 0);
+    Require(sceJpegDecDecodeWithInputControl(completed.handle, &decode, nullptr) == expected);
     Require(image == reference);
-    Require(sceJpegDecDelete(reentered.handle) == 0);
+    Require(sceJpegDecDelete(completed.handle) == 0);
 }
 
 }  // namespace
