@@ -141,7 +141,7 @@ static int testClock() {
     std::memset(version, 'x', sizeof(version));
     sceNpGetSdkVersion(version);
 
-    ok &= expect(std::strcmp(version, "1.00") == 0, "the version is not 1.00");
+    ok &= expect(std::memcmp(version, "1.00\0\0\0\0", 8) == 0, "the version is not 1.00 padded with zeros");
     ok &= expect(version[8] == 'x', "the version was written past 8 bytes");
     return ok ? 0 : 1;
 }
