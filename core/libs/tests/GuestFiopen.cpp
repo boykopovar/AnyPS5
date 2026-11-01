@@ -21,6 +21,21 @@ constexpr int In = 0x01, Out = 0x02, Ate = 0x04, App = 0x08, Trunc = 0x10, Nocre
 constexpr int GuestEinval = 22;
 constexpr int GuestEnoent = 2;
 
+static int g_violations = 0;
+static std::string g_violation;
+
+static void APS5_VABI RecordViolation(const char* message, void* pointer, int error) {
+    Require(pointer == nullptr && error == GuestEinval);
+    ++g_violations;
+    g_violation = message;
+}
+
+static bool Reported(const char* message) {
+    const bool matched = g_violations == 1 && g_violation == message;
+    g_violations = 0;
+    return matched;
+}
+
 static FileStream* Open(const char* name, int mode) {
     return _ZSt7_FiopenPKcNSt5_IosbIiE9_OpenmodeEi_nid_postfix(name, mode, 0x1b6);
 }
@@ -64,13 +79,16 @@ int main() {
     Write(Open(file, Out), "abc");
     Require(Contents(file) == "abc");
 
+    void* const previousHandler = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&RecordViolation));
     FileStream* checkedStream = &_Stdout_nid_postfix;
     Require(fopen_s_nid_postfix(&checkedStream, nullptr, "rb") == GuestEinval);
-    Require(checkedStream == nullptr);
+    Require(checkedStream == nullptr && Reported("fopen_s: bad argument"));
     checkedStream = &_Stderr_nid_postfix;
     Require(fopen_s_nid_postfix(&checkedStream, file, nullptr) == GuestEinval);
-    Require(checkedStream == nullptr);
-    Require(fopen_s_nid_postfix(nullptr, file, "rb") == GuestEinval);
+    Require(checkedStream == nullptr && Reported("fopen_s: bad argument"));
+    Require(fopen_s_nid_postfix(nullptr, file, "rb") == GuestEinval && Reported("fopen_s: bad FILE ** argument"));
+    Require(fopen_s_nid_postfix(nullptr, nullptr, nullptr) == GuestEinval && Reported("fopen_s: bad FILE ** argument"));
+    set_constraint_handler_s_nid_postfix(previousHandler);
     checkedStream = &_Stdout_nid_postfix;
     Require(fopen_s_nid_postfix(&checkedStream, file, "rb") == 0);
     Require(checkedStream != nullptr);
