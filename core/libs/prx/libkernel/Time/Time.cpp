@@ -632,6 +632,10 @@ int APS5_VABI gettimeofday_nid_postfix(KernelTimeval* output, KernelTimezone* zo
 
 int APS5_VABI clock_getres_nid_postfix(int clockId, KernelTimespec* res) {
     if (res == nullptr) return 0;
+    if (!IsCpuClock(clockId) && (clockId < 0 || clockId >= 32)) {
+        *__error_nid_postfix() = GUEST_EINVAL;
+        return -1;
+    }
     if (IsCpuClock(clockId))
         return clock_getres_nid_postfix(GUEST_CLOCK_THREAD_CPUTIME_ID, res);
     if (clockId == 1 || clockId == 2) {
