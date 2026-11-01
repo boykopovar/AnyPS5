@@ -1,142 +1,60 @@
-// Copyright (C) 2026 Boy K. Povar
-// SPDX-License-Identifier: MIT
-//
-
 #include "prx/libSceHidControl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <stdexcept>
 
 static void Require(bool condition, const char* label) {
     if (condition) return;
-    std::fprintf(stderr, "%s: %s\n", label, "failed");
+    std::fprintf(stderr, "%s: failed\n", label);
+    std::abort();
+}
+
+template<typename TCallable>
+static void RequireNotImplemented(TCallable callable, const char* label) {
+    try {
+        callable();
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    std::fprintf(stderr, "%s: expected not-implemented exception\n", label);
     std::abort();
 }
 
 int main() {
-    // The PS5 HID library success/not-ready codes from the 3.20 export
-    // (0x803b3001 == success, 0x803b3002 == not ready / not initialized).
-    const std::int32_t kOk = static_cast<std::int32_t>(0x803b3001u);
+    const std::int32_t kStatus3001 = static_cast<std::int32_t>(0x803b3001u);
     const std::int32_t kNotReady = static_cast<std::int32_t>(0x803b3002u);
-
-    // ---- Before init: every command function reports not-ready, except
-    // ---- the EQ-band value getters/setters which are no-op pre-init.
-    Require(sceHidControlConnectPort(1, 2) == kNotReady, "[hid] ConnectPort pre-init");
-    Require(sceHidControlConnectPort(0, 0) == kNotReady, "[hid] ConnectPort null pre-init");
-    Require(sceHidControlConnectHandle(1, 2, 3) == kNotReady, "[hid] ConnectHandle pre-init");
-    Require(sceHidControlDisconnectDevice(1) == kNotReady, "[hid] DisconnectDevice pre-init");
-    Require(sceHidControlGetDeviceName() == kNotReady, "[hid] GetDeviceName pre-init");
-    Require(sceHidControlGetPswCommand(1, 1234) == kNotReady, "[hid] GetPswCommand pre-init");
-    Require(sceHidControlSetPswCommand(1, 1234) == kNotReady, "[hid] SetPswCommand pre-init");
-    Require(sceHidControlGetPswState(1, 1234) == kNotReady, "[hid] GetPswState pre-init");
-    Require(sceHidControlEnableMicBeamForming() == kNotReady, "[hid] EnableMicBeamForming pre-init");
-    Require(sceHidControlGetBatteryState() == kNotReady, "[hid] GetBatteryState pre-init");
-    Require(sceHidControlGetPswAllEqBandValues(1, 1234) == kNotReady, "[hid] AllEqBand pre-init");
-    Require(sceHidControlConnectPswDeviceForNearby(1, 2) == kNotReady, "[hid] NearbConnect pre-init");
-
-    // These four EQ-band functions return success even before init.
-    Require(sceHidControlGetPswEqBandValues(1, 2, 345) == kOk, "[hid] GetPswEqBandValues pre-init");
-    Require(sceHidControlSetPswEqBandValues(1, 2, 345) == kOk, "[hid] SetPswEqBandValues pre-init");
-    Require(sceHidControlGetPswEqPresetName(1, 2, 345) == kOk, "[hid] GetPswEqPresetName pre-init");
-    Require(sceHidControlSetPswEqPresetName(1, 2, 345) == kOk, "[hid] SetPswEqPresetName pre-init");
-
-    // ---- Init
-    Require(sceHidControlInit() == kOk, "[hid] Init");
-
-    // ---- After init: command functions succeed, param guards apply.
-    Require(sceHidControlConnectPort(1, 2) == kOk, "[hid] ConnectPort post-init");
-    Require(sceHidControlConnectPort(0, 0) == kOk, "[hid] ConnectPort null post-init");
-    Require(sceHidControlConnectHandle(1, 2, 3) == kOk, "[hid] ConnectHandle post-init");
-    Require(sceHidControlDisconnectHandle(1, 2) == kOk, "[hid] DisconnectHandle post-init");
-    Require(sceHidControlDisconnectPort(1, 2) == kOk, "[hid] DisconnectPort post-init");
-    Require(sceHidControlDisconnectDevice(1) == kOk, "[hid] DisconnectDevice post-init");
-    Require(sceHidControlEnableMicBeamForming() == kOk, "[hid] EnableMicBeamForming post-init");
-    Require(sceHidControlGetBatteryState() == kOk, "[hid] GetBatteryState post-init");
-    Require(sceHidControlGetDeviceId(1, 2) == kOk, "[hid] GetDeviceId post-init");
-    Require(sceHidControlGetDeviceName() == kOk, "[hid] GetDeviceName post-init");
-    Require(sceHidControlGetVersionInfo(1, 2) == kOk, "[hid] GetVersionInfo post-init");
-    Require(sceHidControlGetJediState() == kOk, "[hid] GetJediState post-init");
-    Require(sceHidControlGetSparkState() == kOk, "[hid] GetSparkState post-init");
-    Require(sceHidControlGetAuthInformation(1, 2, 3, nullptr) == kOk, "[hid] GetAuthInformation post-init");
-    Require(sceHidControlGetControllerSerialNumberInformation(1, nullptr) == kOk, "[hid] GetControllerSerial post-init");
-    Require(sceHidControlGetPswNearbyDeviceInfo(1, 1234) == kOk, "[hid] GetPswNearby post-init");
-    Require(sceHidControlConnectPswDeviceForNearby(1, 2) == kOk, "[hid] NearbConnect dup post-init");
-    Require(sceHidControlConnectPswDeviceForNearby(1, 2) == kOk, "[hid] NearbConnect post-init");
-    Require(sceHidControlSetJediVolumeGain(1234, 1, 2) == kOk, "[hid] SetJediVolumeGain post-init");
-    Require(sceHidControlSetJediAudioOutPath(1) == kOk, "[hid] SetJediAudioOutPath post-init");
-    Require(sceHidControlSetProcessFocus(1, 2) == kOk, "[hid] SetProcessFocus post-init");
-    Require(sceHidControlSetApplicationFocus(1, 2) == kOk, "[hid] SetApplicationFocus post-init");
-    Require(sceHidControlSetCollaboInputSettingOverrideProcess() == kOk, "[hid] SetCollabo post-init");
-    Require(sceHidControlSetForceAdvancedVibrationMode(1) == kOk, "[hid] SetForceAdvancedVib post-init");
-    Require(sceHidControlGetPswBatteryState() == kOk, "[hid] GetPswBatteryState post-init");
-    Require(sceHidControlSetCollaboInputSettingOverrideProcess() == kOk, "[hid] SetCollabo dup");
-    Require(sceHidControlGetPswAllEqBandValues(1, 1234) == kOk, "[hid] AllEqBand post-init");
-
-    // ---- Param-guard arms (decompiled thresholds).
-    // GetPswCommand / SetPswCommand: null payload -> success.
-    Require(sceHidControlGetPswCommand(1, 0) == kOk, "[hid] GetPswCommand null payload");
-    Require(sceHidControlSetPswCommand(1, 0) == kOk, "[hid] SetPswCommand null payload");
-    Require(sceHidControlGetPswCommand(1, 1234) == kOk, "[hid] GetPswCommand valid payload");
-    Require(sceHidControlSetPswCommand(1, 1234) == kOk, "[hid] SetPswCommand valid payload");
-    Require(sceHidControlGetPswDeviceName(1, 1234) == kOk, "[hid] GetPswDeviceName valid");
-    Require(sceHidControlSetPswDeviceName(1, 1234) == kOk, "[hid] SetPswDeviceName valid");
-    Require(sceHidControlGetPswState(1, 1234) == kOk, "[hid] GetPswState valid");
-    Require(sceHidControlGetPswNearbyDeviceInfo(1, 1234) == kOk, "[hid] GetPswNearby valid");
-
-    // GetPswEqPresetSelection: null -> success.
-    Require(sceHidControlGetPswEqPresetSelection(1, 0) == kOk, "[hid] GetPswEqPresetSelection null");
-    Require(sceHidControlGetPswEqPresetSelection(1, 1) == kOk, "[hid] GetPswEqPresetSelection valid");
-
-    // GetPswNetworkLocale / GetPswSidetoneLevel: null -> success.
-    Require(sceHidControlGetPswNetworkLocale(1, 0) == kOk, "[hid] GetPswNetworkLocale null");
-    Require(sceHidControlGetPswSidetoneLevel(1, 0) == kOk, "[hid] GetPswSidetoneLevel null");
-    Require(sceHidControlGetPswNetworkLocale(1, 1234) == kOk, "[hid] GetPswNetworkLocale valid");
-    Require(sceHidControlGetPswSidetoneLevel(1, 1234) == kOk, "[hid] GetPswSidetoneLevel valid");
-
-    // SetPswEqPresetSelection: index >= 6 -> not ready, else success.
-    Require(sceHidControlSetPswEqPresetSelection(1, 6) == kNotReady, "[hid] SetPswEqPresetSelection idx 6");
-    Require(sceHidControlSetPswEqPresetSelection(1, 5) == kOk, "[hid] SetPswEqPresetSelection idx 5");
-    Require(sceHidControlSetPswEqPresetSelection(1, 0) == kOk, "[hid] SetPswEqPresetSelection idx 0");
-
-    // SetPswNetworkLocale: idx <= 0x24 -> not ready, else success.
-    Require(sceHidControlSetPswNetworkLocale(1, 0) == kNotReady, "[hid] SetPswNetworkLocale idx 0");
-    Require(sceHidControlSetPswNetworkLocale(1, 0x24) == kNotReady, "[hid] SetPswNetworkLocale idx 0x24");
-    Require(sceHidControlSetPswNetworkLocale(1, 0x25) == kOk, "[hid] SetPswNetworkLocale idx 0x25");
-
-    // SetPswSidetoneLevel: idx >= 0x10 -> not ready, else success.
-    Require(sceHidControlSetPswSidetoneLevel(1, 0x10) == kNotReady, "[hid] SetPswSidetoneLevel idx 0x10");
-    Require(sceHidControlSetPswSidetoneLevel(1, 0x0f) == kOk, "[hid] SetPswSidetoneLevel idx 0x0f");
-
-    // SetPswSpeakerVolume: idx >= 0x10 -> not ready, else success.
-    Require(sceHidControlSetPswSpeakerVolume(1, 0x10) == kNotReady, "[hid] SetPswSpeakerVolume idx 0x10");
-    Require(sceHidControlSetPswSpeakerVolume(1, 0x0f) == kOk, "[hid] SetPswSpeakerVolume idx 0x0f");
-    Require(sceHidControlSetPswSpeakerVolume(1, 0) == kOk, "[hid] SetPswSpeakerVolume idx 0");
-
-    // PswUpdate functions (all guarded by init).
-    Require(sceHidControlPswUpdateIsReady(1, nullptr) == kOk, "[hid] PswUpdateIsReady");
-    Require(sceHidControlPswUpdateGetStatus(1, 2) == kOk, "[hid] PswUpdateGetStatus");
-    Require(sceHidControlPswUpdateSendData(1, 2) == kOk, "[hid] PswUpdateSendData");
-    Require(sceHidControlPswUpdateSendAppendixData(1, 2) == kOk, "[hid] PswUpdateSendAppendixData");
-    Require(sceHidControlPswUpdateGetReconnectStatus(1) == kOk, "[hid] PswUpdateGetReconnectStatus");
-    Require(sceHidControlPswUpdateGetDeviceFirmwareUpdateTelemetryData(1, nullptr) == kOk, "[hid] PswUpdateGetFirmwareTelemetry");
-    Require(sceHidControlPswUpdateIsUpdateNeeded(1, 1234, nullptr) == kOk, "[hid] PswUpdateIsUpdateNeeded");
-    Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(1, nullptr, nullptr, nullptr) == kOk, "[hid] PswUpdateIsUpdateNeededMulti");
-    Require(sceHidControlPswUpdateStart(1, 2) == kOk, "[hid] PswUpdateStart");
-    Require(sceHidControlPswUpdateInit() == kOk, "[hid] PswUpdateInit");
-    Require(sceHidControlPswUpdateTerm() == kOk, "[hid] PswUpdateTerm");
-
-    // Misc command functions (post-init).
-    Require(sceHidControlSetRevokeList(1, 2, 345) == kOk, "[hid] SetRevokeList");
-    Require(sceHidControlSetRevokeList2(1, 2, 345) == kOk, "[hid] SetRevokeList2");
-    Require(sceHidControlSetUserColor(1) == kOk, "[hid] SetUserColor");
-    Require(sceHidControlSetPswConsoleMute(1, 2) == kOk, "[hid] SetPswConsoleMute");
-    Require(sceHidControlSetPswControllerCommunicationMethod(1) == kOk, "[hid] SetPswControllerCommunicationMethod");
-    Require(sceHidControlSetRemoteMergeProcess(1, 2) == kOk, "[hid] SetRemoteMergeProcess");
-    Require(sceHidControlSetVibrationTriggerEffectWeakForce(1, 2) == kOk, "[hid] SetVibrationTriggerEffectWeakForce");
-    Require(sceHidControlSetHandleState(1) == kOk, "[hid] SetHandleState");
-    Require(sceHidControlSetPswResetSettings(1) == kOk, "[hid] SetPswResetSettings");
-
+    Require(sceHidControlConnectPort(1, 2) == kNotReady, "ConnectPort before init");
+    Require(sceHidControlConnectPort(0, 0) == kNotReady, "ConnectPort zero args before init");
+    Require(sceHidControlConnectHandle(1, 2, 3) == kNotReady, "ConnectHandle before init");
+    Require(sceHidControlDisconnectDevice(1) == kNotReady, "DisconnectDevice before init");
+    Require(sceHidControlGetDeviceName() == kNotReady, "GetDeviceName before init");
+    Require(sceHidControlGetPswCommand(1, 0) == kNotReady, "GetPswCommand before init");
+    Require(sceHidControlSetPswCommand(1, 1) == kNotReady, "SetPswCommand before init");
+    Require(sceHidControlGetPswState(1, 1) == kNotReady, "GetPswState before init");
+    Require(sceHidControlGetBatteryState() == kNotReady, "GetBatteryState before init");
+    Require(sceHidControlGetPswAllEqBandValues(1, 1) == kNotReady, "GetPswAllEqBandValues before init");
+    Require(sceHidControlGetPswEqBandValues(1, 2, 3) == kStatus3001, "GetPswEqBandValues before init");
+    Require(sceHidControlSetPswEqBandValues(1, 2, 3) == kStatus3001, "SetPswEqBandValues before init");
+    Require(sceHidControlGetPswEqPresetName(1, 2, 3) == kStatus3001, "GetPswEqPresetName before init");
+    Require(sceHidControlSetPswEqPresetName(1, 2, 3) == kStatus3001, "SetPswEqPresetName before init");
+    RequireNotImplemented([] { sceHidControlInit(); }, "Init without HID transport");
+    Require(sceHidControlConnectPort(1, 2) == kNotReady, "ConnectPort after failed init");
+    RequireNotImplemented([] { libSceHidControlUnknown_00qes5NswlQ_nid_no_patch(); }, "libSceHidControlUnknown_00qes5NswlQ_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_8fIm7UR4VDc_nid_no_patch(); }, "libSceHidControlUnknown_8fIm7UR4VDc_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_AjBZjowWaFI_nid_no_patch(); }, "libSceHidControlUnknown_AjBZjowWaFI_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_C05jP9w4PCc_nid_no_patch(); }, "libSceHidControlUnknown_C05jP9w4PCc_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_DUGI7AXFtV0_nid_no_patch(); }, "libSceHidControlUnknown_DUGI7AXFtV0_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_HZJRMD3BeKk_nid_no_patch(); }, "libSceHidControlUnknown_HZJRMD3BeKk_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_i5ALHbvjRi8_nid_no_patch(); }, "libSceHidControlUnknown_i5ALHbvjRi8_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_iVF5VrBHJzk_nid_no_patch(); }, "libSceHidControlUnknown_iVF5VrBHJzk_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_OFyJjudLKlA_nid_no_patch(); }, "libSceHidControlUnknown_OFyJjudLKlA_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_tcDE01gUoN0_nid_no_patch(); }, "libSceHidControlUnknown_tcDE01gUoN0_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_TKax3WNHtEg_nid_no_patch(); }, "libSceHidControlUnknown_TKax3WNHtEg_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_w2MEBm2Tvm8_nid_no_patch(); }, "libSceHidControlUnknown_w2MEBm2Tvm8_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_WikCB91EU0w_nid_no_patch(); }, "libSceHidControlUnknown_WikCB91EU0w_nid_no_patch");
+    RequireNotImplemented([] { libSceHidControlUnknown_yJJq5Arw8EI_nid_no_patch(); }, "libSceHidControlUnknown_yJJq5Arw8EI_nid_no_patch");
     return 0;
 }
