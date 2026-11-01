@@ -83,12 +83,17 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnosti
     }
 }
 
+namespace {
+
+void DrainShaderWrites(std::uint64_t address, std::size_t bytes) {
+    if (!DrawPipeline::Active()) return;
+    auto& pipeline = DrawPipeline::Queue0();
+    if (pipeline.Busy() && pipeline.Overlaps(address, bytes)) pipeline.Drain(DrawPipeline::DrainReason::Capture);
+}
+
+}
+
 std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
-    const auto drain = [](std::uint64_t first, std::size_t bytes) {
-        if (!DrawPipeline::Active()) return;
-        auto& pipeline = DrawPipeline::Queue0();
-        if (pipeline.Busy() && pipeline.Overlaps(first, bytes)) pipeline.Drain(DrawPipeline::DrainReason::Capture);
-    };
     GuestMemory::CheckRange(reinterpret_cast<const void*>(address), sizeof(std::uint32_t), 256);
     static std::mutex cacheMutex;
     static std::list<std::shared_ptr<const ShaderSnapshot>> cache;
@@ -101,7 +106,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
     }
     if (cached) {
         const auto code = std::as_bytes(std::span(cached->code));
-        drain(address, code.size());
+        DrainShaderWrites(address, code.size());
         GuestMemory::FlushGpuWrites(address, code.size());
         if (GuestMemory::CompareMapped(address, code) == GuestMemory::Compare::Equal) {
             std::lock_guard lock(cacheMutex);
@@ -122,7 +127,7 @@ std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address) {
     while (snapshot.code.size() < available) {
         const auto previous = snapshot.code.size();
         snapshot.code.resize(std::min(available, std::max<std::size_t>(64, previous * 2)));
-        drain(address + previous * sizeof(std::uint32_t), (snapshot.code.size() - previous) * sizeof(std::uint32_t));
+        DrainShaderWrites(address + previous * sizeof(std::uint32_t), (snapshot.code.size() - previous) * sizeof(std::uint32_t));
         GuestMemory::Read(address + previous * sizeof(std::uint32_t),
             std::as_writable_bytes(std::span(snapshot.code).subspan(previous)), alignof(std::uint32_t));
         try {
@@ -1001,6 +1006,7 @@ std::vector<std::uint32_t> ReadUserDataCallee(std::uint64_t address, std::uint32
     while (words.size() < limitWords) {
         const auto next = address + words.size() * 4u;
         const auto bytes = static_cast<std::size_t>(page - next % page);
+        DrainShaderWrites(next, bytes);
         if (!GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(next)), bytes)) {
             if (finish()) return words;
             throw std::runtime_error("its callee at " + hexText(address) + " is not readable at " + hexText(next));
@@ -1019,6 +1025,7 @@ std::vector<std::uint8_t> ReadGuestBytes(std::uint64_t address, std::uint64_t by
     if (address > UINTPTR_MAX - bytes || !GuestMemory::Accessible(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)), static_cast<std::size_t>(bytes))) {
         throw std::runtime_error(std::string("its ") + what + " at " + hexText(address) + " + " + hexText(bytes) + " is not readable");
     }
+    DrainShaderWrites(address, static_cast<std::size_t>(bytes));
     std::vector<std::uint8_t> data(static_cast<std::size_t>(bytes));
     GuestMemory::Read(address, std::as_writable_bytes(std::span(data)));
     return data;
