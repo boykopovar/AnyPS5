@@ -609,6 +609,34 @@ int main() {
         }
         Require(memmem_nid_postfix(haystack.data(), haystack.size(), needle.data(), needle.size()) == expected);
     }
+    for (int round = 0; round < 8000; ++round) {
+        const bool adversarial = round % 2 == 1;
+        char word[4];
+        const std::size_t wordLength = 1 + next(4);
+        for (std::size_t i = 0; i < wordLength; ++i) word[i] = static_cast<char>('a' + next(3));
+        std::string needle;
+        const std::size_t needleLength = 1 + next(adversarial ? 60 : 12);
+        for (std::size_t i = 0; i < needleLength; ++i) needle.push_back(adversarial ? word[i % wordLength] : static_cast<char>('a' + next(1 + next(3))));
+        if (adversarial) needle.back() = static_cast<char>('a' + next(4));
+        std::string haystack;
+        const std::size_t haystackLength = adversarial ? 300 + next(3000) : next(80);
+        while (haystack.size() < haystackLength) {
+            if (next(64) == 0) {
+                haystack += needle;
+            } else if (adversarial && next(16) != 0) {
+                haystack.push_back(word[haystack.size() % wordLength]);
+            } else {
+                haystack.push_back(static_cast<char>('a' + next(4)));
+            }
+        }
+        if (!haystack.empty() && next(4) == 0) haystack[next(static_cast<std::uint32_t>(haystack.size()))] = '\0';
+        const std::size_t limit = next(static_cast<std::uint32_t>(haystack.size() + 2));
+        const char* expected = nullptr;
+        for (std::size_t i = 0; expected == nullptr && i < limit && haystack[i] != '\0' && needle.size() <= limit - i; ++i) {
+            if (std::strncmp(haystack.c_str() + i, needle.c_str(), needle.size()) == 0) expected = haystack.c_str() + i;
+        }
+        Require(strnstr_nid_postfix(haystack.c_str(), needle.c_str(), limit) == expected);
+    }
     std::string boundedHaystack(2000, 'a');
     boundedHaystack.push_back('b');
     const std::string tail = std::string(40, 'a') + "b";

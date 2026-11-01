@@ -799,9 +799,26 @@ int APS5_VABI memset_s_nid_postfix(void* dest, size_t destsz, int value, size_t 
 char* APS5_VABI strnstr_nid_postfix(const char* haystack, const char* needle, size_t length) {
     const size_t needleLength = std::strlen(needle);
     if (needleLength == 0) return const_cast<char*>(haystack);
-    for (size_t index = 0; index < length && haystack[index] != '\0'; ++index) {
-        if (needleLength > length - index) break;
-        if (std::strncmp(haystack + index, needle, needleLength) == 0) return const_cast<char*>(haystack + index);
+    size_t wasted = 0;
+    for (size_t start = 0; start < length && haystack[start] != '\0'; ++start) {
+        if (needleLength > length - start) break;
+        if (haystack[start] != needle[0]) continue;
+        size_t matched = 1;
+        while (matched < needleLength && haystack[start + matched] == needle[matched]) ++matched;
+        if (matched == needleLength) return const_cast<char*>(haystack + start);
+        wasted += matched;
+        if (wasted > start + NaiveSearchSlack) {
+            const char* rest = haystack + start + 1;
+            const size_t bound = length - start - 1;
+            size_t known = 0;
+            return const_cast<char*>(TwoWaySearch(rest, needle, needleLength, [rest, bound, &known](size_t end) {
+                if (end > bound) return false;
+                for (; known < end; ++known) {
+                    if (rest[known] == '\0') return false;
+                }
+                return true;
+            }));
+        }
     }
     return nullptr;
 }
