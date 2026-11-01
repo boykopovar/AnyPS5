@@ -36,6 +36,7 @@
 
 ### Functional
 
+- [sceVideoOutOpen](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut) - reopening a closed port waits for all submitted GPU work (`AgcDriverWaitIdle`) before it replaces the port's configuration, because a label store into the old configuration's `bufferLabels` may still be in flight. A queue stalled on something the title does only after `sceVideoOutOpen` returns stalls the reopen with it. Closes when: the wait covers only the work that stores into the previous configuration.
 - [ANYPS5_PAD_IDENTIFY and haptics reports](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - the pulse uses the SDL motor rumble path only; it is not checked against the Bluetooth DualSense haptics-report path of open PR #9154, and the two have not been run together.
 - [ANYPS5_PAD_IDENTIFY on request](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - no key or overlay entry sends the pattern on demand; `always` repeats it every 30 seconds instead.
 - [ANYPS5_PAD_IDENTIFY pulse pattern](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - the 150 ms full-strength pulses 400 ms apart and the 500 ms quiet window are AnyPS5 choices: no measurement shows how a real controller's motors feel them or whether players can count the pulses.

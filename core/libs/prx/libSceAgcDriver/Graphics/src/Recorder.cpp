@@ -1317,9 +1317,45 @@ bool Recorder::wideLabelInLocked(std::uint64_t address, std::size_t bytes) const
     if (wideLabels.empty() || bytes == 0) return false;
     const auto end = address + bytes;
     for (auto it = wideLabels.lower_bound(address >= wideLabelBytes ? address - wideLabelBytes + 1 : 0); it != wideLabels.end() && it->first < end; ++it) {
-        if (it->second > address) return true;
+        if (it->second.end > address) return true;
     }
     return false;
+}
+
+bool Recorder::LookupStoredBytes(std::uint64_t address, std::span<std::byte> bytes) {
+    std::lock_guard tableLock(labelTableMutex);
+    return labelTableOwner != nullptr && labelTableOwner->storedBytesLocked(address, bytes);
+}
+
+bool Recorder::storedBytesLocked(std::uint64_t address, std::span<std::byte> bytes) const {
+    if (bytes.empty() || bytes.size() % 4 != 0 || address % 4 != 0 || address > std::numeric_limits<std::uint64_t>::max() - bytes.size()) return false;
+    const auto end = address + bytes.size();
+    if (const auto queued = queuedLabels.lower_bound(address); queued != queuedLabels.end() && queued->first < end) return false;
+    const auto dwords = bytes.size() / 4;
+    std::vector<const std::pair<const std::uint64_t, WideLabel>*> newest(dwords, nullptr);
+    for (auto it = wideLabels.lower_bound(address >= wideLabelBytes ? address - wideLabelBytes + 1 : 0); it != wideLabels.end() && it->first < end; ++it) {
+        if (it->second.end <= address) continue;
+        const auto from = std::max(it->first, address);
+        const auto to = std::min(it->second.end, end);
+        for (auto dword = (from - address) / 4; dword < (to - address + 3) / 4; ++dword) {
+            if (newest[dword] == nullptr || newest[dword]->second.sequence < it->second.sequence) newest[dword] = &*it;
+        }
+    }
+    std::vector<std::byte> composed(bytes.size());
+    for (std::size_t dword = 0; dword < dwords; ++dword) {
+        const auto at = address + dword * 4;
+        if (const auto found = labels.find(at); found != labels.end()) {
+            const auto& entry = found->second;
+            if (entry.batch == nullptr || entry.batch->submitStarted.load(std::memory_order_acquire) || entry.overwritten || entry.behindCompletion) return false;
+            std::memcpy(composed.data() + dword * 4, &entry.value, 4);
+            continue;
+        }
+        const auto* wide = newest[dword];
+        if (wide == nullptr || at < wide->first || wide->second.end - at < 4 || wide->second.overwritten || wide->second.batch == nullptr || wide->second.batch->submitStarted.load(std::memory_order_acquire)) return false;
+        std::memcpy(composed.data() + dword * 4, wide->second.bytes.data() + (at - wide->first), 4);
+    }
+    std::copy(composed.begin(), composed.end(), bytes.begin());
+    return true;
 }
 
 Recorder::OwnLabel Recorder::UnlandedOwnLabel(std::uint64_t address, std::size_t bytes, std::uint32_t queue) {
@@ -3063,10 +3099,13 @@ void Recorder::noteWriteOn(Batch& batch, std::uint64_t address, std::size_t byte
 }
 
 void Recorder::markOverwritten(std::uint64_t address, std::uint64_t end) {
-    if (recordedLabels.load(std::memory_order_relaxed) == 0) return;
+    if (recordedLabels.load(std::memory_order_relaxed) == 0 && recordedWideLabels.load(std::memory_order_relaxed) == 0) return;
     std::lock_guard tableLock(labelTableMutex);
     // A dword overlaps the range when it starts before the end and ends after the start.
     for (auto it = labels.lower_bound(address >= 3 ? address - 3 : 0); it != labels.end() && it->first < end; ++it) it->second.overwritten = true;
+    for (auto it = wideLabels.lower_bound(address >= wideLabelBytes ? address - wideLabelBytes + 1 : 0); it != wideLabels.end() && it->first < end; ++it) {
+        if (it->second.end > address) it->second.overwritten = true;
+    }
 }
 
 void Recorder::NotePendingWrite(std::uint64_t address, std::size_t bytes) {
@@ -3455,8 +3494,9 @@ void Recorder::NoteLabel(std::uint64_t address, std::span<const std::byte> bytes
         std::lock_guard tableLock(labelTableMutex);
         labels.erase(labels.lower_bound(address), labels.lower_bound(address + bytes.size()));
         recordedLabels.store(labels.size(), std::memory_order_relaxed);
-        open->wideLabels.push_back(wideLabels.emplace(address, address + bytes.size()));
+        open->wideLabels.push_back(wideLabels.emplace(address, WideLabel{address + bytes.size(), {bytes.begin(), bytes.end()}, ++wideLabelSequence, false, open.get()}));
         wideLabelBytes = std::max<std::uint64_t>(wideLabelBytes, bytes.size());
+        recordedWideLabels.store(wideLabels.size(), std::memory_order_relaxed);
     }
     if (activeRecorder == this && pendingLabelSince.load(std::memory_order_relaxed) == NoPendingLabel) {
         pendingLabelSince.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_release);
@@ -3735,6 +3775,7 @@ void Recorder::Submit() {
     if (hold != VK_NULL_HANDLE || timeline != VK_NULL_HANDLE) submission.pNext = &timelineInfo;
     DestroyDeferredAtIdle(context);
     const auto submitStart = std::chrono::steady_clock::now();
+    batch->submitStarted.store(true, std::memory_order_release);
     const auto result = function(queueSubmit, "vkQueueSubmit")(context.queue, 1, &submission, batch->fence);
     if (result == VK_ERROR_DEVICE_LOST) {
         const auto idle = context.Function<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(context.device);
@@ -4333,6 +4374,7 @@ void Recorder::removeLabels(Batch& batch) {
         }
         for (const auto entry : batch.wideLabels) wideLabels.erase(entry);
         recordedLabels.store(labels.size(), std::memory_order_relaxed);
+        recordedWideLabels.store(wideLabels.size(), std::memory_order_relaxed);
     }
     batch.labelDwords.clear();
     batch.wideLabels.clear();
