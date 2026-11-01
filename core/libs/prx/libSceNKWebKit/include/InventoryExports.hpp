@@ -5,9 +5,6 @@
 extern "C" {
 
 int APS5_VABI WKURLRequestSetDefaultTimeoutInterval();
-int APS5_VABI WKErrorCopyDomain();
-int APS5_VABI WKErrorGetErrorCode();
-int APS5_VABI WKErrorCopyFailingURL();
 int APS5_VABI WKURLRequestCopyURL();
 int APS5_VABI WKURLRequestCopyFirstPartyForCookies();
 int APS5_VABI WKURLRequestCopyHTTPMethod();

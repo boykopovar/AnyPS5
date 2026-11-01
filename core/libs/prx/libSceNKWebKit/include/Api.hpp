@@ -4,7 +4,6 @@
 
 extern "C" {
 
-int APS5_VABI WKErrorCopyLocalizedDescription();
 int APS5_VABI _ZN9Inspector17ScriptDebugServer23removeBreakpointActionsEm();
 int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal8Settings11getPropertyERKN3WTF6StringE();
 int APS5_VABI _ZN9Inspector21InjectedScriptManagerdaEPv();
