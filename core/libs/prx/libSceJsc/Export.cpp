@@ -82,7 +82,7 @@ bool Equal(const GuestJSString* first, const GuestJSString* second) {
 
 extern "C" {
 
-GuestJSString* APS5_VABI JSStringCreateWithCharacters(const std::uint16_t* characters, std::size_t count) {
+GuestJSString* APS5_VABI JSStringCreateWithCharacters_nid_postfix(const std::uint16_t* characters, std::size_t count) {
     if (!characters) return NullString().release();
     if (!GuestJSStringValidLength<char16_t>(count)) throw std::length_error("JSStringCreateWithCharacters: length above the string limit");
     auto string = std::make_unique<GuestJSString>();
@@ -91,36 +91,36 @@ GuestJSString* APS5_VABI JSStringCreateWithCharacters(const std::uint16_t* chara
     return string.release();
 }
 
-GuestJSString* APS5_VABI JSStringCreateWithUTF8CString(const char* text) {
+GuestJSString* APS5_VABI JSStringCreateWithUTF8CString_nid_postfix(const char* text) {
     return Decode(text).release();
 }
 
-GuestJSString* APS5_VABI JSStringRetain(GuestJSString* string) {
+GuestJSString* APS5_VABI JSStringRetain_nid_postfix(GuestJSString* string) {
     if (!string) throw std::invalid_argument("JSStringRetain: null string");
     string->references.fetch_add(1, std::memory_order_relaxed);
     return string;
 }
 
-void APS5_VABI JSStringRelease(GuestJSString* string) {
+void APS5_VABI JSStringRelease_nid_postfix(GuestJSString* string) {
     if (!string) throw std::invalid_argument("JSStringRelease: null string");
     if (string->references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete string;
 }
 
-std::size_t APS5_VABI JSStringGetLength(const GuestJSString* string) {
+std::size_t APS5_VABI JSStringGetLength_nid_postfix(const GuestJSString* string) {
     return string ? string->characters.size() - 1 : 0;
 }
 
-const std::uint16_t* APS5_VABI JSStringGetCharactersPtr(const GuestJSString* string) {
+const std::uint16_t* APS5_VABI JSStringGetCharactersPtr_nid_postfix(const GuestJSString* string) {
     return string && !string->nullString ? string->characters.data() : nullptr;
 }
 
-std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize(const GuestJSString* string) {
+std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize_nid_postfix(const GuestJSString* string) {
     if (!string) throw std::invalid_argument("JSStringGetMaximumUTF8CStringSize: null string");
     const auto length = static_cast<std::uint32_t>(string->characters.size() - 1);
     return static_cast<std::uint32_t>(length * 3u + 1u);
 }
 
-std::size_t APS5_VABI JSStringGetUTF8CString(const GuestJSString* string, char* buffer, std::size_t bufferSize) {
+std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* string, char* buffer, std::size_t bufferSize) {
     if (!string || !buffer || !bufferSize) return 0;
     std::size_t written = 0;
     const auto count = string->characters.size() - 1;
