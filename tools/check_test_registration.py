@@ -5,9 +5,8 @@ import sys
 from pathlib import Path
 
 TEST_OUTPUT = r"tests[\\/]"
-COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|subdirs)\s*\(", re.M | re.I)
 SCOPE_START = {"if", "foreach", "while", "function", "macro", "block"}
-SOURCE_COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
+COMMAND = re.compile(r"^\s*(add_test|set_tests_properties|subdirs|if|elseif|else|endif|foreach|endforeach|while|endwhile|function|endfunction|macro|endmacro|block|endblock)\s*\(", re.M | re.I)
 ARGUMENT = re.compile(r'"(?:\\.|[^"\\])*"|\[(?P<equals>=*)\[.*?\](?P=equals)\]|[^\s()]+', re.S)
 LEXICAL = re.compile(r'\\.|"(?:\\.|[^"\\])*"|\[(?P<literal_equals>=*)\[.*?\](?P=literal_equals)\]'
                      r'|(?P<comment>\#\[(?P<comment_equals>=*)\[.*?\](?P=comment_equals)\]|\#[^\n]*)', re.S)
@@ -53,13 +52,13 @@ def built(build):
     return names
 
 
-def commands(content, pattern=COMMAND):
+def commands(content):
     content = content.removeprefix("\ufeff")
     content = LEXICAL.sub(lambda match: re.sub(r"[^\n]", " ", match.group())
                           if match.group("comment") is not None else match.group(), content)
     code = LEXICAL.sub(lambda match: re.sub(r"[^\n]", "_", match.group()), content)
     parsed_until = 0
-    for command in pattern.finditer(code):
+    for command in COMMAND.finditer(code):
         if command.start() < parsed_until:
             continue
         name = command.group(1).lower()
@@ -197,7 +196,7 @@ def run_scripts(root, files):
             content = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
             tests = []
             scopes = []
-            for index, (command, arguments) in enumerate(commands(content, SOURCE_COMMAND)):
+            for index, (command, arguments) in enumerate(commands(content)):
                 if command in SCOPE_START:
                     scopes.append((index, index))
                 elif command.removeprefix("end") in SCOPE_START:
