@@ -33,6 +33,9 @@
 #include <pthread.h>
 #include <sys/mman.h>
 #endif
+#ifdef __APPLE__
+#include "prx/libSceAgcDriver/Execution/include/Driver/DriverMemory.hpp"
+#endif
 
 namespace AgcDriver::DriverDetail {
 
@@ -54,9 +57,15 @@ void PrintFailure(std::exception_ptr error) {
     std::fflush(stderr);
 }
 
+#ifdef __APPLE__
+constexpr std::uint64_t DriverMemoryAddress = MacOsDriverMemoryBase;
+constexpr std::size_t DriverMemoryBytes = DriverMemorySpan;
+constexpr std::uint64_t FsTableAddress = RetargetPs5DriverMemory(0xfe0040000ull);
+#else
 constexpr std::uint64_t DriverMemoryAddress = 0xfe0000000ull + GuestArena::GuestAddressOffset;
 constexpr std::size_t DriverMemoryBytes = 2u << 20u;
 constexpr std::uint64_t FsTableAddress = DriverMemoryAddress + 0x40000ull;
+#endif
 constexpr std::uint64_t FsTableSlotBytes = 16u;
 constexpr std::uint64_t FsTableSlots = 6u;
 constexpr std::uint64_t FsRoutineRecords = 8u;
@@ -73,6 +82,10 @@ void MapDriverMemory() {
 #ifdef _WIN32
     mapped = reinterpret_cast<void*>(DriverMemoryAddress);
     GuestArena::GuestArenaCommit_nid_postfix(mapped, DriverMemoryBytes, PAGE_READWRITE, DriverMemoryBytes);
+#elif defined(__APPLE__)
+    mapped = mmap(reinterpret_cast<void*>(DriverMemoryAddress), DriverMemoryBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (mapped == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map the AGC driver memory");
+    if (reinterpret_cast<std::uint64_t>(mapped) != DriverMemoryAddress) munmap(mapped, DriverMemoryBytes);
 #else
     mapped = mmap(reinterpret_cast<void*>(DriverMemoryAddress), DriverMemoryBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
     if (mapped == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "map the AGC driver memory");
@@ -106,6 +119,11 @@ bool StackHoldsImport() {
         std::uintptr_t low = 0;
         std::uintptr_t high = 0;
         Bounds() {
+#ifdef __APPLE__
+            const auto self = pthread_self();
+            high = reinterpret_cast<std::uintptr_t>(pthread_get_stackaddr_np(self));
+            low = high - pthread_get_stacksize_np(self);
+#else
             pthread_attr_t attributes;
             if (pthread_getattr_np(pthread_self(), &attributes) != 0) return;
             void* base = nullptr;
@@ -115,6 +133,7 @@ bool StackHoldsImport() {
                 high = low + size;
             }
             pthread_attr_destroy(&attributes);
+#endif
         }
     };
     thread_local const Bounds bounds;

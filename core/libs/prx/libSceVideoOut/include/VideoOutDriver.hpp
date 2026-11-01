@@ -96,7 +96,6 @@ static constexpr uint64_t VIDEO_OUT_OUTPUT_MODE_119_88HZ = 0x000000000000000FULL
 
 static constexpr std::uint32_t VIDEO_OUT_DYNAMIC_RANGE_SDR = 1;
 static constexpr std::uint32_t VIDEO_OUT_DYNAMIC_RANGE_HDR = 2;
-static constexpr std::uint64_t VIDEO_OUT_OUTPUT_STATUS_FLAG_HDR = 1;
 
 static constexpr uint64_t VIDEO_OUT_REFRESH_RATE_59_94HZ = 3;
 static constexpr uint64_t VIDEO_OUT_REFRESH_RATE_119_88HZ = 13;

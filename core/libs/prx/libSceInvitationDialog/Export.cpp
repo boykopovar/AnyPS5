@@ -2,6 +2,7 @@
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <iterator>
@@ -85,6 +86,7 @@ int APS5_VABI sceInvitationDialogOpen(const InvitationDialogParam* param) {
     }
     dialog.callbackArg = param->callbackArg;
     dialog.status = COMMON_DIALOG_STATUS_FINISHED;
+    PsnDialogNoticeOffer_nid_postfix(PsnDialogNoticeKind::PsnFeature);
     return COMMON_DIALOG_OK;
 }
 
