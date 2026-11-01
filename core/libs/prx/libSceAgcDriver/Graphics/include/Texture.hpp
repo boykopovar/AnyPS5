@@ -302,11 +302,7 @@ public:
     // Whether the storage cache holds this image (set and cleared by the cache under its mutex, the
     // clear before the eviction's flush): what a lookup of its surface would return.
     bool Cached() const { return cached.load(std::memory_order_acquire); }
-    void SetCached(bool value) {
-        if (value) everCached.store(true, std::memory_order_relaxed);
-        cached.store(value, std::memory_order_release);
-    }
-    bool LeftCache() const { return everCached.load(std::memory_order_relaxed) && !cached.load(std::memory_order_acquire); }
+    void SetCached(bool value) { cached.store(value, std::memory_order_release); }
     // The pending image whose surface starts at `address` and covers at least `bytes` (a mip chain
     // contains a descriptor of its first mips), if any; the caller decides whether the geometry fits
     // (Texture::CanCopyFrom, ResidentPresentable).
@@ -702,7 +698,6 @@ private:
     // no fill may put results into this one (guarded by the live-image registry lock).
     bool released = false;
     std::atomic<bool> cached{false};
-    std::atomic<bool> everCached{false};
     // The present a consumer last proved the image current at (NoteProved).
     mutable std::atomic<std::uint64_t> provedPresent{0};
     // Hook skips of this image since FlushPending last listed it (AccessKeptByCpu), the read site

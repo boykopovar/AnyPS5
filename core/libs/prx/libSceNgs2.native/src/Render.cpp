@@ -111,32 +111,15 @@ std::uint32_t Ngs2ReadSamplerPcm(Ngs2Voice& voice, float* dest, std::uint32_t st
     return written;
 }
 
-static bool Bypasses(const Ngs2Filter& filter, std::uint32_t channel) {
-    return channel < 64 && (filter.bypassMask & (std::uint64_t{1} << channel)) != 0;
-}
-
-static bool HasHistory(const Ngs2Filter& filter) {
-    if (!filter.enabled) return false;
-    for (std::uint32_t channel = 0; channel < filter.history.size(); channel++) {
-        const auto& h = filter.history[channel];
-        if (!Bypasses(filter, channel) && (h.x1 != 0.0 || h.x2 != 0.0 || h.y1 != 0.0 || h.y2 != 0.0)) return true;
-    }
-    return false;
-}
-
-static void ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grain) {
-    for (std::uint32_t channel = 0; channel < voice.channels; channel++) {
-        if (Bypasses(filter, channel)) continue;
-        auto& h = filter.history[channel];
-        for (std::uint32_t i = 0; i < grain; i++) {
-            auto& sample = voice.samples[channel * grain + i];
-            const double x = sample;
-            double y = filter.b0 * x + filter.b1 * h.x1 + filter.b2 * h.x2 - filter.a1 * h.y1 - filter.a2 * h.y2;
-            if (std::abs(y) < 1e-20) y = 0.0;
-            h = {x, h.x1, y, h.y1};
-            sample = static_cast<float>(y);
+static void RunFiltersOverSilence(Ngs2Voice& voice, std::uint32_t grain) {
+    for (auto& filter : voice.filters) {
+        if (filter.pending) {
+            const auto parameter = filter.parameter;
+            Ngs2SetFilter(voice, parameter);
         }
+        if (filter.enabled) Ngs2ApplyFilter(voice, filter, grain);
     }
+    std::fill(voice.samples.begin(), voice.samples.end(), 0.0f);
 }
 
 static void RenderSampler(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t systemRate) {
@@ -152,12 +135,12 @@ static void RenderSampler(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t s
             const auto parameter = filter.parameter;
             Ngs2SetFilter(voice, parameter);
         }
-        if (!filter.enabled || (!voice.hasSamples && !HasHistory(filter))) continue;
-        ApplyFilter(voice, filter, grain);
+        if (!filter.enabled || (!voice.hasSamples && !Ngs2FilterHasHistory(filter))) continue;
+        Ngs2ApplyFilter(voice, filter, grain);
         voice.hasSamples = true;
     }
     const bool buffered = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && voice.atrac9.windowCursor * voice.channels < voice.atrac9.window.size();
-    if ((voice.state == Ngs2PlayState::Playing || voice.state == Ngs2PlayState::Paused) && voice.samplerEnded && !buffered && std::none_of(voice.filters.begin(), voice.filters.end(), HasHistory)) {
+    if ((voice.state == Ngs2PlayState::Playing || voice.state == Ngs2PlayState::Paused) && voice.samplerEnded && !buffered) {
         voice.state = Ngs2PlayState::Empty;
     }
 }
@@ -182,9 +165,9 @@ static constexpr Ngs2DefaultRow QUAD_LEFT{0.5f, {HALF_POWER, 0}, {0, 0, 0, 0, 1,
 static constexpr Ngs2DefaultRow QUAD_RIGHT{0.5f, {0, HALF_POWER}, {0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 1, 0, 0}};
 static constexpr Ngs2DefaultRow FIVE_SURROUND_LEFT{0.5f, {0, 0}, {0, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 1, 0, 0, 0}};
 static constexpr Ngs2DefaultRow FIVE_SURROUND_RIGHT{0.5f, {0, 0}, {0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 1, 0, 0}};
+static constexpr Ngs2DefaultRow BACK_CENTER{QUARTER_POWER, {QUARTER_POWER, QUARTER_POWER}, {0, 0, 0, 0, HALF_POWER, HALF_POWER}, {0, 0, 0, 0, 0, 0, HALF_POWER, HALF_POWER}};
 static constexpr Ngs2DefaultRow SURROUND_LEFT{0.5f, {0.5f, 0}, {0, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 1, 0, 0, 0}};
 static constexpr Ngs2DefaultRow SURROUND_RIGHT{0.5f, {0, 0.5f}, {0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 1, 0, 0}};
-static constexpr Ngs2DefaultRow BACK_CENTER{QUARTER_POWER, {QUARTER_POWER, QUARTER_POWER}, {0, 0, 0, 0, HALF_POWER, HALF_POWER}, {0, 0, 0, 0, 0, 0, HALF_POWER, HALF_POWER}};
 static constexpr Ngs2DefaultRow BACK_LEFT{0.5f, {0.5f, 0}, {0, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 0, 0, 1, 0}};
 static constexpr Ngs2DefaultRow BACK_RIGHT{0.5f, {0, 0.5f}, {0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 1}};
 static constexpr Ngs2DefaultRow SURROUND_LEFT_51{0.5f, {HALF_POWER, 0}, {0, 0, 0, 0, 1, 0}, {0, 0, 0, 0, 1, 0, 0, 0}};
@@ -225,8 +208,78 @@ static void RequireMappedChannels(std::uint32_t sourceChannels, std::uint32_t de
     }
 }
 
+struct Ngs2MapTerm {
+    std::uint8_t dest;
+    std::uint8_t source;
+    float level;
+};
+
+struct Ngs2PairMap {
+    std::uint32_t sourceChannels;
+    std::uint32_t destChannelSet;
+    Ngs2MapTerm terms[8];
+};
+
+template <typename... TCounts>
+static constexpr std::uint32_t ChannelSet(TCounts... counts) {
+    return ((1u << counts) | ...);
+}
+
+static constexpr Ngs2PairMap ODD_COUNT_MAPS[] = {
+    {1, ChannelSet(3, 4), {{0, 0, HALF_POWER}, {1, 0, HALF_POWER}}},
+    {1, ChannelSet(5, 7), {{2, 0, 1}}},
+    {2, ChannelSet(3, 4, 5, 7), {{0, 0, 1}, {1, 1, 1}}},
+    {3, ChannelSet(1), {{0, 0, HALF_POWER}, {0, 1, HALF_POWER}, {0, 2, 1}}},
+    {3, ChannelSet(2, 3, 4), {{0, 0, 1}, {0, 2, HALF_POWER}, {1, 1, 1}, {1, 2, HALF_POWER}}},
+    {3, ChannelSet(5, 6, 7, 8), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}}},
+    {4, ChannelSet(1), {{0, 0, HALF_POWER}, {0, 1, HALF_POWER}, {0, 2, 0.5f}, {0, 3, 0.5f}}},
+    {4, ChannelSet(2), {{0, 0, 1}, {0, 2, HALF_POWER}, {1, 1, 1}, {1, 3, HALF_POWER}}},
+    {4, ChannelSet(3), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}}},
+    {4, ChannelSet(4), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {3, 3, 1}}},
+    {4, ChannelSet(5), {{0, 0, 1}, {1, 1, 1}, {4, 2, 1}}},
+    {4, ChannelSet(6, 7, 8), {{0, 0, 1}, {1, 1, 1}, {4, 2, 1}, {5, 3, 1}}},
+    {5, ChannelSet(1), {{0, 0, HALF_POWER}, {0, 1, HALF_POWER}, {0, 2, 1}, {0, 3, 0.5f}, {0, 4, 0.5f}}},
+    {5, ChannelSet(2), {{0, 0, 1}, {0, 2, HALF_POWER}, {0, 3, HALF_POWER}, {1, 1, 1}, {1, 2, HALF_POWER}, {1, 4, HALF_POWER}}},
+    {5, ChannelSet(3), {{0, 0, 1}, {0, 2, HALF_POWER}, {1, 1, 1}, {1, 2, HALF_POWER}, {2, 3, 1}}},
+    {5, ChannelSet(4), {{0, 0, 1}, {0, 2, HALF_POWER}, {1, 1, 1}, {1, 2, HALF_POWER}, {2, 3, 1}, {3, 4, 1}}},
+    {5, ChannelSet(5), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {4, 3, 1}}},
+    {5, ChannelSet(6, 7, 8), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {4, 3, 1}, {5, 4, 1}}},
+    {6, ChannelSet(3), {{0, 0, 1}, {0, 2, HALF_POWER}, {1, 1, 1}, {1, 2, HALF_POWER}, {2, 4, 1}}},
+    {6, ChannelSet(4), {{0, 0, 1}, {0, 2, HALF_POWER}, {1, 1, 1}, {1, 2, HALF_POWER}, {2, 4, 1}, {3, 5, 1}}},
+    {6, ChannelSet(5), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {3, 3, 1}, {4, 4, 1}}},
+    {6, ChannelSet(7), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {3, 3, 1}, {4, 4, 1}, {5, 5, 1}}},
+    {7, ChannelSet(1), {{0, 0, HALF_POWER}, {0, 1, HALF_POWER}, {0, 2, 1}, {0, 4, 0.5f}, {0, 5, 0.5f}, {0, 6, QUARTER_POWER}}},
+    {7, ChannelSet(2), {{0, 0, 1}, {0, 2, HALF_POWER}, {0, 4, HALF_POWER}, {0, 6, 0.5f}, {1, 1, 1}, {1, 2, HALF_POWER}, {1, 5, HALF_POWER}, {1, 6, 0.5f}}},
+    {7, ChannelSet(3), {{0, 0, 1}, {0, 2, HALF_POWER}, {1, 1, 1}, {1, 2, HALF_POWER}, {2, 4, 1}, {2, 6, HALF_POWER}}},
+    {7, ChannelSet(4), {{0, 0, 1}, {0, 2, HALF_POWER}, {1, 1, 1}, {1, 2, HALF_POWER}, {2, 4, 1}, {2, 6, HALF_POWER}, {3, 5, 1}, {3, 6, HALF_POWER}}},
+    {7, ChannelSet(5), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {3, 3, 1}, {4, 4, 1}, {4, 6, HALF_POWER}}},
+    {7, ChannelSet(6), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {3, 3, 1}, {4, 4, 1}, {4, 6, HALF_POWER}, {5, 5, 1}, {5, 6, HALF_POWER}}},
+    {7, ChannelSet(7), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {3, 3, 1}, {4, 4, 1}, {5, 5, 1}, {6, 6, HALF_POWER}}},
+    {7, ChannelSet(8), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {3, 3, 1}, {4, 4, 1}, {5, 5, 1}, {6, 6, HALF_POWER}, {7, 6, HALF_POWER}}},
+    {8, ChannelSet(3), {{0, 0, 1}, {1, 1, 1}, {2, 4, 1}, {2, 6, 1}}},
+    {8, ChannelSet(4), {{0, 0, 1}, {1, 1, 1}, {2, 4, 1}, {2, 6, 1}, {3, 5, 1}, {3, 7, 1}}},
+    {8, ChannelSet(5), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {3, 3, 1}, {4, 4, 1}, {4, 6, 1}}},
+    {8, ChannelSet(7), {{0, 0, 1}, {1, 1, 1}, {2, 2, 1}, {3, 3, 1}, {4, 4, 1}, {5, 5, 1}, {6, 6, 1}}},
+};
+
+static bool HasDefaultMap(std::uint32_t channels) {
+    return channels == 1 || channels == 2 || channels == 6 || channels == 8;
+}
+
+static float OddCountLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest) {
+    for (const auto& map : ODD_COUNT_MAPS) {
+        if (map.sourceChannels != sourceChannels || (map.destChannelSet & ChannelSet(destChannels)) == 0) continue;
+        for (const auto& term : map.terms) {
+            if (term.dest == dest && term.source == source) return term.level;
+        }
+        return 0.0f;
+    }
+    throw std::runtime_error("NGS2: the default channel map from " + std::to_string(sourceChannels) + " into " + std::to_string(destChannels) + " channels is not implemented");
+}
+
 float Ngs2DefaultLevel(std::uint32_t sourceChannels, std::uint32_t source, std::uint32_t destChannels, std::uint32_t dest) {
     RequireMappedChannels(sourceChannels, destChannels);
+    if (!PS4_LIBRARY && (!HasDefaultMap(sourceChannels) || !HasDefaultMap(destChannels))) return OddCountLevel(sourceChannels, source, destChannels, dest);
     return RowLevel(DEFAULT_MAP[sourceChannels - 1][source], destChannels, dest);
 }
 
@@ -359,7 +412,8 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
         (SCE_NGS2_VOICE_STATE_FLAG_PAUSED | SCE_NGS2_VOICE_STATE_FLAG_PLAYING);
     if ((voice.state == Ngs2PlayState::Playing || pitchShiftActive) && voice.channels != 0) {
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_SAMPLER || voice.rack->rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
-            if (!frozenSampler && voice.outputTransition != Ngs2VoiceTransition::Kill) RenderSampler(voice, grain, systemRate);
+            if (frozenSampler) RunFiltersOverSilence(voice, grain);
+            else if (voice.outputTransition != Ngs2VoiceTransition::Kill) RenderSampler(voice, grain, systemRate);
         } else {
             MixInputs(voice, voices, grain, systemRate);
         }
@@ -488,12 +542,11 @@ static std::size_t SampleBytes(std::uint32_t waveformType) {
 
 static bool HasMasteringMap(std::uint32_t channels, std::uint32_t outputChannels) {
     if (PS4_LIBRARY) return channels == 2 && (outputChannels == 6 || outputChannels == 8);
-    const auto mapped = [](std::uint32_t count) { return count == 1 || count == 2 || count == 6 || count == 8; };
-    return mapped(channels) && mapped(outputChannels);
+    return HasDefaultMap(channels) && HasDefaultMap(outputChannels);
 }
 
 static float MasteringOutputLevel(std::uint32_t channels, std::uint32_t channel, std::uint32_t outputChannels, std::uint32_t dest) {
-    if (channels == outputChannels) return channel == dest ? 1.0f : 0.0f;
+    if (channels == outputChannels) return PS4_LIBRARY || HasDefaultMap(channels) ? static_cast<float>(channel == dest) : OddCountLevel(channels, channel, channels, dest);
     if (channels == 1) return dest == 0 ? 1.0f : 0.0f;
     return Ngs2DefaultLevel(channels, channel, outputChannels, dest);
 }

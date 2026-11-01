@@ -86,6 +86,7 @@ public:
         std::uint64_t spansWritten = 0, spansKept = 0, spansExpired = 0, keptChunksSkipped = 0;
     };
     Counts Statistics() const;
+    std::size_t RingChunkCount() const { return ringChunks.size(); }
 
     static constexpr std::size_t RingBytes = 64u << 20u;
     static constexpr std::size_t RingChunkBytes = 2u << 20u;
@@ -115,9 +116,10 @@ private:
         Recorder* recorder = nullptr;
         std::uint64_t serial = 0;
         bool open = false;
-        std::uint64_t entries = 0;
+        std::uint64_t entered = 0;
     };
     std::vector<Chunk> ringChunks;
+    std::uint64_t ringEntries = 0;
     std::size_t ringChunk = ~std::size_t{0};
     void enterRingChunk(std::size_t index);
     std::size_t wrapRingOffset(std::size_t offset, std::size_t bytes);

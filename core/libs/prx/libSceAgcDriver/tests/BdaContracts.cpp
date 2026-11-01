@@ -2,14 +2,11 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
-#include <spirv/unified1/GLSL.std.450.h>
 #include <cstring>
-#include <functional>
 #include <initializer_list>
 #include <string>
 #include <vector>
 #include <array>
-#include <initializer_list>
 
 namespace {
 

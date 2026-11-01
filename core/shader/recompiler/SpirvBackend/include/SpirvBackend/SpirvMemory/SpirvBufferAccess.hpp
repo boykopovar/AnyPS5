@@ -4,12 +4,15 @@
 #include "SpirvBackend/SpirvEmitterState.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include <cstdint>
+#include <functional>
 
 namespace ShaderRecompiler {
 
 std::uint32_t EmitBinaryU32(SpirvEmitterState& state, std::uint32_t opcode, std::uint32_t lhs, std::uint32_t rhs);
 std::uint32_t EmitShaderDataDwordLoad(SpirvEmitterState& state, std::uint32_t dwordIndex);
 std::uint32_t EmitShaderDataWordLoad(SpirvEmitterState& state, std::uint32_t index);
+std::uint32_t ComposeAddress64(SpirvEmitterState& state, const std::function<std::uint32_t()>& loadLow, const std::function<std::uint32_t()>& loadHigh);
+std::uint32_t EmitAlignedLoadU32(SpirvEmitterState& state, std::uint32_t pointer);
 std::uint32_t EmitRootDword(SpirvEmitterState& state, std::uint32_t field);
 std::uint32_t EmitStageRootDword(SpirvEmitterState& state, RuntimeAbi::RootStageField field);
 std::uint32_t EmitRootAddressWordPointer(SpirvEmitterState& state, std::uint32_t field, std::uint32_t index);
@@ -20,7 +23,7 @@ std::uint32_t EmitAddressWordPointer(SpirvEmitterState& state, std::uint32_t bas
 std::uint32_t EmitFlattenedSrtLoad(SpirvEmitterState& state, std::uint32_t index);
 bool HasFlattenedSrt(const SpirvEmitterState& state);
 void EmitMemoryOffsets(SpirvEmitterState& state);
-void EmitHeapSlotPreload(SpirvEmitterState& state);
+std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index);
 std::uint32_t LoadHeapSlotWord(SpirvEmitterState& state, std::uint32_t dword);
 std::uint32_t LdsDwordCount(const SpirvEmitterState& state);
 bool LdsInDeviceMemory(const SpirvEmitterState& state);

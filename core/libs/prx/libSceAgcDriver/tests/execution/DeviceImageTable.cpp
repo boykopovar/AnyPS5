@@ -190,7 +190,7 @@ void HeaderAtCreation(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
     Require(recorder != nullptr, "the device has an active recorder");
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     const auto words = ReadTable(context, *recorder, table, DeviceImageTable::TableWords);
     const auto header = std::span<const std::uint32_t>(words).first(Abi::HeaderWords);
@@ -205,7 +205,7 @@ void ResolvesAndUploads(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
     Require(recorder != nullptr, "the device has an active recorder");
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     const auto heap = std::make_shared<FakeHeap>();
     DeviceImageTable table(context, Lookup(), FakeSlots(heap));
     const auto keys = FormatKeys();
@@ -244,7 +244,7 @@ void ResolvesAndUploads(AgcDriver::VulkanDevice& device) {
 void TrailerAddresses(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     static_cast<void>(recorder->Commands());
     const auto first = table.Trailer(*recorder);
@@ -263,7 +263,7 @@ void TrailerAddresses(AgcDriver::VulkanDevice& device) {
 void SweptSlotsLeave(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     const auto heap = std::make_shared<FakeHeap>();
     DeviceImageTable table(context, Lookup(), FakeSlots(heap));
     const auto keys = FormatKeys();
@@ -299,7 +299,7 @@ void SweptSlotsLeave(AgcDriver::VulkanDevice& device) {
 void MarginRefuses(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     const auto heap = std::make_shared<FakeHeap>();
     heap->nearlyFull = true;
     DeviceImageTable table(context, Lookup(), FakeSlots(heap));
@@ -320,7 +320,7 @@ void MarginRefuses(AgcDriver::VulkanDevice& device) {
 void RejectsAndFaults(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     auto invalid = TextureDescriptor(Textures[0].data(), Formats[0]);
     invalid[1] &= ~(0x1ffu << 20u);
@@ -404,7 +404,7 @@ void RefreshesWrittenEntries(AgcDriver::VulkanDevice& device) {
         return;
     }
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     std::vector<Key> keys;
     for (std::uint32_t index = 0; index < WatchedTextures; ++index) keys.push_back(KeyFor(TextureDescriptor(block.Texture(index), Formats[4])));
@@ -461,7 +461,7 @@ void RefreshesOnOwnStores(AgcDriver::VulkanDevice& device) {
         return;
     }
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     std::vector<Key> keys;
     for (std::uint32_t index = 0; index < Count; ++index) keys.push_back(KeyFor(TextureDescriptor(block.Texture(index), Formats[4])));
@@ -487,7 +487,7 @@ void KeepsUnwatchedEntries(AgcDriver::VulkanDevice& device) {
     for (std::uint32_t index = 0; index < Count; ++index) std::memset(block.Texture(index), static_cast<int>(0x40u + index), Side * Side * 4u);
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     std::vector<Key> keys;
     for (std::uint32_t index = 0; index < Count; ++index) keys.push_back(KeyFor(TextureDescriptor(block.Texture(index), Formats[4])));
@@ -518,7 +518,7 @@ void KeepsUnwatchedEntries(AgcDriver::VulkanDevice& device) {
 void EvictsLeastRecentlyUsed(AgcDriver::VulkanDevice& device) {
     std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()), DeviceImageTable::Budget{4u, std::uint64_t{1} << 40u, 0u, 0u});
     const auto keys = FormatKeys();
     table.Prepare(context, *recorder);
@@ -547,7 +547,7 @@ void EvictsLeastRecentlyUsed(AgcDriver::VulkanDevice& device) {
 void CountsOverflow(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     const auto keys = FormatKeys();
     table.Prepare(context, *recorder);
@@ -563,7 +563,7 @@ void CountsOverflow(AgcDriver::VulkanDevice& device) {
 void OverflowFallsBack(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     table.NoteProgram(Program, ProgramAddress);
     const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{Program};
@@ -593,7 +593,7 @@ void OverflowFallsBack(AgcDriver::VulkanDevice& device) {
 void OverflowsBeforeAResolveCountOnce(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     table.NoteProgram(Program, ProgramAddress);
     const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{Program};
@@ -617,7 +617,7 @@ void OverflowsBeforeAResolveCountOnce(AgcDriver::VulkanDevice& device) {
 void OverflowsBeforeTheirInsertsDoNotCount(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     table.NoteProgram(Program, ProgramAddress);
     const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{Program};
@@ -645,7 +645,7 @@ void OverflowsBeforeTheirInsertsDoNotCount(AgcDriver::VulkanDevice& device) {
 void WarmOverflowFallsBack(AgcDriver::VulkanDevice& device) {
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()));
     table.NoteProgram(Program, ProgramAddress);
     const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{Program};
@@ -673,7 +673,7 @@ void FullTableFallsBack(AgcDriver::VulkanDevice& device) {
     GuestBlock block;
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     auto* recorder = Recorder::Active();
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     DeviceImageTable table(context, Lookup(), FakeSlots(std::make_shared<FakeHeap>()), DeviceImageTable::Budget{1u << 20u, std::uint64_t{1} << 40u, 0u, 0u, 16u});
     table.NoteProgram(Program, ProgramAddress);
     const std::array<ShaderRecompiler::PipelineIdentity, 1> programs{Program};
@@ -694,7 +694,7 @@ alignas(4096) std::array<std::uint8_t, 65536> CubeTexels{};
 void NonSeamlessCube(AgcDriver::VulkanDevice& device) {
     constexpr std::uint32_t TypeCube = 11;
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
-    const auto context = device.GraphicsContext();
+    const auto context = device.graphicsContext();
     auto cube = TextureDescriptor(CubeTexels.data(), Formats[4]);
     cube[3] = 0xfacu | (TypeCube << 28u);
     cube[4] = 5u;
@@ -760,12 +760,12 @@ void DevicePathRefusals() {
 int HeapRetention() {
     auto device = OpenVulkanTestDevice();
     if (device == nullptr) return VulkanTestSkipped;
-    if (!device->GraphicsContext().descriptorHeap) {
+    if (!device->graphicsContext().descriptorHeap) {
         std::printf("skipped, the device lacks VK_EXT_descriptor_heap, which the GPU heap the device image table takes its slots from needs\n");
         return VulkanTestSkipped;
     }
     {
-        const auto context = device->GraphicsContext();
+        const auto context = device->graphicsContext();
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         auto* recorder = Recorder::Active();
         DeviceImageTable table(context, Lookup(), DeviceImageTable::HeapSlots(context));

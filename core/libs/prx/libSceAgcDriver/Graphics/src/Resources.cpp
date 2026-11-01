@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
@@ -48,15 +49,19 @@ VkBuffer BindExactBuffer(const Context& context, std::size_t size, VkBufferUsage
     return buffer;
 }
 
+VkBufferUsageFlags UsageWithoutUnsupportedAddress(const Context& context, VkBufferUsageFlags requested, VkBufferUsageFlags pooled) {
+    if (!context.bufferDeviceAddress && (requested & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) == 0) return pooled & ~static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    return pooled;
 }
 
-Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
+}
+
+Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(UsageWithoutUnsupportedAddress(context, usage, BufferPool::Usage(usage, properties))), properties(properties) {
     Require(size != 0, "zero-sized GPU buffer");
-    if (!context.bufferDeviceAddress && (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) == 0) this->usage &= ~static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     const bool addressable = (this->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0;
     Require(!addressable || context.bufferDeviceAddress, "buffer device address is not enabled");
     cache = GetBufferPool(context);
-    if (const auto allocation = cache->Take(size, this->usage, properties)) {
+    if (const auto allocation = cache->Take(size, this->usage, properties, "vkAllocateMemory buffer")) {
         buffer = allocation->buffer;
         memory = allocation->memory;
         mapping = allocation->mapping;
@@ -149,7 +154,7 @@ void Buffer::release() noexcept {
     }
     if (mapping) context.Function<PFN_vkUnmapMemory>("vkUnmapMemory")(context.device, memory);
     if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
-    if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    if (memory) MemoryAccounting::Free(context, memory);
 }
 
 VkBuffer Buffer::Handle() const {
@@ -170,11 +175,10 @@ void Buffer::Invalidate() {
     Check(context.Function<PFN_vkInvalidateMappedMemoryRanges>("vkInvalidateMappedMemoryRanges")(context.device, 1, &range), "vkInvalidateMappedMemoryRanges");
 }
 
-DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(UsageWithoutUnsupportedAddress(context, usage, BufferPool::Usage(usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))) {
     Require(size != 0, "zero-sized device buffer");
-    if (!context.bufferDeviceAddress && (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) == 0) this->usage &= ~static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     cache = GetBufferPool(context);
-    if (const auto allocation = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+    if (const auto allocation = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "vkAllocateMemory device buffer")) {
         buffer = allocation->buffer;
         memory = allocation->memory;
         allocationBytes = allocation->allocationBytes;
@@ -230,7 +234,7 @@ void DeviceBuffer::release() noexcept {
         return;
     }
     if (buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
-    if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    if (memory) MemoryAccounting::Free(context, memory);
 }
 
 VkBuffer DeviceBuffer::Handle() const {
@@ -345,7 +349,7 @@ RenderTarget::~RenderTarget() {
 void RenderTarget::release() noexcept {
     if (view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, view, nullptr);
     if (image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
-    if (memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, memory, nullptr);
+    if (memory) MemoryAccounting::Free(context, memory);
 }
 
 VkImage RenderTarget::Image() const {

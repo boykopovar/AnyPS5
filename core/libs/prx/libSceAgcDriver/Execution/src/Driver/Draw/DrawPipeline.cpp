@@ -117,15 +117,6 @@ bool DrawFinisher::PendingKey(std::uint64_t key, std::uint64_t shape) {
     return std::any_of(pending.begin(), pending.end(), [&](const Pending& held) { return held.key == key || (shape != 0 && held.shape == shape); });
 }
 
-void DrawFinisher::PendingWrites(std::vector<Range>& out) {
-    if (!Busy() || !finisherProducer) return;
-    std::lock_guard lock(mutex);
-    for (const auto& held : pending) {
-        if (held.unknown) out.emplace_back(0, std::numeric_limits<std::uint64_t>::max());
-        else out.insert(out.end(), held.writes.begin(), held.writes.end());
-    }
-}
-
 namespace {
 std::array<std::atomic<std::uint64_t>, static_cast<std::size_t>(DrawFinisher::DrainSite::Count)> finisherDrains{}, finisherSkips{};
 }
@@ -520,15 +511,6 @@ std::optional<std::uint64_t> DrawPipeline::PendingLabel(std::uint64_t address, s
         return value;
     }
     return std::nullopt;
-}
-
-void DrawPipeline::QueuedWrites(std::vector<Range>& out) {
-    if (DrawFinisher::Overlap()) DrawFinisher::Get().PendingWrites(out);
-    std::lock_guard lock(mutex);
-    for (const auto& item : items) {
-        out.insert(out.end(), item.writes.begin(), item.writes.end());
-        if (item.labelAddress != 0 && !item.labelBytes.empty()) out.emplace_back(item.labelAddress, item.labelAddress + item.labelBytes.size());
-    }
 }
 
 void DrawPipeline::countWrites(const std::vector<Range>& writes, bool added) {

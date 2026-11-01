@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "Recompiler.hpp"
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <span>
@@ -12,6 +13,12 @@ namespace AgcDriver::Graphics {
 inline constexpr std::uint32_t PipelinePushConstantBytes = 256;
 inline constexpr std::uint32_t PipelinePushSlotBytes = 128;
 inline constexpr std::uint32_t ComputePushConstantBytes = 128;
+
+inline constexpr std::uint32_t HeapLayoutKeyTag = 0x48454150u;
+inline constexpr std::uint32_t DataSetKeyTag = 0x44415441u;
+inline constexpr std::uint32_t MainSetBit = 1u;
+inline constexpr std::uint32_t HeapSetBit = 2u;
+inline constexpr std::uint32_t DataSetBit = 4u;
 
 inline std::uint32_t PushBlockBytes(bool libraries) {
     return libraries ? PipelinePushConstantBytes : PipelinePushSlotBytes;
@@ -39,6 +46,14 @@ struct CompiledShader {
     std::uint32_t pushConstantOffset;
     const ShaderRecompiler::HeapStageWords* heap = nullptr;
 };
+
+inline bool HeapShader(const CompiledShader& shader) {
+    return shader.program != nullptr && shader.program->gpuResolvedImages;
+}
+
+inline bool AnyHeapShader(std::span<const CompiledShader> shaders) {
+    return std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return HeapShader(shader); });
+}
 
 inline const std::vector<std::uint32_t>& DrawGuestWords(const ShaderRecompiler::RecompileResult& program, const ShaderRecompiler::HeapStageWords* heap, const ShaderRecompiler::DescriptorBinding& binding) {
     if (heap == nullptr || heap->bindings.empty()) return binding.guestDescriptor;

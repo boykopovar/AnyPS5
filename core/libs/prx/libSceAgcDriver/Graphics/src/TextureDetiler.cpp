@@ -224,8 +224,7 @@ VkFormat TextureDetiler::ImageElementFormat(std::uint32_t elementBytes) {
 
 VkDeviceAddress TextureDetiler::bufferAddress(VkBuffer buffer) const {
     if (addressedPipelineLayout == VK_NULL_HANDLE || !BufferPool::ForceAddresses()) return 0;
-    const VkBufferDeviceAddressInfo info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
-    return context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &info);
+    return BufferDeviceAddress(context, buffer);
 }
 
 VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image, bool addressed, bool heap) {
@@ -289,7 +288,7 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
     createInfo.layout = addressed ? addressedPipelineLayout : image ? imagePipelineLayout : pipelineLayout;
     std::array<VkDescriptorSetAndBindingMappingEXT, 2> mappings{};
     VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
-    VkPipelineCreateFlags2CreateInfoKHR heapFlags{VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR};
+    auto heapFlags = DescriptorHeapFlags();
     if (heap) {
         Require(image && !addressed, "only the image detiler runs on the descriptor heap");
         const auto& bindless = BindlessHeap::For(context);
@@ -298,7 +297,6 @@ VkPipeline TextureDetiler::pipeline(TextureTileMode tileMode, std::uint32_t elem
         mappingInfo.mappingCount = static_cast<std::uint32_t>(mappings.size());
         mappingInfo.pMappings = mappings.data();
         createInfo.stage.pNext = &mappingInfo;
-        heapFlags.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
         createInfo.pNext = &heapFlags;
         createInfo.layout = VK_NULL_HANDLE;
     }
@@ -521,8 +519,7 @@ void TextureDetiler::DispatchCmaskClear(VkCommandBuffer commands, VkBuffer cmask
             VkShaderDescriptorSetAndBindingMappingInfoEXT mappingInfo{VK_STRUCTURE_TYPE_SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT};
             mappingInfo.mappingCount = static_cast<std::uint32_t>(mappings.size());
             mappingInfo.pMappings = mappings.data();
-            VkPipelineCreateFlags2CreateInfoKHR heapFlags{VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR};
-            heapFlags.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT;
+            auto heapFlags = DescriptorHeapFlags();
             auto heapInfo = pipelineInfo;
             heapInfo.pNext = &heapFlags;
             heapInfo.stage.pNext = &mappingInfo;

@@ -25,6 +25,17 @@ bool HeapPreRasterStage(ShaderRecompiler::ShaderStage stage);
 Graphics::HeapStageReason HeapStageIneligibility(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan,
                                                  bool heapVertex);
 bool HeapStageEligible(ShaderRecompiler::ShaderStage stage, const ShaderRecompiler::IrResourcePlan* plan, bool heapVertex);
+enum class HeapKeyClass { Draw, Compute, HeapVertex };
+
+constexpr std::size_t HeapFragmentKey(std::size_t codeOffset, HeapKeyClass keyClass) {
+    switch (keyClass) {
+    case HeapKeyClass::Compute: return codeOffset | std::size_t{1} << 61u;
+    case HeapKeyClass::HeapVertex: return codeOffset | std::size_t{1} << 62u;
+    case HeapKeyClass::Draw: break;
+    }
+    return codeOffset;
+}
+
 std::optional<bool> HeapFragmentKnown(const void* snapshot, std::size_t codeOffset);
 void NoteHeapFragment(const void* snapshot, std::size_t codeOffset, bool eligible);
 bool HeapStageMappable(const ShaderRecompiler::RecompileResult& result, bool workgroupAddress = false);
@@ -55,10 +66,14 @@ struct HeapStageReads {
     bool complete = false;
 };
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult>
-MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
-                     std::uint64_t shaderBase, ShaderRecompiler::HeapStageWords* words = nullptr,
-                     std::shared_ptr<const ShaderRecompiler::HeapStageWords>* sharedWords = nullptr, HeapStageReads* stageReads = nullptr);
+struct HeapStageMaterialized {
+    std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
+    std::shared_ptr<const ShaderRecompiler::HeapStageWords> words;
+    HeapStageReads reads;
+};
+
+HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
+                                           std::uint64_t shaderBase);
 void NoteHeapDirect();
 void NoteHeapDirectVerify(const ShaderRecompiler::RecompileResult& direct, const ShaderRecompiler::RecompileResult& expected,
                           const ShaderRecompiler::ResourceCapture* expectedCapture = nullptr);

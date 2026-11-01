@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvModuleEmitter.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvFlowEmitter.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
@@ -2016,9 +2017,7 @@ std::uint32_t LoadMeshArgumentWord(SpirvEmitterState& state, std::uint32_t addre
     const auto element = Binary(state, spv::OpIAdd, TypeScalarU64(state), address, Binary(state, spv::OpShiftLeftLogical, TypeScalarU64(state), Unary(state, spv::OpUConvert, TypeScalarU64(state), dword), ConstantU32(state, 2u)));
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, TypeU32(state)), pointer, element);
-    const auto loaded = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), loaded, pointer, spv::MemoryAccessAlignedMask, 4u);
-    return loaded;
+    return EmitAlignedLoadU32(state, pointer);
 }
 
 }
@@ -2065,8 +2064,7 @@ std::uint32_t EmitMeshArgument(SpirvValueEmitContext& ctx, const IrValue& inst) 
     const auto element = Binary(state, spv::OpIAdd, TypeScalarU64(state), address, BdaConstant(state, 4ull * index));
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, TypeU32(state)), pointer, element);
-    const auto loaded = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), loaded, pointer, spv::MemoryAccessAlignedMask, 4u);
+    const auto loaded = EmitAlignedLoadU32(state, pointer);
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);
     const auto value = state.module.AllocateId();

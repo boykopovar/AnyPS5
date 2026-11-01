@@ -344,7 +344,7 @@ int main() {
             served = device->DeviceImagePath();
             heapUsable = AgcDriver::Graphics::DescriptorHeapEnabled();
             Require(device->Target().deviceImageTables == served && device->ComputeTarget(64u).deviceImageTables == served, "the recompile targets ask for device image tables exactly when the device serves the path");
-            Require((DeviceImageTable::Existing(device->GraphicsContext()) != nullptr) == served, "the device keeps a device image table exactly when it serves the path");
+            Require((DeviceImageTable::Existing(device->graphicsContext()) != nullptr) == served, "the device keeps a device image table exactly when it serves the path");
         }
         const bool gpuHeap = AgcDriver::Graphics::GpuHeapEnabled();
         Require(served == (requested && gpuHeap && heapUsable), "the device serves the device image path exactly when APS5_GPU_PATH and APS5_GPU_HEAP are set on a device whose descriptor heap the GPU heap uses");

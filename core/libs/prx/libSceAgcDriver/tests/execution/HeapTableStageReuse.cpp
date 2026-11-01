@@ -205,20 +205,11 @@ void RefreshAfterOriginalDestroyed(const AgcDriver::VulkanDevice& device, const 
 }
 
 int main() {
-#ifdef _WIN32
-    _putenv_s("APS5_GPU_HEAP", "1");
-    _putenv_s("APS5_VERIFY_GPU_HEAP", "1");
-#else
-    setenv("APS5_GPU_HEAP", "1", 1);
-    setenv("APS5_VERIFY_GPU_HEAP", "1", 1);
-#endif
+    SetTestEnvironment("APS5_GPU_HEAP", "1");
+    SetTestEnvironment("APS5_VERIFY_GPU_HEAP", "1");
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (!AgcDriver::Graphics::DescriptorHeapEnabled()) {
-            std::cout << "skipped, the device lacks VK_EXT_descriptor_heap, or the maintenance5, slot room and push data the GPU heap needs with it\n";
-            return VulkanTestSkipped;
-        }
         GuestBlock block(BlockBytes, true);
         GuestBlock surfaces(SurfaceBlockBytes, false);
         Prepare(block, surfaces);

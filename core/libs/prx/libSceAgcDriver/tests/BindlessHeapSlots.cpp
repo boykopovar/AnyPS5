@@ -1,4 +1,4 @@
-#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeapObjects.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
@@ -19,8 +19,6 @@ namespace {
 
 using namespace AgcDriver::Graphics;
 namespace Abi = ShaderRecompiler::RuntimeAbi;
-
-constexpr int VulkanTestSkipped = 77;
 
 void require(bool condition, const std::string& what) {
     if (!condition) throw std::runtime_error(what);
@@ -203,10 +201,10 @@ void ringSpans(const Context& context) {
     static_cast<void>(heap.Allocate(chunkWords - 1024u, filler));
     BindlessHeap::SpanMark crossing;
     static_cast<void>(heap.Allocate(4096u, crossing));
-    require(!heap.Held(crossing), "a span over two chunks is never kept");
+    require(heap.Held(crossing), "a span over two chunks is kept");
     require(heap.Held(first), "a span stays held while its batch keeps the chunk open");
     const auto counts = heap.Statistics();
-    require(counts.spansWritten == 3u && counts.spansKept == 2u, "three spans written and two kept");
+    require(counts.spansWritten == 3u && counts.spansKept == 3u, "three spans written and kept");
     BindlessHeap::SpanMark third;
     static_cast<void>(heap.Allocate(chunkWords, third));
     Recorder recorder(context);
@@ -226,6 +224,63 @@ void ringSpans(const Context& context) {
     require(untilWrap() == 0u && !heap.Held(first) && heap.Statistics().spansExpired == 1u, "a span the ring wrote over has expired");
 }
 
+void ringLargeSpans(const Context& context) {
+    BindlessHeap heap(context);
+    require(heap.RingChunkCount() >= 5u, "the ring has fewer than five chunks, so a span over three chunks cannot be tested");
+    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
+    constexpr std::size_t largeWords = chunkWords * 2u + 1024u;
+    BindlessHeap::SpanMark pin;
+    static_cast<void>(heap.Allocate(16u, pin));
+    BindlessHeap::SpanMark large;
+    const auto span = heap.Allocate(largeWords, large);
+    require(span.words.size() == largeWords && heap.Held(large), "a span over three chunks is written and held");
+    Recorder recorder(context);
+    BindlessHeap::SpanMark fill;
+    const auto untilWrap = [&](const BindlessHeap::SpanMark& kept) {
+        const auto wraps = heap.Statistics().ringWraps;
+        BindlessHeap::DataSpan last{};
+        while (heap.Statistics().ringWraps == wraps) {
+            heap.Submitted(recorder, 0u);
+            require(heap.Held(kept), "a kept span stays held while later batches fill the ring");
+            last = heap.Allocate(chunkWords, fill);
+        }
+        return last.offset;
+    };
+    require(untilWrap(large) == 3u * AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips every chunk a kept large span covers");
+    require(untilWrap(pin) == AgcDriver::Graphics::BindlessHeap::RingChunkBytes, "the ring skips only the pinned first chunk");
+    require(!heap.Held(large), "a large span expires once the ring writes over one of its later chunks");
+    require(heap.Held(pin), "the pinned span outlives the large span");
+    bool refused = false;
+    try {
+        static_cast<void>(heap.Allocate(AgcDriver::Graphics::BindlessHeap::RingBytes / sizeof(std::uint32_t) / 2u + 1u));
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    require(refused, "a span over half the ring is refused");
+}
+
+void ringCurrentChunk(const Context& context) {
+    BindlessHeap heap(context);
+    constexpr std::size_t chunkWords = AgcDriver::Graphics::BindlessHeap::RingChunkBytes / sizeof(std::uint32_t);
+    Recorder recorder(context);
+    std::vector<BindlessHeap::SpanMark> pins(heap.RingChunkCount() - 1u);
+    for (auto& pin : pins) {
+        static_cast<void>(heap.Allocate(chunkWords, pin));
+        heap.Submitted(recorder, 0u);
+        for (const auto& kept : pins) {
+            if (kept.entry != 0u) require(heap.Held(kept), "every pinned chunk stays held");
+        }
+    }
+    BindlessHeap::SpanMark live;
+    static_cast<void>(heap.Allocate(16u, live));
+    bool refused = false;
+    try {
+        static_cast<void>(heap.Allocate(chunkWords));
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    require(refused, "a span never wraps onto the current chunk behind data this batch already wrote");
+    require(heap.Held(live), "the current chunk's span is still held");
 }
 
 void heapComesBack(const Context& context, VkImageView view) {
@@ -329,32 +384,23 @@ void twoHeapsComeBack(const Context& context, VkImageView view) {
     first.reset();
 }
 
+}
+
 int main(int argc, char** argv) {
     const std::string mode = argc > 1 ? argv[1] : "";
     const bool comesBack = !mode.empty();
     try {
-#ifdef _WIN32
-        _putenv_s("APS5_GPU_HEAP", "1");
-        _putenv_s("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
-#else
-        setenv("APS5_GPU_HEAP", "1", 1);
-        setenv("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1", 1);
-#endif
-        std::unique_ptr<AgcDriver::VulkanDevice> device;
-        try {
-            device = std::make_unique<AgcDriver::VulkanDevice>();
-        } catch (const std::exception& error) {
-            if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
-            std::printf("skipped, no usable Vulkan device: %s\n", error.what());
-            return VulkanTestSkipped;
-        }
-        if (!device->GraphicsContext().descriptorHeap) {
+        SetTestEnvironment("APS5_GPU_HEAP", "1");
+        SetTestEnvironment("APS5_HEAP_SLOT_CAP", comesBack ? "8" : "1");
+        auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
+        if (!device->graphicsContext().descriptorHeap) {
             std::printf("skipped, the device has no VK_EXT_descriptor_heap\n");
             return VulkanTestSkipped;
         }
         if (comesBack) {
             {
-                const auto context = device->GraphicsContext();
+                const auto context = device->graphicsContext();
                 const PlaceholderImages placeholders(context);
                 const auto sampled = placeholders.View(Abi::FirstImageBinding);
                 const auto storage = placeholders.View(Abi::FirstStorageImageBinding);
@@ -374,11 +420,13 @@ int main(int argc, char** argv) {
             return 0;
         }
         {
-            const auto context = device->GraphicsContext();
+            const auto context = device->graphicsContext();
             const PlaceholderImages placeholders(context);
             textureSlots(context, placeholders.View(Abi::FirstImageBinding));
             samplerSlots(context);
             ringSpans(context);
+            ringLargeSpans(context);
+            ringCurrentChunk(context);
             viewSlots(context, placeholders.View(Abi::FirstStorageImageBinding));
             encodedViews(context);
             ownerSlots(context, placeholders.View(Abi::FirstStorageImageBinding));

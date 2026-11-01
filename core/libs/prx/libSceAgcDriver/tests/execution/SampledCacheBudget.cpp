@@ -1368,26 +1368,16 @@ int main(int argc, char** argv) {
         setenv("APS5_TEMPLATE_AUDIT_MS", "250", 0);
 #endif
         if (mode == "heap-view") {
-#ifdef _WIN32
-            _putenv_s("APS5_GPU_HEAP", "1");
-#else
-            setenv("APS5_GPU_HEAP", "1", 1);
-#endif
-            std::unique_ptr<AgcDriver::VulkanDevice> heapDevice;
-            try {
-                heapDevice = std::make_unique<AgcDriver::VulkanDevice>();
-            } catch (const std::exception& error) {
-                if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
-                std::printf("skipped, no usable Vulkan device: %s\n", error.what());
-                return VulkanTestSkipped;
-            }
-            if (!heapDevice->GraphicsContext().descriptorHeap) {
+            SetTestEnvironment("APS5_GPU_HEAP", "1");
+            auto heapDevice = OpenVulkanTestDevice();
+            if (!heapDevice) return VulkanTestSkipped;
+            if (!heapDevice->graphicsContext().descriptorHeap) {
                 std::puts("skipped, the device has no VK_EXT_descriptor_heap");
                 return VulkanTestSkipped;
             }
             bool tested = false;
             {
-                const auto context = heapDevice->GraphicsContext();
+                const auto context = heapDevice->graphicsContext();
                 {
                     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
                     heapHeldReleaseTests(context);

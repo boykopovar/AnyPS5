@@ -7,6 +7,15 @@
 
 namespace ShaderRecompiler
 {
+std::uint32_t ReadOnlyStorageBufferType(SpirvEmitterState& state, std::uint32_t element, std::uint32_t stride) {
+    const auto array = state.module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, stride}}}, element);
+    return state.module.DecoratedType(spv::OpTypeStruct,
+        {{spv::OpDecorate, {spv::DecorationBlock}},
+         {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}},
+         {spv::OpMemberDecorate, {0, spv::DecorationNonWritable}}},
+        array);
+}
+
 namespace {
 
 std::uint32_t StorageBufferType(SpirvEmitterState& state) {
@@ -14,15 +23,6 @@ std::uint32_t StorageBufferType(SpirvEmitterState& state) {
     return state.module.DecoratedType(spv::OpTypeStruct,
         {{spv::OpDecorate, {spv::DecorationBlock}},
          {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}}},
-        array);
-}
-
-std::uint32_t ReadOnlyStorageBufferType(SpirvEmitterState& state, std::uint32_t element, std::uint32_t stride) {
-    const auto array = state.module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, stride}}}, element);
-    return state.module.DecoratedType(spv::OpTypeStruct,
-        {{spv::OpDecorate, {spv::DecorationBlock}},
-         {spv::OpMemberDecorate, {0, spv::DecorationOffset, 0}},
-         {spv::OpMemberDecorate, {0, spv::DecorationNonWritable}}},
         array);
 }
 

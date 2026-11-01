@@ -465,6 +465,19 @@ void DefineOutputs(SpirvEmitterState& state) {
     }
 }
 
+namespace {
+
+std::uint32_t defineHeapArray(SpirvEmitterState& state, std::uint32_t slotCount, std::uint32_t elementType, const char* name, std::uint32_t heapKind) {
+    const auto type = state.module.Type(spv::OpTypeArray, elementType, slotCount);
+    const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, type), spv::StorageClassUniformConstant);
+    state.module.AddName(variable, name);
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::FragmentDescriptorSet);
+    state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(heapKind)));
+    return variable;
+}
+
+}
+
 void DefineDescriptors(SpirvEmitterState& state) {
     const IrBindingLayout& layout = state.program.Metadata().bindings;
     const IrShaderStage stage = state.program.Resources().stage;
@@ -475,20 +488,16 @@ void DefineDescriptors(SpirvEmitterState& state) {
         state.module.AddName(state.pushConstantVariable, "vsharp");
     }
     for (const IrDescriptorBinding& binding : layout.descriptors) {
+        const bool gpuHeap = SharedHeapArray(layout, binding.kind, state.gpuResolvedImages);
         const auto Define = [&](std::uint32_t type, const char* name, std::uint32_t storage = spv::StorageClassStorageBuffer) {
             const auto variable = state.module.DefineGlobalVariable(TypePointer(state, storage, type), storage);
             state.module.AddName(variable, name);
-            const bool gpuData = state.gpuResolvedImages && (binding.kind == DescriptorBindingKind::ShaderData || binding.kind == DescriptorBindingKind::FlattenedSrt);
-            const bool gpuHeap = binding.kind == DescriptorBindingKind::Samplers || layout.HeapImageKind(binding.kind);
-            const bool sharedHeap = state.gpuResolvedImages && gpuHeap;
-            const bool fragmentSet = sharedHeap || (!state.gpuResolvedImages && state.fragmentDescriptorSet && stage == IrShaderStage::Pixel);
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, binding.kind == DescriptorBindingKind::Gds && layout.UsesDataAddress() ? RuntimeAbi::GpuGdsSet : gpuData ? RuntimeAbi::GpuDataSet : fragmentSet ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet);
-            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(sharedHeap ? IrShaderStage::Pixel : stage, binding.kind));
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, DescriptorSetNumber(layout, binding.kind, stage, state.gpuResolvedImages, state.fragmentDescriptorSet, false));
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, DescriptorBindingNumber(layout, binding.kind, stage, state.gpuResolvedImages));
             return variable;
         };
         const auto ArrayType = [&](std::uint32_t type) {
             const bool heap = binding.kind == DescriptorBindingKind::Samplers || ImageBindingResourceClass(binding.kind) != ImageResourceClass::None;
-            const bool gpuHeap = state.gpuResolvedImages && (binding.kind == DescriptorBindingKind::Samplers || layout.HeapImageKind(binding.kind));
             const auto count = gpuHeap ? (binding.kind == DescriptorBindingKind::Samplers ? RuntimeAbi::GpuSamplerHeapSlots : RuntimeAbi::GpuImageHeapSlots) : static_cast<std::uint32_t>(binding.resources.size());
             const auto length = heap && !gpuHeap && !state.registrationModules ? state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::HeapCountBase + static_cast<std::uint32_t>(binding.kind), count) : ConstantU32(state, count);
             return state.module.Type(spv::OpTypeArray, type, length);
@@ -515,7 +524,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::BdaPagetable:
             if (layout.UsesDataAddress()) {
                 state.bdaPagetableVariable = state.module.AllocateId();
-                state.bdaAddressed = true;
             } else {
                 state.bdaPagetableVariable = Define(StorageBufferBlockType(state), "bda_pagetable");
                 state.module.AddAnnotation(spv::OpDecorate, state.bdaPagetableVariable, spv::DecorationNonWritable);
@@ -524,7 +532,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::FaultBuffer:
             if (layout.UsesDataAddress()) {
                 state.faultBufferVariable = state.module.AllocateId();
-                state.bdaAddressed = true;
             } else {
                 state.faultBufferVariable = Define(StorageBufferBlockType(state), "fault_buffer");
             }
@@ -558,7 +565,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::ImageStorageTable:
             RequireTableIndexing(state);
             if (binding.kind == DescriptorBindingKind::ImageStorageTable) state.module.EmitCapability(spv::CapabilityStorageImageArrayDynamicIndexing);
-            state.tableHeap = state.gpuResolvedImages && layout.UsesDataAddress();
             for (std::uint32_t resource = 0; resource < state.program.Info().images.size(); ++resource) {
                 const auto& image = state.program.Info().images[resource];
                 if (image.table == NoTable) continue;
@@ -568,15 +574,12 @@ void DefineDescriptors(SpirvEmitterState& state) {
                     if ((ImageBindingResourceClass(kind) == ImageResourceClass::Storage) != (binding.kind == DescriptorBindingKind::ImageStorageTable)) continue;
                     if (std::any_of(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
                     const auto name = "table_images_" + std::to_string(static_cast<std::uint32_t>(kind));
-                    if (state.tableHeap) {
+                    if (state.TableHeap()) {
                         const auto value = static_cast<std::uint32_t>(kind);
-                        const auto heapKind = binding.kind != DescriptorBindingKind::ImageStorageTable ? RuntimeAbi::FirstImageBinding : RuntimeAbi::AtomicImageKind(value) ? RuntimeAbi::FirstAtomicImageBinding : RuntimeAbi::Atomic64ImageKind(value) ? RuntimeAbi::FirstAtomic64ImageBinding : RuntimeAbi::FirstStorageImageBinding;
-                        const auto type = state.module.Type(spv::OpTypeArray, ImageType(state, mode), ConstantU32(state, RuntimeAbi::GpuImageHeapSlots));
-                        const auto variable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, type), spv::StorageClassUniformConstant);
-                        state.module.AddName(variable, name.c_str());
-                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationDescriptorSet, RuntimeAbi::FragmentDescriptorSet);
-                        state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationBinding, NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(heapKind)));
-                        state.tableImageVariables.push_back({kind, variable});
+                        const auto part = RuntimeAbi::StorageHeapPart(value);
+                        const auto heapKind = binding.kind != DescriptorBindingKind::ImageStorageTable ? RuntimeAbi::FirstImageBinding : part == RuntimeAbi::HeapPart::Atomic || part == RuntimeAbi::HeapPart::Atomic64 ? RuntimeAbi::HeapPartFirstBinding(part) : RuntimeAbi::FirstStorageImageBinding;
+                        const auto slotCount = ConstantU32(state, RuntimeAbi::GpuImageHeapSlots);
+                        state.tableImageVariables.push_back({kind, defineHeapArray(state, slotCount, ImageType(state, mode), name.c_str(), heapKind)});
                     } else {
                         state.tableImageVariables.push_back({kind, Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant)});
                     }
@@ -587,12 +590,8 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::SamplerTable:
             RequireTableIndexing(state);
             if (state.gpuResolvedImages && layout.UsesDataAddress()) {
-                const auto type = state.module.Type(spv::OpTypeArray, state.module.Type(spv::OpTypeSampler), ConstantU32(state, RuntimeAbi::GpuSamplerHeapSlots));
-                state.tableSamplerVariable = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassUniformConstant, type), spv::StorageClassUniformConstant);
-                state.module.AddName(state.tableSamplerVariable, "table_samplers");
-                state.module.AddAnnotation(spv::OpDecorate, state.tableSamplerVariable, spv::DecorationDescriptorSet, RuntimeAbi::FragmentDescriptorSet);
-                state.module.AddAnnotation(spv::OpDecorate, state.tableSamplerVariable, spv::DecorationBinding, NativeBinding(IrShaderStage::Pixel, DescriptorBindingKind::Samplers));
-                state.tableHeap = true;
+                const auto slotCount = ConstantU32(state, RuntimeAbi::GpuSamplerHeapSlots);
+                state.tableSamplerVariable = defineHeapArray(state, slotCount, state.module.Type(spv::OpTypeSampler), "table_samplers", static_cast<std::uint32_t>(DescriptorBindingKind::Samplers));
             } else {
                 state.tableSamplerVariable = Define(state.module.Type(spv::OpTypeRuntimeArray, state.module.Type(spv::OpTypeSampler)), "table_samplers", spv::StorageClassUniformConstant);
             }
@@ -600,7 +599,6 @@ void DefineDescriptors(SpirvEmitterState& state) {
         case DescriptorBindingKind::ImageTableMap:
             if (layout.UsesDataAddress()) {
                 state.tableMapVariable = state.module.AllocateId();
-                state.tableMapAddressed = true;
             } else {
                 state.tableMapVariable = Define(StorageBufferBlockType(state), "table_map");
                 state.module.AddAnnotation(spv::OpDecorate, state.tableMapVariable, spv::DecorationNonWritable);

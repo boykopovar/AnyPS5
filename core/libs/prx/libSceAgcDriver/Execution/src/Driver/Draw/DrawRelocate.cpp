@@ -324,10 +324,7 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
             copy->flatBinding = variant->flatBinding;
             copy->pushOffset = variant->pushOffset;
             copy->vertexInfo = variant->vertexInfo;
-            copy->ring = variant->ring;
-            copy->ringAttributes = variant->ringAttributes;
-            copy->ringFlat = variant->ringFlat;
-            copy->ringBindings = variant->ringBindings;
+            copy->ringTemplate = variant->ringTemplate;
             for (const auto& move : moves) {
                 if (move.program != i) continue;
                 const auto delta = AlignedWord(move.to) - AlignedWord(move.from);

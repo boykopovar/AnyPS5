@@ -373,14 +373,14 @@ void VouchedLookups(const GuestBlock& block) {
 
 std::uint32_t AtomicStart(std::uint32_t texel) { return texel * 7u + 3u; }
 
-void AtomicTable(const GuestBlock& block) {
-    std::memcpy(block.Bytes(AtomicKernelOffset), AtomicTableCode.data(), sizeof(AtomicTableCode));
+template <typename FillSurface>
+void PrepareAtomicRecords(const GuestBlock& block, const void* kernel, std::size_t kernelBytes, std::uint32_t format, std::size_t surfaceBytes, FillSurface&& fillSurface) {
+    std::memcpy(block.Bytes(AtomicKernelOffset), kernel, kernelBytes);
     for (std::uint32_t record = 0; record < AtomicRecords; ++record) {
-        const auto surface = TexturesOffset + static_cast<std::size_t>(record) * AtomicSurfaceBytes;
-        auto* texels = reinterpret_cast<std::uint32_t*>(block.Bytes(surface));
-        for (std::uint32_t texel = 0; texel < AtomicWidth; ++texel) texels[texel] = AtomicStart(texel) + record * 1000u;
+        const auto surface = TexturesOffset + static_cast<std::size_t>(record) * surfaceBytes;
+        fillSurface(record, block.Bytes(surface));
         const auto address = block.At(surface);
-        const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format32UInt << 20u) | (((AtomicWidth - 1u) & 3u) << 30u), (AtomicWidth - 1u) >> 2u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+        const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((AtomicWidth - 1u) & 3u) << 30u), (AtomicWidth - 1u) >> 2u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
         std::memcpy(block.Bytes(HeapOffset + static_cast<std::size_t>(record) * Stride), words.data(), sizeof(words));
     }
     auto* srt = reinterpret_cast<std::uint32_t*>(block.Bytes(SrtOffset));
@@ -389,6 +389,13 @@ void AtomicTable(const GuestBlock& block) {
     const auto output = V(block.At(OutputOffset), 0u, 4096u);
     std::copy(heap.begin(), heap.end(), srt);
     std::copy(output.begin(), output.end(), srt + 12);
+}
+
+void AtomicTable(const GuestBlock& block) {
+    PrepareAtomicRecords(block, AtomicTableCode.data(), sizeof(AtomicTableCode), Format32UInt, AtomicSurfaceBytes, [](std::uint32_t record, std::uint8_t* surface) {
+        auto* texels = reinterpret_cast<std::uint32_t*>(surface);
+        for (std::uint32_t texel = 0; texel < AtomicWidth; ++texel) texels[texel] = AtomicStart(texel) + record * 1000u;
+    });
     const auto heapStages = AgcDriver::Graphics::HeapComputeStages();
     for (std::uint32_t dispatch = 0; dispatch < 2; ++dispatch) {
         std::memset(block.Bytes(OutputOffset), 0xee, AtomicWidth * 4u);
@@ -405,20 +412,8 @@ void AtomicTable(const GuestBlock& block) {
 }
 
 bool StoreTable(const GuestBlock& block) {
-    std::memcpy(block.Bytes(AtomicKernelOffset), StoreTableCode.data(), sizeof(StoreTableCode));
-    for (std::uint32_t record = 0; record < AtomicRecords; ++record) {
-        const auto surface = TexturesOffset + static_cast<std::size_t>(record) * StoreSurfaceBytes;
-        std::memset(block.Bytes(surface), 0, StoreSurfaceBytes);
-        const auto address = block.At(surface);
-        const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (Format16x4Float << 20u) | (((AtomicWidth - 1u) & 3u) << 30u), (AtomicWidth - 1u) >> 2u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
-        std::memcpy(block.Bytes(HeapOffset + static_cast<std::size_t>(record) * Stride), words.data(), sizeof(words));
-    }
-    auto* srt = reinterpret_cast<std::uint32_t*>(block.Bytes(SrtOffset));
-    std::fill(srt, srt + SrtBytes / 4u, 0u);
-    const auto heap = V(block.At(HeapOffset), Stride, AtomicRecords);
-    const auto output = V(block.At(OutputOffset), 0u, 4096u);
-    std::copy(heap.begin(), heap.end(), srt);
-    std::copy(output.begin(), output.end(), srt + 12);
+    PrepareAtomicRecords(block, StoreTableCode.data(), sizeof(StoreTableCode), Format16x4Float, StoreSurfaceBytes,
+                         [](std::uint32_t, std::uint8_t* surface) { std::memset(surface, 0, StoreSurfaceBytes); });
     const auto heapStages = AgcDriver::Graphics::HeapComputeStages();
     Dispatch(block, 0, AtomicKernelOffset);
     if (!AgcDriver::Graphics::DescriptorHeapEnabled()) {
@@ -433,7 +428,7 @@ bool StoreTable(const GuestBlock& block) {
                       static_cast<unsigned long long>(texels[texel]), static_cast<unsigned long long>(StoredTexel));
         Require(texels[texel] == StoredTexel, text);
     }
-    if (AgcDriver::Graphics::DescriptorHeapEnabled()) Require(AgcDriver::Graphics::HeapComputeStages() > heapStages, "image table store: the dispatch did not take the descriptor heap");
+    Require(AgcDriver::Graphics::HeapComputeStages() > heapStages, "image table store: the dispatch did not take the descriptor heap");
     std::puts("image table store passed");
     return true;
 }

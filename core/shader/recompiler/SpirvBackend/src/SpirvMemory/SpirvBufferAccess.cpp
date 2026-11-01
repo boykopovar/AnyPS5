@@ -5,6 +5,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvDescriptors.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
 #include <spirv/unified1/spirv.hpp>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <SpirvBackend/SpirvEmitterInstructions.hpp>
@@ -33,13 +34,10 @@ std::uint32_t EmitBinaryU32(SpirvEmitterState& state, std::uint32_t opcode, std:
     return result;
 }
 
-RuntimeAbi::Stage RootStage(const SpirvEmitterState& state) {
-    switch (state.program.Resources().stage) {
-    case IrShaderStage::Pixel: return RuntimeAbi::Stage::Fragment;
-    case IrShaderStage::TessellationControl: return RuntimeAbi::Stage::TessellationControl;
-    case IrShaderStage::TessellationEvaluation: return RuntimeAbi::Stage::TessellationEvaluation;
-    default: return RuntimeAbi::Stage::Main;
-    }
+std::uint32_t EmitAlignedLoadU32(SpirvEmitterState& state, std::uint32_t pointer) {
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, spv::MemoryAccessAlignedMask, 4u);
+    return value;
 }
 
 std::uint32_t EmitRootDword(SpirvEmitterState& state, std::uint32_t field) {
@@ -53,16 +51,21 @@ std::uint32_t EmitRootDword(SpirvEmitterState& state, std::uint32_t field) {
 }
 
 std::uint32_t EmitStageRootDword(SpirvEmitterState& state, RuntimeAbi::RootStageField field) {
-    return EmitRootDword(state, RuntimeAbi::RootStageDword(RootStage(state), field));
+    const auto stage = state.program.Resources().stage;
+    return EmitRootDword(state, RuntimeAbi::RootStageDword(RuntimeAbi::StageGroup(stage == IrShaderStage::Pixel, stage == IrShaderStage::TessellationControl, stage == IrShaderStage::TessellationEvaluation), field));
+}
+
+std::uint32_t ComposeAddress64(SpirvEmitterState& state, const std::function<std::uint32_t()>& loadLow, const std::function<std::uint32_t()>& loadHigh) {
+    const auto u64 = TypeScalarU64(state);
+    const auto low = Unary(state, spv::OpUConvert, u64, loadLow());
+    const auto high = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, loadHigh()), BdaConstant(state, 32u));
+    return Binary(state, spv::OpBitwiseOr, u64, low, high);
 }
 
 namespace {
 
 std::uint32_t rootAddress(SpirvEmitterState& state, std::uint32_t field) {
-    const auto u64 = TypeScalarU64(state);
-    const auto low = Unary(state, spv::OpUConvert, u64, EmitRootDword(state, field));
-    const auto high = Binary(state, spv::OpShiftLeftLogical, u64, Unary(state, spv::OpUConvert, u64, EmitRootDword(state, field + 1u)), BdaConstant(state, 32u));
-    return Binary(state, spv::OpBitwiseOr, u64, low, high);
+    return ComposeAddress64(state, [&] { return EmitRootDword(state, field); }, [&] { return EmitRootDword(state, field + 1u); });
 }
 
 std::uint32_t wordPointer(SpirvEmitterState& state, std::uint32_t base, std::uint32_t index) {
@@ -74,12 +77,7 @@ std::uint32_t wordPointer(SpirvEmitterState& state, std::uint32_t base, std::uin
 }
 
 std::uint32_t readOnlyWordPointer(SpirvEmitterState& state, std::uint32_t base, std::uint32_t index) {
-    const auto array = state.module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, TypeU32(state));
-    const auto words = state.module.DecoratedType(spv::OpTypeStruct,
-        {{spv::OpDecorate, {spv::DecorationBlock}},
-         {spv::OpMemberDecorate, {0u, spv::DecorationOffset, 0u}},
-         {spv::OpMemberDecorate, {0u, spv::DecorationNonWritable}}},
-        array);
+    const auto words = ReadOnlyStorageBufferType(state, TypeU32(state), 4u);
     const auto block = state.module.AllocateId();
     state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, words), block, base);
     const auto pointer = state.module.AllocateId();
@@ -125,9 +123,7 @@ std::uint32_t dataAddressLoad(SpirvEmitterState& state, RuntimeAbi::RootStageFie
         return value;
     }
     const auto pointer = EmitStageRingWordPointer(state, field, index);
-    const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer, spv::MemoryAccessAlignedMask, 4u);
-    return value;
+    return EmitAlignedLoadU32(state, pointer);
 }
 
 }
@@ -196,9 +192,7 @@ void EmitHeapSlotPreload(SpirvEmitterState& state) {
     const IrBindingLayout& layout = state.program.Metadata().bindings;
     std::vector<std::uint32_t> dwords;
     for (auto dword = layout.SamplerSlotDword(); dword < layout.ShaderDataDwords(); ++dword) dwords.push_back(dword);
-    constexpr auto metadataWords = static_cast<std::uint32_t>(sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t));
-    constexpr auto firstElement = static_cast<std::uint32_t>(offsetof(RuntimeAbi::ResourceMetadata, firstElement) / sizeof(std::uint32_t));
-    for (std::uint32_t image = 0; image < layout.runtimeImageCount; ++image) dwords.push_back(layout.ImageMetadataDword() + image * metadataWords + firstElement);
+    for (std::uint32_t image = 0; image < layout.runtimeImageCount; ++image) dwords.push_back(layout.ImageFirstElementDword(image));
     const auto pointerType = TypePointer(state, spv::StorageClassPrivate, TypeU32(state));
     for (const auto dword : dwords) {
         if (dword >= layout.ShaderDataDwords() || state.heapSlotVariables.contains(dword)) continue;

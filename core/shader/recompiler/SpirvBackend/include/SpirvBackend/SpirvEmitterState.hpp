@@ -94,6 +94,9 @@ struct SpirvEmitterState {
     const ImageResource* runtimeImage = nullptr;
     SpirvTableAccess tableAccess;
     SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo);
+    [[nodiscard]] bool BdaAddressed() const;
+    [[nodiscard]] bool TableMapAddressed() const;
+    [[nodiscard]] bool TableHeap() const;
 
     SpirvModule module;
     const IrProgram& program;
@@ -224,9 +227,6 @@ struct SpirvEmitterState {
     std::unordered_map<std::uint32_t, std::uint32_t> heapSlotVariables;
     std::uint32_t flattenedSrtVariable = 0;
     bool flattenedSrtAddressed = false;
-    bool bdaAddressed = false;
-    bool tableMapAddressed = false;
-    bool tableHeap = false;
     std::uint32_t ldsVariable = 0;
     std::uint32_t ldsBufferVariable = 0;
     std::uint32_t ldsBufferU64Variable = 0;

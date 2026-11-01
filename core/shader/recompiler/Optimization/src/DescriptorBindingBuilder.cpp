@@ -327,7 +327,17 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     allocation.specialization = std::move(plan.specialization);
 }
 
-DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet) const {
+bool BufferDescriptorPresent(const DescriptorValue& descriptor) {
+    return descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
+}
+
+BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, std::span<const BufferSubstitute> substitutes, std::size_t index) {
+    const bool present = BufferDescriptorPresent(descriptor);
+    if (!present && !substitutes.empty()) return index < substitutes.size() && substitutes[index].known ? substitutes[index] : BufferSubstitute{};
+    return {descriptor.dwords[1] & 0xffff0000u, descriptor.dwords[3], present ? descriptor.dwords[0] & 3u : 0u, present};
+}
+
+DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes) const {
     if (stage == IrShaderStage::Pixel && exportMappings.size() != 8u) fail("fragment runtime export mappings are missing");
     if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity");
     DescriptorBindingPlan plan;
@@ -355,25 +365,25 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto& descriptor = snapshot.buffers.at(index);
         if (descriptor.dwordCount != 4u) fail("buffer specialization requires four descriptor words");
         const auto& buffer = info.buffers[index];
-        const auto format = (descriptor.dwords[3] >> 12u) & 0x7fu;
-        const bool present = descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
-        if (buffer.descriptorFormatted && (format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) || (present && format == 0u))) fail("buffer specialization has an unsupported format");
-        const auto misalignment = present ? descriptor.dwords[0] & 3u : 0u;
+        const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
+        const auto format = (fields.word3 >> 12u) & 0x7fu;
+        if (buffer.descriptorFormatted && (format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) || (fields.known && format == 0u))) fail("buffer specialization has an unsupported format");
+        const auto misalignment = fields.misalignment;
         auto alignment = static_cast<std::uint32_t>(buffer.typedAlignment);
         if (buffer.descriptorFormatted && format != 0u) alignment = std::max(alignment, std::min(GetFormatInfo(static_cast<IrBufferFormat>(format)).byteSize, 4u));
         if (alignment == 0u || misalignment % alignment != 0u) fail("is a formatted buffer access through a V# whose base is not aligned to its element");
-        if (registrationModules && buffer.descriptorFormatted) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 1u, descriptor.dwords[3]});
+        if (registrationModules && buffer.descriptorFormatted) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 1u, fields.word3});
         if (registrationModules) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 3u, misalignment});
         if (!registrationModules) {
             const auto first = PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords;
-            plan.specialization.push_back({first, descriptor.dwords[1] & 0xffff0000u});
-            plan.specialization.push_back({first + 1u, descriptor.dwords[3]});
+            plan.specialization.push_back({first, fields.word1});
+            plan.specialization.push_back({first + 1u, fields.word3});
             plan.specialization.push_back({first + 3u, misalignment});
         }
         if (buffer.formattedReadMask != 0u) {
             for (std::uint32_t component = 0; component < 4u; ++component) {
                 if ((buffer.formattedReadMask & (1u << component)) == 0u) continue;
-                const auto selector = (descriptor.dwords[3] >> (component * 3u)) & 7u;
+                const auto selector = (fields.word3 >> (component * 3u)) & 7u;
                 if (selector == 2u || selector == 3u) fail("buffer specialization has a reserved component selector");
             }
         }
@@ -487,11 +497,8 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         if ((imageHeap || samplerHeap) && compact.resources.empty()) continue;
         PreparedDescriptorBinding entry{};
         auto& physical = entry.descriptor;
-        const bool heapImage = layout.HeapImageKind(compact.kind);
-        const bool heapSetBinding = heapImage || samplerHeap || compact.kind == DescriptorBindingKind::ShaderData || compact.kind == DescriptorBindingKind::FlattenedSrt;
-        const bool sharedHeapArray = layout.gpuResolvedImages && (heapImage || samplerHeap);
-        physical.descriptorSet = compact.kind == DescriptorBindingKind::Gds && layout.UsesDataAddress() ? RuntimeAbi::GpuGdsSet : layout.gpuResolvedImages ? (heapSetBinding ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet) : fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
-        physical.binding = NativeBinding(sharedHeapArray ? IrShaderStage::Pixel : stage, compact.kind);
+        physical.descriptorSet = DescriptorSetNumber(layout, compact.kind, stage, layout.gpuResolvedImages, fragmentDescriptorSet, true);
+        physical.binding = DescriptorBindingNumber(layout, compact.kind, stage, layout.gpuResolvedImages);
         physical.count = compact.resources.empty() ? 1u : static_cast<std::uint32_t>(compact.resources.size());
         physical.kind = PhysicalKindFor(compact.kind);
         physical.role = RoleFor(compact.kind);
@@ -589,22 +596,39 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     return plan;
 }
 
+namespace {
+
+bool IsAddressedRole(const DescriptorBindingPlan& plan, DescriptorRole role) {
+    switch (role) {
+    case DescriptorRole::GuestBuffers: return plan.addressedBuffers;
+    case DescriptorRole::ShaderData:
+    case DescriptorRole::FlattenedSrt:
+    case DescriptorRole::BdaPagetable:
+    case DescriptorRole::FaultBuffer:
+    case DescriptorRole::ImageTable:
+    case DescriptorRole::ImageStorageTable:
+    case DescriptorRole::SamplerTable:
+    case DescriptorRole::ImageTableMap: return plan.addressedData;
+    default: return false;
+    }
+}
+
+}
+
 DescriptorBindingPlan DescriptorBindingBuilder::Select(const DescriptorBindingPlan& plan, std::span<const std::uint32_t> bindings) const {
     DescriptorBindingPlan selected;
     std::set<std::uint32_t> remaining(bindings.begin(), bindings.end());
     selected.bindings.reserve(remaining.size());
     for (const auto& binding : plan.bindings) {
-        const bool addressed = (plan.addressedBuffers && binding.descriptor.role == DescriptorRole::GuestBuffers) || (plan.addressedData && (binding.descriptor.role == DescriptorRole::ShaderData || binding.descriptor.role == DescriptorRole::FlattenedSrt || binding.descriptor.role == DescriptorRole::BdaPagetable || binding.descriptor.role == DescriptorRole::FaultBuffer || binding.descriptor.role == DescriptorRole::ImageTable || binding.descriptor.role == DescriptorRole::ImageStorageTable || binding.descriptor.role == DescriptorRole::SamplerTable || binding.descriptor.role == DescriptorRole::ImageTableMap));
+        const bool addressed = IsAddressedRole(plan, binding.descriptor.role);
         if (remaining.erase(binding.descriptor.binding) == 0u && !addressed) continue;
         selected.storageData |= binding.descriptor.role == DescriptorRole::ShaderData;
         selected.bindings.push_back(binding);
     }
     if (plan.addressedData) {
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(RuntimeAbi::FirstImageBinding)));
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(RuntimeAbi::FirstStorageImageBinding)));
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(RuntimeAbi::FirstAtomicImageBinding)));
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(RuntimeAbi::FirstAtomic64ImageBinding)));
-        remaining.erase(NativeBinding(IrShaderStage::Pixel, DescriptorBindingKind::Samplers));
+        for (const auto kind : {RuntimeAbi::FirstImageBinding, RuntimeAbi::FirstStorageImageBinding, RuntimeAbi::FirstAtomicImageBinding, RuntimeAbi::FirstAtomic64ImageBinding, static_cast<std::uint32_t>(DescriptorBindingKind::Samplers)}) {
+            remaining.erase(NativeBinding(IrShaderStage::Pixel, static_cast<DescriptorBindingKind>(kind)));
+        }
     }
     if (!remaining.empty()) fail("specialized module bindings disagree with the prepared plan");
     const bool hasSamplers = std::any_of(selected.bindings.begin(), selected.bindings.end(), [](const auto& binding) { return binding.descriptor.role == DescriptorRole::GuestSamplers; });

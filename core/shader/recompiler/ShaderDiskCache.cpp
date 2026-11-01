@@ -700,7 +700,6 @@ void encodeInvocation(Writer& writer, const ShaderInvocation& invocation) {
     });
     writer.Value(invocation.imageTableShader);
     writer.Value(invocation.imageTableFaults);
-    writer.Value(invocation.userDataRegisterReads);
     writer.List(invocation.deviceImageInterfaces, [](Writer& out, std::uint64_t id) { out.Value(id); });
     writer.List(invocation.deviceSamplerClasses, [](Writer& out, std::uint32_t bits) { out.Value(bits); });
 }
@@ -749,7 +748,6 @@ void decodeInvocation(Reader& reader, ShaderInvocation& invocation) {
     });
     reader.Value(invocation.imageTableShader);
     reader.Value(invocation.imageTableFaults);
-    reader.Value(invocation.userDataRegisterReads);
     reader.List(invocation.deviceImageInterfaces, 8, [](Reader& in, std::uint64_t& id) { in.Value(id); });
     reader.List(invocation.deviceSamplerClasses, 4, [](Reader& in, std::uint32_t& bits) { in.Value(bits); });
 }
@@ -1446,6 +1444,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_PERF_DOM_INTERSECTION",
     "APS5_NO_PERF_ITERATION_SELECTION",
     "APS5_NO_PERF_LAYOUT_PAIR",
+    "APS5_NO_BUFFER_SUBSTITUTES",
     "APS5_NO_RESULT_MEMO",
     "APS5_NO_TABLE_RESOLUTION_REUSE",
     "APS5_NO_TABLE_SNAPSHOT_REUSE",
@@ -1564,6 +1563,7 @@ public:
         if (DecodeEntry(bytes, key, *persisted, std::move(mapped)) != LoadStatus::Loaded) return nullptr;
         persisted->layout = variant.layout;
         persisted->artifact.variantId = variant.artifact.variantId;
+        persisted->substitutes = variant.substitutes;
         return persisted;
     }
 

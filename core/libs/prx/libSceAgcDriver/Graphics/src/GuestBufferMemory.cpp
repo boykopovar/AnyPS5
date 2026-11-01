@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/AdaptiveStaging.hpp"
@@ -45,6 +46,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <unordered_set>
 #include <thread>
 #include <stop_token>
 #include <cerrno>
@@ -90,6 +92,7 @@ struct ImageMirror {
     // apart from host import serials.
     std::uint64_t serial = 0;
     std::atomic<std::uint64_t> watchedSerial{0};
+    std::uint64_t lastDispatch = 0;
 };
 
 // The address space. An address-based build maps every readable registered range; building that
@@ -141,7 +144,16 @@ struct GuestBufferMemory::AddressSpace {
     mutable std::list<const std::vector<std::uint64_t>*> tableRecency;
 };
 
+std::atomic<std::uint64_t> testHeapMirrorBudget{0};
+
+void SetHeapMirrorBudget(std::uint64_t bytes) {
+    testHeapMirrorBudget.store(bytes, std::memory_order_release);
+}
+
 namespace {
+struct RefreshBlock;
+static thread_local GuestBufferMemory* buildingBufferMemory = nullptr;
+static thread_local std::vector<RefreshBlock>* buildingBlocks = nullptr;
 
 struct RetiredImport;
 
@@ -399,7 +411,7 @@ void releaseSettleBatches(VkDevice device, ImportSettle& settle) {
         batch = SettleBatch{};
     }
     if (settle.batchTarget != VK_NULL_HANDLE) settle.settleDestroyBuffer(device, settle.batchTarget, nullptr);
-    if (settle.batchMemory != VK_NULL_HANDLE) settle.settleFreeMemory(device, settle.batchMemory, nullptr);
+    if (settle.batchMemory != VK_NULL_HANDLE) MemoryAccounting::Free(settle.settleFreeMemory, device, settle.batchMemory);
     settle.batchTarget = VK_NULL_HANDLE;
     settle.batchMemory = VK_NULL_HANDLE;
 }
@@ -407,7 +419,7 @@ void releaseSettleBatches(VkDevice device, ImportSettle& settle) {
 
 void destroyImport(const Context& context, const HostImport& entry) {
     context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, entry.buffer, nullptr);
-    context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, entry.memory, nullptr);
+    MemoryAccounting::Free(context, entry.memory);
 #ifdef _WIN32
     GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
 #endif
@@ -425,7 +437,7 @@ struct RetiredImport {
     ~RetiredImport() {
         const auto& entry = node.mapped();
         destroyBuffer(device, entry.buffer, nullptr);
-        freeMemory(device, entry.memory, nullptr);
+        MemoryAccounting::Free(freeMemory, device, entry.memory);
 #ifdef _WIN32
         GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
 #endif
@@ -542,7 +554,7 @@ VkResult createImportBuffer(const Context& context, VkExternalMemoryHandleTypeFl
 const char* bindImport(const Context& context, HostImport& entry, VkExternalMemoryHandleTypeFlagBits handleType, const void* import, std::uint32_t importTypes, bool& allocated, VkResult& failure) {
     const auto failed = [&](const char* step, VkResult result) -> const char* {
         if (entry.buffer) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, entry.buffer, nullptr);
-        if (allocated && entry.memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, entry.memory, nullptr);
+        if (allocated && entry.memory) MemoryAccounting::Free(context, entry.memory);
         entry.buffer = VK_NULL_HANDLE;
         entry.memory = VK_NULL_HANDLE;
         failure = result;
@@ -570,12 +582,11 @@ const char* bindImport(const Context& context, HostImport& entry, VkExternalMemo
     VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &flags};
     allocation.allocationSize = entry.bytes;
     allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(types));
-    if (const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &entry.memory); result != VK_SUCCESS) return failed("vkAllocateMemory", result);
+    if (const auto result = MemoryAccounting::Allocate(context, allocation, "guest memory import", &entry.memory); result != VK_SUCCESS) return failed("vkAllocateMemory", result);
     allocated = true;
     entry.memoryType = allocation.memoryTypeIndex;
     if (const auto result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, entry.buffer, entry.memory, 0); result != VK_SUCCESS) return failed("vkBindBufferMemory", result);
-    const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, entry.buffer};
-    entry.address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    entry.address = BufferDeviceAddress(context, entry.buffer);
     if (entry.address == 0) return failed("vkGetBufferDeviceAddressKHR", VK_ERROR_UNKNOWN);
     return nullptr;
 }
@@ -648,7 +659,7 @@ struct ImportChunk {
     ImportChunk(const ImportChunk&) = delete;
     ImportChunk& operator=(const ImportChunk&) = delete;
     ~ImportChunk() {
-        if (memory != VK_NULL_HANDLE) freeMemory(device, memory, nullptr);
+        if (memory != VK_NULL_HANDLE) MemoryAccounting::Free(freeMemory, device, memory);
     }
 };
 
@@ -718,7 +729,7 @@ std::shared_ptr<ImportChunk> importChunk(const Context& context, int file, std::
     allocation.allocationSize = ImportChunkBytes;
     allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(types));
     auto chunk = std::make_shared<ImportChunk>();
-    if (const auto result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &chunk->memory); result != VK_SUCCESS) {
+    if (const auto result = MemoryAccounting::Allocate(context, allocation, "dma-buf import", &chunk->memory); result != VK_SUCCESS) {
         close(buffer);
         failure = result;
         step = "vkAllocateMemory";
@@ -772,10 +783,9 @@ const char* createChunkedDmaBufImport(const Context& context, HostImport& entry,
         failure = result;
         return "vkBindBufferMemory";
     }
-    const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
     entry.buffer = buffer;
     entry.memory = VK_NULL_HANDLE;
-    entry.address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    entry.address = BufferDeviceAddress(context, buffer);
     entry.chunk = std::move(chunk);
     entry.dmaBuf = true;
     return nullptr;
@@ -864,8 +874,7 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
     context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     if (bound != VK_SUCCESS) fail("vkQueueBindSparse", bound);
     if (waited != VK_SUCCESS) fail("vkWaitForFences", waited);
-    const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
-    const auto address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+    const auto address = BufferDeviceAddress(context, buffer);
     if (address == 0) fail("vkGetBufferDeviceAddressKHR", VK_ERROR_UNKNOWN);
     entry.buffer = buffer;
     entry.memory = VK_NULL_HANDLE;
@@ -969,9 +978,9 @@ const char* settleImport(const Context& context, HostImports& state, const HostI
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(requirements.memoryTypeBits));
-        if ((result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &settle.settleMemory)) != VK_SUCCESS || (result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, settle.settleTarget, settle.settleMemory, 0)) != VK_SUCCESS) {
+        if ((result = MemoryAccounting::Allocate(context, allocation, "host import settle", &settle.settleMemory)) != VK_SUCCESS || (result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, settle.settleTarget, settle.settleMemory, 0)) != VK_SUCCESS) {
             context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, settle.settleTarget, nullptr);
-            if (settle.settleMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, settle.settleMemory, nullptr);
+            if (settle.settleMemory != VK_NULL_HANDLE) MemoryAccounting::Free(context, settle.settleMemory);
             settle.settleTarget = VK_NULL_HANDLE;
             settle.settleMemory = VK_NULL_HANDLE;
             return "the settle target";
@@ -1047,9 +1056,9 @@ const char* prepareSettleBatch(const Context& context, ImportSettle& settle, Set
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(requirements.memoryTypeBits));
-        if ((result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &settle.batchMemory)) != VK_SUCCESS || (result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, settle.batchTarget, settle.batchMemory, 0)) != VK_SUCCESS) {
+        if ((result = MemoryAccounting::Allocate(context, allocation, "host import batch", &settle.batchMemory)) != VK_SUCCESS || (result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, settle.batchTarget, settle.batchMemory, 0)) != VK_SUCCESS) {
             context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, settle.batchTarget, nullptr);
-            if (settle.batchMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, settle.batchMemory, nullptr);
+            if (settle.batchMemory != VK_NULL_HANDLE) MemoryAccounting::Free(context, settle.batchMemory);
             settle.batchTarget = VK_NULL_HANDLE;
             settle.batchMemory = VK_NULL_HANDLE;
             return "the settle batch target";
@@ -1890,7 +1899,7 @@ struct ImportConstruction {
     ~ImportConstruction() {
         if (!armed) return;
         if (entry.buffer != VK_NULL_HANDLE) destroyBuffer(device, entry.buffer, nullptr);
-        if (entry.memory != VK_NULL_HANDLE) freeMemory(device, entry.memory, nullptr);
+        if (entry.memory != VK_NULL_HANDLE) MemoryAccounting::Free(freeMemory, device, entry.memory);
 #ifdef _WIN32
         GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
 #endif
@@ -2470,6 +2479,8 @@ struct ImageMirrors {
     std::uint64_t pinnedVersion = 0;
     std::uint64_t sweeps = 0;
     std::uint64_t heapChecks = 0;
+    std::uint64_t evictions = 0;
+    std::uint64_t dispatchCounter = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
 
@@ -2553,6 +2564,7 @@ bool mirrorsEnabled() {
 }
 
 std::uint64_t heapMirrorBudget() {
+    if (const auto test = testHeapMirrorBudget.load(std::memory_order_acquire); test != 0) return test;
     static const std::uint64_t bytes = [] {
         const char* value = std::getenv("APS5_HEAP_MIRROR_MIB");
         return (value ? std::strtoull(value, nullptr, 10) : 24576ull) << 20u;
@@ -2570,7 +2582,7 @@ std::string heapMirrorError(std::uint64_t address, std::uint64_t bytes, std::uin
     return std::string(prefix) + where + std::string(reason) + holding;
 }
 
-void sweepMirrors();
+void sweepMirrors(std::uint64_t neededBytes = 0, std::uint64_t protectAddress = 0);
 
 void unlistMirror(ImageMirrors& state, ImageMirror& mirror) {
     if (!mirror.listed) return;
@@ -2640,7 +2652,7 @@ void reserveHeapBytes(std::uint64_t address, std::uint64_t bytes, std::uint64_t 
             }
             if (attempt != 0) throw std::runtime_error(heapMirrorError(address, bytes, held, "past the budget"));
         }
-        sweepMirrors();
+        sweepMirrors(need, address);
     }
 }
 
@@ -2662,7 +2674,7 @@ void growResident(ImageMirror& mirror, const GuestRuns& runs) {
             }
             if (attempt != 0) throw std::runtime_error(heapMirrorError(mirror.base, mirror.reserved, state.heapBytes, "past the budget"));
         }
-        sweepMirrors();
+        sweepMirrors(need, mirror.base);
     }
     try {
         mirror.resident->Bind(runs);
@@ -3105,6 +3117,13 @@ std::vector<std::pair<std::size_t, std::uint64_t>> refreshHeapRuns(const GuestBu
     return checked;
 }
 
+void refreshWritableMirrors(const GuestBufferMemory::AddressSpace& space, std::vector<RefreshBlock>& blocks) {
+    for (const auto index : space.writableMirrors) {
+        const auto& region = space.base[index];
+        if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
+    }
+}
+
 bool heapMirrorWatched(ImageMirror& mirror) {
     const auto serial = GuestMemory::UnwatchSerial();
     if (mirror.watchedSerial.load(std::memory_order_relaxed) == serial) return true;
@@ -3303,14 +3322,20 @@ std::shared_ptr<ImageMirror> findMirror(const Context& context, std::uint64_t be
     return mirror;
 }
 
-// Drops mirrors whose registered range is gone (a later build made a new one for the replacement).
-void sweepMirrors() {
+void sweepMirrors(std::uint64_t neededBytes, std::uint64_t protectAddress) {
     const bool released = releaseExpiredJoinedHeaps();
-    const auto space = Spaces().current.load();
+    auto space = Spaces().current.load();
     auto& state = Mirrors();
+    std::vector<std::shared_ptr<ImageMirror>> dropped;
     std::lock_guard lock(state.mutex);
     if (released) ++state.version;
-    if (space != nullptr && state.pinnedSpace == space->serial && state.pinnedVersion == state.version) return;
+    if (neededBytes == 0 && space != nullptr && state.pinnedSpace == space->serial && state.pinnedVersion == state.version) return;
+    if (neededBytes != 0 && state.heapBytes + neededBytes > heapMirrorBudget()) {
+        if (auto cached = Spaces().current.exchange(nullptr); cached != nullptr) {
+            space.reset();
+            cached.reset();
+        }
+    }
     ++state.sweeps;
     bool pinned = space != nullptr;
     std::size_t leased = 0;
@@ -3324,8 +3349,46 @@ void sweepMirrors() {
             continue;
         }
         if (it->second->heap) unlistMirror(state, *it->second);
+        dropped.push_back(std::move(it->second));
         it = state.entries.erase(it);
         ++state.version;
+    }
+    if (neededBytes != 0 && state.heapBytes + neededBytes > heapMirrorBudget()) {
+        std::unordered_set<const ImageMirror*> queued;
+        if (buildingBlocks != nullptr) {
+            for (const auto& block : *buildingBlocks) queued.insert(block.mirror);
+        }
+        while (state.heapBytes + neededBytes > heapMirrorBudget()) {
+            auto victim = state.entries.end();
+            for (auto it = state.entries.begin(); it != state.entries.end(); ++it) {
+                if (!it->second->heap || it->first == protectAddress || queued.count(it->second.get()) != 0) continue;
+                const bool buildingHolds = buildingBufferMemory != nullptr && buildingBufferMemory->HoldsMirror(it->second);
+                const auto allowedCount = (buildingHolds && !it->second->writable) ? 2 : 1;
+                if (it->second.use_count() == allowedCount) {
+                    if (victim == state.entries.end()) {
+                        victim = it;
+                    } else if (it->second->lastDispatch != victim->second->lastDispatch) {
+                        if (it->second->lastDispatch < victim->second->lastDispatch) victim = it;
+                    } else if (it->second->writable != victim->second->writable) {
+                        if (!it->second->writable && victim->second->writable) victim = it;
+                    } else if (it->first < victim->first) {
+                        victim = it;
+                    }
+                }
+            }
+            if (victim == state.entries.end()) break;
+            if (buildingBufferMemory != nullptr) {
+                buildingBufferMemory->RecordEvicted(victim->first);
+                if (buildingBufferMemory->HoldsMirror(victim->second)) {
+                    buildingBufferMemory->EvictMirror(victim->second);
+                }
+            }
+            unlistMirror(state, *victim->second);
+            dropped.push_back(std::move(victim->second));
+            state.entries.erase(victim);
+            ++state.version;
+            ++state.evictions;
+        }
     }
     state.pinnedSpace = pinned ? space->serial : 0;
     state.pinnedVersion = state.version;
@@ -3393,7 +3456,7 @@ void reportMirrors() {
         }
         heapBytes = state.heapBytes;
     }
-    AgcDriver::ProfilePrint_nid_no_patch("[buffers] image mirrors: %zu ranges (%.1f MiB, %zu writable, %zu heap %.1f MiB), %llu address-based builds served, %llu descriptor sub-ranges bound, %llu sparse heaps bound, %llu rebuilds, %llu refreshes: %llu blocks compared, %llu copied, %llu refresh syncs; heap refills %llu, unwatched heaps %llu, %llu heap mirrors released for imports (%.1f MiB)\n", count, bytes / 1048576.0, writable, heaps, heapBytes / 1048576.0, static_cast<unsigned long long>(state.builds), static_cast<unsigned long long>(state.subranges), static_cast<unsigned long long>(state.sparseBinds), static_cast<unsigned long long>(state.rebuilds), static_cast<unsigned long long>(state.refreshes), static_cast<unsigned long long>(state.blocksCompared), static_cast<unsigned long long>(state.blocksCopied), static_cast<unsigned long long>(state.syncs), static_cast<unsigned long long>(state.heapRefills), static_cast<unsigned long long>(state.heapUnwatched), static_cast<unsigned long long>(state.heapImported), state.heapImportedBytes / 1048576.0);
+    AgcDriver::ProfilePrint_nid_no_patch("[buffers] image mirrors: %zu ranges (%.1f MiB, %zu writable, %zu heap %.1f MiB), %llu address-based builds served, %llu descriptor sub-ranges bound, %llu sparse heaps bound, %llu rebuilds, %llu refreshes: %llu blocks compared, %llu copied, %llu refresh syncs; heap refills %llu, unwatched heaps %llu, %llu heap mirrors evicted for budget, %llu heap mirrors released for imports (%.1f MiB)\n", count, bytes / 1048576.0, writable, heaps, heapBytes / 1048576.0, static_cast<unsigned long long>(state.builds), static_cast<unsigned long long>(state.subranges), static_cast<unsigned long long>(state.sparseBinds), static_cast<unsigned long long>(state.rebuilds), static_cast<unsigned long long>(state.refreshes), static_cast<unsigned long long>(state.blocksCompared), static_cast<unsigned long long>(state.blocksCopied), static_cast<unsigned long long>(state.syncs), static_cast<unsigned long long>(state.heapRefills), static_cast<unsigned long long>(state.heapUnwatched), static_cast<unsigned long long>(state.evictions), static_cast<unsigned long long>(state.heapImported), state.heapImportedBytes / 1048576.0);
 #ifdef _WIN32
     auto& imports = Imports();
     std::lock_guard importsLock(imports.mutex);
@@ -3680,13 +3743,21 @@ std::string AddressCopyOverflow(std::vector<AddressCopy> copies, std::uint64_t l
 MirrorStats MirrorCounters() {
     auto& state = Mirrors();
     std::lock_guard lock(state.mutex);
-    MirrorStats stats{0, state.heapBytes, state.rebuilds, state.blocksCopied, state.heapRefills, state.sweeps, state.heapChecks, state.sparseBinds};
+    MirrorStats stats{0, state.heapBytes, state.rebuilds, state.blocksCopied, state.heapRefills, state.sweeps, state.heapChecks, state.sparseBinds, state.evictions};
     for (const auto& [base, mirror] : state.entries) stats.heapMirrors += mirror->heap ? 1 : 0;
     return stats;
 }
 
 std::uint64_t SnapshotMismatches() {
     return Snapshots().mismatched.load(std::memory_order_relaxed);
+}
+
+std::shared_ptr<void> HoldHeapMirror(std::uint64_t address) {
+    auto& state = Mirrors();
+    std::lock_guard lock(state.mutex);
+    auto it = state.entries.find(address);
+    if (it != state.entries.end()) return it->second;
+    return nullptr;
 }
 
 HeapMirrorHold HeapMirrorsWithin(std::uint64_t begin, std::uint64_t end) {
@@ -3752,7 +3823,7 @@ void ClearHostImports(VkDevice device) {
         const auto& settle = found->second;
         if (settle.settleFence != VK_NULL_HANDLE) settle.destroyFence(device, settle.settleFence, nullptr);
         if (settle.settleTarget != VK_NULL_HANDLE) settle.settleDestroyBuffer(device, settle.settleTarget, nullptr);
-        if (settle.settleMemory != VK_NULL_HANDLE) settle.settleFreeMemory(device, settle.settleMemory, nullptr);
+        if (settle.settleMemory != VK_NULL_HANDLE) MemoryAccounting::Free(settle.settleFreeMemory, device, settle.settleMemory);
         state.settles.erase(found);
     }
     if (state.device != device) return;
@@ -3764,7 +3835,7 @@ void ClearHostImports(VkDevice device) {
     }
     for (const auto& [address, entry] : state.imports) {
         state.destroyBuffer(state.device, entry.buffer, nullptr);
-        state.freeMemory(state.device, entry.memory, nullptr);
+        MemoryAccounting::Free(state.freeMemory, state.device, entry.memory);
 #ifdef _WIN32
         GuestArena::GuestArenaUnmapAlias_nid_postfix(entry.alias);
 #endif
@@ -3820,7 +3891,7 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
         VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         allocation.allocationSize = requirements.size;
         allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(requirements.memoryTypeBits));
-        if ((probe.result = context.Function<PFN_vkAllocateMemory>("vkAllocateMemory")(context.device, &allocation, nullptr, &destinationMemory)) != VK_SUCCESS) return "vkAllocateMemory";
+        if ((probe.result = MemoryAccounting::Allocate(context, allocation, "host import probe", &destinationMemory)) != VK_SUCCESS) return "vkAllocateMemory";
         if ((probe.result = context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, destination, destinationMemory, 0)) != VK_SUCCESS) return "vkBindBufferMemory";
         VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         allocate.commandPool = context.pool;
@@ -3866,7 +3937,7 @@ void runImportProbe(const Context& context, std::uint64_t base, std::uint64_t by
     if (fence != VK_NULL_HANDLE) context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
     if (commands[0] != VK_NULL_HANDLE) context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 2, commands);
     if (destination != VK_NULL_HANDLE) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, destination, nullptr);
-    if (destinationMemory != VK_NULL_HANDLE) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, destinationMemory, nullptr);
+    if (destinationMemory != VK_NULL_HANDLE) MemoryAccounting::Free(context, destinationMemory);
     if (import.buffer != VK_NULL_HANDLE) destroyImport(context, import);
 }
 
@@ -4368,7 +4439,50 @@ void GuestBufferMemory::CountAddressBuild(double snapshotsUs) {
     totals.snapshotsUs = 0;
 }
 
+bool GuestBufferMemory::HoldsMirror(const std::shared_ptr<ImageMirror>& mirror) const {
+    for (const auto& region : regions) {
+        if (region.mirror == mirror) return true;
+    }
+    return false;
+}
+
+bool GuestBufferMemory::EvictMirror(const std::shared_ptr<ImageMirror>& mirror) {
+    bool found = false;
+    for (auto& region : regions) {
+        if (region.mirror == mirror) {
+            region.mirror.reset();
+            region.hostBacked = !region.writable;
+            auto committed = GuestMemory::DescribeCommitted(region.begin, region.end - region.begin);
+            if (!committed.whole) {
+                region.sparse = true;
+                region.backed = std::move(committed.ranges);
+            } else {
+                region.sparse = false;
+                region.backed.clear();
+            }
+            found = true;
+        }
+    }
+    return found;
+}
+
+bool GuestBufferMemory::WasEvicted(std::uint64_t address) const {
+    return std::find(evictedRanges.begin(), evictedRanges.end(), address) != evictedRanges.end();
+}
+
+void GuestBufferMemory::RecordEvicted(std::uint64_t address) {
+    if (!WasEvicted(address)) evictedRanges.push_back(address);
+}
+
 void GuestBufferMemory::AcquireRegistered() {
+    struct BuildingScope {
+        explicit BuildingScope(GuestBufferMemory* self) { buildingBufferMemory = self; }
+        ~BuildingScope() {
+            buildingBufferMemory = nullptr;
+            buildingBlocks = nullptr;
+        }
+    };
+    const BuildingScope buildingScope(this);
     Require(!uploaded && regions.empty() && lease.empty() && space == nullptr, "guest allocation lease must precede resource registration");
     ensurePinWaiter();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -4384,6 +4498,7 @@ void GuestBufferMemory::AcquireRegistered() {
     // APS5_NO_SORTED_SNAPSHOT_LOOKUP=1: AddSnapshot scans the regions as before instead of searching.
     static const bool sortedLookup = std::getenv("APS5_NO_SORTED_SNAPSHOT_LOOKUP") == nullptr;
     std::vector<RefreshBlock> blocks;
+    buildingBlocks = &blocks;
     std::vector<ImageMirror*> heaps;
     bool mirrored = false;
     bool served = false;
@@ -4449,10 +4564,7 @@ void GuestBufferMemory::AcquireRegistered() {
             // before any of them is dereferenced.
             served = true;
             mirrored = space->mirrored;
-            for (const auto index : space->writableMirrors) {
-                const auto& region = space->base[index];
-                if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
-            }
+            refreshWritableMirrors(*space, blocks);
             lap(timing.mirrorsUs, at);
         }
     }
@@ -4538,7 +4650,7 @@ void GuestBufferMemory::AcquireRegistered() {
                         if (part.mirror->sparse) {
                             part.sparse = true;
                             part.backed = part.mirror->committed;
-                        } else heaps.push_back(part.mirror.get());
+                        }
                     }
                     regions.push_back(std::move(part));
                 }
@@ -4552,7 +4664,7 @@ void GuestBufferMemory::AcquireRegistered() {
                 imported.emplace_back(range->address, range->address + range->bytes);
                 continue;
             }
-            if (mirrorsEnabled()) {
+            if (mirrorsEnabled() && !WasEvicted(range->address)) {
                 region.mirror = acquireMirror(context, range, blocks, range->releasable);
                 lap(timing.mirrorsUs, at);
                 if (region.mirror != nullptr) {
@@ -4560,8 +4672,6 @@ void GuestBufferMemory::AcquireRegistered() {
                     if (region.mirror->sparse) {
                         region.sparse = true;
                         region.backed = region.mirror->committed;
-                    } else if (region.mirror->heap) {
-                        heaps.push_back(region.mirror.get());
                     }
                     regions.push_back(std::move(region));
                     continue;
@@ -4605,6 +4715,9 @@ void GuestBufferMemory::AcquireRegistered() {
             copies.push_back({copied.begin, copied.end, committed, reason, reason == nullptr, overBudget});
         }
         releaseImportedMirrors(context, imported);
+        for (const auto& region : regions) {
+            if (region.mirror != nullptr && region.mirror->heap && !region.mirror->sparse) heaps.push_back(region.mirror.get());
+        }
         regionsSorted = sortedLookup;
         if (!copies.empty()) {
             std::uint64_t copied = 0;
@@ -4679,7 +4792,7 @@ void GuestBufferMemory::AcquireRegistered() {
                 }
                 space = std::move(built);
                 spaces.droppedByWaiter.store(false, std::memory_order_relaxed);
-                spaces.current.store(space);
+                if (evictedRanges.empty()) spaces.current.store(space);
             }
         }
     }
@@ -4947,10 +5060,6 @@ std::shared_ptr<const void> GuestBufferMemory::ReleaseSpace() {
 
 namespace {
 
-bool epochMirrors() {
-    return DrawPipelineEnabled();
-}
-
 void noteEpochMirrors(bool reused, const GuestBufferMemory::AddressSpace& space) {
     static std::atomic<std::uint64_t> reuses{0}, refreshes{0}, compared{0}, differing{0};
     static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
@@ -5004,15 +5113,12 @@ bool GuestBufferMemory::RetakeSpace() {
     std::vector<RefreshBlock> blocks;
     const auto epoch = GuestMemory::CollectEpoch();
     const auto proof = GuestMemory::ProofSerial();
-    const bool reuse = epochMirrors() && epoch != 0 && space->refreshedEpoch.load(std::memory_order_relaxed) == epoch && space->refreshedProof.load(std::memory_order_relaxed) == proof;
+    const bool reuse = DrawPipelineEnabled() && epoch != 0 && space->refreshedEpoch.load(std::memory_order_relaxed) == epoch && space->refreshedProof.load(std::memory_order_relaxed) == proof;
     if (reuse) {
         noteEpochMirrors(true, *space);
     } else {
-        for (const auto index : space->writableMirrors) {
-            const auto& region = space->base[index];
-            if (prepareRefresh(*region.mirror, region.begin, region.end - region.begin)) appendBlocks(blocks, *region.mirror, region.begin, region.end - region.begin);
-        }
-        if (epochMirrors()) noteEpochMirrors(false, *space);
+        refreshWritableMirrors(*space, blocks);
+        if (DrawPipelineEnabled()) noteEpochMirrors(false, *space);
     }
     const auto checked = refreshHeapRuns(*space, blocks);
     compareBlocks(blocks);
@@ -5619,6 +5725,19 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
     for (const auto& region : regions) CompletePendingCpuWrites(context, region.begin, static_cast<std::size_t>(region.end - region.begin));
     if (space != nullptr) completeSpaceWrites();
     uploaded = true;
+    {
+        auto& state = Mirrors();
+        std::lock_guard lock(state.mutex);
+        const auto stamp = ++state.dispatchCounter;
+        for (const auto& region : regions) {
+            if (region.mirror != nullptr) region.mirror->lastDispatch = stamp;
+        }
+        if (space != nullptr) {
+            for (const auto& region : space->base) {
+                if (region.mirror != nullptr) region.mirror->lastDispatch = stamp;
+            }
+        }
+    }
     for (const auto& region : regions) static_cast<void>(FlushDepthPlanes(region.begin, static_cast<std::size_t>(region.end - region.begin)));
     for (const auto& [begin, end] : writes) RequireNoResidentDepthRead_nid_no_patch(begin, static_cast<std::size_t>(end - begin), htileClear);
     for (const auto& [begin, end] : writes) StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "written buffer range");

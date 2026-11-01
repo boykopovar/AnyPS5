@@ -80,32 +80,23 @@ void DecorateTableNonUniform(SpirvEmitterState& state, std::uint32_t id) {
 
 namespace {
 
-std::uint32_t tableMapWord(SpirvEmitterState& state, std::uint32_t index) {
-    const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, EmitStageRingWordPointer(state, RuntimeAbi::RootStageField::TableMap, index), spv::MemoryAccessAlignedMask, 4u);
-    return value;
-}
-
-std::uint32_t tableHeapSlot(SpirvEmitterState& state, std::uint32_t part, std::uint32_t element, std::uint32_t slots) {
+std::uint32_t tableHeapSlot(SpirvEmitterState& state, RuntimeAbi::HeapPart part, std::uint32_t element, std::uint32_t slots) {
+    using RuntimeAbi::HeapPart;
+    const auto partIndex = static_cast<std::uint32_t>(part);
     const auto u32 = TypeU32(state);
-    const auto base = tableMapWord(state, ConstantU32(state, ImageTableAbi::HeaderElementBase));
-    const auto count = tableMapWord(state, ConstantU32(state, ImageTableAbi::HeaderElementCount));
+    const auto base = LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase));
+    const auto count = LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementCount));
     std::uint32_t partBase = base;
-    if (part != 0u && part < 3u) {
-        partBase = Binary(state, spv::OpIAdd, u32, base, Binary(state, spv::OpIMul, u32, count, ConstantU32(state, part)));
-    } else if (part >= 3u) {
-        const auto samplers = tableMapWord(state, ConstantU32(state, ImageTableAbi::HeaderSamplerCount));
+    if (part == HeapPart::Storage || part == HeapPart::Sampler) {
+        partBase = Binary(state, spv::OpIAdd, u32, base, Binary(state, spv::OpIMul, u32, count, ConstantU32(state, partIndex)));
+    } else if (part >= HeapPart::Atomic) {
+        const auto samplers = LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderSamplerCount));
         const auto samplerSpan = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), count, samplers), samplers, count);
-        const auto extra = Binary(state, spv::OpIMul, u32, count, ConstantU32(state, part - 1u));
+        const auto extra = Binary(state, spv::OpIMul, u32, count, ConstantU32(state, partIndex - 1u));
         partBase = Binary(state, spv::OpIAdd, u32, Binary(state, spv::OpIAdd, u32, base, samplerSpan), extra);
     }
-    const auto slot = tableMapWord(state, Binary(state, spv::OpIAdd, u32, partBase, element));
-    const auto fallback = part == 0u ? RuntimeAbi::FirstImageBinding
-                        : part == 1u ? RuntimeAbi::FirstStorageImageBinding
-                        : part == 3u ? RuntimeAbi::FirstAtomicImageBinding
-                        : part == 4u ? RuntimeAbi::FirstAtomic64ImageBinding
-                        : part == 5u ? RuntimeAbi::FirstUintStorageImageBinding
-                                     : 0u;
+    const auto slot = LoadTableMap(state, Binary(state, spv::OpIAdd, u32, partBase, element));
+    const auto fallback = RuntimeAbi::HeapPartFirstBinding(part);
     const auto clamped = Select(state, u32, Binary(state, spv::OpULessThan, TypeBool(state), slot, ConstantU32(state, slots)), slot, ConstantU32(state, fallback));
     DecorateTableNonUniform(state, clamped);
     return clamped;
@@ -114,8 +105,8 @@ std::uint32_t tableHeapSlot(SpirvEmitterState& state, std::uint32_t part, std::u
 }
 
 std::uint32_t TableTrailerWord(SpirvEmitterState& state, std::uint32_t field) {
-    const auto base = tableMapWord(state, ConstantU32(state, ImageTableAbi::HeaderElementBase));
-    return tableMapWord(state, Binary(state, spv::OpISub, TypeU32(state), base, ConstantU32(state, ImageTableAbi::TrailerWords - field)));
+    const auto base = LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase));
+    return LoadTableMap(state, Binary(state, spv::OpISub, TypeU32(state), base, ConstantU32(state, ImageTableAbi::TrailerWords - field)));
 }
 
 std::uint32_t TableStorageImagePointer(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, std::uint32_t pointerType) {
@@ -123,8 +114,7 @@ std::uint32_t TableStorageImagePointer(SpirvEmitterState& state, DescriptorBindi
     if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "image storage table array was not emitted for the mode");
     const auto pointer = state.module.AllocateId();
     const auto value = static_cast<std::uint32_t>(kind);
-    const bool uintStorage = value >= RuntimeAbi::FirstUintStorageImageBinding && value < RuntimeAbi::FirstAtomicImageBinding;
-    const auto part = RuntimeAbi::AtomicImageKind(value) ? 3u : RuntimeAbi::Atomic64ImageKind(value) ? 4u : uintStorage ? 5u : 1u;
+    const auto part = RuntimeAbi::StorageHeapPart(value);
     state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.heap ? tableHeapSlot(state, part, state.tableAccess.element, RuntimeAbi::GpuImageHeapSlots) : state.tableAccess.element);
     DecorateTableNonUniform(state, pointer);
     return pointer;
@@ -195,18 +185,23 @@ std::uint32_t ImageViewSizeType(SpirvEmitterState& state, RdnaImageDimension dim
     }
 }
 
+namespace {
+
+void RequireDynamicIndexing(SpirvEmitterState& state, std::uint32_t capability, DescriptorBindingKind kind, std::uint32_t resource, const char* reason) {
+    const auto supported = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), capability) != state.supportedCapabilities.end();
+    if (!supported) ExitDescriptorBindingFailure(state, kind, resource, reason);
+    state.module.EmitCapability(capability);
+}
+
+}
+
 std::uint32_t HeapImageSlot(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource) {
-    const auto supported = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), spv::CapabilitySampledImageArrayDynamicIndexing) != state.supportedCapabilities.end();
-    if (!supported) ExitDescriptorBindingFailure(state, kind, resource, "the image heap needs image array dynamic indexing, which the device lacks");
-    state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
-    const auto dword = state.program.Metadata().bindings.ImageMetadataDword() + resource * static_cast<std::uint32_t>(sizeof(RuntimeAbi::ResourceMetadata) / sizeof(std::uint32_t)) + static_cast<std::uint32_t>(offsetof(RuntimeAbi::ResourceMetadata, firstElement) / sizeof(std::uint32_t));
-    return LoadHeapSlotWord(state, dword);
+    RequireDynamicIndexing(state, spv::CapabilitySampledImageArrayDynamicIndexing, kind, resource, "the image heap needs image array dynamic indexing, which the device lacks");
+    return LoadHeapSlotWord(state, state.program.Metadata().bindings.ImageFirstElementDword(resource));
 }
 
 std::uint32_t HeapImageSlotWord(SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, std::uint32_t arrayIndex) {
-    const auto supported = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), spv::CapabilitySampledImageArrayDynamicIndexing) != state.supportedCapabilities.end();
-    if (!supported) ExitDescriptorBindingFailure(state, kind, resource, "the image heap needs image array dynamic indexing, which the device lacks");
-    state.module.EmitCapability(spv::CapabilitySampledImageArrayDynamicIndexing);
+    RequireDynamicIndexing(state, spv::CapabilitySampledImageArrayDynamicIndexing, kind, resource, "the image heap needs image array dynamic indexing, which the device lacks");
     const auto& layout = state.program.Metadata().bindings;
     auto dword = layout.ImageSlotDword();
     for (const auto& descriptor : layout.descriptors) {
@@ -221,9 +216,7 @@ std::uint32_t HeapImageSlotWord(SpirvEmitterState& state, DescriptorBindingKind 
 std::uint32_t StorageElementPointer(SpirvEmitterState& state, std::uint32_t pointerType, std::uint32_t variable, std::uint32_t arrayIndex, DescriptorBindingKind kind, std::uint32_t resource) {
     if (!state.gpuResolvedImages || !state.program.Metadata().bindings.HeapImageKind(kind)) return DescriptorElementPointer(state, pointerType, variable, arrayIndex, kind, resource, "storage image descriptor array was not emitted");
     if (variable == 0) ExitDescriptorBindingFailure(state, kind, resource, "storage image heap array was not emitted");
-    const auto supported = std::find(state.supportedCapabilities.begin(), state.supportedCapabilities.end(), spv::CapabilityStorageImageArrayDynamicIndexing) != state.supportedCapabilities.end();
-    if (!supported) ExitDescriptorBindingFailure(state, kind, resource, "the storage image heap needs storage image array dynamic indexing, which the device lacks");
-    state.module.EmitCapability(spv::CapabilityStorageImageArrayDynamicIndexing);
+    RequireDynamicIndexing(state, spv::CapabilityStorageImageArrayDynamicIndexing, kind, resource, "the storage image heap needs storage image array dynamic indexing, which the device lacks");
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, variable, state.registrationModules ? HeapImageSlot(state, kind, resource) : HeapImageSlotWord(state, kind, resource, arrayIndex));
     return pointer;
@@ -241,7 +234,7 @@ std::uint32_t LoadSampledImageDescriptor(SpirvEmitterState& state, std::uint32_t
         const auto found = std::find_if(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; });
         if (found == state.tableImageVariables.end() || !state.tableAccess.active) ExitDescriptorBindingFailure(state, kind, resource, "image table array was not emitted for the mode");
         const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.heap ? tableHeapSlot(state, 0u, state.tableAccess.element, RuntimeAbi::GpuImageHeapSlots) : state.tableAccess.element);
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, found->variable, state.tableAccess.heap ? tableHeapSlot(state, RuntimeAbi::HeapPart::Sampled, state.tableAccess.element, RuntimeAbi::GpuImageHeapSlots) : state.tableAccess.element);
         if (!state.tableAccess.uniform) DecorateTableNonUniform(state, pointer);
         const auto image = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, imageType, image, pointer);
@@ -277,7 +270,7 @@ std::uint32_t LoadSamplerDescriptor(SpirvEmitterState& state, std::uint32_t samp
         const auto variant = image != nullptr && image->depthCompare ? 2u : 0u;
         const auto element = Binary(state, spv::OpIAdd, TypeU32(state), state.tableAccess.samplerElement, ConstantU32(state, variant + (point ? 1u : 0u)));
         const auto pointer = state.module.AllocateId();
-        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.tableSamplerVariable, state.tableHeap ? tableHeapSlot(state, 2u, element, RuntimeAbi::GpuSamplerHeapSlots) : element);
+        state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, state.tableSamplerVariable, state.TableHeap() ? tableHeapSlot(state, RuntimeAbi::HeapPart::Sampler, element, RuntimeAbi::GpuSamplerHeapSlots) : element);
         DecorateTableNonUniform(state, pointer);
         const auto loaded = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, samplerType, loaded, pointer);

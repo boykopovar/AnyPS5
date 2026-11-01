@@ -152,59 +152,44 @@ const char* TakenWhat(Mode mode, bool buffer) {
     return "";
 }
 
+std::array<std::uint32_t, 8> ImageDescriptor(const void* memory) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory));
+    return {static_cast<std::uint32_t>(address >> 8u),
+            static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u),
+            3u << 14u,
+            0xfacu | (9u << 28u),
+            0u,
+            0u,
+            0u,
+            0u};
+}
+
+std::array<std::uint32_t, 4> BufferDescriptor(const void* memory, std::size_t bytes) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory));
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(bytes),
+            0xfacu};
+}
+
 std::vector<std::uint32_t> Draw(const std::uint32_t* pixelCode, Mode mode, const std::uint32_t* vertexCode = nullptr) {
     const bool vertexSampling = mode == Mode::Vertex || mode == Mode::VertexTable;
     const auto vertex = reinterpret_cast<std::uintptr_t>(vertexCode != nullptr ? vertexCode : VertexProgram(mode));
     const auto pixel = reinterpret_cast<std::uintptr_t>(pixelCode);
     const auto color = reinterpret_cast<std::uintptr_t>(ColorMemory.data());
-    const auto texture = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(TextureMemory.data()));
-    const auto bufferAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(BufferMemory.data() + 1));
-    const auto storage = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(StorageMemory.data()));
-    const std::array<std::uint32_t, 24> descriptors{static_cast<std::uint32_t>(texture >> 8u),
-                                                    static_cast<std::uint32_t>((texture >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u),
-                                                    3u << 14u,
-                                                    0xfacu | (9u << 28u),
-                                                    0u,
-                                                    0u,
-                                                    0u,
-                                                    0u,
-                                                    0u,
-                                                    0u,
-                                                    0u,
-                                                    0u,
-                                                    static_cast<std::uint32_t>(bufferAddress),
-                                                    static_cast<std::uint32_t>((bufferAddress >> 32u) & 0xffffu),
-                                                    static_cast<std::uint32_t>(sizeof(BufferMemory) - sizeof(float)),
-                                                    0xfacu,
-                                                    static_cast<std::uint32_t>(storage >> 8u),
-                                                    static_cast<std::uint32_t>((storage >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u),
-                                                    3u << 14u,
-                                                    0xfacu | (9u << 28u),
-                                                    0u,
-                                                    0u,
-                                                    0u,
-                                                    0u};
+    std::array<std::uint32_t, 24> descriptors{};
+    const auto textureImage = ImageDescriptor(TextureMemory.data());
+    const auto bufferDescriptor = BufferDescriptor(BufferMemory.data() + 1, sizeof(BufferMemory) - sizeof(float));
+    const auto storageImage = ImageDescriptor(StorageMemory.data());
+    std::copy(textureImage.begin(), textureImage.end(), descriptors.begin());
+    std::copy(bufferDescriptor.begin(), bufferDescriptor.end(), descriptors.begin() + 12);
+    std::copy(storageImage.begin(), storageImage.end(), descriptors.begin() + 16);
     const auto userWords = PixelUserWords(mode, vertexSampling);
-    const auto bufferWords = [](const void* pointer, std::uint32_t bytes) {
-        const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(pointer));
-        return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu),
-                                            bytes, 0xfacu};
-    };
-    const auto other = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(OtherTextureMemory.data()));
-    const std::array<std::uint32_t, 8> otherImage{static_cast<std::uint32_t>(other >> 8u),
-                                                  static_cast<std::uint32_t>((other >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u),
-                                                  3u << 14u,
-                                                  0xfacu | (9u << 28u),
-                                                  0u,
-                                                  0u,
-                                                  0u,
-                                                  0u};
+    const auto otherImage = ImageDescriptor(OtherTextureMemory.data());
     std::copy(otherImage.begin(), otherImage.end(), TableMemory.begin());
     std::copy(descriptors.begin(), descriptors.begin() + 8, TableMemory.begin() + 8);
     MaterialMemory = {1u, 0u, 0u, 0u};
     std::array<std::uint32_t, 12> tableWords{};
-    const auto table = bufferWords(TableMemory.data(), sizeof(TableMemory));
-    const auto material = bufferWords(MaterialMemory.data(), sizeof(MaterialMemory));
+    const auto table = BufferDescriptor(TableMemory.data(), sizeof(TableMemory));
+    const auto material = BufferDescriptor(MaterialMemory.data(), sizeof(MaterialMemory));
     std::copy(table.begin(), table.end(), tableWords.begin());
     std::copy(material.begin(), material.end(), tableWords.begin() + 8);
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
@@ -301,7 +286,7 @@ std::vector<std::uint32_t> Draw(const std::uint32_t* pixelCode, Mode mode, const
         Append(commands, 0x76, {0x00cu + 13u, static_cast<std::uint32_t>(second >> 32u)});
     }
     if (mode == Mode::MovedBuffer) {
-        const auto moved = bufferWords(BufferMemory.data() + 3, static_cast<std::uint32_t>(sizeof(BufferMemory) - 3 * sizeof(float)));
+        const auto moved = BufferDescriptor(BufferMemory.data() + 3, sizeof(BufferMemory) - 3 * sizeof(float));
         for (std::uint32_t index = 0; index < 4u; ++index) Append(commands, 0x76, {0x00cu + 12u + index, moved[index]});
     }
     if (mode == Mode::MovedTexture) {
@@ -386,20 +371,15 @@ void DrawSamplesTheTexture(bool heap, Mode mode) {
                                                                   std::to_string(StorageMemory[channel]) + ", expected the sampled " +
                                                                   std::to_string(Texel[channel]) + (heap ? " through the heap" : ""));
     }
-    if (heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr) return;
-    const bool descriptorMemory = AgcDriver::Graphics::DescriptorHeapEnabled();
-    if (heap && descriptorMemory && (mode == Mode::Vertex || mode == Mode::VertexTable))
+    if (!heap || std::getenv("APS5_HEAP_SLOT_CAP") != nullptr) return;
+    if (mode == Mode::Vertex || mode == Mode::VertexTable)
         Require(AgcDriver::DriverDetail::HeapStagesTaken() > takenBefore,
                 "the heap did not take the sampling vertex stage with descriptor memory");
-    else if (heap && (mode == Mode::Vertex || mode == Mode::VertexTable))
-        Require(AgcDriver::DriverDetail::HeapStagesTaken() == takenBefore,
-                "the heap took a vertex stage whose constants are read on the CPU");
-    else if (heap)
+    else
         Require(AgcDriver::DriverDetail::HeapStagesTaken() > takenBefore,
                 std::string("the heap did not take the fragment stage") + TakenWhat(mode, buffer));
-    if (heap && descriptorMemory)
-        Require(AgcDriver::Graphics::DataAddressPushes() > pushesBefore,
-                "the heap stages did not read their shader data through pushed addresses");
+    Require(AgcDriver::Graphics::DataAddressPushes() > pushesBefore,
+            "the heap stages did not read their shader data through pushed addresses");
 }
 
 void MixedDrawTakesThePerDrawPath() {
@@ -457,45 +437,28 @@ void MixedDrawTakesThePerDrawPath() {
 }
 
 int main() {
-#ifdef _WIN32
-    _putenv_s("APS5_EAGER_WRITEBACK", "1");
-#else
-    setenv("APS5_EAGER_WRITEBACK", "1", 1);
-#endif
+    SetTestEnvironment("APS5_EAGER_WRITEBACK", "1");
     try {
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
         }
         const bool heap = std::getenv("APS5_GPU_HEAP") != nullptr;
-        if (heap && !AgcDriver::Graphics::DescriptorHeapEnabled()) {
-            std::cout
-                << "skipped, the device lacks VK_EXT_descriptor_heap, or the maintenance5, slot room and push data the GPU heap needs with it, so APS5_GPU_HEAP has no heap to draw through\n";
-            return VulkanTestSkipped;
-        }
+        if (heap && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(StorageMemory.data(), StorageMemory.size(), true, true, true);
             mutation.Add(BufferMemory.data(), sizeof(BufferMemory), true, true, true);
         }
-        DrawSamplesTheTexture(heap, Mode::Texture);
-        DrawSamplesTheTexture(heap, Mode::Buffer);
-        DrawSamplesTheTexture(heap, Mode::Storage);
-        DrawSamplesTheTexture(heap, Mode::Gds);
-        DrawSamplesTheTexture(heap, Mode::Vertex);
-        DrawSamplesTheTexture(heap, Mode::Bda);
-        DrawSamplesTheTexture(heap, Mode::Table);
-        DrawSamplesTheTexture(heap, Mode::VertexTable);
-        DrawSamplesTheTexture(heap, Mode::MovedBuffer);
-        DrawSamplesTheTexture(heap, Mode::MovedTexture);
-        DrawSamplesTheTexture(heap, Mode::PixelLds);
-        DrawSamplesTheTexture(heap, Mode::Texture);
-        if (heap && AgcDriver::Graphics::DescriptorHeapEnabled() && std::getenv("APS5_HEAP_SLOT_CAP") == nullptr)
-            MixedDrawTakesThePerDrawPath();
-        if (heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr)
+        for (const auto mode : {Mode::Texture, Mode::Buffer, Mode::Storage, Mode::Gds, Mode::Vertex, Mode::Bda, Mode::Table, Mode::VertexTable,
+                                Mode::MovedBuffer, Mode::MovedTexture, Mode::PixelLds, Mode::Texture})
+            DrawSamplesTheTexture(heap, mode);
+        const bool capped = heap && std::getenv("APS5_HEAP_SLOT_CAP") != nullptr;
+        if (heap && !capped) MixedDrawTakesThePerDrawPath();
+        if (capped)
             Require(AgcDriver::DriverDetail::HeapRefused(), "a draw found the capped heap full and the heap was not refused");
         AgcDriverShutdown_nid_postfix();
-        if (heap && AgcDriver::Graphics::DescriptorHeapEnabled() && std::getenv("APS5_HEAP_SLOT_CAP") == nullptr)
+        if (heap && !capped)
             Require(AgcDriver::Graphics::EmptyResourceSets() != 0, "no heap draw bound without a per-draw resource set");
         std::cout << "A sampled texture reached the drawn pixels" << (heap ? " through the heap" : "") << '\n';
         return 0;

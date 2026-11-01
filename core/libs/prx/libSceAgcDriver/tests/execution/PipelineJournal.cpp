@@ -16,6 +16,7 @@
 #include "../NarrowConstantStoreFixture.hpp"
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "HeapSampleKernel.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -306,43 +307,22 @@ Totals Snapshot() {
     return {AgcDriver::Graphics::PipelineJournalTotals(), AgcDriver::Graphics::PipelineStoreTotals()};
 }
 
-alignas(256) constexpr std::array<std::uint32_t, 8> SampleCode{0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0xe0780000u, 0x80030000u, 0xbf810000u};
-constexpr std::array<std::uint8_t, 4> SampleTexel{0x10u, 0x80u, 0xc0u, 0xffu};
 alignas(256) std::array<std::uint8_t, 1024> SampleTexture{};
 alignas(4096) std::array<float, 1024> SampleOutput{};
 
-ShaderRecompiler::RecompileResult CompileSample(AgcDriver::VulkanDevice& device) {
-    using namespace ShaderRecompiler;
-    const auto image = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(SampleTexture.data()));
-    const auto output = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(SampleOutput.data()));
-    const std::array<std::uint32_t, 16> userData{
-        static_cast<std::uint32_t>(image >> 8u), static_cast<std::uint32_t>((image >> 40u) & 0xffu) | (56u << 20u) | (3u << 30u), 3u << 14u, 0xfacu | (9u << 28u), 0u, 0u, 0u, 0u,
-        0u, 0u, 0u, 0u,
-        static_cast<std::uint32_t>(output), static_cast<std::uint32_t>(output >> 32u) & 0xffffu, static_cast<std::uint32_t>(4u * sizeof(float)), 0x31016facu,
-    };
-    const std::span<const std::uint32_t> code(SampleCode);
-    const std::array<MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const ShaderComputeStageInfo compute{{1u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
-    RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, memory}, device.ComputeTarget(32u), {0u, 0u, 0u, 128u}};
-    return Recompile(request);
-}
-
 void DispatchSample(AgcDriver::VulkanDevice& device, const char* what) {
     SampleOutput.fill(-1.0f);
-    const auto result = CompileSample(device);
+    const auto result = CompileSampleKernel(device, SampleTexture.data(), SampleOutput.data());
     Require(result.gpuResolvedImages, std::string(what) + ": the sampling compute stage is not GPU mode");
     const auto before = AgcDriver::Graphics::HeapComputeStages();
     device.Dispatch(result, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(SampleCode.data()));
     device.WaitIdle();
     Require(AgcDriver::Graphics::HeapComputeStages() > before, std::string(what) + ": the heap did not take the sampling compute stage");
-    for (std::size_t channel = 0; channel < SampleTexel.size(); ++channel) {
-        const float wanted = static_cast<float>(SampleTexel[channel]) / 255.0f;
-        Require(std::fabs(SampleOutput[channel] - wanted) < 1e-6f, std::string(what) + ": channel " + std::to_string(channel) + " is " + std::to_string(SampleOutput[channel]) + ", expected " + std::to_string(wanted));
-    }
+    RequireSampled(SampleOutput.data(), SampleTexel, what);
 }
 
 void HeapJournalTests() {
-    for (std::size_t offset = 0; offset < SampleTexture.size(); offset += SampleTexel.size()) std::memcpy(SampleTexture.data() + offset, SampleTexel.data(), SampleTexel.size());
+    FillTexels(SampleTexture, SampleTexel);
     {
         const auto device = OpenVulkanTestDevice();
         Require(device != nullptr, "the first device is required once the second opened");
@@ -837,10 +817,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         if (argc >= 2 && std::string(argv[1]) == "--gpu-heap") {
-            if (AgcDriver::Graphics::GpuHeapEnabled() && !AgcDriver::Graphics::DescriptorHeapEnabled()) {
-                std::puts("skipped, the device lacks VK_EXT_descriptor_heap, or the maintenance5, slot room and push data the GPU heap needs with it, so no compute stage can run in GPU mode to record");
-                return VulkanTestSkipped;
-            }
+            if (AgcDriver::Graphics::GpuHeapEnabled() && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
             HeapJournalTests();
             std::puts("pipeline journal record and replay of a GPU-mode compute stage passed");
             return 0;

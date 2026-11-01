@@ -1754,8 +1754,10 @@ ScalarBufferDword EmitScalarBufferDword(SpirvEmitterState& state, std::uint32_t 
     return dword;
 }
 
+}
+
 std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
-    if (state.tableMapAddressed) {
+    if (state.TableMapAddressed()) {
         const auto value = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, TypeU32(state), value, EmitStageRingWordPointer(state, RuntimeAbi::RootStageField::TableMap, index), spv::MemoryAccessAlignedMask, 4u);
         return value;
@@ -1766,6 +1768,8 @@ std::uint32_t LoadTableMap(SpirvEmitterState& state, std::uint32_t index) {
     state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
     return value;
 }
+
+namespace {
 
 std::uint32_t TableMapAt(SpirvEmitterState& state, std::uint32_t base, std::uint32_t offset) {
     return LoadTableMap(state, offset == 0u ? base : Binary(state, spv::OpIAdd, TypeU32(state), base, ConstantU32(state, offset)));
@@ -1902,8 +1906,8 @@ TableAccessResult EmitTableAccess(SpirvValueEmitContext& ctx, const IrValue& ins
         result.valid = both(checked, negate(driverRejected));
         result.flags = flags;
         live = selected;
-        state.tableAccess.element = state.tableHeap ? Select(state, u32, checked, element, ConstantU32(state, 0u)) : Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
-        state.tableAccess.heap = state.tableHeap;
+        state.tableAccess.element = state.TableHeap() ? Select(state, u32, checked, element, ConstantU32(state, 0u)) : Binary(state, spv::OpIAdd, u32, LoadTableMap(state, ConstantU32(state, ImageTableAbi::HeaderElementBase)), element);
+        state.tableAccess.heap = state.TableHeap();
         const auto& sources = state.program.Resources().descriptorSources;
         state.tableAccess.uniform = base.source < sources.size() && sources[base.source].tableColumn.has_value() && sources[base.source].tableColumn->selected;
         if (!state.tableAccess.uniform) DecorateTableNonUniform(state, state.tableAccess.element);
@@ -1983,7 +1987,7 @@ std::uint32_t CompositeU32x4(SpirvEmitterState& state, std::uint32_t x, std::uin
 std::uint32_t EmitDeviceTableAccess(SpirvValueEmitContext& ctx, const IrValue& inst, const MemoryInfo& memory, const ImageResource& base, std::span<const ImageResource> modes, bool tableSampler) {
     namespace Abi = DeviceImageTableAbi;
     auto& state = ctx.state;
-    if (!state.tableHeap || !state.tableMapAddressed) ctx.Fail(inst, "reads a device-table image outside a GPU-mode stage that reads its table map by address");
+    if (!state.TableHeap() || !state.TableMapAddressed()) ctx.Fail(inst, "reads a device-table image outside a GPU-mode stage that reads its table map by address");
     if (state.deviceImageLookupFunction == 0u) ctx.Fail(inst, "reads a device-table image without the device image lookup");
     if (tableSampler) ctx.Fail(inst, "samples a device-table image through a sampler table");
     if (base.tableOperation == TableOperation::Unsupported || modes.empty()) ctx.Fail(inst, "reads a device-table image without runtime modes");
@@ -2029,7 +2033,7 @@ std::uint32_t EmitDeviceTableAccess(SpirvValueEmitContext& ctx, const IrValue& i
 void DefineDeviceImageLookup(SpirvEmitterState& state) {
     namespace Abi = DeviceImageTableAbi;
     const auto& images = state.program.Info().images;
-    if (state.deviceImageLookupFunction != 0u || !state.tableMapAddressed || std::none_of(images.begin(), images.end(), [](const ImageResource& image) { return image.deviceTable; })) return;
+    if (state.deviceImageLookupFunction != 0u || !state.TableMapAddressed() || std::none_of(images.begin(), images.end(), [](const ImageResource& image) { return image.deviceTable; })) return;
     const auto u32 = TypeU32(state);
     const auto uvec4 = TypeU32Vector(state, 4u);
     const auto boolean = TypeBool(state);
@@ -2562,8 +2566,7 @@ void EmitImageBvhIntersectRay(SpirvValueEmitContext& ctx, const IrValue& inst) {
                     for (std::uint32_t i = 0; i < 4u; ++i) {
                         const auto pointer = state.module.AllocateId();
                         state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, op(spv::OpIAdd, u64, physical, BdaConstant(state, (first + i) * 4u)));
-                        values[i] = state.module.AllocateId();
-                        state.module.AddFunction(spv::OpLoad, u32, values[i], pointer, spv::MemoryAccessAlignedMask, 4u);
+                        values[i] = EmitAlignedLoadU32(state, pointer);
                     }
                     return compose(values);
                 });

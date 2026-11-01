@@ -6,6 +6,8 @@
 
 namespace AgcDriver::Graphics {
 
+VkDeviceAddress BufferDeviceAddress(const Context& context, VkBuffer buffer);
+
 class Buffer {
 public:
     Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);

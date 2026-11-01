@@ -579,7 +579,7 @@ public:
             resource.format = 60;
             bool refused = false;
             try {
-                MultisampleTargetStorageView(context, resource).view;
+                MultisampleTargetStorageView(context, resource);
             } catch (const std::exception&) {
                 refused = true;
             }

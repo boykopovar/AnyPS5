@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/DescriptorHeapObjects.hpp"
 
+#include <array>
 #include <atomic>
 #include <cstring>
 #include <mutex>
@@ -20,18 +21,18 @@ std::mutex& recordsMutex() {
     return mutex;
 }
 
-std::unordered_map<VkImageView, ImageViewRecord>& views() {
-    static auto& map = *new std::unordered_map<VkImageView, ImageViewRecord>();
-    return map;
-}
-
 struct EncodedImageView {
     std::uint32_t key = 0;
     std::vector<std::byte> bytes;
 };
 
-std::unordered_map<VkImageView, std::vector<EncodedImageView>>& encodedViews() {
-    static auto& map = *new std::unordered_map<VkImageView, std::vector<EncodedImageView>>();
+struct ViewEntry {
+    ImageViewRecord record;
+    std::vector<EncodedImageView> encoded;
+};
+
+std::unordered_map<VkImageView, ViewEntry>& views() {
+    static auto& map = *new std::unordered_map<VkImageView, ViewEntry>();
     return map;
 }
 
@@ -77,8 +78,7 @@ VKAPI_ATTR VkResult VKAPI_CALL createImageView(VkDevice device, const VkImageVie
         static std::atomic<std::uint64_t> generations{0};
         record.generation = generations.fetch_add(1, std::memory_order_relaxed) + 1u;
         std::lock_guard lock(recordsMutex());
-        views()[*view] = std::move(record);
-        encodedViews().erase(*view);
+        views()[*view] = ViewEntry{std::move(record), {}};
     }
     return result;
 }
@@ -87,7 +87,6 @@ VKAPI_ATTR void VKAPI_CALL destroyImageView(VkDevice device, VkImageView view, c
     {
         std::lock_guard lock(recordsMutex());
         views().erase(view);
-        encodedViews().erase(view);
     }
     realDestroyImageView.load(std::memory_order_acquire)(device, view, allocator);
 }
@@ -119,6 +118,24 @@ bool resolve(std::atomic<TFunction>& real, VkDevice device, PFN_vkGetDeviceProcA
     return true;
 }
 
+struct ObjectHook {
+    const char* name;
+    bool (*resolveReal)(VkDevice, PFN_vkGetDeviceProcAddr, const char*);
+    PFN_vkVoidFunction hook;
+};
+
+template <typename TFunction, std::atomic<TFunction>& Real>
+bool resolveRealFunction(VkDevice device, PFN_vkGetDeviceProcAddr deviceProc, const char* name) {
+    return resolve(Real, device, deviceProc, name);
+}
+
+const std::array<ObjectHook, 4> ObjectHooks{{
+    {"vkCreateImageView", &resolveRealFunction<PFN_vkCreateImageView, realCreateImageView>, reinterpret_cast<PFN_vkVoidFunction>(&createImageView)},
+    {"vkDestroyImageView", &resolveRealFunction<PFN_vkDestroyImageView, realDestroyImageView>, reinterpret_cast<PFN_vkVoidFunction>(&destroyImageView)},
+    {"vkCreateSampler", &resolveRealFunction<PFN_vkCreateSampler, realCreateSampler>, reinterpret_cast<PFN_vkVoidFunction>(&createSampler)},
+    {"vkDestroySampler", &resolveRealFunction<PFN_vkDestroySampler, realDestroySampler>, reinterpret_cast<PFN_vkVoidFunction>(&destroySampler)},
+}};
+
 }
 
 const VkImageViewCreateInfo* ImageViewRecord::Chain() {
@@ -145,30 +162,18 @@ const VkSamplerCreateInfo* SamplerRecord::Chain() {
 
 PFN_vkVoidFunction DescriptorHeapObjectFunction(VkDevice device, PFN_vkGetDeviceProcAddr deviceProc, const char* name) {
     if (device == VK_NULL_HANDLE) return nullptr;
-    if (std::strcmp(name, "vkCreateImageView") == 0) {
-        if (!resolve(realCreateImageView, device, deviceProc, name)) return nullptr;
-        return reinterpret_cast<PFN_vkVoidFunction>(&createImageView);
-    }
-    if (std::strcmp(name, "vkDestroyImageView") == 0) {
-        if (!resolve(realDestroyImageView, device, deviceProc, name)) return nullptr;
-        return reinterpret_cast<PFN_vkVoidFunction>(&destroyImageView);
-    }
-    if (std::strcmp(name, "vkCreateSampler") == 0) {
-        if (!resolve(realCreateSampler, device, deviceProc, name)) return nullptr;
-        return reinterpret_cast<PFN_vkVoidFunction>(&createSampler);
-    }
-    if (std::strcmp(name, "vkDestroySampler") == 0) {
-        if (!resolve(realDestroySampler, device, deviceProc, name)) return nullptr;
-        return reinterpret_cast<PFN_vkVoidFunction>(&destroySampler);
+    for (const auto& entry : ObjectHooks) {
+        if (std::strcmp(name, entry.name) != 0) continue;
+        return entry.resolveReal(device, deviceProc, name) ? entry.hook : nullptr;
     }
     return nullptr;
 }
 
 bool CopyEncodedImageView(VkImageView view, std::uint32_t key, std::span<std::byte> target) {
     std::lock_guard lock(recordsMutex());
-    const auto found = encodedViews().find(view);
-    if (found == encodedViews().end()) return false;
-    for (const auto& encoded : found->second) {
+    const auto found = views().find(view);
+    if (found == views().end()) return false;
+    for (const auto& encoded : found->second.encoded) {
         if (encoded.key != key || encoded.bytes.size() != target.size()) continue;
         std::memcpy(target.data(), encoded.bytes.data(), target.size());
         return true;
@@ -179,8 +184,8 @@ bool CopyEncodedImageView(VkImageView view, std::uint32_t key, std::span<std::by
 void KeepEncodedImageView(VkImageView view, std::uint64_t generation, std::uint32_t key, std::span<const std::byte> bytes) {
     std::lock_guard lock(recordsMutex());
     const auto record = views().find(view);
-    if (record == views().end() || record->second.generation != generation) return;
-    auto& entries = encodedViews()[view];
+    if (record == views().end() || record->second.record.generation != generation) return;
+    auto& entries = record->second.encoded;
     for (auto& encoded : entries) {
         if (encoded.key == key) {
             encoded.bytes.assign(bytes.begin(), bytes.end());
@@ -194,7 +199,7 @@ std::optional<ImageViewRecord> FindImageView(VkImageView view) {
     std::lock_guard lock(recordsMutex());
     const auto found = views().find(view);
     if (found == views().end()) return std::nullopt;
-    return found->second;
+    return found->second.record;
 }
 
 std::optional<SamplerRecord> FindSampler(VkSampler sampler) {

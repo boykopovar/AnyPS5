@@ -399,8 +399,7 @@ std::uint64_t HeapWalkMemoBudget() {
 }
 
 void HeapWalkMemo::trim() {
-    for (const auto& [key, ways] : previous) release(ways);
-    previous.clear();
+    retirePrevious();
     if (heldBytes <= budget) return;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> stamps;
     for (const auto& [key, ways] : current) {
@@ -556,11 +555,9 @@ void rememberWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderI
     noteMemoBytes(memo, heldBefore);
 }
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult>
-adoptWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
-          std::uint64_t shaderBase, const Graphics::Recorder::WriteRanges* before, std::uint64_t generation,
-          ShaderRecompiler::HeapStageWords* words, std::shared_ptr<const ShaderRecompiler::HeapStageWords>* sharedWords,
-          HeapStageReads* stageReads, bool& memoKnown) {
+bool adoptWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
+               std::uint64_t shaderBase, const Graphics::Recorder::WriteRanges* before, std::uint64_t generation,
+               HeapStageMaterialized& adopted, bool& memoKnown) {
     auto& memo = heapWalkMemo();
     const auto heldBefore = memo.heldBytes;
     auto* found = memo.find(memoKey);
@@ -572,16 +569,15 @@ adoptWalk(std::uint64_t memoKey, const ShaderRecompiler::PreparedShaderInvocatio
         if (!rangesSettled(entry.ranges, before, generation)) break;
         memo.touch(entry);
         guardRanges(entry.ranges);
-        if (sharedWords != nullptr) *sharedWords = entry.words;
-        else *words = *entry.words;
-        if (stageReads != nullptr) *stageReads = {entry.ranges, entry.values, entry.userDataUse, entry.capture, true};
-        auto result = entry.result;
+        adopted.words = entry.words;
+        adopted.reads = {entry.ranges, entry.values, entry.userDataUse, entry.capture, true};
+        adopted.result = entry.result;
         if (way != 0)
             std::rotate(found->begin(), found->begin() + static_cast<std::ptrdiff_t>(way),
                         found->begin() + static_cast<std::ptrdiff_t>(way) + 1);
-        return result;
+        return true;
     }
-    return nullptr;
+    return false;
 }
 
 std::shared_ptr<const ShaderRecompiler::ResourceCapture>
@@ -598,10 +594,8 @@ captureWalk(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::s
 
 }
 
-std::shared_ptr<const ShaderRecompiler::RecompileResult>
-MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
-                     std::uint64_t shaderBase, ShaderRecompiler::HeapStageWords* words,
-                     std::shared_ptr<const ShaderRecompiler::HeapStageWords>* sharedWords, HeapStageReads* stageReads) {
+HeapStageMaterialized MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocation, std::span<const std::uint32_t> userData,
+                                           std::uint64_t shaderBase) {
     struct ReadsStorage {};
     struct RangesStorage {};
     struct ValuesStorage {};
@@ -612,14 +606,15 @@ MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocatio
     const auto before = Graphics::Recorder::PendingWriteSnapshot();
     snapshotCost.Stop();
     const auto generation = GuestMemory::TrackerGeneration();
-    const bool memoOn = words != nullptr && !invocation.Request().context.vertex.has_value();
+    const bool memoOn = !invocation.Request().context.vertex.has_value();
     std::uint64_t memoKey = 0;
     bool memoKnown = false;
 
     Graphics::HeapCostScope memoCost(Graphics::HeapCost::WalkMemo);
     if (memoOn) {
         memoKey = walkMemoKey(invocation, userData, shaderBase);
-        if (auto adopted = adoptWalk(memoKey, invocation, userData, shaderBase, before.get(), generation, words, sharedWords, stageReads, memoKnown))
+        HeapStageMaterialized adopted;
+        if (adoptWalk(memoKey, invocation, userData, shaderBase, before.get(), generation, adopted, memoKnown))
             return adopted;
     }
     memoCost.Stop();
@@ -628,25 +623,28 @@ MaterializeHeapStage(const ShaderRecompiler::PreparedShaderInvocation& invocatio
     auto capture = captureWalk(invocation, userData, shaderBase, reads);
     coalesceWords(reads.words, ranges);
     auto& values = HostThreadLocal<std::vector<std::uint32_t>, ValuesStorage>();
-    if ((memoOn || stageReads != nullptr) && !reads.failed) copyRangeValues(ranges, values);
+    if (!reads.failed) copyRangeValues(ranges, values);
     const bool settled = rangesSettled(ranges, before.get(), generation);
     walkCost.Stop();
-    if (!settled) return nullptr;
+    if (!settled) return {};
 
     Graphics::HeapCostScope guardCost(Graphics::HeapCost::Guards);
     guardRanges(ranges);
     guardCost.Stop();
     Graphics::HeapCostScope materializeCost(Graphics::HeapCost::Materialize);
-    std::shared_ptr<const ShaderRecompiler::RecompileResult> result;
-    if (words != nullptr) result = invocation.MaterializeHeap(*capture, *words);
+    auto words = std::make_shared<ShaderRecompiler::HeapStageWords>();
+    auto result = invocation.MaterializeHeap(*capture, *words);
     if (result == nullptr) result = invocation.Materialize(*capture);
     materializeCost.Stop();
     const bool complete = !reads.failed && result != nullptr;
-    if (stageReads != nullptr && complete) *stageReads = {ranges, values, capture->userDataUse, capture, true};
+    HeapStageMaterialized materialized;
+    if (complete) materialized.reads = {ranges, values, capture->userDataUse, capture, true};
     Graphics::HeapCostScope insertCost(Graphics::HeapCost::MemoInsert);
     if (memoOn && complete && (memoKnown || heapWalkMemo().admit(memoKey)))
         rememberWalk(memoKey, invocation, userData, shaderBase, ranges, values, reads.accessible, capture, result, *words);
-    return result;
+    materialized.result = std::move(result);
+    materialized.words = std::move(words);
+    return materialized;
 }
 
 namespace {
