@@ -178,6 +178,18 @@ static void CheckSyserrorMap() {
     Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(2), _ZSt13_Syserror_mapi_nid_postfix(2)) == 0, "_Syserror_map(2) matches the unversioned text");
     Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(99999), "unknown error") == 0, "_Syserror_map(unknown)");
     Require(_ZSt13_Syserror_mapi_nid_postfix(99999) == nullptr, "unversioned _Syserror_map(unknown) stays null");
+
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(0), "success") == 0, "_Syserror_map_search(0)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1040), "no message available") == 0, "_Syserror_map_search(1040)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1050), "no stream resources") == 0, "_Syserror_map_search(1050)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1051), "not a stream") == 0, "_Syserror_map_search(1051)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1074), "stream timeout") == 0, "_Syserror_map_search(1074)");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(45), "not supported") == 0, "_Syserror_map_search(45) first match");
+    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(35), "operation would block") == 0, "_Syserror_map_search(35) first match");
+    Require(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(95) == nullptr, "_Syserror_map_search(95) is not in the table");
+    Require(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(99999) == nullptr, "_Syserror_map_search(unknown)");
+    Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(1040), "no message available") == 0, "_Syserror_map(1040)");
+    Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(95), "unknown error") == 0, "_Syserror_map(95) is unknown");
 }
 
 static void CheckLocinfo() {
