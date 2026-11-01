@@ -54,7 +54,10 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     const auto fileOffset = [&](std::uint64_t address, std::uint64_t size) {
         for (const auto& header : headers) {
             if (header.Type != 1 || address < header.MappedAddress || address - header.MappedAddress > header.FileSize || size > header.FileSize - (address - header.MappedAddress)) continue;
-            const auto offset = header.Offset + address - header.MappedAddress;
+            const auto relative = address - header.MappedAddress;
+            if (relative > std::numeric_limits<std::uint64_t>::max() - header.Offset)
+                throw Domain::RelinkerException("Code analysis: file range exceeds image", header.Offset);
+            const auto offset = header.Offset + relative;
             range(offset, size);
             return offset;
         }
@@ -303,6 +306,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     }
     CodePointers pointers;
     std::set<std::uint64_t> importSlots;
+    std::set<std::uint64_t> relativeSlots;
     const auto relocationRange = [&](std::uint64_t addressTag, std::uint64_t sceAddressTag, std::uint64_t sizeTag, std::uint64_t sceSizeTag) -> std::pair<std::uint64_t, std::uint64_t> {
         const auto size = value(sizeTag, sceSizeTag);
         if (!size) return {0, 0};
@@ -331,7 +335,10 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
                     && addend <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())
                     && Io::ReadU64(bytes, symbol + 8) == addend;
                 const auto [recorded, inserted] = pointers.Values.emplace(slot, addend);
-                if ((index != 0 && !zeroSectionSymbol && !matchingDefinedSymbol) || (!inserted && recorded->second != addend)) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
+                const auto replaces = !plt && index == 0 && !inserted && relativeSlots.contains(slot);
+                if ((index != 0 && !zeroSectionSymbol && !matchingDefinedSymbol) || (!inserted && recorded->second != addend && !replaces)) throw Domain::RelinkerException("Code analysis: invalid relative relocation", slot);
+                if (replaces) recorded->second = addend;
+                if (!plt && index == 0) relativeSlots.insert(slot);
                 addPointerRoot(addend);
             } else if (type == 1 || type == 6 || type == 7) {
                 if (index != 0 && index >= symbolCount) throw Domain::RelinkerException("Code analysis: invalid relocation symbol", slot);
@@ -500,7 +507,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     }
     std::size_t previousRoots = 0;
     std::unordered_set<Domain::VirtualAddress> decodedInstructions;
-    std::vector<std::unordered_set<Domain::VirtualAddress>> sectionReachable(codeHeaders.size());
+    std::vector<std::vector<std::uint8_t>> sectionReachable(codeHeaders.size());
     do {
         previousRoots = roots.size();
         for (std::size_t i = 0; i < codeHeaders.size(); ++i) {
@@ -511,8 +518,9 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
             for (const auto root : roots) if (root >= header.MappedAddress && root - header.MappedAddress < header.FileSize) entries.push_back(root);
             if (entries.empty()) continue;
             const std::span<const std::uint8_t> text(bytes.data() + header.Offset, header.FileSize);
-            const auto graph = UnusedNidFilter::BuildControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), sectionReachable[i], [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable);
-            for (const auto address : graph->ReachableVaddrs()) {
+            auto& reached = sectionReachable[i];
+            if (reached.empty()) reached.resize(header.FileSize);
+            for (const auto address : UnusedNidFilter::ExtendControlFlowGraph(text, header.MappedAddress, entries.front(), entries, pointers, sceFunctions.empty(), reached, [&](std::uint64_t count) { report(6000 + 2500 * count / std::max<std::uint64_t>(scanBytes, 1)); }, inTable)) {
                 if (!decodedInstructions.insert(address).second) continue;
                 instructions.insert(address);
                 const auto offset = address - header.MappedAddress;

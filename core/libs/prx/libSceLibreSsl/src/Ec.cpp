@@ -30,6 +30,14 @@ EcGroup::~EcGroup() {
     mbedtls_ecp_group_free(&group);
 }
 
+EcPoint::EcPoint(const NamedCurve& named) : curve(named) {
+    mbedtls_ecp_point_init(&point);
+}
+
+EcPoint::~EcPoint() {
+    mbedtls_ecp_point_free(&point);
+}
+
 struct EcBignum {
     std::uint64_t* d;
     int top;
@@ -41,12 +49,14 @@ struct EcBignum {
 static_assert(sizeof(EcBignum) == 24);
 static_assert(offsetof(EcBignum, top) == 8);
 
-EcPoint::EcPoint(const NamedCurve& named) : curve(named) {
-    mbedtls_ecp_point_init(&point);
-}
+struct EcBignumDeleter {
+    void operator()(EcBignum* number) const;
+};
 
-EcPoint::~EcPoint() {
-    mbedtls_ecp_point_free(&point);
+EcKey::~EcKey() {
+    delete group;
+    delete publicKey;
+    if (privateKey) EcBignumDeleter()(privateKey);
 }
 
 namespace {
@@ -395,17 +405,20 @@ EcKey* APS5_VABI EC_KEY_new_nid_postfix(void) {
 EcKey* APS5_VABI EC_KEY_new_by_curve_name_nid_postfix(int nid) {
     std::unique_ptr<EcGroup> group = NewGroup(nid);
     if (!group) return nullptr;
-    return new EcKey{std::move(group)};
+    EcKey* key = new EcKey;
+    key->group = group.release();
+    return key;
 }
 
 void APS5_VABI EC_KEY_free_nid_postfix(EcKey* key) {
     static_assert(std::atomic_ref<std::int32_t>::required_alignment <= alignof(std::int32_t));
-    if (key && std::atomic_ref<std::int32_t>(key->references).fetch_sub(1) == 1) delete key;
+    if (!key || std::atomic_ref<std::int32_t>(key->references).fetch_sub(1) > 1) return;
+    delete key;
 }
 
 const EcGroup* APS5_VABI EC_KEY_get0_group_nid_postfix(const EcKey* key) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
-    return key->group.get();
+    return key->group;
 }
 
 int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group) {
@@ -413,45 +426,50 @@ int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group) {
     if (group) {
         if (key->publicKey) RequireSameCurve(*group, key->publicKey->curve, "EC_KEY_set_group: a curve other than the one of the key's public key");
     }
-    key->group = group ? std::make_unique<EcGroup>(group->curve) : nullptr;
-    return key->group ? 1 : 0;
+    EcGroup* copy = group ? new EcGroup(group->curve) : nullptr;
+    delete key->group;
+    key->group = copy;
+    return copy ? 1 : 0;
 }
 
 const void* APS5_VABI EC_KEY_get0_private_key_nid_postfix(const EcKey* key) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
-    return key->privateKey.get();
+    return key->privateKey;
 }
 
 int APS5_VABI EC_KEY_set_private_key_nid_postfix(EcKey* key, const void* privateKey) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
     const auto* source = static_cast<const EcBignum*>(privateKey);
-    if (source != nullptr && source == key->privateKey.get()) throw std::invalid_argument("EC_KEY_set_private_key: the key's own private key, which LibreSSL frees before copying");
+    if (source != nullptr && source == key->privateKey) throw std::invalid_argument("EC_KEY_set_private_key: the key's own private key, which LibreSSL frees before copying");
     if (source != nullptr && source->top <= BignumMaxWords) {
         if (source->top < 0) throw std::invalid_argument("EC_KEY_set_private_key: private key word count " + std::to_string(source->top));
         if (source->top > 0 && !source->d) throw std::invalid_argument("EC_KEY_set_private_key: null private key words");
-        if (SharesWords(*source, key->privateKey.get())) throw std::invalid_argument("EC_KEY_set_private_key: the words of the key's own private key, which LibreSSL frees before copying");
+        if (SharesWords(*source, key->privateKey)) throw std::invalid_argument("EC_KEY_set_private_key: the words of the key's own private key, which LibreSSL frees before copying");
     }
-    key->privateKey.reset();
+    if (key->privateKey) EcBignumDeleter()(key->privateKey);
+    key->privateKey = nullptr;
     if (source == nullptr || source->top > BignumMaxWords) return 0;
-    key->privateKey = DuplicateBignum(*source);
+    key->privateKey = DuplicateBignum(*source).release();
     return key->privateKey ? 1 : 0;
 }
 
 const EcPoint* APS5_VABI EC_KEY_get0_public_key_nid_postfix(const EcKey* key) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
-    return key->publicKey.get();
+    return key->publicKey;
 }
 
 int APS5_VABI EC_KEY_set_public_key_nid_postfix(EcKey* key, const EcPoint* point) {
     if (key == nullptr) APS5_INVALID_ARG_EX;
     if (point == nullptr || !key->group) {
-        key->publicKey.reset();
+        delete key->publicKey;
+        key->publicKey = nullptr;
         return 0;
     }
     RequireSameCurve(*key->group, point->curve, "EC_KEY_set_public_key: a point of another curve");
     auto copy = std::make_unique<EcPoint>(point->curve);
     Check(mbedtls_ecp_copy(&copy->point, &point->point), __func__);
-    key->publicKey = std::move(copy);
+    delete key->publicKey;
+    key->publicKey = copy.release();
     return 1;
 }
 
@@ -462,7 +480,7 @@ int APS5_VABI EC_KEY_generate_key_nid_postfix(EcKey* key) {
     Point publicKey;
     Check(mbedtls_ecp_gen_keypair(&group.group, &secret.value, &publicKey.value, HostRandom, nullptr), __func__);
     std::unique_ptr<EcBignum, EcBignumDeleter> created;
-    EcBignum* number = key->privateKey.get();
+    EcBignum* number = key->privateKey;
     if (!number) {
         created = NewBignum();
         if (!created) return 0;
@@ -483,9 +501,9 @@ int APS5_VABI EC_KEY_generate_key_nid_postfix(EcKey* key) {
     Check(mbedtls_mpi_write_binary_le(&secret.value, reinterpret_cast<unsigned char*>(number->d), static_cast<std::size_t>(words) * sizeof(number->d[0])), __func__);
     number->top = static_cast<int>((mbedtls_mpi_bitlen(&secret.value) + 63) / 64);
     number->neg = 0;
-    if (!key->publicKey) key->publicKey = std::make_unique<EcPoint>(group.curve);
+    if (!key->publicKey) key->publicKey = new EcPoint(group.curve);
     Check(mbedtls_ecp_copy(&key->publicKey->point, &publicKey.value), __func__);
-    if (created) key->privateKey = std::move(created);
+    if (created) key->privateKey = created.release();
     return 1;
 }
 

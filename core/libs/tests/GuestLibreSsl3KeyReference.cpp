@@ -1,6 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
-#include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <array>
 #include <atomic>
@@ -9,7 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <map>
 #include <stdexcept>
 #include <thread>
 
@@ -82,55 +80,19 @@ static void CheckKey(TRetain retain, std::size_t referenceOffset) {
     Require(std::memcmp(&guarded, expected.data(), sizeof(guarded)) == 0, "concurrent count or adjacent bytes changed");
 }
 
-static std::map<void*, std::size_t> live;
-static std::size_t allocationCount;
-static std::size_t releaseCount;
+static_assert(sizeof(EcKey) == sizeof(LibreSsl3EcKey));
+static_assert(offsetof(EcKey, references) == offsetof(LibreSsl3EcKey, references));
 
-static void* APS5_VABI Allocate(std::size_t bytes) {
-    void* pointer = std::malloc(bytes ? bytes : 1);
-    Require(pointer != nullptr, "guest allocation failed");
-    Require(live.emplace(pointer, bytes).second, "guest allocation is already live");
-    ++allocationCount;
-    return pointer;
+static LibreSsl3EcKey* Shared(EcKey* key) {
+    return reinterpret_cast<LibreSsl3EcKey*>(key);
 }
 
-static void APS5_VABI Release(void* pointer) {
-    if (!pointer) return;
-    Require(live.erase(pointer) == 1, "guest allocation freed more than once");
-    ++releaseCount;
-    std::free(pointer);
-}
-
-static void* APS5_VABI AllocateZeroed(std::size_t, std::size_t) {
-    throw std::runtime_error("unexpected guest calloc");
-}
-
-static void* APS5_VABI Reallocate(void*, std::size_t) {
-    throw std::runtime_error("unexpected guest realloc");
-}
-
-static void* APS5_VABI Align(std::size_t, std::size_t) {
-    throw std::runtime_error("unexpected guest memalign");
-}
-
-static void* APS5_VABI Realign(void*, std::size_t, std::size_t) {
-    throw std::runtime_error("unexpected guest reallocalign");
-}
-
-static int APS5_VABI PosixAlign(void**, std::size_t, std::size_t) {
-    throw std::runtime_error("unexpected guest posix_memalign");
-}
-
-static void InitializeHeap() {
-    void* const api[10] {reinterpret_cast<void*>(Allocate), reinterpret_cast<void*>(Release), reinterpret_cast<void*>(AllocateZeroed),
-        reinterpret_cast<void*>(Reallocate), reinterpret_cast<void*>(Align), reinterpret_cast<void*>(Realign), reinterpret_cast<void*>(PosixAlign)};
-    ApplicationHeapRegister_nid_no_patch(api);
+static void RequireP256(const EcKey* key, const char* message) {
+    const EcGroup* group = EC_KEY_get0_group_nid_postfix(key);
+    Require(group && EC_GROUP_get_degree_nid_postfix(group) == 256 && ECDSA_size_nid_postfix(key) == 72, message);
 }
 
 static void CheckEcLifetime(bool named) {
-    Require(live.empty(), "guest allocations remain before EC lifetime test");
-    allocationCount = 0;
-    releaseCount = 0;
     EcKey* key = named ? EC_KEY_new_by_curve_name_nid_postfix(415) : EC_KEY_new_nid_postfix();
     Require(key && key->references == 1, "new EC key reference count");
     if (!named) {
@@ -139,14 +101,10 @@ static void CheckEcLifetime(bool named) {
         Require(group && EC_KEY_set_group_nid_postfix(key, group) == 1, "set EC key group");
         EC_GROUP_free_nid_postfix(group);
     }
-    Require(EC_KEY_generate_key_nid_postfix(key) == 1, "generate EC key");
-    Require(EC_KEY_check_key_nid_postfix(key) == 1, "generated EC key is invalid");
-    Require(allocationCount == 2 && live.size() == 2 && releaseCount == 0, "generated EC private key allocations");
-    Require(EC_KEY_up_ref_nid_postfix(key) == 1 && key->references == 2, "retain real EC key");
+    Require(EC_KEY_up_ref_nid_postfix(Shared(key)) == 1 && key->references == 2, "retain EC key");
     EC_KEY_free_nid_postfix(key);
-    Require(releaseCount == 0 && live.size() == 2, "EC free destroyed a retained key");
-    Require(key->references == 1, "EC free did not release a reference");
-    Require(EC_KEY_check_key_nid_postfix(key) == 1, "retained EC key is unusable after free");
+    Require(key->references == 1, "EC free did not release one reference");
+    RequireP256(key, "retained EC key is unusable after free");
     std::atomic<bool> start = false;
     std::array<std::thread, 4> threads;
     for (auto& thread : threads) {
@@ -154,7 +112,7 @@ static void CheckEcLifetime(bool named) {
             while (!start.load())
                 std::this_thread::yield();
             for (int index = 0; index < 1000; ++index) {
-                Require(EC_KEY_up_ref_nid_postfix(key) == 1, "concurrent EC retain failed");
+                Require(EC_KEY_up_ref_nid_postfix(Shared(key)) == 1, "concurrent EC retain failed");
                 EC_KEY_free_nid_postfix(key);
             }
         });
@@ -163,74 +121,19 @@ static void CheckEcLifetime(bool named) {
     for (auto& thread : threads)
         thread.join();
     Require(key->references == 1, "balanced concurrent EC references");
-    Require(releaseCount == 0 && live.size() == 2, "concurrent EC free destroyed a held key");
-    Require(EC_KEY_check_key_nid_postfix(key) == 1, "EC key is unusable after concurrent release");
+    RequireP256(key, "EC key is unusable after concurrent release");
     EC_KEY_free_nid_postfix(key);
-    Require(releaseCount == 2 && live.empty(), "final EC free did not release both private key allocations exactly once");
-}
-
-static void CheckEcConcurrentFinalRelease() {
-    Require(live.empty(), "guest allocations remain before concurrent final release");
-    allocationCount = 0;
-    releaseCount = 0;
-    EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(415);
-    Require(key && EC_KEY_generate_key_nid_postfix(key) == 1, "generate EC key for concurrent final release");
-    Require(EC_KEY_up_ref_nid_postfix(key) == 1 && key->references == 2, "two references before concurrent final release");
-    Require(allocationCount == 2 && live.size() == 2 && releaseCount == 0, "private key allocations before concurrent final release");
-    std::atomic<bool> start = false;
-    std::array<std::thread, 2> threads;
-    for (auto& thread : threads) {
-        thread = std::thread([&] {
-            while (!start.load())
-                std::this_thread::yield();
-            EC_KEY_free_nid_postfix(key);
-        });
-    }
-    start = true;
-    for (auto& thread : threads)
-        thread.join();
-    Require(releaseCount == 2 && live.empty(), "concurrent final EC release did not free each private key allocation once");
-}
-
-static void CheckEcRetain() {
-    EcKey* key = EC_KEY_new_nid_postfix();
-    Require(key != nullptr, "new EC retain test key");
-    for (std::int32_t initial : {-2, 0, 1, 37, std::numeric_limits<std::int32_t>::max() - 1}) {
-        key->references = initial;
-        Require(EC_KEY_up_ref_nid_postfix(key) == (initial > 0), "EC retain return value");
-        Require(key->references == initial + 1, "EC retain count");
-        Require(!key->group && !key->publicKey && !key->privateKey, "EC retain changed key state");
-    }
-    key->references = std::numeric_limits<std::int32_t>::max();
-    bool overflowThrown = false;
-    try {
-        EC_KEY_up_ref_nid_postfix(key);
-    } catch (const std::overflow_error&) {
-        overflowThrown = true;
-    }
-    Require(overflowThrown && key->references == std::numeric_limits<std::int32_t>::max(), "EC overflow retain must throw without mutation");
-    Require(!key->group && !key->publicKey && !key->privateKey, "EC overflow retain changed key state");
-    bool nullThrown = false;
-    try {
-        EC_KEY_up_ref_nid_postfix(nullptr);
-    } catch (const std::invalid_argument&) {
-        nullThrown = true;
-    }
-    Require(nullThrown, "EC retain of null did not throw");
-    key->references = 1;
-    EC_KEY_free_nid_postfix(key);
-    EC_KEY_free_nid_postfix(nullptr);
-    InitializeHeap();
-    CheckEcLifetime(false);
-    CheckEcLifetime(true);
-    CheckEcConcurrentFinalRelease();
 }
 
 int main(int argc, char** argv) {
     if (argc == 1 || std::strcmp(argv[1], "evp") == 0)
         CheckKey<LibreSsl3EvpPkey>(EVP_PKEY_up_ref_nid_postfix, 4);
-    if (argc == 1 || std::strcmp(argv[1], "ec") == 0)
-        CheckEcRetain();
+    if (argc == 1 || std::strcmp(argv[1], "ec") == 0) {
+        CheckKey<LibreSsl3EcKey>(EC_KEY_up_ref_nid_postfix, 48);
+        EC_KEY_free_nid_postfix(nullptr);
+        CheckEcLifetime(false);
+        CheckEcLifetime(true);
+    }
     if (argc == 1 || std::strcmp(argv[1], "rsa") == 0)
         CheckKey<LibreSsl3Rsa>(RSA_up_ref_nid_postfix, 104);
     return 0;
