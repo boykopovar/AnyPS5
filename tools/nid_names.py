@@ -198,7 +198,10 @@ def source_data_definitions(text):
                 scopes.append(statement[1] == '"C"')
             elif statement[:1] == ["namespace"] or statement[:2] == ["inline", "namespace"]:
                 scopes.append(scopes[-1] if statement[-1] != "namespace" else None)
-            elif data_declarations(statement + ["{", "}"], scopes[-1]):
+            elif "=" in statement or (statement and (re.fullmatch(r"[A-Za-z_]\w*", statement[-1]) or statement[-1] == "]") and
+                    statement[-1] not in {"noexcept", "override", "final"} and
+                    statement[0] not in {"struct", "class", "union", "enum"}) or \
+                    data_declarations(statement + ["{", "}"], scopes[-1]):
                 statement.append(token)
                 groups.append("}")
                 continue
