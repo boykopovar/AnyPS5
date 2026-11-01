@@ -150,10 +150,11 @@ static void CheckUnsignedSignFlags() {
 
 static void CheckGroupingFlag() {
     char16_t buffer[48];
-    Require(swprintf_nid_postfix(buffer, 48, u"%'d|%'-6u|%'.2f|%'+05d|%'g", 1234567, 42u, 1234.5, 12, 1e6) == 34 &&
-        buffer == std::u16string(u"1234567|42    |1234.50|+0012|1e+06"), "swprintf ' flag");
-    Require(snwprintf_s_nid_postfix(buffer, 48, u"%'lld %ls", 9876543210ll, u"x") == 12 && buffer == std::u16string(u"9876543210 x"),
-        "snwprintf_s ' flag");
+    Require(swprintf_nid_postfix(buffer, 48, u"%'d|%'-6u|%'.2f|%'+05d|%'g") == 26 &&
+        buffer == std::u16string(u"%'d|%'-6u|%'.2f|%'+05d|%'g"), "swprintf prints ' as an unknown conversion");
+    Require(snwprintf_s_nid_postfix(buffer, 48, u"%'lld %ls", u"x") == 7 && buffer == std::u16string(u"%'lld x"),
+        "snwprintf_s prints ' as an unknown conversion");
+    Require(swprintf_nid_postfix(buffer, 48, u"[%5k][%-4y][%+k]") == 17 && buffer == std::u16string(u"[   %k][%y  ][%k]"), "swprintf pads unknown conversions");
 }
 
 static void CheckSecureWideBoundary() {
@@ -222,7 +223,10 @@ static void CheckSwprintf() {
     char16_t wide[16];
     Require(swprintf_nid_postfix(wide, 16, u"%5ls|%-3c|%lc", u"wide", 'z', 0x20ac) == 11, "swprintf padded length");
     Require(wide == std::u16string(u" wide|z  |€"), "swprintf padded output");
-    Require(swprintf_nid_postfix(wide, 16, u"%q") < 0 && wide[0] == 0, "swprintf invalid conversion");
+    Require(swprintf_nid_postfix(wide, 16, u"[%q][%5q]") == 11 && wide == std::u16string(u"[%q][   %q]"), "swprintf prints an unknown conversion");
+    char16_t letters[32];
+    Require(swprintf_nid_postfix(letters, 32, u"%C|%5C|%hC|%S|%-3S|%lS%d", 7) == 22 && letters == std::u16string(u"%C|   %C|%C|%S|%S |%S7"), "swprintf prints %C and %S as unknown conversions");
+    Require(swprintf_nid_postfix(letters, 32, u"%2$d %S %f", 1, 2, 3.5) == 13 && letters == std::u16string(u"2 %S 3.500000"), "positional %S takes no argument");
     for (const char16_t* format : {u"%99999999999d", u"%.99999999999d", u"%4294967296s", u"%.4294967296s", u"%2147483648ls", u"%.2147483648ls"}) {
         wide[0] = u'x';
         Require(swprintf_nid_postfix(wide, 16, format, 7, u"a") < 0 && wide[0] == 0, "swprintf width or precision beyond int");
