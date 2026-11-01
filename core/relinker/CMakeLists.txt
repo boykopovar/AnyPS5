@@ -757,6 +757,12 @@ if(BUILD_TESTING)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
             add_test(NAME patch_advisor_unit COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/tools/tests/test_suggest_patches.py)
+            add_test(NAME patch_advisor_json_integration
+                COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_advisor_json_integration.py $<TARGET_FILE:relinker>)
+            set_tests_properties(patch_advisor_json_integration PROPERTIES TIMEOUT 20)
+            add_test(NAME patch_advisor_json COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tools/tests/test_patch_advisor_json.py)
+            set_tests_properties(patch_advisor_json PROPERTIES TIMEOUT 20)
             add_test(NAME patch_advisor_integration COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_advisor.py $<TARGET_FILE:relinker>)
             set_tests_properties(patch_advisor_integration PROPERTIES TIMEOUT 40)
