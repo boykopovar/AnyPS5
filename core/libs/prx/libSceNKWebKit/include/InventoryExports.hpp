@@ -1641,7 +1641,6 @@ int APS5_VABI _ZN3WTF11ThreadGroup3addERKNS_14AbstractLockerERNS_6ThreadE();
 int APS5_VABI _ZN3WTF11ThreadGroup3addERNS_6ThreadE();
 int APS5_VABI _ZN3WTF11ThreadGroupD2Ev();
 int APS5_VABI _ZN3WTF11TimingScope11scopeDidEndEv();
-int APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE();
 int APS5_VABI _ZN3WTF11setDataFileEPKc();
 int APS5_VABI _ZN3WTF11setNonBlockEi();
 int APS5_VABI _ZN3WTF12CountingLock10unlockSlowEv();
