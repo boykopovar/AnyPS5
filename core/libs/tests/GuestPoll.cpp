@@ -348,6 +348,39 @@ static void PollsASocketClosedDuringTheWait() {
     }
 }
 
+static void RejectsReadinessAfterSocketClose() {
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        const int receiver = socket_nid_postfix(2, 2, 0);
+        Require(receiver >= 0);
+        std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+        Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+        std::uint32_t size = address.size();
+        Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+        const int alias = dup_nid_postfix(receiver);
+        Require(alias >= 0);
+        const NativeSocket sender = ::socket(AF_INET, SOCK_DGRAM, 0);
+        Require(sender != NativeInvalid);
+        sockaddr_in destination{};
+        destination.sin_family = AF_INET;
+        std::memcpy(&destination.sin_port, address.data() + 2, 2);
+        std::memcpy(&destination.sin_addr, address.data() + 4, 4);
+        GuestPollDescriptor entry{receiver, In, 0};
+        std::atomic<bool> started{false};
+        int result = -1;
+        std::thread waiter([&] {
+            started = true;
+            result = poll_nid_postfix(&entry, 1, 200);
+        });
+        while (!started) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        Require(close_nid_postfix(receiver) == 0);
+        Require(::sendto(sender, "x", 1, 0, reinterpret_cast<const sockaddr*>(&destination), sizeof(destination)) == 1);
+        waiter.join();
+        CloseNative(sender);
+        Require(close_nid_postfix(alias) == 0);
+        Require(result == 1 && entry.revents == Invalid);
+    }
+}
 int main() {
     for (const int descriptor : {0, 1, 2}) StandardDescriptorFile(descriptor);
     PollsUrgentData();
@@ -455,4 +488,5 @@ int main() {
     PollsKqueues(listener);
     Require(close_nid_postfix(listener) == 0);
     PollsASocketClosedDuringTheWait();
+    RejectsReadinessAfterSocketClose();
 }

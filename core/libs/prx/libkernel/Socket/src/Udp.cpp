@@ -1208,9 +1208,12 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
 #else
         result = ::poll(native.data(), static_cast<nfds_t>(native.size()), slice);
 #endif
+        if (result < 0) return -NativeError();
+        for (std::size_t index = 0; index < held.size(); ++index) {
+            if (Find(entries[index].descriptor) != held[index]) return -9;
+        }
         if (result != 0 || (timeoutMilliseconds >= 0 && std::chrono::steady_clock::now() >= deadline)) break;
     }
-    if (result < 0) return -NativeError();
     int ready = 0;
     for (int index = 0; index < count; ++index) {
         const short events = native[static_cast<std::size_t>(index)].revents;
@@ -2364,6 +2367,10 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
     }
     const auto collect = [&](std::size_t i, bool pipe) {
         auto& entry = descriptors[owners[i]];
+        if (entry.revents == GuestPollInvalid) {
+            ++ready;
+            return;
+        }
 #if defined(_WIN32) || defined(__APPLE__)
         if (!pipe) native[i].revents = ClosedStreamEvents(entry.descriptor, native[i].revents, native[i].events);
 #endif
@@ -2455,6 +2462,11 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         } else if (!ready && !checkedReady && !urgent) {
             const auto wake = std::chrono::steady_clock::now() + std::chrono::milliseconds(1);
             PreciseSleepUntil(timeout < 0 ? wake : std::min(deadline, wake));
+        }
+        for (std::size_t i = 0; i < held.size(); ++i) {
+            if (SocketStillHeld(descriptors[owners[i]].descriptor, held[i].get())) continue;
+            descriptors[owners[i]].revents = GuestPollInvalid;
+            closed = true;
         }
         int socketReady = 0;
         for (const auto& request : native)
