@@ -52,7 +52,7 @@ void defaults() {
     const auto args = parse({"input.elf", "output.elf"});
     require(args.inputPath == "input.elf", "input path was not captured");
     require(args.outputPath == "output.elf", "output path was not captured");
-    require(!args.skipSyscallCheck && !args.trapSdkSyscallStubs && !args.skipSceModule && !args.toIntel && !args.writeRegistry &&
+    require(!args.dryRun && !args.skipSyscallCheck && !args.trapSdkSyscallStubs && !args.skipSceModule && !args.toIntel && !args.writeRegistry &&
         !args.toWindows && !args.lazyBinding && !args.autorun && !args.windowsDiagnostics && !args.windowsGui,
         "a flag defaulted to true");
     require(args.unusedFilterLevel == 0u, "unused filter level did not default to 0");
@@ -353,9 +353,24 @@ void verifyMode() {
     expectUsage({"--verify-patches", "p.toml"});
 }
 
+void dryRun() {
+    for (const auto* target : {"--windows", "--macos"}) {
+        const auto args = parse({"input.elf", "--dry-run", target, "--registry", "output"});
+        require(args.dryRun && args.writeRegistry, "dry run must preserve conversion options");
+        require(args.inputPath == "input.elf" && args.outputPath == "output", "dry run consumed a positional path");
+    }
+    require(parse({"--dry-run", "input.elf", "output"}).dryRun, "Linux dry run was ignored");
+    require(parse({"--dry-run", "--dry-run", "input.elf", "output"}).dryRun, "repeated dry run was rejected");
+    expectThrows({"--dry-run", "--autorun", "input.elf", "output"}, "--dry-run conflicts with --autorun");
+    expectThrows({"--autorun", "--dry-run", "input.elf", "output"}, "--dry-run conflicts with --autorun");
+    expectThrows({"--verify-patches", "p.toml", "--dry-run", "input.elf"}, "--dry-run cannot be used with --verify-patches");
+    expectUsage({"--dry-run", "input.elf"});
+}
+
 int main() {
     try {
         defaults();
+        dryRun();
         booleanFlags();
         trapSdkSyscallStubs();
         positionalsInterleaveWithFlags();
