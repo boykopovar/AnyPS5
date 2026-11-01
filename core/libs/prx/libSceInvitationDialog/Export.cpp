@@ -120,11 +120,17 @@ int APS5_VABI sceInvitationDialogGetStatus_nid_postfix(void) {
 }
 
 int APS5_VABI sceInvitationDialogOpenA_nid_postfix(void) {
+    DialogState& dialog = Dialog();
+    std::lock_guard lock(dialog.mutex);
+    if (dialog.status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceInvitationDialogGetResultA_nid_postfix(void) {
+    DialogState& dialog = Dialog();
+    std::lock_guard lock(dialog.mutex);
+    if (dialog.status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
