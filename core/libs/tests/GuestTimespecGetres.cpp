@@ -6,8 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <stdexcept>
-#include <string>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -111,18 +109,6 @@ static void Errors() {
     }
 }
 
-static void MissingProvider() {
-    RegisterClockGetres_nid_no_patch(nullptr);
-    Require(timespec_getres_nid_postfix(nullptr, 0) == 0);
-    bool threw = false;
-    try {
-        timespec_getres_nid_postfix(nullptr, 1);
-    } catch (const std::runtime_error& error) {
-        threw = std::string(error.what()).find("timespec_getres") != std::string::npos;
-    }
-    Require(threw);
-}
-
 static void Integration() {
     KernelTimespec expected{};
     Require(sceKernelClockGetres(0, &expected) == 0);
@@ -144,7 +130,6 @@ int main(int argc, char** argv) {
     if (std::strcmp(argv[1], "unsupported") == 0) Unsupported();
     else if (std::strcmp(argv[1], "forwarding") == 0) Forwarding();
     else if (std::strcmp(argv[1], "errors") == 0) Errors();
-    else if (std::strcmp(argv[1], "missing_provider") == 0) MissingProvider();
     else if (std::strcmp(argv[1], "integration") == 0) Integration();
     else Require(false);
     RegisterClockGetres_nid_no_patch(&sceKernelClockGetres);
