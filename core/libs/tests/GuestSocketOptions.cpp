@@ -290,6 +290,7 @@ bool SetIp(int descriptor, int option, int value) {
 }
 
 void IpLevelFollowsThePs5() {
+    constexpr int IpOptions = 1;
     constexpr int IpTypeOfService = 3;
     constexpr int IpTimeToLive = 4;
     constexpr int IpMulticastTimeToLive = 10;
@@ -316,6 +317,8 @@ void IpLevelFollowsThePs5() {
     Require(SetIp(datagram, IpMulticastLoop, 5) && GetIp(datagram, IpMulticastLoop) == 1, "IP_MULTICAST_LOOP reads back as 1");
     Require(SetIp(datagram, IpMulticastLoop, 0) && GetIp(datagram, IpMulticastLoop) == 0, "IP_MULTICAST_LOOP can be turned off");
     Require(SetIp(datagram, IpMulticastLoop, 1) && SetIp(datagram, IpMulticastLoop, 0x100) && GetIp(datagram, IpMulticastLoop) == 0, "an int IP_MULTICAST_LOOP keeps only its low byte");
+    const std::array<std::uint8_t, 41> invalidOptions{};
+    Require(SetFails(datagram, 0, IpOptions, invalidOptions.data(), invalidOptions.size(), ErrorInvalid), "IP_OPTIONS with length > 40 must fail with EINVAL (22)");
     int value = 0;
     size = sizeof(value);
     Require(getsockopt_nid_postfix(datagram6, 0, IpTimeToLive, &value, &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "IPPROTO_IP on an AF_INET6 socket must fail with EINVAL (22)");
