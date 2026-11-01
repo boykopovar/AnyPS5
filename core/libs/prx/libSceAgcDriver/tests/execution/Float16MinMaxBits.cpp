@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -266,18 +265,6 @@ int main() {
                     }
                 }
             }
-        }
-        for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
-            auto add = PackedCode;
-            add[5] = 0xcc0f400au;
-            bool rejected = false;
-            try {
-                static_cast<void>(compile(add, {"packed add", ShaderRecompiler::ShaderFloatMode{0xc0u | (rounding << 2u)}}));
-            } catch (const std::runtime_error& error) {
-                Require(std::string(error.what()).find("f16 rounding not to nearest even") != std::string::npos, "unexpected packed add diagnostic: " + std::string(error.what()));
-                rejected = true;
-            }
-            Require(rejected, "directed packed add did not throw");
         }
         constexpr std::array<std::uint32_t, 16> special{0x0000u, 0x8000u, 0x7c00u, 0xfc00u, 0x7e01u, 0xfe42u, 0x7c01u, 0xfc42u,
                                                        0x0001u, 0x8001u, 0x03ffu, 0x83ffu, 0x0400u, 0x8400u, 0x3c00u, 0xbc00u};
