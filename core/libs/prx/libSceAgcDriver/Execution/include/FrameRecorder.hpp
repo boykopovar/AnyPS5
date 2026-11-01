@@ -110,7 +110,7 @@ private:
 
     FrameCall make(FrameCallKind kind);
     void record(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders = {}, const std::function<void()>& accept = {});
-    void recordLocked(FrameCall call, bool prologueCall, std::span<const Shader* const> shaders);
+    bool recordLocked(FrameCall& call, bool prologueCall, std::span<const Shader* const> shaders);
     void emitDelta(const StartedProgressSnapshot* decision = nullptr);
     static void collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages);
     void emitShaderDelta(std::span<const Shader* const> shaders, const StartedProgressSnapshot* decision = nullptr);
