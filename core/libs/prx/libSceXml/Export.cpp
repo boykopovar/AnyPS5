@@ -1,11 +1,89 @@
 #include "prx/libSceXml/include/Api.hpp"
+#include "prx/libSceXml/src/DocumentBuilder.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <cstring>
+#include <atomic>
+#include <stdexcept>
 
 namespace {
+
+constexpr int XmlErrorNoMemory = static_cast<int>(0x80850001);
+constexpr int XmlErrorNotInitialized = static_cast<int>(0x80850002);
+constexpr int XmlErrorInvalidParameter = static_cast<int>(0x80850003);
+constexpr int XmlAlreadyInitialized = 0x00850003;
+constexpr int XmlErrorEngineNoMemory = static_cast<int>(0x80851000);
+constexpr std::size_t XmlInitializerImplSize = 0x20;
+constexpr std::size_t XmlAllocatorWrapperSize = 0x10;
+constexpr std::size_t XmlEngineStateSize = 0xc8;
+
+struct XmlAllocatorWrapper {
+    void* reserved;
+    XmlMemAllocator* allocator;
+};
+
+static_assert(sizeof(XmlAllocatorWrapper) == XmlAllocatorWrapperSize);
+
+int g_xmlActiveInitializers = 0;
+XmlAllocatorWrapper* g_xmlAllocatorWrapper = nullptr;
+std::atomic<int> g_xmlEngineUsers = 0;
+void* g_xmlEngineState = nullptr;
+XmlMemAllocator* g_xmlEngineAllocator = nullptr;
+void* g_xmlEngineUserData = nullptr;
+
+void* XmlAllocate(XmlMemAllocator* allocator, std::size_t size, void* userData) {
+    return allocator->vtable->allocate(allocator, size, userData);
+}
+
+void XmlDeallocate(XmlMemAllocator* allocator, void* pointer, void* userData) {
+    allocator->vtable->deallocate(allocator, pointer, userData);
+}
+
+int XmlEngineAcquire() {
+    if (g_xmlEngineUsers.fetch_add(1) != 0) return 0;
+    g_xmlEngineState = XmlAllocate(g_xmlEngineAllocator, XmlEngineStateSize, g_xmlEngineUserData);
+    if (g_xmlEngineState == nullptr) return XmlErrorEngineNoMemory;
+    std::memset(g_xmlEngineState, 0, XmlEngineStateSize);
+    return 0;
+}
+
+void XmlEngineRelease() {
+    if (g_xmlEngineUsers.fetch_sub(1) != 1) return;
+    if (g_xmlEngineState != nullptr) XmlDeallocate(g_xmlEngineAllocator, g_xmlEngineState, g_xmlEngineUserData);
+    g_xmlEngineState = nullptr;
+}
+
+void XmlTerminate(XmlHandle* self) {
+    const auto* impl = static_cast<const XmlInitParameter*>(self->impl);
+    XmlEngineRelease();
+    if (g_xmlActiveInitializers > 0) --g_xmlActiveInitializers;
+    if (g_xmlAllocatorWrapper != nullptr) {
+        XmlDeallocate(impl->allocator, g_xmlAllocatorWrapper, impl->userData);
+        g_xmlAllocatorWrapper = nullptr;
+    }
+    XmlDeallocate(impl->allocator, self->impl, impl->userData);
+    self->impl = nullptr;
+}
+
+void APS5_VABI XmlMemAllocatorDestroy_nid_no_patch(XmlMemAllocator*) {
+}
+
+void APS5_VABI XmlMemAllocatorDelete_nid_no_patch(XmlMemAllocator*) {
+    throw std::logic_error("sce::Xml::MemAllocator: deleting destructor of the abstract base");
+}
+
+void* APS5_VABI XmlMemAllocatorPureAllocate_nid_no_patch(XmlMemAllocator*, std::size_t, void*) {
+    __cxa_pure_virtual_nid_postfix();
+}
+
+void APS5_VABI XmlMemAllocatorPureDeallocate_nid_no_patch(XmlMemAllocator*, void*, void*) {
+    __cxa_pure_virtual_nid_postfix();
+}
+
+const XmlMemAllocatorVtable g_xmlMemAllocatorVtable{XmlMemAllocatorDestroy_nid_no_patch, XmlMemAllocatorDelete_nid_no_patch, XmlMemAllocatorPureAllocate_nid_no_patch, XmlMemAllocatorPureDeallocate_nid_no_patch};
 
 void AssignNodeId(XmlNodeId* self, const XmlNodeId& value) {
     self->first = value.first;
@@ -44,12 +122,36 @@ void APS5_VABI _ZN3sce3Xml10SimpleDataC2Ev(XmlSimpleData* self) {
     self->size = 0;
 }
 
-int APS5_VABI _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(XmlHandle* self, const XmlInitParameter* parameter) {
+    if (self == nullptr) throw std::invalid_argument("sce::Xml::Initializer::initialize: null object");
+    if (self->impl != nullptr) return XmlAlreadyInitialized;
+    if (parameter == nullptr) return XmlErrorInvalidParameter;
+    if (g_xmlActiveInitializers > 0) return XmlAlreadyInitialized;
+    if (parameter->allocator == nullptr) throw std::invalid_argument("sce::Xml::Initializer::initialize: null allocator");
+    void* impl = XmlAllocate(parameter->allocator, XmlInitializerImplSize, parameter->userData);
+    if (impl == nullptr) return XmlErrorNoMemory;
+    std::memcpy(impl, parameter, XmlInitializerImplSize);
+    self->impl = impl;
+    auto* wrapper = static_cast<XmlAllocatorWrapper*>(XmlAllocate(parameter->allocator, XmlAllocatorWrapperSize, parameter->userData));
+    if (wrapper == nullptr) {
+        XmlTerminate(self);
+        return XmlErrorNoMemory;
+    }
+    *wrapper = {nullptr, parameter->allocator};
+    g_xmlAllocatorWrapper = wrapper;
+    g_xmlEngineAllocator = parameter->allocator;
+    g_xmlEngineUserData = parameter->userData;
+    const int result = XmlEngineAcquire();
+    if (result < 0) return result;
+    ++g_xmlActiveInitializers;
+    return result;
 }
 
-int APS5_VABI _ZN3sce3Xml11Initializer9terminateEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml11Initializer9terminateEv(XmlHandle* self) {
+    if (self == nullptr) throw std::invalid_argument("sce::Xml::Initializer::terminate: null object");
+    if (self->impl == nullptr) return XmlErrorNotInitialized;
+    XmlTerminate(self);
+    return 0;
 }
 
 void APS5_VABI _ZN3sce3Xml11InitializerC1Ev(XmlHandle* self) {
@@ -60,20 +162,23 @@ void APS5_VABI _ZN3sce3Xml11InitializerC2Ev(XmlHandle* self) {
     self->impl = nullptr;
 }
 
-int APS5_VABI _ZN3sce3Xml11InitializerD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml11InitializerD1Ev(XmlHandle* self) {
+    if (self == nullptr) throw std::invalid_argument("sce::Xml::Initializer::~Initializer: null object");
+    if (self->impl == nullptr) return;
+    XmlTerminate(self);
 }
 
-int APS5_VABI _ZN3sce3Xml11InitializerD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml11InitializerD2Ev(XmlHandle* self) {
+    _ZN3sce3Xml11InitializerD1Ev(self);
 }
 
-int APS5_VABI _ZN3sce3Xml12MemAllocatorC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml12MemAllocatorC2Ev(XmlMemAllocator* self) {
+    if (self == nullptr) throw std::invalid_argument("sce::Xml::MemAllocator::MemAllocator: null object");
+    self->vtable = &g_xmlMemAllocatorVtable;
 }
 
-int APS5_VABI _ZN3sce3Xml12MemAllocatorD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml12MemAllocatorD0Ev(XmlMemAllocator*) {
+    throw std::logic_error("sce::Xml::MemAllocator: deleting destructor of the abstract base");
 }
 
 void APS5_VABI _ZN3sce3Xml12MemAllocatorD1Ev(void*) {
@@ -134,32 +239,32 @@ void APS5_VABI _ZN3sce3Xml18SerializeParameterC2Ev(XmlSerializeParameter* self) 
     self->third = 0;
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder10initializeEPKNS0_11InitializerE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
+    return XmlDom::BuilderInitialize(self, initializer);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder11getDocumentEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder16setResolveEntityEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder16setResolveEntityEb(XmlHandle* self, bool value) {
+    XmlDom::BuilderSetOption(self, XmlDom::BuilderOption::ResolveEntity, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder20setSkipIgnorableTextEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder20setSkipIgnorableTextEb(XmlHandle* self, bool value) {
+    XmlDom::BuilderSetOption(self, XmlDom::BuilderOption::SkipIgnorableText, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder26setSkipIgnorableWhiteSpaceEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder26setSkipIgnorableWhiteSpaceEb(XmlHandle* self, bool value) {
+    XmlDom::BuilderSetOption(self, XmlDom::BuilderOption::SkipIgnorableWhiteSpace, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder5parseEPKNS0_6StringEb() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder5parseEPKNS0_6StringEb(XmlHandle* self, const XmlString* text, bool last) {
+    return XmlDom::BuilderParse(self, text, last);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder9terminateEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilder9terminateEv(XmlHandle* self) {
+    return XmlDom::BuilderTerminate(self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderC1Ev(XmlHandle* self) {
@@ -170,12 +275,12 @@ void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderC2Ev(XmlHandle* self) {
     self->impl = nullptr;
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD1Ev(XmlHandle* self) {
+    XmlDom::BuilderDestroy(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Dom15DocumentBuilderD2Ev(XmlHandle* self) {
+    XmlDom::BuilderDestroy(self);
 }
 
 int APS5_VABI _ZN3sce3Xml3Dom4Node11appendChildENS1_6NodeIdE() {
