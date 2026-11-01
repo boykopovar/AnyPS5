@@ -83,6 +83,32 @@ class OracleCacheTests(unittest.TestCase):
                 self.assertEqual([file for file in cache.rglob("*") if file.is_file()], [binary])
 
 
+class CacheDirectoryTests(unittest.TestCase):
+    def test_xdg_cache_home_is_used_only_when_absolute(self):
+        home = Path.home() / ".cache" / "anyps5-hw-oracle"
+        absolute = Path(tempfile.gettempdir()).resolve()
+        cases = (
+            ({}, home),
+            ({"XDG_CACHE_HOME": ""}, home),
+            ({"XDG_CACHE_HOME": "relative/cache"}, home),
+            ({"XDG_CACHE_HOME": "."}, home),
+            ({"XDG_CACHE_HOME": str(absolute)}, absolute / "anyps5-hw-oracle"),
+            ({"XDG_CACHE_HOME": "relative/cache", "HW_ORACLE_CACHE": "chosen"}, Path("chosen")),
+            ({"XDG_CACHE_HOME": str(absolute), "HW_ORACLE_CACHE": ""}, absolute / "anyps5-hw-oracle"),
+        )
+        for environment, expected in cases:
+            with self.subTest(environment=environment):
+                self.assertEqual(hw_oracle.cache_directory(environment), expected)
+
+    def test_module_cache_follows_the_environment_at_import(self):
+        environment = {key: value for key, value in os.environ.items() if key not in ("HW_ORACLE_CACHE", "XDG_CACHE_HOME")}
+        environment["XDG_CACHE_HOME"] = "relative/cache"
+        result = subprocess.run([sys.executable, "-c", "import hw_oracle; print(hw_oracle.CACHE)"],
+                                cwd=Path(hw_oracle.__file__).parent, env=environment, check=True,
+                                stdout=subprocess.PIPE, text=True)
+        self.assertEqual(Path(result.stdout.strip()), Path.home() / ".cache" / "anyps5-hw-oracle")
+
+
 class InputRowsTests(unittest.TestCase):
     def test_cli_reports_invalid_input_before_tool_lookup(self):
         with tempfile.TemporaryDirectory() as tmp:
