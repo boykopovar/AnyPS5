@@ -85,6 +85,18 @@ static void OmittedTimeIsFaultAfterClockValidation() {
     Require(rejected);
 }
 
+static void InvalidClockIdFailsGettime() {
+    KernelTimespec time{-1, -1};
+    for (const int clockId : {-1, 999}) {
+        *__error_nid_postfix() = 0;
+        Require(clock_gettime_nid_postfix(clockId, &time) == -1 && *__error_nid_postfix() == 22);
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+        *__error_nid_postfix() = 0;
+        Require(sceKernelClockGettime(clockId, &time) == static_cast<int>(0x80020016u));
+        Require(time.tv_sec == -1 && time.tv_nsec == -1);
+    }
+}
+
 static KernelTimespec Read(int clockId) {
     KernelTimespec time{-1, -1};
     Require(clock_gettime_nid_postfix(clockId, &time) == SCE_OK);
@@ -342,6 +354,7 @@ int main() {
     KernelTimezoneIsUtc();
     UnsupportedResolutionStillThrows();
     OmittedTimeIsFaultAfterClockValidation();
+    InvalidClockIdFailsGettime();
     SettimeValidatesLikeFreebsd();
     CalendarConversionsInitializeTheirState();
     CalendarConversionsFollowTheHostZone();
