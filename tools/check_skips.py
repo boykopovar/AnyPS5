@@ -4,7 +4,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports no|flushes|binds fewer)|no display|no usable Vulkan device|host imports are unavailable)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports no|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space)", re.IGNORECASE)
 
 NO_DISPLAY = re.compile(r"skipped,.*no display", re.IGNORECASE)
 
@@ -32,23 +32,32 @@ def high_refresh_limitation(output):
     return bool(reasons) and all(HIGH_REFRESH_LIMITATION.fullmatch(reason) for reason in reasons)
 
 
-def skips(path):
+def skips(path, require_tests=False):
     root = ET.parse(path).getroot()
     if root.tag not in ("testsuite", "testsuites"):
         raise ValueError(f"{path}: expected a JUnit testsuite or testsuites root, got {root.tag!r}")
+    found = False
+    seen = set()
     for case in root.iter("testcase"):
-        if case.get("status") == "disabled":
-            raise ValueError(f"{path}: testcase {case.get('name')!r} is disabled and was not run")
-        skipped = case.find("skipped")
-        if skipped is None:
-            continue
+        found = True
         name = case.get("name")
         if not name:
             raise ValueError(f"{path}: skipped testcase has no name")
+        if name in seen:
+            raise ValueError(f"{path}: testcase {name!r} is listed more than once")
+        seen.add(name)
+        skipped = case.find("skipped")
+        ctest_skip = skipped is not None and CTEST_SKIP_STATUS.fullmatch(skipped.get("message", "").strip())
+        if case.get("status") == "disabled" or (case.get("status") == "notrun" and not ctest_skip):
+            raise ValueError(f"{path}: testcase {name!r} is {case.get('status')} and was not run")
+        if skipped is None:
+            continue
         output = ["skipped, " + reason.strip() for reason in (skipped.get("message", ""), skipped.text or "")
                   if reason.strip() and not CTEST_SKIP_STATUS.fullmatch(reason.strip())]
         output += [case.findtext(channel) or "" for channel in ("system-out", "system-err")]
         yield name, "\n".join(output)
+    if require_tests and not found:
+        raise ValueError(f"{path}: report contains no testcases")
 
 
 def main(argv=None):
@@ -59,9 +68,10 @@ def main(argv=None):
     parser.add_argument("junit", type=Path, help="the file written by ctest --output-junit")
     parser.add_argument("--job", choices=("linux", "windows"), default="linux")
     parser.add_argument("--list", action="store_true", help="print the skipped tests and why the file says they skipped")
+    parser.add_argument("--require-tests", action="store_true", help="fail if the report contains no testcases")
     args = parser.parse_args(argv)
     try:
-        found = sorted(skips(args.junit))
+        found = sorted(skips(args.junit, require_tests=args.require_tests))
     except (OSError, ET.ParseError, ValueError) as error:
         parser.error(str(error))
     if args.list:

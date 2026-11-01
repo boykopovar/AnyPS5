@@ -46,6 +46,10 @@ int main() {
     Require(Throws([] { sceAudioOutSysConfigureOutput(1, 0, 4, 1, 0); }), "another mode throws");
     Require(Throws([] { sceAudioOutSysConfigureOutput(1, 0, 5, 2, 0); }), "another target throws");
 
+    int mainOutput = -1;
+    Require(!Throws([&mainOutput] { mainOutput = sceAudioOutSetMainOutput(); }), "sceAudioOutSetMainOutput does not throw");
+    Require(mainOutput == 0, "sceAudioOutSetMainOutput returns 0");
+
     Require(sceAudioOutSysClose(truehd) == 0, "close the first Sys port");
     Require(Throws([truehd] { sceAudioOutSysClose(truehd); }), "a closed Sys port throws");
     const int ex = sceAudioOutExOpen(SYSTEM_USER, 0);

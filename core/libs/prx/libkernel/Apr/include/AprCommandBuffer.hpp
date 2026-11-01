@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 // Shared between libSceAmpr (which records commands) and libkernel (which executes them).
 // The object layout is guest ABI; command records use the shared host encoding.
@@ -86,6 +87,22 @@ struct CompactReadFileGatherCommand {
     std::uint32_t offsetLow;
 };
 static_assert(sizeof(CompactReadFileGatherCommand) == 12);
+
+inline constexpr std::uint32_t NopHeaderBytes = 4;
+inline constexpr std::uint32_t NopHeaderMask = 0xffff00ffu;
+inline constexpr std::uint32_t NopHeaderTag = 0x5452000fu;
+
+constexpr std::uint32_t NopHeader(std::uint32_t payloadDwords, std::uint32_t type = 0) {
+    return NopHeaderTag | (payloadDwords & 0xfu) << 8u | (type & 0xfu) << 12u;
+}
+
+constexpr bool IsNopHeader(std::uint32_t header) {
+    return (header & NopHeaderMask) == NopHeaderTag;
+}
+
+constexpr std::uint32_t NopDwords(std::uint32_t header) {
+    return (header >> 8u & 0xfu) + 1u;
+}
 
 struct ResetGatherScatterStateCommand {
     CommandHeader header;
@@ -194,6 +211,47 @@ struct WriteAddressFromCounterCommand {
 struct MarkerCommand {
     CommandHeader header;
 };
+
+inline bool ValidMapRange(std::uint64_t address, std::uint64_t size) {
+    constexpr std::uint64_t pageMask = 0x3FFFu;
+    return address != 0u && size != 0u && ((address | size) & pageMask) == 0u && address + size > address;
+}
+
+inline bool ValidAmmProtection(std::int32_t protection) {
+    return (static_cast<std::uint32_t>(protection) & 0xFFFFFC0Cu) == 0u;
+}
+
+inline bool ValidMap(std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::int32_t protection) {
+    return ValidMapRange(address, size) && (directOffset & 0x3FFFu) == 0u && ValidAmmProtection(protection);
+}
+
+inline bool ValidRemap(std::uint64_t address, std::uint64_t source, std::uint64_t size, std::int32_t protection) {
+    return ValidMapRange(address, size) && ValidMapRange(source, size) && ValidAmmProtection(protection);
+}
+
+inline bool ValidProtect(std::uint64_t address, std::uint64_t size, std::int32_t protection, std::int32_t mask) {
+    return ValidMapRange(address, size) && ValidAmmProtection(protection) && ValidAmmProtection(mask);
+}
+
+inline std::optional<AmmMapCommand> EncodeAmmMap(Opcode opcode, std::uint64_t address, std::uint64_t directOffset, std::uint64_t size, std::int32_t type, std::int32_t protection) {
+    if (!ValidMap(address, directOffset, size, protection)) return std::nullopt;
+    return AmmMapCommand{{opcode, sizeof(AmmMapCommand)}, address, directOffset, size, type, protection};
+}
+
+inline std::optional<AmmUnmapCommand> EncodeAmmUnmap(std::uint64_t address, std::uint64_t size) {
+    if (!ValidMapRange(address, size)) return std::nullopt;
+    return AmmUnmapCommand{{Opcode::AmmUnmap, sizeof(AmmUnmapCommand)}, address, size};
+}
+
+inline std::optional<AmmRemapCommand> EncodeAmmRemap(Opcode opcode, std::uint64_t address, std::uint64_t source, std::uint64_t size, std::int32_t protection) {
+    if (!ValidRemap(address, source, size, protection)) return std::nullopt;
+    return AmmRemapCommand{{opcode, sizeof(AmmRemapCommand)}, address, source, size, protection, 0};
+}
+
+inline std::optional<AmmProtectCommand> EncodeAmmProtect(Opcode opcode, std::uint64_t address, std::uint64_t size, std::int32_t type, std::int32_t protection, std::int32_t mask) {
+    if (!ValidProtect(address, size, protection, mask)) return std::nullopt;
+    return AmmProtectCommand{{opcode, sizeof(AmmProtectCommand)}, address, size, type, protection, mask, 0};
+}
 
 }
 
