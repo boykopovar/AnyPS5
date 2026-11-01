@@ -14,6 +14,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Acb.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -502,6 +503,39 @@ void PendingRegistrationPreparation(AgcDriver::VulkanDevice& device) {
     ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::InvocationFor(snapshot, 0, request)); }, "injected registration preparation failure");
 }
 
+void PendingPreparationOutsideTransactionLock() {
+    alignas(256) static const std::array<std::uint32_t, 1> code{0xbf810000u};
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    AgcDriver::DriverDetail::ShaderSnapshot pending{address, 0, 0, {code.begin(), code.end()}, {}};
+    pending.header.resize(sizeof(Shader));
+    AgcDriver::DriverDetail::ShaderSnapshot ready{address, 0, 0, {code.begin(), code.end()}, {}};
+    ready.header.resize(sizeof(Shader));
+    pending.prepared->pending = true;
+    std::atomic<bool> reading{false};
+    auto waiter = std::async(std::launch::async, [&] {
+        AgcDriver::DriverDetail::ShaderPreparationTransaction transaction;
+        reading.store(true, std::memory_order_release);
+        static_cast<void>(transaction.Read(pending));
+        transaction.Commit();
+    });
+    while (!reading.load(std::memory_order_acquire)) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    auto other = std::async(std::launch::async, [&] {
+        AgcDriver::DriverDetail::ShaderPreparationTransaction transaction;
+        static_cast<void>(transaction.Read(ready));
+        transaction.Commit();
+    });
+    const bool independent = other.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    {
+        std::lock_guard lock(pending.prepared->mutex);
+        pending.prepared->pending = false;
+    }
+    pending.prepared->settled.notify_all();
+    waiter.get();
+    other.get();
+    Require(independent, "a transaction on a prepared shader waited for another transaction's pending registration preparation");
+}
+
 void UnsupportedTypeRegistration() {
     alignas(256) static const std::array<std::uint32_t, 1> code{0xbf810000u};
     struct Header {
@@ -931,7 +965,7 @@ public:
     StderrCapture() {
         AgcDriver::FlushAsyncLog_nid_no_patch();
         std::fflush(stderr);
-        file = std::tmpfile();
+        file = TemporaryFile::Open();
         Require(file != nullptr, "cannot open a temporary file for stderr");
 #ifdef _WIN32
         saved = _dup(_fileno(stderr));
@@ -1665,6 +1699,7 @@ int main(int argc, char** argv) {
         FailureCapture(*device);
         DumpSelection(*device);
         PendingRegistrationPreparation(*device);
+        PendingPreparationOutsideTransactionLock();
         AwaitedRegistrationPreparation();
         Require(argc != 2 || std::string_view(argv[1]) != "--fail-before-registration", "injected failure before registration");
         PrepareMultisampledStorage(*device);

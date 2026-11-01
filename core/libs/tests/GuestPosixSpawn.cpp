@@ -203,6 +203,10 @@ static void CheckSpawn() {
     Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(&processId, "missing.elf", nullptr, &uninitializedAttributes, arguments, nullptr); }));
     Check(ThrowsInvalidArgument([&] { posix_spawn_nid_postfix(&processId, nullptr, nullptr, nullptr, arguments, nullptr); }));
     Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(&processId, nullptr, nullptr, nullptr, arguments, nullptr); }));
+    Check(posix_spawn_nid_postfix(nullptr, missing.c_str(), &actions, &attributes, arguments, environment) == NoSuchFile);
+    Check(posix_spawnp_nid_postfix(nullptr, "missing.elf", &actions, &attributes, arguments, nullptr) == NoSuchFile);
+    Check(ThrowsInvalidArgument([&] { posix_spawn_nid_postfix(nullptr, nullptr, nullptr, nullptr, arguments, nullptr); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnp_nid_postfix(nullptr, nullptr, nullptr, nullptr, arguments, nullptr); }));
 
     Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0 && posix_spawnattr_destroy_nid_postfix(&attributes) == 0);
     std::filesystem::remove_all(directory);
@@ -227,7 +231,7 @@ static std::filesystem::path OwnExecutablePath() {
 #endif
 }
 
-static std::int32_t SpawnChild(const char* role) {
+static std::int32_t SpawnChildExplicit(const char* role, std::int32_t* processId, bool usePath = false) {
     const auto own = OwnExecutablePath();
     const auto target = own.parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + own.extension().string()).c_str()));
     std::error_code error;
@@ -261,9 +265,17 @@ static std::int32_t SpawnChild(const char* role) {
     for (auto& entry : entries)
         environment.push_back(entry.data());
     environment.push_back(nullptr);
+    if (usePath) {
+        Check(posix_spawnp_nid_postfix(processId, program, nullptr, nullptr, arguments, environment.data()) == 0);
+    } else {
+        Check(posix_spawn_nid_postfix(processId, program, nullptr, nullptr, arguments, environment.data()) == 0);
+    }
+    return processId != nullptr ? *processId : 0;
+}
+
+static std::int32_t SpawnChild(const char* role) {
     std::int32_t processId = 0;
-    Check(posix_spawn_nid_postfix(&processId, program, nullptr, nullptr, arguments, environment.data()) == 0);
-    Check(processId > 0);
+    Check(SpawnChildExplicit(role, &processId) > 0);
     return processId;
 }
 
@@ -271,6 +283,15 @@ static void CleanupChild() {
     std::error_code error;
     std::filesystem::remove(OwnExecutablePath().parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + OwnExecutablePath().extension().string()).c_str())), error);
     std::filesystem::remove_all(std::filesystem::current_path() / "app0", error);
+}
+
+static void CheckSpawnNullProcessId(bool usePath) {
+    Check(SpawnChildExplicit("child-exit-42", nullptr, usePath) == 0);
+    int status = -1;
+    const int reaped = waitpid_nid_postfix(-1, &status, 0);
+    Check(reaped > 0);
+    Check((status & 0x7f) == 0 && ((status >> 8) & 0xff) == 42);
+    CleanupChild();
 }
 
 static void CheckSpawnedChild(const char* role, int expectedCode) {
@@ -376,6 +397,8 @@ int main() {
     CheckAttributes();
     CheckFileActions();
     CheckSpawn();
+    CheckSpawnNullProcessId(false);
+    CheckSpawnNullProcessId(true);
     CheckSpawnedChild("child-exit-42", 42);
     CheckSpawnedChild("child-sleep", 43);
     CheckSpawnedChild("child-exit-neg", 255);
