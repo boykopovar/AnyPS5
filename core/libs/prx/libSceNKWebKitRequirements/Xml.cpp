@@ -10,6 +10,7 @@
 #include <libxml/xmlIO.h>
 #include <libxml/SAX2.h>
 
+#include <array>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace {
 
@@ -40,15 +42,28 @@ static std::mutex g_xmlMutex;
 static std::unordered_map<NKWebKit::GuestParserCtxt*, std::unique_ptr<XmlBinding>> g_xmlBindings;
 static std::unordered_map<const NKWebKit::GuestDoc*, xmlDocPtr> g_docMap;
 
-static NKWebKit::GuestInputMatchCallback s_guestInputMatch = nullptr;
-static NKWebKit::GuestInputOpenCallback s_guestInputOpen = nullptr;
-static NKWebKit::GuestInputReadCallback s_guestInputRead = nullptr;
-static NKWebKit::GuestInputCloseCallback s_guestInputClose = nullptr;
+constexpr std::size_t XmlInputSlotCount = 15;
+constexpr std::size_t XmlOutputSlotCount = 15;
 
-static NKWebKit::GuestOutputMatchCallback s_guestOutputMatch = nullptr;
-static NKWebKit::GuestOutputOpenCallback s_guestOutputOpen = nullptr;
-static NKWebKit::GuestOutputWriteCallback s_guestOutputWrite = nullptr;
-static NKWebKit::GuestOutputCloseCallback s_guestOutputClose = nullptr;
+struct GuestInputSlot {
+    NKWebKit::GuestInputMatchCallback match = nullptr;
+    NKWebKit::GuestInputOpenCallback open = nullptr;
+    NKWebKit::GuestInputReadCallback read = nullptr;
+    NKWebKit::GuestInputCloseCallback close = nullptr;
+};
+
+struct GuestOutputSlot {
+    NKWebKit::GuestOutputMatchCallback match = nullptr;
+    NKWebKit::GuestOutputOpenCallback open = nullptr;
+    NKWebKit::GuestOutputWriteCallback write = nullptr;
+    NKWebKit::GuestOutputCloseCallback close = nullptr;
+};
+
+static std::mutex g_ioMutex;
+static std::array<GuestInputSlot, XmlInputSlotCount> g_inputSlots{};
+static std::array<GuestOutputSlot, XmlOutputSlotCount> g_outputSlots{};
+static std::size_t g_inputSlotsUsed = 0;
+static std::size_t g_outputSlotsUsed = 0;
 
 static XmlBinding* FindBinding(NKWebKit::GuestParserCtxt* ctxt) {
     if (!ctxt) return nullptr;
@@ -513,37 +528,72 @@ static void InitHostSax(NKWebKit::GuestSAXHandler* guest_sax, xmlSAXHandler* hos
     if (guest_sax->fatalError) host_sax->fatalError = HostFatalError;
 }
 
-static int HostInputMatch(const char* filename) {
-    return s_guestInputMatch ? s_guestInputMatch(filename) : 0;
+template <std::size_t Slot>
+int HostInputMatch(const char* filename) {
+    return g_inputSlots[Slot].match(filename);
 }
 
-static void* HostInputOpen(const char* filename) {
-    return s_guestInputOpen ? s_guestInputOpen(filename) : nullptr;
+template <std::size_t Slot>
+void* HostInputOpen(const char* filename) {
+    return g_inputSlots[Slot].open(filename);
 }
 
-static int HostInputRead(void* context, char* buffer, int len) {
-    return s_guestInputRead ? s_guestInputRead(context, buffer, len) : -1;
+template <std::size_t Slot>
+int HostInputRead(void* context, char* buffer, int len) {
+    return g_inputSlots[Slot].read(context, buffer, len);
 }
 
-static int HostInputClose(void* context) {
-    return s_guestInputClose ? s_guestInputClose(context) : -1;
+template <std::size_t Slot>
+int HostInputClose(void* context) {
+    return g_inputSlots[Slot].close(context);
 }
 
-static int HostOutputMatch(const char* filename) {
-    return s_guestOutputMatch ? s_guestOutputMatch(filename) : 0;
+template <std::size_t Slot>
+int HostOutputMatch(const char* filename) {
+    return g_outputSlots[Slot].match(filename);
 }
 
-static void* HostOutputOpen(const char* filename) {
-    return s_guestOutputOpen ? s_guestOutputOpen(filename) : nullptr;
+template <std::size_t Slot>
+void* HostOutputOpen(const char* filename) {
+    return g_outputSlots[Slot].open(filename);
 }
 
-static int HostOutputWrite(void* context, const char* buffer, int len) {
-    return s_guestOutputWrite ? s_guestOutputWrite(context, buffer, len) : -1;
+template <std::size_t Slot>
+int HostOutputWrite(void* context, const char* buffer, int len) {
+    return g_outputSlots[Slot].write(context, buffer, len);
 }
 
-static int HostOutputClose(void* context) {
-    return s_guestOutputClose ? s_guestOutputClose(context) : -1;
+template <std::size_t Slot>
+int HostOutputClose(void* context) {
+    return g_outputSlots[Slot].close(context);
 }
+
+struct HostInputTrampolines {
+    xmlInputMatchCallback match;
+    xmlInputOpenCallback open;
+    xmlInputReadCallback read;
+    xmlInputCloseCallback close;
+};
+
+struct HostOutputTrampolines {
+    xmlOutputMatchCallback match;
+    xmlOutputOpenCallback open;
+    xmlOutputWriteCallback write;
+    xmlOutputCloseCallback close;
+};
+
+template <std::size_t... Slots>
+constexpr std::array<HostInputTrampolines, sizeof...(Slots)> MakeInputTrampolines(std::index_sequence<Slots...>) {
+    return {{{HostInputMatch<Slots>, HostInputOpen<Slots>, HostInputRead<Slots>, HostInputClose<Slots>}...}};
+}
+
+template <std::size_t... Slots>
+constexpr std::array<HostOutputTrampolines, sizeof...(Slots)> MakeOutputTrampolines(std::index_sequence<Slots...>) {
+    return {{{HostOutputMatch<Slots>, HostOutputOpen<Slots>, HostOutputWrite<Slots>, HostOutputClose<Slots>}...}};
+}
+
+constexpr auto InputTrampolines = MakeInputTrampolines(std::make_index_sequence<XmlInputSlotCount>{});
+constexpr auto OutputTrampolines = MakeOutputTrampolines(std::make_index_sequence<XmlOutputSlotCount>{});
 
 } // namespace
 
@@ -579,7 +629,7 @@ NKWebKit::GuestParserCtxt* APS5_VABI xmlCreatePushParserCtxt_nid_postfix(NKWebKi
         InitHostSax(sax, &b->host_sax);
         b->host_ctxt = xmlCreatePushParserCtxt(&b->host_sax, b.get(), chunk, size, filename);
     } else {
-        b->host_ctxt = xmlCreatePushParserCtxt(nullptr, b.get(), chunk, size, filename);
+        b->host_ctxt = xmlCreatePushParserCtxt(nullptr, user_data, chunk, size, filename);
     }
 
     if (!b->host_ctxt) {
@@ -693,19 +743,39 @@ int APS5_VABI xmlParseContent_nid_postfix(NKWebKit::GuestParserCtxt* ctxt) {
 }
 
 int APS5_VABI xmlRegisterInputCallbacks_nid_postfix(NKWebKit::GuestInputMatchCallback matchFunc, NKWebKit::GuestInputOpenCallback openFunc, NKWebKit::GuestInputReadCallback readFunc, NKWebKit::GuestInputCloseCallback closeFunc) {
-    s_guestInputMatch = matchFunc;
-    s_guestInputOpen = openFunc;
-    s_guestInputRead = readFunc;
-    s_guestInputClose = closeFunc;
-    return xmlRegisterInputCallbacks(HostInputMatch, HostInputOpen, HostInputRead, HostInputClose);
+    std::lock_guard<std::mutex> lock(g_ioMutex);
+    if (g_inputSlotsUsed == XmlInputSlotCount) {
+        return -1;
+    }
+    const std::size_t slot = g_inputSlotsUsed;
+    g_inputSlots[slot] = {matchFunc, openFunc, readFunc, closeFunc};
+    const auto& host = InputTrampolines[slot];
+    const int result = xmlRegisterInputCallbacks(matchFunc ? host.match : nullptr, openFunc ? host.open : nullptr,
+                                                 readFunc ? host.read : nullptr, closeFunc ? host.close : nullptr);
+    if (result < 0) {
+        g_inputSlots[slot] = {};
+        return result;
+    }
+    ++g_inputSlotsUsed;
+    return result;
 }
 
 int APS5_VABI xmlRegisterOutputCallbacks_nid_postfix(NKWebKit::GuestOutputMatchCallback matchFunc, NKWebKit::GuestOutputOpenCallback openFunc, NKWebKit::GuestOutputWriteCallback writeFunc, NKWebKit::GuestOutputCloseCallback closeFunc) {
-    s_guestOutputMatch = matchFunc;
-    s_guestOutputOpen = openFunc;
-    s_guestOutputWrite = writeFunc;
-    s_guestOutputClose = closeFunc;
-    return xmlRegisterOutputCallbacks(HostOutputMatch, HostOutputOpen, HostOutputWrite, HostOutputClose);
+    std::lock_guard<std::mutex> lock(g_ioMutex);
+    if (g_outputSlotsUsed == XmlOutputSlotCount) {
+        return -1;
+    }
+    const std::size_t slot = g_outputSlotsUsed;
+    g_outputSlots[slot] = {matchFunc, openFunc, writeFunc, closeFunc};
+    const auto& host = OutputTrampolines[slot];
+    const int result = xmlRegisterOutputCallbacks(matchFunc ? host.match : nullptr, openFunc ? host.open : nullptr,
+                                                  writeFunc ? host.write : nullptr, closeFunc ? host.close : nullptr);
+    if (result < 0) {
+        g_outputSlots[slot] = {};
+        return result;
+    }
+    ++g_outputSlotsUsed;
+    return result;
 }
 
 void APS5_VABI xmlSAX2EndDocument_nid_postfix(void* ctx) {

@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -219,50 +220,198 @@ void TestMemoryParserAndEntities() {
     xmlFreeParserCtxt_nid_postfix(ctxt);
 }
 
-static int32_t APS5_VABI DummyInputMatch(const char* filename) {
-    (void)filename;
+struct IoHandler {
+    const char* scheme = "";
+    const char* payload = "";
+    int matches = 0;
+    int opens = 0;
+    int reads = 0;
+    int closes = 0;
+    int foreign = 0;
+    void (*onFirstRead)() = nullptr;
+};
+
+struct IoStream {
+    int handler = -1;
+    std::size_t offset = 0;
+};
+
+IoHandler g_io[6];
+IoStream g_streams[32];
+int g_streamCount = 0;
+int g_lateRegistration = -2;
+
+template <int H>
+int32_t APS5_VABI IoMatch(const char* name) {
+    ++g_io[H].matches;
+    const std::size_t length = std::strlen(g_io[H].scheme);
+    return length != 0 && std::strncmp(name, g_io[H].scheme, length) == 0 ? 1 : 0;
+}
+
+template <int H>
+void* APS5_VABI IoOpen(const char* name) {
+    (void)name;
+    ++g_io[H].opens;
+    AssertTrue(g_streamCount < 32, "too many I/O streams");
+    IoStream* stream = &g_streams[g_streamCount++];
+    stream->handler = H;
+    stream->offset = 0;
+    return stream;
+}
+
+template <int H>
+int32_t APS5_VABI IoRead(void* context, char* buffer, int32_t len) {
+    auto* stream = static_cast<IoStream*>(context);
+    ++g_io[H].reads;
+    if (stream->handler != H) {
+        ++g_io[H].foreign;
+        return -1;
+    }
+    if (g_io[H].reads == 1 && g_io[H].onFirstRead) {
+        g_io[H].onFirstRead();
+    }
+    const std::size_t length = std::strlen(g_io[H].payload);
+    if (stream->offset >= length || len <= 0) {
+        return 0;
+    }
+    buffer[0] = g_io[H].payload[stream->offset++];
+    return 1;
+}
+
+template <int H>
+int32_t APS5_VABI IoClose(void* context) {
+    ++g_io[H].closes;
+    if (static_cast<IoStream*>(context)->handler != H) {
+        ++g_io[H].foreign;
+    }
     return 0;
 }
-static void* APS5_VABI DummyInputOpen(const char* filename) {
-    (void)filename;
+
+template <int H>
+int RegisterInput() {
+    return xmlRegisterInputCallbacks_nid_postfix(IoMatch<H>, IoOpen<H>, IoRead<H>, IoClose<H>);
+}
+
+template <int H>
+int32_t APS5_VABI OutMatch(const char* name) {
+    (void)name;
+    ++g_io[H].matches;
+    return 0;
+}
+
+template <int H>
+void* APS5_VABI OutOpen(const char* name) {
+    (void)name;
+    ++g_io[H].opens;
     return nullptr;
 }
-static int32_t APS5_VABI DummyInputRead(void* context, char* buffer, int32_t len) {
+
+template <int H>
+int32_t APS5_VABI OutWrite(void* context, const char* buffer, int32_t len) {
     (void)context;
     (void)buffer;
-    (void)len;
-    return -1;
+    ++g_io[H].reads;
+    return len;
 }
-static int32_t APS5_VABI DummyInputClose(void* context) {
+
+template <int H>
+int32_t APS5_VABI OutClose(void* context) {
     (void)context;
+    ++g_io[H].closes;
     return 0;
 }
 
-static int32_t APS5_VABI DummyOutputMatch(const char* filename) {
-    (void)filename;
-    return 0;
-}
-static void* APS5_VABI DummyOutputOpen(const char* filename) {
-    (void)filename;
-    return nullptr;
-}
-static int32_t APS5_VABI DummyOutputWrite(void* context, const char* buffer, int32_t len) {
-    (void)context;
-    (void)buffer;
-    (void)len;
-    return -1;
-}
-static int32_t APS5_VABI DummyOutputClose(void* context) {
-    (void)context;
-    return 0;
+template <int H>
+int RegisterOutput() {
+    return xmlRegisterOutputCallbacks_nid_postfix(OutMatch<H>, OutOpen<H>, OutWrite<H>, OutClose<H>);
 }
 
-void TestIoCallbacks() {
-    int inRet = xmlRegisterInputCallbacks_nid_postfix(DummyInputMatch, DummyInputOpen, DummyInputRead, DummyInputClose);
-    AssertTrue(inRet >= 0, "xmlRegisterInputCallbacks failed");
+void RegisterLateHandler() {
+    g_lateRegistration = RegisterInput<2>();
+}
 
-    int outRet = xmlRegisterOutputCallbacks_nid_postfix(DummyOutputMatch, DummyOutputOpen, DummyOutputWrite, DummyOutputClose);
-    AssertTrue(outRet >= 0, "xmlRegisterOutputCallbacks failed");
+void ResetIoCounters() {
+    for (IoHandler& handler : g_io) {
+        handler.matches = 0;
+        handler.opens = 0;
+        handler.reads = 0;
+        handler.closes = 0;
+        handler.foreign = 0;
+        handler.onFirstRead = nullptr;
+    }
+}
+
+int ParseWithExternalEntities() {
+    const char doc[] =
+        "<!DOCTYPE r [<!ENTITY a SYSTEM \"alpha:one\"><!ENTITY b SYSTEM \"beta:two\">]>"
+        "<r>&a;|&b;</r>";
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "io.xml");
+    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    AssertTrue(xmlCtxtUseOptions_nid_postfix(ctxt, 2) == 0, "xmlCtxtUseOptions(XML_PARSE_NOENT) failed");
+    const int result = xmlParseChunk_nid_postfix(ctxt, doc, static_cast<int>(std::strlen(doc)), 1);
+    if (ctxt->myDoc) {
+        xmlFreeDoc_nid_postfix(ctxt->myDoc);
+        ctxt->myDoc = nullptr;
+    }
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+    return result;
+}
+
+void ExpectServed(int handler, const char* message) {
+    AssertTrue(g_io[handler].opens == 1, message);
+    AssertTrue(g_io[handler].reads > static_cast<int>(std::strlen(g_io[handler].payload)), message);
+    AssertTrue(g_io[handler].closes == 1, message);
+    AssertTrue(g_io[handler].foreign == 0, message);
+}
+
+void ExpectUntouched(int handler, const char* message) {
+    AssertTrue(g_io[handler].opens == 0 && g_io[handler].reads == 0 && g_io[handler].closes == 0, message);
+}
+
+void TestInputHandlersAndOpenContexts() {
+    g_io[0].scheme = "alpha:";
+    g_io[0].payload = "alpha-payload";
+    g_io[1].scheme = "beta:";
+    g_io[1].payload = "beta-payload";
+    const int first = RegisterInput<0>();
+    const int second = RegisterInput<1>();
+    AssertTrue(first >= 0 && second == first + 1, "input registrations should take consecutive entries");
+
+    ResetIoCounters();
+    g_io[0].onFirstRead = RegisterLateHandler;
+    AssertTrue(ParseWithExternalEntities() == 0, "parse through two guest input handlers failed");
+    AssertTrue(g_lateRegistration == second + 1, "registration made while alpha was open should succeed");
+    ExpectServed(0, "alpha entity should be read and closed through alpha's callbacks after a later registration");
+    ExpectServed(1, "beta entity should be read and closed through beta's callbacks");
+    ExpectUntouched(2, "the late handler matches nothing and must not receive alpha's or beta's stream");
+    AssertTrue(g_io[2].matches >= 1, "the late handler should be consulted for beta");
+}
+
+void TestFailedRegistrations() {
+    int inputResult = 0;
+    for (int i = 0; i < 20 && inputResult >= 0; ++i) {
+        inputResult = RegisterInput<3>();
+    }
+    AssertTrue(inputResult == -1, "input registrations should fail once libxml2's table is full");
+    AssertTrue(RegisterInput<4>() == -1, "a registration into a full table should fail");
+
+    ResetIoCounters();
+    AssertTrue(ParseWithExternalEntities() == 0, "parse after failed registrations failed");
+    ExpectServed(0, "alpha should still be served after failed registrations");
+    ExpectServed(1, "beta should still be served after failed registrations");
+    ExpectUntouched(3, "filler handlers match nothing");
+    AssertTrue(g_io[4].matches == 0, "a rejected handler must never be called");
+    ExpectUntouched(4, "a rejected handler must never be called");
+
+    const int firstOutput = RegisterOutput<0>();
+    const int secondOutput = RegisterOutput<1>();
+    AssertTrue(firstOutput >= 0 && secondOutput == firstOutput + 1, "output registrations should take consecutive entries");
+    int outputResult = 0;
+    for (int i = 0; i < 20 && outputResult >= 0; ++i) {
+        outputResult = RegisterOutput<3>();
+    }
+    AssertTrue(outputResult == -1, "output registrations should fail once libxml2's table is full");
+    AssertTrue(RegisterOutput<5>() == -1, "an output registration into a full table should fail");
 }
 
 } // namespace
@@ -272,7 +421,8 @@ int main() {
     TestPushParserChunks();
     TestErrorHandling();
     TestMemoryParserAndEntities();
-    TestIoCallbacks();
+    TestInputHandlersAndOpenContexts();
+    TestFailedRegistrations();
     std::printf("Xml tests passed.\n");
     return 0;
 }
