@@ -271,7 +271,21 @@ static void VerifyReportedEventsMoveBehindWaitingOnes() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyWaitNullAndInvalidMaxEvents() {
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "wait_bounds") == SCE_OK);
+    KernelEvent event{};
+    int count = -1;
+    const KernelUseconds timeout = 0;
+    Require(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelWaitEqueue(eq, &event, -1, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, 1, nullptr, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+}
+
 int main() {
+    VerifyWaitNullAndInvalidMaxEvents();
     VerifyPeriodicTimer();
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
