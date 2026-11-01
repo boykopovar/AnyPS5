@@ -38,7 +38,6 @@ constexpr int PAD_ERROR_UNKNOWN_USER = static_cast<int>(0x809b0081);
 constexpr int PAD_ERROR_INVALID_USER_ID = static_cast<int>(0x809b0001);
 constexpr int PAD_ERROR_INVALID_PORT_INDEX = static_cast<int>(0x809b0003);
 constexpr int PAD_ERROR_NOT_PERMITTED = static_cast<int>(0x80920101);
-constexpr int PAD_USER_ID_INVALID = -1;
 
 std::array<bool, PAD_MAX_CONTROLLERS> g_opened{false};
 std::array<bool, PAD_MAX_CONTROLLERS> g_everOpened{false};
@@ -52,6 +51,7 @@ bool SpecialHandle(int handle) {
 }
 
 int SpecialHandleOf(int userId) {
+    if (userId <= 0) return PAD_ERROR_DEVICE_NO_HANDLE;
     for (int slot = 0; slot < PAD_SPECIAL_HANDLE_COUNT; ++slot) {
         if (g_specialUsers[slot] == userId) return PAD_SPECIAL_HANDLE + slot;
     }
@@ -193,6 +193,7 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
 }
 
 int APS5_VABI scePadGetHandle(int user_id, int type, int index) {
+ if (user_id < 0) return PAD_ERROR_INVALID_USER_ID;
  if (!ValidPort(user_id, type, index)) return PAD_ERROR_DEVICE_NO_HANDLE;
  if (type == PAD_PORT_TYPE_SPECIAL) return SpecialHandleOf(user_id);
  if (SystemRemote(user_id, type)) return g_remoteOpened ? PAD_REMOTE_HANDLE : PAD_ERROR_DEVICE_NO_HANDLE;
@@ -261,10 +262,11 @@ int APS5_VABI scePadOpen_nid_postfix(int userId, int type, int index, const void
  const bool unknownType = type == 3 || type == 4;
  const bool knownType = type == PAD_PORT_TYPE_STANDARD || type == PAD_PORT_TYPE_SPECIAL || SystemRemote(userId, type);
  if (!unknownType && !knownType) return PAD_ERROR_INVALID_ARG;
- if (userId == PAD_USER_ID_INVALID) return PAD_ERROR_INVALID_USER_ID;
+ if (userId < 0) return PAD_ERROR_INVALID_USER_ID;
  if (unknownType) NotImplemented_nid_no_patch(__func__);
  if (index != 0) return PAD_ERROR_INVALID_PORT_INDEX;
  if (type == PAD_PORT_TYPE_SPECIAL) {
+  if (userId <= 0) return PAD_ERROR_DEVICE_NO_HANDLE;
   if (SpecialHandleOf(userId) != PAD_ERROR_DEVICE_NO_HANDLE) return PAD_ERROR_ALREADY_OPENED;
   for (int slot = 0; slot < PAD_SPECIAL_HANDLE_COUNT; ++slot) {
    if (g_specialUsers[slot] == 0) {
