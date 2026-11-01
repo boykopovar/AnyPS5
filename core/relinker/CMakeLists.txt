@@ -95,6 +95,11 @@ if(WIN32)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(guest_load_ranges_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestLoadRangesTests.cpp)
+    target_link_libraries(guest_load_ranges_tests PRIVATE relinker_core)
+    add_test(NAME guest_load_ranges COMMAND guest_load_ranges_tests)
+    set_tests_properties(guest_load_ranges PROPERTIES TIMEOUT 20)
+
     add_test_executable(andn_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/AndnLoweringTests.cpp)
     target_link_libraries(andn_lowering_tests PRIVATE relinker_core)
     add_test(NAME andn_lowering COMMAND andn_lowering_tests)
@@ -950,6 +955,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_gnu_hash COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_gnu_hash.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_gnu_hash PROPERTIES TIMEOUT 20)
+        add_test(NAME guest_empty_loads COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_empty_loads.py $<TARGET_FILE:relinker>)
+        set_tests_properties(guest_empty_loads PROPERTIES TIMEOUT 30)
         add_test(NAME mulx_conversion COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_mulx_conversion.py $<TARGET_FILE:relinker>)
         set_tests_properties(mulx_conversion PROPERTIES TIMEOUT 20)

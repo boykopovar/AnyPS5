@@ -47,6 +47,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (header.Type == 1) {
             if (header.FileSize > header.MemorySize || header.MemorySize > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress || (header.Flags & ~7u) != 0) fail("Invalid load segment");
             if (header.Alignment > 1 && (!std::has_single_bit(header.Alignment) || header.Offset % header.Alignment != header.MappedAddress % header.Alignment)) fail("Invalid load segment alignment");
+            if (header.MemorySize == 0) continue;
             const auto next = loads.lower_bound(header.MappedAddress);
             if ((next != loads.end() && next->first < header.MappedAddress + header.MemorySize) || (next != loads.begin() && std::prev(next)->second > header.MappedAddress)) fail("Overlapping load segments");
             loads.emplace(header.MappedAddress, header.MappedAddress + header.MemorySize);
@@ -260,6 +261,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         Io::AppendU64(image.Dynamic.RelaData, 8);
         Io::AppendU64(image.Dynamic.RelaData, addend);
     }
+    std::map<std::uint64_t, std::size_t> relativeEntries;
     const auto copyRelocations = [&](std::uint64_t offset, std::uint64_t size, std::vector<std::uint8_t>& output, bool plt) {
         output.reserve(size);
         for (std::uint64_t index = 0; index < size; index += 24) {
@@ -274,6 +276,12 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             const auto target = Io::ReadU64(bytes, offset + index);
             const auto addend = Io::ReadU64(bytes, offset + index + 16);
             mapped(target, 8, 2);
+            const bool relative = !plt && relocation == 8 && (info >> 32) == 0;
+            if (const auto earlier = relativeEntries.find(target); relative && earlier != relativeEntries.end()) {
+                mapped(addend, 0, 0);
+                Io::WriteU64(output, earlier->second + 16, addend);
+                continue;
+            }
             const auto next = relocationTargets.lower_bound(target);
             if ((next != relocationTargets.end() && next->first < target + 8) || (next != relocationTargets.begin() && std::prev(next)->second > target)) fail("Overlapping guest relocations");
             relocationTargets.emplace(target, target + 8);
@@ -303,6 +311,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
             const auto position = output.size();
             output.insert(output.end(), bytes.begin() + offset + index, bytes.begin() + offset + index + 24);
             if (ownTlsBlock) Io::WriteU64(output, position + 8, relocation);
+            if (relative) relativeEntries.emplace(target, position);
         }
     };
     copyRelocations(relaOffset, relaSize, image.Dynamic.RelaData, false);

@@ -112,9 +112,9 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
 
 int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* priority) {
     constexpr int Lookup = 0, Set = 1;
-    constexpr int GuestEsrch = 3, GuestEfault = 14;
+    constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEfault = 14;
     constexpr int GuestSchedFifo = 1, GuestSchedRr = 3;
-    constexpr std::uint16_t Realtime = 2, Normal = 3, Fifo = 10;
+    constexpr std::uint16_t Realtime = 2, Normal = 3, Idle = 4, Fifo = 10, FifoBit = 8;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
         return -1;
@@ -136,6 +136,8 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
         if (!GuestCopyOut_nid_no_patch(priority, &current, sizeof(current))) return fail(GuestEfault);
         return 0;
     }
+    const auto requestedClass = static_cast<std::uint16_t>(requested.type & ~FifoBit);
+    if (requestedClass == Realtime || requestedClass == Idle) return fail(GuestEperm);
     if (other) NotImplemented_nid_no_patch("rtprio_thread: a thread other than the calling one");
     if (realTime) NotImplemented_nid_no_patch("rtprio_thread: a guest thread's real-time class");
     if (requested.type == Normal && requested.prio == 0) return 0;

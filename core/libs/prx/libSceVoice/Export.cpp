@@ -24,9 +24,11 @@ constexpr std::int32_t PortOutDevice = 5;
 constexpr std::int32_t PortStateReady = 1;
 constexpr int VoiceErrorNotInitialized = static_cast<int>(0x804E0801u);
 constexpr auto NotInitialized = static_cast<std::int32_t>(0x804e0801u);
+constexpr auto PortWithoutDevice = static_cast<std::int32_t>(0x804e0803u);
 constexpr auto InvalidPort = static_cast<std::int32_t>(0x804e0804u);
 constexpr auto InvalidArgument = static_cast<std::int32_t>(0x804e0805u);
 constexpr auto PortNotFound = static_cast<std::int32_t>(0x804e0807u);
+constexpr auto MemorySizeVersion = static_cast<std::int32_t>(0x804e080fu);
 constexpr std::int32_t ThreadPriorityHighest = 256;
 constexpr std::int32_t ThreadPriorityLowest = 767;
 constexpr std::uint64_t ThreadAffinityAll = 0x1fff;
@@ -50,6 +52,9 @@ struct Voice {
     std::deque<std::uint32_t> freePorts;
     std::map<std::uint32_t, Port> ports;
     std::set<std::pair<std::uint32_t, std::uint32_t>> connections;
+    float vadAdjustment[2] = {};
+    float vadPvtAdjustment[4] = {};
+    bool qaRecording = false;
 };
 
 Voice& State() {
@@ -432,29 +437,48 @@ int APS5_VABI sceVoiceInitHQ(const VoiceInitParam* param, std::int32_t version) 
     return sceVoiceInit(param, version);
 }
 
-int APS5_VABI sceVoiceGetMemorySize(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceVoiceGetMemorySize(std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t* size) {
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    if (!voice.initialized) return NotInitialized;
+    if (!size) return InvalidArgument;
+    *size = 0;
+    return MemorySizeVersion;
 }
 
-int APS5_VABI sceVoiceDeviceInCustomerData(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceVoiceDeviceInCustomerData(std::uint32_t portId, const void* data, std::uint32_t, float* gain) {
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    if (!voice.initialized) return NotInitialized;
+    if (!data || !gain || !std::isfinite(*gain) || *gain < 0.0f) return InvalidArgument;
+    const auto port = voice.ports.find(portId);
+    if (port == voice.ports.end()) return InvalidPort;
+    if (port->second.type != PortInDevice) Fail(__func__, "a port that is not an input device port");
+    return PortWithoutDevice;
 }
 
 int APS5_VABI sceVoiceQAEnableRecording(void) {
-    NotImplemented_nid_no_patch(__func__);
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    if (!voice.initialized) return NotInitialized;
+    voice.qaRecording = true;
     return 0;
 }
 
-int APS5_VABI sceVoiceVADAdjustment(float, float) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceVoiceVADAdjustment(float param1, float param2) {
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    voice.vadAdjustment[0] = param1;
+    voice.vadAdjustment[1] = param2;
 }
 
-int APS5_VABI sceVoiceVADPVTAdjustment(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceVoiceVADPVTAdjustment(float param1, float param2, float param3, float param4) {
+    auto& voice = State();
+    std::lock_guard lock(voice.mutex);
+    voice.vadPvtAdjustment[0] = param1;
+    voice.vadPvtAdjustment[1] = param2;
+    voice.vadPvtAdjustment[2] = param3;
+    voice.vadPvtAdjustment[3] = param4;
 }
 
 int APS5_VABI sceVoiceVADSetVersion(std::int32_t version) {

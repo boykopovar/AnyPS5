@@ -971,14 +971,14 @@ int runLargeFileWrite() {
     } cleanup{directory};
     const auto space = std::filesystem::space(directory, error);
     if (error || space.available < size + (std::uintmax_t{1} << 30u)) {
-        std::cout << "skipping: not enough free disk space for a file of more than 2 GiB\n";
+        std::cout << "skipped, the host has not enough free disk space for a file of more than 2 GiB\n";
         return 77;
     }
     std::vector<std::byte> bytes;
     try {
         bytes.resize(size);
     } catch (const std::bad_alloc&) {
-        std::cout << "skipping: cannot allocate a buffer of more than 2 GiB\n";
+        std::cout << "skipped, the host cannot allocate a buffer of more than 2 GiB\n";
         return 77;
     }
     const std::array<std::size_t, 6> samples{0u, (std::size_t{1} << 30u) - 1u, std::size_t{1} << 30u, (std::size_t{2} << 30u) - 1u, std::size_t{2} << 30u, size - 1u};
@@ -1400,6 +1400,10 @@ void verifyInvocationIsolation() {
         require(changed.cacheHit && first.variantId == changed.variantId, "buffer metadata changed the compiled variant");
         if ((descriptor[0] & 3u) == (original[0] & 3u) && (descriptor[1] & 0xffff0000u) == (original[1] & 0xffff0000u) && descriptor[3] == original[3] && (descriptor[0] != 0u || (descriptor[1] & 0xffffu) != 0u)) {
             require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "buffer address or size rebuilt the specialized module");
+        }
+        if (descriptor[2] == 0u) {
+            require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "a null V# did not specialize with the bound slot's substitute");
+            continue;
         }
         ComputeRequest fresh(false);
         fresh.userData = descriptor;
