@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <random>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #ifdef _WIN32
@@ -33,6 +34,15 @@ void Check(bool condition, const std::string& what) {
     if (condition) return;
     std::fprintf(stderr, "savedata mount status check failed: %s\n", what.c_str());
     ++failures;
+}
+
+bool MountedCountThrows(std::int32_t reserved, std::uint32_t* count) {
+    try {
+        static_cast<void>(sceSaveDataGetMountedSaveDataCount(reserved, count));
+    } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
 }
 
 void CheckUnmountedCalls() {
@@ -131,6 +141,8 @@ void CheckMountInfoAndParam(const SaveDataMountPoint* point) {
     Check(sceSaveDataSetParam(point, 1, newTitle, sizeof(newTitle)) == 0, "setParam on mounted save succeeds");
     Check(sceSaveDataGetParam(point, 1, readTitle, sizeof(readTitle), &gotSize) == 0, "getParam reads back set title");
     Check(std::strcmp(readTitle, newTitle) == 0, "readTitle matches newTitle");
+    std::uint32_t mounted = 0;
+    Check(MountedCountThrows(0, &mounted), "mounted count throws on an open save");
 }
 
 void MountAndCheck(const char* name, std::uint32_t mode, std::uint32_t expectedStatus, const std::string& what) {
@@ -384,9 +396,15 @@ int main() {
     std::filesystem::current_path(root);
     Check(sceSaveDataAbort() == SaveDataErrorNotInitialized, "abort pre-init is NOT_INITIALIZED");
     Check(sceSaveDataClearProgress() == SaveDataErrorNotInitialized, "clearProgress pre-init is NOT_INITIALIZED");
+    Check(MountedCountThrows(0, nullptr), "mounted count throws before initialization");
     CheckUnmountedCalls();
     Check(sceSaveDataSyncSaveDataMemory(nullptr) == static_cast<int>(0x809F0000), "null param rejected in memory sync");
     Check(sceSaveDataInitialize3(nullptr) == 0, "SaveData initializes");
+    std::uint32_t mounted = 0;
+    Check(MountedCountThrows(0, nullptr), "mounted count throws for a null count");
+    Check(MountedCountThrows(0, &mounted), "mounted count throws after initialization");
+    Check(MountedCountThrows(0x7fffffff, &mounted), "mounted count throws for a nonzero first argument");
+    Check(mounted == 0u, "mounted count writes nothing before throwing");
     CheckHostMountFailures();
     CheckMountCapacityAndLifecycle();
     MountAndCheck("fresh", MountReadWrite | MountCreate2, 1u, "CREATE2 of a missing save");

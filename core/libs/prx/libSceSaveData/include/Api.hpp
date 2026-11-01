@@ -46,7 +46,7 @@ int APS5_VABI sceSaveDataGetBoundPsnAccountCount(void);
 int APS5_VABI sceSaveDataGetClientThreadPriority(void);
 int APS5_VABI sceSaveDataGetCloudQuotaInfo(void);
 int APS5_VABI sceSaveDataGetEventInfo();
-int APS5_VABI sceSaveDataGetMountedSaveDataCount();
+int APS5_VABI sceSaveDataGetMountedSaveDataCount(std::int32_t reserved, std::uint32_t* count);
 int APS5_VABI sceSaveDataGetProgress();
 int APS5_VABI sceSaveDataGetSaveDataCount();
 int APS5_VABI sceSaveDataGetSaveDataRootDir(void);
