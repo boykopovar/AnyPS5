@@ -255,5 +255,15 @@ class HostOnlyTargets(unittest.TestCase):
         self.assert_exact_file_argument_links_product("-Wl,-l:libproduct_lib.a")
 
 
+class WindowsPullRequestGateTests(unittest.TestCase):
+    def test_build_wide_inputs_start_the_windows_pull_request_job(self):
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/build.yml").read_text(encoding="utf-8")
+        gate = workflow.split("mingwHostTests: ", 1)[1].split("),", 1)[0]
+        for item in ("'core/CMakeLists.txt'", "'cmake/'", "'3rdparty/'", "'.gitmodules'",
+                     "'tools/select_tests.py'", "'tools/configure_seed.py'"):
+            with self.subTest(item=item):
+                self.assertIn(item, gate)
+
+
 if __name__ == "__main__":
     unittest.main()

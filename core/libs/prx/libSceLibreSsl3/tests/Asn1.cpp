@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
@@ -32,8 +33,14 @@ std::unordered_map<void*, std::size_t> allocations;
 std::size_t freeCalls = 0;
 void* dataToClear = nullptr;
 std::size_t clearLength = 0;
+int allocationsUntilFailure = -1;
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
+    if (allocationsUntilFailure == 0) {
+        allocationsUntilFailure = -1;
+        return nullptr;
+    }
+    if (allocationsUntilFailure > 0) --allocationsUntilFailure;
     void* result = std::malloc(size);
     Require(result != nullptr);
     allocations.emplace(result, size);
@@ -193,6 +200,113 @@ void BerExtremes() {
     Check(length, expected);
 }
 
+constexpr std::uint64_t Asn1Error(std::uint64_t reason) {
+    return 0x0dfff000 | reason;
+}
+
+constexpr std::uint64_t NestedError = Asn1Error(0x3a);
+constexpr std::uint64_t LengthMismatchError = Asn1Error(0x3e);
+constexpr std::uint64_t MallocError = Asn1Error(0x41);
+constexpr std::uint64_t BadHeaderError = Asn1Error(0x66);
+constexpr std::uint64_t TooLongError = Asn1Error(0x9b);
+constexpr std::uint64_t WrongTagError = Asn1Error(0xa8);
+constexpr std::uint64_t NotPrimitiveError = Asn1Error(0xe7);
+
+void RequireQueue(std::initializer_list<std::uint64_t> expected) {
+    for (const auto code : expected) Require(ERR_get_error_nid_postfix() == code);
+    Require(ERR_get_error_nid_postfix() == 0);
+}
+
+String* OwnedInteger() {
+    const unsigned char encoded[] = {2, 1, 42};
+    const unsigned char* cursor = encoded;
+    return static_cast<String*>(d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, sizeof(encoded)));
+}
+
+void RejectKeepsOutput(std::span<const unsigned char> encoded, std::int64_t length, std::initializer_list<std::uint64_t> errors) {
+    const unsigned char* cursor = encoded.data();
+    Require(d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, length) == nullptr);
+    Require(cursor == encoded.data());
+    RequireQueue(errors);
+    auto* previous = OwnedInteger();
+    void* output = previous;
+    const auto before = freeCalls;
+    Require(d2i_ASN1_INTEGER_nid_postfix(&output, &cursor, length) == nullptr);
+    Require(cursor == encoded.data() && output == previous && freeCalls == before && previous->data[0] == 42);
+    RequireQueue(errors);
+    Release(previous);
+}
+
+void RejectKeepsOutput(std::initializer_list<unsigned char> encoded, std::initializer_list<std::uint64_t> errors) {
+    RejectKeepsOutput(std::span(encoded.begin(), encoded.size()), static_cast<std::int64_t>(encoded.size()), errors);
+}
+
+void RejectFreesOutput(std::initializer_list<unsigned char> encoded) {
+    const std::span bytes(encoded.begin(), encoded.size());
+    const unsigned char* cursor = bytes.data();
+    Require(d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, static_cast<std::int64_t>(bytes.size())) == nullptr);
+    Require(cursor == bytes.data());
+    RequireQueue({LengthMismatchError});
+    auto* previous = OwnedInteger();
+    void* output = previous;
+    dataToClear = previous->data;
+    clearLength = 1;
+    const auto before = freeCalls;
+    Require(d2i_ASN1_INTEGER_nid_postfix(&output, &cursor, static_cast<std::int64_t>(bytes.size())) == nullptr);
+    Require(cursor == bytes.data() && output == nullptr && freeCalls == before + 2 && dataToClear == nullptr);
+    RequireQueue({LengthMismatchError});
+}
+
+void Rejections() {
+    RejectKeepsOutput({0x03, 1, 42}, {WrongTagError, NestedError});
+    RejectKeepsOutput({0x42, 1, 42}, {WrongTagError, NestedError});
+    RejectKeepsOutput({0x82, 1, 42}, {WrongTagError, NestedError});
+    RejectKeepsOutput({0x03, 0xff}, {WrongTagError, NestedError});
+    RejectKeepsOutput({0x22, 1, 42}, {NotPrimitiveError});
+    RejectKeepsOutput({0x22, 0x80, 0, 0}, {NotPrimitiveError});
+    RejectKeepsOutput({0x22, 2, 42}, {TooLongError, NestedError});
+    RejectKeepsOutput({2, 0x80, 42, 0, 0}, {BadHeaderError, NestedError});
+    RejectKeepsOutput({2, 0xff, 1, 42}, {BadHeaderError, NestedError});
+    RejectKeepsOutput({2, 0x82, 0}, {BadHeaderError, NestedError});
+    RejectKeepsOutput({2, 0x89, 1, 0, 0, 0, 0, 0, 0, 0, 0}, {BadHeaderError, NestedError});
+    RejectKeepsOutput({0x1f}, {BadHeaderError, NestedError});
+    RejectKeepsOutput({0x1f, 0x90, 0x80, 0x80, 0x80, 0x80, 2, 1, 42}, {BadHeaderError, NestedError});
+    RejectKeepsOutput({2, 2, 42}, {TooLongError, NestedError});
+    const unsigned char integer[] = {2, 1, 42};
+    RejectKeepsOutput(integer, 0, {BadHeaderError, NestedError});
+    RejectKeepsOutput(integer, 1, {BadHeaderError, NestedError});
+    RejectKeepsOutput(integer, 2, {TooLongError, NestedError});
+    for (const auto length : std::initializer_list<std::int64_t>{-1, -2, -1000, std::numeric_limits<std::int32_t>::min(), -(std::int64_t{1} << 40)})
+        RejectKeepsOutput(integer, length, {});
+    const unsigned char oversized[] = {2, 0x84, 0x80, 0, 0, 0};
+    RejectKeepsOutput(oversized, (std::int64_t{1} << 31) + sizeof(oversized), {});
+    RejectFreesOutput({2, 0});
+    RejectFreesOutput({2, 2, 0, 0x7f});
+    RejectFreesOutput({2, 2, 0xff, 0x80});
+    RejectFreesOutput({2, 2, 0, 0});
+    RejectFreesOutput({2, 3, 0xff, 0xff, 0});
+    Require(allocations.empty());
+}
+
+void AllocationFailures() {
+    const unsigned char positive[] = {2, 1, 42};
+    const unsigned char negative[] = {2, 1, 0xd6};
+    for (const auto encoded : {std::span<const unsigned char>(positive), std::span<const unsigned char>(negative)}) {
+        for (const bool replace : {false, true}) {
+            for (const int failure : {0, 1}) {
+                void* output = replace ? OwnedInteger() : nullptr;
+                const unsigned char* cursor = encoded.data();
+                allocationsUntilFailure = failure;
+                Require(d2i_ASN1_INTEGER_nid_postfix(&output, &cursor, static_cast<std::int64_t>(encoded.size())) == nullptr);
+                Require(allocationsUntilFailure == -1 && output == nullptr && cursor == encoded.data());
+                if (failure == 0) RequireQueue({});
+                else RequireQueue({MallocError, MallocError});
+                Require(allocations.empty());
+            }
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -204,6 +318,8 @@ int main() {
     Integers();
     BerExtremes();
     Ownership();
+    Rejections();
+    AllocationFailures();
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 ASN.1 tests passed");
 }
