@@ -75,10 +75,11 @@ void Require(const bool condition) {
     if (!condition) throw std::runtime_error("Unexpected parsed value");
 }
 
-void RejectSections(Bytes bytes) {
+void RejectSections(Bytes bytes, const std::string& diagnostic = {}) {
     try {
         Relinker::ElfReader(std::move(bytes)).ReadSectionHeaders();
-    } catch (const Relinker::RelinkerException&) {
+    } catch (const Relinker::RelinkerException& error) {
+        Require(std::string(error.what()).starts_with(diagnostic));
         return;
     }
     throw std::runtime_error("Invalid section metadata was accepted");
@@ -214,13 +215,13 @@ int main() {
         {"section name table missing initial null", [] {
             auto bytes = Fixture();
             bytes[0x200] = 'X';
-            RejectSections(std::move(bytes));
+            RejectSections(std::move(bytes), "Section name string table must begin and end with a null byte");
         }},
         {"section name table missing final null outside referenced names", [] {
             auto bytes = Fixture();
             Write<std::uint32_t>(bytes, 256, 1);
             bytes[0x210] = 'X';
-            RejectSections(std::move(bytes));
+            RejectSections(std::move(bytes), "Section name string table must begin and end with a null byte");
         }},
         {"one-byte section name table", [] {
             auto bytes = Fixture();
