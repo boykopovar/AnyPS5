@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -9,6 +10,10 @@
 static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr int InvalidId = static_cast<int>(0x817B1100);
+static constexpr int InvalidValue = static_cast<int>(0x817B11FE);
+static constexpr int NotConnected = static_cast<int>(0x817B1065);
+static constexpr int UnsupportedScheme = static_cast<int>(0x817B1061);
+static constexpr int InvalidUrl = static_cast<int>(0x80433060);
 
 template <typename TCall>
 static bool Throws(TCall call) {
@@ -16,7 +21,112 @@ static bool Throws(TCall call) {
     return false;
 }
 
+static void APS5_VABI WebSocketText(std::int32_t, const char*, std::uint32_t, void*) {}
+static void APS5_VABI WebSocketData(std::int32_t, const void*, std::size_t, std::uint32_t, void*) {}
+static void APS5_VABI WebSocketClose(std::int32_t, const std::uint16_t*, const char*, std::uint32_t, void*) {}
+static void APS5_VABI WebSocketError(std::int32_t, std::int32_t, void*) {}
+
+static std::array<std::uint8_t, 64> g_receive;
+
+static bool ReceiveIs(std::uint8_t value) {
+    for (const std::uint8_t byte : g_receive) {
+        if (byte != value) return false;
+    }
+    return true;
+}
+
+static int CreateWebSocket(int tmpl, const char* url) {
+    g_receive.fill(0xcc);
+    return sceHttp2WebSocketCreateRequest(tmpl, url, WebSocketText, WebSocketData, WebSocketClose, WebSocketError, g_receive.data(), g_receive.size(), nullptr, nullptr);
+}
+
+static void RequireNullMessageRejected(int id) {
+    const Http2AsyncOption asyncOption{};
+    Require(sceHttp2WebSocketSendTextMessageAsync(id, nullptr, 0, nullptr, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendTextMessageAsync(id, nullptr, 0xff, &asyncOption, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendDataMessageAsync(id, nullptr, 2, 0, nullptr, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketSendDataMessageAsync(id, nullptr, 0, 0xff, &asyncOption, nullptr) == InvalidValue);
+}
+
+static void RequireNotWebSocket(int id) {
+    const std::uint16_t status = 1000;
+    RequireNullMessageRejected(id);
+    Require(sceHttp2WebSocketSetPingInterval(id, 1000000) == InvalidId);
+    Require(sceHttp2WebSocketSetPingTimeout(id, 1000000) == InvalidId);
+    Require(sceHttp2WebSocketSendTextMessageAsync(id, "hi", 0, nullptr, nullptr) == InvalidId);
+    Require(sceHttp2WebSocketSendDataMessageAsync(id, "hi", 2, 0, nullptr, nullptr) == InvalidId);
+    Require(sceHttp2WebSocketCloseAsync(id, &status, "bye", 0, nullptr, nullptr) == InvalidId);
+}
+
+static void TestWebSockets() {
+    const int context = sceHttp2Init(1, 1, 0x10000, 4);
+    const int tmpl = sceHttp2CreateTemplate(context, "agent", 2, 0);
+    Require(context > 0 && tmpl > 0);
+    const char* url = "ws://example.com/socket";
+    const int marker = 0;
+    const auto create = [&](Http2WebSocketTextCallback text, Http2WebSocketDataCallback data, Http2WebSocketCloseCallback close, Http2WebSocketErrorCallback error, void* buffer, std::size_t size, const void* option) {
+        g_receive.fill(0xcc);
+        return sceHttp2WebSocketCreateRequest(tmpl, url, text, data, close, error, buffer, size, nullptr, option);
+    };
+    Require(create(nullptr, WebSocketData, WebSocketClose, WebSocketError, g_receive.data(), g_receive.size(), nullptr) == InvalidValue && ReceiveIs(0xcc));
+    Require(create(WebSocketText, nullptr, WebSocketClose, WebSocketError, g_receive.data(), g_receive.size(), nullptr) == InvalidValue && ReceiveIs(0xcc));
+    Require(create(WebSocketText, WebSocketData, nullptr, WebSocketError, g_receive.data(), g_receive.size(), nullptr) == InvalidValue && ReceiveIs(0xcc));
+    Require(create(WebSocketText, WebSocketData, WebSocketClose, nullptr, g_receive.data(), g_receive.size(), nullptr) == InvalidValue && ReceiveIs(0xcc));
+    Require(create(WebSocketText, WebSocketData, WebSocketClose, WebSocketError, nullptr, g_receive.size(), nullptr) == InvalidValue && ReceiveIs(0xcc));
+    Require(create(WebSocketText, WebSocketData, WebSocketClose, WebSocketError, g_receive.data(), 0, nullptr) == InvalidValue && ReceiveIs(0xcc));
+    Require(create(WebSocketText, WebSocketData, WebSocketClose, WebSocketError, g_receive.data(), g_receive.size(), &marker) == InvalidValue && ReceiveIs(0xcc));
+    Require(CreateWebSocket(0x7777, url) == InvalidId && ReceiveIs(0));
+    Require(CreateWebSocket(0x7777, nullptr) == InvalidId && ReceiveIs(0));
+    Require(CreateWebSocket(tmpl, nullptr) == InvalidUrl && ReceiveIs(0));
+    Require(CreateWebSocket(tmpl, "http://example.com/socket") == UnsupportedScheme && ReceiveIs(0));
+    Require(CreateWebSocket(tmpl, "") == UnsupportedScheme);
+    const int accepted[] = {CreateWebSocket(tmpl, "ws:/bad"), CreateWebSocket(tmpl, "wss://example.com:9/probe"), CreateWebSocket(tmpl, "WS://EXAMPLE.COM/")};
+    for (const int id : accepted) {
+        Require(id > 0);
+        Require(sceHttp2DeleteRequest(id) == 0);
+    }
+
+    const int socket = CreateWebSocket(tmpl, url);
+    Require(socket > 0 && ReceiveIs(0));
+    const int plain = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://example.com/", 0);
+    Require(plain > 0);
+    Require(sceHttp2WebSocketSetPingInterval(socket, 0) == 0);
+    Require(sceHttp2WebSocketSetPingInterval(socket, 1) == InvalidValue);
+    Require(sceHttp2WebSocketSetPingInterval(socket, 999999) == InvalidValue);
+    Require(sceHttp2WebSocketSetPingInterval(socket, 1000000) == 0);
+    Require(sceHttp2WebSocketSetPingInterval(socket, 0xffffffffu) == 0);
+    Require(sceHttp2WebSocketSetPingTimeout(socket, 0) == InvalidValue);
+    Require(sceHttp2WebSocketSetPingTimeout(socket, 999999) == InvalidValue);
+    Require(sceHttp2WebSocketSetPingTimeout(socket, 1000000) == 0);
+    Require(sceHttp2WebSocketSetPingTimeout(socket, 0xffffffffu) == 0);
+    Require(sceHttp2WebSocketSetPingInterval(0x7777, 5) == InvalidValue);
+    Require(sceHttp2WebSocketSetPingTimeout(0x7777, 0) == InvalidValue);
+    for (const int invalid : {0, -1, 0x7777, plain, tmpl, context}) RequireNotWebSocket(invalid);
+
+    const std::uint16_t status = 1000;
+    RequireNullMessageRejected(socket);
+    Require(sceHttp2WebSocketSendTextMessageAsync(socket, "hi", 0, nullptr, nullptr) == NotConnected);
+    Require(sceHttp2WebSocketSendTextMessageAsync(socket, "hi", 0, nullptr, &marker) == InvalidValue);
+    Require(sceHttp2WebSocketSendDataMessageAsync(socket, "hi", 2, 0, nullptr, nullptr) == NotConnected);
+    Require(sceHttp2WebSocketSendDataMessageAsync(socket, "hi", 2, 0, nullptr, &marker) == InvalidValue);
+    Require(sceHttp2WebSocketCloseAsync(socket, &status, "bye", 0, nullptr, nullptr) == NotConnected);
+    Require(sceHttp2WebSocketCloseAsync(socket, nullptr, nullptr, 0, nullptr, nullptr) == NotConnected);
+    Require(sceHttp2WebSocketCloseAsync(socket, nullptr, "bye", 0, nullptr, nullptr) == InvalidValue);
+    Require(sceHttp2WebSocketCloseAsync(socket, &status, nullptr, 0, nullptr, &marker) == InvalidValue);
+    Require(sceHttp2WebSocketCloseAsync(0x7777, nullptr, "bye", 0, nullptr, nullptr) == InvalidValue);
+
+    Require(sceHttp2DeleteRequest(socket) == 0);
+    RequireNotWebSocket(socket);
+    const int orphan = CreateWebSocket(tmpl, "wss://example.com/");
+    Require(orphan > 0);
+    Require(sceHttp2DeleteTemplate(tmpl) == 0);
+    RequireNotWebSocket(orphan);
+    Require(CreateWebSocket(tmpl, url) == InvalidId);
+    Require(sceHttp2Term(context) == 0);
+}
+
 int main() {
+    TestWebSockets();
     Require(sceHttp2CreateCookieBox(0xffff) == static_cast<int>(0x817b121du));
     const int box = sceHttp2CreateCookieBox(0x10000);
     Require(sceHttp2Init(1, 1, 0x10000, 0) == static_cast<int>(0x817B11FE));
@@ -40,7 +150,7 @@ int main() {
     Require(Throws([&] { sceHttp2AddRequestHeader(request, "x-header", "value\r\ninjected: yes", 0); }));
     Require(Throws([&] { sceHttp2AddRequestHeader(request, "keep-alive", "timeout=5", 0); }));
     Require(sceHttp2AddRequestHeader(request, "connection", "keep-alive", 0) == static_cast<int>(0x804311FE));
-    Require(Throws([] { sceHttp2WebSocketSetPingInterval(0, 1000000); }));
+    Require(sceHttp2WebSocketSetPingInterval(request, 1000000) == InvalidId);
     for (const int id : {tmpl, request}) {
         Require(Throws([&] { sceHttp2SetMinSslVersion(id, 0); }));
         Require(sceHttp2SslEnableOption(id, 0x3d) == 0);
