@@ -218,6 +218,15 @@ std::uint32_t SpawnAttributeFlags(PosixSpawnAttributes* const* attributes) {
 #ifdef _WIN32
 struct ChildStreams {
     HANDLE handles[3] = {INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE};
+    bool modified[3] = {};
+
+    ChildStreams() = default;
+    ChildStreams(const ChildStreams&) = delete;
+    ChildStreams& operator=(const ChildStreams&) = delete;
+    ~ChildStreams() {
+        for (HANDLE handle : handles)
+            if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+    }
 };
 
 HANDLE DuplicateInheritable(HANDLE source) {
@@ -227,14 +236,10 @@ HANDLE DuplicateInheritable(HANDLE source) {
     return handle;
 }
 
-void CloseRedirectedStreams(ChildStreams& streams) {
-    for (HANDLE handle : streams.handles)
-        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-}
-
 void ReplaceChildStream(ChildStreams& streams, int descriptor, HANDLE source) {
     HANDLE previous = streams.handles[descriptor];
     streams.handles[descriptor] = source == INVALID_HANDLE_VALUE ? INVALID_HANDLE_VALUE : DuplicateInheritable(source);
+    streams.modified[descriptor] = true;
     if (previous != INVALID_HANDLE_VALUE) CloseHandle(previous);
 }
 
@@ -248,9 +253,11 @@ int ApplyChildRedirection(ChildStreams& streams, const PosixSpawnFileAction& act
         if (action.newDescriptor > 2)
             NotImplemented_nid_no_patch(("posix_spawn: a child descriptor " + std::to_string(action.newDescriptor) + " beyond the standard streams").c_str());
         {
-            const HANDLE source = WindowsDescriptorHandle_nid_no_patch(action.descriptor);
+            const HANDLE source = action.descriptor < 3 && streams.modified[action.descriptor]
+                ? streams.handles[action.descriptor] : WindowsDescriptorHandle_nid_no_patch(action.descriptor);
             if (source == INVALID_HANDLE_VALUE) return BadDescriptor;
-            ReplaceChildStream(streams, action.newDescriptor, source);
+            if (action.descriptor != action.newDescriptor)
+                ReplaceChildStream(streams, action.newDescriptor, source);
         }
         return 0;
     case PosixSpawnFileActionKind::Open: {
@@ -263,7 +270,12 @@ int ApplyChildRedirection(ChildStreams& streams, const PosixSpawnFileAction& act
             const int fd = ::_wopen(native.c_str(), HostOpenFlags(action.openFlags), action.mode);
             if (fd < 0) return errno;
             const HANDLE source = WindowsDescriptorHandle_nid_no_patch(fd);
-            ReplaceChildStream(streams, action.descriptor, source);
+            try {
+                ReplaceChildStream(streams, action.descriptor, source);
+            } catch (...) {
+                ::_close(fd);
+                throw;
+            }
             ::_close(fd);
         } catch (const std::invalid_argument&) {
             return InvalidArgument;
@@ -329,10 +341,7 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
         for (const auto& action : (*actions)->actions) {
             if (action.kind != PosixSpawnFileActionKind::Close || (action.descriptor >= 0 && action.descriptor < 3)) redirected = true;
             const int error = ApplyChildRedirection(streams, action);
-            if (error != 0) {
-                CloseRedirectedStreams(streams);
-                return error;
-            }
+            if (error != 0) return error;
         }
     }
     std::wstring command = L"\"" + target.wstring() + L"\"";
@@ -372,10 +381,8 @@ int SpawnChild(const char* function, const std::string& guest, PosixSpawnFileAct
     }();
     if (!created) {
         const DWORD error = GetLastError();
-        CloseRedirectedStreams(streams);
         throw std::system_error(error, std::system_category(), "posix_spawn: creating the converted executable");
     }
-    CloseRedirectedStreams(streams);
     CloseHandle(process.hThread);
     RegisterChildProcess_nid_no_patch(process.dwProcessId, static_cast<std::int64_t>(reinterpret_cast<std::uintptr_t>(process.hProcess)));
     if (processId != nullptr) *processId = static_cast<std::int32_t>(process.dwProcessId);

@@ -12,6 +12,7 @@
 #include <cwchar>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -231,7 +232,8 @@ static std::filesystem::path OwnExecutablePath() {
 #endif
 }
 
-static std::int32_t SpawnChildExplicit(const char* role, std::int32_t* processId, bool usePath = false) {
+static std::int32_t SpawnChildExplicit(const char* role, std::int32_t* processId, bool usePath = false,
+    PosixSpawnFileActions** actions = nullptr, int expectedResult = 0) {
     const auto own = OwnExecutablePath();
     const auto target = own.parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + own.extension().string()).c_str()));
     std::error_code error;
@@ -266,9 +268,9 @@ static std::int32_t SpawnChildExplicit(const char* role, std::int32_t* processId
         environment.push_back(entry.data());
     environment.push_back(nullptr);
     if (usePath) {
-        Check(posix_spawnp_nid_postfix(processId, program, nullptr, nullptr, arguments, environment.data()) == 0);
+        Check(posix_spawnp_nid_postfix(processId, program, actions, nullptr, arguments, environment.data()) == expectedResult);
     } else {
-        Check(posix_spawn_nid_postfix(processId, program, nullptr, nullptr, arguments, environment.data()) == 0);
+        Check(posix_spawn_nid_postfix(processId, program, actions, nullptr, arguments, environment.data()) == expectedResult);
     }
     return processId != nullptr ? *processId : 0;
 }
@@ -283,6 +285,62 @@ static void CleanupChild() {
     std::error_code error;
     std::filesystem::remove(OwnExecutablePath().parent_path() / std::filesystem::path(reinterpret_cast<const char8_t*>(("child.bin" + OwnExecutablePath().extension().string()).c_str())), error);
     std::filesystem::remove_all(std::filesystem::current_path() / "app0", error);
+}
+
+static void CheckOrderedFileActions(const std::string& order) {
+    std::fprintf(stderr, "Checking spawn file actions: %s\n", order.c_str());
+    const auto app0 = std::filesystem::current_path() / "app0";
+    Check(std::filesystem::create_directories(app0) || std::filesystem::exists(app0));
+    PosixSpawnFileActions* actions = nullptr;
+    Check(posix_spawn_file_actions_init_nid_postfix(&actions) == 0);
+    const int savedOutput = dup_nid_postfix(1);
+    Check(savedOutput >= 0);
+    const int parentOutput = open_nid_postfix("/app0/spawn-parent.txt", 0x601, 0600);
+    Check(parentOutput >= 0);
+    Check(dup2_nid_postfix(parentOutput, 1) == 1);
+    Check(close_nid_postfix(parentOutput) == 0);
+    const bool closed = order == "close-dup" || order == "close-self-dup";
+    const bool reverse = order == "dup-open";
+    const bool self = order == "open-self-dup" || order == "close-self-dup";
+    const bool chain = order == "dup-replace-dup";
+    if (reverse || chain)
+        Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
+    if (closed) {
+        Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 1) == 0);
+    } else {
+        Check(posix_spawn_file_actions_addopen_nid_postfix(&actions, 1, "/app0/spawn-child.txt", 0x601, 0600) == 0);
+    }
+    if (chain) {
+        Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 2, 1) == 0);
+        Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 2) == 0);
+        Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
+    } else if (!reverse) {
+        if (self)
+            Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 1) == 0);
+        if (!closed || !self)
+            Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
+    }
+    std::int32_t processId = 0;
+    SpawnChildExplicit("child-streams", &processId, false, &actions, closed ? BadDescriptor : 0);
+    Check(dup2_nid_postfix(savedOutput, 1) == 1);
+    Check(close_nid_postfix(savedOutput) == 0);
+    Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0);
+    if (closed) {
+        Check(processId == 0);
+    } else {
+        int status = -1;
+        Check(waitpid_nid_postfix(processId, &status, 0) == processId);
+        Check(status == 0);
+        std::ifstream child(app0 / "spawn-child.txt", std::ios::binary);
+        const std::string childOutput((std::istreambuf_iterator<char>(child)), std::istreambuf_iterator<char>());
+        Check((childOutput.find("spawn-stdout") != std::string::npos) == !chain);
+        Check((childOutput.find("spawn-stderr") != std::string::npos) == (!reverse && !chain));
+        std::ifstream parent(app0 / "spawn-parent.txt", std::ios::binary);
+        const std::string originalOutput((std::istreambuf_iterator<char>(parent)), std::istreambuf_iterator<char>());
+        Check((originalOutput.find("spawn-stdout") != std::string::npos) == chain);
+        Check((originalOutput.find("spawn-stderr") != std::string::npos) == (reverse || chain));
+    }
+    CleanupChild();
 }
 
 static void CheckSpawnNullProcessId(bool usePath) {
@@ -372,6 +430,13 @@ static void CheckTerminatedChild(const char* role, unsigned code, int guestSigna
 
 int main() {
     if (const char* role = std::getenv("ANYPS5_POSIX_SPAWN_ROLE")) {
+        if (std::strcmp(role, "child-streams") == 0) {
+            constexpr char output[] = "spawn-stdout";
+            constexpr char error[] = "spawn-stderr";
+            Check(write_nid_postfix(1, output, sizeof(output) - 1) == sizeof(output) - 1);
+            Check(write_nid_postfix(2, error, sizeof(error) - 1) == sizeof(error) - 1);
+            std::_Exit(0);
+        }
         if (std::strcmp(role, "child-exit-42") == 0) std::_Exit(42);
         if (std::strcmp(role, "child-exit-neg") == 0) std::exit(-1);
 #ifndef _WIN32
@@ -397,6 +462,8 @@ int main() {
     CheckAttributes();
     CheckFileActions();
     CheckSpawn();
+    for (const char* order : {"open-dup", "close-dup", "dup-open", "open-self-dup", "close-self-dup", "dup-replace-dup"})
+        CheckOrderedFileActions(order);
     CheckSpawnNullProcessId(false);
     CheckSpawnNullProcessId(true);
     CheckSpawnedChild("child-exit-42", 42);
