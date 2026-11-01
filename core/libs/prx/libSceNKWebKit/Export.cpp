@@ -19756,14 +19756,6 @@ int APS5_VABI _ZN3WTF3URL21setFragmentIdentifierENS_10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF3URL23fakeURLWithRelativePartENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF3URL25fileURLWithFileSystemPathENS_10StringViewE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF3URL32removeQueryAndFragmentIdentifierEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -36569,10 +36561,6 @@ int APS5_VABI _ZNK3WTF3URL17lastPathComponentEv() {
 }
 
 int APS5_VABI _ZNK3WTF3URL19protocolHostAndPortEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

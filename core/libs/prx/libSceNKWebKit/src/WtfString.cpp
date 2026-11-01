@@ -1495,6 +1495,61 @@ URL StoreURL(const ParsedURL& value, const String& input) {
 
 }  // namespace
 
+namespace {
+
+URL ParseDerivedURL(const std::u16string& text) {
+    String input(CopyImpl({text.data(), static_cast<unsigned>(text.size()), false}));
+    URL empty{};
+    URL result{};
+    _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(&result, &empty, &input, nullptr);
+    return result;
+}
+
+}  // namespace
+
+extern "C" {
+
+URL APS5_VABI _ZNK3WTF3URL21truncatedForUseAsBaseEv(const URL* self) {
+    const auto& url = Checked(self);
+    if (!url.impl) return {};
+    auto view = View(url.impl);
+    String input(url.pathAfterLastSlash >= view.length ? Retain(url.impl) : CopyImpl(Slice(view, 0, url.pathAfterLastSlash)));
+    URL empty{};
+    URL result{};
+    _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(&result, &empty, &input, nullptr);
+    return result;
+}
+
+URL APS5_VABI _ZN3WTF3URL23fakeURLWithRelativePartENS_10StringViewE(StringView relative) {
+    std::array<unsigned char, 16> bytes;
+    _ZN3WTF29cryptographicallyRandomValuesEPvm(bytes.data(), bytes.size());
+    bytes[6] = (bytes[6] & 0x0F) | 0x40;
+    bytes[8] = (bytes[8] & 0x3F) | 0x80;
+    constexpr char16_t hex[] = u"0123456789abcdef";
+    std::u16string text = u"webkit-fake-url://";
+    for (unsigned i = 0; i < bytes.size(); ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) text.push_back('-');
+        text.push_back(hex[bytes[i] >> 4]);
+        text.push_back(hex[bytes[i] & 15]);
+    }
+    return ParseDerivedURL(text + u"/" + URLUnits(relative));
+}
+
+URL APS5_VABI _ZN3WTF3URL25fileURLWithFileSystemPathENS_10StringViewE(StringView path) {
+    auto units = URLUnits(path);
+    std::u16string text = units.starts_with(u"/") ? u"file://" : u"file:///";
+    constexpr char16_t hex[] = u"0123456789ABCDEF";
+    for (unsigned char byte : URLBytes(units, 0)) {
+        if (byte == '?' || byte == '#' || byte > 127) {
+            text.push_back('%'); text.push_back(hex[byte >> 4]); text.push_back(hex[byte & 15]);
+        } else text.push_back(byte);
+    }
+    return ParseDerivedURL(text);
+}
+
+}
+
+
 extern "C" {
 
 void APS5_VABI _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE(URL* self, const URL* base, const String* relative, const void* encoding) {

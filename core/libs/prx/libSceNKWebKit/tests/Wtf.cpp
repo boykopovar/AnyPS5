@@ -375,10 +375,12 @@ static void TestJscAndPal() {
 }
 
 void TestAdditionalWtf();
+void TestURLDerived();
 void TestURLParsing();
 
 int main() {
     TestAdditionalWtf();
+    TestURLDerived();
     TestURLParsing();
     TestMemoryAllocations();
     TestAllocationBoundaries();
@@ -973,6 +975,74 @@ void TestURLsAndReallocation() {
 }
 
 }  // namespace Wtf2Tests
+
+void TestURLDerived() {
+    using namespace Wtf2Tests;
+    constexpr auto parse = _ZN3WTF3URLC2ERKS0_RKNS_6StringEPKNS_15URLTextEncodingE;
+    struct Case { const char* input; const char* base; };
+    for (const Case& test : {
+        Case{"http://username:password@www.example.com:8080/index.html?var=val#fragment", "http://username:password@www.example.com:8080/"},
+        Case{"https://u:p@host:81/a/b?q#f", "https://u:p@host:81/a/"},
+        Case{"http://host/a/b/", "http://host/a/b/"},
+        Case{"http://host/", "http://host/"},
+        Case{"http://host/a//", "http://host/a//"},
+        Case{"http://host/a%20b#", "http://host/"},
+        Case{"http://:p@host/a?", "http://:p@host/"},
+        Case{"foo://host", "foo://host"},
+        Case{"foo:/a/b?x#y", "foo:/a/"},
+        Case{"foo:/.//path", "foo:/.//"},
+        Case{"file:///C:/a/b", "file:///C:/a/"},
+        Case{"about:blank#f", "about:"},
+        Case{"data:a/b#f", "data:a/"},
+        Case{"not a URL", ""}
+    }) {
+        auto input = FromUTF8Z(U8(test.input));
+        URL empty{};
+        URL url{};
+        parse(&url, &empty, &input, nullptr);
+        String owner(url.impl);
+        auto base = _ZNK3WTF3URL21truncatedForUseAsBaseEv(&url);
+        String baseOwner(base.impl);
+        Text(baseOwner, test.base);
+        if (std::strcmp(test.input, test.base) == 0) Check(baseOwner.impl == owner.impl);
+    }
+    URL null{};
+    Check(!_ZNK3WTF3URL21truncatedForUseAsBaseEv(&null).impl);
+    struct FileCase { const char16_t* path; const char* expected; };
+    for (const FileCase& test : {
+        FileCase{u"/a/b", "file:///a/b"},
+        FileCase{u"relative/path", "file:///relative/path"},
+        FileCase{u"C:\\a\\b", "file:///C:/a/b"},
+        FileCase{u"/a/../b?c#d é", "file:///b%3Fc%23d%20%C3%A9"},
+        FileCase{u"//server/path", "file:////server/path"},
+        FileCase{u"/%20", "file:///%20"},
+        FileCase{u"/\xD800", "file:///%ED%A0%80"},
+        FileCase{u"", "file:///"},
+        FileCase{nullptr, "file:///"}
+    }) {
+        StringView path{test.path, test.path ? static_cast<unsigned>(std::char_traits<char16_t>::length(test.path)) : 0, false};
+        auto url = _ZN3WTF3URL25fileURLWithFileSystemPathENS_10StringViewE(path);
+        String owner(url.impl);
+        Check(url.bits & 1);
+        Text(owner, test.expected);
+    }
+    for (const auto& test : {std::pair{u"a/../b?x#f", "/b?x#f"}, std::pair{u"", "/"}, std::pair{u"/path", "//path"}, std::pair{u"é", "/%C3%A9"}}) {
+        StringView part{test.first, static_cast<unsigned>(std::char_traits<char16_t>::length(test.first)), false};
+        auto url = _ZN3WTF3URL23fakeURLWithRelativePartENS_10StringViewE(part);
+        String owner(url.impl);
+        Check(url.bits & 1);
+        Check(ViewText(URLProtocol(&url)) == "webkit-fake-url");
+        auto host = ViewText(URLHost(&url));
+        Check(host.size() == 36 && host[14] == '4');
+        Check(host[19] == '8' || host[19] == '9' || host[19] == 'a' || host[19] == 'b');
+        for (unsigned i = 0; i < host.size(); ++i) {
+            if (i == 8 || i == 13 || i == 18 || i == 23) Check(host[i] == '-');
+            else Check((host[i] >= '0' && host[i] <= '9') || (host[i] >= 'a' && host[i] <= 'f'));
+        }
+        Text(owner, ("webkit-fake-url://" + host + test.second).c_str());
+    }
+}
+
 
 void TestURLParsing() {
     using namespace Wtf2Tests;
