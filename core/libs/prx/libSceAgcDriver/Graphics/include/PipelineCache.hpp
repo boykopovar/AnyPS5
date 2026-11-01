@@ -28,6 +28,8 @@ public:
     void SaveNow();
     void SaveUnlessBusy();
 
+    friend struct PipelineCacheTestAccess;
+
 private:
     struct FileHeader {
         std::uint32_t magic;
@@ -45,7 +47,7 @@ private:
         std::span<const std::byte> Payload() const;
     };
 
-    File readFile() const;
+    File readFile(const std::filesystem::path& source) const;
     std::optional<FileHeader> readHeader() const;
     void load(std::vector<std::byte>& initialData);
     void save(bool final, bool waitForPipelines);
@@ -64,6 +66,12 @@ private:
     std::condition_variable wake;
     bool stopping = false;
     std::thread saver;
+};
+
+struct PipelineCacheTestAccess {
+    static bool HasHeader(const PipelineCache& cache) {
+        return cache.readHeader().has_value();
+    }
 };
 
 }

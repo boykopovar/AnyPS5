@@ -176,4 +176,8 @@ int APS5_VABI sceGameUpdateTerminate(void) {
     return 0;
 }
 
+int APS5_VABI sceGameUpdateCheckTitle() {
+    NotImplemented_nid_no_patch(__func__);
+}
+
 }

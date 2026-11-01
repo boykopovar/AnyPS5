@@ -319,6 +319,20 @@ class AttributionTests(FixtureTests):
                 time.sleep(1.1)
                 self.assertFalse(marker.exists())
 
+    def test_symlink_loops_are_setup_errors(self):
+        (self.root / "first").symlink_to("second")
+        (self.root / "second").symlink_to("first")
+        loop, source = self.root / "first", self.source("base")
+        for baseline, output in ((source, loop / "evidence"), ((loop, source[1]), self.root / "evidence")):
+            with self.subTest(baseline=baseline[0], output=output):
+                arguments = ["--baseline", str(baseline[0]), baseline[1], "--candidate", str(source[0]), source[1],
+                             "--output", str(output), "--target", "fixture", "--tests", ".*", "--gpu", "fixture"]
+                stderr = io.StringIO()
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+                    self.assertEqual(gate.main(arguments), 2)
+                self.assertIn("validation gate:", stderr.getvalue())
+                self.assertFalse((self.root / "evidence").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
