@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 
 #include <cstdio>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -43,6 +44,14 @@ void WriteFile(const char* name, const char* content, std::streamsize bytes, std
 } // namespace
 
 int main() {
+    const auto originalDirectory = std::filesystem::current_path();
+    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::filesystem::path work;
+    for (unsigned int attempt = 0;; ++attempt) {
+        work = std::filesystem::temp_directory_path() / ("anyps5-execvpe-" + std::to_string(stamp) + "-" + std::to_string(attempt));
+        if (std::filesystem::create_directory(work)) break;
+    }
+    std::filesystem::current_path(work);
     char first[] = "first";
     char second[] = "second";
     char* const argv[] = {first, second, nullptr};
@@ -117,6 +126,8 @@ int main() {
     std::filesystem::remove("scripts");
     std::filesystem::remove("usr/bin");
     std::filesystem::remove("usr");
+    std::filesystem::current_path(originalDirectory);
+    std::filesystem::remove_all(work);
     std::puts("guest_kernel_sys_execvpe passed");
     return 0;
 }
