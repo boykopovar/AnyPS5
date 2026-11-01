@@ -439,17 +439,8 @@ static_assert(offsetof(GuestPad, condition) == 0x8 && offsetof(GuestPad, mutex) 
 [[noreturn]] void ThrowCppError_nid_no_patch(int code);
 
 static void RequireThrd(int result, const char* what) {
-    switch (result) {
-    case threadSuccess:
-        return;
-    case threadNomem:
-    case threadTimedout:
-        ThrowCppError_nid_no_patch(6);
-    case threadBusy:
-        ThrowCppError_nid_no_patch(0);
-    case threadError:
-        ThrowCppError_nid_no_patch(1);
-    }
+    if (result == threadSuccess) return;
+    _ZSt14_Throw_C_errori_nid_postfix(result);
     throw std::runtime_error(std::string(what) + " failed with " + std::to_string(result));
 }
 
