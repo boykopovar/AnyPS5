@@ -115,6 +115,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_storage_rewritten_blocks PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME agc_storage_rewritten_stale_units COMMAND agc_driver_recorder_tests --rewritten-stale-units-only)
+    set_tests_properties(agc_storage_rewritten_stale_units PROPERTIES SKIP_RETURN_CODE 77)
+    if(WIN32)
+        set_tests_properties(agc_storage_rewritten_stale_units PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     foreach(mode IN ITEMS map ring shared uncached)
         add_test(NAME agc_collect_mapping_history_${mode} COMMAND agc_driver_recorder_tests --collect-mapping-history-only)
         set_tests_properties(agc_collect_mapping_history_${mode} PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
