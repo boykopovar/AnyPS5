@@ -2,7 +2,7 @@
 
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcurl/Export.cpp) - 85 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcurl.c) and the [selected export metadata](https://gist.github.com/kyon-eth/996975adc28d0d270d032fb47eb297a7/52f3b6179ff69fbc0725e02ba146279ecd451f49) from two version-labelled images (SHA-256 `69baa557f91eba487275aa1b8e0aecd8dde1caa261eb2dd04106f8fa00e65361`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Callable exports](../../../core/libs/prx/libcurl/Export.cpp) - 78 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcurl.c) and the [selected export metadata](https://gist.github.com/kyon-eth/996975adc28d0d270d032fb47eb297a7/52f3b6179ff69fbc0725e02ba146279ecd451f49) from two version-labelled images (SHA-256 `69baa557f91eba487275aa1b8e0aecd8dde1caa261eb2dd04106f8fa00e65361`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -11,8 +11,6 @@
 | `curl_multi_socket_action` | `-WWyz1uPfx0` |
 | `curl_easy_recv` | `0i8EaWOLjcY` |
 | `curl_mime_free` | `1N7ft+SiHD0` |
-| `curl_escape` | `3BKtV-ZgNGE` |
-| `curl_easy_escape` | `3y2ysESiRFA` |
 | `curl_mvfprintf` | `4zl-9Emcwhc` |
 | `curl_share_cleanup` | `5b-D80m2TKc` |
 | `curl_easy_perform` | `7KQckhaDi18` |
@@ -21,7 +19,6 @@
 | `curl_global_sslset` | `7ijxBuDNvHY` |
 | `curl_multi_perform` | `9cpxUNV97mM` |
 | `curl_version` | `A+rTLSeCJFQ` |
-| `curl_free` | `AAHmHrXOtv4` |
 | `curl_mvsnprintf` | `BAz8Ji7lJls` |
 | `curl_multi_socket_all` | `BhNAR5P2VEg` |
 | `curl_strequal` | `CDG6wR08Ntw` |
@@ -40,7 +37,6 @@
 | `curl_formget` | `KUolTh2gQ8k` |
 | `curl_mime_type` | `KzSFgeUXy2E` |
 | `curl_mprintf` | `Lr91kLn38uM` |
-| `curl_slist_append` | `MDgMnL6At94` |
 | `curl_easy_send` | `MhymOvp1NkU` |
 | `curl_easy_reset` | `N5yPp5dHBQE` |
 | `curl_easy_strerror` | `NGTkAHTkViY` |
@@ -63,17 +59,14 @@
 | `curl_share_setopt` | `b3SWcncY+A0` |
 | `curl_multi_info_read` | `ea8LaHOKFDA` |
 | `curl_easy_upkeep` | `govcxXDyzbw` |
-| `curl_unescape` | `gtkTcnWCrkU` |
 | `curl_multi_setopt` | `hGv08dyfsNQ` |
 | `curl_mime_addpart` | `hXXC4BDL1gY` |
 | `curl_easy_option_by_name` | `hdaJCex67Tg` |
 | `curl_maprintf` | `hpQlqUYshFI` |
-| `curl_slist_free_all` | `k76sC3mIVw4` |
 | `curl_url_cleanup` | `kIbwtX5Mi6c` |
 | `curl_getdate` | `kX88h1qQ7co` |
 | `curl_mime_filedata` | `ln25S0X-S08` |
 | `curl_multi_timeout` | `lxail8CxrHk` |
-| `curl_easy_unescape` | `m-VsMMa8Mqo` |
 | `curl_multi_add_handle` | `mQBD4RanvTc` |
 | `curl_mime_init` | `mUQG6ux03z4` |
 | `curl_easy_option_by_id` | `mmBX7M6ArkM` |
@@ -91,3 +84,9 @@
 | `curl_easy_pause` | `yQ7SgQu4L98` |
 | `curl_mime_filename` | `yfNiwy8p5Ds` |
 | `curl_msprintf` | `zMA017igJyk` |
+
+### Functional
+
+- [String lists and URL escaping](../../../core/libs/prx/libcurl/Export.cpp) have no console verification of their signatures, behavior or curl revision. The public signatures and 16-byte LP64 `curl_slist` layout follow curl 8.10.1's [list](https://github.com/curl/curl/blob/curl-8_10_1/lib/slist.c) and [escaping](https://github.com/curl/curl/blob/curl-8_10_1/lib/escape.c) APIs. Custom curl allocators are unavailable because `curl_global_init_mem` throws; allocations use the guest libc heap.
+- [Null string arguments](../../../core/libs/prx/libcurl/Export.cpp) to list append or escaping with a nonnegative length throw. curl 8.5.0 faults there; 8.10.1 returns null from escaping. The console behavior is unknown. Invalid non-null pointers and damaged lists are not validated.
+- [Escaping version differences](../../../core/libs/prx/libcurl/Export.cpp) remain unverified: the easy handle is ignored, as curl does from 7.82.0, and input size follows 8.10.1 rather than 8.5.0's dynamic-buffer cap. Older per-handle character conversion is not modeled. Tests do not exercise the unescape output-length overflow for strings larger than `INT_MAX`.
