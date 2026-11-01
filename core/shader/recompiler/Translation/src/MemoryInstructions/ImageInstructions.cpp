@@ -214,6 +214,12 @@ bool TranslationContext::imageGather(const RdnaInstruction& inst) {
         throw std::runtime_error("packed horizontal gather with D16 data is not measured");
     }
     const MemoryInfo memory = imageMemoryInfoFromInstruction(inst);
+    if (inst.op == RdnaOpcode::ImageGather8hPck) {
+        for (std::uint32_t index = 0; index < memory.dataDwords; ++index) {
+            writeOperand(offsetOperand(inst.destination, index), &ir.Constant(0u));
+        }
+        return true;
+    }
     IrValue* resource = getImageResource(memory);
     IrValue* sampler = getSamplerResource(memory);
     IrValue* address = makeImageAddress(inst, inst.source0);
