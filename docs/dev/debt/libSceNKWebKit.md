@@ -23,6 +23,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF host services](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `fastMalloc`, `bmalloc` and Gigacage allocations come from the host allocator, and `numberOfProcessorCores`, `ramSize`, the clocks and random values come from the host, not the console; they throw when the host cannot answer. `WTFCrash` and failed assertions abort the process.
 - [WebCore::ResourceResponseBase](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponse.cpp) (libSceNKWebKit) - the object layout in [ResourceResponseAbi.hpp](../../../core/libs/prx/libSceNKWebKit/src/ResourceResponseAbi.hpp) comes from [ResourceResponseBase.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ResourceResponseBase.h) and is not checked against the PS5 module: `URL` at 0, four `AtomString` and the 64-bit expected length up to offset 80, then a 32-byte `HTTPHeaderMap` (two vectors of inline capacity 0 as in [HTTPHeaderMap.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/HTTPHeaderMap.h)). Only these fields are modelled because `std::optional<CertificateInfo>` follows the `Box<NetworkLoadMetrics>` and the size of the PS5 `CertificateInfo` is unknown, so the offsets of `m_httpStatusCode`, `m_isNull`, `m_initLevel`, `m_type`, `m_source` and the flags are not established. The getters (`url`, `mimeType`, `expectedContentLength`, `textEncodingName`, `httpStatusText`, `httpVersion`, `httpHeaderFields`, `isInHTTPFamily`) skip `lazyInit` because the curl [ResourceResponse.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/curl/ResourceResponse.h) has no `platformLazyInit`; the PS5 `ResourceResponse` is not known to match. `isInHTTPFamily` reads the valid bit of `URL::bits` and the scheme text, not the cached `m_protocolIsInHTTPFamily` bit, whose position is unknown. The 30 other exports (`ResourceResponseBase` constructors, `setURL`, `setType`, `setExpectedContentLength`, `setHTTPStatusCode`, `httpStatusCode`, `source`, `isSuccessful`, `isRedirection`, `isHTTP09`, `isAttachment*`, `suggestedFilename`, `sanitize*`, `syntheticRedirectResponse`, `cacheControlContains*`, `hasCacheValidatorFields`, `lazyInit`, `httpHeaderField*`, `addHTTPHeaderField*`, `setHTTPHeaderField*`) still throw `NotImplemented_nid_no_patch`: they write `m_isNull`, read fields after `CertificateInfo`, or need `HTTPHeaderMap`, `CertificateInfo`, `Vector` or `ResourceResponse` layouts.
 
+- [WTF pthread primitives](../../../core/libs/prx/libSceNKWebKit/src/WtfSystem.cpp) (libSceNKWebKit) - `Mutex` and `ThreadCondition` use host synchronization objects behind the FreeBSD pointer-sized fields; their layouts and scheduling have not been verified against console binaries. Mutex names (`SceNKWTF`) are not registered with the guest kernel. Normal mutex ownership and condition waits follow [ThreadingPOSIX.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/posix/ThreadingPOSIX.cpp); deadlines use the host wall clock. A NaN deadline, unlock by a non-owner, or condition wait by a non-owner throws; the pinned implementation only asserts on a failed `wait` and returns false on a failed `timedWait`. Destroying an object while it is in use is unsupported, as for pthread primitives.
+
 ### Known export names; ABI prototypes unverified
 
 - The 127 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
@@ -1709,12 +1711,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF15FilePrintStreamD0Ev` | `9yaO7ovhE7o` |
 | `_ZN3WTF15FilePrintStreamD1Ev` | `f4A+i2Tlrmk` |
 | `_ZN3WTF15FilePrintStreamD2Ev` | `2o3n0iKkjwY` |
-| `_ZN3WTF15ThreadCondition4waitERNS_5MutexE` | `Gabnudg8bzM` |
-| `_ZN3WTF15ThreadCondition6signalEv` | `FNJN5HdvU90` |
-| `_ZN3WTF15ThreadCondition9broadcastEv` | `cmb3wIXQ-Js` |
-| `_ZN3WTF15ThreadCondition9timedWaitERNS_5MutexENS_8WallTimeE` | `iulVS7DGVeg` |
-| `_ZN3WTF15ThreadConditionD1Ev` | `jfeZA8a0GbA` |
-| `_ZN3WTF15ThreadConditionD2Ev` | `FD7Kfj4cCDs` |
 | `_ZN3WTF15isWordTextBreakEP14UBreakIterator` | `Jb1OVO08cOE` |
 | `_ZN3WTF15memoryFootprintEv` | `DLog94EYwFI` |
 | `_ZN3WTF16addSignalHandlerENS_6SignalEONS_8FunctionIFNS_12SignalActionES0_RNS_7SigInfoERNS_17PlatformRegistersEEEE` | `l0Z0NQiqr3M` |
@@ -1858,13 +1854,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF4SHA116computeHexDigestEv` | `Ow27qMGiCBU` |
 | `_ZN3WTF4SHA1C1Ev` | `f4Y+BVScAcc` |
 | `_ZN3WTF4SHA1C2Ev` | `Dq5bk2mU2xw` |
-| `_ZN3WTF5Mutex4lockEv` | `GCXtBIZJoFY` |
-| `_ZN3WTF5Mutex6unlockEv` | `qr+T1Bp3AqE` |
-| `_ZN3WTF5Mutex7tryLockEv` | `fFZmV5BzYC0` |
-| `_ZN3WTF5MutexC1Ev` | `zFwxBZREkG8` |
-| `_ZN3WTF5MutexC2Ev` | `ut8I892aPW8` |
-| `_ZN3WTF5MutexD1Ev` | `SVYZa9hbTh8` |
-| `_ZN3WTF5MutexD2Ev` | `WBxQfbet+nY` |
 | `_ZN3WTF5sleepENS_7SecondsE` | `gsFoqQ-R5js` |
 | `_ZN3WTF6String24numberToStringFixedWidthEdj` | `EIwwRbyxZTM` |
 | `_ZN3WTF6String28numberToStringFixedPrecisionEdjNS_29TrailingZerosTruncatingPolicyE` | `KtgcveZxnco` |
