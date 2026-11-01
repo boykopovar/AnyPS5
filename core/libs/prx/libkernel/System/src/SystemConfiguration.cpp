@@ -701,9 +701,13 @@ int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* 
     if (version == nullptr) {
         return 0;
     }
-    std::memset(version->versionString, 0, sizeof(version->versionString));
-    std::memcpy(version->versionString, "01.000.000", sizeof("01.000.000"));
-    version->version = 0x01000000;
+    char versionString[sizeof(version->versionString)] = {};
+    std::memcpy(versionString, "01.000.000", sizeof("01.000.000"));
+    constexpr std::uint32_t packedVersion = 0x01000000;
+    if (!GuestCopyOut_nid_no_patch(version->versionString, versionString, sizeof(versionString)) ||
+        !GuestCopyOut_nid_no_patch(&version->version, &packedVersion, sizeof(packedVersion))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -711,8 +715,11 @@ int APS5_VABI sceKernelGetSystemExVersion(char* first, char* second) {
     if (first == nullptr || second == nullptr) {
         return 22;
     }
-    *first = '\0';
-    *second = '\0';
+    constexpr char zero = '\0';
+    if (!GuestCopyOut_nid_no_patch(first, &zero, sizeof(zero)) ||
+        !GuestCopyOut_nid_no_patch(second, &zero, sizeof(zero))) {
+        return 14;
+    }
     return 0;
 }
 
@@ -720,7 +727,10 @@ int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char* version) {
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
-    *version = '\0';
+    constexpr char zero = '\0';
+    if (!GuestCopyOut_nid_no_patch(version, &zero, sizeof(zero))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -728,7 +738,10 @@ int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t* versio
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
-    *version = 0;
+    constexpr std::uint32_t zero = 0;
+    if (!GuestCopyOut_nid_no_patch(version, &zero, sizeof(zero))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 

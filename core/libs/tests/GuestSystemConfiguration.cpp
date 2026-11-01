@@ -667,6 +667,24 @@ static void CheckVersionLimits() {
     } update{0xaaaaaaaau, 0xaaaaaaaau};
     Require(sysKernelGetLowerLimitUpdVersion_nid_postfix(&update.version) == 0 && update.version == 0 && update.after == 0xaaaaaaaau);
     Require(sysKernelGetLowerLimitUpdVersion_nid_postfix(nullptr) == SCE_KERNEL_ERROR_EINVAL && *__error_nid_postfix() == 13);
+    Require(sceKernelGetSystemExVersion(reinterpret_cast<char*>(0x10), reinterpret_cast<char*>(first)) == 14);
+    Require(sceKernelGetSystemExVersion(reinterpret_cast<char*>(first), reinterpret_cast<char*>(0x10)) == 14);
+    Require(sysKernelGetLowerLimitSysexVersion_nid_postfix(reinterpret_cast<char*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sysKernelGetLowerLimitUpdVersion_nid_postfix(reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetSystemSwVersion_nid_postfix(reinterpret_cast<SceKernelSystemSwVersion*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    *__error_nid_postfix() = 13;
+
+    constexpr std::size_t GuardPage = 0x4000;
+    void* guard = mmap_nid_postfix(nullptr, 2 * GuardPage, 3, 0x1002, -1, 0);
+    Require(guard != reinterpret_cast<void*>(static_cast<std::uintptr_t>(-1)));
+    Require(mprotect_nid_postfix(guard, GuardPage, 1) == 0);
+    auto* record = reinterpret_cast<SceKernelSystemSwVersion*>(static_cast<unsigned char*>(guard) + GuardPage - offsetof(SceKernelSystemSwVersion, versionString));
+    Require(sceKernelGetSystemSwVersion_nid_postfix(record) == 0);
+    Require(std::memcmp(record->versionString, "01.000.000", sizeof("01.000.000")) == 0 && record->version == 0x01000000);
+    Require(mprotect_nid_postfix(guard, GuardPage, 3) == 0);
+    Require(record->size == 0);
+    Require(munmap_nid_postfix(guard, 2 * GuardPage) == 0);
+    *__error_nid_postfix() = 13;
 
     update = {0xaaaaaaaau, 0xaaaaaaaau};
     Require(sysKernelGetUpdVersion_nid_postfix(&update.version) == 0 && update.version == 0 && update.after == 0xaaaaaaaau);

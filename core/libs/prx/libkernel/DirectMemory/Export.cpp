@@ -241,8 +241,8 @@ int APS5_VABI sceKernelAvailableDirectMemorySize(int64_t search_start, int64_t s
  size_t size = 0;
  const int result = DirectMemoryLargestFree(search_start, search_end, alignment, &start, &size);
  if (result != 0) return result;
- if (phys_addr_out) *phys_addr_out = start;
- if (size_out) *size_out = size;
+ if (phys_addr_out && !GuestCopyOut_nid_no_patch(phys_addr_out, &start, sizeof(start))) return SCE_KERNEL_ERROR_EFAULT;
+ if (size_out && !GuestCopyOut_nid_no_patch(size_out, &size, sizeof(size))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
@@ -251,8 +251,9 @@ int APS5_VABI sceKernelDirectMemoryQuery(int64_t offset, int flags, void* info, 
  if (!info || offset < 0) return SCE_KERNEL_ERROR_EINVAL;
  struct DirectMemoryQueryInfo { int64_t start; int64_t end; int memory_type; };
  if (info_size < sizeof(DirectMemoryQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
- auto* q = static_cast<DirectMemoryQueryInfo*>(info);
- if (!DirectMemoryFind(offset, (flags & SCE_KERNEL_DMQ_FIND_NEXT) != 0, &q->start, &q->end, &q->memory_type)) return SCE_KERNEL_ERROR_EACCES;
+ DirectMemoryQueryInfo q{};
+ if (!DirectMemoryFind(offset, (flags & SCE_KERNEL_DMQ_FIND_NEXT) != 0, &q.start, &q.end, &q.memory_type)) return SCE_KERNEL_ERROR_EACCES;
+ if (!GuestCopyOut_nid_no_patch(info, &q, sizeof(q))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
@@ -262,9 +263,9 @@ int APS5_VABI sceKernelGetDirectMemoryType(int64_t offset, int* memory_type, int
  int64_t blockEnd = 0;
  int blockType = 0;
  if (!DirectMemoryFind(offset, false, &blockStart, &blockEnd, &blockType)) return SCE_KERNEL_ERROR_ENOENT;
- *memory_type = blockType;
- *start = blockStart;
- *end = blockEnd;
+ if (!GuestCopyOut_nid_no_patch(memory_type, &blockType, sizeof(blockType))) return SCE_KERNEL_ERROR_EFAULT;
+ if (!GuestCopyOut_nid_no_patch(start, &blockStart, sizeof(blockStart))) return SCE_KERNEL_ERROR_EFAULT;
+ if (!GuestCopyOut_nid_no_patch(end, &blockEnd, sizeof(blockEnd))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
@@ -503,13 +504,15 @@ int APS5_VABI sceKernelAvailableFlexibleMemorySize(size_t* size) {
  const size_t configured = _configuredFlexibleSize();
  const size_t images = GuestImageSegmentBytes_nid_no_patch();
  std::lock_guard lock(g_flexibleLock);
- *size = configured - std::min(configured, images + _flexibleUsedLocked());
+ const size_t available = configured - std::min(configured, images + _flexibleUsedLocked());
+ if (!GuestCopyOut_nid_no_patch(size, &available, sizeof(available))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
 int APS5_VABI sceKernelConfiguredFlexibleMemorySize(size_t* size) {
  if (!size) return SCE_KERNEL_ERROR_EINVAL;
- *size = _configuredFlexibleSize();
+ const size_t configured = _configuredFlexibleSize();
+ if (!GuestCopyOut_nid_no_patch(size, &configured, sizeof(configured))) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 
@@ -564,8 +567,9 @@ int APS5_VABI sceKernelGetTraceMemoryStats(std::uint64_t* first, std::uint64_t* 
 int APS5_VABI sceKernelGetPrtAperture(int index, void** addr, size_t* len) {
  if (index < 0 || index >= PRT_APERTURE_COUNT || !addr || !len) return SCE_KERNEL_ERROR_EINVAL;
  std::lock_guard lock(g_prtLock);
- *addr = g_prtApertures[index].address;
- *len = g_prtApertures[index].length;
+ if (!GuestCopyOut_nid_no_patch(addr, &g_prtApertures[index].address, sizeof(void*)) ||
+     !GuestCopyOut_nid_no_patch(len, &g_prtApertures[index].length, sizeof(size_t)))
+  return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 

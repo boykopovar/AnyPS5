@@ -503,6 +503,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_firmware_constant_returns PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvSetting>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceComposite>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFsInternalForVsh>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceHttpCache>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSdma>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSsl>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVisionManager>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libmdbg_syscore>")
     endif()
+    add_test_executable(guest_playready_tests tests/GuestPlayReady.cpp)
+    target_include_directories(guest_playready_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_playready_tests PRIVATE libScePlayReady libkernel libc)
+    configure_windows_unwind(guest_playready_tests)
+    add_test(NAME guest_playready COMMAND guest_playready_tests)
+    set_tests_properties(guest_playready PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_playready PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePlayReady>")
+    endif()
     if(Python3_Interpreter_FOUND)
         add_test(NAME nid_verneed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_verneed.py $<TARGET_FILE:nid_patcher>)
@@ -679,6 +689,16 @@ if(BUILD_TESTING)
     add_test(NAME guest_gnm_neo_retail COMMAND guest_gnm_neo_retail_tests)
     if(WIN32)
         set_tests_properties(guest_gnm_neo_retail PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
+    endif()
+
+    add_test_executable(guest_gnm_neo_context_state_internal_tests tests/GuestGnmNeoContextStateInternal.cpp)
+    target_include_directories(guest_gnm_neo_context_state_internal_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_gnm_neo_context_state_internal_tests PRIVATE libSceGnmDriverForNeoMode libc)
+    configure_windows_unwind(guest_gnm_neo_context_state_internal_tests)
+    add_test(NAME guest_gnm_neo_context_state_internal COMMAND guest_gnm_neo_context_state_internal_tests)
+    if(WIN32)
+        set_tests_properties(guest_gnm_neo_context_state_internal PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriverForNeoMode>")
     endif()
 
@@ -942,6 +962,16 @@ if(BUILD_TESTING)
     if(WIN32)
         set_tests_properties(guest_system_gesture PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemGesture>")
+    endif()
+
+    add_test_executable(guest_sys_util_notification_tests tests/GuestSysUtilNotification.cpp)
+    target_include_directories(guest_sys_util_notification_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_sys_util_notification_tests PRIVATE libSceSysUtil libkernel libc)
+    configure_windows_unwind(guest_sys_util_notification_tests)
+    add_test(NAME guest_sys_util_notification COMMAND guest_sys_util_notification_tests)
+    if(WIN32)
+        set_tests_properties(guest_sys_util_notification PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSysUtil>")
     endif()
 
     if(UNIX AND (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64)$" OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
