@@ -178,6 +178,20 @@ void Errors() {
     Require(inflateEnd_nid_postfix(&inflater) == Z_OK, "inflate end after error");
 }
 
+void StaleChecksum() {
+    GuestZStream deflater{};
+    deflater.adler = 0x100000001ULL;
+    Require(deflateInit2__nid_postfix(&deflater, 6, Z_DEFLATED, 15, 8, 0, "1.3.1", STREAM_SIZE) == Z_OK, "deflate init over a stale checksum");
+    Require(deflater.adler == 1, "deflate init replaces every checksum bit");
+    Require(deflateEnd_nid_postfix(&deflater) == Z_OK, "deflate end");
+
+    GuestZStream inflater{};
+    inflater.adler = 0xFFFFFFFF00000001ULL;
+    Require(inflateInit2__nid_postfix(&inflater, 15, "1.3.1", STREAM_SIZE) == Z_OK, "inflate init over a stale checksum");
+    Require(inflater.adler == 1, "inflate init replaces every checksum bit");
+    Require(inflateEnd_nid_postfix(&inflater) == Z_OK, "inflate end");
+}
+
 void Uncompress() {
     const auto data = Sample();
     GuestZStream deflater{};
@@ -217,6 +231,7 @@ int main() {
         for (const std::uint32_t chunk : {1u, 7u, 4096u}) RoundTrip(windowBits, chunk);
     }
     Errors();
+    StaleChecksum();
     Uncompress();
     return 0;
 }
