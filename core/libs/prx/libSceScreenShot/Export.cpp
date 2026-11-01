@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
@@ -20,6 +22,21 @@ constexpr std::uint16_t FileTypeMask = 0xF000;
 constexpr std::uint16_t DirectoryType = 0x4000;
 
 std::atomic<bool> disabled{false};
+
+template <typename T>
+T Field(const void* block, std::size_t offset) {
+    T value;
+    std::memcpy(&value, static_cast<const std::byte*>(block) + offset, sizeof(value));
+    return value;
+}
+
+bool StringFits(const char* text, std::size_t maxLength) {
+    return text == nullptr || strnlen(text, maxLength + 1) <= maxLength;
+}
+
+[[noreturn]] void ScreenShotService(const char* function) {
+    throw std::runtime_error(std::string(function) + ": the screenshot service is not available");
+}
 
 std::uint32_t CompiledSdkVersion() {
     static const auto* processParameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
@@ -84,29 +101,32 @@ int APS5_VABI sceScreenShotEnableNotification() {
     return 0;
 }
 
-int APS5_VABI sceScreenShotCapture() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceScreenShotCapture(std::uint32_t type, void* result, int (APS5_VABI*)(void*), void*) {
+    if (type >= 2 || !result) return ErrorArgument;
+    ScreenShotService(__func__);
 }
-int APS5_VABI sceScreenShotGetAppInfo() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceScreenShotGetAppInfo(int id, void* info) {
+    if (id == -1 || !info) return ErrorArgument;
+    ScreenShotService(__func__);
 }
-int APS5_VABI sceScreenShotGetDrcParam() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceScreenShotGetDrcParam(int id, void* first, std::uint64_t, void* second, void* third, std::uint64_t, void* fourth) {
+    if (id == -1 || !first || !second || !third || !fourth) return ErrorArgument;
+    ScreenShotService(__func__);
 }
-int APS5_VABI sceScreenShotIsVshScreenCaptureDisabled() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceScreenShotIsVshScreenCaptureDisabled(int* isDisabled) {
+    if (!isDisabled) return ErrorArgument;
+    ScreenShotService(__func__);
 }
-int APS5_VABI sceScreenShotSetDrcParam() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceScreenShotSetDrcParam(const void* param) {
+    if (!param || Field<std::uint64_t>(param, 0x28) != 0 || Field<std::uint32_t>(param, 0x00) != 0x30) return ErrorArgument;
+    if (!Field<const void*>(param, 0x08) || !Field<const void*>(param, 0x18)) return ErrorArgument;
+    if (Field<std::uint32_t>(param, 0x10) != 0x400 || Field<std::uint32_t>(param, 0x20) != 0x8000) return ErrorArgument;
+    ScreenShotService(__func__);
 }
-int APS5_VABI sceScreenShotSetParam() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceScreenShotSetParam(const void* param) {
+    if (!param || Field<std::uint64_t>(param, 0x20) != 0 || Field<std::uint32_t>(param, 0x00) != 0x28) return ErrorArgument;
+    if (!StringFits(Field<const char*>(param, 0x08), 255) || !StringFits(Field<const char*>(param, 0x10), 255) || !StringFits(Field<const char*>(param, 0x18), 511)) return ErrorArgument;
+    ScreenShotService(__func__);
 }
 
 }
