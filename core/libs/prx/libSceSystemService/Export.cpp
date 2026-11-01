@@ -578,9 +578,10 @@ int APS5_VABI sceSystemServiceLaunchSystemDeeplink(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI sceShellCoreUtilLaunchByUriParamInit(void* param) {
+    if (param == nullptr) return;
+    const std::uint32_t fields[2] = {0, 0xffffffff};
+    std::memcpy(param, fields, sizeof(fields));
 }
 
 int APS5_VABI sceSystemStateMgrTickVideoPlayback(void) {
@@ -868,8 +869,9 @@ int APS5_VABI sceShellCoreUtilRemoveCffConfigFile(void) {
     return 0;
 }
 
-int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceShellCoreUtilDebugGetNumberOfCffItems(std::uint32_t* count) {
+    if (count == nullptr) return static_cast<int>(0x80e30005);
+    *count = 50;
     return 0;
 }
 
