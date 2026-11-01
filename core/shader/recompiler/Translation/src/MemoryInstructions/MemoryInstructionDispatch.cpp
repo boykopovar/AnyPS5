@@ -608,6 +608,7 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::ImageGather4CLzO:
     case RdnaOpcode::ImageGather4h:
     case RdnaOpcode::ImageGather4hPck:
+    case RdnaOpcode::ImageGather8hPck:
     case RdnaOpcode::ImageGather4:
     case RdnaOpcode::ImageGather4B:
     case RdnaOpcode::ImageGather4BCl:
