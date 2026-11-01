@@ -254,10 +254,10 @@ int APS5_VABI sceFreeTypeOtOutlineGetBBox_nid_no_patch() {
 }
 APS5_EXPORT("0Aal-TIC4so", sceFreeTypeOtOutlineGetBBox_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_4RRjK_Wd1lU_nid_no_patch() {
+int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtUnknown_4RRjK_Wd1lU_nid_no_patch);
+APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtOutlineGetOrientation_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
