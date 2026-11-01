@@ -30,7 +30,7 @@ std::optional<std::size_t> ripRelativeDispOffset(const std::vector<std::uint8_t>
             ++cur;
             continue;
         }
-        if (b == PrefixRepne || b == PrefixSegDs) {
+        if (b == PrefixRepne || b == PrefixSegCs || b == PrefixSegDs || b == PrefixSegEs || b == PrefixSegSs) {
             hasRexW = false;
             ++cur;
             continue;
