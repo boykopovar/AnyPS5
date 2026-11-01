@@ -204,11 +204,15 @@ int main() {
             ordinaryArtifact = Draw(*device, VolumeDescriptor(), SamplerDescriptor(), bias);
             Check();
         }
-        for (const std::uint32_t reduction : {1u, 2u}) {
-            auto sampler = SamplerDescriptor();
-            sampler[0] |= reduction << 29u;
-            Draw(*device, VolumeDescriptor(), sampler, 8.0f);
-            Check();
+        if (!device->SamplerFilterMinmax()) {
+            std::puts("the device has no min/max sampler reduction with component mapping: the reduction cases are skipped");
+        } else {
+            for (const std::uint32_t reduction : {1u, 2u}) {
+                auto sampler = SamplerDescriptor();
+                sampler[0] |= reduction << 29u;
+                Draw(*device, VolumeDescriptor(), sampler, 8.0f);
+                Check();
+            }
         }
         auto plane = VolumeDescriptor();
         plane[3] = (plane[3] & ~(0xfu << 28u)) | (Type2D << 28u);
