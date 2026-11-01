@@ -1,3 +1,4 @@
+#include "prx/libSceOpusDec/include/InventoryExports.hpp"
 #include "prx/libSceOpusDec/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceOpusDec/include/OpusDecoder.hpp"
@@ -66,6 +67,14 @@ int APS5_VABI sceOpusDecDecodeWithPriority(void* state, const std::uint8_t* data
 int APS5_VABI sceOpusDecDecodeWithPriorityAndTimeout(void* state, const std::uint8_t* data, int bytes, std::int16_t* pcm, int capacity, int priority,
                                                     std::uint32_t timeout, std::uint32_t*) {
     return OpusDecodeVariantWithTimeout(library, ErrorBase, state, data, bytes, pcm, capacity, priority, false, timeout, __func__);
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI sceOpusDecGetAjmContext() {
+    NotImplemented_nid_no_patch(__func__);
 }
 
 }

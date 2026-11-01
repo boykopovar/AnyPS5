@@ -2327,6 +2327,7 @@ int APS5_VABI sceCesUtf16leToSbc(const uint16_t* utf16, uint32_t utf16max, uint3
 }
 
 int APS5_VABI sceCesUtf32ToSbc(uint32_t utf32, const uint8_t* profile, uint8_t* sbc) {
+    if (isSbc(profile) && sbc && utf32 >= 0xD800 && utf32 <= 0xDFFF) return CES_ERROR_ILLEGAL_CODE;
     return scalarToSbc(utf32, profile, sbc);
 }
 

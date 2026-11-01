@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceKeyboard/include/InventoryExports.hpp"
 #include "prx/libSceKeyboard/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceKeyboard/include/KeyboardState.hpp"
@@ -134,5 +136,14 @@ int APS5_VABI sceDbgKeyboardReadState() {
 void KeyboardPublishInput_nid_postfix(const KeyboardInputEvent& event) {
     Keyboard::Publish(event);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceKeyboardUnknown_l76jptHfizM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("l76jptHfizM", libSceKeyboardUnknown_l76jptHfizM_nid_no_patch);
 
 }

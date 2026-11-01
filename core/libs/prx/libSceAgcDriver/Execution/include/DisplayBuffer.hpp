@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -37,6 +38,7 @@ std::array<std::byte, 4> DisplayBufferClearTexel(const DisplayBuffer& buffer, Gr
 std::array<std::byte, 4> DisplayBufferClearPixel(const DisplayBuffer& buffer, Graphics::DccKeys keys);
 std::size_t DisplayBufferKeyBytes(const DisplayBuffer& buffer);
 Graphics::DccKeys DisplayBufferKeys(const DisplayBuffer& buffer);
+bool ResidentServesDisplay(std::uint64_t residentBase, std::uint64_t residentDcc, Graphics::DccKeys uploadedKeys, Graphics::DccKeys filledKeys, bool hasWritesSinceFill, const std::function<Graphics::DccKeys()>& residentKeys, const DisplayBuffer& buffer);
 
 }
 
