@@ -935,6 +935,7 @@ int main() {
     constexpr int user = 0x10000000;
 
     Require(scePadGetHandle(user, 0, 0) == noHandle);
+    for (const int invalidUser : {-1, 0, 0x10000005}) Require(scePadGetHandle(invalidUser, 0, 0) == noHandle);
     Require(scePadOpen_nid_postfix(user, 1, 0, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadOpen_nid_postfix(user, 0, 1, nullptr) == static_cast<int>(0x809b0003));
     for (const int type : {0, 2, 3, 4}) Require(scePadOpen_nid_postfix(-1, type, 0, nullptr) == static_cast<int>(0x809b0001));
@@ -967,6 +968,7 @@ int main() {
     Require(handle > 0);
     Require(scePadUnknown_n3kSX62fgNo() == PAD_OK);
     Require(scePadGetHandle(user, 0, 0) == handle);
+    for (const int invalidUser : {-1, 0, 0x10000005}) Require(scePadGetHandle(invalidUser, 0, 0) == noHandle);
     CheckSpecialPort(user, handle);
     CheckTiltCorrection(handle);
     CheckAngularVelocityDeadband(handle);
