@@ -8,6 +8,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -623,19 +624,24 @@ void ErasePhysMappings(std::uint64_t first, std::uint64_t last) {
     }
 }
 
-void ValidatePhysicalRange(std::uint64_t phys, std::size_t len) {
+std::optional<std::uint64_t> FirstUnallocatedPage(std::uint64_t phys, std::size_t len) {
     const auto last = phys + len;
     auto it = g_physBlocks.upper_bound(phys);
     if (it != g_physBlocks.begin()) --it;
     for (auto cursor = phys; cursor < last;) {
-        if (it == g_physBlocks.end() || it->first > cursor || it->second.end <= cursor) {
-            char message[160];
-            std::snprintf(message, sizeof(message), "direct memory range 0x%llx+0x%zx references unallocated physical page 0x%llx", static_cast<unsigned long long>(phys), len, static_cast<unsigned long long>(cursor));
-            throw std::invalid_argument(message);
-        }
+        if (it == g_physBlocks.end() || it->first > cursor || it->second.end <= cursor) return cursor;
         cursor = std::min(last, it->second.end);
         ++it;
     }
+    return std::nullopt;
+}
+
+void ValidatePhysicalRange(std::uint64_t phys, std::size_t len) {
+    const auto missing = FirstUnallocatedPage(phys, len);
+    if (!missing) return;
+    char message[160];
+    std::snprintf(message, sizeof(message), "direct memory range 0x%llx+0x%zx references unallocated physical page 0x%llx", static_cast<unsigned long long>(phys), len, static_cast<unsigned long long>(*missing));
+    throw std::invalid_argument(message);
 }
 
 #if defined(__linux__)
@@ -1075,6 +1081,10 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
         return SCE_KERNEL_ERROR_EINVAL;
     }
     if ((prot & ~0x3F7) == 0 && (prot & GuestProtCpuExecute) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    {
+        std::lock_guard lock(g_directLock);
+        if (FirstUnallocatedPage(static_cast<std::uint64_t>(physStart), len)) return SCE_KERNEL_ERROR_ENOMEM;
+    }
     GuestAllocations::Mutation mutation;
     flags = PlaceHintInReservation(*addr, len, flags);
     if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;

@@ -206,7 +206,7 @@ if(BUILD_TESTING)
     endif()
 endif()
 
-target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjectTable.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjectText.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjectTable.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjectText.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjectCreate.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_object_text_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/ObjectText.cpp)
@@ -223,7 +223,7 @@ endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_object_allocation_tests
-        tests/ObjectTextAllocation.cpp src/ObjectText.cpp src/ObjectTable.cpp src/Error.cpp)
+        tests/ObjectTextAllocation.cpp src/ObjectText.cpp src/ObjectCreate.cpp src/ObjectTable.cpp src/Error.cpp)
     target_include_directories(guest_libressl_object_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_compile_features(guest_libressl_object_allocation_tests PRIVATE cxx_std_23)
     target_link_libraries(guest_libressl_object_allocation_tests PRIVATE libc)

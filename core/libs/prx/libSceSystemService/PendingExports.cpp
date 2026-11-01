@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <atomic>
+#include <cstring>
 
 namespace {
 
@@ -16,6 +17,8 @@ constexpr std::int32_t ActivationTypeHevc = 3;
 constexpr std::int32_t ActivationTypeHevcSoft = 4;
 constexpr std::int32_t ActivationStatus = 2;
 constexpr std::intptr_t ActivationHandleStep = 4;
+constexpr std::int32_t FirstPSButtonEventType = 0x20000001;
+constexpr std::int32_t LastPSButtonEventType = 0x20000002;
 
 std::atomic<std::intptr_t> nextActivationHandle{0x1000};
 
@@ -27,6 +30,10 @@ static_assert(offsetof(ShellCoreErrorDialogParam, formatArgs) == 8);
 static_assert(offsetof(ShellCoreErrorDialogParam, flag) == 16);
 
 struct SystemServiceEvent;
+
+static_assert(sizeof(SystemServicePSButtonEvent) == 16);
+static_assert(offsetof(SystemServicePSButtonEvent, dataAt8) == 4);
+static_assert(offsetof(SystemServicePSButtonEvent, dataAt0) == 8);
 
 static_assert(sizeof(SystemServiceStoreParam) == 4);
 
@@ -1848,7 +1855,14 @@ int APS5_VABI sceSystemServiceGetMainAppTitleId() {
 }
 
 int APS5_VABI sceSystemServiceGetPSButtonEvent(const SystemServiceEvent* event, SystemServicePSButtonEvent* buttonEvent) {
-    NotImplemented_nid_no_patch(__func__);
+    if (event == nullptr || buttonEvent == nullptr) return SystemServiceInvalidArgument;
+    const auto* bytes = reinterpret_cast<const std::uint8_t*>(event);
+    SystemServicePSButtonEvent result{};
+    std::memcpy(&result.eventType, bytes, sizeof(result.eventType));
+    if (result.eventType < FirstPSButtonEventType || result.eventType > LastPSButtonEventType) return SystemServiceInvalidArgument;
+    std::memcpy(&result.dataAt0, bytes + 4, sizeof(result.dataAt0));
+    std::memcpy(&result.dataAt8, bytes + 12, sizeof(result.dataAt8));
+    *buttonEvent = result;
     return 0;
 }
 

@@ -23,8 +23,11 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include "prx/libSceVideoOut/include/HostVolumeInput.hpp"
+#include "prx/libScePad/include/HostVolumeSettings.hpp"
 
 PadInput::PadInput() : PadInput(Pad::LoadInputMapping()) {
+    HostVolumeConfigureFromEnvironment_nid_no_patch();
 }
 
 static_assert(PAD_MAX_CONTROLLERS == AgcDriver::PadStatusSlots, "the pad status panel lists one line per controller slot");
@@ -310,6 +313,8 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
     }
     if (event.type == SDL_WINDOWEVENT) {
         if (keyboardMouse.HandleEvent(event, std::chrono::steady_clock::now()).releaseMouse) setMouseMode(false);
+        HostVolume volume;
+        if (window.Handle() != nullptr && ApplyHostFocusEvent(event, SDL_GetWindowID(window.Handle()), &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
         publish(window.FrameNumber(), 0);
         return;
     }
@@ -330,11 +335,20 @@ void PadInput::HandleEvent(const SDL_Event& event, DisplayWindow& window) {
         AgcDriverPadStatusShow_nid_postfix();
         reportStatus();
     }
+    if (window.Handle() != nullptr && event.key.windowID == SDL_GetWindowID(window.Handle())) {
+        HostVolume volume;
+        if (ApplyHostVolumeRequests(requests, &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
+    }
     if (requests.toggleMouse) setMouseMode(!keyboardMouse.MouseMode());
     if (event.type != SDL_MOUSEMOTION) publish(window.FrameNumber(), 0);
 }
 
 void PadInput::Update(const DisplayWindow& window) {
+    if (!hostFocusSynced && window.Handle() != nullptr) {
+        hostFocusSynced = true;
+        HostVolume volume;
+        if (HostVolumeFocus_nid_no_patch(SDL_GetKeyboardFocus() == window.Handle(), &volume)) APS5_LOG_ERR("%s", HostVolumeMessage(volume).c_str());
+    }
     bool anyController = false;
     for (int slot = 0; slot < PAD_MAX_CONTROLLERS; ++slot) {
         if (slots[slot].controller != nullptr) {

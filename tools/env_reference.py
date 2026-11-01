@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from nid_names import CPP_TOKEN
+from sanitizer_report import cell
 
 PREFIXES = ("APS5_", "ANYPS5_")
 DOC = "docs/dev/ENVIRONMENT.md"
@@ -177,7 +178,8 @@ def table(found, out):
         out.write("| Name | Kind | Source | Default | Description |\n")
         out.write("|------|------|--------|---------|-------------|\n")
         for name, (source, number, kind, default) in sorted(libraries[library]):
-            out.write(f"| `{name}` | {kind} | `{source}` | {default} | |\n")
+            cells = (f"`{name}`", kind.replace("\\", "\\\\"), f"`{source}`", default.replace("\\", "\\\\"))
+            out.write("| " + " | ".join(cell(value) for value in cells) + " | |\n")
         out.write("\n")
 
 

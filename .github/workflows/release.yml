@@ -24,7 +24,7 @@ jobs:
   build:
     name: Build and test (${{ matrix.platform }})
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - platform: linux
