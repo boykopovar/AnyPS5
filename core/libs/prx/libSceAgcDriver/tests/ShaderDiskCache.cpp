@@ -2376,6 +2376,80 @@ void verifyPlanRoundTrip() {
     require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; }); }), "no fixture plans a pure flat slot");
 }
 
+void verifyPlanBudget() {
+    auto base = planFixtures().front();
+    base.waveSize = 32u;
+    std::vector<PlanFixture> fixtures;
+    for (std::uint32_t index = 0; index < 4u; ++index) {
+        auto fixture = base;
+        fixture.code.insert(fixture.code.begin(), 0xbf800006u + index);
+        fixture.codeAddress += 0x1000u * (index + 1u);
+        fixtures.push_back(std::move(fixture));
+    }
+    const auto planOf = [&](std::size_t index) { return GetResourcePlan(fixtures[index].Request(true)); };
+    SetResourcePlanBudget(1u);
+    SetResourcePlanBudget(0u);
+    std::vector<std::uint64_t> sizes;
+    std::vector<std::vector<std::byte>> encoded;
+    for (std::size_t index = 0; index < fixtures.size(); ++index) {
+        const auto before = ResourcePlanTotals();
+        const auto plan = planOf(index);
+        const auto after = ResourcePlanTotals();
+        require(after.heldPlans == before.heldPlans + 1u && after.heldBytes > before.heldBytes + plan->valueStorage.Size() * sizeof(IrValue), "plan budget: a loaded plan was not accounted with its values");
+        sizes.push_back(after.heldBytes - before.heldBytes);
+        encoded.push_back(encodedPlan(*plan));
+    }
+    ShaderDiskCache::Flush();
+    static_cast<void>(planOf(0));
+    const auto beforeTrim = ResourcePlanTotals();
+    const auto budget = ((beforeTrim.heldBytes - sizes[1] - sizes[2] + std::min(sizes[1], sizes[2]) / 2u) / 3u + 1u) * 4u;
+    SetResourcePlanBudget(budget);
+    const auto afterTrim = ResourcePlanTotals();
+    require(afterTrim.evictions == beforeTrim.evictions + 2u && afterTrim.heldBytes == beforeTrim.heldBytes - sizes[1] - sizes[2] && afterTrim.heldBytes <= budget / 4u * 3u, "plan budget: the trim did not drop exactly the two least recently used plans down to three quarters of the budget");
+    const auto residentDisk = ShaderDiskCache::Totals();
+    static_cast<void>(planOf(3));
+    static_cast<void>(planOf(0));
+    require(ShaderDiskCache::Totals().planHits == residentDisk.planHits && ResourcePlanTotals().reloads == afterTrim.reloads, "plan budget: a recently used plan was evicted");
+    const auto beforeReload = ShaderDiskCache::Totals();
+    const auto reloaded = planOf(1);
+    const auto afterReload = ShaderDiskCache::Totals();
+    require(afterReload.planHits == beforeReload.planHits + 1u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites, "plan budget: an evicted plan did not reload as a disk cache hit without a new write");
+    require(ResourcePlanTotals().reloads == afterTrim.reloads + 1u && encodedPlan(*reloaded) == encoded[1], "plan budget: the reloaded plan differs from the evicted one");
+    SetResourcePlanBudget(0u);
+    static_cast<void>(planOf(2));
+    static_cast<void>(planOf(3));
+    const auto owned = planOf(0);
+    const auto beforeOwned = ResourcePlanTotals();
+    SetResourcePlanBudget(1u);
+    const auto afterOwned = ResourcePlanTotals();
+    require(afterOwned.evictions >= beforeOwned.evictions + 2u && afterOwned.heldPlans >= 2u, "plan budget: a budget of one byte did not evict the unowned plans or evicted the owned ones");
+    const auto beforeOwnedHits = ShaderDiskCache::Totals().planHits;
+    require(planOf(0) == owned && planOf(1) == reloaded && ShaderDiskCache::Totals().planHits == beforeOwnedHits, "plan budget: a plan with another owner was evicted");
+    SetResourcePlanBudget(0u);
+    auto preparedFixture = base;
+    preparedFixture.code.insert(preparedFixture.code.begin(), 0xbf80000au);
+    preparedFixture.codeAddress += 0x10000u;
+    const auto preparedRequest = preparedFixture.Request(true);
+    const auto preparedHandle = PrepareShader(preparedRequest);
+    auto drawn = preparedRequest;
+    drawn.layout.pushConstantOffsetBytes = 16u;
+    drawn.layout.pushConstantSizeBytes = 112u;
+    const auto invocation = PreparedShaderInvocation::TryCreate(drawn, preparedHandle);
+    require(invocation.has_value(), "plan budget: the prepared artifact refused a relocated push layout");
+    RequestMemoryView drawnMemory(drawn.context.memory);
+    static_cast<void>(invocation->Capture(drawnMemory.MakeRuntime(drawn.context.userData, drawn.shader.codeAddress)));
+    ShaderDiskCache::Flush();
+    const auto beforePreparedTrim = ResourcePlanTotals();
+    SetResourcePlanBudget(1u);
+    require(ResourcePlanTotals().evictions > beforePreparedTrim.evictions, "plan budget: the captured plan of a prepared shader was not evicted");
+    const auto beforePrepared = ShaderDiskCache::Totals();
+    static_cast<void>(invocation->Capture(drawnMemory.MakeRuntime(drawn.context.userData, drawn.shader.codeAddress)));
+    const auto afterPrepared = ShaderDiskCache::Totals();
+    require(afterPrepared.planHits == beforePrepared.planHits + 1u && afterPrepared.planMisses == beforePrepared.planMisses && afterPrepared.planWrites == beforePrepared.planWrites && afterPrepared.misses == beforePrepared.misses && afterPrepared.writes == beforePrepared.writes && ResourcePlanTotals().reloads == beforePreparedTrim.reloads + 1u, "plan budget: a prepared shader's evicted plan did not reload from its own disk cache entry");
+    SetResourcePlanBudget(0u);
+    require(ResourcePlanBudgetFor(0u) == (2ull << 30u) && ResourcePlanBudgetFor(4ull << 30u) == (1ull << 30u) && ResourcePlanBudgetFor(32ull << 30u) == (4ull << 30u) && ResourcePlanBudgetFor(256ull << 30u) == (8ull << 30u), "plan budget: the default budget is not an eighth of the host memory between 1 and 8 GiB");
+}
+
 void verifyPlanKey() {
     auto fixtures = planFixtures();
     auto& fixture = fixtures[1];
@@ -2671,6 +2745,7 @@ int main(int argc, char** argv) {
         verifyVertexTypeSpecialization();
         verifyBuiltinSpecialization();
         verifySpecializationLiveness();
+        verifyPlanBudget();
         ShaderRecompiler::ShaderDiskCache::Flush();
         removeCacheDirectory(directory);
         std::cout << "shader disk cache tests passed\n";
