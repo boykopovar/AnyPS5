@@ -215,6 +215,10 @@ static void CheckHandleQueries(int user, int handle) {
     PadMotionSensorPosition position{1.0f, 2.0f, 3.0f};
     Require(scePadGetMotionSensorPosition(handle, nullptr) == PAD_ERROR_INVALID_ARG);
     Require(scePadGetMotionSensorPosition(closed, &position) == PAD_ERROR_INVALID_HANDLE);
+    for (const int invalid : {-1, 0, 9999}) {
+        Require(scePadGetMotionSensorPosition(invalid, &position) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadGetMotionSensorPosition(invalid, nullptr) == PAD_ERROR_INVALID_ARG);
+    }
     Require(scePadGetMotionSensorPosition(handle, &position) == notConnected);
     Require(position.x == 1.0f && position.y == 2.0f && position.z == 3.0f);
 
@@ -1002,7 +1006,10 @@ int main() {
     Require(scePadResetLightBar(handle + 1) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetMotionSensorState(handle, true) == PAD_OK);
     Require(scePadSetMotionSensorState(handle, false) == PAD_OK);
-    Require(scePadSetMotionSensorState(handle + 1, true) == PAD_ERROR_INVALID_HANDLE);
+    for (const int invalid : {-1, 0, handle + 1, 9999}) {
+        Require(scePadSetMotionSensorState(invalid, true) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadSetMotionSensorState(invalid, false) == PAD_ERROR_INVALID_HANDLE);
+    }
     Require(scePadSetVibrationMode(handle, 1) == 0);
     Require(scePadSetVibrationMode(handle, 2) == 0);
     Require(scePadSetVibrationMode(handle, 3) == 0);
