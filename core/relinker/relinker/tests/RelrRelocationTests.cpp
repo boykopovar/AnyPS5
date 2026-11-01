@@ -101,6 +101,7 @@ int main() try {
         Reject([&](auto& input) { auto tag = input.Tags[index]; ++tag.Value; input.Tags.push_back(tag); }, "Conflicting duplicate");
     }
     Reject([](auto& input) { input.SetWords({3}); }, "bitmap precedes address");
+    Reject([](auto& input) { input.SetWords({0x201}); }, "bitmap precedes address");
     Reject([](auto& input) { input.SetWords({0x200, 0x200}); }, "Overlapping RELR targets");
     Reject([](auto& input) { input.SetWords({0x200, 0x206}); }, "Overlapping RELR targets");
     Reject([](auto& input) { input.SetWords({0x3000}); }, "target exceeds load");
