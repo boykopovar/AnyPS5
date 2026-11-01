@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
@@ -56,6 +57,8 @@ static void RequireInvalidArguments() {
     Require(sceKernelSignalSema(sem, 3) == SCE_OK);
     Require(sceKernelPollSema(sem, 3) == SCE_OK);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
+    Require(ksem_wait_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
+    Require(ksem_trywait_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
 }
 
 int main() {
@@ -116,6 +119,8 @@ int main() {
     Require(sceKernelSignalSema(sem, 1) == SCE_OK);
     Require(sceKernelWaitSema(sem, 1, nullptr) == SCE_OK);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
+    Require(ksem_wait_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
+    Require(ksem_trywait_nid_postfix(-1) == -1 && *__error_nid_postfix() == 22);
 
     RequireInvalidArguments();
 }
