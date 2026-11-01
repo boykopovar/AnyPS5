@@ -84,6 +84,10 @@ bool BasicEvaluator<TNode>::EvaluateWide(TNode value, std::uint64_t& result) {
         return false;
     }
     const TNode& inst = value;
+    if (_masked && inst.Type() == IrType::Bool && ActiveMaskImplies(_activeMask, inst)) {
+        result = 1u;
+        return true;
+    }
     if (_masked && IsRuntimeSelect(inst.Opcode()) && inst.ArgumentCount() == 3 && ActiveMaskImplies(_activeMask, inst.Argument(0))) {
         return EvaluateWide(inst.Argument(1), result);
     }
@@ -150,6 +154,10 @@ bool BasicEvaluator<TNode>::EvaluateExtract(const TNode& inst, std::uint64_t& re
         return false;
     }
     const auto component = static_cast<std::uint32_t>(index.ImmediateBits());
+    if (inst.Opcode() == IrOpcode::CompositeExtractU32x4) {
+        const TNode source = inst.Argument(0);
+        return component < 4u && source.Opcode() == IrOpcode::CompositeConstructU32x4 && source.ArgumentCount() == 4u && EvaluateWide(source.Argument(component), result);
+    }
     if (component >= 2u) {
         return false;
     }
@@ -319,6 +327,7 @@ std::optional<std::size_t> evaluatedArguments(IrOpcode opcode) {
         case IrOpcode::SLessThan32:
         case IrOpcode::ULessThan32:
         case IrOpcode::UGreaterThan32:
+        case IrOpcode::UGreaterThanEqual32:
         case IrOpcode::LogicalAnd:
         case IrOpcode::LogicalOr:
         case IrOpcode::LogicalXor: return 2u;
@@ -356,6 +365,12 @@ std::optional<bool> evaluableAlone(const IrResourcePlan& program, const IrValue&
         case IrOpcode::LoadAddressU32:
         case IrOpcode::ReadConstBuffer: return IsRawRead(program, value);
         case IrOpcode::Phi: return std::nullopt;
+        case IrOpcode::CompositeExtractU32x4: {
+            const auto* source = value.ArgumentCount() == 2u && value.Argument(0) != nullptr ? value.Argument(0)->Resolve() : nullptr;
+            const auto* index = value.ArgumentCount() == 2u && value.Argument(1) != nullptr ? value.Argument(1)->Resolve() : nullptr;
+            if (source == nullptr || source->Opcode() != IrOpcode::CompositeConstructU32x4 || source->ArgumentCount() != 4u || index == nullptr || !index->HasImmediate() || index->Type() != IrType::U32 || index->ImmediateU32() >= 4u) return false;
+            return std::nullopt;
+        }
         case IrOpcode::CompositeExtractU64:
         case IrOpcode::CompositeExtractU32x2: {
             if (value.ArgumentCount() < 2) return true;
@@ -404,6 +419,10 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
             return;
         }
         const auto resolved = [](IrValue* value) { return value != nullptr ? value->Resolve() : nullptr; };
+        if (current->Opcode() == IrOpcode::CompositeExtractU32x4) {
+            required.push_back(resolved(current->Argument(0)->Resolve()->Argument(current->Argument(1)->Resolve()->ImmediateU32())));
+            return;
+        }
         if (current->Opcode() == IrOpcode::CompositeExtractU64) {
             required.push_back(resolved(current->Argument(0)));
             return;
@@ -430,6 +449,10 @@ bool BasicEvaluator<TNode>::MayEvaluate(const IrResourcePlan& program, IrValue* 
         const auto [current, expanded] = pending.back();
         pending.pop_back();
         if (known.contains(current)) continue;
+        if (activeMask != nullptr && current->Type() == IrType::Bool && ActiveMaskImplies(activeMask, current)) {
+            known.emplace(current, true);
+            continue;
+        }
         if (current->Opcode() == IrOpcode::ReadFirstLane && current->ArgumentCount() >= 2) {
             auto* source = current->Argument(0) != nullptr ? current->Argument(0)->Resolve() : nullptr;
             const auto* mask = current->Argument(1) != nullptr ? current->Argument(1)->Resolve() : nullptr;
@@ -489,6 +512,7 @@ EvaluatorReads BasicEvaluator<TNode>::Reads(const IrResourcePlan& program, const
     switch (value.Opcode()) {
         case IrOpcode::LoadAddressU32:
         case IrOpcode::ReadConstBuffer: return IsRawRead(program, value) ? EvaluatorReads::Closure : EvaluatorReads::Nothing;
+        case IrOpcode::CompositeConstructU32x4:
         case IrOpcode::CompositeConstructU32x2:
         case IrOpcode::IAddCarry32:
         case IrOpcode::GetUserData:
@@ -498,6 +522,7 @@ EvaluatorReads BasicEvaluator<TNode>::Reads(const IrResourcePlan& program, const
         case IrOpcode::BitCastU32F32:
         case IrOpcode::BitCastF32U32:
         case IrOpcode::CompositeExtractU64:
+        case IrOpcode::CompositeExtractU32x4:
         case IrOpcode::CompositeExtractU32x2:
         case IrOpcode::ReadConst: return EvaluatorReads::Arguments;
         default: return evaluatedArguments(value.Opcode()) ? EvaluatorReads::Arguments : EvaluatorReads::Nothing;
@@ -543,7 +568,8 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
         case IrOpcode::BitCastU32F32:
         case IrOpcode::BitCastF32U32: return Arg(inst, 0, result);
         case IrOpcode::CompositeExtractU64:
-        case IrOpcode::CompositeExtractU32x2: return EvaluateExtract(inst, result);
+        case IrOpcode::CompositeExtractU32x2:
+        case IrOpcode::CompositeExtractU32x4: return EvaluateExtract(inst, result);
         case IrOpcode::CompositeConstructU64:
             if (!binary()) {
                 return false;
@@ -828,6 +854,12 @@ bool BasicEvaluator<TNode>::EvaluateInst(const TNode& inst, std::uint64_t& resul
             }
             return false;
         }
+        case IrOpcode::UGreaterThanEqual32:
+            if (binary()) {
+                result = static_cast<std::uint32_t>(a) >= static_cast<std::uint32_t>(b) ? 1u : 0u;
+                return true;
+            }
+            return false;
         case IrOpcode::IEqual32:
             if (binary()) {
                 result = static_cast<std::uint32_t>(a) == static_cast<std::uint32_t>(b) ? 1u : 0u;

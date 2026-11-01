@@ -758,7 +758,7 @@ void CheckStreamInfo(AvPlayerInternal* player) {
             Check(std::strcmp(info.details.video.language_code, "eng") == 0, "unexpected video language");
         } else {
             const bool english = index == EnglishAudioStream;
-            Check(info.type == 0, "audio stream type");
+            Check(info.type == 2, "audio stream type");
             Check(info.details.audio.channel_count == (english ? 2 : 1) && info.details.audio.sample_rate == SampleRate, "unexpected audio stream");
             Check(std::strcmp(info.details.audio.language_code, english ? "eng" : "fra") == 0, "unexpected audio language");
         }
@@ -786,7 +786,7 @@ void CheckStreamInfoEx(AvPlayerInternal* player) {
         } else {
             const bool english = index == EnglishAudioStream;
             const auto& audio = info.details.audio;
-            Check(info.type == 0, "extended audio stream type");
+            Check(info.type == 2, "extended audio stream type");
             Check(audio.channel_count == (english ? 2 : 1) && audio.sample_rate == SampleRate, "unexpected extended audio stream");
             Check(std::memcmp(audio.language_code, english ? "eng" : "fra", 4) == 0, "unexpected extended audio language");
         }
@@ -947,7 +947,7 @@ void TestVp9OpusPlayback() {
         AvPlayerStreamInfo video{};
         Check(sceAvPlayerGetStreamInfo(player, 0, &video) == 0 && video.type == 1 && video.details.video.width == 112 && video.details.video.height == 64, "unexpected VP9 stream");
         AvPlayerStreamInfo audio{};
-        Check(sceAvPlayerGetStreamInfo(player, 1, &audio) == 0 && audio.type == 0 && audio.details.audio.channel_count == 2 && audio.details.audio.sample_rate == SampleRate, "unexpected Opus stream");
+        Check(sceAvPlayerGetStreamInfo(player, 1, &audio) == 0 && audio.type == 2 && audio.details.audio.channel_count == 2 && audio.details.audio.sample_rate == SampleRate, "unexpected Opus stream");
         Check(sceAvPlayerEnableStream(player, 0) == 0 && (!withAudio || sceAvPlayerEnableStream(player, 1) == 0), "enable WebM streams failed");
         if (!withAudio) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "WebM no-sync mode rejected");
         Check(sceAvPlayerStart(player) == 0, "WebM start failed");
