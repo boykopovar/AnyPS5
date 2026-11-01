@@ -2492,7 +2492,7 @@ int APS5_VABI sceNetResolverGetError(int rid, int* status) {
     std::lock_guard lk(g_mutex);
     const auto resolver = g_resolvers.find(rid);
     if (resolver == g_resolvers.end()) return fail(NET_EBADF);
-    *status = resolver->second.error;
+    if (!GuestCopyOut_nid_no_patch(status, &resolver->second.error, sizeof(*status))) return fail(NET_EFAULT);
     return 0;
 }
 
