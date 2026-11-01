@@ -52,13 +52,17 @@ struct Service {
 Service lookup(1, 1);
 Service wordFilter(WORD_FILTER_TITLE_CTX_ID_OFFSET + 1, WORD_FILTER_REQUEST_ID_OFFSET + 1);
 
-int CreateTitleContext(Service& service, const void* selfNpId) {
-    if (!selfNpId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+int AddTitleContext(Service& service) {
     std::lock_guard lock(service.mutex);
     if (service.titleContexts.size() >= MAX_TITLE_CONTEXTS) return SCE_NP_COMMUNITY_ERROR_TOO_MANY_OBJECTS;
     const int titleCtxId = service.nextTitleContext++;
     service.titleContexts.insert(titleCtxId);
     return titleCtxId;
+}
+
+int CreateTitleContext(Service& service, const void* selfNpId) {
+    if (!selfNpId) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
+    return AddTitleContext(service);
 }
 
 int DeleteTitleContext(Service& service, int titleCtxId) {
@@ -297,9 +301,9 @@ int APS5_VABI sceNpAppLaunchLinkIntInitialize() {
 int APS5_VABI sceNpBandwidthTestShutdownWithDetailedInfo() {
     return SCE_NP_ERROR_INVALID_ARGUMENT;
 }
-int APS5_VABI sceNpLookupCreateTitleCtxA() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpLookupCreateTitleCtxA(int userId) {
+    (void)userId;
+    return AddTitleContext(lookup);
 }
 int APS5_VABI sceNpLookupNetAbortRequest() {
     NotImplemented_nid_no_patch(__func__);
@@ -457,9 +461,9 @@ int APS5_VABI sceNpUtilityTerm() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpWordFilterCreateTitleCtxA() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceNpWordFilterCreateTitleCtxA(int userId) {
+    (void)userId;
+    return AddTitleContext(wordFilter);
 }
 }
 

@@ -46,8 +46,8 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value="[]") as gh:
             self.assertEqual(pr_overlap.open_prs("topic/one&two"), {})
         gh.assert_called_once_with(
-            "api", "--paginate",
-            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100",
+            "api", "--include",
+            "repos/owner/project/pulls?state=open&base=topic%2Fone%26two&per_page=100&page=1",
         )
 
     def test_single_page_preserves_author_head_and_dependencies(self):
@@ -367,6 +367,47 @@ class SubdirectoryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue((root / "tools" / "reports" / "7.md").is_file())
 
+
+class MarkdownCellTests(unittest.TestCase):
+    def test_regular_filename_is_unchanged(self):
+        self.assertEqual(
+            pr_overlap.cell({"normal.cpp"}),
+            "`normal.cpp`",
+        )
+
+    def test_single_backtick_in_filename(self):
+        self.assertEqual(
+            pr_overlap.cell({"example`file.cpp"}),
+            "`` example`file.cpp ``",
+        )
+
+    def test_multiple_backticks_in_filename(self):
+        self.assertEqual(
+            pr_overlap.cell({"example``file.cpp"}),
+            "``` example``file.cpp ```",
+        )
+
+    def test_multiple_filenames_are_sorted(self):
+        self.assertEqual(
+            pr_overlap.cell({"normal.cpp", "example`file.cpp"}),
+            "`` example`file.cpp ``<br>`normal.cpp`",
+        )
+
+
+    def test_conflict_spans_with_backticks(self):
+        result = pr_overlap.spans(
+            {"example`file.cpp": [(5, 5)]},
+            "https://github.com/boykopovar/AnyPS5/blob/main",
+        )
+
+        self.assertIn(
+            "`` example`file.cpp ``",
+            result,
+        )
+        self.assertIn(
+            "example%60file.cpp#L5",
+            result,
+        )
 
 class CommentStateTests(unittest.TestCase):
     def setUp(self):

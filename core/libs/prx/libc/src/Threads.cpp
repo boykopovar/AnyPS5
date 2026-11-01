@@ -204,6 +204,10 @@ int APS5_VABI _Mtx_init_with_name_nid_postfix(void** handle, int type, const cha
     return _Mtx_init_nid_postfix(handle, type);
 }
 
+int APS5_VABI _Mtx_init_with_default_name_override_nid_postfix(void** handle, int type, const char* name) {
+    return _Mtx_init_with_name_nid_postfix(handle, type, name);
+}
+
 void APS5_VABI _Mtx_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Mtx_destroy: null mutex handle pointer");
@@ -380,8 +384,16 @@ int SignalCondition_nid_no_patch(void** handle) {
     return threadSuccess;
 }
 
+static std::atomic<unsigned> registeredProcessorCount{0};
+
+void RegisterProcessorCount_nid_no_patch(unsigned count) {
+    registeredProcessorCount.store(count, std::memory_order_release);
+}
+
 unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
-    return std::thread::hardware_concurrency();
+    const unsigned count = registeredProcessorCount.load(std::memory_order_acquire);
+    if (count == 0) throw std::runtime_error("std::thread::hardware_concurrency: libkernel has not registered the processor count");
+    return count;
 }
 
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
@@ -568,6 +580,10 @@ int APS5_VABI _Tss_set_nid_postfix(int key, void* value) {
 
 int APS5_VABI _Thrd_equal_nid_postfix(void* first, void* second) {
     return ThreadForwards(__func__).equal(first, second);
+}
+
+int APS5_VABI _Thrd_lt_nid_postfix(void* first, void* second) {
+    return reinterpret_cast<std::uintptr_t>(first) < reinterpret_cast<std::uintptr_t>(second);
 }
 
 void* APS5_VABI _Thrd_current_nid_postfix(void) {

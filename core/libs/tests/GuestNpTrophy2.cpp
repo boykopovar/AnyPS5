@@ -29,6 +29,9 @@ int main() {
 
     Require(sceNpTrophy2ShowTrophyList(1) == 0);
 
+    auto* volatile linked = &sceNpTrophy2SystemCreateContext;
+    Require(linked != nullptr);
+
     NpTrophy2GameDetails details{};
     NpTrophy2GameData data{};
     Require(sceNpTrophy2GetGameInfo(1, 1, &details, nullptr) == 0);
@@ -55,4 +58,9 @@ int main() {
     Require(sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, &iconSize) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
     Require(iconSize == 0);
     Require(sceNpTrophy2GetRewardIcon(1, 1, 1, nullptr, nullptr) == SCE_NP_TROPHY2_ERROR_ICON_FILE_NOT_FOUND);
+
+    int handle = -1;
+    Require(sceNpTrophy2CreateHandle(&handle) == SCE_NP_TROPHY2_OK);
+    Require(handle == NP_TROPHY2_HANDLE_DEFAULT);
+    Require(sceNpTrophy2DestroyHandle(handle) == SCE_NP_TROPHY2_OK);
 }

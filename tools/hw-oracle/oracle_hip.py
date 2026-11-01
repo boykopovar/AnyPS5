@@ -107,12 +107,14 @@ def data_bytes(data_set, kind):
     for index in range(count.value):
         data = Handle()
         check(library.amd_comgr_action_data_get_data(data_set, kind, index, ctypes.byref(data)), "amd_comgr_action_data_get_data")
-        size = ctypes.c_size_t()
-        check(library.amd_comgr_get_data(data, ctypes.byref(size), None), "amd_comgr_get_data")
-        buffer = ctypes.create_string_buffer(size.value)
-        check(library.amd_comgr_get_data(data, ctypes.byref(size), buffer), "amd_comgr_get_data")
-        chunks.append(buffer.raw[:size.value])
-        library.amd_comgr_release_data(data)
+        try:
+            size = ctypes.c_size_t()
+            check(library.amd_comgr_get_data(data, ctypes.byref(size), None), "amd_comgr_get_data")
+            buffer = ctypes.create_string_buffer(size.value)
+            check(library.amd_comgr_get_data(data, ctypes.byref(size), buffer), "amd_comgr_get_data")
+            chunks.append(buffer.raw[:size.value])
+        finally:
+            library.amd_comgr_release_data(data)
     return chunks
 
 
@@ -120,13 +122,21 @@ def data_set(kind, name, payload):
     library = comgr()
     data = Handle()
     check(library.amd_comgr_create_data(kind, ctypes.byref(data)), "amd_comgr_create_data")
-    check(library.amd_comgr_set_data(data, len(payload), payload), "amd_comgr_set_data")
-    check(library.amd_comgr_set_data_name(data, name), "amd_comgr_set_data_name")
-    result = Handle()
-    check(library.amd_comgr_create_data_set(ctypes.byref(result)), "amd_comgr_create_data_set")
-    check(library.amd_comgr_data_set_add(result, data), "amd_comgr_data_set_add")
-    library.amd_comgr_release_data(data)
-    return result
+    try:
+        check(library.amd_comgr_set_data(data, len(payload), payload), "amd_comgr_set_data")
+        check(library.amd_comgr_set_data_name(data, name), "amd_comgr_set_data_name")
+        result = Handle()
+        check(library.amd_comgr_create_data_set(ctypes.byref(result)), "amd_comgr_create_data_set")
+        added = False
+        try:
+            check(library.amd_comgr_data_set_add(result, data), "amd_comgr_data_set_add")
+            added = True
+            return result
+        finally:
+            if not added:
+                library.amd_comgr_destroy_data_set(result)
+    finally:
+        library.amd_comgr_release_data(data)
 
 
 def comgr_step(actions, isa, options, inputs, kind):
@@ -136,6 +146,7 @@ def comgr_step(actions, isa, options, inputs, kind):
         info = Handle()
         check(library.amd_comgr_create_action_info(ctypes.byref(info)), "amd_comgr_create_action_info")
         outputs = Handle()
+        outputs_created = False
         try:
             check(library.amd_comgr_action_info_set_isa_name(info, isa.encode("ascii")), "amd_comgr_action_info_set_isa_name")
             check(library.amd_comgr_action_info_set_logging(info, True), "amd_comgr_action_info_set_logging")
@@ -143,12 +154,16 @@ def comgr_step(actions, isa, options, inputs, kind):
                 check(library.amd_comgr_action_info_set_option_list(info, (ctypes.c_char_p * len(options))(*options), len(options)),
                       "amd_comgr_action_info_set_option_list")
             check(library.amd_comgr_create_data_set(ctypes.byref(outputs)), "amd_comgr_create_data_set")
+            outputs_created = True
             status = library.amd_comgr_do_action(action, info, inputs, outputs)
             result = data_bytes(outputs, kind)
             log = b"".join(data_bytes(outputs, DATA_LOG)).decode("utf-8", errors="replace").strip()
-            library.amd_comgr_destroy_data_set(outputs)
         finally:
-            library.amd_comgr_destroy_action_info(info)
+            try:
+                if outputs_created:
+                    library.amd_comgr_destroy_data_set(outputs)
+            finally:
+                library.amd_comgr_destroy_action_info(info)
         if status == 0 and len(result) == 1:
             return result[0]
         logs.append(f"action {action:#x} status {status}" + (f": {log}" if log else ""))
@@ -215,16 +230,33 @@ def main(argv=None):
             return 0
         if args.assemble and not args.target and not args.dispatch:
             source, output, isa_target = args.assemble
-            Path(output).write_bytes(assemble(Path(source).read_bytes(), isa_target, args.wave64))
+            source, output = Path(source), Path(output)
+            source_bytes = source.read_bytes()
+            if output.exists() and source.samefile(output):
+                parser.error("--assemble output must not overwrite the source")
+            output.write_bytes(assemble(source_bytes, isa_target, args.wave64))
             return 0
         if len(args.dispatch) != 5 or args.target or args.assemble or args.wave64:
             parser.error("give --target, --assemble SOURCE OUTPUT TARGET, or CODE THREADS IN OUT OUT_DWORDS")
         code, threads, inputs, output, out_dwords = args.dispatch
-        threads, out_dwords = int(threads), int(out_dwords)
+        try:
+            threads = int(threads)
+        except ValueError:
+            parser.error("THREADS must be an integer")
+        try:
+            out_dwords = int(out_dwords)
+        except ValueError:
+            parser.error("OUT_DWORDS must be an integer")
         if threads not in range(1, 1025) or out_dwords not in range(1, 17):
             parser.error("THREADS must be 1 to 1024 and OUT_DWORDS 1 to 16")
-        result = dispatch(Path(code).read_bytes(), threads, Path(inputs).read_bytes(), out_dwords, os.environ.get("COARSE") is not None)
-        Path(output).write_bytes(result)
+        code, inputs, output = Path(code), Path(inputs), Path(output)
+        code_bytes, input_bytes = code.read_bytes(), inputs.read_bytes()
+        if output.exists() and any(source.samefile(output) for source in (code, inputs)):
+            parser.error("dispatch output must not overwrite an input file")
+        if len(input_bytes) < threads * 16:
+            parser.error(f"input file must contain at least {threads * 16} bytes")
+        result = dispatch(code_bytes, threads, input_bytes, out_dwords, os.environ.get("COARSE") is not None)
+        output.write_bytes(result)
         return 0
     except (OSError, OracleError) as error:
         print(error, file=sys.stderr)
