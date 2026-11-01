@@ -242,6 +242,56 @@ bool IsSymbolicLink(const std::filesystem::path& native) {
 #endif
 }
 
+bool ReadSymbolicLinkTarget(const std::filesystem::path& native, std::filesystem::path& target) {
+#ifdef _WIN32
+    const DWORD attributes = GetFileAttributesW(native.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
+    std::string text;
+    if (!File::WindowsSymbolicLink::Read(native, text, "link")) return false;
+    target = std::filesystem::path(reinterpret_cast<const char8_t*>(text.c_str()));
+    return true;
+#else
+    std::error_code error;
+    if (!std::filesystem::is_symlink(std::filesystem::symlink_status(native, error))) return false;
+    target = std::filesystem::read_symlink(native, error);
+    if (error) throw std::system_error(error, "link: read_symlink");
+    return true;
+#endif
+}
+
+int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast) {
+    constexpr int MaxSymbolicLinks = 32;
+    std::vector<std::filesystem::path> pending;
+    const auto push = [&pending](const std::filesystem::path& path) {
+        const std::vector<std::filesystem::path> parts(path.begin(), path.end());
+        pending.insert(pending.end(), parts.rbegin(), parts.rend());
+    };
+    push(native.relative_path());
+    std::filesystem::path current = native.root_path();
+    int links = 0;
+    while (!pending.empty()) {
+        const auto part = pending.back();
+        pending.pop_back();
+        if (part.empty() || part == ".") continue;
+        if (part == "..") {
+            std::error_code error;
+            if (!std::filesystem::is_directory(current, error)) return 0;
+            current = current.parent_path();
+            continue;
+        }
+        const auto next = current / part;
+        std::filesystem::path target;
+        if ((followLast || !pending.empty()) && ReadSymbolicLinkTarget(next, target)) {
+            if (++links > MaxSymbolicLinks) return GuestEloop;
+            if (target.has_root_path()) current = target.root_path();
+            push(target.relative_path());
+            continue;
+        }
+        current = next;
+    }
+    return 0;
+}
+
 std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, std::size_t size) {
 #ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
@@ -697,9 +747,11 @@ int APS5_VABI link_nid_postfix(const char* existing, const char* created) {
     if (const int error = CopyPath(existing, existingCopy)) return static_cast<int>(Fail(error));
     std::filesystem::path source, destination;
     if (const int error = ResolvePathError_nid_no_patch(existing, source)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(source, true)) return static_cast<int>(Fail(error));
     if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(created, createdCopy)) return static_cast<int>(Fail(error));
     if (const int error = ResolvePathError_nid_no_patch(created, destination)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(destination, false)) return static_cast<int>(Fail(error));
     return LinkNative(source, destination);
 }
 
@@ -719,11 +771,13 @@ int APS5_VABI linkat_nid_postfix(int fd1, const char* path1, int fd2, const char
     if (const int error = CopyPath(path1, copy1)) return static_cast<int>(Fail(error));
     std::filesystem::path source, destination;
     if (const int error = ResolveAtPath(fd1, path1, source)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(source, flag != 0)) return static_cast<int>(Fail(error));
     const bool linkItself = flag == 0 && IsSymbolicLink(source);
     if (!linkItself)
         if (const int error = LinkSourceError(source)) return static_cast<int>(Fail(error));
     if (const int error = CopyPath(path2, copy2)) return static_cast<int>(Fail(error));
     if (const int error = ResolveAtPath(fd2, path2, destination)) return static_cast<int>(Fail(error));
+    if (const int error = SymbolicLinkLimitError(destination, false)) return static_cast<int>(Fail(error));
     if (linkItself) return LinkSymbolicLinkItself(source, destination);
     return LinkNative(source, destination);
 }

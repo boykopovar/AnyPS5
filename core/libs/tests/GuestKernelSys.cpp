@@ -382,6 +382,63 @@ void CheckSymlinkTargetRestrictions(const std::filesystem::path& root) {
     }
 }
 
+void CheckLinkSymbolicLinkLimit(const std::filesystem::path& root) {
+    const auto chain = root / "link-chain";
+    const auto folder = chain / "folder";
+    Require(std::filesystem::create_directories(folder));
+    std::ofstream((chain / "file.txt").string()).put('x');
+    std::ofstream((folder / "file.txt").string()).put('x');
+    const auto at = [&](const std::string& name) { return (chain / name).string(); };
+    const auto fileLink = [](int index) { return "file" + std::to_string(index); };
+    const auto folderLink = [](int index) { return "folder" + std::to_string(index); };
+    const int first = symlink_nid_postfix("file.txt", at(fileLink(1)).c_str());
+    if (first != 0) {
+        Require(first == -1 && Error() == 1);
+        std::fprintf(stderr, "symbolic links unavailable: the link chain limit not tested\n");
+        Require(std::filesystem::remove(folder / "file.txt") && std::filesystem::remove(folder));
+        Require(std::filesystem::remove(chain / "file.txt") && std::filesystem::remove(chain));
+        return;
+    }
+    Require(symlink_nid_postfix("folder", at(folderLink(1)).c_str()) == 0);
+    for (int index = 2; index <= 33; ++index) {
+        Require(symlink_nid_postfix(fileLink(index - 1).c_str(), at(fileLink(index)).c_str()) == 0);
+        Require(symlink_nid_postfix(folderLink(index - 1).c_str(), at(folderLink(index)).c_str()) == 0);
+    }
+    const auto copy = at("copy.txt");
+    const auto linksTo = [&](const std::string& source, const std::string& created, const std::filesystem::path& file) {
+        const bool linked = link_nid_postfix(source.c_str(), created.c_str()) == 0 && std::filesystem::hard_link_count(file) == 2;
+        return linked && std::filesystem::remove(created);
+    };
+    const auto refused = [](int result) { return result == -1 && Error() == 62; };
+    Require(linksTo(at(fileLink(32)), copy, chain / "file.txt"));
+    Require(refused(link_nid_postfix(at(fileLink(33)).c_str(), copy.c_str())));
+    Require(refused(linkat_nid_postfix(-100, at(fileLink(33)).c_str(), -100, copy.c_str(), 0x400)));
+    Require(linkat_nid_postfix(-100, at(fileLink(33)).c_str(), -100, copy.c_str(), 0) == 0 && RemoveSymlink(copy));
+    Require(linksTo(at(folderLink(32) + "/file.txt"), copy, folder / "file.txt"));
+    Require(refused(link_nid_postfix(at(folderLink(33) + "/file.txt").c_str(), copy.c_str())));
+    Require(refused(linkat_nid_postfix(-100, at(folderLink(33) + "/file.txt").c_str(), -100, copy.c_str(), 0)));
+    Require(symlink_nid_postfix("file.txt", (folder / "inner").string().c_str()) == 0);
+    Require(linksTo(at(folderLink(31) + "/inner"), copy, folder / "file.txt"));
+    Require(refused(link_nid_postfix(at(folderLink(32) + "/inner").c_str(), copy.c_str())));
+    Require(RemoveSymlink((folder / "inner").string()));
+    Require(linksTo(at("file.txt"), at(folderLink(32) + "/created.txt"), chain / "file.txt"));
+    Require(refused(link_nid_postfix(at("file.txt").c_str(), at(folderLink(33) + "/created.txt").c_str())));
+    Require(refused(linkat_nid_postfix(-100, at("file.txt").c_str(), -100, at(folderLink(33) + "/created.txt").c_str(), 0x400)));
+#ifndef _WIN32
+    const int chainDirectory = sceKernelOpen(chain.string().c_str(), SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
+    Require(chainDirectory >= 0);
+    const auto belowMissing = "missing/../" + fileLink(33);
+    Require(linkat_nid_postfix(chainDirectory, belowMissing.c_str(), -100, copy.c_str(), 0x400) == -1 && Error() == 2);
+    const auto belowFile = "file.txt/../" + fileLink(33);
+    Require(linkat_nid_postfix(chainDirectory, belowFile.c_str(), -100, copy.c_str(), 0x400) == -1 && Error() == 20);
+    Require(sceKernelClose(chainDirectory) == 0);
+#endif
+    Require(!std::filesystem::exists(copy) && !std::filesystem::exists(folder / "created.txt"));
+    for (int index = 1; index <= 33; ++index) Require(RemoveSymlink(at(fileLink(index))) && RemoveSymlink(at(folderLink(index))));
+    Require(std::filesystem::remove(folder / "file.txt") && std::filesystem::remove(folder));
+    Require(std::filesystem::remove(chain / "file.txt") && std::filesystem::remove(chain));
+}
+
 UserUcontext sigreturnContext{};
 UserUcontext sigreturnResume{};
 volatile int sigreturnPasses = 0;
@@ -1164,6 +1221,7 @@ int main() {
     Require(std::filesystem::create_directory(root));
     DirectoryRenameTests(root);
     OwnershipAndLinkTests(root);
+    CheckLinkSymbolicLinkLimit(root);
     const auto file = (root / "file.txt").string();
     std::ofstream(file).put('x');
     CheckPathconf(root, file);
