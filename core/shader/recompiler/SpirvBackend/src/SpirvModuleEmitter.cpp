@@ -2273,11 +2273,18 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
             state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassOutput, TypeF32Vector(state, 4u)), pointer, variable, ConstantU32(state, 0u));
             state.module.AddFunction(spv::OpStore, pointer, value);
         } else if (preserveInactive) {
+            auto& shadow = state.exportShadowVariables[variable];
+            if (shadow == 0u) {
+                shadow = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, vectorType), spv::StorageClassPrivate);
+                if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(shadow);
+            }
             const auto previous = state.module.AllocateId();
-            state.module.AddFunction(spv::OpLoad, vectorType, previous, variable);
+            state.module.AddFunction(spv::OpLoad, vectorType, previous, shadow);
             const auto lanes = state.module.AllocateId();
             state.module.AddFunction(spv::OpCompositeConstruct, TypeBoolVector(state, 4u), lanes, exec, exec, exec, exec);
-            state.module.AddFunction(spv::OpStore, variable, Select(state, vectorType, lanes, value, previous));
+            const auto selected = Select(state, vectorType, lanes, value, previous);
+            state.module.AddFunction(spv::OpStore, shadow, selected);
+            state.module.AddFunction(spv::OpStore, variable, selected);
         } else {
             state.module.AddFunction(spv::OpStore, variable, value);
         }

@@ -239,6 +239,7 @@ struct SpirvEmitterState {
     std::uint32_t meshGuestFunc = 0;
     std::uint32_t pixelGuestFunc = 0;
     std::uint32_t pixelStopFlag = 0;
+    std::map<std::uint32_t, std::uint32_t> exportShadowVariables;
     bool pixelStopStored = false;
     std::uint32_t meshAllocation = 0;
     std::uint32_t meshPrimitiveData = 0;
