@@ -419,7 +419,7 @@ int APS5_VABI OCSP_RESPONSE_free_nid_postfix(void);
 int APS5_VABI OCSP_basic_add1_cert_nid_postfix(void);
 int APS5_VABI OCSP_basic_verify_nid_postfix(void);
 const char* APS5_VABI OCSP_cert_status_str_nid_postfix(std::int64_t status);
-int APS5_VABI OCSP_check_validity_nid_postfix(void);
+int APS5_VABI OCSP_check_validity_nid_postfix(const Asn1String* thisUpdate, const Asn1String* nextUpdate, std::int64_t slack, std::int64_t maxAge);
 const char* APS5_VABI OCSP_crl_reason_str_nid_postfix(std::int64_t reason);
 int APS5_VABI OCSP_resp_count_nid_postfix(void);
 int APS5_VABI OCSP_resp_get0_nid_postfix(void);
