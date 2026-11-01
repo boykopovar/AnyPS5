@@ -8,4 +8,5 @@
 #include "prx/libSceNKWebKit/include/WebKitConfigExports.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libSceNKWebKit/include/WtfNumberFormatting.hpp"
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
