@@ -167,6 +167,7 @@ int APS5_VABI scePadReadState(int handle, PadData* data);
 int APS5_VABI scePadResetLightBar(int handle);
 int APS5_VABI scePadResetOrientation(int handle);
 int APS5_VABI scePadSetAngularVelocityDeadbandState(int handle, bool enable);
+int APS5_VABI scePadSetConnection(std::int32_t handle, bool connected);
 int APS5_VABI scePadSetLightBar(int handle, const PadLightBarParam* param);
 int APS5_VABI scePadSetMotionSensorState(int handle, bool enable);
 int APS5_VABI scePadSetTiltCorrectionState(int handle, bool enabled);
