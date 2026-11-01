@@ -130,7 +130,7 @@ std::array<std::uint32_t, 4> Expected(std::uint32_t tid, std::uint32_t dmask) {
     return selected;
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, const std::array<std::uint32_t, 10>& program) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> program) {
     std::vector<std::uint32_t> userData(20, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(sizeof(Input)));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(sizeof(Output)));
@@ -168,17 +168,24 @@ void RunGather4h(AgcDriver::VulkanDevice& device, std::uint32_t dmask) {
 }
 
 void RunGather8h(AgcDriver::VulkanDevice& device, std::uint32_t dmask) {
-    auto program = PckGather4h;
-    program[4] = 0xf18c0008u | (dmask << 8u);
+    std::vector<std::uint32_t> program(PckGather4h.begin(), PckGather4h.begin() + 4);
+    program.insert(program.end(), {0x7e1002ffu, 0xdeadbeefu, 0x7e1202ffu, 0xdeadbeefu, 0x7e1402ffu, 0xdeadbeefu, 0x7e1602ffu, 0xdeadbeefu});
+    program.push_back(0xf18c0008u | (dmask << 8u));
+    program.push_back(PckGather4h[5]);
+    program.push_back(PckGather4h[6]);
+    program.push_back(PckGather4h[7]);
+    program.push_back(PckGather4h[8]);
+    program.push_back(PckGather4h[9]);
     Output.fill(0xdeadbeefu);
     const auto result = Compile(device, program);
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(program.data()));
     device.WaitIdle();
     const std::uint32_t zeroed = static_cast<std::uint32_t>(std::popcount(dmask));
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
-        for (std::uint32_t component = 0; component < zeroed; ++component) {
+        for (std::uint32_t component = 0; component < 4u; ++component) {
             const std::uint32_t actual = Output[tid * 4u + component];
-            Require(actual == 0u, std::string("packed horizontal gather 8h: dmask ") + std::to_string(dmask) + " thread " + std::to_string(tid) + " register " + std::to_string(component) + " is " + Hex(actual) + ", expected zero");
+            const std::uint32_t expected = component < zeroed ? 0u : 0xdeadbeefu;
+            Require(actual == expected, std::string("packed horizontal gather 8h: dmask ") + std::to_string(dmask) + " thread " + std::to_string(tid) + " register " + std::to_string(component) + " is " + Hex(actual) + ", expected " + Hex(expected));
         }
     }
 }
