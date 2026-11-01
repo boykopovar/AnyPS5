@@ -39,6 +39,7 @@ def guest(relocation, visibility, binding=1, referenced=True, defined=False, sce
 def main():
     relinker = Path(sys.argv[1]).resolve()
     is_guest = sys.argv[2] == "guest"
+    relocations = (int(sys.argv[3]),) if len(sys.argv) > 3 else (1, 6, 7)
     count = 0
     with tempfile.TemporaryDirectory(prefix="anyps5-restricted-symbols-") as directory:
         work = Path(directory)
@@ -72,7 +73,7 @@ def main():
                 assert module_path.read_bytes() == image, (name, options)
             count += 1
 
-        for relocation in (1, 6, 7):
+        for relocation in relocations:
             for target, options in TARGETS:
                 if is_guest and target == "pie":
                     continue

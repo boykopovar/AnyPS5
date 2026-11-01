@@ -384,8 +384,16 @@ int SignalCondition_nid_no_patch(void** handle) {
     return threadSuccess;
 }
 
+static std::atomic<unsigned> registeredProcessorCount{0};
+
+void RegisterProcessorCount_nid_no_patch(unsigned count) {
+    registeredProcessorCount.store(count, std::memory_order_release);
+}
+
 unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
-    return std::thread::hardware_concurrency();
+    const unsigned count = registeredProcessorCount.load(std::memory_order_acquire);
+    if (count == 0) throw std::runtime_error("std::thread::hardware_concurrency: libkernel has not registered the processor count");
+    return count;
 }
 
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
