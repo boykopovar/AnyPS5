@@ -226,6 +226,7 @@ constexpr auto VirtualKeys = [] {
 }();
 
 constexpr int kErrInvalidKeyboardType = static_cast<int>(0x80BC001Du);
+constexpr int kErrInvalidParameter = static_cast<int>(0x80BC0030u);
 constexpr auto CharacterTables = [] {
     std::array<std::array<std::uint32_t, 256>, 111> tables{};
     tables[1][4] = 327777;
@@ -2453,14 +2454,10 @@ int APS5_VABI sceConvertKeycodeGetVirtualKeycode(std::uint16_t keycode, std::uin
 
 int APS5_VABI sceConvertKeycodeGetCharacterFromKeyboardData(const KeyboardData* keyData, std::int32_t index, std::uint32_t state, std::uint32_t keyboardType, char16_t* character) {
     if (keyData == nullptr || character == nullptr) return kErrInvalidAddress;
-    if (keyboardType == 0 || keyboardType > 39) return kErrInvalidKeyboardType;
-    if (!KeyboardTypeAvailable(keyboardType, CompiledSdkVersion(), Ps4ClientOnce())) return kErrInvalidKeyboardType;
-    if (index < 0 || index >= keyData->length || index >= static_cast<std::int32_t>(KEYBOARD_MAX_KEYCODES)) {
-        throw std::runtime_error("sceConvertKeycodeGetCharacterFromKeyboardData: result for an index outside the key data is unknown");
-    }
-    const std::uint16_t keycode = keyData->key_code[index];
-    *character = ConvertCharacter(keycode, state, keyboardType);
-    return 0;
+    const auto length = static_cast<std::uint32_t>(keyData->length);
+    if (length > KEYBOARD_MAX_KEYCODES || keyData->led >= 8 || keyData->modifier_key >= 0x100 || (state & 0xE3FFFF7Fu) != 0) return kErrInvalidParameter;
+    if (index < 0 || static_cast<std::uint32_t>(index) >= length) return kErrInvalidParameter;
+    return sceConvertKeycodeGetCharacter(keyData->key_code[index], state | keyData->modifier_key << 8 | keyData->led << 16, keyboardType, character);
 }
 
 int APS5_VABI sceConvertKeycodeGetCharacter(std::uint16_t keycode, std::uint32_t state, std::uint32_t type, char16_t* character) {
