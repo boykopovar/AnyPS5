@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCENPUNIVERSALDATASYSTEM_INCLUDE_UDSEVENT_HPP
 #define CORE_LIBS_PRX_LIBSCENPUNIVERSALDATASYSTEM_INCLUDE_UDSEVENT_HPP
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -48,6 +49,8 @@ namespace Uds {
 inline constexpr std::string_view UnlockTrophyEvent = "_UnlockTrophy";
 inline constexpr std::string_view UpdateTrophyProgressEvent = "_UpdateTrophyProgress";
 inline constexpr std::string_view TrophyIdProperty = "_trophy_id";
+inline constexpr std::string_view EventNameKey = "eventName";
+inline constexpr std::string_view PropertiesKey = "properties";
 
 enum class TrophyEventKind { None, Unlock, Progress, Malformed };
 
@@ -61,6 +64,8 @@ TrophyEvent RecognizeTrophyEvent(const NpUniversalDataSystemEvent& event);
 std::string Describe(const Value& value);
 std::string Describe(const NpUniversalDataSystemEventPropertyObject& object);
 std::string Describe(const NpUniversalDataSystemEvent& event);
+std::size_t MessagePackSize(const NpUniversalDataSystemEvent& event);
+std::string DebugString(const NpUniversalDataSystemEvent& event);
 NpTrophy2Event StatEvent(const NpUniversalDataSystemEvent& event);
 
 }
