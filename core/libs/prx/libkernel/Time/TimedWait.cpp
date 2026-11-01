@@ -170,9 +170,26 @@ struct Waiter {
     }
 };
 
-void QueueForDeliveryDrain(unsigned long thread, void (*run)(void*), void* argument) {
-    const std::lock_guard lock(drainBoxesLock);
-    drainBoxes[thread].push_back({run, argument});
+std::atomic<void (*)()>& DrainPostHook() {
+    static std::atomic<void (*)()> hook{nullptr};
+    return hook;
+}
+
+void SetDeliveryDrainPostHook(void (*hook)()) {
+    DrainPostHook().store(hook, std::memory_order_release);
+}
+
+void QueueForDeliveryDrain(unsigned long thread, const std::atomic<bool>* targetFinished, void (*run)(void*), void* argument) {
+    if (const auto hook = DrainPostHook().load(std::memory_order_acquire)) hook();
+    bool queued = false;
+    {
+        const std::lock_guard lock(drainBoxesLock);
+        if (targetFinished == nullptr || !targetFinished->load(std::memory_order_acquire)) {
+            drainBoxes[thread].push_back({run, argument});
+            queued = true;
+        }
+    }
+    if (!queued) run(argument);
 }
 
 void ReapDeliveryDrain() {

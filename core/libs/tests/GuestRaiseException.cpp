@@ -308,6 +308,14 @@ static void* APS5_VABI ChurnUntil(void* arg) {
     while (!exitingRelease.load()) MultiByteToWideChar(CP_UTF8, 0, source.data(), static_cast<int>(source.size()), converted.data(), static_cast<int>(converted.size()));
     return nullptr;
 }
+
+static std::atomic<int> postEntered{0};
+static std::atomic<bool> postHold{false};
+
+static void DeliveryPostHook() {
+    postEntered.fetch_add(1);
+    while (postHold.load()) std::this_thread::yield();
+}
 #endif
 
 static std::atomic<std::thread::id> spinningId;
@@ -742,6 +750,8 @@ int main() {
 
     Worker churning;
     Pthread churningThread = nullptr;
+    TimedWait::SetDeliveryDrainPostHook(&DeliveryPostHook);
+    const int postsBeforeChurn = postEntered.load();
     Require(scePthreadCreate(&churningThread, nullptr, Churning, &churning, "churn then drain") == 0);
     for (int round = 0; round < DrainRounds; ++round) {
         while (!churning.started.load()) std::this_thread::yield();
@@ -753,6 +763,7 @@ int main() {
         ExpectDelivery(before, churning.id);
     }
     Require(scePthreadJoin(churningThread, nullptr) == 0);
+    Require(postEntered.load() > postsBeforeChurn);
 
     for (int round = 0; round < ExitRounds; ++round) {
         exitingRelease.store(false);
@@ -767,6 +778,35 @@ int main() {
         Require(scePthreadJoin(exitingThread, nullptr) == 0);
         Require(TimedWait::DeliveryDrainPending() == 0);
     }
+
+    exitingRelease.store(false);
+    postHold.store(true);
+    const int postsBeforeHeld = postEntered.load();
+    Worker heldExit;
+    Pthread heldExitThread = nullptr;
+    Require(scePthreadCreate(&heldExitThread, nullptr, ChurnUntil, &heldExit, "exit while posted") == 0);
+    while (!heldExit.started.load()) std::this_thread::yield();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::atomic<int> raiseResult{-1};
+    bool posted = false;
+    for (int attempt = 0; attempt < 50 && !posted; ++attempt) {
+        raiseResult.store(-1);
+        std::thread raiser([&] { raiseResult.store(sceKernelRaiseException(heldExitThread, GUEST_SIGUSR1)); });
+        const auto entered = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (postEntered.load() == postsBeforeHeld && raiseResult.load() == -1 && std::chrono::steady_clock::now() < entered) std::this_thread::yield();
+        posted = postEntered.load() > postsBeforeHeld;
+        if (posted) {
+            exitingRelease.store(true);
+            Require(scePthreadJoin(heldExitThread, nullptr) == 0);
+            postHold.store(false);
+        }
+        raiser.join();
+    }
+    Require(posted);
+    Require(raiseResult.load() == 0 || raiseResult.load() == SCE_KERNEL_ERROR_ESRCH);
+    const auto drained = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (TimedWait::DeliveryDrainPending() != 0 && std::chrono::steady_clock::now() < drained) std::this_thread::yield();
+    Require(TimedWait::DeliveryDrainPending() == 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     const int settledCalls = calls.load();
     drainingRound.store(0);

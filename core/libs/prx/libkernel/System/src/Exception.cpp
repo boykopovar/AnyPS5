@@ -784,7 +784,7 @@ Attempt TryDeliver(Pthread thread, HANDLE native, GuestExceptionHandler handler,
         DWORD64 unknown = 0;
         if (arm != nullptr && running == CodeKind::Host && !restoring) ArmReturnBreak(native, delivery.context, queued, *arm, unknown);
         ResumeThread(native);
-        if (postAfterResume) TimedWait::QueueForDeliveryDrain(GetThreadId(native), &DeferredWaitingEntry, queued);
+        if (postAfterResume) TimedWait::QueueForDeliveryDrain(GetThreadId(native), &thread->_finished, &DeferredWaitingEntry, queued);
         if (running == CodeKind::Unknown) {
             static_cast<void>(ClassifyImage(image));
             continue;

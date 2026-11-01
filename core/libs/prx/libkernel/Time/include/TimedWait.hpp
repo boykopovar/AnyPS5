@@ -39,9 +39,10 @@ public:
 void DeliverDeferred();
 
 #ifdef _WIN32
-void QueueForDeliveryDrain(unsigned long thread, void (*run)(void*), void* argument);
+void QueueForDeliveryDrain(unsigned long thread, const std::atomic<bool>* targetFinished, void (*run)(void*), void* argument);
 void ReapDeliveryDrain();
 std::size_t DeliveryDrainPending();
+void SetDeliveryDrainPostHook(void (*hook)());
 
 constexpr unsigned PARK_SPINS = 1000;
 
