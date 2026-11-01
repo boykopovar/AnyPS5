@@ -132,6 +132,8 @@ int main() {
     Require(scePthreadMutexInit(&mutex, &unset, "unset") == SCE_OK);
     Require(scePthreadMutexLock(&mutex) == SCE_OK);
     Require(scePthreadMutexDestroy(&mutex) == SCE_KERNEL_ERROR_EBUSY);
+    Require(scePthreadMutexUnlock(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_mutex_unlock_nid_postfix(nullptr) == POSIX_EINVAL);
     Require(scePthreadMutexUnlock(&mutex) == SCE_OK);
     Require(scePthreadMutexDestroy(&mutex) == SCE_OK);
     Require(mutex == reinterpret_cast<PthreadMutex>(std::uintptr_t{2}));
