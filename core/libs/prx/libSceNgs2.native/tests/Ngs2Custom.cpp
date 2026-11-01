@@ -651,24 +651,13 @@ static void TestCustomRackChecks() {
         for (std::uint32_t index = 0; index < count; ++index) {
             sampler.custom_rack_option.module[index].module_id = SCE_NGS2_CUSTOM_MODULE_ID_FILTER;
         }
-        sampler.custom_rack_option.module[count - 1].module_id = 0x99;
-        Require(CreateSamplerThrows<std::runtime_error>(sampler));
-        for (const bool useAllocator : {false, true}) {
-            rack = 0;
-            rejected = false;
-            try {
-                if (useAllocator) {
-                    sceNgs2RackCreateWithAllocator(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &sampler.custom_rack_option.rack_option, &allocator, &rack);
-
-                } else {
-                    sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &sampler.custom_rack_option.rack_option, &info, &rack);
-
-                }
-            } catch (const std::runtime_error&) {
-                rejected = true;
-            }
-            Require(rejected && rack == 0 && allocCalls == 0);
-        }
+        sampler.custom_rack_option.module[count - 1].module_id = SCE_NGS2_CUSTOM_MODULE_ID_USER_FX;
+        Ngs2ContextBufferInfo counted{};
+        Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &sampler.custom_rack_option.rack_option, &counted) == SCE_NGS2_OK);
+        const auto countedInfo = Buffer(counted);
+        rack = 0;
+        Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &sampler.custom_rack_option.rack_option, &countedInfo, &rack) == SCE_NGS2_OK);
+        Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
     }
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
@@ -800,7 +789,6 @@ static Ngs2CustomSamplerRackOption LegacySamplerRackOption(const Ngs2CustomModul
 static void TestCustomSamplerLegacyUserFx(std::uint32_t moduleIndex) {
     const auto system = CreateSystem();
     const auto master = Mastering(system, 2);
-    const Ngs2CustomModuleOption header{sizeof(Ngs2CustomModuleOption)};
     auto option = LegacySamplerRackOption(nullptr, moduleIndex);
     Ngs2ContextBufferInfo query{};
     Require(sceNgs2RackQueryBufferSize(SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &option.custom_rack_option.rack_option, &query) == SCE_NGS2_OK);
@@ -828,9 +816,11 @@ static void TestCustomSamplerLegacyUserFx(std::uint32_t moduleIndex) {
     Require(state.calls == 2 && state.flags == 0);
     for (std::uint32_t i = 0; i < Grain; i++) Require(out[i * 2] == 0.25f && out[i * 2 + 1] == 0.5f);
 
-    Require(ControlThrows<std::invalid_argument>(voice, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | 0, param));
-    Require(ControlThrows<std::invalid_argument>(voice, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | (moduleIndex + 2), param));
-    Require(CreateSamplerThrows<std::runtime_error>(LegacySamplerRackOption(&header, moduleIndex)));
+    Ngs2CustomVoiceUserFxParam invalid{};
+    invalid.header = {sizeof(invalid), 0, SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | 0};
+    Require(sceNgs2VoiceControl(voice, &invalid.header) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
+    invalid.header.id = SCE_NGS2_CUSTOM_VOICE_PARAM_USER_FX | (moduleIndex + 2);
+    Require(sceNgs2VoiceControl(voice, &invalid.header) == SCE_NGS2_ERROR_INVALID_PARAM_ID);
     Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }

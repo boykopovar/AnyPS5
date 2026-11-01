@@ -381,7 +381,7 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
         }
         auto index = param.id & 0x1f;
         if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
-            if (index == 0) APS5_INVALID_ARG_EX;
+            if (index == 0 || index - 1 >= voice.customUserFx.size()) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PARAM_ID};
             index--;
         }
         SetCustomUserFxParam(voice, index, ParamAs<Ngs2CustomVoiceUserFxParam>(param));
