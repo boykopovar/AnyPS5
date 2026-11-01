@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 
+from test_windows_import_modules import consumer
+
 from test_guest_intel_trampolines import PLAIN_SITE, guest_fixture, main_fixture
 from test_guest_module_directories import module_with_symbol, needed_libraries
 
@@ -184,12 +186,51 @@ def check_needed_outside(relinker, work):
                 (case / "locked").chmod(0o755)
 
 
+def check_unavailable_unused(relinker, work):
+    kernel, plugin = b"libkernel.prx", b"missingPlugin.prx"
+
+    def convert(label, files, options, module):
+        case = work / f"unavailable-{label}"
+        (case / "prx").mkdir(parents=True)
+        if files is not None:
+            (case / "libs").mkdir()
+            for name in files:
+                (case / "libs" / name).write_bytes(b"")
+        source = case / "input.elf"
+        source.write_bytes(main_fixture())
+        (case / "prx" / "consumer.prx").write_bytes(module)
+        output = case / "output.elf"
+        result = subprocess.run([str(relinker), "--rpath", "$ORIGIN/libs", *options, str(source), str(output)],
+                                capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert result.returncode == 0, (label, result.stdout, result.stderr)
+        artifact = needed_libraries((case / "app0" / "prx" / "consumer.prx.guest.prx").read_bytes())
+        hosts = [name for name in needed_libraries(output.read_bytes()) if not name.startswith("$ORIGIN")]
+        return artifact, hosts, result.stdout + result.stderr
+
+    unused = module_with_needed((kernel, plugin), (0, 1))
+    both = [kernel.decode(), plugin.decode()]
+    omit = ["--omit-unavailable-dependencies"]
+    for label, files, options, expected, message in (
+            ("absent", ("libkernel.prx",), omit, [kernel.decode()], "it is left out of the needed libraries"),
+            ("absent-default", ("libkernel.prx",), [], both, "--omit-unavailable-dependencies leaves it out"),
+            ("present", ("libkernel.prx", "missingPlugin.prx"), omit, both, None),
+            ("no-directory", None, omit, both, None)):
+        artifact, hosts, output = convert(label, files, options, unused)
+        assert artifact == expected and hosts == expected, (label, artifact, hosts)
+        assert (message is not None and message in output) or (message is None and "missingPlugin.prx, which" not in output), (label, output)
+    imported = consumer(plugin.decode(), symbol="CCCCCCCCCCC#A#B", module_name="missingPlugin")
+    artifact, hosts, output = convert("imported", (), omit, imported)
+    assert plugin.decode() in artifact and plugin.decode() in hosts, ("imported", artifact, hosts)
+    assert "missingPlugin.prx, which" not in output, ("imported", output)
+
+
 def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-needed-modules-") as directory:
         work = Path(directory)
         check_guest_needed(relinker, work)
         check_needed_outside(relinker, work)
+        check_unavailable_unused(relinker, work)
 
         def convert(case, windows, needed=NEEDED, repeats=1):
             if not (case / "sce_modules").exists():
