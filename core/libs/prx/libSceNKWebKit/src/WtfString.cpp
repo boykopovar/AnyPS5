@@ -397,7 +397,7 @@ String FromUTF8(const unsigned char* input, std::size_t length) {
     return String(CopyImpl({output.data(), static_cast<unsigned>(output.size()), false}));
 }
 
-CString ToUTF8(StringView view, unsigned mode) {
+CString ToUTF8(StringView view, unsigned mode, std::uint8_t* error = nullptr) {
     if (mode > 2 && !view.is8Bit) throw std::invalid_argument("invalid WTF UTF-8 conversion mode");
     std::string bytes;
     for (unsigned i = 0; i < view.length; ++i) {
@@ -406,8 +406,11 @@ CString ToUTF8(StringView view, unsigned mode) {
             if (cp <= 0xDBFF && i + 1 < view.length && Unit(view, i + 1) >= 0xDC00 && Unit(view, i + 1) <= 0xDFFF) {
                 cp = 0x10000 + ((cp - 0xD800) << 10) + Unit(view, i + 1) - 0xDC00;
                 ++i;
-            } else if (mode == 1) throw std::invalid_argument("unpaired WTF UTF-16 surrogate");
-            else if (mode == 2) cp = 0xFFFD;
+            } else if (mode == 1) {
+                if (!error) throw std::invalid_argument("unpaired WTF UTF-16 surrogate");
+                *error = cp <= 0xDBFF && i + 1 == view.length ? 2 : 1;
+                return CString();
+            } else if (mode == 2 || cp >= 0xDC00 || i + 1 < view.length) cp = 0xFFFD;
         }
         if (cp < 0x80) bytes.push_back(static_cast<char>(cp));
         else if (cp < 0x800) {
@@ -1335,6 +1338,23 @@ void APS5_VABI _ZN3WTF13printInternalERNS_11PrintStreamEPKNS_10StringImplE(NKWeb
 
 void APS5_VABI _ZN3WTF13dumpCharacterERNS_11PrintStreamEc(NKWebKit::WtfAbi::PrintStream* self, char value) {
     _ZN3WTF11PrintStream6printfEPKcz(self, "%c", static_cast<int>(value));
+}
+
+}
+
+extern "C" {
+
+NKWebKit::WtfAbi::ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length) {
+    if (length > MaxStringLength / 2) return NKWebKit::WtfAbi::ExpectedCString(std::uint8_t{0});
+    return NKWebKit::WtfAbi::ExpectedCString(ToUTF8({characters, length, true}, 0));
+}
+
+NKWebKit::WtfAbi::ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode) {
+    if (length > MaxStringLength / 3) return NKWebKit::WtfAbi::ExpectedCString(std::uint8_t{0});
+    std::uint8_t error = 0;
+    auto result = ToUTF8({characters, length, false}, length ? mode : 0, &error);
+    if (error) return NKWebKit::WtfAbi::ExpectedCString(error);
+    return NKWebKit::WtfAbi::ExpectedCString(std::move(result));
 }
 
 }

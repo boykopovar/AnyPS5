@@ -18380,14 +18380,6 @@ int APS5_VABI _ZN3WTF10ParkingLot9unparkOneEPKv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF10StringImpl28convertToLowercaseWithLocaleERKNS_10AtomStringE() {
     NotImplemented_nid_no_patch(__func__);
 }

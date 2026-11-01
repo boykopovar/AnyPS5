@@ -279,4 +279,7 @@ WTF::MonotonicTime APS5_VABI _ZNK3WTF7SecondsplENS_13MonotonicTimeE(const WTF::S
 WTF::WallTime APS5_VABI _ZNK3WTF7SecondsplENS_8WallTimeE(const WTF::Seconds* self, WTF::WallTime other);
 WTF::MonotonicTime APS5_VABI _ZNK3WTF8WallTime24approximateMonotonicTimeEv(const WTF::WallTime* self);
 
+NKWebKit::WtfAbi::ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode);
+NKWebKit::WtfAbi::ExpectedCString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length);
+
 }

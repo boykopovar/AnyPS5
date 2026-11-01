@@ -377,10 +377,12 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 void TestPrintStreams();
+void TestUtf8ForCharacters();
 
 int main() {
     TestAdditionalWtf();
     TestPrintStreams();
+    TestUtf8ForCharacters();
     TestMemoryAllocations();
     TestAllocationBoundaries();
     TestTime();
@@ -627,7 +629,7 @@ void TestUTFConversions() {
     char16_t bad[] = {0xD800, 'X', 0xDC00, 0xDFFF};
     auto malformed = Create16(bad, 4);
     Check(ImplCharacter(malformed.impl, 0) == 0 && ImplCharacter(malformed.impl, 2) == 0);
-    Check(Bytes(UTF8(&malformed, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Check(Bytes(UTF8(&malformed, 0)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Check(Bytes(UTF8(&malformed, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Throws([&] { UTF8(&malformed, 1); });
     Text(FromCodePoint(0x1F600), "\xf0\x9f\x98\x80");
@@ -1200,4 +1202,61 @@ void TestPrintStreams() {
     _ZN3WTF13printInternalERNS_11PrintStreamEb(&capture.stream, true); check("true");
     Check(capture.beginCount == 6 && capture.endCount == 6 && capture.printCount == 24);
     destroy(&capture.output);
+}
+
+void TestUtf8ForCharacters() {
+    using namespace Wtf2Tests;
+    constexpr auto latin = _ZN3WTF10StringImpl17utf8ForCharactersEPKhj;
+    constexpr auto utf16 = _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE;
+    auto success = [](ExpectedCString result, const std::string& bytes) {
+        Check(result.hasValue && result.value && result.value->refCount == 1);
+        CString owner(result.value);
+        result.value = nullptr;
+        Check(Bytes(owner) == bytes);
+    };
+    auto failure = [](ExpectedCString result, std::uint8_t error) {
+        Check(!result.hasValue && result.error == error);
+    };
+    success(latin(nullptr, 0), "");
+    success(latin(U8("ASCII"), 5), "ASCII");
+    success(latin(U8("a\0b"), 3), std::string("a\0b", 3));
+    const unsigned char latin1[]{0, 0x7F, 0x80, 0xE9, 0xFF};
+    success(latin(latin1, 5), std::string("\0\x7f\xc2\x80\xc3\xa9\xc3\xbf", 8));
+    for (unsigned mode : {0U, 1U, 2U}) {
+        success(utf16(nullptr, 0, mode), "");
+        success(utf16(u"A\u00e9\u20ac\U0001f600", 5, mode), "A\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80");
+        success(utf16(u"a\0b", 3, mode), std::string("a\0b", 3));
+    }
+    struct Case {
+        std::u16string input;
+        std::string lenient;
+        std::string replacing;
+        std::uint8_t error;
+    };
+    const Case cases[]{
+        {u"\xd800", "\xed\xa0\x80", "\xef\xbf\xbd", 2},
+        {u"\xdbff", "\xed\xaf\xbf", "\xef\xbf\xbd", 2},
+        {u"\xdc00", "\xef\xbf\xbd", "\xef\xbf\xbd", 1},
+        {u"\xdfff", "\xef\xbf\xbd", "\xef\xbf\xbd", 1},
+        {u"\xd800X", "\xef\xbf\xbdX", "\xef\xbf\xbdX", 1},
+        {u"X\xd800", "X\xed\xa0\x80", "X\xef\xbf\xbd", 2},
+        {u"\xdc00\xd800", "\xef\xbf\xbd\xed\xa0\x80", "\xef\xbf\xbd\xef\xbf\xbd", 1},
+        {u"\xd800\xd800\xdc00", "\xef\xbf\xbd\xf0\x90\x80\x80", "\xef\xbf\xbd\xf0\x90\x80\x80", 1},
+        {u"\xd800\xdc00\xdbff", "\xf0\x90\x80\x80\xed\xaf\xbf", "\xf0\x90\x80\x80\xef\xbf\xbd", 2}
+    };
+    for (const auto& test : cases) {
+        const auto length = static_cast<unsigned>(test.input.size());
+        String value(Create16(test.input.data(), length));
+        StringView view{test.input.data(), length, false};
+        Check(Bytes(UTF8(&value, 0)) == test.lenient);
+        Check(Bytes(ImplUTF8(value.impl, 0)) == test.lenient);
+        Check(Bytes(ViewUTF8(&view, 0)) == test.lenient);
+        success(utf16(test.input.data(), length, 0), test.lenient);
+        failure(utf16(test.input.data(), length, 1), test.error);
+        success(utf16(test.input.data(), length, 2), test.replacing);
+    }
+    failure(latin(nullptr, 0x7FFFFFFFU / 2 + 1), 0);
+    failure(utf16(nullptr, 0x7FFFFFFFU / 3 + 1, 1), 0);
+    failure(latin(nullptr, std::numeric_limits<unsigned>::max()), 0);
+    failure(utf16(nullptr, std::numeric_limits<unsigned>::max(), 2), 0);
 }

@@ -106,6 +106,21 @@ struct CString {
     ~CString() { Release(buffer); }
 };
 
+struct ExpectedCString {
+    union { CStringBuffer* value; std::uint8_t error; };
+    bool hasValue;
+    explicit ExpectedCString(CString&& string) : value(std::exchange(string.buffer, nullptr)), hasValue(true) {}
+    explicit ExpectedCString(std::uint8_t code) : error(code), hasValue(false) {}
+    ExpectedCString(const ExpectedCString&) = delete;
+    ~ExpectedCString() { if (hasValue) Release(value); }
+};
+
+static_assert(sizeof(ExpectedCString) == 16);
+static_assert(offsetof(ExpectedCString, value) == 0);
+static_assert(offsetof(ExpectedCString, error) == 0);
+static_assert(offsetof(ExpectedCString, hasValue) == 8);
+static_assert(!std::is_trivially_destructible_v<ExpectedCString>);
+
 struct ProcessPrivileges {
     unsigned storage;
 };
