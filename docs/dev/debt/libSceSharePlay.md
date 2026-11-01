@@ -13,3 +13,14 @@
 - [sceSharePlayGetCurrentConnectionInfoA](../../../core/libs/prx/libSceSharePlay/Export.cpp) - the native module confirms a 72-byte result, initial zero fields and both user IDs -1. Initialization is checked before the output pointer. The host retains this initial disconnected state; native event draining, cached updates and service reconnection are unimplemented.
 - [sceSharePlayGetCurrentConnectionInfo](../../../core/libs/prx/libSceSharePlay/Export.cpp) - the 56-byte layout without account IDs is from [shadPS4's shareplay.h](https://github.com/shadps4-emu/shadPS4/blob/396c2a09a38d22eaa02aab32c1967263dceab95f/src/core/libraries/share_play/shareplay.h); the checks and values copy `sceSharePlayGetCurrentConnectionInfoA`, while shadPS4 leaves both user IDs 0 and checks nothing. Not measured on a console.
 - [sceSharePlayProhibitController](../../../core/libs/prx/libSceSharePlay/Export.cpp) - the argument is one byte, forwarded unchanged to the service. The host checks initialization, accepts 0/1 without a visitor controller, and returns 0x810E0001 (SCE_SHARE_PLAY_ERROR_INVALID_ARGS) for other values; dynamic service communication and controller state remain unimplemented.
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceSharePlay/Export.cpp) - 4 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `6egMR0eB8RU` |
+| `Unknown` | `891hmdoV7UQ` |
+| `Unknown` | `LpPA6mprZ8Q` |
+| `Unknown` | `wcI2co2I4Xc` |
