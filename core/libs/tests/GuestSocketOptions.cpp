@@ -306,6 +306,8 @@ void IpLevelFollowsThePs5() {
     const unsigned char byte = 9;
     Require(SetFails(datagram, 0, IpTimeToLive, &byte, 1, ErrorInvalid), "a one-byte IP_TTL must fail with EINVAL (22)");
     Require(SetIp(datagram, IpTypeOfService, 0x1ff) && GetIp(datagram, IpTypeOfService) == 0xff, "IP_TOS keeps the low byte");
+    Require(SetIp(datagram, IpTypeOfService, -1) && GetIp(datagram, IpTypeOfService) == 255, "IP_TOS of -1 reads back as 255");
+    Require(SetFails(datagram, 0, IpTypeOfService, &byte, 1, ErrorInvalid), "a one-byte IP_TOS must fail with EINVAL (22)");
     const unsigned char seven = 7;
     Require(setsockopt_nid_postfix(datagram, 0, IpMulticastTimeToLive, &seven, 1) == 0 && GetIp(datagram, IpMulticastTimeToLive) == 7, "a one-byte IP_MULTICAST_TTL is accepted");
     const int tooLarge = 300;
