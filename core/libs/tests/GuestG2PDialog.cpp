@@ -3,6 +3,7 @@
 #include <cstdint>
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include <cerrno>
 #include <cstdlib>
 
 namespace {
@@ -82,6 +83,9 @@ int main() {
     Require(prefixResult[2] == kResultUserCanceled);
     Require(prefixResult[0] == -1 && prefixResult[1] == -1 && prefixResult[3] == -1);
     Require(prefixResult[4] == 0x5a && prefixResult[5] == 0x5a && prefixResult[6] == 0x5a && prefixResult[7] == 0x5a);
+    errno = 71;
+    Require(sceG2PDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
 
     Require(sceG2PDialogClose() == static_cast<int>(0x80B8000Bu));
     Require(sceG2PDialogTerminate() == 0);
