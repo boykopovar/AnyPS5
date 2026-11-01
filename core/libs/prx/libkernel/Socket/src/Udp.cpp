@@ -1456,6 +1456,8 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
     sockaddr_storage native{};
     socklen_t size;
     if (!Address(socket->family, address, mapped ? 28 : length, native, size)) return -1;
+    if (native.ss_family == AF_INET6 && IN6_IS_ADDR_UNSPECIFIED(&reinterpret_cast<sockaddr_in6&>(native).sin6_addr))
+        reinterpret_cast<sockaddr_in6&>(native).sin6_addr = in6addr_loopback;
 #ifdef _WIN32
     if (socket->type == 1) RefuseClosedLoopbackAtOnce_nid_no_patch(socket->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
