@@ -111,7 +111,7 @@ void Store(HostStream& host, bool totalsReset) {
     }
     guest.msg = stream.msg;
     guest.data_type = stream.data_type;
-    if (stream.adler != static_cast<uLong>(guest.adler)) guest.adler = stream.adler;
+    if (guest.adler != static_cast<std::uint64_t>(stream.adler)) guest.adler = stream.adler;
 }
 
 HostStream* Find(GuestZStream* guest, bool inflating) {
