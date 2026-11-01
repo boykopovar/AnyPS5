@@ -302,6 +302,70 @@ static void TestVectorPushBackReleasesElements() {
     Require(deletedObject == object);
 }
 
+static void TestVectorCopyFromSelfPreservesElements() {
+    int context = 0;
+    alignas(8) unsigned char objectA[ObjectSize];
+    alignas(8) unsigned char objectB[ObjectSize];
+    std::memset(objectA, 0x5a, sizeof(objectA));
+    std::memset(objectB, 0x5a, sizeof(objectB));
+    WriteCount(objectA, 0, 1);
+    WriteCount(objectB, 0, 1);
+    deleterCalls = 0;
+    deletedObject = nullptr;
+
+    auto* sourceElements = static_cast<IntrusivePtr*>(std::calloc(2, sizeof(IntrusivePtr)));
+    Require(sourceElements != nullptr);
+    sourceElements[0] = IntrusivePtr{objectA, RecordDelete, &context};
+    sourceElements[1] = IntrusivePtr{objectB, RecordDelete, &context};
+    alignas(8) unsigned char sourceBody[0x50];
+    std::memset(sourceBody, 0, sizeof(sourceBody));
+    const std::uint64_t magic = 0x434e507056656342ULL;
+    const std::uint64_t two = 2;
+    std::memcpy(sourceBody, &magic, sizeof(magic));
+    WriteCount(sourceBody, VectorReferenceCountOffset, 1);
+    WriteCount(sourceBody, 0x34, 1);
+    std::memcpy(sourceBody + 0x38, &sourceElements, sizeof(sourceElements));
+    std::memcpy(sourceBody + 0x40, &two, sizeof(two));
+    std::memcpy(sourceBody + 0x48, &two, sizeof(two));
+    IntrusivePtr source{sourceBody, RecordDelete, &context};
+
+    IntrusivePtr vector;
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEEC1EPNS2_10LibContextE(&vector, &context);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE8copyFromERKS9_(&vector, &source) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE4sizeEv(&vector) == 2);
+    Require(ReadCount(objectA, 0) == 2 && ReadCount(objectB, 0) == 2);
+
+    IntrusivePtr* elements = nullptr;
+    std::memcpy(&elements, static_cast<const unsigned char*>(vector.object) + 0x38, sizeof(elements));
+    Require(elements != nullptr && elements != sourceElements);
+    Require(elements[0].object == objectA && elements[0].deleter == RecordDelete && elements[0].libContext == &context);
+    Require(elements[1].object == objectB && elements[1].deleter == RecordDelete && elements[1].libContext == &context);
+
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE8copyFromERKS9_(&vector, &vector) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE4sizeEv(&vector) == 2);
+    IntrusivePtr* elementsAfter = nullptr;
+    std::memcpy(&elementsAfter, static_cast<const unsigned char*>(vector.object) + 0x38, sizeof(elementsAfter));
+    Require(elementsAfter == elements);
+    Require(elements[0].object == objectA && elements[1].object == objectB);
+    Require(ReadCount(objectA, 0) == 2 && ReadCount(objectB, 0) == 2);
+    Require(deleterCalls == 0);
+
+    IntrusivePtr alias{vector.object, vector.deleter, vector.libContext};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE8copyFromERKS9_(&alias, &vector) == 0);
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE8copyFromERKS9_(&vector, &alias) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEE4sizeEv(&vector) == 2);
+    std::memcpy(&elementsAfter, static_cast<const unsigned char*>(vector.object) + 0x38, sizeof(elementsAfter));
+    Require(elementsAfter == elements);
+    Require(elements[0].object == objectA && elements[1].object == objectB);
+    Require(ReadCount(objectA, 0) == 2 && ReadCount(objectB, 0) == 2);
+    Require(deleterCalls == 0);
+
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V127ResponsePlayerSessionPlayerEEEED1Ev(&vector);
+    Require(ReadCount(objectA, 0) == 1 && ReadCount(objectB, 0) == 1);
+    Require(deleterCalls == 0);
+    std::free(sourceElements);
+}
+
 static void TestAdoptedVectorBodyDestroyedThroughDeleter() {
     int context = 0;
     alignas(8) unsigned char body[ObjectSize];
@@ -657,6 +721,7 @@ int main(int argc, char** argv) {
     TestMatchmakingSharedOwnership();
     TestMatchTeamVectorSize();
     TestVectorPushBackReleasesElements();
+    TestVectorCopyFromSelfPreservesElements();
     TestAdoptedVectorBodyDestroyedThroughDeleter();
     TestUserProfileVectorAssign();
     TestUserProfileModelAndTransaction();
