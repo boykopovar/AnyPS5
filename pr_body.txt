@@ -1,0 +1,5 @@
+- [x] Added negative test coverage for `sceUserServiceGetAccessibilityChatTranscription` null pointer and unlogged user cases.
+- [x] Verified 0 findings with `tools/check_conventions.py`.
+- [x] Maintained strict 0 comments policy in C++20 code.
+- [x] Followed author and commit message specifications.
+- [x] Successfully pushed branch and created pull request.
