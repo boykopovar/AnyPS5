@@ -143,7 +143,7 @@ CairoSurface* MakeImage(int format, int width, int height,
                       std::numeric_limits<std::size_t>::max())
         return ErrorSurface(kInvalidSize);
     auto* result = NewSurface();
-    if (!result) return nullptr;
+    if (!result) return ErrorSurface(kNoMemory);
     result->format = format;
     result->content = ContentForFormat(format);
     result->width = width;
@@ -269,7 +269,7 @@ CairoSurface* APS5_VABI cairo_surface_create_for_rectangle(CairoSurface* target,
     if (State(target)->status != kSuccess) return ErrorSurface(State(target)->status);
     if (!(width >= 0 && height >= 0)) return ErrorSurface(kInvalidSize);
     auto* result = NewSurface();
-    if (!result) return nullptr;
+    if (!result) return ErrorSurface(kNoMemory);
 
     result->isImage = false;
     result->content = State(target)->content;
