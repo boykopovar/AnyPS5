@@ -83,4 +83,40 @@ LibcException::TypeInfoVtable _ZTVN10__cxxabiv120__function_type_infoE_nid_postf
     LibcException::IsPointerTypeInfo,
     LibcException::IsFunctionTypeInfoTrue
 };
+LibcException::TypeInfoVtable _ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix {
+    0,
+    &typeid(__cxxabiv1::__fundamental_type_info)
+};
+}
+
+namespace {
+struct FundamentalTypeRecord { const void* vtable; const char* name; };
+}
+
+extern "C" {
+FundamentalTypeRecord _ZTIv_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "v"};
+FundamentalTypeRecord _ZTIw_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "w"};
+FundamentalTypeRecord _ZTIb_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "b"};
+FundamentalTypeRecord _ZTIc_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "c"};
+FundamentalTypeRecord _ZTIa_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "a"};
+FundamentalTypeRecord _ZTIh_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "h"};
+FundamentalTypeRecord _ZTIs_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "s"};
+FundamentalTypeRecord _ZTIt_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "t"};
+FundamentalTypeRecord _ZTIi_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "i"};
+FundamentalTypeRecord _ZTIj_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "j"};
+FundamentalTypeRecord _ZTIl_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "l"};
+FundamentalTypeRecord _ZTIm_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "m"};
+FundamentalTypeRecord _ZTIx_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "x"};
+FundamentalTypeRecord _ZTIy_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "y"};
+FundamentalTypeRecord _ZTIn_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "n"};
+FundamentalTypeRecord _ZTIo_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "o"};
+FundamentalTypeRecord _ZTIf_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "f"};
+FundamentalTypeRecord _ZTId_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "d"};
+FundamentalTypeRecord _ZTIe_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "e"};
+FundamentalTypeRecord _ZTIg_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "g"};
+FundamentalTypeRecord _ZTIDn_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "Dn"};
+FundamentalTypeRecord _ZTIDs_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "Ds"};
+FundamentalTypeRecord _ZTIDi_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "Di"};
+FundamentalTypeRecord _ZTIDu_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "Du"};
+FundamentalTypeRecord _ZTIDh_nid_postfix {reinterpret_cast<const void*>(&_ZTVN10__cxxabiv123__fundamental_type_infoE_nid_postfix.destroy), "Dh"};
 }
