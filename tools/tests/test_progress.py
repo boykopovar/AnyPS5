@@ -352,6 +352,18 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(sum(line.startswith("| libSce") for line in table.splitlines()), progress.REPORT_ROWS)
         self.assertIn("3 more libraries", table)
 
+    def test_opcodes_counted_through_variants_are_not_listed_as_uncounted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            opcodes = Path(directory) / "RdnaOpcode.hpp"
+            opcodes.write_text("enum class RdnaOpcode : int {\n    VAddI32,\n    VMulLoI32,\n    Count,\n};\n",
+                               encoding="utf-8")
+            isa = Path(directory) / "rdna_isa.txt"
+            isa.write_text("V_ADD_CO_U32 VOP3\n", encoding="utf-8")
+            with patch.multiple(progress, OPCODES=opcodes, ISA=isa):
+                shaders = progress.collect_shaders()
+        self.assertEqual(shaders["done"], 1)
+        self.assertEqual(shaders["extra"], ["VMulLoI32"])
+
     def test_raw_string_example_does_not_declare_an_export(self):
         source = 'const char* example = R"help(\nint APS5_VABI Fake() { return 0; }\n)help";\n'
         source += 'int APS5_VABI Real() { return 7; }\n'
