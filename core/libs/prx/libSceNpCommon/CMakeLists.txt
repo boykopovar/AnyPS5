@@ -18,3 +18,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceNpCommon>")
     endif()
 endif()
+
+target_sources(libSceNpCommon PRIVATE InventoryExports.cpp)
