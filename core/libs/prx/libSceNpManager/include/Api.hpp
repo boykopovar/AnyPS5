@@ -6,13 +6,6 @@ using NpStateCallback = void (APS5_VABI *)(int userId, uint32_t state, NpId* npI
 
 using NpStateCallbackA = void (APS5_VABI *)(int userId, uint32_t state, void* userdata);
 
-struct NpPeerAddressA {
-    std::uint64_t accountId;
-    std::uint32_t platform;
-    std::uint8_t padding[4];
-};
-static_assert(sizeof(NpPeerAddressA) == 16);
-
 extern "C" {
 
 int APS5_VABI sceNpAsmAbort(void);
@@ -79,8 +72,8 @@ int APS5_VABI sceNpIdMapperOnlineIdToAccountId(int reqId, int userId, const void
 int APS5_VABI sceNpInGameMessageAbortHandle(std::int32_t libCtxId, std::int32_t handleId);
 int APS5_VABI sceNpInGameMessageCheckCallback(void);
 int APS5_VABI sceNpInGameMessageGetMemoryPoolStatistics(void);
-int APS5_VABI sceNpInGameMessagePrepareA(std::int32_t libCtxId, std::int32_t handleId, const void* reserved, void* callback, void* userArg);
-int APS5_VABI sceNpInGameMessageSendDataA(std::int32_t libCtxId, const NpPeerAddressA* to, const NpPeerAddressA* from, const void* message);
+int APS5_VABI sceNpInGameMessagePrepareA(void);
+int APS5_VABI sceNpInGameMessageSendDataA(void);
 int APS5_VABI sceNpIntGetAppType(void);
 int APS5_VABI sceNpIntGetGamePresenceStatus(void);
 int APS5_VABI sceNpIntGetNpTitleId(void);

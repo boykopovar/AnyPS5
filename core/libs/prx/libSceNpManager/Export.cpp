@@ -1,4 +1,5 @@
 #include "prx/libSceNpManager/include/Api.hpp"
+#include "prx/libSceNpManager/include/InGameMessageIds.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -9,6 +10,7 @@
 #include <atomic>
 #include <mutex>
 #include <map>
+#include <set>
 #include <unordered_set>
 
 // PSN is not emulated: the user is reported as signed out and online queries fail.
@@ -35,17 +37,12 @@ static constexpr uint32_t NP_GAME_PRESENCE_STATUS_OFFLINE = 0;
 
 static std::atomic<int> g_nextRequest{1};
 
-static constexpr int NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80552B02);
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND = static_cast<int>(0x80552B03);
-static constexpr int NP_IN_GAME_MESSAGE_ERROR_NOT_SIGNED_IN = static_cast<int>(0x80552B04);
 static constexpr int NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND = static_cast<int>(0x80552B05);
-static constexpr int NP_IN_GAME_MESSAGE_ERROR_ABORTED = static_cast<int>(0x80552B06);
-static constexpr int NP_IN_GAME_MESSAGE_ERROR_NOT_PREPARED = static_cast<int>(0x80552B08);
 
 namespace {
 struct InGameMessageContext {
-    std::map<std::int32_t, bool> handles;
-    bool prepared = false;
+    std::set<std::int32_t> handles;
 };
 
 std::mutex inGameMessageMutex;
@@ -368,10 +365,7 @@ int APS5_VABI sceNpInGameMessageAbortHandle(std::int32_t libCtxId, std::int32_t 
     std::lock_guard lock(inGameMessageMutex);
     InGameMessageContext* context = FindInGameMessageContext(libCtxId);
     if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
-    const auto handle = context->handles.find(handleId);
-    if (handle == context->handles.end()) return NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND;
-    handle->second = true;
-    return 0;
+    return context->handles.count(handleId) == 1 ? 0 : NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND;
 }
 int APS5_VABI sceNpInGameMessageCheckCallback(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -381,26 +375,13 @@ int APS5_VABI sceNpInGameMessageGetMemoryPoolStatistics(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpInGameMessagePrepareA(std::int32_t libCtxId, std::int32_t handleId, const void* reserved, void* callback, void* userArg) {
-    (void)reserved;
-    (void)userArg;
-    if (!callback) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
-    std::lock_guard lock(inGameMessageMutex);
-    InGameMessageContext* context = FindInGameMessageContext(libCtxId);
-    if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
-    const auto handle = context->handles.find(handleId);
-    if (handle == context->handles.end()) return NP_IN_GAME_MESSAGE_ERROR_HANDLE_NOT_FOUND;
-    if (handle->second) return NP_IN_GAME_MESSAGE_ERROR_ABORTED;
-    context->prepared = true;
+int APS5_VABI sceNpInGameMessagePrepareA(void) {
+    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpInGameMessageSendDataA(std::int32_t libCtxId, const NpPeerAddressA* to, const NpPeerAddressA* from, const void* message) {
-    if (!to || !from || !message) return NP_IN_GAME_MESSAGE_ERROR_INVALID_ARGUMENT;
-    std::lock_guard lock(inGameMessageMutex);
-    const InGameMessageContext* context = FindInGameMessageContext(libCtxId);
-    if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
-    if (!context->prepared) return NP_IN_GAME_MESSAGE_ERROR_NOT_PREPARED;
-    return NP_IN_GAME_MESSAGE_ERROR_NOT_SIGNED_IN;
+int APS5_VABI sceNpInGameMessageSendDataA(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 int APS5_VABI sceNpIntGetAppType(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -1106,8 +1087,8 @@ int APS5_VABI sceNpInGameMessageCreateHandle(std::int32_t libCtxId) {
     std::lock_guard lock(inGameMessageMutex);
     InGameMessageContext* context = FindInGameMessageContext(libCtxId);
     if (!context) return NP_IN_GAME_MESSAGE_ERROR_LIB_CONTEXT_NOT_FOUND;
-    const std::int32_t handleId = nextInGameMessageHandle++;
-    context->handles.emplace(handleId, false);
+    const std::int32_t handleId = TakeInGameMessageId(nextInGameMessageHandle, __func__);
+    context->handles.insert(handleId);
     return handleId;
 }
 
@@ -1122,7 +1103,7 @@ int APS5_VABI sceNpInGameMessageInitialize(std::size_t poolSize, void* option) {
     (void)poolSize;
     (void)option;
     std::lock_guard lock(inGameMessageMutex);
-    const std::int32_t libCtxId = nextInGameMessageContext++;
+    const std::int32_t libCtxId = TakeInGameMessageId(nextInGameMessageContext, __func__);
     inGameMessageContexts.emplace(libCtxId, InGameMessageContext{});
     return libCtxId;
 }
