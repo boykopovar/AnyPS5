@@ -940,6 +940,18 @@ std::uint32_t Atomic32(SpirvValueEmitContext& ctx, const IrValue& inst, const Me
 std::uint32_t BufferAtomic64(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     static_cast<void>(BufferMemory(ctx, inst));
+    if (state.requirements.bufferInt64AtomicsSplit) {
+        if (!IsSplittableBufferAtomic64(&inst)) ctx.Fail(inst, "64-bit buffer atomic needs shaderBufferInt64Atomics");
+        const auto data = Unary(state, spv::OpBitcast, TypeScalarU64(state), ctx.Arg(inst, inst.ArgumentCount() - 2u));
+        const auto low = Unary(state, spv::OpUConvert, TypeU32(state), data);
+        const auto high = Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), data, BdaConstant(state, 32u)));
+        std::uint32_t index = 0u;
+        EmitRuntimeBufferAtomicHalves(ctx, inst, ActiveArgument(ctx, inst), [&](std::uint32_t pointer) {
+            state.module.AddFunction(SpirvAtomicOpcode(inst.Opcode()), TypeU32(state), state.module.AllocateId(), pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), index++ == 0u ? low : high);
+        });
+        EmitDeviceAtomicMemoryBarrier(state);
+        return ConstantU64(state, 0u);
+    }
     return EmitRuntimeBufferAtomic(ctx, inst, 64u, ActiveArgument(ctx, inst), [&](std::uint32_t pointer) {
         const auto value = Unary(state, spv::OpBitcast, TypeScalarU64(state), ctx.Arg(inst, inst.ArgumentCount() - 2u));
         const auto old = state.module.AllocateId();

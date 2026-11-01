@@ -1021,7 +1021,7 @@ std::uint32_t EmitRuntimeScalarBufferLoad(SpirvValueEmitContext& context, const 
     return EmitValueOrZeroIfCondition(state, inBounds, [&] { return readBuffer(context, instruction, AddBdaAddress(context, instruction, resource.base, offset, false), 32u); });
 }
 
-std::uint32_t EmitRuntimeBufferAtomic(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t bits, std::uint32_t active, const std::function<std::uint32_t(std::uint32_t)>& operation) {
+static std::uint32_t RuntimeBufferAtomic(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t bits, bool split, std::uint32_t active, const std::function<std::uint32_t(std::uint32_t, std::uint32_t)>& operation) {
     auto& state = context.state;
     if (bits != 32u && bits != 64u) context.Fail(instruction, "unsupported runtime buffer atomic width");
     if (context.Memory(instruction).gpuDescriptor && (state.bdaAtomicPointerFunction == 0u || state.bdaNoteWriteFunction == 0u)) context.Fail(instruction, "BDA atomic functions are missing");
@@ -1030,18 +1030,20 @@ std::uint32_t EmitRuntimeBufferAtomic(SpirvValueEmitContext& context, const IrVa
         if (std::ranges::find(state.supportedCapabilities, spv::CapabilityInt64) == state.supportedCapabilities.end()) context.Fail(instruction, "buffer atomic fault addresses require shaderInt64");
         state.module.EmitCapability(spv::CapabilityInt64);
     }
-    const auto type = bits == 64u ? TypeU64(state) : TypeU32(state);
-    const auto scalar = bits == 64u ? TypeScalarU64(state) : TypeU32(state);
-    const auto zero = bits == 64u ? ConstantU64(state, 0u) : ConstantU32(state, 0u);
+    const bool wide = bits == 64u && !split;
+    const auto type = wide ? TypeU64(state) : TypeU32(state);
+    const auto scalar = wide ? TypeScalarU64(state) : TypeU32(state);
+    const auto zero = wide ? ConstantU64(state, 0u) : ConstantU32(state, 0u);
     return EmitValueOrDefaultIfCondition(state, active, type, zero, [&] {
         const auto resource = descriptor(context, instruction);
         const auto access = address(context, instruction, resource, 0u, bits / 8u);
         return EmitValueOrDefaultIfCondition(state, access.inBounds, type, zero, [&] {
             if (!context.Memory(instruction).gpuDescriptor) {
-                const auto storage = directAccess(context, instruction, bits == 64u);
+                const auto storage = directAccess(context, instruction, wide);
                 const auto byte = EmitAddU32(state, access.guest, storage.byteOffset);
-                const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byte, ConstantU32(state, bits == 64u ? 3u : 2u));
-                auto valid = EmitMemoryElementInBounds(state, storage, index);
+                const auto index = Binary(state, spv::OpShiftRightLogical, TypeU32(state), byte, ConstantU32(state, wide ? 3u : 2u));
+                const auto highIndex = split ? EmitAddU32(state, index, ConstantU32(state, 1u)) : index;
+                auto valid = EmitMemoryElementInBounds(state, storage, highIndex);
                 if (bits == 64u) {
                     const auto unaligned = nonzero(state, EmitAndConstant(state, byte, bits / 8u - 1u));
                     const auto guest = Binary(state, spv::OpIAdd, TypeScalarU64(state), resource.base, Unary(state, spv::OpUConvert, TypeScalarU64(state), access.guest));
@@ -1053,8 +1055,10 @@ std::uint32_t EmitRuntimeBufferAtomic(SpirvValueEmitContext& context, const IrVa
                     valid = both(state, Unary(state, spv::OpLogicalNot, TypeBool(state), unaligned), valid);
                 }
                 return EmitValueOrDefaultIfCondition(state, valid, type, zero, [&] {
-                    const auto pointer = EmitStorageBufferElementPointer(state, storage, index, bits == 64u ? TypeStorageBufferU64ElementPointer(state) : TypeStorageBufferElementPointer(state));
-                    return operation(pointer);
+                    const auto pointer = EmitStorageBufferElementPointer(state, storage, index, wide ? TypeStorageBufferU64ElementPointer(state) : TypeStorageBufferElementPointer(state));
+                    auto result = operation(pointer, 0u);
+                    if (split) result = operation(EmitStorageBufferElementPointer(state, storage, highIndex, TypeStorageBufferElementPointer(state)), 1u);
+                    return result;
                 });
             }
             const auto atomicAt = [&](std::uint32_t guest) {
@@ -1064,7 +1068,14 @@ std::uint32_t EmitRuntimeBufferAtomic(SpirvValueEmitContext& context, const IrVa
                 return EmitValueOrDefaultIfCondition(state, mapped, type, zero, [&] {
                     const auto pointer = state.module.AllocateId();
                     state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, scalar), pointer, physical);
-                    const auto result = operation(pointer);
+                    auto result = operation(pointer, 0u);
+                    if (split) {
+                        const auto high = state.module.AllocateId();
+                        state.module.AddFunction(spv::OpIAdd, TypeScalarU64(state), high, physical, BdaConstant(state, 4u));
+                        const auto highPointer = state.module.AllocateId();
+                        state.module.AddFunction(spv::OpConvertUToPtr, TypePointer(state, spv::StorageClassPhysicalStorageBuffer, scalar), highPointer, high);
+                        result = operation(highPointer, 1u);
+                    }
                     state.module.AddFunction(spv::OpFunctionCall, state.module.Type(spv::OpTypeVoid), state.module.AllocateId(), state.bdaNoteWriteFunction, guest);
                     return result;
                 });
@@ -1076,5 +1087,17 @@ std::uint32_t EmitRuntimeBufferAtomic(SpirvValueEmitContext& context, const IrVa
         });
     });
 }
+
+std::uint32_t EmitRuntimeBufferAtomic(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t bits, std::uint32_t active, const std::function<std::uint32_t(std::uint32_t)>& operation) {
+    return RuntimeBufferAtomic(context, instruction, bits, false, active, [&](std::uint32_t pointer, std::uint32_t) { return operation(pointer); });
+}
+
+void EmitRuntimeBufferAtomicHalves(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t active, const std::function<void(std::uint32_t)>& operation) {
+    static_cast<void>(RuntimeBufferAtomic(context, instruction, 64u, true, active, [&](std::uint32_t pointer, std::uint32_t) {
+        operation(pointer);
+        return ConstantU32(context.state, 0u);
+    }));
+}
+
 
 }
