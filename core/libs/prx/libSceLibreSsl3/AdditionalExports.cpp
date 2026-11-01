@@ -23,18 +23,6 @@ int APS5_VABI ERR_func_error_string_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI EVP_CIPHER_iv_length_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_CIPHER_key_length_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_MD_CTX_md_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI EVP_PKEY_CTX_free_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -152,10 +140,6 @@ int APS5_VABI X509_STORE_CTX_get0_param_nid_postfix() {
 }
 
 int APS5_VABI X509_STORE_load_locations_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI X509_VERIFY_PARAM_set_flags_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

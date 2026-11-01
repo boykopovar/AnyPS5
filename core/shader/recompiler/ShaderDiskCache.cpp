@@ -1389,6 +1389,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_PERF_DOM_INTERSECTION",
     "APS5_NO_PERF_ITERATION_SELECTION",
     "APS5_NO_PERF_LAYOUT_PAIR",
+    "APS5_NO_BUFFER_SUBSTITUTES",
     "APS5_NO_RESULT_MEMO",
     "APS5_NO_TABLE_RESOLUTION_REUSE",
     "APS5_NO_TABLE_SNAPSHOT_REUSE",
@@ -1507,6 +1508,7 @@ public:
         if (DecodeEntry(bytes, key, *persisted, std::move(mapped)) != LoadStatus::Loaded) return nullptr;
         persisted->layout = variant.layout;
         persisted->artifact.variantId = variant.artifact.variantId;
+        persisted->substitutes = variant.substitutes;
         return persisted;
     }
 
