@@ -360,12 +360,12 @@ struct Context {
         const auto host = HostMemoryType(mask);
         if (!host) return type;
         if (cacheReclaim != nullptr) {
-            const auto wanted = bytes + (usage > budget ? usage - budget : 0u);
+            const auto wanted = bytes + (report.usage > report.budget ? report.usage - report.budget : 0u);
             const auto released = cacheReclaim(wanted, true);
             if (released >= wanted) return type;
             if (released != 0) {
-                memoryProperties2(physical, &properties);
-                if (reported.heapUsage[heap] < reported.heapBudget[heap] && bytes <= reported.heapBudget[heap] - reported.heapUsage[heap]) return type;
+                const auto after = ReportedHeap(heap);
+                if (after.usage < after.budget && bytes <= after.budget - after.usage) return type;
             }
         }
         static std::atomic<std::uint64_t> placements{0}, placedBytes{0};
