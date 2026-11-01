@@ -333,6 +333,22 @@ static int OpenFailure(const std::filesystem::path& path, bool writes, int hostE
     return writes && error == 13 && std::filesystem::is_directory(path, status) ? 21 : error;
 }
 
+static void* (*g_beginClosingDescriptor)(int) = nullptr;
+static void (*g_endClosingDescriptor)(void*) = nullptr;
+
+void LibcRegisterClosedDescriptors_nid_no_patch(void* (*begin)(int), void (*end)(void*)) {
+    g_beginClosingDescriptor = begin;
+    g_endClosingDescriptor = end;
+}
+
+void* BeginClosingDescriptor_nid_no_patch(int descriptor) {
+    return g_beginClosingDescriptor ? g_beginClosingDescriptor(descriptor) : nullptr;
+}
+
+void EndClosingDescriptor_nid_no_patch(void* closing) {
+    if (g_endClosingDescriptor) g_endClosingDescriptor(closing);
+}
+
 #ifdef _WIN32
 static int (*g_openDirectoryDescriptor)(const wchar_t*) = nullptr;
 static void (*g_forgetDirectoryDescriptor)(int) = nullptr;

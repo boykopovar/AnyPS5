@@ -246,7 +246,7 @@ struct PositionedLock {
 };
 std::mutex g_positionedTableLock;
 std::unordered_map<int, std::shared_ptr<PositionedLock>> g_positionedLocks;
-std::unique_lock<std::mutex> File::LockPositionedTransfer(int descriptor) {
+File::PositionedTransferLock File::LockPositionedTransfer(int descriptor) {
     std::shared_ptr<PositionedLock> entry;
     {
         std::lock_guard table(g_positionedTableLock);
@@ -254,7 +254,7 @@ std::unique_lock<std::mutex> File::LockPositionedTransfer(int descriptor) {
         if (!slot) slot = std::make_shared<PositionedLock>();
         entry = slot;
     }
-    return std::unique_lock<std::mutex>(entry->mutex);
+    return PositionedTransferLock(std::shared_ptr<std::mutex>(entry, &entry->mutex));
 }
 void File::SharePositionedTransfer(int from, int to) {
     std::lock_guard table(g_positionedTableLock);
@@ -806,12 +806,8 @@ int APS5_VABI close_nid_postfix(int d) {
 #ifdef _WIN32
     const auto positioned = File::LockPositionedTransfer(d);
 #endif
-    File::ForgetRandomDevice(d);
-    File::ForgetDescriptor(d);
-    ForgetJitSharedMemory(d);
-    File::ForgetDirectoryDescriptor(d);
+    File::ForgetClosedDescriptor(d);
 #ifdef _WIN32
-    File::ForgetFileLock(d);
     const int shared = File::CloseSharedMemoryDescriptor_nid_no_patch(d);
     if (shared != -2) return shared;
     return WithoutParameterHandler([d] { return ::_close(d); });
