@@ -31,6 +31,7 @@ constexpr int GuestBroadcast = 0x20;
 constexpr int GuestLinger = 0x80;
 constexpr int GuestOobInline = 0x100;
 constexpr int GuestAcceptFilter = 0x1000;
+constexpr std::uint32_t GuestAcceptFilterArgumentSize = 256;
 constexpr int GuestNoSigpipe = 0x800;
 constexpr int GuestSendBuffer = 0x1001;
 constexpr int GuestReceiveBuffer = 0x1002;
@@ -177,6 +178,8 @@ int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
         bool listening = false;
         if (type != 2 && !NativeListening(native, listening)) return HostError();
         if (!listening) return ErrorInvalid;
+        if (!value) return 0;
+        if (length < GuestAcceptFilterArgumentSize) return ErrorInvalid;
         NotImplemented_nid_no_patch("setsockopt: SO_ACCEPTFILTER on a listening socket");
     }
     if (option == GuestLinger) {
@@ -291,8 +294,7 @@ int GetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int fa
     if (option == GuestAcceptFilter) {
         bool listening = false;
         if (type != 2 && !NativeListening(native, listening)) return HostError();
-        if (!listening) return ErrorInvalid;
-        NotImplemented_nid_no_patch("getsockopt: SO_ACCEPTFILTER on a listening socket");
+        return ErrorInvalid;
     }
     if (option == GuestLinger) {
         linger current{};
