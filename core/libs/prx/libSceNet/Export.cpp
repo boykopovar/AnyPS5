@@ -743,6 +743,12 @@ void GuestSceNetTest::SetResolverLookupForTests_nid_no_patch(ResolverLookup look
 extern "C" {
 
 extern const std::uint32_t sce_net_in6addr_any[4] = {};
+
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_loopback_nid_postfix[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_nodelocal_allnodes_nid_postfix[16] = {0xff, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_linklocal_allrouters_nid_postfix[16] = {0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2};
+extern const std::uint32_t sce_net_dummy_nid_postfix = 0;
+
 alignas(std::uint32_t) extern const std::uint8_t sce_net_in6addr_linklocal_allnodes[16] = {0xff, 0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
 
 int* APS5_VABI sceNetErrnoLoc(void) {
@@ -2390,7 +2396,9 @@ int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std
 }
 
 int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
-    if (timeout < 0 || retry < 0 || (static_cast<unsigned>(flags) & 0xfffefffeu) != 0) return fail(NET_EINVAL);
+    constexpr int minimumTimeout = 1000000;
+    if (timeout < 0 || (timeout != 0 && timeout < minimumTimeout) || retry < 0 || (static_cast<unsigned>(flags) & 0xfffefffeu) != 0)
+        return fail(NET_EINVAL);
     if (!hostname || !addr) return fail(NET_EINVAL);
     std::vector<std::uint32_t> addresses;
     if (const int error = lookup_ipv4(rid, hostname, __func__, addresses)) return error;
