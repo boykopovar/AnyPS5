@@ -9,6 +9,8 @@ inline constexpr int SCE_CAMERA_ERROR_FORMAT_UNKNOWN = static_cast<int>(0x802E00
 inline constexpr int SCE_CAMERA_ERROR_NOT_CONNECTED = static_cast<int>(0x802E0010);
 inline constexpr int SCE_CAMERA_ERROR_FATAL = static_cast<int>(0x802E00FF);
 
+extern "C" void SetCamera2AppCategoryForTest_nid_no_patch(const std::uint32_t* category);
+
 namespace Camera {
 
 bool IsOpen();
