@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string_view>
 #include "SceTypes.hpp"
 
 namespace {
@@ -114,6 +115,44 @@ int Base64Encode(const std::uint8_t* src, char* dst, std::size_t length, const c
     return static_cast<int>(out - dst);
 }
 
+bool IsAsciiAlnum(char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+bool IsJidUserByte(char c) {
+    return IsAsciiAlnum(c) || c == '+' || c == '-' || c == '.' || c == '_';
+}
+
+bool IsJidDomainByte(char c) {
+    return IsAsciiAlnum(c) || c == '-' || c == '.' || c == '_';
+}
+
+struct JidParts {
+    std::string_view user;
+    std::string_view domain;
+    std::string_view resource;
+};
+
+JidParts SplitJid(std::string_view text) {
+    JidParts parts;
+    std::size_t user = 0;
+    while (user < text.size() && IsJidUserByte(text[user])) ++user;
+    std::size_t position = 0;
+    if (user != 0 && user < text.size() && text[user] == '@') {
+        parts.user = text.substr(0, user);
+        position = user;
+    }
+    if (position < text.size() && text[position] == '@') ++position;
+    std::size_t domain = 0;
+    while (position + domain < text.size() && IsJidDomainByte(text[position + domain])) ++domain;
+    while (domain != 0 && text[position + domain - 1] == '.') --domain;
+    parts.domain = text.substr(position, domain);
+    position += domain;
+    if (position < text.size()) ++position;
+    parts.resource = text.substr(position);
+    return parts;
+}
+
 int HexValue(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -198,6 +237,9 @@ int CopyToBuffer(char* dst, std::size_t size, const char* src, std::size_t lengt
 constexpr int NP_UTIL_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550601);
 constexpr int NP_UTIL_ERROR_BUFFER_TOO_SMALL = static_cast<int>(0x80550602);
 constexpr int NP_UTIL_ERROR_INVALID_CHARACTER = static_cast<int>(0x80550608);
+constexpr int NP_UTIL_ERROR_INVALID_JID = static_cast<int>(0x80550604);
+constexpr std::size_t NP_ONLINE_ID_MAX_LENGTH = 16;
+constexpr std::size_t NP_ID_RESOURCE_MAX_LENGTH = 4;
 constexpr std::size_t JSON_ESCAPE_MARGIN = 7;
 constexpr std::size_t JSON_UNICODE_ESCAPE_LENGTH = 6;
 constexpr std::size_t JSON_SURROGATE_PAIR_LENGTH = 12;
@@ -681,6 +723,72 @@ int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const cha
         position += length;
     }
     *character = position;
+    return 0;
+}
+
+int APS5_VABI sceNpUtilParseJid(NpJid* jid, const char* text, char* buffer, std::size_t bufferSize, std::size_t* required) {
+    if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const bool fill = jid != nullptr && buffer != nullptr;
+    if (fill) {
+        *jid = {};
+    } else if (required == nullptr) {
+        return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    const std::string_view whole(text);
+    const std::size_t start = whole.find_first_not_of(' ');
+    if (start == std::string_view::npos) return NP_UTIL_ERROR_INVALID_JID;
+    const JidParts parts = SplitJid(whole.substr(start));
+    const std::string_view pieces[] = {parts.user, parts.domain, parts.resource};
+    const char* copies[3] = {};
+    std::size_t used = 0;
+    for (std::size_t i = 0; i < 3; ++i) {
+        const std::size_t size = pieces[i].size() + 1;
+        if (fill) {
+            if (bufferSize - used < size) {
+                *jid = {};
+                return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+            }
+            std::memcpy(buffer + used, pieces[i].data(), pieces[i].size());
+            buffer[used + pieces[i].size()] = '\0';
+            copies[i] = buffer + used;
+        }
+        used += size;
+    }
+    if (fill) {
+        jid->user = copies[0];
+        jid->domain = copies[1];
+        jid->resource = copies[2];
+    }
+    if (required != nullptr) *required = used;
+    return 0;
+}
+
+int APS5_VABI sceNpUtilJidToNpId(NpIdFull* npId, const NpJid* jid) {
+    if (npId == nullptr || jid == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    if (jid->user == nullptr || jid->domain == nullptr) return NP_UTIL_ERROR_INVALID_JID;
+    const std::size_t userLength = std::strlen(jid->user);
+    if (userLength == 0 || userLength > NP_ONLINE_ID_MAX_LENGTH) return NP_UTIL_ERROR_INVALID_JID;
+    const char* domain = jid->domain;
+    if (!IsAsciiAlnum(domain[0]) || !IsAsciiAlnum(domain[1]) || domain[2] != '.' || !IsAsciiAlnum(domain[3]) || !IsAsciiAlnum(domain[4])
+        || domain[5] != '.') {
+        return NP_UTIL_ERROR_INVALID_JID;
+    }
+    const char* label = domain + 6;
+    while (*label != '.') {
+        if (*label == '\0') return NP_UTIL_ERROR_INVALID_JID;
+        ++label;
+    }
+    if (std::strcmp(label + 1, "playstation.net") != 0) return NP_UTIL_ERROR_INVALID_JID;
+    const std::size_t resourceLength = jid->resource != nullptr ? std::strlen(jid->resource) : 0;
+    if (resourceLength > NP_ID_RESOURCE_MAX_LENGTH) return NP_UTIL_ERROR_INVALID_JID;
+    *npId = {};
+    std::memcpy(npId->handle.data, jid->user, userLength);
+    npId->opt[0] = static_cast<std::uint8_t>(domain[0]);
+    npId->opt[1] = static_cast<std::uint8_t>(domain[1]);
+    npId->opt[2] = static_cast<std::uint8_t>(domain[3]);
+    npId->opt[3] = static_cast<std::uint8_t>(domain[4]);
+    if (resourceLength != 0) std::memcpy(npId->opt + 4, jid->resource, resourceLength);
+    npId->reserved[0] = 1;
     return 0;
 }
 
