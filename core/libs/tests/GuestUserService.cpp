@@ -148,6 +148,13 @@ int main() {
         Require(setting.get(USER_SERVICE_INITIAL_USER_ID, &value) == USER_SERVICE_OK);
         Require(value == setting.value);
     }
+    std::int32_t loginStatus = -1;
+    Require(sceUserServiceGetLoginStatus(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetLoginStatus(USER_SERVICE_USER_ID_INVALID, &loginStatus) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetLoginStatus(0, &loginStatus) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetLoginStatus(123, &loginStatus) == USER_SERVICE_ERROR_UNKNOWN_USER);
+    Require(sceUserServiceGetLoginStatus(USER_SERVICE_INITIAL_USER_ID, &loginStatus) == USER_SERVICE_OK);
+    Require(loginStatus == USER_SERVICE_LOGIN_STATUS_LOGGED_IN);
     int initialUser = -1;
     Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK && initialUser == USER_SERVICE_INITIAL_USER_ID);
