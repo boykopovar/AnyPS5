@@ -4,6 +4,8 @@
 
 - [sceVideoRecordingGetInfo, sceVideoRecordingSetInfo](../../../core/libs/prx/libSceVideoRecordingP/Export.cpp) support native validation and errors before a recording context exists. Open and initialization remain protected unimplemented exports; live recording queries, control and volume changes are unavailable.
 
+- [13.60 remaining inventory exports](../../../core/libs/prx/libSceVideoRecordingP/Export.cpp) - `sceVideoRecordingGetCopyrightImageMemory` (`PAKwtO6i9d8`), `sceVideoRecordingCloseWithTruncationByHandle` (`oryBI-2iyxw`) have unknown signatures and behavior. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every call throws through `NotImplemented_nid_no_patch`. These defined name/NID bindings come from the [13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/bfec40deb4c47a17d7603ee2bc79aa6862c0c56b/data/firmware-13.60/libscevideorecordingp-2f2509cb1b.jsonl).
+
 - [_sceVideoRecordingQueryParam_nid_postfix](../../../core/libs/prx/libSceVideoRecordingP/Export.cpp): the supplied module reads a 64-bit size and writes a 32-bit mode at offset 12 for sizes at least 16, plus a 32-bit option at offset 28 for sizes at least 64. Mode/option meanings remain unresolved; the protected implementation is unchanged.
 - [sceVideoRecordingCloseByHandle, sceVideoRecordingGetInfoByHandle](../../../core/libs/prx/libSceVideoRecordingP/Export.cpp) - native handles are context pointers. Recording state and per-handle queries remain unimplemented.
 - [sceVideoRecordingCopyBGRAtoNV12](../../../core/libs/prx/libSceVideoRecordingP/Export.cpp) - the destination, source, 32-bit width and height arguments are confirmed. Pixel conversion remains unimplemented.

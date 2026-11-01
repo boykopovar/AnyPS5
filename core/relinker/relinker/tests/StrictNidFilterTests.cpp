@@ -490,6 +490,19 @@ void relativeTableTargetsBounds() {
             "Modular two's-complement displacement wrapping across the address boundary was lost");
 }
 
+void pltCompactorBounds() {
+    const std::vector<std::uint8_t> text(64, 0x90);
+    const std::vector<Relinker::NidReference> emptyReferences;
+
+    requireFailure([&] {
+        Relinker::UnusedNidFilter::CompactPlt(emptyReferences, emptyReferences, text, std::numeric_limits<std::uint64_t>::max() - 10, 0, 0x300);
+    }, "Wrapping text section virtual address range was accepted by PLT compactor");
+
+    requireFailure([&] {
+        Relinker::UnusedNidFilter::CompactPlt(emptyReferences, emptyReferences, text, 0x1000, std::numeric_limits<std::uint64_t>::max() - 10, 0x300);
+    }, "Overflowing text section file byte offset was accepted by PLT compactor");
+}
+
 void relativeRelocationTableBounds() {
     std::vector<std::uint8_t> bytes(0x400, 0);
     bytes[0] = 0x7F;
@@ -900,6 +913,54 @@ void constructorArrayBounds() {
     }
 }
 
+void negativeRelativeRelocationTarget() {
+    auto input = fixture();
+    emit(input, 0, {0xC3});
+    importThunk(input, 16, 0x2000);
+    auto bytes = elfFixture(input);
+    bytes.resize(0xA00);
+    write<std::uint16_t>(bytes, 56, 4);
+    write<std::uint32_t>(bytes, 176, 2);
+    write<std::uint32_t>(bytes, 180, 6);
+    write<std::uint64_t>(bytes, 184, 0x300);
+    write<std::uint64_t>(bytes, 192, 0x2000);
+    write<std::uint64_t>(bytes, 208, 0x40);
+    write<std::uint64_t>(bytes, 216, 0x40);
+    write<std::uint64_t>(bytes, 224, 8);
+    write<std::uint32_t>(bytes, 232, 0x61000000);
+    write<std::uint32_t>(bytes, 236, 4);
+    write<std::uint64_t>(bytes, 240, 0x500);
+    write<std::uint64_t>(bytes, 264, 0x500);
+    write<std::uint64_t>(bytes, 272, 0x500);
+    write<std::uint64_t>(bytes, 280, 0x10);
+    write<std::int64_t>(bytes, 0x300, 0x6100002F);
+    write<std::uint64_t>(bytes, 0x308, 0x400);
+    write<std::int64_t>(bytes, 0x310, 0x61000031);
+    write<std::uint64_t>(bytes, 0x318, 24);
+    write<std::int64_t>(bytes, 0x320, 0x61000033);
+    write<std::uint64_t>(bytes, 0x328, 24);
+    write<std::uint64_t>(bytes, 0x900, 0x2040);
+    write<std::uint64_t>(bytes, 0x908, 8);
+    write<std::uint64_t>(bytes, 0x910, static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + 1);
+    const std::vector<Relinker::NidReference> references = {{"live", {}, 6, 0x900, 0x2000, 0}};
+    try {
+        (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr);
+        require(false, "Strict filter accepted a negative relative relocation target address");
+    } catch (const Relinker::RelinkerException& error) {
+        require(std::string(error.what()).find("relative relocation target address is negative") != std::string::npos,
+                "Unexpected error message for negative relative relocation target");
+        require(error.FailureOffset == 0x2040, "Unexpected failure offset for negative relative relocation target");
+    }
+    write<std::uint64_t>(bytes, 0x910, std::numeric_limits<std::uint64_t>::max());
+    requireFailure([&] { (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr); },
+                   "Strict filter accepted UINT64_MAX as relative relocation target address");
+    write<std::uint64_t>(bytes, 0x910, static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()));
+    (void)Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr);
+    write<std::uint64_t>(bytes, 0x910, 0x1010);
+    require(Relinker::MakeStrictUnusedNidFilter(testProgress)->Filter(references, bytes, input.Text, input.TextVaddr).size() == 1,
+            "Strict filter rejected a valid relative relocation target address");
+}
+
 }
 
 int main() {
@@ -923,10 +984,12 @@ int main() {
         filterCallbackDataImports();
         filterAndPltCompaction();
         relativeTableTargetsBounds();
+        pltCompactorBounds();
         relativeRelocationTableBounds();
         sceDynlibDataOffsets();
         duplicatePointerRelocations();
         constructorArrayBounds();
+        negativeRelativeRelocationTarget();
         std::cout << "Strict NID filter tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

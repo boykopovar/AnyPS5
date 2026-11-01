@@ -1,8 +1,54 @@
 # libSceUserService technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceUserService/InventoryExports.cpp) - 36 entries present in both version-labelled images are import-resolution declarations only. Neither label independently authenticates retail firmware provenance. None of these NIDs appears in the pinned public 3.20 catalogue for this library. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `sceUserServiceGetPartyChatTranscriptionVoiceType` | `Ebq9pcMYrko` |
+| `sceUserServiceSetVoiceAgentEnableByButton` | `Jz06XYyyqGE` |
+| `Unknown` | `-JCFmPNhxY8` |
+| `Unknown` | `-dkPbHlL9O8` |
+| `Unknown` | `-o+vKoB+bIw` |
+| `Unknown` | `0rgUYD57RHc` |
+| `Unknown` | `1b1BuBizZ2Q` |
+| `Unknown` | `1fV-P4lyYAM` |
+| `Unknown` | `6Qsib4RLbFw` |
+| `Unknown` | `6erDJ4-MGCs` |
+| `Unknown` | `A-wBTL+Cs5A` |
+| `Unknown` | `BdzmN4JP3JM` |
+| `Unknown` | `Bx+ESDBWJm4` |
+| `Unknown` | `Cqt7pJZRKLI` |
+| `Unknown` | `D5lYX9Wm7PI` |
+| `Unknown` | `DL6cKVeISqs` |
+| `Unknown` | `ErTMkmSho4E` |
+| `Unknown` | `GbRykQBfmM8` |
+| `Unknown` | `JD766DzZIIU` |
+| `Unknown` | `L9NSPGwLZTQ` |
+| `Unknown` | `PBJH7EFon8c` |
+| `Unknown` | `UKInJ0LzusI` |
+| `Unknown` | `WGYLbMB95kM` |
+| `Unknown` | `YZwUXHtKrXI` |
+| `Unknown` | `fPmaQlxVoqI` |
+| `Unknown` | `hKzuaakSOLE` |
+| `Unknown` | `iRkGgbFAhcw` |
+| `Unknown` | `isbcQWjV-qU` |
+| `Unknown` | `keFAPHk6pIc` |
+| `Unknown` | `oF3Ygwz32Bs` |
+| `Unknown` | `pfgU0SxMMxw` |
+| `Unknown` | `pr3J39r9ArQ` |
+| `Unknown` | `shuQwNy79HM` |
+| `Unknown` | `tPbEIE0wYCM` |
+| `Unknown` | `u5SR3+a0lTw` |
+| `Unknown` | `ys8aAGjUads` |
+
 ### Unknown function info
 
-- [sceUserServiceGetNpAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the account id for a user with no linked PSN account is assumed to be 0 with success; libSceNpManager's `sceNpGetAccountIdA` answers the same question with `SCE_NP_ERROR_SIGNED_OUT`
+- [sceUserServiceGetLoginUserIdList and sceUserServiceGetEvent for user 0](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - under ANYPS5_PAD_PORT0_STATE=controller user 0 logs out when its controller is removed and logs in when it returns, after a hold of 500 ms that AnyPS5 chooses. Whether the console logs the initial user out on controller removal, how long it takes and which event it sends are not measured. The default mode keeps user 0 logged in as before.
+- [sceUserServiceGetNpAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the account id for a logged-in user with no linked PSN account is assumed to be 0 with success; libSceNpManager's `sceNpGetAccountIdA` answers the same question with `SCE_NP_ERROR_SIGNED_OUT`. Console measurement on PS4 Pro firmware 10.71 confirms a user that is not logged in returns `0x80960105` (`USER_SERVICE_ERROR_UNKNOWN_USER`) and leaves the output untouched, differing from `sceUserServiceGetUserName`.
+- [Older settings exports](../../../core/libs/prx/libSceUserService/LegacyExports.cpp) - Forty callable NIDs are declared as throwing placeholders for older software. Their signatures and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. The corresponding NIDs are absent from the later version-labelled inventory. Representative later settings functions use a related dispatch pattern, which does not establish compatibility for these settings. No functionality is implemented.
+
 - [sceUserServiceInitialize and sceUserServiceInitialize2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - event delivery has no background service thread, so the confirmed priority and Initialize2 CPU affinity mask do not affect host scheduling. Of 23 `sceUserServiceInitialize` calls in ten titles checked, 17 pass no param, four pass priority 700 (Borderlands 4 PPSA01494, Crimson Desert PPSA25286, MXGP 26 PPSA30839, Super Meat Boy 3D PPSA31162), one passes 767 (Ghost of Tsushima PPSA02225) and one in Metal Gear Solid 4's `mgs4.elf` passes a param from a register. None calls `sceUserServiceInitialize2`.
 - [sceUserServiceGetUserColor](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the profile colour corresponds to user index (0: blue, 1: red, 2: green, 3: pink); colours 1, 2 and 3 are assumed, not measured
 - [sceUserServiceGetUserName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - `0x80960105`, which a PS5 (firmware 13.60) returns for a user id it does not know, has no known name; it is `USER_SERVICE_ERROR_UNKNOWN_USER` here. On the console a registered user who is not logged in still gets their name; here up to 4 users ("Player", "Player2", "Player3", "Player4") are supported; user names "Player2", "Player3" and "Player4" are assumed, not measured
