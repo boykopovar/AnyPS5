@@ -291,7 +291,8 @@ struct TlsScan {
 TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domain::ProgramHeader>& headers, const Windows::WindowsLoadImage& image, const std::function<void(std::string_view)>& message) {
     TlsScan scan;
     const Codegen::X64InstructionDecoder decoder;
-    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, {}, nullptr, message);
+    std::set<Domain::VirtualAddress> entryRoots;
+    const auto instructions = Relinker::CodeInstructionCollector().Collect(source, headers, {}, &entryRoots, message);
     for (const auto& header : headers) {
         if (header.Type == 7) {
             if (scan.Tls != nullptr) throw Domain::RelinkerException("Multiple ELF TLS segments");
@@ -335,6 +336,9 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
                 message << ')';
                 throw Domain::RelinkerException(message.str(), header.Offset + offset);
             }
+            const auto entry = entryRoots.upper_bound(*instruction);
+            if (entry != entryRoots.end() && *entry - *instruction < info.Length)
+                throw Domain::RelinkerException("TLS rewrite would overwrite an executable entry point", header.Offset + *entry - header.MappedAddress);
             scan.Accesses.push_back({rva, info.Length, storeImmediate, storeImmediate ? Io::ReadU32(source, header.Offset + offset + position + 7) : 0, storeImmediate ? std::uint8_t{0} : loadRegister, storeImmediate ? 0 : Io::ReadU32(source, header.Offset + offset + position + 3), aluRead ? bytes[position] : std::uint8_t{0}});
         }
     }
