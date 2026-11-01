@@ -894,6 +894,14 @@ struct NativeThreadArgs {
 };
 
 #ifdef _WIN32
+static std::wstring ThreadDescription(const std::string& name) {
+    if (name.empty()) return {};
+    const int length = MultiByteToWideChar(CP_UTF8, 0, name.data(), static_cast<int>(name.size()), nullptr, 0);
+    std::wstring description(static_cast<std::size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, name.data(), static_cast<int>(name.size()), description.data(), length);
+    return description;
+}
+
 static unsigned __stdcall StartNativeThread(void* opaque) {
     std::unique_ptr<NativeThreadArgs> args(static_cast<NativeThreadArgs*>(opaque));
     auto* self = args->guest->self;
@@ -909,8 +917,7 @@ static unsigned __stdcall StartNativeThread(void* opaque) {
         self->threadId = std::this_thread::get_id();
         CurrentGuestState().current = self;
         if (!self->name.empty()) {
-            const std::wstring description(self->name.begin(), self->name.end());
-            SetThreadDescription(GetCurrentThread(), description.c_str());
+            SetThreadDescription(GetCurrentThread(), ThreadDescription(self->name).c_str());
             ApplyJobAffinity(*self, nullptr);
         }
         args->initialized.set_value();
@@ -1318,8 +1325,7 @@ int APS5_VABI scePthreadRename(Pthread thread, const char* name) {
     std::lock_guard lock(thread->nameLock);
     thread->name = name;
 #ifdef _WIN32
-    const std::wstring description(thread->name.begin(), thread->name.end());
-    SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), description.c_str());
+    SetThreadDescription(static_cast<HANDLE>(thread->nativeHandle), ThreadDescription(thread->name).c_str());
     ApplyJobAffinity(*thread, thread->nativeHandle);
 #endif
     return SCE_OK;
