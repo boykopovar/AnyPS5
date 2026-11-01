@@ -16450,35 +16450,11 @@ int APS5_VABI _ZN3JSC14ProtoCallFrame11setArgumentEmNS_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC14ProtoCallFrame12setCodeBlockEPNS_9CodeBlockE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame12setThisValueENS_7JSValueE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC14ProtoCallFrame15clearCurrentVPCEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC14ProtoCallFrame15setGlobalObjectEPNS_14JSGlobalObjectE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame17setPaddedArgCountEj() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame29setArgumentCountIncludingThisEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC14ProtoCallFrame8argumentEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame9setCalleeEPNS_8JSObjectE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -22270,10 +22246,6 @@ int APS5_VABI _ZN7WebCore13GraphicsLayer7setSizeERKNS_9FloatSizeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore13GraphicsLayer9setClientERNS_19GraphicsLayerClientE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore13GraphicsLayerC2ENS0_4TypeERNS_19GraphicsLayerClientE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -26082,10 +26054,6 @@ int APS5_VABI _ZN7WebCore18TextureMapperLayer14syncAnimationsEN3WTF13MonotonicTi
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore18TextureMapperLayer15setBackingStoreEPNS_25TextureMapperBackingStoreE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore18TextureMapperLayer15setContentsRectERKNS_9FloatRectE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -26111,10 +26079,6 @@ int APS5_VABI _ZN7WebCore18TextureMapperLayer16replicaTransformEv() {
 }
 
 int APS5_VABI _ZN7WebCore18TextureMapperLayer16setBackdropLayerEPS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore18TextureMapperLayer16setContentsLayerEPNS_26TextureMapperPlatformLayerE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -28410,19 +28374,11 @@ int APS5_VABI _ZN7WebCore22throwSequenceTypeErrorERN3JSC14JSGlobalObjectERNS0_10
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore23ApplicationCacheStorage14setMaximumSizeEl() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore23ApplicationCacheStorage15deleteAllCachesEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN7WebCore23ApplicationCacheStorage16deleteAllEntriesEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore23ApplicationCacheStorage21setDefaultOriginQuotaEl() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -29606,15 +29562,7 @@ int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC1EOS0_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC1EPNS_15SQLiteStatementE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC2EOS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC2EPNS_15SQLiteStatementE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -33690,14 +33638,6 @@ int APS5_VABI _ZN9Inspector21CSSFrontendDispatcher23mediaQueryResultChangedEv() 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector21CSSFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector21CSSFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector21CSSFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -33767,14 +33707,6 @@ int APS5_VABI _ZN9Inspector21DOMFrontendDispatcher34powerEfficientPlaybackStateC
 }
 
 int APS5_VABI _ZN9Inspector21DOMFrontendDispatcher7inspectEi() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector21DOMFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector21DOMFrontendDispatcherC2ERNS_14FrontendRouterE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -33907,10 +33839,6 @@ int APS5_VABI _ZN9Inspector21InspectorConsoleAgent10countResetEPN3JSC14JSGlobalO
 }
 
 int APS5_VABI _ZN9Inspector21InspectorConsoleAgent10stopTimingEPN3JSC14JSGlobalObjectERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector21InspectorConsoleAgent12setHeapAgentEPNS_18InspectorHeapAgentE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -34130,14 +34058,6 @@ int APS5_VABI _ZN9Inspector22HeapFrontendDispatcher16trackingCompleteEdRKN3WTF6S
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector22HeapFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector22HeapFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector22HeapFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -34318,14 +34238,6 @@ int APS5_VABI _ZN9Inspector22PageFrontendDispatcher24frameScheduledNavigationERK
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector22PageFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector22PageFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector22PageFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -34502,14 +34414,6 @@ int APS5_VABI _ZN9Inspector24CanvasFrontendDispatcher19canvasMemoryChangedERKN3W
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector24CanvasFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector24CanvasFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector24CanvasFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -34575,10 +34479,6 @@ int APS5_VABI _ZN9Inspector24NetworkBackendDispatcherD1Ev() {
 }
 
 int APS5_VABI _ZN9Inspector24NetworkBackendDispatcherD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector24RemoteControllableTarget19setTargetIdentifierEj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -34650,14 +34550,6 @@ int APS5_VABI _ZN9Inspector24TargetFrontendDispatcher26didCommitProvisionalTarge
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector24TargetFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector24TargetFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector24TargetFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -34690,14 +34582,6 @@ int APS5_VABI _ZN9Inspector24WorkerFrontendDispatcher25dispatchMessageFromWorker
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector24WorkerFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector24WorkerFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector24WorkerFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -34722,14 +34606,6 @@ int APS5_VABI _ZN9Inspector24WorkerFrontendDispatchernwEm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector25BrowserFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector25BrowserFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector25BrowserFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -34751,14 +34627,6 @@ int APS5_VABI _ZN9Inspector25BrowserFrontendDispatchernwEm() {
 }
 
 int APS5_VABI _ZN9Inspector25BrowserFrontendDispatchernwEmPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcherC2ERNS_14FrontendRouterE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -34850,14 +34718,6 @@ int APS5_VABI _ZN9Inspector25NetworkFrontendDispatcher19webSocketFrameErrorERKN3
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector25NetworkFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector25NetworkFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector25NetworkFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -34879,14 +34739,6 @@ int APS5_VABI _ZN9Inspector25NetworkFrontendDispatchernwEm() {
 }
 
 int APS5_VABI _ZN9Inspector25NetworkFrontendDispatchernwEmPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector25RuntimeFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector25RuntimeFrontendDispatcherC2ERNS_14FrontendRouterE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -34962,14 +34814,6 @@ int APS5_VABI _ZN9Inspector26AnimationBackendDispatcherD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector26DatabaseFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector26DatabaseFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector26DatabaseFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -35007,14 +34851,6 @@ int APS5_VABI _ZN9Inspector26DebuggerFrontendDispatcher25playBreakpointActionSou
 }
 
 int APS5_VABI _ZN9Inspector26DebuggerFrontendDispatcher7resumedEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector26DebuggerFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector26DebuggerFrontendDispatcherC2ERNS_14FrontendRouterE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -35098,14 +34934,6 @@ int APS5_VABI _ZN9Inspector26TimelineFrontendDispatcher18autoCaptureStartedEv() 
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector26TimelineFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector26TimelineFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector26TimelineFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -35143,14 +34971,6 @@ int APS5_VABI _ZN9Inspector27AnimationFrontendDispatcher16trackingCompleteEd() {
 }
 
 int APS5_VABI _ZN9Inspector27AnimationFrontendDispatcher18animationDestroyedERKN3WTF6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector27AnimationFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector27AnimationFrontendDispatcherC2ERNS_14FrontendRouterE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -35246,14 +35066,6 @@ int APS5_VABI _ZN9Inspector27InspectorFrontendDispatcher25evaluateForTestInFront
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector27InspectorFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector27InspectorFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector27InspectorFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -35279,14 +35091,6 @@ int APS5_VABI _ZN9Inspector27InspectorFrontendDispatchernwEmPv() {
 }
 
 int APS5_VABI _ZN9Inspector27LayerTreeFrontendDispatcher18layerTreeDidChangeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector27LayerTreeFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector27LayerTreeFrontendDispatcherC2ERNS_14FrontendRouterE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -35371,14 +35175,6 @@ int APS5_VABI _ZN9Inspector28DOMDebuggerBackendDispatcherD1Ev() {
 }
 
 int APS5_VABI _ZN9Inspector28DOMDebuggerBackendDispatcherD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector28DOMStorageFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector28DOMStorageFrontendDispatcherC2ERNS_14FrontendRouterE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -35782,14 +35578,6 @@ int APS5_VABI _ZN9Inspector32ScriptProfilerFrontendDispatcher13trackingStartEd()
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN9Inspector32ScriptProfilerFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector32ScriptProfilerFrontendDispatcherC2ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN9Inspector32ScriptProfilerFrontendDispatcherdaEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -35911,14 +35699,6 @@ int APS5_VABI _ZN9Inspector34ApplicationCacheFrontendDispatcher19networkStateUpd
 }
 
 int APS5_VABI _ZN9Inspector34ApplicationCacheFrontendDispatcher29applicationCacheStatusUpdatedERKN3WTF6StringES4_i() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector34ApplicationCacheFrontendDispatcherC1ERNS_14FrontendRouterE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN9Inspector34ApplicationCacheFrontendDispatcherC2ERNS_14FrontendRouterE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
