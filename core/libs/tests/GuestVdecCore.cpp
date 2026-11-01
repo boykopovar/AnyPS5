@@ -274,6 +274,18 @@ void RequirePicture(const VdecCoreOutputInfo& output, std::size_t picture, std::
     Require(info.sarWidth == 1 && info.sarHeight == 1 && info.flags == 0x03, message);
 }
 
+void CheckAccessUnitLength() {
+    const std::uint64_t limit = VdecCoreMaxAccessUnitSize_nid_no_patch();
+    Require(limit > 0 && limit < 0x7fffffffull, "the largest access unit leaves room for the packet padding in an int");
+    Require(VdecCoreAccessUnitLength_nid_no_patch(0) < 0, "an empty access unit has no length");
+    Require(VdecCoreAccessUnitLength_nid_no_patch(1) == 1, "a one-byte access unit keeps its length");
+    Require(VdecCoreAccessUnitLength_nid_no_patch(limit) == static_cast<std::int32_t>(limit), "the largest access unit keeps its length");
+    Require(VdecCoreAccessUnitLength_nid_no_patch(limit + 1) < 0, "an access unit one past the packet limit has no length");
+    Require(VdecCoreAccessUnitLength_nid_no_patch(0x7fffffffull) < 0, "an access unit of the largest int has no length");
+    Require(VdecCoreAccessUnitLength_nid_no_patch((1ull << 32) + 16) < 0, "an access unit whose low 32 bits look small has no length");
+    Require(VdecCoreAccessUnitLength_nid_no_patch(~0ull) < 0, "the largest 64-bit size has no length");
+}
+
 void CheckDecodeArguments() {
     void* decoder = CreateAvc(static_cast<std::int32_t>(H264Fixture::Width));
     const auto& unit = Units()[0];
@@ -290,6 +302,14 @@ void CheckDecodeArguments() {
     input.auSize = 0;
     Require(sceVdecCoreSetDecodeInput(decoder, &input, nullptr, status.data()) == InvalidArgument, "set input with an empty access unit");
     Require(status[0] == 1 && status[1] == 1, "the status is written before the access unit size is checked");
+    const std::uint64_t limit = VdecCoreMaxAccessUnitSize_nid_no_patch();
+    const std::array<std::uint64_t, 4> oversized{1ull << 31, limit + 1, (1ull << 32) + unit.size(), ~0ull};
+    for (const auto size : oversized) {
+        status = {7, 7};
+        input.auSize = size;
+        Require(sceVdecCoreSetDecodeInput(decoder, &input, nullptr, status.data()) == InvalidArgument, "set input with an access unit past the packet limit");
+        Require(status[0] == 1 && status[1] == 1, "the status is written before an oversized access unit is refused");
+    }
     input.auSize = unit.size();
     Require(sceVdecCoreSetDecodeInput(decoder, &input, nullptr, nullptr) == 0, "set input without a status");
 
@@ -492,6 +512,7 @@ int main() {
     CheckComputeResourceInfo();
     CheckCreateAndDelete();
     CheckMapMemoryBlock();
+    CheckAccessUnitLength();
     CheckDecodeArguments();
     CheckEmptyQueue();
     CheckDecodeIntoSlots();

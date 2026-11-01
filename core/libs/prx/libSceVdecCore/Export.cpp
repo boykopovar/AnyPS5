@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -49,6 +50,7 @@ constexpr std::uint32_t FrameBufferAlignment = 256;
 constexpr std::uint64_t InstanceSize = 0x40000;
 constexpr std::uint64_t ComputeSize = 0x10000;
 constexpr std::uint32_t ComputeAlignment = 0x10000;
+constexpr std::uint64_t MaxAccessUnitSize = static_cast<std::uint64_t>(std::numeric_limits<int>::max() - AV_INPUT_BUFFER_PADDING_SIZE - 1);
 
 struct Geometry {
     std::uint32_t width;
@@ -271,6 +273,15 @@ std::uint64_t PictureTime(std::int64_t decoded, std::int64_t last) {
 }
 
 extern "C" {
+
+std::uint64_t VdecCoreMaxAccessUnitSize_nid_no_patch() {
+    return MaxAccessUnitSize;
+}
+
+std::int32_t VdecCoreAccessUnitLength_nid_no_patch(std::uint64_t auSize) {
+    if (auSize == 0 || auSize > MaxAccessUnitSize) return -1;
+    return static_cast<std::int32_t>(auSize);
+}
 
 std::uint32_t VdecCoreFrameBufferSlots_nid_no_patch(const void* decoder, void** slots, std::uint32_t capacity) {
     auto& state = State();
@@ -516,16 +527,17 @@ int APS5_VABI sceVdecCoreSetDecodeInput(void* decoder, const VdecCoreInputData* 
         status[0] = 1;
         status[1] = 1;
     }
-    if (input->auData == nullptr || input->auSize == 0) return VdecCoreErrorInvalidArgument;
+    const std::int32_t length = VdecCoreAccessUnitLength_nid_no_patch(input->auSize);
+    if (input->auData == nullptr || length < 0) return VdecCoreErrorInvalidArgument;
     const std::int64_t pts = input->pts == VdecCorePtsInvalid ? AV_NOPTS_VALUE : input->pts;
     const std::int64_t dts = input->dts == VdecCorePtsInvalid ? AV_NOPTS_VALUE : input->dts;
     AVPacket* packet = av_packet_alloc();
     if (packet == nullptr) return VdecCoreErrorFatal;
-    if (av_new_packet(packet, static_cast<int>(input->auSize)) < 0) {
+    if (av_new_packet(packet, length) < 0) {
         av_packet_free(&packet);
         return VdecCoreErrorFatal;
     }
-    std::memcpy(packet->data, input->auData, static_cast<std::size_t>(input->auSize));
+    std::memcpy(packet->data, input->auData, static_cast<std::size_t>(length));
     packet->pts = pts;
     packet->dts = dts;
     packet->opaque = reinterpret_cast<void*>(static_cast<std::uintptr_t>(input->userData));
