@@ -638,7 +638,10 @@ static void CheckVibrationForce(int user, int handle) {
     Require(scePadSetVibration(handle, &weak) == PAD_OK && VibrationIs(0, 5, 6));
     Require(scePadSetVibrationForce(handle, &weak) == scePadSetVibration(handle, &weak) && VibrationIs(0, 5, 6));
     Require(scePadSetVibrationForce(handle, nullptr) == PAD_ERROR_INVALID_ARG && VibrationIs(0, 5, 6));
-    for (const int other : {handle + 1, 0x999, -1}) Require(scePadSetVibrationForce(other, nullptr) == PAD_ERROR_INVALID_ARG);
+    for (const int other : {handle + 1, 0x999, -1}) {
+        Require(scePadSetVibrationForce(other, nullptr) == PAD_ERROR_INVALID_ARG);
+        Require(scePadSetVibration(other, &strong) == PAD_ERROR_INVALID_HANDLE);
+    }
     const int special = scePadOpen_nid_postfix(user, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
     Require(special >= PAD_SPECIAL_HANDLE);
     Require(scePadSetVibrationForce(special, &strong) == PAD_OK && VibrationIs(0, 5, 6));
