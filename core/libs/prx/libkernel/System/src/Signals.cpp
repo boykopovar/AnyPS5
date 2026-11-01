@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/JumpBuffer.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
@@ -382,6 +383,7 @@ std::string DescribeInterval(std::chrono::microseconds interval) {
 }
 
 void ExpireAlarm(std::chrono::microseconds interval) {
+    KqueueSignalSent(GuestSigalrm);
     std::uintptr_t handler = 0;
     {
         std::lock_guard lock(registration);
@@ -663,6 +665,7 @@ int APS5_VABI raise_nid_postfix(int guest) {
     if (guest < 1 || guest > MaxSignal) { *__error_nid_postfix() = 22; return -1; }
     const GuestSigaction action = Disposition(guest);
     if (action.handler > 1 && !Delivered(action)) throw std::runtime_error("raise: SA_SIGINFO handlers are not delivered");
+    KqueueSignalSent(guest);
     if (action.handler == 1 || (action.handler == 0 && guest != GuestSigcont && IgnoredByDefault(guest))) return 0;
     if (SignalBlocked(guest)) {
         MarkPending(guest);
@@ -697,6 +700,7 @@ int APS5_VABI pthread_kill_nid_postfix(Pthread thread, int guest) {
     if (thread == scePthreadSelf()) return guest == 0 || raise_nid_postfix(guest) == 0 ? 0 : *__error_nid_postfix();
     if (!GuestThreadIsLive(thread)) return PosixThread::GUEST_ESRCH;
     if (guest == 0) return 0;
+    KqueueSignalSent(guest);
     if (Disposition(guest).handler != 1) MarkPending(guest);
     return 0;
 }

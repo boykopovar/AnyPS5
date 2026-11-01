@@ -44,6 +44,7 @@ static constexpr std::int16_t EvfiltWrite = -2;
 static constexpr std::int16_t EvfiltVnode = -4;
 static constexpr std::int16_t EvfiltAio = -3;
 static constexpr std::int16_t EvfiltProc = -5;
+static constexpr std::int16_t EvfiltSignal = -6;
 static constexpr std::int16_t EvfiltTimer = -7;
 static constexpr std::int16_t EvfiltProcdesc = -8;
 static constexpr std::int16_t EvfiltLio = -10;
@@ -353,6 +354,53 @@ static void UserEvents() {
     Require(Apply(kq, Change(7, EvfiltUser, 0, NoteTrigger)) == 0);
     Require(Poll(kq, events, 4) == 1 && events[0].fflags == 0x55 && events[0].data == 0 && events[0].flags == EvReceipt);
     Require(close_nid_postfix(kq) == 0);
+}
+
+static void SignalEvents() {
+    constexpr int Sigalrm = 14;
+    constexpr int Sigusr1 = 30;
+    constexpr int Sigusr2 = 31;
+    const auto alrm = static_cast<std::uintptr_t>(Sigalrm);
+    const auto usr1 = static_cast<std::uintptr_t>(Sigusr1);
+    const auto usr2 = static_cast<std::uintptr_t>(Sigusr2);
+    const auto ignore = reinterpret_cast<GuestHandler>(std::uintptr_t{1});
+    const GuestHandler previousUsr1 = signal_nid_postfix(Sigusr1, ignore);
+    const GuestHandler previousAlrm = signal_nid_postfix(Sigalrm, ignore);
+    const int kq = kqueue_nid_postfix();
+    const int self = getpid_nid_postfix();
+    int marker = 0;
+    KernelEvent events[4]{};
+    RequireFailure(Apply(kq, Change(usr1, EvfiltSignal, EvDelete)), GuestEnoent);
+    RequireFailure(Apply(kq, Change(usr1, EvfiltSignal, EvEnable)), GuestEnoent);
+    Require(Apply(kq, Change(usr1, EvfiltSignal, EvAdd, 7, 9, &marker)) == 0);
+    Require(Apply(kq, Change(usr2, EvfiltSignal, EvAdd)) == 0);
+    Require(Apply(kq, Change(alrm, EvfiltSignal, EvAdd)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(kill_nid_postfix(self, 0) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(raise_nid_postfix(Sigusr1) == 0);
+    Require(kill_nid_postfix(self, Sigusr1) == 0);
+    Require(pthread_kill_nid_postfix(scePthreadSelf(), Sigusr1) == 0);
+    Require(Poll(kq, events, 4) == 1);
+    Require(events[0].ident == usr1 && events[0].filter == EvfiltSignal && events[0].flags == EvClear);
+    Require(events[0].fflags == 0 && events[0].data == 3 && events[0].udata == &marker);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(usr1, EvfiltSignal, EvDisable)) == 0);
+    Require(raise_nid_postfix(Sigusr1) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(usr1, EvfiltSignal, EvEnable)) == 0);
+    Require(Poll(kq, events, 4) == 1 && events[0].ident == usr1 && events[0].data == 1);
+    const GuestItimerval once{{0, 0}, {0, 20000}};
+    Require(setitimer_nid_postfix(0, &once, nullptr) == 0);
+    Require(Wait(kq, events, 4) == 1 && events[0].ident == alrm && events[0].filter == EvfiltSignal && events[0].data == 1);
+    Require(Apply(kq, Change(usr1, EvfiltSignal, EvDelete)) == 0);
+    RequireFailure(Apply(kq, Change(usr1, EvfiltSignal, EvDelete)), GuestEnoent);
+    Require(raise_nid_postfix(Sigusr1) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(close_nid_postfix(kq) == 0);
+    Require(raise_nid_postfix(Sigusr1) == 0);
+    Require(signal_nid_postfix(Sigusr1, previousUsr1) == ignore);
+    Require(signal_nid_postfix(Sigalrm, previousAlrm) == ignore);
 }
 
 static void PipeRead() {
@@ -1629,6 +1677,7 @@ int main(int argc, char** argv) {
     TimerReadd();
     UnsupportedFilters();
     ProcdescOnFiles();
+    SignalEvents();
     PipeRead();
 #ifndef __APPLE__
     PipeWrite();
