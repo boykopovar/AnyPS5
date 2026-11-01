@@ -1264,11 +1264,11 @@ private:
             VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
             allocation.allocationSize = requirements.size;
             allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            Check(MemoryAccounting::Allocate(context, allocation, "sampled depth shadow", &memory), "vkAllocateMemory sampled depth shadow");
-            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image, memory, 0), "vkBindImageMemory sampled depth shadow");
-            sampleShadow = std::make_shared<OwnedImage>(context, image, memory);
+            auto owned = std::make_shared<OwnedImage>(context, image, VK_NULL_HANDLE);
             image = VK_NULL_HANDLE;
-            memory = VK_NULL_HANDLE;
+            owned->Allocate(context, allocation, requirements.memoryTypeBits, "vkAllocateMemory sampled depth shadow");
+            Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, owned->image, owned->memory, 0), "vkBindImageMemory sampled depth shadow");
+            sampleShadow = std::move(owned);
             auto* recorder = RecorderFor(context);
             if (recorder != nullptr) recorder->Keep(sampleShadow);
             std::unique_ptr<CommandBatch> batch;
