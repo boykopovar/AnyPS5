@@ -198,6 +198,7 @@ static void CheckInvalidPriorityAttribute(PthreadMutexattr* attr) {
     int ceiling = -1;
     int protocol = -1;
     Require(pthread_mutexattr_setprotocol_nid_postfix(attr, PRIO_PROTECT) == GUEST_EINVAL);
+    Require(pthread_mutexattr_getprotocol_nid_postfix(nullptr, &protocol) == GUEST_EINVAL && protocol == -1);
     Require(pthread_mutexattr_setprotocol_nid_postfix(attr, -1) == GUEST_EINVAL);
     Require(pthread_mutexattr_getprotocol_nid_postfix(attr, &protocol) == GUEST_EINVAL && protocol == -1);
     Require(pthread_mutexattr_getprotocol_nid_postfix(attr, nullptr) == GUEST_EINVAL);
