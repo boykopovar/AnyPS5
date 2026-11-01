@@ -91,6 +91,18 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSWritePacket(connection, packet.data(), nullptr) == argumentInvalid);
     Require(sceVoiceQoSWritePacket(connection + 100, packet.data(), &packetSize) == argumentInvalid);
 
+    std::uint32_t attributeValue = 0;
+    Require(sceVoiceQoSGetLocalEndpointAttribute(local + 1, 0, &attributeValue, sizeof(attributeValue)) == argumentInvalid);
+    Require(sceVoiceQoSGetLocalEndpointAttribute(local, 0, nullptr, sizeof(attributeValue)) == argumentInvalid);
+    for (std::int32_t attribute : {-1, 4, 7, 9, 100}) Require(sceVoiceQoSGetLocalEndpointAttribute(local, attribute, &attributeValue, sizeof(attributeValue)) == argumentInvalid);
+    for (std::int32_t attribute : {0, 2, 6}) {
+        for (std::int32_t size : {0, 1, 2, 8, -1}) Require(sceVoiceQoSGetLocalEndpointAttribute(local, attribute, &attributeValue, size) == argumentInvalid);
+    }
+    for (std::int32_t attribute : {1, 3, 5}) {
+        for (std::int32_t size : {0, 2, 4, 8, -1}) Require(sceVoiceQoSGetLocalEndpointAttribute(local, attribute, &attributeValue, size) == argumentInvalid);
+    }
+    for (std::int32_t size : {0, 1, 4, 8, -1}) Require(sceVoiceQoSGetLocalEndpointAttribute(local, 8, &attributeValue, size) == argumentInvalid);
+
     Require(NotImplemented([&] { sceVoiceQoSSetLocalEndpointAttribute(local, 0, &level, 4); }));
     Require(NotImplemented([&] { sceVoiceQoSSetRemoteEndpointAttribute(remote, 7, &level, 1); }));
     Require(sceVoiceQoSDisconnect(connection) == 0);
@@ -121,7 +133,7 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSEnd() == notInitialized);
     Require(sceVoiceQoSInit(nullptr, 0x40000, appType) == argumentInvalid);
 
-    Require(NotImplemented([] { sceVoiceQoSGetLocalEndpointAttribute(0, 0, nullptr, 0); }));
+    Require(sceVoiceQoSGetLocalEndpointAttribute(0, 0, nullptr, 0) == notInitialized);
     Require(NotImplemented([] { sceVoiceQoSGetRemoteEndpointAttribute(1, 1, nullptr, 0); }));
     Require(NotImplemented([] { sceVoiceQoSGetConnectionAttribute(1, 1, nullptr, 0); }));
     Require(NotImplemented([] { sceVoiceQoSEnableChat(); }));
