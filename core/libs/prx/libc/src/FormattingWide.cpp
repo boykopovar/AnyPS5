@@ -15,6 +15,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/WindowsFormatting.hpp"
+#include "prx/libc/include/SonyCrt.hpp"
 
 #ifdef _WIN32
 #define APS5_VA_BEGIN(last) __builtin_sysv_va_list args; __builtin_sysv_va_start(args, last)
@@ -109,7 +110,12 @@ void AppendPadded(std::u16string& out, const std::u16string& text, bool left, in
     if (left) out.append(pad, u' ');
 }
 
-std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = false) {
+class WideFormatViolation : public std::invalid_argument {
+public:
+    using std::invalid_argument::invalid_argument;
+};
+
+void FormatWideInto(std::u16string& out, const char16_t* format, VaList* source, bool secure) {
     if (format == nullptr || source == nullptr) throw std::invalid_argument("Null formatting argument");
     LibcDetail::FormatArguments args(source);
     const char16_t* const start = format;
@@ -126,7 +132,6 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
         const std::size_t found = position();
         return found ? args.At<int>(found) : args.Next<int>();
     };
-    std::u16string out;
     while (*format) {
         if (*format != u'%') { out.push_back(*format++); continue; }
         ++format;
@@ -234,16 +239,18 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             const std::size_t limit = precision < 0 ? SIZE_MAX : static_cast<std::size_t>(precision);
             if (conversion == u'S' || length == "l") {
                 const char16_t* value = args.Next<const char16_t*>();
-                if (value == nullptr && secure) throw std::invalid_argument("Null string argument");
+                if (value == nullptr && secure) throw WideFormatViolation("wprintf_s: bad %ls argument");
                 if (value == nullptr) value = u"(null)";
                 for (std::size_t index = 0; index < limit && value[index] != 0; ++index) text.push_back(value[index]);
             } else {
                 const char* value = args.Next<const char*>();
-                if (value == nullptr && secure) throw std::invalid_argument("Null string argument");
+                if (value == nullptr && secure) throw WideFormatViolation("wprintf_s: bad %s argument");
                 AppendUtf16(text, value != nullptr ? value : "(null)", limit);
             }
             AppendPadded(out, text, left, width);
-        } else if (conversion == u'n' && integerLength && spec == "%" && !secure) {
+        } else if (conversion == u'n' && secure) {
+            throw WideFormatViolation("wprintf_s: %n disallowed");
+        } else if (conversion == u'n' && integerLength && spec == "%") {
             void* pointer = args.Next<void*>();
             if (!pointer) throw std::invalid_argument("Null format count pointer");
             const int count = static_cast<int>(out.size());
@@ -255,7 +262,58 @@ std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = 
             throw std::invalid_argument("Unsupported format conversion");
         }
     }
+}
+
+std::u16string FormatWide(const char16_t* format, VaList* source, bool secure = false) {
+    std::u16string out;
+    FormatWideInto(out, format, source, secure);
     return out;
+}
+
+int FormatWideSecure(const char* name, bool terminated, char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
+    constexpr std::size_t RsizeMax = SIZE_MAX >> 3;
+    constexpr int GuestEinval = 22;
+    constexpr int GuestErange = 34;
+    const auto report = [name](const char* what, int error) {
+        const std::string message = std::string(name) + ": " + what;
+        SonyInvokeConstraintHandler(message.c_str(), nullptr, error);
+    };
+    if (buffer == nullptr || size == 0 || size > RsizeMax) {
+        report("bad argument", GuestEinval);
+        return terminated ? 0 : -1;
+    }
+    if (format == nullptr) {
+        buffer[0] = 0;
+        report("bad format argument", GuestEinval);
+        return terminated ? 0 : -1;
+    }
+    std::u16string text;
+    try {
+        FormatWideInto(text, format, args, true);
+    } catch (const WideFormatViolation& violation) {
+        std::memcpy(buffer, text.data(), std::min(text.size(), size - 1) * sizeof(char16_t));
+        buffer[0] = 0;
+        SonyInvokeConstraintHandler(violation.what(), nullptr, GuestEinval);
+        if (terminated && text.size() >= size) report("buffer overflow", GuestErange);
+        return terminated ? 0 : -23;
+    } catch (const std::invalid_argument&) {
+        buffer[0] = 0;
+        return -1;
+    }
+    if (text.size() > static_cast<std::size_t>(INT_MAX)) {
+        buffer[0] = 0;
+        return -1;
+    }
+    if (terminated && text.size() >= size) {
+        std::memcpy(buffer, text.data(), (size - 1) * sizeof(char16_t));
+        buffer[0] = 0;
+        report("buffer overflow", GuestErange);
+        return 0;
+    }
+    const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
+    std::memcpy(buffer, text.data(), copied * sizeof(char16_t));
+    buffer[copied] = 0;
+    return static_cast<int>(text.size());
 }
 
 }  // namespace
@@ -286,81 +344,25 @@ int APS5_VABI swprintf_nid_postfix(char16_t* buffer, std::size_t size, const cha
 }
 
 int APS5_VABI snwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
-    constexpr std::size_t RsizeMax = SIZE_MAX >> 1;
-    int result = -1;
-    if (buffer != nullptr && format != nullptr && size != 0 && size <= RsizeMax) {
-        APS5_VA_BEGIN(format);
-        try {
-            const std::u16string text = FormatWide(format, reinterpret_cast<VaList*>(args), true);
-            if (text.size() <= static_cast<std::size_t>(INT_MAX)) {
-                const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
-                std::memcpy(buffer, text.data(), copied * sizeof(char16_t));
-                buffer[copied] = 0;
-                result = static_cast<int>(text.size());
-            }
-        } catch (const std::invalid_argument&) {
-        }
-        APS5_VA_END();
-    }
-    if (result < 0 && buffer != nullptr && size != 0 && size < RsizeMax) buffer[0] = 0;
+    APS5_VA_BEGIN(format);
+    const int result = FormatWideSecure("snwprintf_s", false, buffer, size, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
     return result;
 }
 
 int APS5_VABI vswprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
-    constexpr std::size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
-    int result = -1;
-    if (buffer != nullptr && format != nullptr && args != nullptr && size != 0 && size <= RsizeMax) {
-        try {
-            const std::u16string text = FormatWide(format, args, true);
-            if (text.size() + 1 <= size && text.size() <= static_cast<std::size_t>(INT_MAX)) {
-                std::memcpy(buffer, text.data(), text.size() * sizeof(char16_t));
-                buffer[text.size()] = 0;
-                result = static_cast<int>(text.size());
-            }
-        } catch (const std::invalid_argument&) {
-        }
-    }
-    if (result < 0 && buffer != nullptr && size != 0 && size <= RsizeMax) buffer[0] = 0;
-    return result;
+    return FormatWideSecure("vswprintf_s", true, buffer, size, format, args);
 }
 
 int APS5_VABI swprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, ...) {
-    constexpr std::size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
-    int result = -1;
-    if (buffer != nullptr && format != nullptr && size != 0 && size <= RsizeMax) {
-        APS5_VA_BEGIN(format);
-        try {
-            const std::u16string text = FormatWide(format, reinterpret_cast<VaList*>(args), true);
-            if (text.size() + 1 <= size && text.size() <= static_cast<std::size_t>(INT_MAX)) {
-                std::memcpy(buffer, text.data(), text.size() * sizeof(char16_t));
-                buffer[text.size()] = 0;
-                result = static_cast<int>(text.size());
-            }
-        } catch (const std::invalid_argument&) {
-        }
-        APS5_VA_END();
-    }
-    if (result < 0 && buffer != nullptr && size != 0 && size <= RsizeMax) buffer[0] = 0;
+    APS5_VA_BEGIN(format);
+    const int result = FormatWideSecure("swprintf_s", true, buffer, size, format, reinterpret_cast<VaList*>(args));
+    APS5_VA_END();
     return result;
 }
 
 int APS5_VABI vsnwprintf_s_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
-    constexpr std::size_t RsizeMax = (SIZE_MAX >> 1) / sizeof(char16_t);
-    int result = -1;
-    if (buffer != nullptr && format != nullptr && args != nullptr && size != 0 && size <= RsizeMax) {
-        try {
-            const std::u16string text = FormatWide(format, args, true);
-            if (text.size() <= static_cast<std::size_t>(INT_MAX)) {
-                const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
-                std::memcpy(buffer, text.data(), copied * sizeof(char16_t));
-                buffer[copied] = 0;
-                result = static_cast<int>(text.size());
-            }
-        } catch (const std::invalid_argument&) {
-        }
-    }
-    if (result < 0 && buffer != nullptr && size != 0 && size <= RsizeMax) buffer[0] = 0;
-    return result;
+    return FormatWideSecure("vsnwprintf_s", false, buffer, size, format, args);
 }
 
 int APS5_VABI wprintf_nid_postfix(const char16_t* format, ...) {
