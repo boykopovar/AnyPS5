@@ -194,6 +194,10 @@ int main(int argc, char** argv) {
     }
     int failures = 0;
     for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--gcn") {
+            ShaderRecompiler::SetGcnGuestShaders(true);
+            continue;
+        }
         if (std::string(argv[i]) == "--dis") {
             g_disassemble = true;
             continue;

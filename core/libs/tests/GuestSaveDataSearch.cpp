@@ -5,7 +5,9 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -303,6 +305,40 @@ static void BlockSize() {
     Require(info.blocks == 16384 && info.free_blocks == 16384, "a save must hold at most 16384 blocks");
 }
 
+static void SetHostZone(const char* zone) {
+#ifdef _WIN32
+    Require(_putenv_s("TZ", zone == nullptr ? "" : zone) == 0, "TZ could not be set");
+    _tzset();
+#else
+    Require((zone == nullptr ? unsetenv("TZ") : setenv("TZ", zone, 1)) == 0, "TZ could not be set");
+    tzset();
+#endif
+}
+
+static void UnsetParamsReportDirectoryTime() {
+    std::filesystem::create_directories(std::filesystem::path("_sd") / "STAMP_A");
+    const auto created = static_cast<std::int64_t>(std::time(nullptr));
+    const char* inherited = std::getenv("TZ");
+    const std::string previous = inherited == nullptr ? "" : inherited;
+    for (const char* zone : {"AAA-12", "AAA+12"}) {
+        SetHostZone(zone);
+        SceSaveDataDirName pattern{};
+        std::snprintf(pattern.data, sizeof(pattern.data), "STAMP_A");
+        SaveDataDirNameSearchCond cond{};
+        cond.user_id = 1;
+        cond.dir_name = &pattern;
+        SceSaveDataDirName name{};
+        SaveDataParam param{};
+        SaveDataDirNameSearchResult result{};
+        result.dir_names = &name;
+        result.dir_names_num = 1;
+        result.params = &param;
+        Require(sceSaveDataDirNameSearch(&cond, &result) == 0 && result.set_num == 1, "the unmounted save was not found");
+        Require(param.mtime >= created - 60 && param.mtime <= created + 60, "a save without a stored mtime must report its directory's modification time under any TZ");
+    }
+    SetHostZone(inherited == nullptr ? nullptr : previous.c_str());
+}
+
 int main() {
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() /
@@ -317,6 +353,7 @@ int main() {
         TrailingWildcards();
         SaveSize();
         BlockSize();
+        UnsetParamsReportDirectoryTime();
         CheckNullArguments();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
