@@ -188,6 +188,11 @@ int APS5_VABI sceHttp2GetAllResponseHeaders(int req_id, char** header, size_t* h
     return request ? request->Headers(header, header_size) : ERROR_INVALID_ID;
 }
 
+int APS5_VABI sceHttp2GetAllTrailingHeaders(int req_id, char** header, size_t* header_size) {
+    const auto request = Transport(req_id, false);
+    return request ? request->TrailingHeaders(header, header_size) : ERROR_INVALID_ID;
+}
+
 int APS5_VABI sceHttp2GetResponseContentLength(int req_id, int* result, uint64_t* content_length) {
     const auto request = Transport(req_id, false);
     return request ? request->ContentLength(result, content_length) : ERROR_INVALID_ID;

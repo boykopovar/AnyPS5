@@ -35,6 +35,7 @@ int APS5_VABI sceHttp2CreateTemplate(int libHttp2CtxId, const char* userAgent, i
 int APS5_VABI sceHttp2DeleteRequest(int reqId);
 int APS5_VABI sceHttp2DeleteTemplate(int tmplId);
 int APS5_VABI sceHttp2GetAllResponseHeaders(int reqId, char** header, size_t* headerSize);
+int APS5_VABI sceHttp2GetAllTrailingHeaders(int reqId, char** header, size_t* headerSize);
 int APS5_VABI sceHttp2GetResponseContentLength(int reqId, int* result, uint64_t* contentLength);
 int APS5_VABI sceHttp2GetStatusCode(int reqId, int* statusCode);
 int APS5_VABI sceHttp2Init(int libnetMemId, int libsslCtxId, size_t poolSize, int maxConcurrentRequest);
