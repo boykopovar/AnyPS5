@@ -331,6 +331,10 @@ bool PeerConnected(const Socket& socket) {
     socklen_t size = sizeof(peer);
     return ::getpeername(socket.value, reinterpret_cast<sockaddr*>(&peer), &size) == 0;
 }
+bool Multicast(const sockaddr_storage& address) {
+    if (address.ss_family == AF_INET) return (reinterpret_cast<const unsigned char*>(&reinterpret_cast<const sockaddr_in&>(address).sin_addr)[0] & 0xf0) == 0xe0;
+    return address.ss_family == AF_INET6 && reinterpret_cast<const unsigned char*>(&reinterpret_cast<const sockaddr_in6&>(address).sin6_addr)[0] == 0xff;
+}
 constexpr std::int64_t NotAnswered = -2;
 std::int64_t ZeroPortSend(const Socket& socket, const sockaddr_storage& destination, std::uint64_t length) {
     if (socket.type != 2 || socket.family != 2 || destination.ss_family != AF_INET) return NotAnswered;
@@ -1459,6 +1463,7 @@ int APS5_VABI connect_nid_postfix(int descriptor, const void* address, std::uint
 #ifdef _WIN32
     if (socket->type == 1) RefuseClosedLoopbackAtOnce_nid_no_patch(socket->value, reinterpret_cast<const sockaddr*>(&native));
 #endif
+    if (socket->type == 1 && Multicast(native) && !PeerConnected(*socket)) return Fail(47);
     if (ZeroPortConnect(*socket, address, length)) return -1;
     std::unique_lock lock(socket->modeMutex);
     socket->options.reportedError = 0;
@@ -1553,6 +1558,7 @@ int APS5_VABI bind_nid_postfix(int descriptor, const void* address, std::uint32_
     const int mapped = LongMappedDualStack(*socket, address, length);
     if (mapped < 0) return -1;
     if (!Address(socket->family, address, mapped ? 28 : length, native, size)) return -1;
+    if (socket->type == 1 && Multicast(native)) return Fail(47);
     std::unique_lock lock(socket->modeMutex, std::defer_lock);
     if (socket->type == 2) lock.lock();
     if (::bind(socket->value, reinterpret_cast<sockaddr*>(&native), size)) return Fail(NativeError());
