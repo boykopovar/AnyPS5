@@ -31,8 +31,10 @@ int main() {
     Require(sceContentDeleteByPath(nullptr) == static_cast<int>(0x809D5002u));
 
     ContentDeleteInitParam param{};
-    param.heap_size = 0x10000;
-    Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5001u));
+    for (const std::uint32_t badHeap : {0u, 0x1000u, 0x3fffu, 0x4001u, 0x10000u}) {
+        param.heap_size = badHeap;
+        Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5001u));
+    }
     param.heap_size = 0x4000;
     Require(sceContentDeleteInitialize(&param) == 0);
     Require(sceContentDeleteInitialize(&param) == static_cast<int>(0x809D5003u));

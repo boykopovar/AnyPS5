@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <vector>
+#include <cstdlib>
 
 static std::vector<std::int16_t> RenderI16(uintptr_t system) {
     std::vector<std::int16_t> out(Grain, -1);
@@ -163,6 +164,91 @@ static void TestSilenceBlock() {
     Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
 }
 
+static Ngs2SamplerRackOption BlockLimitOption(std::uint32_t blocks) {
+    Ngs2SamplerRackOption option{};
+    option.rack_option.size = sizeof(option);
+    option.rack_option.max_grain_samples = 512;
+    option.rack_option.max_voices = 4;
+    option.rack_option.max_matrices = 1;
+    option.rack_option.max_ports = 8;
+    option.max_channel_works = 32;
+    option.max_codec_caches = 4;
+    option.max_waveform_blocks = blocks;
+    option.max_envelope_points = 4;
+    option.max_filters = 8;
+    option.num_peak_meter_blocks = 8;
+    return option;
+}
+
+static Ngs2CustomSamplerRackOption CustomBlockLimitOption(std::uint32_t blocks, std::uint32_t buffers) {
+    Ngs2CustomSamplerRackOption custom{};
+    custom.custom_rack_option.rack_option = BlockLimitOption(blocks).rack_option;
+    custom.custom_rack_option.rack_option.size = sizeof(custom);
+    custom.custom_rack_option.state_size = 48;
+    custom.custom_rack_option.num_buffers = buffers;
+    custom.custom_rack_option.num_modules = 1;
+    custom.custom_rack_option.module[0].module_id = SCE_NGS2_CUSTOM_MODULE_ID_FILTER;
+    custom.max_channel_works = 32;
+    custom.max_waveform_blocks = blocks;
+    custom.max_codec_caches = 32;
+    return custom;
+}
+
+static std::int32_t APS5_VABI HeapAlloc(Ngs2ContextBufferInfo* info) {
+    info->host_buffer = std::calloc(1, info->host_buffer_size + 64);
+    return info->host_buffer != nullptr ? SCE_NGS2_OK : -1;
+}
+
+static std::int32_t APS5_VABI HeapFree(Ngs2ContextBufferInfo* info) {
+    std::free(info->host_buffer);
+    return SCE_NGS2_OK;
+}
+
+static void RequireBlockLimit(std::uint32_t rackId, const Ngs2RackOption& rackOption, std::uint32_t blocks) {
+    constexpr int invalid = static_cast<int>(0x804A8053u);
+    const int expected = blocks == 0 || blocks > 32 ? invalid : SCE_NGS2_OK;
+    const auto system = CreateSystem();
+    const Ngs2BufferAllocator allocator{HeapAlloc, HeapFree, 0};
+    Ngs2ContextBufferInfo query{};
+    Require(sceNgs2RackQueryBufferSize(rackId, &rackOption, &query) == expected);
+    if (expected != SCE_NGS2_OK) query.host_buffer_size = sizeof(std::uint64_t) * 4096;
+    const auto buffer = Buffer(query);
+    uintptr_t rack = 0;
+    Require(sceNgs2RackCreate(system, rackId, &rackOption, &buffer, &rack) == expected && (rack != 0) == (expected == SCE_NGS2_OK));
+    if (rack != 0) Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+    rack = 0;
+    Require(sceNgs2RackCreateWithAllocator(system, rackId, &rackOption, &allocator, &rack) == expected && (rack != 0) == (expected == SCE_NGS2_OK));
+    if (rack != 0) Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
+static void TestRackWaveformBlockLimit() {
+    for (std::uint32_t blocks : {0u, 1u, 2u, 4u, 16u, 17u, 32u, 33u, 64u, 70u}) {
+        auto sampler = BlockLimitOption(blocks);
+        RequireBlockLimit(SCE_NGS2_RACK_ID_SAMPLER, sampler.rack_option, blocks);
+        auto custom = CustomBlockLimitOption(blocks, 1);
+        RequireBlockLimit(SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, custom.custom_rack_option.rack_option, blocks);
+    }
+}
+
+static void TestRackWaveformBlockLimitComesFirst() {
+    constexpr int invalid = static_cast<int>(0x804A8053u);
+    const auto system = CreateSystem();
+    for (std::uint32_t blocks : {0u, 33u}) {
+        auto sampler = BlockLimitOption(blocks);
+        sampler.num_peak_meter_blocks = 0;
+        std::vector<std::uint64_t> storage(4096);
+        Ngs2ContextBufferInfo buffer{};
+        buffer.host_buffer = storage.data();
+        buffer.host_buffer_size = storage.size() * sizeof(std::uint64_t);
+        uintptr_t rack = 0;
+        Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_SAMPLER, &sampler.rack_option, &buffer, &rack) == invalid);
+        auto custom = CustomBlockLimitOption(blocks, 0);
+        Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &custom.custom_rack_option.rack_option, &buffer, &rack) == invalid);
+    }
+    Require(sceNgs2SystemDestroy(system, nullptr) == SCE_NGS2_OK);
+}
+
 static void TestNoBlocksForClearedVoice() {
     const auto system = CreateSystem();
     const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_SAMPLER);
@@ -211,6 +297,8 @@ int main() {
     TestStreamEndsAtDeclaredSamples();
     TestStreamClosedBeforeDeclaredSamples();
     TestStreamRejections();
+    TestRackWaveformBlockLimit();
+    TestRackWaveformBlockLimitComesFirst();
     TestSilenceBlock();
     TestDrainedStreamReportsEmpty();
     TestNoBlocksForClearedVoice();
