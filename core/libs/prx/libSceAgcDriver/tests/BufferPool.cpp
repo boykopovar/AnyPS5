@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "AllocationFailure.hpp"
 #include "SlabReturn.hpp"
+#include <array>
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <string_view>
 #include <thread>
 #include <vector>
@@ -63,6 +65,8 @@ struct MockDevice {
     unsigned binds = 0;
     unsigned maps = 0;
     unsigned unmaps = 0;
+    std::uint64_t lookups = 0;
+    bool anyName = false;
 };
 
 MockDevice mock;
@@ -139,7 +143,10 @@ VKAPI_ATTR VkDeviceAddress VKAPI_CALL mockGetBufferDeviceAddress(VkDevice, const
     return 0x100000000000ULL + reinterpret_cast<std::uintptr_t>(info->buffer) * 0x10000;
 }
 
+VKAPI_ATTR void VKAPI_CALL mockUnnamed() {}
+
 PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
+    ++mock.lookups;
     static const std::map<std::string_view, PFN_vkVoidFunction> table{
         {"vkCreateBuffer", reinterpret_cast<PFN_vkVoidFunction>(mockCreateBuffer)},
         {"vkGetBufferMemoryRequirements", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferMemoryRequirements)},
@@ -152,7 +159,8 @@ PFN_vkVoidFunction VKAPI_CALL mockProc(VkDevice, const char* name) {
         {"vkGetBufferDeviceAddressKHR", reinterpret_cast<PFN_vkVoidFunction>(mockGetBufferDeviceAddress)},
     };
     const auto it = table.find(name);
-    return it == table.end() ? nullptr : it->second;
+    if (it == table.end()) return mock.anyName ? reinterpret_cast<PFN_vkVoidFunction>(mockUnnamed) : nullptr;
+    return it->second;
 }
 
 VkDeviceMemory MemoryOf(VkBuffer buffer) {
@@ -1347,6 +1355,59 @@ void MemoryAccountingBudgetCap(bool floor = false) {
     MemoryAccounting::Report(context, reported, 0, 0, selected);
 }
 
+void TableFill() {
+    mock = MockDevice{};
+    mock.anyName = true;
+    const auto context = mockContext();
+    DeviceFunctions filled{};
+    FillDeviceFunctions(context, filled);
+    mock.anyName = false;
+    const std::array<std::pair<bool, const char*>, 8> entries{{
+        {filled.createBuffer == mockCreateBuffer, "vkCreateBuffer"},
+        {filled.destroyBuffer == mockDestroyBuffer, "vkDestroyBuffer"},
+        {filled.getBufferMemoryRequirements == mockGetBufferMemoryRequirements, "vkGetBufferMemoryRequirements"},
+        {filled.bindBufferMemory == mockBindBufferMemory, "vkBindBufferMemory"},
+        {filled.allocateMemory == mockAllocateMemory, "vkAllocateMemory"},
+        {filled.freeMemory == mockFreeMemory, "vkFreeMemory"},
+        {filled.mapMemory == mockMapMemory, "vkMapMemory"},
+        {filled.unmapMemory == mockUnmapMemory, "vkUnmapMemory"},
+    }};
+    for (const auto& [same, name] : entries) Expect(same, std::string("the device function table's member for ") + name + " was not filled from that name");
+}
+
+void TableLookups() {
+    mock = MockDevice{};
+    auto context = mockContext();
+    constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    std::size_t round = 0;
+    const auto cycle = [&](const Context& owner) {
+        ++round;
+        for (const std::size_t size : {std::size_t{200}, std::size_t{300}}) {
+            Buffer host(owner, size + round * 8, usage);
+            DeviceBuffer device(owner, (size + round * 8) * 1024, usage);
+        }
+    };
+    cycle(context);
+    const auto untabled = mock.lookups;
+    cycle(context);
+    Expect(mock.lookups > untabled, "a buffer cycle of new sizes without a device function table looked nothing up by name, so the tabled count proves nothing");
+    DeviceFunctions table{};
+    table.createBuffer = mockCreateBuffer;
+    table.destroyBuffer = mockDestroyBuffer;
+    table.getBufferMemoryRequirements = mockGetBufferMemoryRequirements;
+    table.bindBufferMemory = mockBindBufferMemory;
+    table.allocateMemory = mockAllocateMemory;
+    table.freeMemory = mockFreeMemory;
+    table.mapMemory = mockMapMemory;
+    table.unmapMemory = mockUnmapMemory;
+    auto tabled = context;
+    tabled.functions = &table;
+    cycle(tabled);
+    const auto before = mock.lookups;
+    cycle(tabled);
+    Expect(mock.lookups == before, "a host and a device buffer cycle of new sizes looked up " + std::to_string(mock.lookups - before) + " Vulkan functions by name while the device's function table holds them");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--memory-accounting") {
@@ -1384,6 +1445,8 @@ int main(int argc, char** argv) {
         SizeClassesAndDirections();
         LargerClass();
         ExactSizeReuse();
+        TableFill();
+        TableLookups();
         KeptUntilFence();
         SmallDeviceRetention();
         Budget();
