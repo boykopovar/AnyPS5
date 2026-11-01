@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,20 @@ alignas(256) constexpr std::array<std::uint32_t, 171> Code{
 
 alignas(256) constexpr std::array<std::uint32_t, 3> AddressOffsetCode{0xda008000, 0x00000000, 0xbf810000};
 
+alignas(256) constexpr std::array<std::uint32_t, 85> FloatCode{
+    0x34020086, 0x340c0082, 0x7e040281, 0x7e060282, 0x4a0e0cff, 0x00000100, 0x4a100cff, 0x00000200,
+    0x4a120cff, 0x00000300, 0xd8340000, 0x00000308, 0xd8340000, 0x00000207, 0xbf8cc07f, 0xda480040,
+    0x00000007, 0xbf8cc07f, 0xd8d80000, 0x0a000007, 0xbf8cc07f, 0xd8340000, 0x00000209, 0xbf8cc07f,
+    0xd8480000, 0x00000309, 0xbf8cc07f, 0xd8d80000, 0x0d000009, 0x4a0e0cff, 0x00000400, 0x4a100cff,
+    0x00000500, 0x4a120cff, 0x00000600, 0xd8340000, 0x00000308, 0xd8340000, 0x00000207, 0xbf8cc07f,
+    0xda4c0040, 0x00000007, 0xbf8cc07f, 0xd8d80000, 0x0b000007, 0xbf8cc07f, 0xd8340000, 0x00000209,
+    0xbf8cc07f, 0xd84c0000, 0x00000309, 0xbf8cc07f, 0xd8d80000, 0x0e000009, 0x4a0e0cff, 0x00000700,
+    0x4a100cff, 0x00000800, 0x4a120cff, 0x00000900, 0xd8340000, 0x00000308, 0xd8340000, 0x00000207,
+    0xbf8cc07f, 0xda540040, 0x00000007, 0xbf8cc07f, 0xd8d80000, 0x0c000007, 0xbf8cc07f, 0xd8340000,
+    0x00000209, 0xbf8cc07f, 0xd8540000, 0x00000309, 0xbf8cc07f, 0xd8d80000, 0x0f000009, 0xbf8cc07f,
+    0xe0781000, 0x80010a01, 0xe0781010, 0x80010e01, 0xbf810000,
+};
+
 void Fill(std::uint32_t tid, std::uint32_t* words) {
     const std::uint64_t seed = (tid + 1u) * 0x9e3779b97f4a7c15ull;
     const auto mixed = seed * 0xbf58476d1ce4e5b9ull;
@@ -69,7 +84,7 @@ std::string Hex(std::uint32_t value) {
     return text;
 }
 
-ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode = std::nullopt) {
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
@@ -84,6 +99,7 @@ ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::
         {0, 0, 0, 128}
     };
     request.useCache = false;
+    request.context.floatMode = floatMode;
     return ShaderRecompiler::Recompile(request);
 }
 
@@ -118,17 +134,29 @@ void CheckLanes() {
     }
 }
 
-void CheckFloatRejected(AgcDriver::VulkanDevice& device) {
-    for (const std::uint32_t opcode : {0x92u, 0x93u, 0x95u}) {
-        alignas(256) static std::array<std::uint32_t, 3> code{};
-        code = {0xd8000000u | (opcode << 18u) | 1u, 0x00000000u, 0xbf810000u};
-        bool refused = false;
-        try {
-            (void)Compile(device, code);
-        } catch (const std::exception& error) {
-            refused = std::string(error.what()).find("f32 denormal mode") != std::string::npos;
+void CheckFloats(AgcDriver::VulkanDevice& device) {
+    constexpr std::array<const char*, 3> names{"min", "max", "add"};
+    constexpr std::array<std::uint32_t, 2> modes{0x00u, 0x30u};
+    std::array<std::array<std::array<std::uint32_t, Results>, Threads>, 2> results{};
+    for (std::uint32_t mode = 0; mode < modes.size(); ++mode) {
+        Output.fill(0xdeadbeefu);
+        const auto result = Compile(device, FloatCode, ShaderRecompiler::ShaderFloatMode{modes[mode], false, true, false});
+        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(FloatCode.data()));
+        device.WaitIdle();
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy_n(&Output[tid * Results], Results, results[mode][tid].begin());
+    }
+    for (std::uint32_t mode = 0; mode < modes.size(); ++mode) {
+        for (std::uint32_t op = 0; op < names.size(); ++op) {
+            for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+                Require(results[mode][tid][op] == results[mode][tid][op + names.size()],
+                    std::string("lds src2: ") + names[op] + " differs from ds_" + names[op] + "_f32 in mode " + Hex(modes[mode]));
+            }
         }
-        Require(refused, "lds src2: f32 opcode " + Hex(opcode) + " was not refused");
+    }
+    for (std::uint32_t op = 0; op < names.size(); ++op) {
+        for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+            Require(results[0][tid][op] != results[1][tid][op], std::string("lds src2: ") + names[op] + " ignores the f32 denormal mode");
+        }
     }
 }
 
@@ -150,7 +178,7 @@ int main() {
         Run(*device);
         CheckLanes();
         CheckAddressOffsetRejected(*device);
-        CheckFloatRejected(*device);
+        CheckFloats(*device);
         std::puts("lds src2 tests passed");
         return 0;
     } catch (const std::exception& error) {
