@@ -384,10 +384,12 @@ void Reads() {
 }
 
 void Status() {
+    auto* const badStatus = reinterpret_cast<FileStat*>(static_cast<std::uintptr_t>(0x10));
+    Check(sceKernelStat("/app0/Data/Small.txt", badStatus) == SCE_KERNEL_ERROR_EFAULT);
     FileStat status{};
     Check(sceKernelStat("/app0/Data/Small.txt", &status) == 0);
     Check((status.st_mode & TypeMask) == RegularType && (status.st_mode & 0222) == 0 && status.st_size == 3 && status.st_blocks == 1);
-    Check(sceKernelStat("/app0/data", &status) == 0 && (status.st_mode & TypeMask) == DirectoryType);
+    Check(sceKernelStat("/app0/data", &status) == 0 && (status.st_mode & TypeMask) == DirectoryType && status.st_blksize == 0x10000);
     Check(sceKernelStat("/app0/Data/", &status) == 0);
     Check(sceKernelStat("/app0/Data/Small.txt/", &status) == SCE_KERNEL_ERROR_ENOTDIR);
     Check(sceKernelStat("/app0/Data/Missing.txt", &status) == SCE_KERNEL_ERROR_ENOENT);

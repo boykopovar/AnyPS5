@@ -359,13 +359,11 @@ int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter
 }
 
 int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsDrawupFillTextureImageObject(graphicsObject, fillObject, mode, output, x, y, width, height);
 }
 
 int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, std::uint32_t format, std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1, std::uint32_t option2, std::uint32_t dimension2, void** output) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return Font::GraphicsDrawupFillTexturePatternObject(graphicsObject, fillObject, mode, format, select, dimension1, option1, option2, dimension2, output);
 }
 
 int APS5_VABI sceFontGraphicsCanvasStartDrawing() {
@@ -396,8 +394,8 @@ int APS5_VABI sceFontGraphicsUndefineIndexedVertexesGlyph() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFontGraphicsAppendGradientSegment() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontGraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradient, float position, const void* color) {
+    return Font::GraphicsAppendGradientSegment(graphicsObject, gradient, position, color);
 }
 
 int APS5_VABI sceFontSupportSystemUpdation() {
@@ -464,12 +462,12 @@ int APS5_VABI sceFontGraphicsAdjustFillRadialGradient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFontGraphicsDrawupFillFlatColor() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontGraphicsDrawupFillFlatColor(FontGraphicsFrame* graphicsObject, const void* color, void** output) {
+    return Font::GraphicsDrawupFillFlatColor(graphicsObject, color, output);
 }
 
-int APS5_VABI sceFontGraphicsDrawupFillLinearGradient() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontGraphicsDrawupFillLinearGradient(FontGraphicsFrame* graphicsObject, std::uint32_t mode, const void* color1, const void* color2, void** output, float extent0, float extent1, float x0, float y0, float x1, float y1) {
+    return Font::GraphicsDrawupFillLinearGradient(graphicsObject, mode, color1, color2, output, extent0, extent1, x0, y0, x1, y1);
 }
 
 int APS5_VABI sceFontGraphicsSetVertexesGlyphScale() {
@@ -480,8 +478,8 @@ int APS5_VABI sceFontGlyphGetOutlineVertexes() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFontGraphicsDrawupFillRadialGradient() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFontGraphicsDrawupFillRadialGradient(FontGraphicsFrame* graphicsObject, std::uint32_t mode, const void* color1, const void* color2, void** output, float extent0, float extent1, float x0, float y0, float x1, float y1) {
+    return Font::GraphicsDrawupFillRadialGradient(graphicsObject, mode, color1, color2, output, extent0, extent1, x0, y0, x1, y1);
 }
 
 int APS5_VABI sceFontGraphicsAdjustGradientSpread() {

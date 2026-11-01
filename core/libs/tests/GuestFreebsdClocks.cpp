@@ -225,6 +225,15 @@ static void CalendarConversionsInitializeTheirState() {
     }
     Require(sceKernelConvertLocaltimeToUtc(0, 0, nullptr, nullptr, nullptr) == SCE_OK);
     Require(sceKernelConvertUtcToLocaltime(0, nullptr, nullptr, nullptr) == SCE_OK);
+    auto* const badTime = reinterpret_cast<std::int64_t*>(static_cast<std::uintptr_t>(0x10));
+    auto* const badState = reinterpret_cast<KernelTimesec*>(static_cast<std::uintptr_t>(0x10));
+    auto* const badDst = reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(0x10));
+    Require(sceKernelConvertLocaltimeToUtc(0, 0, badTime, nullptr, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertLocaltimeToUtc(0, 0, nullptr, badState, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertLocaltimeToUtc(0, 0, nullptr, nullptr, badDst) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertUtcToLocaltime(0, badTime, nullptr, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertUtcToLocaltime(0, nullptr, badState, nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelConvertUtcToLocaltime(0, nullptr, nullptr, badDst) == static_cast<int>(0x8002000eu));
 }
 
 static void RequireSettimeError(int clockId, const KernelTimespec* time, int error) {
