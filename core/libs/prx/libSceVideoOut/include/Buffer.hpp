@@ -18,6 +18,7 @@ int APS5_VABI sceVideoOutSubmitEopFlip(int handle, int index, int flipMode, int6
 int APS5_VABI sceVideoOutSubmitFlip(int handle, int index, int flipMode, int64_t flipArg);
 int APS5_VABI sceVideoOutUnregisterBuffers(int handle, int setIndex);
 int APS5_VABI sceVideoOutGetBufferLabelAddress(int handle, uintptr_t* address);
+uintptr_t VideoOutBufferLabelAddress_nid_postfix(int handle);
 
 }
 
