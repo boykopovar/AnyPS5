@@ -402,6 +402,8 @@ std::uint64_t ScratchPoolCapBytes() {
     return bytes;
 }
 
+constexpr std::uint64_t ScratchPoolBufferLimit = std::uint64_t{1} << 31u;
+
 std::uint64_t ScratchPoolTotalBytes() {
     static const std::uint64_t bytes = MebibytesFromEnvironment("APS5_SCRATCH_POOL_TOTAL_MIB", 256);
     return bytes;
@@ -742,12 +744,12 @@ struct VulkanDevice::State {
     }
 
     std::shared_ptr<ScratchPool> ScratchPoolFor(const Graphics::Context& context, const ShaderRecompiler::PipelineIdentity& identity, std::uint32_t slotDwords, std::uint64_t groups) {
-        const std::uint64_t range = properties.limits.maxStorageBufferRange;
+        const auto range = std::min<std::uint64_t>(properties.limits.maxStorageBufferRange, ScratchPoolBufferLimit);
         const auto slotBytes = (static_cast<std::uint64_t>(slotDwords) + 2u) * 4u;
         if (slotBytes > range) {
-            throw std::runtime_error("Vulkan dispatch: one scratch pool slot of " + std::to_string(slotBytes) + " bytes is over maxStorageBufferRange " + std::to_string(range));
+            throw std::runtime_error("Vulkan dispatch: one scratch pool slot of " + std::to_string(slotBytes) + " bytes is over the scratch pool buffer limit of " + std::to_string(range) + " bytes");
         }
-        const auto capSlots = std::max<std::uint64_t>(std::min(ScratchPoolCapBytes(), range) / slotBytes, 1u);
+        const auto capSlots = std::max<std::uint64_t>(std::min({ScratchPoolCapBytes(), ScratchPoolTotalBytes(), range}) / slotBytes, 1u);
         const auto wanted = std::clamp<std::uint64_t>(groups, 1u, capSlots);
         std::lock_guard lock(scratchPoolsMutex);
         const auto use = ++scratchPoolUses;
