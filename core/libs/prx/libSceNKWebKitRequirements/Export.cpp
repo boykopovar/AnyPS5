@@ -17,42 +17,6 @@ int APS5_VABI __ubsan_handle_cfi_check_fail_abort_nid_disambig1_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI deflate_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI deflateBound_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI deflateEnd_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI deflateInit2__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI deflateReset_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI inflate_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI inflateEnd_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI inflateInit2__nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI inflateReset_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI jpeg_CreateDecompress_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -398,10 +362,6 @@ int APS5_VABI sqlite3_wal_checkpoint_v2_nid_postfix() {
 }
 
 int APS5_VABI sqlite3_wal_hook_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uncompress_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
