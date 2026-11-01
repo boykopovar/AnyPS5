@@ -359,6 +359,13 @@ int main() {
             Require(reader.TranslateVirtualAddress(0x101f) == 0x25f);
             RejectAddress(Fixture(), 0x1020);
         }},
+        {"DT_RELAENT entry size mismatch", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 9);
+            Write<std::uint64_t>(bytes, 248, 16);
+            Write<std::uint32_t>(bytes, 192, 21);
+            RejectSections(std::move(bytes));
+        }},
     };
     std::size_t failures = 0;
     for (const auto& [name, test] : cases) {
