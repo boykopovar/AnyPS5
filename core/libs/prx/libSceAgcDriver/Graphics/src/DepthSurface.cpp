@@ -2940,6 +2940,7 @@ std::size_t DiscardFilledDepthPlanes(std::uint64_t address, std::size_t bytes, s
     std::size_t discarded = 0;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> remaining;
     for (const auto& surface : surfaces()) {
+        if (surface->stencilStale) remaining.push_back(staleStencilRange(*surface));
         if (!surface->AnyStale()) continue;
         const auto& target = surface->target;
         const auto plane = stalePlaneRange(*surface);

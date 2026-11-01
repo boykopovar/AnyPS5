@@ -174,6 +174,36 @@ int main() {
         Require(AgcDriver::Graphics::FlushDepthPlanes(base, PlaneBytes).empty(), "a read after the driver's fill and a draw that wrote no depth stored the plane");
         device->WaitIdle();
         Require(Since(before).stores == 0, "a read after the driver's fill counted a store");
+
+        const auto stencilBytes = AgcDriver::Graphics::DepthSliceBytes(PlaneExtent, 1u);
+        auto* stencilBlocks = static_cast<std::byte*>(AllocateBlocks(PlaneBytes + stencilBytes, true));
+        auto* stencilDepthPlane = reinterpret_cast<float*>(stencilBlocks);
+        auto* stencilPlane = reinterpret_cast<std::uint8_t*>(stencilBlocks + PlaneBytes);
+        const auto stencilDepthBase = reinterpret_cast<std::uintptr_t>(stencilDepthPlane);
+        const auto stencilBase = reinterpret_cast<std::uintptr_t>(stencilPlane);
+        const Surface depthStencil{stencilDepthBase, stencilBase, 0, false, VK_FORMAT_D32_SFLOAT_S8_UINT, 0, 0, swizzle};
+        const auto holding = [&](std::uint8_t value) { return static_cast<std::size_t>(std::count(stencilPlane, stencilPlane + stencilBytes, value)); };
+        const auto writeStencil = [](std::uint32_t reference) { return VkStencilOpState{VK_STENCIL_OP_KEEP, VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_ALWAYS, 0xffu, 0xffu, reference}; };
+        Fill(stencilDepthPlane, 1.0f);
+        std::fill(stencilPlane, stencilPlane + stencilBytes, std::uint8_t{0});
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+
+        Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 beside a stencil-only surface did not cover the plane");
+        Require(draw(depthStencil, {.depthTest = false, .stencilTest = true, .stencil = writeStencil(0x2au)}) == PlaneTexels, "the draw writing only stencil 0x2a did not cover the plane");
+        Require(AgcDriver::Graphics::DiscardFilledDepthPlanes(stencilDepthBase, PlaneBytes, One) == 0, "a fill discarded the depth plane of a surface whose depth was never written");
+        Require(AgcDriver::Graphics::DiscardFilledDepthPlanes(base, PlaneBytes, One) == 1, "a fill over the stale depth plane beside a stencil-only surface did not discard it");
+        Require(holding(0u) == stencilBytes, "discarding another surface's depth plane stored the stencil plane");
+        Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, stencilBytes).empty(), "a read of a stencil-only surface's plane stored nothing after another surface's depth plane was discarded");
+        device->WaitIdle();
+        Require(holding(0x2au) == PlaneTexels, "a read after another surface's depth plane was discarded does not see stencil 0x2a");
+
+        Require(draw(depthStencil, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS, .stencilTest = true, .stencil = writeStencil(0x18u)}) == PlaneTexels, "the draw writing depth and stencil 0x18 did not cover the plane");
+        Require(AgcDriver::Graphics::DiscardFilledDepthPlanes(stencilDepthBase, PlaneBytes, One) == 1, "a fill over the stale depth plane of a surface with a stale stencil plane did not discard it");
+        Require(holding(0x2au) == PlaneTexels, "discarding the depth plane stored the surface's own stencil plane");
+        Require(!AgcDriver::Graphics::FlushDepthPlanes(stencilBase, stencilBytes).empty(), "a read of the stencil plane stored nothing after its surface's depth plane was discarded");
+        device->WaitIdle();
+        Require(holding(0x18u) == PlaneTexels, "a read after the surface's depth plane was discarded does not see stencil 0x18");
+        Require(AgcDriver::Graphics::FlushDepthPlanes(stencilBase, stencilBytes).empty(), "a second read of the stored stencil plane stored it again");
         LibcRunShutdown_nid_postfix();
         std::puts("depth plane fill discard tests passed");
         return 0;
