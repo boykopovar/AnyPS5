@@ -905,6 +905,11 @@ if(BUILD_TESTING)
         add_asan_test_options(input_magic max_allocation_size_mb=512)
         add_test(NAME input_preservation COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_preservation.py $<TARGET_FILE:relinker>)
+        foreach(mode linux windows controls)
+            add_test(NAME patch_input_preservation_${mode} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_patch_input_preservation.py $<TARGET_FILE:relinker> ${mode})
+            set_tests_properties(patch_input_preservation_${mode} PROPERTIES TIMEOUT 20)
+        endforeach()
         add_test(NAME output_collisions COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_output_collisions.py $<TARGET_FILE:relinker>)
         add_test(NAME secondary_output_collisions COMMAND ${Python3_EXECUTABLE}
