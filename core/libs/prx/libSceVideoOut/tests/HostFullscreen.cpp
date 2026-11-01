@@ -207,13 +207,17 @@ static bool DisplayRequired() {
 }
 
 static bool SkipsWithoutDisplay(const std::string& reason, bool required) {
-    return !required && reason.find("Vulkan support") != std::string::npos;
+    return !required && (reason.find("Vulkan support") != std::string::npos ||
+                         reason.find("doesn't implement the VK_KHR_surface extension") != std::string::npos);
 }
 
 static void SkipPolicyTest() {
     const std::string noVulkan = "DisplayWindow: Vulkan support is either not configured in SDL or not available in current SDL video driver (offscreen) or platform";
     Require(SkipsWithoutDisplay(noVulkan, false), "a missing Vulkan window did not skip");
     Require(!SkipsWithoutDisplay(noVulkan, true), "a missing Vulkan window skipped although a display was required");
+    const std::string noSurface = "DisplayWindow: Installed Vulkan doesn't implement the VK_KHR_surface extension";
+    Require(SkipsWithoutDisplay(noSurface, false), "a Vulkan driver without surface support did not skip");
+    Require(!SkipsWithoutDisplay(noSurface, true), "a Vulkan driver without surface support skipped although a display was required");
     for (const char* unexpected : {"DisplayWindow: failed to decode icon0.png", "DisplayWindow: initial window extent is smaller than the minimum", "SetWindowSubclass failed", ""}) {
         Require(!SkipsWithoutDisplay(unexpected, false), (std::string("an unexpected failure was skipped: ") + unexpected).c_str());
     }
