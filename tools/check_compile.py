@@ -70,7 +70,10 @@ def validate_arguments(arguments):
 
 
 def compilation_database(text, source, skip_empty_commands=False):
-    database = json.loads(text)
+    try:
+        database = json.loads(text)
+    except RecursionError as error:
+        raise ValueError(f"{source}: compilation database is nested too deeply") from error
     if not isinstance(database, list):
         raise ValueError(f"{source}: expected an array of command objects")
     commands = []
@@ -284,7 +287,7 @@ def syntax_arguments(arguments, directory, source):
         if compiler in ("cl", "clang-cl") or any(argument in ("--driver-mode=cl", "--rsp-quoting=windows") for argument in arguments):
             raise ValueError("Windows-style compiler response files are unsupported; provide expanded arguments")
     arguments = [arguments[0], *expand_response_files(arguments[1:], directory)]
-    wanted = source.resolve()
+    wanted = real(source)
     trimmed = [arguments[0]]
     index = 1
     positional = False

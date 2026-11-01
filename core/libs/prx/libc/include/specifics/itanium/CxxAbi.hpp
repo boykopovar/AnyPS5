@@ -3,6 +3,12 @@
 
 #include <cxxabi.h>
 
+#ifdef __EMSCRIPTEN__
+namespace __cxxabiv1 {
+extern "C" int __cxa_thread_atexit(void (*)(void*), void*, void*) noexcept;
+}
+#endif
+
 #ifdef _LIBCPPABI_VERSION
 #include <typeinfo>
 

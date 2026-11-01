@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <thread>
 
 static void Require(bool condition, const char* message) {
@@ -33,6 +34,25 @@ static void CheckKey(TRetain retain, std::size_t referenceOffset) {
         Require(retain(&guarded.key) == (next > 1), "retain return value");
         Require(std::memcmp(&guarded, expected.data(), sizeof(guarded)) == 0, "retain changed bytes outside reference count");
     }
+    std::memset(&guarded, 0x3C, sizeof(guarded));
+    guarded.key.references = std::numeric_limits<std::int32_t>::max();
+    std::array<unsigned char, sizeof(guarded)> unchanged;
+    std::memcpy(unchanged.data(), &guarded, sizeof(guarded));
+    bool overflowThrown = false;
+    try {
+        retain(&guarded.key);
+    } catch (const std::overflow_error&) {
+        overflowThrown = true;
+    }
+    Require(overflowThrown, "retain at maximum count did not throw");
+    Require(std::memcmp(&guarded, unchanged.data(), sizeof(guarded)) == 0, "overflowing retain changed bytes");
+    bool nullThrown = false;
+    try {
+        retain(nullptr);
+    } catch (const std::invalid_argument&) {
+        nullThrown = true;
+    }
+    Require(nullThrown, "retain of null did not throw");
     std::memset(&guarded, 0x5A, sizeof(guarded));
     guarded.key.references = 1;
     std::array<unsigned char, sizeof(guarded)> expected;
@@ -64,5 +84,7 @@ int main(int argc, char** argv) {
         CheckKey<LibreSsl3EvpPkey>(EVP_PKEY_up_ref_nid_postfix, 4);
     if (argc == 1 || std::strcmp(argv[1], "ec") == 0)
         CheckKey<LibreSsl3EcKey>(EC_KEY_up_ref_nid_postfix, 48);
+    if (argc == 1 || std::strcmp(argv[1], "rsa") == 0)
+        CheckKey<LibreSsl3Rsa>(RSA_up_ref_nid_postfix, 104);
     return 0;
 }
