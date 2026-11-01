@@ -60,6 +60,13 @@ int main(const int argc, char** argv) {
             RunAndRequireRejected(binary, image, "that does not fit in the file");
         }
 
+        {
+            Bytes image = MakeExecutable(kCode);
+            WriteTag(image, kRelaTag, kDtOsRela, 0x1000);
+            WriteTag(image, kRelaSzTag, kDtRelaSz, 0xFFFFFFFFFFFFFFFFull);
+            RunAndRequireRejected(binary, image, "whose entry count exceeds ELF section boundary");
+        }
+
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "rela_bounds_tests: " << error.what() << '\n';
