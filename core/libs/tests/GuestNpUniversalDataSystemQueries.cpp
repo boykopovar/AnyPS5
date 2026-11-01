@@ -35,6 +35,9 @@ static bool Zeroed(const Stat& stat) {
 int main() {
     CHECK(RejectsArgument([] { sceNpUniversalDataSystemInitialize(nullptr); }));
     const NpUniversalDataSystemInitParam init{sizeof(NpUniversalDataSystemInitParam), 0x10000};
+    NpUniversalDataSystemInitParam invalidSizeInit = init;
+    invalidSizeInit.size = sizeof(NpUniversalDataSystemInitParam) - 1;
+    CHECK(RejectsArgument([invalidSizeInit] { sceNpUniversalDataSystemInitialize(&invalidSizeInit); }));
     CHECK(sceNpUniversalDataSystemInitialize(&init) == 0);
 
     NpUniversalDataSystemMemoryStat memory;
