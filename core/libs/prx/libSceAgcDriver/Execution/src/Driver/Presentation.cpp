@@ -90,6 +90,7 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
     std::shared_ptr<VulkanDevice> presenting;
     timing.Mark("validate");
     try {
+        if (const auto settling = device.Load(); settling != nullptr) settling->SettleDeviceImageMisses();
         bool submitted = false;
         bool presentable = false;
         bool trailing = false;

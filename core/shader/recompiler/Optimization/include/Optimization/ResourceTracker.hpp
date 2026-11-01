@@ -7,7 +7,7 @@ namespace ShaderRecompiler {
 
 class ResourceTracker {
 public:
-    void Track(IrProgram& program) const;
+    void Track(IrProgram& program, bool deviceImageTables = false) const;
 };
 
 }

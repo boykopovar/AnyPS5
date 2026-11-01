@@ -83,6 +83,7 @@ void RunUnregistered(AgcDriver::VulkanDevice& device, ShaderRecompiler::Recompil
         Require(snapshot.prepared->entries.size() == 1, "unregistered compute invocation did not cache exactly one artifact");
         const auto handle = snapshot.prepared->entries.front().handle;
         const auto& artifact = ShaderRecompiler::GetPreparedArtifact(*handle);
+        const std::uint32_t* module = artifact.gpuResolvedImages ? nullptr : artifact.spirv.data();
         for (const bool useCache : {false, true}) {
             request.useCache = useCache;
             Require(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 0, request) == handle, "unregistered compute source was prepared again");
@@ -91,7 +92,8 @@ void RunUnregistered(AgcDriver::VulkanDevice& device, ShaderRecompiler::Recompil
             runtime.userData = request.context.userData;
             const auto capture = repeated.Capture(runtime);
             const auto result = repeated.Materialize(*capture);
-            Require(snapshot.prepared->entries.size() == 1 && result->variantId == artifact.variantId && result->spirv.data() == artifact.spirv.data(), "unregistered compute invocation replaced its cached artifact");
+            if (module == nullptr) module = result->spirv.data();
+            Require(snapshot.prepared->entries.size() == 1 && result->variantId == artifact.variantId && result->spirv.data() == module, "unregistered compute invocation replaced its cached artifact");
             device.Dispatch(*result, 1, 1, 1);
         }
         device.WaitIdle();
@@ -134,6 +136,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     snapshot.prepared->entries.push_back({0, handle});
     ExpectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::SourceHandleFor(snapshot, 1, request)); }, "outside the snapshot");
     const auto& artifact = ShaderRecompiler::GetPreparedArtifact(*handle);
+    const std::uint32_t* module = artifact.gpuResolvedImages ? nullptr : artifact.spirv.data();
     for (std::uint32_t value = 0; value < 8; ++value) {
         users.fill(value);
         request.useCache = value % 2 == 0;
@@ -142,7 +145,8 @@ void Run(AgcDriver::VulkanDevice& device) {
         runtime.userData = users;
         const auto capture = ShaderRecompiler::CaptureResources(request, runtime, *ready);
         const auto result = ShaderRecompiler::MaterializeShader(request, *capture, *ready);
-        Require(result->variantId == artifact.variantId && result->spirv.data() == artifact.spirv.data(), "invocation replaced the prepared artifact");
+        if (module == nullptr) module = result->spirv.data();
+        Require(result->variantId == artifact.variantId && result->spirv.data() == module, "invocation replaced the prepared artifact");
         device.Dispatch(*result, 1, 1, 1);
     }
     device.WaitIdle();
@@ -178,7 +182,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto replacementInvocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, replacementRequest);
     const auto replacementCapture = replacementInvocation.Capture(preparedRuntime);
     const auto replacementResult = replacementInvocation.Materialize(*replacementCapture);
-    Require(replacementResult->spirv.data() == artifact.spirv.data(), "device replacement recompiled the prepared shader");
+    Require(replacementResult->spirv.data() == (artifact.gpuResolvedImages ? firstResult->spirv.data() : artifact.spirv.data()), "device replacement recompiled the prepared shader");
     replacement->Dispatch(*replacementResult, 1, 1, 1);
     replacement->WaitIdle();
     replacementRequest.target.nonConstantImageOffsets = !replacementRequest.target.nonConstantImageOffsets;

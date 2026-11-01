@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
@@ -6,6 +7,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <array>
 #include <exception>
 #ifdef __APPLE__
 #include <cstring>
@@ -47,11 +49,16 @@ VkBuffer BindExactBuffer(const Context& context, std::size_t size, VkBufferUsage
     return buffer;
 }
 
+VkBufferUsageFlags UsageWithoutUnsupportedAddress(const Context& context, VkBufferUsageFlags requested, VkBufferUsageFlags pooled) {
+    if (!context.bufferDeviceAddress && (requested & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) == 0) return pooled & ~static_cast<VkBufferUsageFlags>(VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    return pooled;
 }
 
-Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, properties)), properties(properties) {
+}
+
+Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(UsageWithoutUnsupportedAddress(context, usage, BufferPool::Usage(usage, properties))), properties(properties) {
     Require(size != 0, "zero-sized GPU buffer");
-    const bool addressable = (usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0;
+    const bool addressable = (this->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0;
     Require(!addressable || context.bufferDeviceAddress, "buffer device address is not enabled");
     cache = GetBufferPool(context);
     if (const auto allocation = cache->Take(size, this->usage, properties, "vkAllocateMemory buffer")) {
@@ -72,7 +79,14 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
             deviceAddress = 0;
             try {
                 buffer = BindExactBuffer(context, size, this->usage, memory, offset, allocationBytes);
-                initializeAddress(usage);
+                initializeAddress(this->usage);
+            } catch (...) {
+                release();
+                throw;
+            }
+        } else if (deviceAddress == 0) {
+            try {
+                initializeAddress(this->usage);
             } catch (...) {
                 release();
                 throw;
@@ -105,7 +119,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
             slab = true;
             allocationBytes = capacity;
             Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, offset), "vkBindBufferMemory slab");
-            initializeAddress(usage);
+            initializeAddress(this->usage);
             mapping = slot.mapping;
 #ifdef __APPLE__
             ClearPooledTail(mapping, size, capacity, properties);
@@ -115,7 +129,7 @@ Buffer::Buffer(const Context& context, std::size_t size, VkBufferUsageFlags usag
         }
         memory = cache->AllocateMemory(allocation, "vkAllocateMemory buffer");
         Check(context.Function<PFN_vkBindBufferMemory>("vkBindBufferMemory")(context.device, buffer, memory, 0), "vkBindBufferMemory");
-        initializeAddress(usage);
+        initializeAddress(this->usage);
         if ((properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) != 0) Check(context.Function<PFN_vkMapMemory>("vkMapMemory")(context.device, memory, 0, VK_WHOLE_SIZE, 0, &mapping), "vkMapMemory");
         ready = true;
     } catch (...) {
@@ -161,7 +175,7 @@ void Buffer::Invalidate() {
     Check(context.Function<PFN_vkInvalidateMappedMemoryRanges>("vkInvalidateMappedMemoryRanges")(context.device, 1, &range), "vkInvalidateMappedMemoryRanges");
 }
 
-DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(BufferPool::Usage(usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsageFlags usage) : context(context), size(size), capacity(BufferPool::Capacity(size)), usage(UsageWithoutUnsupportedAddress(context, usage, BufferPool::Usage(usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))) {
     Require(size != 0, "zero-sized device buffer");
     cache = GetBufferPool(context);
     if (const auto allocation = cache->Take(size, this->usage, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "vkAllocateMemory device buffer")) {
@@ -196,6 +210,8 @@ DeviceBuffer::DeviceBuffer(const Context& context, std::size_t size, VkBufferUsa
         allocation.allocationSize = ClassAllocationBytes(requirements, capacity);
         allocationBytes = allocation.allocationSize;
         allocation.memoryTypeIndex = context.DeviceMemoryType(requirements.memoryTypeBits, allocation.allocationSize, "device buffer");
+        const VkMemoryAllocateFlagsInfo addressFlags{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, nullptr, VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT, 0};
+        if ((this->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0) allocation.pNext = &addressFlags;
         const auto deviceType = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
         std::uint32_t allocatedType = allocation.memoryTypeIndex;
         memory = cache->AllocateMemory(allocation, "vkAllocateMemory device buffer", context.RefusedDeviceMemoryFallback(requirements.memoryTypeBits, allocation.memoryTypeIndex), &allocatedType);
@@ -359,6 +375,7 @@ CommandBatch::CommandBatch(const Context& context) : context(context) {
         fence = created;
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        NoteCommandBufferBegun(commands);
         Check(context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands, &begin), "vkBeginCommandBuffer");
         // Work recorded so far goes first in queue order, so this batch sees its results.
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Recording()) recorder->Submit();

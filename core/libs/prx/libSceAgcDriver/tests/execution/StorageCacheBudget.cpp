@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <span>
@@ -74,14 +76,44 @@ void Record(AgcDriver::VulkanDevice& device, std::uint64_t address) {
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
 }
 
+bool heapSlots = false;
+
+struct HeapSlotted {
+    std::uint32_t slot = 0;
+    std::uint32_t generation = 0;
+};
+std::map<std::uint64_t, HeapSlotted> heapSlotsByAddress;
+
+std::shared_ptr<StorageTexture> heapSlotted(AgcDriver::VulkanDevice& device, std::uint64_t address, std::shared_ptr<StorageTexture> image) {
+    if (!heapSlots || image == nullptr) return image;
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+    auto& heap = AgcDriver::Graphics::BindlessHeap::For(device.graphicsContext());
+    const auto slot = heap.StorageSlot(ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding, image.get(), image->StorageView(0, false));
+    Require(slot.has_value(), "the stored image took no GPU heap storage slot");
+    heapSlotsByAddress.try_emplace(address, HeapSlotted{*slot, heap.SlotGeneration(*slot)});
+    return image;
+}
+
+bool heapSlotFreed(AgcDriver::VulkanDevice& device, std::uint64_t address) {
+    const auto found = heapSlotsByAddress.find(address);
+    Require(found != heapSlotsByAddress.end(), "no GPU heap slot was recorded for the surface");
+    return AgcDriver::Graphics::BindlessHeap::For(device.graphicsContext()).SlotGeneration(found->second.slot) != found->second.generation;
+}
+
 std::shared_ptr<StorageTexture> Store(AgcDriver::VulkanDevice& device, std::uint64_t base, std::uint32_t surface, bool flush = true) {
     const auto address = base + surface * Stride;
     Record(device, address);
     device.WaitIdle();
-    if (!flush) return StorageTexture::FindLive(address, SurfaceBytes);
+    if (!flush) return heapSlotted(device, address, StorageTexture::FindLive(address, SurfaceBytes));
     StorageTexture::FlushPending(address, static_cast<std::size_t>(SurfaceBytes), nullptr, "test");
     device.WaitIdle();
-    return StorageTexture::FindLive(address, SurfaceBytes);
+    return heapSlotted(device, address, StorageTexture::FindLive(address, SurfaceBytes));
+}
+
+bool LacksHeapSlots(AgcDriver::VulkanDevice& device) {
+    if (!heapSlots || device.graphicsContext().descriptorHeap) return false;
+    std::puts("skipped, the device has no VK_EXT_descriptor_heap");
+    return true;
 }
 
 int RetainedBatch() {
@@ -94,6 +126,7 @@ int RetainedBatch() {
 #endif
     const auto device = OpenVulkanTestDevice();
     if (!device) return VulkanTestSkipped;
+    if (LacksHeapSlots(*device)) return VulkanTestSkipped;
     std::vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
     auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
     const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texels));
@@ -110,8 +143,9 @@ int RetainedBatch() {
     };
     try {
         Record(*device, base);
-        auto retained = StorageTexture::FindLive(base, SurfaceBytes);
+        auto retained = heapSlotted(*device, base, StorageTexture::FindLive(base, SurfaceBytes));
         Require(retained != nullptr, "surface 0 has no cached storage image");
+        const std::weak_ptr<StorageTexture> weak = retained;
         const auto retainedBytes = retained->BudgetBytes();
         auto* recorder = Recorder::Active();
         Require(recorder != nullptr && recorder->Recording(), "the surface dispatch was not left in an open batch");
@@ -122,6 +156,11 @@ int RetainedBatch() {
         for (std::uint32_t surface = 1; surface <= capacity; ++surface) Record(*device, base + surface * Stride);
         Require(StorageTexture::FindLive(base, SurfaceBytes) == nullptr, "surface 0 remained cached after the storage budget was exceeded");
         Require(recorder->OpenKeptBytes() >= beforeEviction + retainedBytes, "an evicted storage image held by a batch without a shared resource-cache entry was not charged to that batch");
+        if (heapSlots) {
+            Require(!weak.expired() && !heapSlotFreed(*device, base), "an evicted storage image lost its GPU heap slot while its open batch still read it");
+            device->WaitIdle();
+            Require(weak.expired() && heapSlotFreed(*device, base), "an evicted storage image kept its GPU heap slot after the batch that held it finished");
+        }
     } catch (...) {
         release();
         throw;
@@ -134,7 +173,10 @@ int RetainedBatch() {
 
 int main(int argc, char** argv) {
     try {
-        if (argc == 2 && std::string(argv[1]) == "--retained-batch") return RetainedBatch();
+        const std::string mode = argc == 2 ? argv[1] : "";
+        heapSlots = mode == "--heap-slots" || mode == "--retained-batch-heap-slots";
+        if (heapSlots) Require(SetTestEnvironment("APS5_GPU_HEAP", "1") == 0, "cannot enable the GPU heap");
+        if (mode == "--retained-batch" || mode == "--retained-batch-heap-slots") return RetainedBatch();
 #ifdef _WIN32
         Require(_putenv_s("APS5_TEXTURE_CACHE_MIB", "32") == 0, "cannot set the test cache budget");
 #else
@@ -142,6 +184,7 @@ int main(int argc, char** argv) {
 #endif
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (LacksHeapSlots(*device)) return VulkanTestSkipped;
         const auto budget = TestBudget;
         std::vector<std::uint32_t> storage((SurfaceBytes + MaxSurfaces * Stride + Stride) / 4u, 0u);
         auto* texels = reinterpret_cast<std::uint32_t*>((reinterpret_cast<std::uintptr_t>(storage.data()) + Stride - 1u) & ~std::uintptr_t{Stride - 1u});
@@ -179,6 +222,10 @@ int main(int argc, char** argv) {
             const auto capacity = static_cast<std::uint32_t>(budget / held);
             Require(capacity + 2u <= MaxSurfaces, "the eviction set exceeds the test storage");
             for (std::uint32_t surface = reused; surface < capacity + 2u; ++surface) images[surface] = Store(*device, base, surface);
+            for (std::uint32_t surface = 0; heapSlots && surface < capacity + 2u; ++surface) {
+                const bool evicted = surface < 2u;
+                Require(heapSlotFreed(*device, base + surface * Stride) == evicted, "surface " + std::to_string(surface) + (evicted ? " was evicted but kept its GPU heap slot" : " is cached but lost its GPU heap slot"));
+            }
             for (std::uint32_t surface = 0; surface < capacity + 2u; ++surface) {
                 const bool cached = StorageTexture::FindLive(base + surface * Stride, SurfaceBytes) != nullptr;
                 Require(cached == (surface >= 2u), "surface " + std::to_string(surface) + (cached ? " is still cached" : " was evicted") + " after " + std::to_string(capacity + 2u) + " surfaces under a budget of " + std::to_string(capacity) + " of them");

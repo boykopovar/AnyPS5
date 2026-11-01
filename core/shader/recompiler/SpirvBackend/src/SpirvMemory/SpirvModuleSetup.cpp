@@ -308,12 +308,12 @@ void PlanMeshWindowBuffer(SpirvEmitterState& state) {
     state.meshWindowEntryLive = order.empty() ? Slots(slots, true) : liveIn.at(order.front());
 }
 
-bool WritesGuestMemory(const IrProgram& program) {
+}
+
+bool WritesGuestBuffers(const IrProgram& program) {
     const auto& info = program.Info();
-    const auto writtenImage = [](const ImageResource& image) { return !image.targetMerge && (image.written || image.atomic || image.atomic64); };
-    const auto writtenModes = [&](const std::vector<ImageResource>& modes) { return std::ranges::any_of(modes, writtenImage); };
     const auto writtenBuffer = [](const BufferResource& buffer) { return buffer.written || buffer.atomic; };
-    if (info.bdaWrites || std::ranges::any_of(info.buffers, writtenBuffer) || std::ranges::any_of(info.images, writtenImage) || std::ranges::any_of(info.runtimeImageModes, writtenModes)) return true;
+    if (info.bdaWrites || std::ranges::any_of(info.buffers, writtenBuffer)) return true;
     const auto& memory = program.Resources().memoryInfo;
     for (const auto& block : program.Blocks()) {
         for (const IrValue* inst : block->Instructions()) {
@@ -327,6 +327,11 @@ bool WritesGuestMemory(const IrProgram& program) {
     return false;
 }
 
+bool WritesGuestMemory(const IrProgram& program) {
+    const auto& info = program.Info();
+    const auto writtenImage = [](const ImageResource& image) { return !image.targetMerge && (image.written || image.atomic || image.atomic64); };
+    const auto writtenModes = [&](const std::vector<ImageResource>& modes) { return std::ranges::any_of(modes, writtenImage); };
+    return std::ranges::any_of(info.images, writtenImage) || std::ranges::any_of(info.runtimeImageModes, writtenModes) || WritesGuestBuffers(program);
 }
 
 void DefineModule(SpirvEmitterState& state) {
