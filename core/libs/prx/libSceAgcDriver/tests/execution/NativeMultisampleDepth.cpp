@@ -734,17 +734,26 @@ bool DepthSupported(const Context& context, VkFormat format, std::uint32_t fragm
     return result == VK_SUCCESS && (properties.sampleCounts & fragments) != 0u && (context.limits.framebufferDepthSampleCounts & fragments) != 0u;
 }
 
-void CheckDrawFeedback() {
+bool CheckDrawFeedback(std::optional<bool> bufferFeedback = std::nullopt) {
     const auto device = OpenVulkanTestDevice();
     Require(device != nullptr, "native depth draw feedback requires Vulkan");
+#ifndef _WIN32
+    if (bufferFeedback.has_value() && PrepareImportWatch(device->graphicsContext()) == ImportWatch::Unwatch) {
+        std::puts("skipped, native depth buffer feedback requires imports that retain write tracking");
+        return false;
+    }
+#endif
     constexpr VkExtent2D extent{5u, 3u};
     constexpr std::uint32_t samples = 4u;
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
-    TargetMemory memory(depthBytes), metadata(65536u);
+    TargetMemory memory(bufferFeedback.has_value() ? (1u << 20u) : depthBytes, bufferFeedback.has_value()), metadata(65536u);
     std::memset(metadata.Data(), 0, 65536u);
-    DepthTarget depth{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, metadata.Address(), false, samples};
+    DepthTarget depth{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 0.0f, 0u, bufferFeedback.has_value() ? memory.Address() + depthBytes : metadata.Address(), false, samples};
     depth.depthSwizzle = 24u;
     depth.iterate256 = depth.htilePipeAligned = true;
+    if (bufferFeedback.has_value()) depth.htileDepthOnly = true;
+    std::unique_ptr<TargetMemory> warmMemory;
+    if (bufferFeedback.has_value()) warmMemory = std::make_unique<TargetMemory>(depthBytes);
     struct Cleanup {
         AgcDriver::VulkanDevice& device;
         ~Cleanup() { device.WaitIdle(); ClearCachedTextures(device.Device()); ClearDepthSurfaces(device.Device()); }
@@ -771,10 +780,6 @@ void CheckDrawFeedback() {
     const auto pixelOffset = PixelPushOffset(0u, device->Target());
     const AgcDriver::Pm4::DrawParameters draw{0u, 3u, 0u, 1u, 0u, false};
     const std::array<CompiledShader, 2> initial{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0u}, {ShaderRecompiler::ShaderStage::Fragment, &producer, pixelOffset}}};
-    device->Draw(state, draw, initial);
-    device->WaitIdle();
-    std::array<std::byte, 1> probe{};
-    Require(DepthSurfaceAt(depth.address), "a draw left no resident native depth surface");
     reader.spirv = DepthFeedbackFragmentShader(binding, true);
     reader.variantId = 3u;
     const auto words = DepthSampleWords(depth);
@@ -789,6 +794,100 @@ void CheckDrawFeedback() {
     image.imageSamplers = {0u};
     reader.bindings.push_back(std::move(image));
     const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0u}, {ShaderRecompiler::ShaderStage::Fragment, &reader, pixelOffset}}};
+    if (bufferFeedback.has_value()) {
+        const bool sampled = *bufferFeedback;
+        constexpr std::uint32_t bufferBytes = 196608u;
+        Require(bufferBytes >= depthBytes + HtileMetadataBytes(extent), "feedback fixture buffer does not cover depth and HTILE");
+        ShaderRecompiler::DescriptorBinding buffer{};
+        buffer.kind = ShaderRecompiler::DescriptorKind::StorageBuffer;
+        buffer.role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+        buffer.descriptorSet = ShaderRecompiler::RuntimeAbi::DescriptorSet;
+        buffer.binding = static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::Binding::Buffers);
+        buffer.count = 1u;
+        buffer.guestDescriptor = {static_cast<std::uint32_t>(depth.address), static_cast<std::uint32_t>(depth.address >> 32u) | (4u << 16u), bufferBytes / 4u, 0x00014204u};
+        buffer.bufferWritten = {true};
+        buffer.bufferRead = {false};
+        auto warmWriter = producer;
+        warmWriter.spirv = DepthFeedbackFragmentShader(binding, false, 0.0f, true);
+        warmWriter.variantId = 5u;
+        warmWriter.bindings.push_back(buffer);
+        const std::array<CompiledShader, 2> warmStages{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0u}, {ShaderRecompiler::ShaderStage::Fragment, &warmWriter, pixelOffset}}};
+        auto warmDepth = depth;
+        warmDepth.address = warmMemory->Address();
+        warmDepth.htileAddress = 0u;
+        warmDepth.samples = 1u;
+        warmDepth.depthSwizzle = 0u;
+        auto warmState = state;
+        warmState.depth = warmDepth;
+        warmState.samples = 1u;
+        warmState.scissor.extent = {1u, 1u};
+        std::memset(memory.Data(), 0, 1u << 20u);
+        device->Draw(warmState, draw, warmStages);
+        device->WaitIdle();
+        AgcDriver::GuestMemory::FlushGpuWrites(memory.Address(), bufferBytes);
+        std::memset(memory.Data(), 0, bufferBytes);
+        AgcDriver::GuestMemory::MarkWritten(memory.Address(), bufferBytes);
+        AgcDriver::GuestMemory::BumpCollectEpoch();
+        device->Draw(state, draw, initial);
+        device->WaitIdle();
+        auto held = DepthSurfaceTexture(device->graphicsContext(), words, DecodeTextureResource(words), VkComponentMapping{});
+        Require(held != nullptr && DepthSurfaceAt(depth.address), "feedback fixture has no eligible active native depth");
+        auto writer = sampled ? reader : producer;
+        writer.spirv = DepthFeedbackFragmentShader(binding, sampled, 0.0f, true);
+        writer.variantId = 4u;
+        writer.bindings.push_back(buffer);
+        const std::array<CompiledShader, 2> writing{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0u}, {ShaderRecompiler::ShaderStage::Fragment, &writer, pixelOffset}}};
+        if (sampled) {
+            TargetMemory output(1u << 20u, true);
+            auto disjoint = writer;
+            auto& descriptor = disjoint.bindings.back().guestDescriptor;
+            descriptor[0] = static_cast<std::uint32_t>(output.Address());
+            descriptor[1] = static_cast<std::uint32_t>(output.Address() >> 32u) | (4u << 16u);
+            const std::array<CompiledShader, 2> separate{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0u}, {ShaderRecompiler::ShaderStage::Fragment, &disjoint, pixelOffset}}};
+            ShaderResources resources(device->graphicsContext(), separate, {}, 0u, 0u, 0u);
+            Require(!resources.Reusable(), "native multisample sampling unexpectedly retained a reusable resource set");
+            const auto textures = resources.SampledTextures();
+            Require(std::any_of(textures.begin(), textures.end(), [&](const auto& texture) { return texture != nullptr && DepthSurfaceHolds(device->graphicsContext(), DecodeTextureResource(words), texture.get()); }), "disjoint feedback control did not retain its native sampled view");
+            ShaderResources refreshed(device->graphicsContext(), separate, {}, 0u, 0u, 0u);
+            std::string refusal;
+            try { ShaderResources overlapping(device->graphicsContext(), writing, {}, 0u, 0u, 0u); }
+            catch (const std::exception& error) { refusal = error.what(); }
+            Require(!refusal.empty(), "sampled native buffer feedback was not refused");
+            std::array<std::byte, 4> recovered{};
+            std::string recovery;
+            try { AgcDriver::GuestMemory::Read(depth.address, recovered); }
+            catch (const std::exception& error) { recovery = error.what(); }
+            Require(recovery.empty(), "sampled feedback refusal poisoned later depth access: " + recovery);
+            Require(refusal.find("a writable shader buffer overlaps sampled native depth") != std::string::npos, "sampled feedback refusal did not identify native depth: " + refusal);
+            Require(std::all_of(recovered.begin(), recovered.end(), [](std::byte value) { return value == std::byte{0}; }), "sampled feedback refusal changed published depth");
+            device->WaitIdle();
+            std::puts("Native sampled buffer feedback refused; disjoint native sampled sets rebuilt correctly");
+            return true;
+        }
+        auto adjacent = writer;
+        auto& adjacentDescriptor = adjacent.bindings.back().guestDescriptor;
+        const auto adjacentAddress = depth.address + bufferBytes;
+        adjacentDescriptor[0] = static_cast<std::uint32_t>(adjacentAddress);
+        adjacentDescriptor[1] = static_cast<std::uint32_t>(adjacentAddress >> 32u) | (4u << 16u);
+        adjacentDescriptor[2] = 1u;
+        const std::array<CompiledShader, 2> separate{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0u}, {ShaderRecompiler::ShaderStage::Fragment, &adjacent, pixelOffset}}};
+        auto onePixel = state;
+        onePixel.scissor.extent = {1u, 1u};
+        device->Draw(onePixel, draw, separate);
+        device->WaitIdle();
+        AgcDriver::GuestMemory::FlushGpuWrites(adjacentAddress, 4u);
+        std::uint32_t value = 0u;
+        std::memcpy(&value, memory.Data() + bufferBytes, sizeof(value));
+        Require(value == 0x12345678u && DepthSurfaceAt(depth.address), "an adjacent shader buffer write disturbed native depth ownership");
+        TargetRefuses([&] { device->Draw(onePixel, draw, writing); }, "a writable shader buffer overlaps a native depth attachment");
+        device->WaitIdle();
+        std::puts("Native attachment buffer feedback refused; adjacent GPU writes left native depth active");
+        return true;
+    }
+    device->Draw(state, draw, initial);
+    device->WaitIdle();
+    std::array<std::byte, 1> probe{};
+    Require(DepthSurfaceAt(depth.address), "a draw left no resident native depth surface");
     TargetRefuses([&] { device->Draw(state, draw, shaders); }, "sampling a native multisampled depth target the draw attaches");
     device->WaitIdle();
     TargetMemory testedMemory(depthBytes), testedMetadata(65536u);
@@ -807,6 +906,7 @@ void CheckDrawFeedback() {
     Require(probe[0] == guestByte(depthBytes - 1u), "a guest read after a depth-test-only draw did not return its guest bytes");
     Require(!DepthSurfaceAt(tested.address), "a guest read left a native depth surface only depth-tested resident");
     std::puts("Native depth feedback refused through the draw resource path; a depth-tested surface retired on guest read");
+    return true;
 }
 
 bool CheckRetiredNativeWriteRefusal(bool attachment = false) {
@@ -1949,6 +2049,8 @@ int main(int argc, char** argv) {
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
             return VulkanTestSkipped;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--attachment-buffer-feedback") return CheckDrawFeedback(false) ? 0 : VulkanTestSkipped;
+        if (argc == 2 && std::string_view(argv[1]) == "--sampled-buffer-feedback") return CheckDrawFeedback(true) ? 0 : VulkanTestSkipped;
         if (argc == 2 && std::string_view(argv[1]) == "--cached-draw-publication") {
             const bool checked = CheckCachedDrawPublication();
             AgcDriver::DriverDetail::DriverTestAccess::Stop();
