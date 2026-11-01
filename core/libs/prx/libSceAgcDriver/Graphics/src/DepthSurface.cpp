@@ -1814,10 +1814,35 @@ std::map<std::uint64_t, std::uint64_t>& htileReads() {
     return *reads;
 }
 
+using UntrackedHtileStamp = std::array<std::uint64_t, 5>;
+
+struct UntrackedHtileScan {
+    std::size_t bytes = 0;
+    bool stencil = false;
+    UntrackedHtileStamp stamp{};
+};
+
+std::map<std::uint64_t, UntrackedHtileScan>& untrackedHtileScans() {
+    static auto* scans = new std::map<std::uint64_t, UntrackedHtileScan>();
+    return *scans;
+}
+
+std::optional<UntrackedHtileStamp> untrackedHtileStamp(const Recorder* recorder, std::uint64_t address, std::size_t bytes) {
+    const auto epoch = GuestMemory::CollectEpoch();
+    if (epoch == 0) return std::nullopt;
+    GuestMemory::FlushGpuWrites(address, bytes);
+    const auto hint = GuestMemory::UntrackedHint(address, bytes);
+    const UntrackedHtileStamp stamp{hint != 0, hint != 0 ? hint : epoch, GuestMemory::NewestStamp(address, bytes), GuestMemory::ForgetSerial(), recorder != nullptr ? recorder->NewestWriteNote(address, bytes) : 0};
+    if ((stamp[3] & 1u) != 0) return std::nullopt;
+    return stamp;
+}
+
 void forgetHtileReads(std::uint64_t address, std::size_t bytes) {
     std::lock_guard lock(htileReadsMutex());
     auto& reads = htileReads();
     reads.erase(reads.lower_bound(address), reads.lower_bound(address + bytes));
+    auto& scans = untrackedHtileScans();
+    scans.erase(scans.lower_bound(address), scans.lower_bound(address + bytes));
 }
 
 bool RoutesToNativeDepthOwner(const DepthTarget& target) {
@@ -1926,10 +1951,15 @@ VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarg
     const auto collected = GuestMemory::CollectWrites(target.htileAddress, bytes);
     auto* recorder = RecorderFor(context);
     const bool pending = recorder != nullptr && recorder->PendingWriteOverlaps(target.htileAddress, bytes);
+    const auto untracked = !pending && collected == 0 ? untrackedHtileStamp(recorder, target.htileAddress, bytes) : std::nullopt;
     if (!pending) {
         std::lock_guard lock(htileReadsMutex());
         const auto found = htileReads().find(target.htileAddress);
         if (found != htileReads().end() && found->second != 0 && GuestMemory::UnchangedSince(target.htileAddress, bytes, found->second)) return 0;
+        if (untracked) {
+            const auto scanned = untrackedHtileScans().find(target.htileAddress);
+            if (scanned != untrackedHtileScans().end() && scanned->second.bytes == bytes && scanned->second.stencil == target.htileStencil && scanned->second.stamp == *untracked) return 0;
+        }
     }
     static const bool pendingFills = std::getenv("APS5_NO_PENDING_HTILE_FILLS") == nullptr;
     if (pending && pendingFills) {
@@ -1966,6 +1996,8 @@ VkImageAspectFlags storeBackClearedHtile(const Context& context, const DepthTarg
     }
     std::lock_guard lock(htileReadsMutex());
     htileReads()[target.htileAddress] = generation;
+    if (cleared == 0 && untracked) untrackedHtileScans()[target.htileAddress] = {bytes, target.htileStencil, *untracked};
+    else untrackedHtileScans().erase(target.htileAddress);
     return cleared;
 }
 
