@@ -80,6 +80,9 @@ int main() {
     SetLanguage("arabic");
     Require(sceSystemServiceParamGetInt(SYSTEM_SERVICE_PARAM_ID_LANG, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     Require(sceSystemServiceParamGetInt(SYSTEM_SERVICE_PARAM_ID_400, nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    for (int paramId : {SYSTEM_SERVICE_PARAM_ID_100, 999}) {
+        Require(sceSystemServiceParamGetInt(paramId, reinterpret_cast<int*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    }
     for (int paramId : {0, SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, SYSTEM_SERVICE_PARAM_ID_GAME_PARENTAL_LEVEL, 8, 20, 401, 999,
                         SYSTEM_SERVICE_PARAM_ID_ENTER_BUTTON_ASSIGN, 1001, 1008}) {
         int unknown = -1;

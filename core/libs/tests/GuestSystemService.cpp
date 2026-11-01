@@ -10,6 +10,13 @@
 #include <initializer_list>
 #include <limits>
 #include <stdexcept>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -26,6 +33,49 @@ bool Throws(TCall call) {
     }
     return false;
 }
+
+class PageBeforeHole {
+public:
+    PageBeforeHole() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous;
+        Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long nativePageSize = sysconf(_SC_PAGESIZE);
+        Require(nativePageSize > 0);
+        pageSize = static_cast<std::size_t>(nativePageSize);
+        void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(allocation != MAP_FAILED);
+        memory = static_cast<char*>(allocation);
+        Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    PageBeforeHole(const PageBeforeHole&) = delete;
+    PageBeforeHole& operator=(const PageBeforeHole&) = delete;
+
+    ~PageBeforeHole() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, pageSize * 2);
+#endif
+    }
+
+    char* Tail(std::size_t length) const {
+        Require(length <= pageSize);
+        return memory + pageSize - length;
+    }
+
+private:
+    char* memory = nullptr;
+    std::size_t pageSize = 0;
+};
 
 bool LaunchAppThrows(const char* titleId, const char* const* arguments, const void* param) {
     try {
@@ -163,6 +213,7 @@ int main() {
     Require(Throws([] { return sceSystemServiceAddLocalProcessForPsmKit(nullptr, nullptr, nullptr); }));
     Require(Throws([] { return sceSystemServiceKillLocalProcessForPsmKit(1); }));
     Require(sceSystemServiceGetHdrToneMapLuminance(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceGetHdrToneMapLuminance(reinterpret_cast<SystemServiceHdrToneMapLuminance*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceHdrToneMapLuminance luminance{-1.0f, -1.0f, -1.0f};
     Require(sceSystemServiceGetHdrToneMapLuminance(&luminance) == SYSTEM_SERVICE_OK);
     Require(luminance.max_full_frame_tone_map_luminance == 100.0f);
@@ -178,6 +229,7 @@ int main() {
     };
     std::memset(name, 'x', sizeof(name));
     Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, nullptr, SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, reinterpret_cast<char*>(0x10), SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH) == SYSTEM_SERVICE_ERROR_PARAMETER);
     for (std::size_t size = 0; size < SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH; ++size) {
         Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, name, size) == SYSTEM_SERVICE_ERROR_PARAMETER);
     }
@@ -190,20 +242,33 @@ int main() {
     Require(std::strcmp(name, "PS5") == 0);
     for (std::size_t index = 4; index < SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH + 3; ++index) Require(name[index] == '\0');
     for (std::size_t index = SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH + 3; index < sizeof(name); ++index) Require(name[index] == 'x');
+    char large[608];
+    std::memset(large, 'x', sizeof(large));
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, large, 600) == SYSTEM_SERVICE_OK);
+    Require(std::strcmp(large, "PS5") == 0);
+    for (std::size_t index = 4; index < 600; ++index) Require(large[index] == '\0');
+    for (std::size_t index = 600; index < sizeof(large); ++index) Require(large[index] == 'x');
+    const PageBeforeHole page;
+    char* const tail = page.Tail(300);
+    std::memset(tail, 'x', 300);
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, tail, 600) == SYSTEM_SERVICE_ERROR_PARAMETER);
 
     Require(sceSystemServiceGetStatus(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceGetStatus(reinterpret_cast<SystemServiceStatus*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceStatus status;
     std::memset(&status, 0x5a, sizeof(status));
     Require(sceSystemServiceGetStatus(&status) == SYSTEM_SERVICE_OK);
     Require(status.event_num == 0 && !status.is_system_ui_overlaid && !status.is_in_background_execution && !status.is_vr_play_area_overlaid);
     for (unsigned char byte : status.reserved) Require(byte == 0);
     Require(sceSystemServiceGetDisplaySafeAreaInfo(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceGetDisplaySafeAreaInfo(reinterpret_cast<SystemServiceDisplaySafeAreaInfo*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceDisplaySafeAreaInfo safeArea;
     std::memset(&safeArea, 0x5a, sizeof(safeArea));
     Require(sceSystemServiceGetDisplaySafeAreaInfo(&safeArea) == SYSTEM_SERVICE_OK);
     Require(safeArea.ratio == 1.0f);
     for (unsigned char byte : safeArea.reserved) Require(byte == 0);
     Require(sceSystemServiceGetNoticeScreenSkipFlag(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceGetNoticeScreenSkipFlag(reinterpret_cast<bool*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
     bool skip = true;
     Require(sceSystemServiceGetNoticeScreenSkipFlag(&skip) == SYSTEM_SERVICE_OK && !skip);
     Require(sceSystemServiceSetNoticeScreenSkipFlag() == SYSTEM_SERVICE_OK);
