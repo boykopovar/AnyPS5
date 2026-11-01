@@ -87,6 +87,7 @@ def package(platform, build, output, version):
         files.extend(build / "core/libs/libs" / name for name in ("mimalloc.dll", "mimalloc-redirect.dll"))
     else:
         files.append(build / "core/libs/libs/libmimalloc.so")
+    licenses.append((ROOT / "3rdparty/mimalloc/LICENSE", "libs/licenses/mimalloc.txt"))
     files.extend(tracy_runtime(platform, build))
     unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
     unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")
