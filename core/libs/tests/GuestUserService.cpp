@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr int SCE_USER_SERVICE_ERROR_INVALID_PARAM = USER_SERVICE_ERROR_INVALID_ARGUMENT;
+
 void Require(bool value) { if (!value) std::abort(); }
 
 void SetLanguage(const char* value) {
@@ -22,6 +24,12 @@ void SetLanguage(const char* value) {
 }
 
 int main() {
+    const int invalidPriorities[] = {0, -1, -100, 1000, USER_SERVICE_THREAD_PRIORITY_MIN - 1, USER_SERVICE_THREAD_PRIORITY_MAX + 1, 0xFF, 0x300};
+    for (int priority : invalidPriorities) {
+        Require(sceUserServiceInitialize2(priority, 0) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+        Require(sceUserServiceInitialize2(priority, 1) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    }
+
     Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     int32_t userNumber = -1;
     Require(sceUserServiceGetUserNumber(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
