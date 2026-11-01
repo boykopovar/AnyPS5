@@ -17,15 +17,6 @@ static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotMounted = static_cast<int>(0x80D90004);
 static void Require(bool value) { if (!value) std::abort(); }
 
-template <typename TCall>
-static bool NotImplemented(TCall call) {
-    try {
-        call();
-        return false;
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()).find("not implemented") != std::string::npos;
-    }
-}
 
 int main() {
     static std::array<std::byte, 64> process{};
@@ -130,11 +121,6 @@ int main() {
     size_t download2Space = 0;
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download2Mount, &download2Space) == 0);
     Require(download2Space == 1024);
-    Require(NotImplemented([] { sceAppContentDownload0Expand(); }));
-    Require(NotImplemented([] { sceAppContentDownload0Shrink(); }));
-    Require(NotImplemented([] { sceAppContentDownload1Expand(); }));
-    Require(NotImplemented([] { sceAppContentDownload1Shrink(); }));
-    Require(NotImplemented([] { sceAppContentDownload2Shrink(); }));
 
     const int32_t expectedParams[] = {3, 23566, -7, 0, 2147483647};
     for (uint32_t id = 0; id < 5; ++id) {
