@@ -31,6 +31,8 @@ static int NativeReplace(int from, int to) { return ::_dup2(from, to); }
 #else
 #include <fcntl.h>
 #include <sys/resource.h>
+#include <csignal>
+#include <pthread.h>
 #include <sys/wait.h>
 #include <unistd.h>
 static int NativeDescriptor(std::FILE* file) { return ::fileno(file); }
@@ -751,10 +753,28 @@ static void CloseBeforeNative() {
         ThreadCancel::IoPoint point(restart);
         result = File::WithIoDescriptor(descriptors[0], [&](int descriptor) {
             return ThreadCancel::Native([&] {
+#ifndef _WIN32
+                sigset_t signal{}, previous{};
+                sigemptyset(&signal);
+                sigaddset(&signal, SIGUSR2);
+                Require(pthread_sigmask(SIG_BLOCK, &signal, &previous) == 0, "hold pre-entry interrupt signal");
+#endif
                 entered.store(true);
                 Require(Observe([&] { return GuestDescriptorAccess::Operation::CurrentInterrupted(); }), "close did not interrupt before native entry");
+                GuestDescriptorAccess synchronized(descriptor, GuestDescriptorAccess::Mode::Read, std::defer_lock);
+                synchronized.Snapshot();
+#ifndef _WIN32
+                sigset_t pending{};
+                while (sigpending(&pending) == 0 && sigismember(&pending, SIGUSR2) == 1) {
+                    int delivered = 0;
+                    Require(sigwait(&signal, &delivered) == 0 && delivered == SIGUSR2, "consume completed pre-entry interrupt");
+                }
+#endif
                 interrupted.store(true);
                 Require(Observe([&] { return release.load(); }), "release native entry");
+#ifndef _WIN32
+                Require(pthread_sigmask(SIG_SETMASK, &previous, nullptr) == 0, "restore pre-entry signal mask");
+#endif
                 char byte = 0;
 #ifdef _WIN32
                 return ::_read(descriptor, &byte, 1);
