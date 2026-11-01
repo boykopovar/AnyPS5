@@ -46,10 +46,10 @@ With `--field full=false`, the manual run skips the full builds and runs only th
 
 With `--field linux=false`, the manual run skips the full Linux build and adds Linux to the relinker matrix, if the pull requests change a file the relinker-only build uses. With `--field select=true`, the full builds build and run only the tests whose build inputs the pull requests change; push builds of `main` always run every test.
 
-The Conventions check runs automatically for every contributor, including first-time contributors. It uses the checker from the current tip of the base branch, so rules added after a pull request was opened apply to its next run, and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing:
+The Conventions check runs automatically for every contributor, including first-time contributors. It uses the checker from the current tip of the base branch, so rules added after a pull request was opened apply to its next run, and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing; without `--base` it compares with `upstream/main`, then `origin/main`, then `main`, so a fork whose `origin/main` is behind the project is not checked against that old state:
 
 ```
-python3 tools/check_conventions.py --base origin/main
+python3 tools/check_conventions.py
 ```
 
 ## Branches and pull requests
