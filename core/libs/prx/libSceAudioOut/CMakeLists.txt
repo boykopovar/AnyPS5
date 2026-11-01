@@ -326,4 +326,15 @@ if(BUILD_TESTING)
         set_tests_properties(audio_out2_context_handles PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
+
+    add_test_executable(audio_out_set_volume_tests tests/AudioOutSetVolume.cpp)
+    target_include_directories(audio_out_set_volume_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out_set_volume_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out_set_volume_tests)
+    add_test(NAME audio_out_set_volume COMMAND audio_out_set_volume_tests)
+    set_tests_properties(audio_out_set_volume PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(audio_out_set_volume PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
 endif()
