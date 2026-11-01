@@ -65,8 +65,10 @@ static bool ReadGuestTime(void* destination, const void* source, std::size_t byt
 #elif defined(__linux__)
     iovec local{destination, bytes};
     iovec remote{const_cast<void*>(source), bytes};
+    const int saved = errno;
     const auto copied = ::process_vm_readv(::getpid(), &local, 1, &remote, 1, 0);
     if (copied < 0 && errno != EFAULT) throw std::runtime_error("time: process_vm_readv failed with errno " + std::to_string(errno));
+    errno = saved;
     return copied >= 0 && static_cast<std::size_t>(copied) == bytes;
 #elif defined(__APPLE__)
     mach_vm_size_t copied = 0;
