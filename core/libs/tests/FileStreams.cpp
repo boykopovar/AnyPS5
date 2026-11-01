@@ -430,7 +430,17 @@ static void CheckStreamWritesAfterReads(const std::string& base) {
                 Require(ferror_nid_postfix(stream) == 0, "Write after fgetc on an update stream set the error indicator");
             });
         }
+        CheckWriteAfterRead(path, "r+b", "0XY3456789", [write](FileStream* stream) {
+            Require(setvbuf_nid_postfix(stream, nullptr, 2, 0) == 0 && fgetc_nid_postfix(stream) == '0', "fgetc on an unbuffered update stream");
+            write(stream);
+            Require(ferror_nid_postfix(stream) == 0, "Write after fgetc on an unbuffered update stream set the error indicator");
+        });
     }
+    CheckWriteAfterRead(path, "r+b", "012XY56789", [](FileStream* stream) {
+        std::array<char, 3> buffer{};
+        Require(setvbuf_nid_postfix(stream, nullptr, 2, 0) == 0 && fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == buffer.size(), "fread on an unbuffered update stream");
+        Require(fputs_nid_postfix("XY", stream) >= 0 && ferror_nid_postfix(stream) == 0, "fputs after fread on an unbuffered update stream");
+    });
     CheckWriteAfterRead(path, "r+b", appended, [](FileStream* stream) {
         std::array<char, 10> buffer{};
         Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == buffer.size() && feof_nid_postfix(stream) == 0, "fread of every byte of an r+ stream");
