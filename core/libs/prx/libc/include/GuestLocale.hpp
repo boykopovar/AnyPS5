@@ -112,6 +112,20 @@ struct IosBase {
     Implementation** locale;
 };
 
+struct SceV2IosBase {
+    const void* vtable;
+    std::int64_t standardStream;
+    unsigned char reserved[0x20];
+    void* streamNodes;
+    void* callbackNodes;
+    Implementation** locale;
+};
+
+static_assert(offsetof(SceV2IosBase, streamNodes) == 0x30);
+static_assert(offsetof(SceV2IosBase, callbackNodes) == 0x38);
+static_assert(offsetof(SceV2IosBase, locale) == 0x40);
+static_assert(sizeof(SceV2IosBase) == 0x48);
+
 struct Streambuf;
 
 struct StreambufVtable {
