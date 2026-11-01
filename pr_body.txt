@@ -1,0 +1,8 @@
+### Summary
+Add negative test coverage for `getsockopt` with `SO_TYPE` (`0x1008`, `SocketLevel = 0xffff`) when `optlen` is smaller than `sizeof(int)` or `optval` is null, returning `EINVAL` or `EFAULT`.
+
+- [x] Depends on: none
+- [x] Fixes: none
+- [x] Unblocks: none
+- [x] GPUs tested: n/a
+- [x] AI-assisted: yes
