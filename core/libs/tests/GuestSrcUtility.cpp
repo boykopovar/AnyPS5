@@ -8,6 +8,10 @@
 #include <iterator>
 #include <vector>
 
+extern "C" [[gnu::weak, noreturn]] void NotImplemented_nid_no_patch(const char*) {
+    std::abort();
+}
+
 namespace {
 
 constexpr int INVALID_HANDLE = static_cast<int>(0x815D0000);
@@ -73,9 +77,56 @@ void CheckPriority() {
     Require(sceSrcUtilityGetPriority(handle.data(), &priority) == INVALID_HANDLE && priority == 7, "a changed magic is rejected");
 }
 
+void CheckInitializeFinalize() {
+    Require(sceSrcUtilityFinalize(nullptr) == INVALID_HANDLE, "finalize on a null handle");
+    std::vector<std::uint8_t> handle(HANDLE_SIZE, 0x5A);
+    const std::vector<std::uint8_t> untouched = handle;
+    Require(sceSrcUtilityFinalize(handle.data()) == INVALID_HANDLE, "finalize on an uninitialized handle");
+    Require(handle == untouched, "finalize leaves an uninitialized handle unchanged");
+
+    Require(sceSrcUtilityInitialize(nullptr, 2, 0, 48000, 48000) == INVALID_POINTER, "initialize on a null handle");
+    Require(sceSrcUtilityInitialize(handle.data(), 0, 0, 48000, 48000) == INVALID_CHANNELS, "initialize with 0 channels");
+    Require(handle == untouched, "rejected initialize leaves handle unchanged");
+    Require(sceSrcUtilityInitialize(handle.data(), 9, 0, 48000, 48000) == INVALID_CHANNELS, "initialize with 9 channels");
+    Require(handle == untouched, "rejected initialize leaves handle unchanged");
+    Require(sceSrcUtilityInitialize(handle.data(), 2, 3, 48000, 48000) == INVALID_MODE, "initialize with invalid mode");
+    Require(handle == untouched, "rejected initialize leaves handle unchanged");
+    Require(sceSrcUtilityInitialize(handle.data(), 2, 0, 0, 48000) == INVALID_INPUT_RATE, "initialize with invalid input rate");
+    Require(handle == untouched, "rejected initialize leaves handle unchanged");
+    Require(sceSrcUtilityInitialize(handle.data(), 2, 0, 48000, 0) == INVALID_OUTPUT_RATE, "initialize with invalid output rate");
+    Require(handle == untouched, "rejected initialize leaves handle unchanged");
+
+    Require(sceSrcUtilityInitialize(handle.data(), 2, 0, 48000, 48000) == 0, "valid initialize");
+
+    std::uint64_t magic = 0;
+    std::memcpy(&magic, handle.data() + 0x9470, sizeof(magic));
+    Require(magic == MAGIC, "initialize sets magic");
+
+    std::uint32_t priority = 0;
+    std::memcpy(&priority, handle.data() + 0x2C, sizeof(priority));
+    Require(priority == 0x28, "initialize sets default priority");
+
+    std::vector<std::uint8_t> expected(HANDLE_SIZE, 0);
+    const std::uint32_t defaultPriority = 0x28;
+    std::memcpy(expected.data() + 0x2C, &defaultPriority, sizeof(defaultPriority));
+    std::memcpy(expected.data() + 0x9470, &MAGIC, sizeof(MAGIC));
+    Require(handle == expected, "initialize clears handle and sets priority and magic");
+
+    std::uint32_t queriedPriority = 0;
+    Require(sceSrcUtilityGetPriority(handle.data(), &queriedPriority) == 0 && queriedPriority == 0x28, "get priority returns default priority");
+
+    Require(sceSrcUtilityFinalize(handle.data()) == 0, "finalize on initialized handle");
+    std::memcpy(&magic, handle.data() + 0x9470, sizeof(magic));
+    Require(magic == 0, "finalize clears magic");
+
+    Require(sceSrcUtilityFinalize(handle.data()) == INVALID_HANDLE, "second finalize on already finalized handle");
+    Require(sceSrcUtilityGetPriority(handle.data(), &queriedPriority) == INVALID_HANDLE, "get priority rejected after finalize");
+}
+
 }
 
 int main() {
     CheckHandleSize();
     CheckPriority();
+    CheckInitializeFinalize();
 }

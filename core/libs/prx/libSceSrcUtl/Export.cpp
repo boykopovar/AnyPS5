@@ -48,8 +48,10 @@ int APS5_VABI sceSrcUtilityDeleteEx() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceSrcUtilityFinalize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSrcUtilityFinalize(void* handle) {
+    if (handle == nullptr || !HandleIsInitialized(handle)) return SRC_UTILITY_ERROR_INVALID_HANDLE;
+    const std::uint64_t zero = 0;
+    std::memcpy(static_cast<std::byte*>(handle) + SRC_UTILITY_MAGIC_OFFSET, &zero, sizeof(zero));
     return 0;
 }
 
@@ -82,8 +84,16 @@ int APS5_VABI sceSrcUtilityGetPriority(const void* handle, std::uint32_t* priori
     return 0;
 }
 
-int APS5_VABI sceSrcUtilityInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceSrcUtilityInitialize(void* handle, std::uint32_t channels, std::uint32_t mode, std::uint32_t input_rate, std::uint32_t output_rate) {
+    if (handle == nullptr) return SRC_UTILITY_ERROR_INVALID_POINTER;
+    if (channels == 0 || channels > SRC_UTILITY_MAX_CHANNELS) return SRC_UTILITY_ERROR_INVALID_CHANNELS;
+    if (mode > SRC_UTILITY_MAX_MODE) return SRC_UTILITY_ERROR_INVALID_MODE;
+    if (!IsRate(SRC_UTILITY_INPUT_RATES, input_rate)) return SRC_UTILITY_ERROR_INVALID_INPUT_RATE;
+    if (!IsRate(SRC_UTILITY_OUTPUT_RATES, output_rate)) return SRC_UTILITY_ERROR_INVALID_OUTPUT_RATE;
+    std::memset(handle, 0, SRC_UTILITY_HANDLE_SIZE);
+    const std::uint32_t defaultPriority = 0x28;
+    std::memcpy(static_cast<std::byte*>(handle) + SRC_UTILITY_PRIORITY_OFFSET, &defaultPriority, sizeof(defaultPriority));
+    std::memcpy(static_cast<std::byte*>(handle) + SRC_UTILITY_MAGIC_OFFSET, &SRC_UTILITY_MAGIC, sizeof(SRC_UTILITY_MAGIC));
     return 0;
 }
 
