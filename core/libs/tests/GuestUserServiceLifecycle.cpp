@@ -67,6 +67,7 @@ void TestCallbackRemoval() {
 }
 
 void TestTerminateWaitsForCallback() {
+    UserServiceSetUserConnected_nid_postfix(0, true);
     {
         std::lock_guard lock(callbackMutex);
         callbackStarted = false;
