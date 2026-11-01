@@ -10,7 +10,10 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path, PureWindowsPath
 
-CPP = (".cpp", ".cc", ".cxx", ".c")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import base_ref
+
+CPP =(".cpp", ".cc", ".cxx", ".c")
 DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
         "-save-temps=cwd", "-save-temps=obj", "--save-temps=cwd", "--save-temps=obj")
 DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
@@ -70,7 +73,10 @@ def validate_arguments(arguments):
 
 
 def compilation_database(text, source, skip_empty_commands=False):
-    database = json.loads(text)
+    try:
+        database = json.loads(text)
+    except RecursionError as error:
+        raise ValueError(f"{source}: compilation database is nested too deeply") from error
     if not isinstance(database, list):
         raise ValueError(f"{source}: expected an array of command objects")
     commands = []
@@ -405,16 +411,19 @@ def main(argv=None):
                         help="a configured Ninja build directory of this checkout (default: build)")
     parser.add_argument("--jobs", type=positive_integer, default=1, metavar="N",
                         help="check up to N translation units concurrently; diagnostics retain input order (default 1)")
-    parser.add_argument("--base", default="origin/main",
-                        help="branch the change is against (default: origin/main)")
+    parser.add_argument("--base", help="branch the change is against (default: upstream/main, then origin/main, then main)")
     parser.add_argument("paths", nargs="*", help="translation units to check instead of the changed ones")
     args = parser.parse_args(argv)
     try:
         root = repository()
-        files = [Path(path) for path in args.paths] or [root / path for path in changed(root, args.base)]
-        if not files:
-            print(f"no changed translation unit against {args.base}")
-            return 0
+        if args.paths:
+            files = [Path(path) for path in args.paths]
+        else:
+            base = base_ref.resolve(root, args.base)
+            files = [root / path for path in changed(root, base)]
+            if not files:
+                print(f"no changed translation unit against {base}")
+                return 0
         checked, failed = check(root, args.build, files, args.jobs)
     except (json.JSONDecodeError, OSError, ValueError) as error:
         parser.error(str(error))
