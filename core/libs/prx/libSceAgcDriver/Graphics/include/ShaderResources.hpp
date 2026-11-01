@@ -392,6 +392,7 @@ private:
         std::int32_t pushByte = -1;
         std::int64_t dataAllocation = -1;
         std::uint32_t dataByte = 0;
+        bool oversized = false;
     };
     struct DataPatch {
         std::size_t allocation;

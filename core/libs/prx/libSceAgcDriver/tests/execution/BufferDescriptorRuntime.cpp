@@ -191,6 +191,24 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
         device.WaitIdle();
         Require(std::all_of(Output.begin(), Output.end(), [value](std::uint32_t word) { return word == value; }), "scalar buffer read differs for base " + Hex(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(base))) + " records " + std::to_string(records) + ": " + Hex(Output[0]));
     }
+    constexpr std::array<std::uint32_t, 6> storeCode{0x34020082u, 0x7e0402ffu, 0x12345678u, 0xe0701000u, 0x80000201u, 0xbf810000u};
+    auto oversized = BufferDescriptor(reinterpret_cast<const void*>(std::uintptr_t{0x10000000000u}), 0xffffffffu);
+    oversized[1] |= 2u << 16u;
+    std::copy(oversized.begin(), oversized.end(), userData.begin());
+    request.shader.code = storeCode;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(storeCode.data());
+    const auto storeResult = ShaderRecompiler::Recompile(request);
+    device.Dispatch(storeResult, 1, 1, 1);
+    device.WaitIdle();
+    const auto null = BufferDescriptor(nullptr, 8u);
+    std::copy(null.begin(), null.end(), userData.begin());
+    request.shader.code = scalarCode;
+    request.shader.codeAddress = reinterpret_cast<std::uintptr_t>(scalarCode.data());
+    Output.fill(Fill);
+    const auto nullResult = ShaderRecompiler::Recompile(request);
+    device.Dispatch(nullResult, 1, 1, 1);
+    device.WaitIdle();
+    Require(std::all_of(Output.begin(), Output.end(), [](std::uint32_t word) { return word == 0u; }), "scalar read through a null V# after a store through an oversized V# returned " + Hex(Output[0]));
     GuestAllocations::Mutation().Remove(Input.data());
 }
 

@@ -222,6 +222,7 @@ struct Context {
     bool conservativeRasterization = false;
     bool meshWave32 = false;
     VkBuffer emptyBuffer = VK_NULL_HANDLE;
+    VkBuffer oversizedBuffer = VK_NULL_HANDLE;
     bool exactRobustLoads = false;
     // The device's list of recorded dispatches whose copied written buffers await a CPU write-back
     // (VulkanDevice's State::copiedWriters; the draw counterpart is DrawCopiedWriters): an indirect

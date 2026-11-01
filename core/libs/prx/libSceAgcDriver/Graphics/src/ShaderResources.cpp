@@ -4553,6 +4553,7 @@ std::size_t ShaderResources::addGuestBuffer(std::span<const std::uint32_t> words
     const auto byteSize = guestBufferBytes(words);
     if (byteSize == 0 || address == 0) {
         allocations.push_back({0, EmptyBufferBytes, false, nullptr, ShaderRecompiler::DescriptorRole::GuestBuffers, false});
+        allocations.back().oversized = address != 0 && descriptor.GetSize() != 0;
         return allocations.size() - 1;
     }
     Require(byteSize <= context.limits.maxStorageBufferRange, "shader buffer exceeds descriptor range limit");
