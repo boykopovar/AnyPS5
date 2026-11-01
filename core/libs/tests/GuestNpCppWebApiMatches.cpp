@@ -8,6 +8,19 @@
 #include <source_location>
 #include <stdexcept>
 
+extern "C" {
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RequestMemberEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V118RequestMatchPlayerEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V118RequestTeamResultsEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V119AdditionalStatisticEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V120RequestPlayerResultsEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V120RequestTeamStatisticEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V122RequestPlayerStatisticEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V123RequestTeamMemberResultEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V126RequestTeamMemberStatisticEEEEC1EPNS2_10LibContextE(IntrusivePtr* self, void* libContext);
+}
+
 namespace {
 
 void Require(bool value, std::source_location at = std::source_location::current()) {
@@ -165,6 +178,57 @@ int main() {
     Require(_ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult16setPlayerResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_20RequestPlayerResultsEEEEE(request.data(), &vectorValue) == 0);
     Require(Read<void*>(request.data(), 16) == vectorBody.data() && request[40] == 1);
     Require(Read<std::int32_t>(vectorBody.data(), 0x30) >= 2);
+    std::uint64_t vectorContext = 9;
+    alignas(8) IntrusivePtr emptyMembers{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V113RequestMemberEEEEC1EPNS2_10LibContextE(&emptyMembers, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V116RequestMatchTeam10setMembersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_13RequestMemberEEEEE(request.data(), &emptyMembers) == 0);
+    Require(Read<void*>(request.data(), 88) == nullptr && request[112] == 1);
+    alignas(8) IntrusivePtr emptyTeamMemberResults{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V123RequestTeamMemberResultEEEEC1EPNS2_10LibContextE(&emptyTeamMemberResults, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V118RequestTeamResults20setTeamMemberResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEEEE(request.data(), &emptyTeamMemberResults) == 0);
+    Require(Read<void*>(request.data(), 72) == nullptr && request[96] == 1);
+    alignas(8) IntrusivePtr emptyPlayers{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V118RequestMatchPlayerEEEEC1EPNS2_10LibContextE(&emptyPlayers, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V119RequestInGameRoster10setPlayersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestMatchPlayerEEEEE(request.data(), &emptyPlayers) == 0);
+    Require(Read<void*>(request.data(), 16) == nullptr && request[40] == 1);
+    alignas(8) IntrusivePtr emptyTeams{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&emptyTeams, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V119RequestInGameRoster8setTeamsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_16RequestMatchTeamEEEEE(request.data(), &emptyTeams) == 0);
+    Require(Read<void*>(request.data(), 48) == nullptr && request[72] == 1);
+    alignas(8) IntrusivePtr emptyTeamMemberStatistics{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V126RequestTeamMemberStatisticEEEEC1EPNS2_10LibContextE(&emptyTeamMemberStatistics, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V120RequestTeamStatistic23setTeamMemberStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_26RequestTeamMemberStatisticEEEEE(request.data(), &emptyTeamMemberStatistics) == 0);
+    Require(Read<void*>(request.data(), 80) == nullptr && request[104] == 1);
+    alignas(8) IntrusivePtr emptyStats{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V119AdditionalStatisticEEEEC1EPNS2_10LibContextE(&emptyStats, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V120RequestTeamStatistic8setStatsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEE(request.data(), &emptyStats) == 0);
+    Require(Read<void*>(request.data(), 48) == nullptr && request[72] == 1);
+    alignas(8) IntrusivePtr emptyTeamStatistics{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V120RequestTeamStatisticEEEEC1EPNS2_10LibContextE(&emptyTeamStatistics, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics17setTeamStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_20RequestTeamStatisticEEEEE(request.data(), &emptyTeamStatistics) == 0);
+    Require(Read<void*>(request.data(), 48) == nullptr && request[72] == 1);
+    alignas(8) IntrusivePtr emptyPlayerStatistics{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V122RequestPlayerStatisticEEEEC1EPNS2_10LibContextE(&emptyPlayerStatistics, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics19setPlayerStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_22RequestPlayerStatisticEEEEE(request.data(), &emptyPlayerStatistics) == 0);
+    Require(Read<void*>(request.data(), 16) == nullptr && request[40] == 1);
+    alignas(8) IntrusivePtr emptyTeamResults{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V118RequestTeamResultsEEEEC1EPNS2_10LibContextE(&emptyTeamResults, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult14setTeamResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestTeamResultsEEEEE(request.data(), &emptyTeamResults) == 0);
+    Require(Read<void*>(request.data(), 48) == nullptr && request[72] == 1);
+    alignas(8) IntrusivePtr emptyPlayerResults{};
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V120RequestPlayerResultsEEEEC1EPNS2_10LibContextE(&emptyPlayerResults, &vectorContext);
+    std::memset(request.data(), 0, request.size());
+    Require(_ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult16setPlayerResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_20RequestPlayerResultsEEEEE(request.data(), &emptyPlayerResults) == 0);
+    Require(Read<void*>(request.data(), 16) == nullptr && request[40] == 1);
     std::memset(request.data(), 0, request.size());
     Write<std::uint8_t>(request.data(), 0x48, 1);
     Require(_ZNK3sce2Np9CppWebApi7Matches2V119RequestInGameRoster10teamsIsSetEv(request.data()));

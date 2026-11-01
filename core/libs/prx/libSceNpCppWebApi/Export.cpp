@@ -3873,7 +3873,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V116JoinMatchRequest17setNpServiceLab
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V116RequestMatchTeam10setMembersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_13RequestMemberEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 88), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 112) = 1;
     return 0;
@@ -3939,7 +3939,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V118RequestMatchPlayer13setPlayerName
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V118RequestTeamResults20setTeamMemberResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_23RequestTeamMemberResultEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 72), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 96) = 1;
     return 0;
@@ -3952,14 +3952,14 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V118RequestTeamResults8setScoreERKd(v
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V119RequestInGameRoster10setPlayersERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestMatchPlayerEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 16), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 40) = 1;
     return 0;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V119RequestInGameRoster8setTeamsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_16RequestMatchTeamEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 48), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 72) = 1;
     return 0;
@@ -4010,28 +4010,28 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V120RequestPlayerResults8setScoreERKd
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V120RequestTeamStatistic23setTeamMemberStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_26RequestTeamMemberStatisticEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 80), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 104) = 1;
     return 0;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V120RequestTeamStatistic8setStatsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_19AdditionalStatisticEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 48), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 72) = 1;
     return 0;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics17setTeamStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_20RequestTeamStatisticEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 48), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 72) = 1;
     return 0;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V122RequestMatchStatistics19setPlayerStatisticsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_22RequestPlayerStatisticEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 16), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 40) = 1;
     return 0;
@@ -4056,14 +4056,14 @@ int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124LeaveMatchRequestFactory6createEP
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult14setTeamResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_18RequestTeamResultsEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 48), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 72) = 1;
     return 0;
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi7Matches2V124RequestCompetitiveResult16setPlayerResultsERKNS1_6Common6VectorINS5_12IntrusivePtrINS3_20RequestPlayerResultsEEEEE(void* self, const IntrusivePtr* value) {
-    if (value == nullptr || value->object == nullptr) return ParameterBodyMissing;
+    if (value == nullptr) return ParameterBodyMissing;
     AssignIntrusivePtr(reinterpret_cast<IntrusivePtr*>(static_cast<std::uint8_t*>(self) + 16), value, VectorReferenceCountOffset, __func__);
     *reinterpret_cast<std::uint8_t*>(static_cast<std::uint8_t*>(self) + 40) = 1;
     return 0;
