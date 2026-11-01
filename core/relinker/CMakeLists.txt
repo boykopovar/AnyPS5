@@ -54,6 +54,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AdxLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
@@ -95,6 +96,11 @@ if(WIN32)
 endif()
 
 if(BUILD_TESTING)
+    add_test_executable(adx_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/AdxLoweringTests.cpp)
+    target_link_libraries(adx_lowering_tests PRIVATE relinker_core)
+    add_test(NAME adx_lowering COMMAND adx_lowering_tests)
+    set_tests_properties(adx_lowering PROPERTIES TIMEOUT 20)
+
     add_test_executable(guest_load_ranges_tests ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/GuestLoadRangesTests.cpp)
     target_link_libraries(guest_load_ranges_tests PRIVATE relinker_core)
     add_test(NAME guest_load_ranges COMMAND guest_load_ranges_tests)
@@ -256,6 +262,7 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AdxLowering.cpp
     )
     target_include_directories(amd64_only_windows_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/src/specifics/windows)
     if(BUILD_TESTING)
@@ -545,6 +552,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/ScalarCompareOperands.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MaskedStoreLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AndnLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/AdxLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
