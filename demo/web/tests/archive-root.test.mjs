@@ -16,6 +16,36 @@ async function zipped(entries) {
 
 const { packageArchive } = await import(pathToFileURL(path.join(process.argv[2], "archive.mjs")));
 const libraryBundle = await zipped([["libs/provider.prx", false]]);
+for (const moduleDirectories of [["sce_modules"], ["prx"], ["sce_module", "prx"], ["sce_modules", "prx"]]) {
+  const entries = [["title/main.elf", false], ...moduleDirectories.map((name, index) => [`title/${name}/module${index}.prx`, false])];
+  const folder = entries.map(([name, , bytes = header]) => ({path: name, file: new Blob([bytes])}));
+  for (const selection of [await zipped(entries), folder]) {
+    const archive = new Archive(selection);
+    try {
+      const summary = await archive.inspect(() => {});
+      assert.equal(summary.root, "title/");
+      assert.equal(summary.modules, moduleDirectories.length);
+      assert.equal(summary.warnings.some(warning => warning.includes("module folder")), false);
+      const input = await archive.conversionInput("linux", false, () => {});
+      assert.deepEqual(input.modules.map(module => module.name).sort(), moduleDirectories.map((name, index) => `${name}/module${index}.prx`).sort());
+      const written = [];
+      const modules = input.modules.map(module => ({name: `app0/${module.name}.guest.prx`, bytes: header}));
+      await packageArchive(archive, {executable: header, modules}, "main", libraryBundle, {
+        async directory(name) { written.push(name); },
+        async file(name) { written.push(name); return new WritableStream(); }
+      }, () => {}, true);
+      for (const module of modules) assert(written.includes(module.name));
+    } finally { await archive.close(); }
+  }
+}
+for (const entries of [
+  [["main.elf", false], ["sce_module/a.prx", false], ["sce_modules/b.prx", false]],
+  [["main.elf", false], ["sce_module/", true], ["sce_modules/", true]]
+]) {
+  const archive = new Archive(await zipped(entries));
+  try { await assert.rejects(archive.inspect(() => {}), /Both sce_module and sce_modules/); }
+  finally { await archive.close(); }
+}
 for (const conflict of ["sce_module/provider.guest.prx/child", "sce_module/PROVIDER.GUEST.PRX/child", "sce_module/provider.guest.prx/"]) {
   const input = new Archive(await zipped([["main.elf", false], ["sce_module/provider.prx", false], [conflict, conflict.endsWith("/")]]));
   try {
