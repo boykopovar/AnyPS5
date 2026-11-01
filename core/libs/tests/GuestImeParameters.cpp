@@ -108,7 +108,9 @@ static void CheckClosedPanel() {
     Require(sceImeSetCaret(&caret) == notOpened, "caret needs an open panel");
     Require(sceImeSetCaret(nullptr) == notOpened, "caret checks the panel first");
     Require(sceImeSetText(text, 4) == notOpened, "text needs an open panel");
+    Require(sceImeSetText(nullptr, 4) == notOpened, "null text checks open panel first");
     Require(sceImeSetTextGeometry(TextAreaMode::Edit, &geometry) == notOpened, "geometry needs an open panel");
+    Require(sceImeSetTextGeometry(TextAreaMode::Edit, nullptr) == notOpened, "null geometry checks open panel first");
     Require(sceImeClose_nid_postfix() == notOpened, "closing needs an open panel");
     PositionAndForm form;
     std::memset(&form, 0xa5, sizeof(form));

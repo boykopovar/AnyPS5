@@ -111,6 +111,7 @@ struct HttpEpoll {
 static std::mutex g_stateMutex;
 static std::unordered_set<int> g_contexts;
 static std::unordered_map<int, uint64_t> g_contextPoolSizes;
+static std::unordered_map<int, std::pair<int, int>> g_contextRegisteredIds;
 static std::unordered_map<HttpEpollHandle, std::shared_ptr<HttpEpoll>> g_epolls;
 
 static std::shared_ptr<HttpEpoll> FindEpoll(HttpEpollHandle eh) {
@@ -276,11 +277,10 @@ int APS5_VABI sceHttpGetStatusCode(int request_id, int* status_code) {
 }
 
 int APS5_VABI sceHttpInit_nid_postfix(int memid, int ssl_ctx_id, uint64_t pool_size) {
-    (void)memid;
-    (void)ssl_ctx_id;
     const int id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard lock(g_stateMutex);
     g_contextPoolSizes[id] = pool_size;
+    g_contextRegisteredIds[id] = {memid, ssl_ctx_id};
     g_contexts.insert(id);
     AddHttpContext(id);
     return id;
@@ -404,6 +404,7 @@ int APS5_VABI sceHttpTerm_nid_postfix(int http_ctx_id) {
     {
         std::lock_guard lock(g_stateMutex);
         g_contextPoolSizes.erase(http_ctx_id);
+        g_contextRegisteredIds.erase(http_ctx_id);
         if (g_contexts.empty()) return ERROR_BEFORE_INIT;
         if (g_contexts.erase(http_ctx_id) == 0) return ERROR_INVALID_ID;
         RemoveHttpContext(http_ctx_id);
@@ -824,7 +825,13 @@ int APS5_VABI sceHttpSetHttp09Enabled(int id, int enabled) {
 }
 
 int APS5_VABI sceHttpGetRegisteredCtxIds(int contextId, int* netPoolId, int* sslContextId) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!netPoolId || !sslContextId) APS5_INVALID_ARG_EX;
+    std::lock_guard lock(g_stateMutex);
+    if (g_contexts.empty()) return ERROR_BEFORE_INIT;
+    const auto ids = g_contextRegisteredIds.find(contextId);
+    if (ids == g_contextRegisteredIds.end()) return ERROR_INVALID_ID;
+    *netPoolId = ids->second.first;
+    *sslContextId = ids->second.second;
     return 0;
 }
 

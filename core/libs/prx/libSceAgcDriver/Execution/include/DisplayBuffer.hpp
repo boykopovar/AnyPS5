@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -25,6 +26,8 @@ struct DisplayBuffer {
     std::uint32_t alignment = 65536;
 };
 
+inline constexpr std::uint32_t DisplayTilingGcn = 2;
+
 std::size_t DisplayBufferSize(const DisplayBuffer& buffer);
 std::size_t DisplayBufferOffset(const DisplayBuffer& buffer, std::uint32_t x, std::uint32_t y);
 std::vector<std::byte> DecodeDisplayBuffer(const DisplayBuffer& buffer, std::span<const std::byte> source);
@@ -35,6 +38,7 @@ std::array<std::byte, 4> DisplayBufferClearTexel(const DisplayBuffer& buffer, Gr
 std::array<std::byte, 4> DisplayBufferClearPixel(const DisplayBuffer& buffer, Graphics::DccKeys keys);
 std::size_t DisplayBufferKeyBytes(const DisplayBuffer& buffer);
 Graphics::DccKeys DisplayBufferKeys(const DisplayBuffer& buffer);
+bool ResidentServesDisplay(std::uint64_t residentBase, std::uint64_t residentDcc, Graphics::DccKeys uploadedKeys, Graphics::DccKeys filledKeys, bool hasWritesSinceFill, const std::function<Graphics::DccKeys()>& residentKeys, const DisplayBuffer& buffer);
 
 }
 

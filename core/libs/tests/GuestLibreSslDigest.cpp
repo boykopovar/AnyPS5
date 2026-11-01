@@ -67,6 +67,43 @@ static std::string Digest(const Algorithm& algorithm, const std::string& message
     return Hex(digest, algorithm.digestSize);
 }
 
+static void CheckWideInitialization(const Algorithm& algorithm) {
+    struct GuardedContext {
+        std::uint64_t before;
+        Sha512Context context;
+        std::uint64_t after;
+    };
+    for (const unsigned char seed : {0u, 0x55u, 0xffu}) {
+        GuardedContext guarded;
+        std::memset(&guarded, seed, sizeof(guarded));
+        for (std::size_t index = 0; index < sizeof(guarded.context.data); ++index)
+            reinterpret_cast<unsigned char*>(guarded.context.data)[index] = static_cast<unsigned char>(seed + index);
+        unsigned char retained[sizeof(guarded.context.data)];
+        std::memcpy(retained, guarded.context.data, sizeof(retained));
+        const auto before = guarded.before;
+        const auto after = guarded.after;
+        auto& context = guarded.context;
+        for (int cycle = 0; cycle < 3; ++cycle) {
+            Require(algorithm.init(&context) == 1, "wide init returns 1");
+            Require(std::memcmp(context.data, retained, sizeof(retained)) == 0, "wide init preserves the block buffer");
+            Require(context.Nl == 0 && context.Nh == 0 && context.num == 0 && context.mdLength == algorithm.digestSize,
+                    "wide init resets the counters and digest size");
+            Require(guarded.before == before && guarded.after == after, "wide init stays within the context");
+            if (cycle == 0) {
+                Require(algorithm.update(&context, "discarded partial input", 23) == 1, "wide partial input before reinit");
+            } else {
+                unsigned char digest[64];
+                const std::size_t length = cycle == 1 ? 3 : 0;
+                Require(algorithm.update(&context, "abc", length) == 1, "wide input after reinit");
+                Require(algorithm.final(digest, &context) == 1, "wide final after reinit");
+                Require(Hex(digest, algorithm.digestSize) == algorithm.expected[cycle == 1 ? 1 : 0],
+                        "wide reinit discards the previous digest state");
+            }
+            std::memcpy(retained, context.data, sizeof(retained));
+        }
+    }
+}
+
 int main() {
     const std::string messages[6] {
         "",
@@ -111,6 +148,7 @@ int main() {
     };
 
     for (const auto& algorithm : algorithms) {
+        if (algorithm.blockSize == 128) CheckWideInitialization(algorithm);
         for (int i = 0; i < 6; ++i) {
             if (!algorithm.expected[i]) continue;
             const auto& message = messages[i];
@@ -165,11 +203,12 @@ int main() {
     std::memcpy(context + 108, &length, 4);
     std::memset(digest, 0xee, sizeof(digest));
     Require(SHA256_Final_nid_postfix(digest, reinterpret_cast<Sha256Context*>(context)) == 1 && Hex(digest, 16) == "e3b0c44298fc1c149afbf4c8996fb924" && digest[16] == 0xee, "SHA256_Final truncates to the digest length");
-    SHA512_Init_nid_postfix(reinterpret_cast<Sha512Context*>(context));
-
-    length = 32;
-    std::memcpy(context + 212, &length, 4);
-    RequireThrows([&] { SHA512_Final_nid_postfix(digest, reinterpret_cast<Sha512Context*>(context)); }, "SHA-512/256 digest length");
+    for (std::uint32_t truncated : {28u, 32u}) {
+        SHA512_Init_nid_postfix(reinterpret_cast<Sha512Context*>(context));
+        std::memcpy(context + 212, &truncated, 4);
+        std::memset(digest, 0xee, sizeof(digest));
+        Require(SHA512_Final_nid_postfix(digest, reinterpret_cast<Sha512Context*>(context)) == 0 && digest[0] == 0xee && digest[63] == 0xee, "SHA512_Final with a SHA-512/t digest length");
+    }
     SHA256_Init_nid_postfix(reinterpret_cast<Sha256Context*>(context));
 
     length = 64;
@@ -179,6 +218,8 @@ int main() {
     const auto* abc = reinterpret_cast<const unsigned char*>("abc");
     Require(SHA256_nid_postfix(abc, 3, digest) == digest && Hex(digest, 32) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA256 one-shot");
     Require(SHA256_nid_postfix(nullptr, 0, digest) == digest && Hex(digest, 32) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA256 one-shot of nothing");
-    RequireThrows([&] { SHA256_nid_postfix(abc, 3, nullptr); }, "SHA256 one-shot without a digest buffer");
+    unsigned char* shared = SHA256_nid_postfix(abc, 3, nullptr);
+    Require(shared && shared != digest && Hex(shared, 32) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA256 one-shot into the static buffer");
+    Require(SHA256_nid_postfix(nullptr, 0, nullptr) == shared && Hex(shared, 32) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "SHA256 one-shot reuses the static buffer");
     std::puts("libSceLibreSsl digest tests passed");
 }

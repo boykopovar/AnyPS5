@@ -69,6 +69,64 @@ int APS5_VABI CompareKeysWithDirection(const void* left, const void* right, void
     return *static_cast<const int*>(context) * CompareKeys(left, right);
 }
 
+int APS5_VABI CompareKeysWithThunk(void* thunk, const void* left, const void* right) {
+    return *static_cast<const int*>(thunk) * CompareKeys(left, right);
+}
+
+bool ExpectOrderR(const char* name, const std::vector<int>& keys, const std::vector<int>& tags) {
+    std::vector<Element> elements;
+    for (std::size_t index = 0; index < keys.size(); ++index) elements.push_back({keys[index], static_cast<int>(index)});
+    int direction = 1;
+    qsort_r_nid_postfix(elements.data(), elements.size(), sizeof(Element), &direction, CompareKeysWithThunk);
+    for (std::size_t index = 0; index < tags.size(); ++index) {
+        if (elements[index].tag != tags[index]) {
+            std::fprintf(stderr, "%s: qsort_r element %zu has tag %d, expected %d\n", name, index, elements[index].tag, tags[index]);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ExpectReverseOrderR() {
+    std::vector<Element> elements{{1, 0}, {3, 1}, {2, 2}, {4, 3}};
+    int direction = -1;
+    qsort_r_nid_postfix(elements.data(), elements.size(), sizeof(Element), &direction, CompareKeysWithThunk);
+    if (elements.size() != 4) return false;
+    if (elements[0].key != 4 || elements[1].key != 3 || elements[2].key != 2 || elements[3].key != 1) {
+        std::fprintf(stderr, "reverse qsort_r: elements not sorted in descending order\n");
+        return false;
+    }
+    return true;
+}
+
+bool ExpectQsortRValidation() {
+    Element pair[2] = {{2, 0}, {1, 1}};
+    int direction = 1;
+    qsort_r_nid_postfix(nullptr, 0, sizeof(Element), &direction, CompareKeysWithThunk);
+    qsort_r_nid_postfix(pair, 1, sizeof(Element), &direction, CompareKeysWithThunk);
+    bool threw = false;
+    try {
+        qsort_r_nid_postfix(pair, 2, sizeof(Element), &direction, nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    if (!threw) return false;
+    threw = false;
+    try {
+        qsort_r_nid_postfix(pair, 2, 0, &direction, CompareKeysWithThunk);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    if (!threw) return false;
+    threw = false;
+    try {
+        qsort_r_nid_postfix(nullptr, 2, sizeof(Element), &direction, CompareKeysWithThunk);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    return threw;
+}
+
 bool ExpectOrderS(const char* name, const std::vector<int>& keys, const std::vector<int>& tags) {
     std::vector<Element> elements;
     for (std::size_t index = 0; index < keys.size(); ++index) elements.push_back({keys[index], static_cast<int>(index)});
@@ -210,6 +268,29 @@ bool CheckMergesort() {
     if (!correct) std::fprintf(stderr, "mergesort failed\n");
     return correct;
 }
+
+bool CheckHeapsort() {
+    bool correct = true;
+    for (const std::size_t count : {0, 1, 2, 3, 7, 16, 33, 1000}) {
+        std::vector<Element> elements;
+        for (std::size_t index = 0; index < count; ++index) elements.push_back({static_cast<int>((index * 7919) % 5), static_cast<int>(index)});
+        correct &= heapsort_nid_postfix(elements.data(), count, sizeof(Element), CompareKeys) == 0;
+        for (std::size_t index = 1; index < count; ++index) {
+            const auto& before = elements[index - 1];
+            const auto& after = elements[index];
+            correct &= before.key <= after.key;
+        }
+    }
+    unsigned char bytes[3] = {3, 1, 2};
+    *__error_nid_postfix() = 0;
+    correct &= heapsort_nid_postfix(nullptr, 0, 0, nullptr) == 0;
+    unsigned char single = 42;
+    correct &= heapsort_nid_postfix(&single, 1, 0, nullptr) == 0;
+    correct &= heapsort_nid_postfix(bytes, 3, 0, CompareFirstByte) == -1 && *__error_nid_postfix() == 22 && bytes[0] == 3;
+    correct &= heapsort_nid_postfix(nullptr, 0, 4, CompareKeys) == 0;
+    if (!correct) std::fprintf(stderr, "heapsort failed\n");
+    return correct;
+}
 }
 
 int main() {
@@ -218,6 +299,10 @@ int main() {
     correct &= ExpectOrder("median of three", {2, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 0}, {11, 3, 6, 8, 10, 1, 7, 4, 9, 5, 0, 2});
     correct &= ExpectOrderS("insertion sort", {1, 0, 1, 0}, {1, 3, 0, 2});
     correct &= ExpectOrderS("median of three", {2, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 0}, {11, 3, 6, 8, 10, 1, 7, 4, 9, 5, 0, 2});
+    correct &= ExpectOrderR("insertion sort", {1, 0, 1, 0}, {1, 3, 0, 2});
+    correct &= ExpectOrderR("median of three", {2, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 0}, {11, 3, 6, 8, 10, 1, 7, 4, 9, 5, 0, 2});
+    correct &= ExpectReverseOrderR();
+    correct &= ExpectQsortRValidation();
     correct &= ExpectQsortS();
     correct &= ExpectQsortSConstraints();
     std::vector<int> keys;
@@ -229,5 +314,6 @@ int main() {
         for (const std::size_t count : {0, 1, 2, 6, 7, 8, 40, 41, 1000})
             correct &= ExpectSorted(size, count);
     correct &= CheckMergesort();
+    correct &= CheckHeapsort();
     return correct ? 0 : 1;
 }

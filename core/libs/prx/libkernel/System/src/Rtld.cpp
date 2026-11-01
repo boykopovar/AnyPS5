@@ -36,15 +36,13 @@ const void* imageContaining(const void* address, bool reference, void*& handle, 
 #ifdef _WIN32
     const DWORD flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | (reference ? 0 : GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT);
     HMODULE module = nullptr;
-    if (!GetModuleHandleExW(flags, reinterpret_cast<LPCWSTR>(address), &module))
-        throw std::runtime_error(std::string(caller) + ": address outside every loaded image");
+    if (!GetModuleHandleExW(flags, reinterpret_cast<LPCWSTR>(address), &module)) return nullptr;
     if (reference) handle = module;
     return module;
 #else
     Dl_info info{};
     link_map* image = nullptr;
-    if (!dladdr1(address, &info, reinterpret_cast<void**>(&image), RTLD_DL_LINKMAP) || !image)
-        throw std::runtime_error(std::string(caller) + ": address outside every loaded image");
+    if (!dladdr1(address, &info, reinterpret_cast<void**>(&image), RTLD_DL_LINKMAP) || !image) return nullptr;
     if (reference && image->l_name && *image->l_name) {
         handle = dlopen(image->l_name, RTLD_LAZY | RTLD_NOLOAD);
         if (!handle) throw std::runtime_error(std::string(caller) + ": cannot reference " + image->l_name);
@@ -56,6 +54,7 @@ const void* imageContaining(const void* address, bool reference, void*& handle, 
 int referenceThreadAtexitImage(const void* address, const char* caller) {
     void* handle = nullptr;
     const void* image = imageContaining(address, true, handle, caller);
+    if (!image) return -1;
     std::lock_guard lock(threadAtexitMutex);
     threadAtexitReferences.emplace(image, handle);
     return 0;
@@ -64,6 +63,7 @@ int referenceThreadAtexitImage(const void* address, const char* caller) {
 int releaseThreadAtexitImage(const void* address, const char* caller) {
     void* handle = nullptr;
     const void* image = imageContaining(address, false, handle, caller);
+    if (!image) return 0;
     {
         std::lock_guard lock(threadAtexitMutex);
         const auto found = threadAtexitReferences.find(image);

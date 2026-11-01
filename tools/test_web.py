@@ -22,11 +22,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", type=Path, required=True)
     args = parser.parse_args(argv)
-    archive = args.build / "web/archive.mjs"
+    build = Path(os.path.realpath(args.build))
+    archive = build / "web/archive.mjs"
     if not archive.is_file():
         parser.error(f"archive module does not exist: {archive}")
     try:
-        subprocess.run(["node", "--test", str(ROOT / "demo/web/tests/output-directory.test.mjs")], check=True)
+        subprocess.run(["node", "--test", *(str(ROOT / "demo/web/tests" / name) for name in (
+            "app.test.mjs", "batch.test.mjs", "failure-report.test.mjs", "output-directory.test.mjs"
+        ) + ("directory-writer.test.mjs",))], check=True)
         with tempfile.TemporaryDirectory(prefix="anyps5-web-") as directory:
             fixture = Path(directory)
             (fixture / "main.elf").write_bytes(main_fixture())
@@ -40,10 +43,12 @@ def main(argv=None):
             with urllib.request.urlopen(url, timeout=30) as response:
                 library.write_bytes(response.read())
             environment = dict(os.environ, ANYPS5_TEST_ZIP_URL=url, ANYPS5_TEST_ZIP_PATH=library.as_uri())
-            subprocess.run(["node", str(ROOT / "demo/web/tests/archive-root.test.mjs"), str(args.build.resolve() / "web")], env=environment, check=True)
-            subprocess.run(["node", str(ROOT / "demo/web/tests/archive-windows.test.mjs"), str(args.build.resolve() / "web")], env=environment, check=True)
-            subprocess.run(["node", str(ROOT / "demo/web/tests/archive.test.mjs"), str(args.build.resolve() / "web"), str(fixture)], env=environment, check=True)
-    except (subprocess.CalledProcessError, urllib.error.URLError, OSError) as error:
+            web = str(build / "web")
+            subprocess.run(["node", str(ROOT / "demo/web/tests/archive-root.test.mjs"), web], env=environment, check=True)
+            subprocess.run(["node", str(ROOT / "demo/web/tests/archive-windows.test.mjs"), web], env=environment, check=True)
+            subprocess.run(["node", str(ROOT / "demo/web/tests/archive-reserved.test.mjs"), web], env=environment, check=True)
+            subprocess.run(["node", str(ROOT / "demo/web/tests/archive.test.mjs"), web, str(fixture)], env=environment, check=True)
+    except (subprocess.CalledProcessError, urllib.error.URLError, OSError, UnicodeDecodeError) as error:
         parser.error(str(error))
     return 0
 

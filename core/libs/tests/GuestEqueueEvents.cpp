@@ -23,16 +23,6 @@ static bool RejectsNull(TResult (APS5_VABI *accessor)(const KernelEvent*)) {
     return false;
 }
 
-static bool RejectsWideFflags(const KernelEvent* ev) {
-    try {
-        sceKernelGetEventError(ev);
-
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
-}
-
 static void SleepAtLeast(std::chrono::steady_clock::duration duration) {
     const auto start = std::chrono::steady_clock::now();
     while (std::chrono::steady_clock::now() - start < duration) {
@@ -327,7 +317,15 @@ int main() {
     Require(sceKernelGetEventFflags(&rawEvent) == static_cast<intptr_t>(0x80000001LL));
     Require(sceKernelGetEventData(&rawEvent) == -5);
     Require(sceKernelGetEventUserData(&rawEvent) == nullptr);
-    Require(RejectsWideFflags(&rawEvent));
+    Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(0x00020001));
+    const std::uint32_t wide[][2] = {
+        {0x00010000u, 0x80030000u}, {0x00020000u, 0x80040000u}, {0x7fff0001u, 0x00010001u},
+        {0x80020005u, 0x00040005u}, {0x8000ffffu, 0x0002ffffu}, {0xffffffffu, 0x8001ffffu},
+    };
+    for (const auto& [fflags, error] : wide) {
+        rawEvent.fflags = fflags;
+        Require(sceKernelGetEventError(&rawEvent) == static_cast<int>(error));
+    }
     rawEvent.fflags = 0;
     rawEvent.flags = EV_ERROR;
     rawEvent.data = 22;

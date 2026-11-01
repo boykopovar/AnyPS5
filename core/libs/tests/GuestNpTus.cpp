@@ -49,6 +49,31 @@ static void CheckTssTitleContexts() {
     for (const int context : contexts) Require(sceNpTusDeleteNpTitleCtx(context) == 0);
 }
 
+static void CheckNpIdTitleContexts() {
+    NpId npId{};
+    Require(sceNpTusCreateNpTitleCtx(0, nullptr) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTusCreateNpTitleCtx(0xFFFFFFFFu, nullptr) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTusCreateNpTitleCtx(0xFFFFFFFFu, &npId) == INVALID_ARGUMENT);
+
+    const int single = sceNpTusCreateNpTitleCtx(0, &npId);
+    Require(single > 0);
+    const int request = sceNpTusCreateRequest(single);
+    Require(request > 0);
+    Require(sceNpTusDeleteNpTitleCtx(single) == 0);
+    Require(sceNpTusDeleteRequest(request) == INVALID_ID);
+
+    std::array<int, 32> contexts{};
+    for (std::size_t index = 0; index < contexts.size(); ++index) {
+        contexts[index] = index % 2 == 0 ? sceNpTusCreateNpTitleCtx(static_cast<std::uint32_t>(index), &npId) : sceNpTusCreateNpTitleCtxA(0, 1);
+        Require(contexts[index] > 0);
+    }
+    Require(sceNpTusCreateNpTitleCtx(0, &npId) == TOO_MANY_OBJECTS);
+    Require(sceNpTssCreateNpTitleCtx(0, &npId) == TOO_MANY_OBJECTS);
+    Require(sceNpTusCreateNpTitleCtx(0, nullptr) == INSUFFICIENT_ARGUMENT);
+    Require(sceNpTusCreateNpTitleCtx(0xFFFFFFFFu, &npId) == INVALID_ARGUMENT);
+    for (const int context : contexts) Require(sceNpTusDeleteNpTitleCtx(context) == 0);
+}
+
 static void CheckMultiSlotVariables() {
     const int context = sceNpTusCreateNpTitleCtxA(0, 1);
     Require(context > 0);
@@ -270,4 +295,5 @@ int main() {
     for (const int child : children) Require(sceNpTusPollAsync(child, &result) == INVALID_ID);
     for (std::size_t index = 1; index < contexts.size(); ++index) Require(sceNpTusDeleteNpTitleCtx(contexts[index]) == 0);
     CheckTssTitleContexts();
+    CheckNpIdTitleContexts();
 }

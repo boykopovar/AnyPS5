@@ -4,7 +4,6 @@
 #include "prx/libkernel/Module/ModuleArgs.hpp"
 #include <nid/NidCompute.hpp>
 #include <algorithm>
-#include <array>
 #include <condition_variable>
 #include <filesystem>
 #include <cstdio>
@@ -29,16 +28,20 @@
 #include <unistd.h>
 #endif
 #endif
+#include "prx/libc/include/HostThreadLocal.hpp"
 
 #ifdef _WIN32
 extern "C" void ForgetUnloadedUnwindImages_nid_no_patch();
 #endif
 
 namespace {
-thread_local std::array<char, 512> loaderError{};
+struct LoaderErrorTag;
+std::string& LoaderError() {
+    return HostThreadLocal<std::string, LoaderErrorTag>();
+}
 thread_local bool pendingError = false;
 void Error(const char* message) {
-    std::snprintf(loaderError.data(), loaderError.size(), "%s", message);
+    LoaderError() = message;
     pendingError = true;
 }
 void LoadFailure(const std::filesystem::path& source, const std::filesystem::path& resolved, const std::string& reason) {
@@ -139,7 +142,7 @@ extern "C" {
 char* APS5_VABI dlerror_nid_postfix() {
     if (!pendingError) return nullptr;
     pendingError = false;
-    return loaderError.data();
+    return LoaderError().data();
 }
 #ifdef __linux__
 static void InitializeLinuxGuestModule(void* native) {

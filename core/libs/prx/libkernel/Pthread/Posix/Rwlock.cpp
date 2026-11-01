@@ -14,6 +14,8 @@ namespace {
 
 constexpr int GUEST_REALTIME_CLOCK = 0;
 constexpr int PROCESS_PRIVATE = 0;
+constexpr int FIRST_STORED_RWLOCK_TYPE = 1;
+constexpr int LAST_STORED_RWLOCK_TYPE = 2;
 
 int toPosix(int result) {
     if (result == 0)
@@ -49,11 +51,19 @@ int APS5_VABI pthread_rwlock_init_nid_postfix(PthreadRwlock* rwlock, const Pthre
 }
 
 int APS5_VABI pthread_rwlockattr_destroy_nid_postfix(PthreadRwlockattr* attr) {
-    return toPosix(scePthreadRwlockattrDestroy(attr));
+    if (attr && *attr == DESTROYED_RWLOCKATTR) throw std::runtime_error("pthread_rwlockattr_destroy: destroyed attr");
+    const int result = toPosix(scePthreadRwlockattrDestroy(attr));
+    *attr = DESTROYED_RWLOCKATTR;
+    return result;
 }
 
 int APS5_VABI pthread_rwlockattr_init_nid_postfix(PthreadRwlockattr* attr) {
     return toPosix(scePthreadRwlockattrInit(attr));
+}
+
+int APS5_VABI pthread_rwlockattr_settype_np_nid_postfix(PthreadRwlockattr* attr, int type) {
+    if (!attr || !*attr || type < FIRST_STORED_RWLOCK_TYPE || type > LAST_STORED_RWLOCK_TYPE) return PosixThread::GUEST_EINVAL;
+    return toPosix(scePthreadRwlockattrSettype(attr, type));
 }
 
 int APS5_VABI pthread_rwlockattr_getpshared_nid_postfix(const PthreadRwlockattr* attr, int* pshared) {
@@ -70,7 +80,7 @@ int APS5_VABI pthread_rwlockattr_setpshared_nid_postfix(PthreadRwlockattr* attr,
 }
 
 int APS5_VABI pthread_rwlockattr_gettype_np_nid_postfix(const PthreadRwlockattr* attr, int* type) {
-    if (!attr || !*attr) throw std::runtime_error("pthread_rwlockattr_gettype_np: null attr");
+    if (!attr || !*attr || *attr == DESTROYED_RWLOCKATTR) throw std::runtime_error("pthread_rwlockattr_gettype_np: null attr");
     if (!type) throw std::runtime_error("pthread_rwlockattr_gettype_np: null type");
     *type = (*attr)->type;
     return 0;

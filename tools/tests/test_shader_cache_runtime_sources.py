@@ -176,17 +176,33 @@ class ShaderCacheRuntimeSourceTests(unittest.TestCase):
         fixture.configure()
         self.assertEqual(fixture.version(), previous)
 
-    def test_runtime_sources_headers_and_cmake_change_version(self):
+    def assertEditChangesVersion(self, name):
         fixture = self.fixture()
         previous = fixture.version()
-        for name in ('Recompiler.cpp', 'tests/DummyShaders.cpp', 'tests/DummyShaders.hpp', 'BdaAbi.hpp', 'CMakeLists.txt', 'ShaderCacheVersion.cmake'):
-            with self.subTest(source=name):
-                path = fixture.recompiler / name
-                before = path.read_bytes()
-                path.write_bytes(before + b'\n')
-                self.assertNotEqual(fixture.version(), previous)
-                path.write_bytes(before)
-                self.assertEqual(fixture.version(), previous)
+        path = fixture.recompiler / name
+        before = path.read_bytes()
+        path.write_bytes(before + b'\n')
+        self.assertNotEqual(fixture.version(), previous)
+        path.write_bytes(before)
+        self.assertEqual(fixture.version(), previous)
+
+    def test_runtime_source_changes_version(self):
+        self.assertEditChangesVersion('Recompiler.cpp')
+
+    def test_compiled_test_source_changes_version(self):
+        self.assertEditChangesVersion('tests/DummyShaders.cpp')
+
+    def test_compiled_test_header_changes_version(self):
+        self.assertEditChangesVersion('tests/DummyShaders.hpp')
+
+    def test_runtime_header_changes_version(self):
+        self.assertEditChangesVersion('BdaAbi.hpp')
+
+    def test_cmake_list_changes_version(self):
+        self.assertEditChangesVersion('CMakeLists.txt')
+
+    def test_version_script_changes_version(self):
+        self.assertEditChangesVersion('ShaderCacheVersion.cmake')
 
     def test_flags_change_version(self):
         fixture = self.fixture()
@@ -222,5 +238,45 @@ class ShaderCacheRuntimeSourceTests(unittest.TestCase):
         self.assertIn('has not been reviewed', fixture.version(False))
 
 
+def iter_test_cases(suite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            yield from iter_test_cases(test)
+        else:
+            yield test
+
+
+def shard_suite(index, count):
+    if count <= 0 or index < 0 or index >= count:
+        raise ValueError('shard index must be within the shard count')
+    tests = sorted(iter_test_cases(unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])), key=lambda test: test.id())
+    return unittest.TestSuite(test for position, test in enumerate(tests) if position % count == index)
+
+
+class ShardTests(unittest.TestCase):
+    def test_shards_run_each_case_once(self):
+        discovered = sorted(test.id() for test in iter_test_cases(unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__])))
+        for count in range(1, len(discovered) + 2):
+            with self.subTest(count=count):
+                sharded = [test.id() for index in range(count) for test in iter_test_cases(shard_suite(index, count))]
+                self.assertEqual(sorted(sharded), discovered)
+
+    def test_invalid_shard_is_rejected(self):
+        for index, count in ((0, 0), (-1, 2), (2, 2)):
+            with self.subTest(index=index, count=count), self.assertRaises(ValueError):
+                shard_suite(index, count)
+
+
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == '--shard':
+        if len(sys.argv) != 3 or '/' not in sys.argv[2]:
+            print('usage: test_shader_cache_runtime_sources.py [SOURCE CMAKE] --shard INDEX/COUNT', file=sys.stderr)
+            raise SystemExit(2)
+        try:
+            shard_index, shard_count = (int(part) for part in sys.argv[2].split('/', 1))
+            suite = shard_suite(shard_index, shard_count)
+        except ValueError as error:
+            print(f'invalid shard: {error}', file=sys.stderr)
+            raise SystemExit(2)
+        raise SystemExit(0 if unittest.TextTestRunner().run(suite).wasSuccessful() else 1)
     unittest.main()

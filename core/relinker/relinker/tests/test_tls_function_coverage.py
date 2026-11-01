@@ -531,7 +531,8 @@ def add_alias(image, size, begin=0x1200):
 
 def main():
     groups = ("metadata", "padding", "register_loads", "displacement_bounds", "alu_execution",
-              "register_address_loads", "moved_branch", "rejected", "gs_traps", "gs_traps_implicit")
+              "register_address_loads", "moved_branch", "rejected", "gs_traps", "gs_traps_implicit",
+              "gs_non_memory")
     groups += tuple(f"displacement_r{register}" for register in range(16) if register != 4)
     groups += tuple(f"alu_{name}" for name in ALU_READ)
     parser = argparse.ArgumentParser(description="Run Windows guest TLS function coverage fixtures")
@@ -741,6 +742,21 @@ def main():
                 assert offset >= 0, (name, stub.hex())
                 displacement = struct.unpack_from("<i", stub, offset + len(encoding))[0]
                 assert displacement == (0x10000 + target) - (stub_address + offset + len(encoding) + 4), (name, displacement)
+            eip_lea = bytes.fromhex("67 48 8d 0d 00 00 00 80")
+            eip_body = prologue + bytes.fromhex("64 48 33 03") + eip_lea + bytes.fromhex("b8 2a 00 00 00 5b c3")
+            convert("moved-eip-relative-lea", make_image("register", "unwind", body=eip_body), tls_address=0x124B)
+            pe = (work / "moved-eip-relative-lea.exe").read_bytes()
+            patched = pe_bytes_at(pe, 0x10000 + 0x124B, 5)
+            stub_address = 0x10000 + 0x124B + 5 + struct.unpack_from("<i", patched, 1)[0]
+            stub = pe_bytes_at(pe, stub_address, 128)
+            offset = stub.find(eip_lea[:4])
+            assert offset >= 0, stub.hex()
+            end = stub_address + offset + len(eip_lea)
+            effective = (end + struct.unpack_from("<i", stub, offset + 4)[0]) & 0xffffffff
+            assert effective == (0x10000 + 0x124F + len(eip_lea) - 0x80000000) & 0xffffffff, hex(effective)
+            rip_body = prologue + bytes.fromhex("64 48 33 03 48 8d 0d 00 00 00 80 b8 2a 00 00 00 5b c3")
+            convert("moved-rip-relative-lea-out-of-range", make_image("register", "unwind", body=rip_body),
+                    "Moved RIP-relative instruction exceeds rel32 range from its TLS stub", error_offset=0x124B)
         if args.group in ("all", "rejected"):
             for name, instruction in {
                 "short-before-return": bytes.fromhex("64 48 8b 03 c3"),
@@ -777,6 +793,8 @@ def main():
             conflicting[232:344] = unwind[232:344]
             struct.pack_into("<H", conflicting, 56, 5)
             convert("conflicting-function-extents", conflicting, "Code analysis: conflicting function ranges")
+            convert("branch-into-gs", make_image("register", "unwind", body=bytes.fromhex("74 01 65 48 8b 0c 25 78 03 00 00 c3")),
+                    "Branch enters a guest GS instruction", error_offset=0x11243)
 
         def check_gs_traps(cases):
             for name, instruction, trapped in cases:
@@ -815,6 +833,11 @@ def main():
             assert result.returncode == 0, ("gs-without-pt-tls", result.stdout, result.stderr)
             patched = pe_bytes_at(output.read_bytes(), 0x11240, len(instruction) + 1)
             assert patched == b"\x0f\x0b" + b"\x90" * (len(instruction) - 2) + b"\xc3", ("gs-without-pt-tls", patched.hex())
+        if args.group in ("all", "gs_non_memory"):
+            check_gs_traps([
+                ("gs-lea", bytes.fromhex("65 8d 05 11 11 11 11"), False),
+                ("gs-nop-memory", bytes.fromhex("65 0f 1f 05 11 11 11 11"), False),
+            ])
         if args.group in ("all", "gs_traps_implicit"):
             check_gs_traps([
                 ("gs-maskmovdqu", bytes.fromhex("65 66 0f f7 c1"), True),

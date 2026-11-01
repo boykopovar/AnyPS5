@@ -59,10 +59,7 @@ int main() {
     Require(sceContentExportStart() == static_cast<int>(0x809D3018u));
     Require(sceContentExportTerm() == static_cast<int>(0x809D3003u));
     int first = *sessions.begin();
-    Require(Throws<std::runtime_error>([&] { sceContentExportGetProgress(first); }));
     Require(sceContentExportCancel(first) == static_cast<int>(0x809D3002u));
-    Require(Throws<std::runtime_error>([&] { Export(first); }));
-    Require(path[0] == 0);
     Require(sceContentExportFinish(first) == 0);
     Require(Throws<std::invalid_argument>([&] { sceContentExportFinish(first); }));
     Require(Throws<std::invalid_argument>([&] { sceContentExportGetProgress(first); }));

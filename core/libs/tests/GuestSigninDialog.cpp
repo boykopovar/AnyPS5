@@ -21,12 +21,13 @@ constexpr int kResultUserCanceled = 1;
 
 int main() {
     std::int64_t param = 0;
-    std::int32_t result[4];
-    std::memset(result, 0x5a, sizeof(result));
+    std::int32_t result[8]{0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a, 0x5a};
 
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
     Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
     Require(sceSigninDialogClose() == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceSigninDialogGetResult(result) == kErrNotInitialized);
     Require(sceSigninDialogGetStatus() == kStatusNone);
     Require(sceSigninDialogUpdateStatus() == kStatusNone);
@@ -36,9 +37,17 @@ int main() {
     Require(sceSigninDialogGetStatus() == kStatusInitialized);
 
     Require(sceSigninDialogOpen(nullptr) == kErrArgNull);
+    Require(sceSigninDialogGetResult(nullptr) == kErrNotFinished);
     Require(sceSigninDialogGetResult(result) == kErrNotFinished);
 
     Require(sceSigninDialogOpen(&param) == 0);
+    Require(sceSigninDialogGetStatus() == kStatusFinished);
+    Require(sceSigninDialogUpdateStatus() == kStatusFinished);
+    Require(sceSigninDialogOpen(&param) == 0);
+    Require(sceSigninDialogGetStatus() == kStatusFinished);
+    Require(sceSigninDialogUpdateStatus() == kStatusFinished);
+    Require(sceSigninDialogOpen(nullptr) == kErrArgNull);
+    Require(sceSigninDialogClose() == 0);
     Require(sceSigninDialogGetStatus() == kStatusFinished);
     Require(sceSigninDialogUpdateStatus() == kStatusFinished);
 
@@ -48,11 +57,21 @@ int main() {
     Require(result[1] == 0);
     Require(result[2] == 0);
     Require(result[3] == 0);
+    Require(result[4] == 0x5a);
+    Require(result[5] == 0x5a);
+    Require(result[6] == 0x5a);
+    Require(result[7] == 0x5a);
 
     Require(sceSigninDialogClose() == 0);
     Require(sceSigninDialogTerminate() == 0);
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
+    Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
+    Require(sceSigninDialogClose() == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogGetResult(result) == kErrNotInitialized);
     Require(sceSigninDialogGetStatus() == kStatusNone);
+    Require(sceSigninDialogUpdateStatus() == kStatusNone);
 
     Require(sceSigninDialogInitialize() == 0);
     Require(sceSigninDialogGetStatus() == kStatusInitialized);
@@ -65,4 +84,5 @@ int main() {
     Require(result[2] == 0);
     Require(result[3] == 0);
     Require(sceSigninDialogTerminate() == 0);
+    Require(sceSigninDialogTerminate() == kErrNotInitialized);
 }

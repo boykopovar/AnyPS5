@@ -43,10 +43,12 @@ def command_output(stdout, stderr="", returncode=0):
 
     def run(command, **kwargs):
         if command[:3] == ["git", "rev-parse", "--show-toplevel"]:
-            return RUN(command, **kwargs)
+            root = (str(Path.cwd()) + "\n").encode("utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout=root, stderr=b"")
         return RUN([sys.executable, "-c", code], **kwargs)
 
     with simulated_cp1252(), \
+            patch.dict(pr_overlap._REPO_ROOTS, clear=True), \
             patch.object(subprocess, "run", side_effect=run):
         yield
 

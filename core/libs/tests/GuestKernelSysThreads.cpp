@@ -69,14 +69,18 @@ int main(int argc, char** argv) {
 #ifdef __linux__
     if (test == "main_late_load") {
         int (APS5_VABI* isMain)() = nullptr;
+        int (APS5_VABI* sceIsMain)() = nullptr;
         int other = -1;
+        int sceOther = -1;
         std::thread loader([&] {
             auto* module = LoadLibraryFile(directory / "libkernel_sys.prx");
             isMain = LoadFunction<int (APS5_VABI*)()>(module, "pthread_main_np", patched);
+            sceIsMain = LoadFunction<int (APS5_VABI*)()>(module, "scePthreadMain", patched, "scePthreadMain");
             other = isMain();
+            sceOther = sceIsMain();
         });
         loader.join();
-        Require(other == 0 && isMain() == 1);
+        Require(other == 0 && isMain() == 1 && sceOther == 0 && sceIsMain() == 1);
         return 0;
     }
 #endif
@@ -86,10 +90,15 @@ int main(int argc, char** argv) {
     auto* libc = LoadLibraryFile(directory / "libc.prx");
     const auto error = LoadFunction<int* (APS5_VABI*)()>(libc, "__error", patched);
     const auto isMain = LoadFunction<int (APS5_VABI*)()>(sys, "pthread_main_np", patched);
+    const auto sceIsMain = LoadFunction<int (APS5_VABI*)()>(sys, "scePthreadMain", patched, "scePthreadMain");
     *error() = 71;
     int other = -1;
-    std::thread worker([&] { other = isMain(); });
+    int sceOther = -1;
+    std::thread worker([&] {
+        other = isMain();
+        sceOther = sceIsMain();
+    });
     worker.join();
-    Require(other == 0 && isMain() == 1 && *error() == 71);
+    Require(other == 0 && isMain() == 1 && sceOther == 0 && sceIsMain() == 1 && *error() == 71);
     return 0;
 }

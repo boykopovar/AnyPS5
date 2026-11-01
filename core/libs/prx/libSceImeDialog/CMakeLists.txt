@@ -1,9 +1,17 @@
-add_library(libSceImeDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+add_library(libSceImeDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PadKeyboard.cpp)
 target_include_directories(libSceImeDialog PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceImeDialog PRIVATE libSceIme)
 configure_windows_unwind(libSceImeDialog)
 
 if(BUILD_TESTING)
+    add_test_executable(ime_dialog_pad_keyboard_tests tests/PadKeyboard.cpp src/PadKeyboard.cpp)
+    target_include_directories(ime_dialog_pad_keyboard_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    if(MINGW)
+        target_compile_options(ime_dialog_pad_keyboard_tests PRIVATE -fasynchronous-unwind-tables)
+        target_link_options(ime_dialog_pad_keyboard_tests PRIVATE -static -static-libgcc -static-libstdc++)
+    endif()
+    add_test(NAME ime_dialog_pad_keyboard COMMAND ime_dialog_pad_keyboard_tests)
+
     add_test_executable(guest_ime_dialog_tests ${LIBS_INCLUDE_DIR}/tests/GuestImeDialog.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../libSceVideoOut/src/ImeTextInput.cpp)
     target_include_directories(guest_ime_dialog_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})

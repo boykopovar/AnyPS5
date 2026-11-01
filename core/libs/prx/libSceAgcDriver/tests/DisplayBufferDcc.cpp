@@ -215,6 +215,15 @@ DccKeys ReadKeys(DisplayBuffer buffer, std::vector<std::uint8_t>& keys) {
     return AgcDriver::DisplayBufferKeys(buffer);
 }
 
+void ResidentServesDisplayOrderTests() {
+    DisplayBuffer buffer{65536, 0x8000000000000000ull, 1920, 1080};
+    std::vector<std::uint8_t> keys(49152, 0x00);
+    buffer.dccAddress = reinterpret_cast<std::uint64_t>(keys.data());
+
+    Expect(AgcDriver::ResidentServesDisplay(0x10000, buffer.dccAddress, DccKeys::Clear0000, DccKeys::Clear0000, true, [&] { return DccKeys::Clear0000; }, buffer), "a resident written after a clear fill serves the display");
+    Expect(!AgcDriver::ResidentServesDisplay(0x10000, buffer.dccAddress, DccKeys::Clear0000, DccKeys::Clear0000, false, [&] { return DccKeys::Clear0000; }, buffer), "a resident with no post-fill writes falls back to the clear");
+}
+
 void ExtentTests() {
     const DisplayBuffer full{65536, 0x8000000000000000ull, 1920, 1080};
     std::vector<std::uint8_t> keys(49152);
@@ -292,6 +301,7 @@ int main() {
     KeyCountTests();
     RetileTests();
     ExtentTests();
+    ResidentServesDisplayOrderTests();
     if (failures != 0) return 1;
     std::puts("display buffer DCC tests passed");
     return 0;

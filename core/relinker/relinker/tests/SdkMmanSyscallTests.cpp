@@ -88,6 +88,23 @@ void CheckFixtures() {
         sizeExceededRejected = std::string(error.what()) == "Code section exceeds the input buffer";
     }
     Require(sizeExceededRejected, "Scanner accepted code section size exceeding input");
+    const Bytes sdkGenericStub = {
+        0x48, 0x89, 0xF8, 0x48, 0x89, 0xF7, 0x48, 0x89, 0xD6, 0x48, 0x89, 0xCA,
+        0x4D, 0x89, 0xC2, 0x4D, 0x89, 0xC8, 0x4C, 0x8B, 0x4C, 0x24, 0x08,
+        0x0F, 0x05, 0xC3,
+    };
+    const Bytes sdkNumberedStub = {
+        0x48, 0xC7, 0xC0, 0x09, 0x00, 0x00, 0x00,
+        0x49, 0x89, 0xCA,
+        0x0F, 0x05, 0xC3,
+    };
+    for (const auto& stubFixture : std::vector<Fixture>{{sdkGenericStub, 23}, {sdkNumberedStub, 10}}) {
+        Bytes padded = stubFixture.code;
+        padded.resize(stubFixture.code.size() + 16, 0x90);
+        const auto trapped = Relinker::MakeSyscallScanner(testProgress, true)->ScanCodeSectionForSyscalls(padded, 0, stubFixture.code.size());
+        Require(trapped == std::vector<std::size_t>{stubFixture.syscall}, "SDK stub returned the wrong patch offset");
+        Require(Rejected(padded, true, stubFixture.syscall + 2), "SDK stub matching read past the code section boundary");
+    }
     std::cout << "SDK inline syscall checks passed, " << rejectedMutations << " near-match rejections\n";
 }
 
