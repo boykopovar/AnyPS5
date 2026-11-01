@@ -581,6 +581,15 @@ class CheckRegistrationCliTests(unittest.TestCase):
                 names = check_test_registration.built(build)
                 self.assertEqual(names, {"dummy_tests"})
 
+    def test_scripts_outside_a_git_checkout_is_a_usage_error(self):
+        error = subprocess.CalledProcessError(128, ["git", "ls-files"], stderr="fatal: not a git repository")
+        with patch.object(check_test_registration, "unrun_scripts", side_effect=error):
+            with contextlib.redirect_stderr(io.StringIO()) as errors, self.assertRaises(SystemExit) as caught:
+                check_test_registration.main(["--scripts"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("run it in a git checkout", errors.getvalue())
+        self.assertNotIn("Traceback", errors.getvalue())
+
     def test_main_scripts_with_explicit_argv(self):
         with patch.object(check_test_registration, "unrun_scripts", return_value=(["test_a.py"], [])):
             with contextlib.redirect_stdout(io.StringIO()):
