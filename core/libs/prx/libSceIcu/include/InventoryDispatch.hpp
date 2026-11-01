@@ -4,9 +4,9 @@
 
 extern "C" {
 
-int APS5_VABI sceIcuDispatchUnknown_BufsAiaX0_plus_s_nid_no_patch();
-int APS5_VABI sceIcuDispatchUnknown_xdF5zg0V5Oc_nid_no_patch();
-int APS5_VABI sceIcuDispatchUnknown_Con4H1SB3nw_nid_no_patch();
-int APS5_VABI sceIcuDispatchUnknown_lME28PLmu54_nid_no_patch();
+int APS5_VABI _ZN6icu_6813BreakIterator23createCharacterInstanceERKNS_6LocaleER10UErrorCode_nid_postfix();
+int APS5_VABI _ZN6icu_6813BreakIterator18createWordInstanceERKNS_6LocaleER10UErrorCode_nid_postfix();
+int APS5_VABI _ZN6icu_6813BreakIterator18createLineInstanceERKNS_6LocaleER10UErrorCode_nid_postfix();
+int APS5_VABI _ZN6icu_6813BreakIterator22createSentenceInstanceERKNS_6LocaleER10UErrorCode_nid_postfix();
 
 }
