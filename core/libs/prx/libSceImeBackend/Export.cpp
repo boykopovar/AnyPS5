@@ -114,4 +114,29 @@ int APS5_VABI sceImeBackendGetCandidateSelect(void) {
     return 0;
 }
 
+int APS5_VABI sceImeBackendGetConvertMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeBackendTemporalConfirm(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeBackendSetConvertMode(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeBackendForTestFunction(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
+int APS5_VABI sceImeBackendDeleteCharacter(void) {
+    NotImplemented_nid_no_patch(__func__);
+    return 0;
+}
+
 }

@@ -1,18 +1,178 @@
 # libSceNpManager technical debt
 
+- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
+
 ### Silent stubs
 
 - [sceNpUnregisterPlusEventCallback](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 whether or not a callback was registered, as `sceNpUnregisterPremiumEventCallback` does: `sceNpRegisterPlusEventCallback` keeps no callback, and a signed-out user gets no plus events
+- [sceNpNotifyPremiumFeature](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 without reading its parameter block. Borderlands 4 (PPSA01494), Ghost of Tsushima (PPSA02225), MXGP 26 (PPSA30839) and Super Meat Boy 3D (PPSA31162) call it, and Metal Gear Solid 4 (PPSA18194) imports it
+- [sceNpSetNpTitleId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 and keeps neither its title ID nor the 128-byte block passed with it. Forspoken (PPSA03984) and Crimson Desert (PPSA25286) call it once each
+- [sceNpRegisterPremiumEventCallback, sceNpUnregisterPremiumEventCallback](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - registration returns `SCE_NP_ERROR_INVALID_ARGUMENT` for a null callback and otherwise returns 0 without keeping the callback or its user data, so it is never called. Unregistration returns 0. Metal Gear Solid 4 (PPSA18194) imports both
 
 ### Unknown function info
 
-- [libSceNpManager pending exports](../../../core/libs/prx/libSceNpManager/Export.cpp) - 143 named callable exports are present in the local `libSceNpManager.sprx` export table and the public PS5 3.20 symbol list. Their signatures and behavior are unverified; each declaration uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`.
+- [libSceNpManager additional exports](../../../core/libs/prx/libSceNpManager/AdditionalExports.cpp) - 148 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded.
+
+| Name | NID |
+| --- | --- |
+| `sceNpAsmClientExtAbortRequest` | `Xi517rrV8MU` |
+| `sceNpAsmClientExtCreateRequest` | `yB12TC6fbPo` |
+| `sceNpAsmClientExtDeleteRequest` | `yuQrMTiR28k` |
+| `sceNpAsmClientExtGetPlayingTitleNpTitleToken` | `zj5wKSAva+Y` |
+| `sceNpAsmClientExtInitialize` | `kKCa1japBxI` |
+| `sceNpAsmClientExtTerminate` | `yODgcWKSa8Q` |
+| `sceNpAsmClientGetNpComInfo2WithHmac` | `fX+iM4sZIl0` |
+| `sceNpIntUnregisterCheckCallback` | `IS5vEAFgl0c` |
+| `sceNpManagerIntBindSandbox` | `rBQUkjrchjw` |
+| `sceNpManagerIntClearAdultToChildConversionFlag` | `vkJy2+W0pJw` |
+| `sceNpManagerIntClearBcAccessToken` | `vMbEH4rT5CM` |
+| `sceNpManagerIntCreateLocalSandboxAdminLoginContext` | `WM9LDa0us3s` |
+| `sceNpManagerIntGetAdultToChildConversionFlag` | `vuKj6MA2ODU` |
+| `sceNpManagerIntGetBcAccessTokenWithCheck` | `vuAkL6Dj-JA` |
+| `sceNpManagerIntGetBcAccessToken` | `odAzwN-S9G4` |
+| `sceNpManagerIntGetCachedAccountInfo` | `mZV+Pm4hvbI` |
+| `sceNpManagerIntGetClientCredentialJwtAccessToken` | `PuKANq-Ceqo` |
+| `sceNpManagerIntGetLocalSandboxAdminSigninState` | `ADcwKq8Qcxo` |
+| `sceNpManagerIntGetSandboxList` | `ZxR0uns1XX8` |
+| `sceNpManagerIntGetSandboxState` | `x7Dni-pgA+c` |
+| `sceNpManagerIntGetStreamingSandboxSecret` | `9aQPQa73zus` |
+| `sceNpManagerIntGetVshSandboxClientId` | `J4pZ9rzjc5s` |
+| `sceNpManagerIntSetStreamingSandboxSecret` | `LCgXXwy-Gpg` |
+| `sceNpManagerIntSignoutLocalSandboxAdmin` | `qNiQYsQ2fnw` |
+| `sceNpPush2SetDataType` | `4CkpTzOLZKQ` |
+| `sceNpPushSetNpCommunicationId` | `rjatoAGW+Fo` |
+| `sceNpPushUnsetNpCommunicationId` | `j1YsEXl5ta4` |
+| `sceNpRegisterGamePresenceCallbackA` | `KswxLxk4c1Y` |
+| `sceNpSandboxIntAbortRequest` | `u0apsYwuTvE` |
+| `sceNpSandboxIntCreateRequest` | `7IC43AzCrQU` |
+| `sceNpSandboxIntDeleteRequest` | `lkgRBuVtWFM` |
+| `sceNpSandboxIntGetStreamingSandboxSecret` | `n1tgdduEHu8` |
+| `sceNpSandboxIntSetStreamingSandboxSecret` | `OTYUXXdJNbg` |
+| `Unknown` | `+JmXFo3Jh6g` |
+| `Unknown` | `+RtbJcybMNk` |
+| `Unknown` | `+fUJ4QmdNxg` |
+| `Unknown` | `+pfQKES7Ghc` |
+| `Unknown` | `-1Q057TFjDE` |
+| `Unknown` | `-5ZuQ1HlZNY` |
+| `Unknown` | `-OrDVMqLIG4` |
+| `Unknown` | `-QFXnlDhLNM` |
+| `Unknown` | `095ladq7hQ8` |
+| `Unknown` | `0cZdUbbTaMw` |
+| `Unknown` | `1I4EiKvohEo` |
+| `Unknown` | `2o4V3QCvnfg` |
+| `Unknown` | `397uJvLrlrM` |
+| `Unknown` | `3ikctjJYPtk` |
+| `Unknown` | `3sU9cWXBN98` |
+| `Unknown` | `4gVqbwFkKGY` |
+| `Unknown` | `5FWkeFFM1WI` |
+| `Unknown` | `5PZ+-JHIT4c` |
+| `Unknown` | `5vBBomYPg+s` |
+| `Unknown` | `6Xm6QTvYTTg` |
+| `Unknown` | `6ijl2h7IowA` |
+| `Unknown` | `7d3y0wXbeGY` |
+| `Unknown` | `81ldjv-ybsA` |
+| `Unknown` | `899ScRQvFV0` |
+| `Unknown` | `AydqLDpvliU` |
+| `Unknown` | `BQA2KNZr2H0` |
+| `Unknown` | `DDiKTyHJivk` |
+| `Unknown` | `DOzHoIo+UK8` |
+| `Unknown` | `Dw8yC2rYpT0` |
+| `Unknown` | `ETxHcJD5oXQ` |
+| `Unknown` | `EtNn1ccn8Ag` |
+| `Unknown` | `FN+wQFzswlE` |
+| `Unknown` | `FkASC9R1kx4` |
+| `Unknown` | `G6+sdb0fbv8` |
+| `Unknown` | `GRp4UNp-eCM` |
+| `Unknown` | `Gv4cB8leZaU` |
+| `Unknown` | `HZg8fgworHI` |
+| `Unknown` | `IIlDaVo7WP4` |
+| `Unknown` | `IfxfTgE2NAc` |
+| `Unknown` | `JYo9EMmaQ7s` |
+| `Unknown` | `Jj4yV5S0Eqw` |
+| `Unknown` | `JkRtteRXHYw` |
+| `Unknown` | `K2pL81xeJA0` |
+| `Unknown` | `K3B--gWssAk` |
+| `Unknown` | `L1nYyNP96jo` |
+| `Unknown` | `LOWrIw66+LQ` |
+| `Unknown` | `LpAjW2-Kc14` |
+| `Unknown` | `OCHXnB7YbzM` |
+| `Unknown` | `P0MZl8cQW78` |
+| `Unknown` | `Q49ghYqIP88` |
+| `Unknown` | `QZJ5fC0tP8M` |
+| `Unknown` | `Qcfj2Iu7f3U` |
+| `Unknown` | `TEoGLlZg+r0` |
+| `Unknown` | `TICPek76Nqc` |
+| `Unknown` | `ThztfmL2j0Y` |
+| `Unknown` | `VCYDmZygruk` |
+| `Unknown` | `VGkLQcESh5k` |
+| `Unknown` | `VisjSq4l+Aw` |
+| `Unknown` | `WNGXUCbdhko` |
+| `Unknown` | `WmA5X4w-4Sg` |
+| `Unknown` | `Wzgnd+m18pQ` |
+| `Unknown` | `XbMB+c1klnE` |
+| `Unknown` | `XcJr6IO6YVU` |
+| `Unknown` | `ZEHVWGnY1vI` |
+| `Unknown` | `aQaOGIVChN4` |
+| `Unknown` | `aqQDBO03Uw4` |
+| `Unknown` | `b1nDsAsD4Fo` |
+| `Unknown` | `ckzOf3ihNWs` |
+| `Unknown` | `dQ8bBTwkMwg` |
+| `Unknown` | `dg8Hm7kd4lg` |
+| `Unknown` | `e-J4TWuAGlw` |
+| `Unknown` | `enOG3JM+sFE` |
+| `Unknown` | `gQygKbb3w6E` |
+| `Unknown` | `gg2CzDord9E` |
+| `Unknown` | `glO5Roao0-0` |
+| `Unknown` | `hABPod2fe5Y` |
+| `Unknown` | `hNBwchvmG90` |
+| `Unknown` | `hT6stxLyZpg` |
+| `Unknown` | `hmUTinCeFlQ` |
+| `Unknown` | `i8Iq1bRTvBI` |
+| `Unknown` | `i9PldiC93Dg` |
+| `Unknown` | `iC9I+uYJfAw` |
+| `Unknown` | `j26eOWbUwwo` |
+| `Unknown` | `j6YmS-P2zAA` |
+| `Unknown` | `jwp0ATrWM+w` |
+| `Unknown` | `kpLofCwJceQ` |
+| `Unknown` | `krFzyfMTVKo` |
+| `Unknown` | `ksopIxjKA6g` |
+| `Unknown` | `lB7tiCkrHcw` |
+| `Unknown` | `lQfpsyGl4Nc` |
+| `Unknown` | `lTaV2Wd+8YA` |
+| `Unknown` | `lekBhfAviCg` |
+| `Unknown` | `mMqV4jGYBzE` |
+| `Unknown` | `nCZMI3Hdzb4` |
+| `Unknown` | `p7wseS6VIsU` |
+| `Unknown` | `q7oPgJVIywI` |
+| `Unknown` | `s7LodS0Puh8` |
+| `Unknown` | `sUonpM7eAg8` |
+| `Unknown` | `syPuHCOrl-M` |
+| `Unknown` | `tCmBna70C6w` |
+| `Unknown` | `tHq7rNTBQp0` |
+| `Unknown` | `u4zM1slIDrI` |
+| `Unknown` | `ue6sId17JRE` |
+| `Unknown` | `ukG+D0QVfuQ` |
+| `Unknown` | `uqHeyEjZlpA` |
+| `Unknown` | `v+6TY5GrDHA` |
+| `Unknown` | `vWxlv7-lH78` |
+| `Unknown` | `vsJdqui4uB8` |
+| `Unknown` | `wN0tvi6mb3o` |
+| `Unknown` | `wfhYv1uGwqE` |
+| `Unknown` | `wfjSUV5QuDQ` |
+| `Unknown` | `wzijRFAxDnk` |
+| `Unknown` | `y2cDXtZoz2s` |
+| `Unknown` | `z8eiw8+UfEo` |
+| `Unknown` | `zLktx8v2g+Y` |
+
+- [sceNpWaitAsync](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - not measured on a PS5: how the console waits on a request still running is unknown. No request is ever running here, so it never blocks and gives `sceNpPollAsync`'s answers, with that entry's gaps, as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/45837a89a617ac394c1844ec95a28471fb79ec08/src/core/libraries/np/np_manager.cpp#L402-L452) does with two identical bodies. The `(request id, result)` signature follows shadPS4 and [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Np/NpAccount.cs#L138-L146)
+
+- [libSceNpManager pending exports](../../../core/libs/prx/libSceNpManager/Export.cpp) - 144 named callable exports are present in the local `libSceNpManager.sprx` export table and the public PS5 3.20 symbol list. Their signatures and behavior are unverified; each declaration uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`.
 
 - [sceNpGetSandboxInfo](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager, NID `ZVZ++68nNI8`) - the name hashes to the imported NID (found with nidhunt, confirmed with `tools/nid_names.py`). STAR WARS: Galactic Racer (PPSA28416) imports it; its OnlineSubsystemPS5 calls it with one pointer to a 0x50-byte stack buffer and reads the buffer as a string (discussions/3086). The returned string, the exact parameter struct and console errors are unknown, so every call throws without reading or writing caller memory. A working implementation belongs with that title's bring-up.
 - [sceNpUnknown_8weiQyIdI3A](../../../core/libs/prx/libSceNpManager/Export.cpp): the original name remains unknown. The native wrapper takes a user ID and a read-only 20-byte online-ID record, validates its first byte and sends the record through IPC. The implementation remains a throwing stub.
 - [sceNpUnknown_WxLcN76q19o](../../../core/libs/prx/libSceNpManager/Export.cpp): the original name remains unknown. The native wrapper has no input arguments and returns a 32-bit status from an IPC request after initialization checks. The implementation remains a throwing stub.
 - [sceNpSetTimeout](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the signature follows [orbital](https://github.com/AlexAltea/orbital/blob/b321fcdbd700cc02da1cb1ad25412781d5ec73c6/tools/ida/db_types.json), [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/0fe263a4760dfbfa973366890061749b4af0de97/src/core/libraries/np/np_manager.cpp) and [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Np/NpAccount.cs); the rejected values (all five 0, negative retries, a resolve timeout under 1 s or another timeout under 10 s, 0 meaning the default) are shadPS4's, not checked on a console. An id that was never created or was deleted returns `REQUEST_NOT_FOUND`, as in shadPS4; there is no network, so the timeouts are not stored
-- [sceNpGetUserIdByAccountId](../../../core/libs/prx/libSceNpManager/Export.cpp) - the `(account id, user id output)` signature and its errors follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/np/np_manager.cpp): account id 0 or a null output returns `SCE_NP_ERROR_INVALID_ARGUMENT`, and a signed-out NP returns `SCE_NP_ERROR_SIGNED_OUT` without writing the output. NP is always signed out here, so no account id resolves to a user
+- [sceNpGetUserIdByAccountId](../../../core/libs/prx/libSceNpManager/Export.cpp) - the `(account id, user id output)` signature and its errors follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/np/np_manager.cpp): account id 0 or a null output returns `SCE_NP_ERROR_INVALID_ARGUMENT`, and a signed-out NP returns `SCE_NP_ERROR_SIGNED_OUT` without writing the output. NP is always signed out here, so no account id resolves to a user. PPSA30839 01.003.000 (at 0x447C995 and 0x448C72C) and PPSA34502 01.010.000 (0x712FE2), disassembled for this entry, pass a 64-bit account id and the address of a 32-bit user id on the stack, matching that signature; PPSA30839 sets the user id to -1 before the call, still reads it after a failure, and after a success passes it to its next call
 - [sceNpNotifyPlusFeature](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - PS4 titles import it; its parameter block and what the console does with it for a signed-out user are unknown ([shadPS4](https://github.com/shadps4-emu/shadPS4/blob/81be949167d0060b08f26dc3e055a0b640d129c8/src/core/libraries/np/np_manager.cpp#L1170) returns 0 without reading it), so every call throws.
 
 ### Functional
@@ -36,7 +196,33 @@
 - [sceNpIdMapperCreateRequest, sceNpIdMapperDeleteRequest, sceNpIdMapperAbortRequest](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the in-library check is [measured on firmware 13.42 `libSceNpManager.sprx` by BunnyFl](https://github.com/boykopovar/AnyPS5/pull/10879#issuecomment-6397162725): delete and abort refuse a request id of 0 or less with `0x80553085`, and the rest goes to the NP service (create through `np::ipc::service_client::CreateRequest`, abort through `sceNpAsmClientAbortRequest`, delete through `sceNpAsmClientAbortRequest` and `sceNpAsmClientDeleteRequest`). The service's answers follow main's offline model of `sceNpCreateRequest`, not a console measurement: a counter of their own hands out ids from 1, abort leaves a live request live, delete frees it, and an id never created or already deleted returns `SCE_NP_ERROR_REQUEST_NOT_FOUND`
 - [sceNpManagerIntCreateRequest, sceNpManagerIntDeleteRequest, sceNpManagerIntAbortRequest](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the in-library table is [measured on firmware 13.42 `libSceNpManager.sprx` by BunnyFl](https://github.com/boykopovar/AnyPS5/pull/10879#issuecomment-6397362281): 64 slots, so the 65th live request gives `0x80559D05` without asking the service; create returns a negative or zero service id as is and refuses one already live with `0x80559D03`; delete gives `0x80559D0A` for an id not in the table and frees a live one; abort has no local lookup. The ids and the abort answer follow main's offline model, not a console measurement: a counter of this family's own hands out ids from 1, and abort answers `SCE_NP_ERROR_REQUEST_NOT_FOUND` for an id the service does not hold. The measured in-use path (a request held by a running call is only marked deleted) is not reached, since no call holds a request
 - [sceNpIdMapperNpIdToAccountId, sceNpIdMapperOnlineIdToAccountId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the argument checks are [measured on firmware 13.42 `libSceNpManager.sprx` by BunnyFl](https://github.com/boykopovar/AnyPS5/pull/10879#issuecomment-6397162725): seven arguments (request id, user id, an input pointer, an output pointer, a 32-bit value, a byte and a seventh argument); a request id of 0 or less gives `0x80553085`, then user id -1, a null pointer or the value outside 1 to 1000 gives `0x80553083`, and the byte and the seventh argument are not checked. Past them the request goes to the NP service, whose answer follows main's offline model of the public twins, not a console measurement: `SCE_NP_ERROR_SIGNED_OUT`, writing nothing. The SDK names of the two codes are not known, so their constants are named after the checks
-- [NP service client initialization](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - not modelled, so `0x80550002` is never returned: BunnyFl measured it from `sceNpManagerIntCreateRequest`, `sceNpManagerIntDeleteRequest` and `sceNpManagerIntAbortRequest` before the library's NP service client exists ([measured on firmware 13.42 `libSceNpManager.sprx` by BunnyFl](https://github.com/boykopovar/AnyPS5/pull/10879#issuecomment-6397362281)), and main keeps no initialized state for this library
+- [NP service client initialization](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - not modelled, so `0x80550002` is never returned: BunnyFl measured it before the library's NP service client exists from `sceNpManagerIntCreateRequest`, `sceNpManagerIntDeleteRequest` and `sceNpManagerIntAbortRequest` ([measured on firmware 13.42 `libSceNpManager.sprx` by BunnyFl](https://github.com/boykopovar/AnyPS5/pull/10879#issuecomment-6397362281)) and, before any argument check, from the eleven NpManagerInt getters ([the #10890 measurement](https://github.com/boykopovar/AnyPS5/pull/10890#issuecomment-6397162960)), and main keeps no initialized state for this library
 - [sceNpIdMapperAccountIdToNpId, sceNpIdMapperAccountIdToOnlineId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - still throw: this library gives no answer for an account id mapped to an online id or NpId (`sceNpManagerIntGetOnlineIdByAccountId` has no export here), and what a signed-out user's account id is depends on the offline account-id model of [#6990](https://github.com/boykopovar/AnyPS5/pull/6990) and [#7412](https://github.com/boykopovar/AnyPS5/pull/7412)
+- [sceNpManagerIntGetAccountAge, sceNpManagerIntGetAccountCountryA, sceNpManagerIntGetAccountLanguageA, sceNpManagerIntGetNpId, sceNpManagerIntGetOnlineId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the argument checks are [measured on firmware 13.42 `libSceNpManager.sprx` by BunnyFl](https://github.com/boykopovar/AnyPS5/pull/10890#issuecomment-6397162960): user id -1 or a null output gives `SCE_NP_ERROR_INVALID_ARGUMENT`, and `GetAccountAge` and `GetAccountLanguageA` look their request id up only after the checks. Past them the call goes to the NP service, whose answer follows main's offline model of the public twins, not a console measurement: `SCE_NP_ERROR_SIGNED_OUT`, writing nothing, for any request id, since the request lookup's own answer is not measured
+- [sceNpManagerIntGetUserIdByOnlineId, sceNpManagerIntGetUserIdByNpId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the argument checks are [measured on firmware 13.42 `libSceNpManager.sprx` by BunnyFl](https://github.com/boykopovar/AnyPS5/pull/10890#issuecomment-6397162960): a null input or output gives `SCE_NP_ERROR_INVALID_ARGUMENT`. Past them the answer follows main's offline model of `sceNpGetUserIdByOnlineId`, not a console measurement: `SCE_NP_ERROR_SIGNED_OUT`, writing nothing
+- [sceNpManagerIntAuthGetAuthorizationCode, sceNpManagerIntAuthGetIdToken, sceNpManagerIntGetAuthorizationCode, sceNpManagerIntGetAuthorizationCodeWithPsnoUri](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the arities and checks are [measured on firmware 13.42 `libSceNpManager.sprx` by BunnyFl](https://github.com/boykopovar/AnyPS5/pull/10890#issuecomment-6397162960), with no libSceNpAuth layout: user id -1 or a required pointer null gives `SCE_NP_ERROR_INVALID_ARGUMENT`, as do the eight-argument call's values outside 0 to 3 and 1 to 3; a mode other than 0, 3 or 5 gives `0x80550004`; the URI form refuses a size outside 1 to 0x801 with `0x80550011`, then the mode, then a URI of 0x2000 bytes or more with `0x80550005` (terminator unmeasured). Past the checks the answer follows main's offline model, not a console measurement: `SCE_NP_ERROR_SIGNED_OUT`, writing nothing, for any request id; the request lookup and the URI form's `sceHttpUriParse` step are not modelled
+- [sceNpManagerIntGetAccountId, sceNpManagerIntGetAccountIdSdk, sceNpManagerIntGetUserIdByAccountId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - still throw: their answer or their input is an account id, and what a signed-out user's account id is depends on the offline account-id model of [#6990](https://github.com/boykopovar/AnyPS5/pull/6990) and [#7412](https://github.com/boykopovar/AnyPS5/pull/7412), as for `sceNpIdMapperAccountIdToNpId`
 - [sceNpPollAsync](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - a null result pointer returns `SCE_NP_ERROR_INVALID_ARGUMENT` before the id is read, a request id that was never created or was deleted returns `SCE_NP_ERROR_REQUEST_NOT_FOUND` without writing the caller's result, and a live request keeps its signed-out completion `0` with `SCE_NP_ERROR_SIGNED_OUT`, as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/81be949167d0060b08f26dc3e055a0b640d129c8/src/core/libraries/np/np_manager.cpp) does in `sceNpPollAsync` ([#9277](https://github.com/boykopovar/AnyPS5/issues/9277)). The parts of that model beyond the validation are not implemented: shadPS4 keeps a per-request state machine decorated by `sceNpCheckNpAvailability` and neighbors and refuses `InvalidId` for a ready async request in wait/poll, whose completion publication, poll-versus-wait precedence and already-complete errors remain unattributable to the PS5
-- [sceNpCreateAsyncRequest](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the parameter is not read ([NpCreateAsyncRequestParameter](../../../core/libs/SceTypes.hpp) is a 0x40-byte opaque blob, so shadPS4's nonnull check and `size == sizeof` reject ([81be949167d0060b08f26dc3e055a0b640d129c8](https://github.com/shadps4-emu/shadPS4/blob/81be949167d0060b08f26dc3e055a0b640d129c8/src/core/libraries/np/np_manager.cpp)) cannot be applied without inventing a layout) and no async kind or completion state is stored until the console's contract for them is evidenced ([#9277](https://github.com/boykopovar/AnyPS5/issues/9277)); `sceNpWaitAsync` (`jyi5p9XWUSs`) has no export here yet and stays with [PR #9282](https://github.com/boykopovar/AnyPS5/pull/9282)
+- [sceNpCreateAsyncRequest](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the parameter is not read ([NpCreateAsyncRequestParameter](../../../core/libs/SceTypes.hpp) is a 0x40-byte opaque blob, so shadPS4's nonnull check and `size == sizeof` reject ([81be949167d0060b08f26dc3e055a0b640d129c8](https://github.com/shadps4-emu/shadPS4/blob/81be949167d0060b08f26dc3e055a0b640d129c8/src/core/libraries/np/np_manager.cpp)) cannot be applied without inventing a layout) and no async kind or completion state is stored until the console's contract for them is evidenced ([#9277](https://github.com/boykopovar/AnyPS5/issues/9277))
+
+#### Additional-export identity evidence
+
+This additional inventory is the inspected `libSceNpManager` ELF function-export table: defined `STT_FUNC` entries with 11-character NIDs. The module-parameter record contains version words `0x13590001` at `0x10` and `0x13600007` at `0x14`; the earlier 13.60 wording referred to that SDK-formatted metadata and does not independently attest retail firmware or introduction dates.
+
+The [reproducible static audit](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298) yields **539 unique function NIDs**, set digest `cbae5a1be711881f881e750ded1e817aba9e4f0cde69fdaee47f29585ceb3ecd` (sorted unique ASCII NIDs, each followed by LF, hashed with SHA-256), and confirms all 148 proposed entries. The [independent 13.42 comparison](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6469181950) also reports all 148 entries in a 539-NID module. That corroborates membership in the reviewer's reference; it does not identify the two images as the same binary or authenticate firmware provenance. The older 3.20 inventory is not the evidence for this additional set. The symbol table supplies hashes and callable kind, not C prototypes or plaintext spellings.
+
+All 33 named declarations were matched by recomputing candidate spellings against the function NIDs; none is assigned by ordinal or neighbouring address. The [repository-pinned aerolib table](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) contains 22 of the pairs. The other 11 candidates occur in the [public ps5rs identity database at commit `2304be5131221bae0dac24b9767cabffda33f747`](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv); each independently hashes to a function NID in the inspected table. That public database supports spelling only, not firmware attribution or ABI. The remaining 115 exports stay NID-only.
+
+| Supplemental candidate spelling | NID |
+| --- | --- |
+| `sceNpManagerIntClearBcAccessToken` | `vMbEH4rT5CM` |
+| `sceNpManagerIntSetStreamingSandboxSecret` | `LCgXXwy-Gpg` |
+| `sceNpManagerIntGetClientCredentialJwtAccessToken` | `PuKANq-Ceqo` |
+| `sceNpManagerIntGetStreamingSandboxSecret` | `9aQPQa73zus` |
+| `sceNpSandboxIntSetStreamingSandboxSecret` | `OTYUXXdJNbg` |
+| `sceNpSandboxIntCreateRequest` | `7IC43AzCrQU` |
+| `sceNpSandboxIntDeleteRequest` | `lkgRBuVtWFM` |
+| `sceNpSandboxIntAbortRequest` | `u0apsYwuTvE` |
+| `sceNpSandboxIntGetStreamingSandboxSecret` | `n1tgdduEHu8` |
+| `sceNpAsmClientExtTerminate` | `yODgcWKSa8Q` |
+| `sceNpPush2SetDataType` | `4CkpTzOLZKQ` |

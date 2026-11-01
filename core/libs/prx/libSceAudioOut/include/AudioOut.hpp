@@ -45,7 +45,7 @@ int APS5_VABI sceAudioOutMasteringInit(uint32_t flags);
 int APS5_VABI sceAudioOutMasteringSetParam(const AudioOut2MasteringParamsHeader* param, uint32_t flags);
 int APS5_VABI sceAudioOutMasteringGetState(AudioOut2MasteringStatesHeader* state);
 int APS5_VABI sceAudioOutMasteringTerm(void);
-int APS5_VABI sceAudioOutSetPadSpkVolume(void);
+int APS5_VABI sceAudioOutSetPadSpkVolume(std::int32_t handle, std::int32_t volume);
 int APS5_VABI sceAudioOutSetPadJackVolume(void);
 int APS5_VABI sceAudioOutSetUsbVolume(void);
 int APS5_VABI sceAudioOutSetCaesarVolume(void);

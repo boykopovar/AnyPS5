@@ -221,7 +221,9 @@ std::string_view UnsupportedReason(std::uint32_t header) {
         case 0x24: case 0x25: case 0x2c: case 0x38:
             if (IndirectDrawsDisabled()) return "graphics draw, shader stages and guest render-target materialization are not implemented";
             return {};
-        case 0x3a: case 0x8d:
+        case 0x3a:
+            return "DRAW_INDEX_MULTI_INST is not implemented: which fields hold the instance count, object ID address, index base and index count, and how object IDs reach the shaders, are not known";
+        case 0x8d:
             return "graphics draw, shader stages and guest render-target materialization are not implemented";
         case 0x33: case 0x3f: return "nested command buffers, branching and nested flip reservation are not implemented";
         case 0x3c: case 0x93: return {};
@@ -533,9 +535,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
 }
 
 bool IsTagMarker(std::span<const std::uint32_t> packet) {
-    // libSceAgc brackets waits and draws with predicated SET_UCONFIG_REG writes of a tag value to
-    // 0x342; they carry no register state.
-    return packet.size() >= 3 && ((packet[0] >> 8u) & 0xffu) == 0x79u && (packet[0] & 1u) != 0 && packet[1] == 0x342u;
+    return packet.size() >= 3 && ((packet[0] >> 8u) & 0xffu) == 0x79u && packet[1] == 0x342u;
 }
 
 namespace {
@@ -1034,13 +1034,12 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
                         case 0: queue.ClearContext(); break;
                         case 1: case 3:
                             require(!queue.savedContext.has_value(), "context state is already pushed");
-                            queue.savedContext = queue.context;
+                            queue.PushContext();
                             if (packet[1] == 3) queue.ClearContext();
                             break;
                         case 2:
                             require(queue.savedContext.has_value(), "context state has not been pushed");
-                            queue.context = std::move(*queue.savedContext);
-                            queue.savedContext.reset();
+                            queue.PopContext();
                             break;
                     }
                     APS5_LOG_OUT_DEBUG("CONTEXT_STATE done operation=%u targetMaskAfter=0x%x shaderMaskAfter=0x%x", packet[1], queue.context.contains(0x8e) ? queue.context.at(0x8e) : 0u, queue.context.contains(0x8f) ? queue.context.at(0x8f) : 0u);

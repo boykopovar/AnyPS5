@@ -13,7 +13,7 @@ int APS5_VABI sceNpGameIntentInfoInit(NpGameIntentInfo* info);
 int APS5_VABI sceNpGameIntentVshInitialize(void);
 int APS5_VABI sceNpGameIntentVshTerminate(void);
 int APS5_VABI sceNpAppLauncherInitialize(const void* initParam);
-int APS5_VABI sceNpAppLauncherLaunchApp();
+int APS5_VABI sceNpAppLauncherLaunchApp(std::int32_t arg0, const char* arg2, const char* arg3);
 int APS5_VABI sceNpAppLauncherTerminate();
 int APS5_VABI sceNpGameIntentGetUdsNpComId();
 int APS5_VABI sceNpGameIntentLaunchApp();
