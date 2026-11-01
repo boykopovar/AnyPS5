@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
@@ -1419,6 +1420,69 @@ void CheckEligibility(Context context) {
     std::puts("Native depth eligibility, guest writes, queued writes, metadata transitions and held views checked");
 }
 
+void CheckInitialOwner(Context context, VkFormat format, std::uint32_t samples, bool one, bool depthOnly) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto bytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, format == VK_FORMAT_D16_UNORM ? 2u : 4u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(bytes), metadata(65536u);
+    const std::uint32_t pattern = one ? (depthOnly ? 0xfffffff0u : 0xfffc00f0u) : 0u;
+    for (std::size_t offset = 0u; offset < metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &pattern, 4u);
+    DepthTarget target{memory.Address(), 0u, extent, format, one ? 1.0f : 0.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = true;
+    target.htileDepthOnly = depthOnly;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    auto owner = target;
+    owner.samples = 1u;
+    owner.htileAddress = 0u;
+    owner.clearDepth = 0.75f;
+    const auto previous = DepthSurfaceView(context, owner);
+    Require(previous != VK_NULL_HANDLE, "initial depth owner was not created");
+    Require(!NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes), "unbound initial HTILE clear became a completion candidate");
+    const auto view = DepthSurfaceView(context, target);
+    Require(view != previous && DepthSurfaceView(context, target) == view, "fresh native depth did not replace and reuse its attachment");
+    const auto words = DepthSampleWords(target);
+    const auto texture = CachedSampledTexture(context, words);
+    const auto count = extent.width * extent.height * samples;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, samples, false, true));
+    const auto check = [&](bool rendered, float offset) {
+        std::memset(output.Bytes().data(), 0xa5, output.Bytes().size());
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+        output.Invalidate();
+        for (std::uint32_t index = 0u; index < count; ++index) {
+            std::array<float, 4> result{};
+            std::memcpy(result.data(), output.Bytes().data() + (index + 1u) * 16u, 16u);
+            const auto expected = rendered ? offset + static_cast<float>(index % samples + 1u) / 16.0f : target.clearDepth;
+            const auto tolerance = format == VK_FORMAT_D16_UNORM && rendered ? 1.0f / 65535.0f : 0.0f;
+            Require(std::isfinite(result[0]) && std::abs(result[0] - expected) <= tolerance && result[1] == 0.0f && result[2] == 0.0f && result[3] == 1.0f, "fresh native depth lost its initial clear or a later raster sample");
+        }
+        Require(std::all_of(output.Bytes().begin(), output.Bytes().begin() + 16u, [](auto byte) { return byte == std::byte{0xa5}; }) && std::all_of(output.Bytes().end() - 16u, output.Bytes().end(), [](auto byte) { return byte == std::byte{0xa5}; }), "fresh native depth fetch changed output guards");
+    };
+    check(false, 0.0f);
+    const DepthRaster raster(context, target, view);
+    for (const auto offset : {0.0f, 0.25f}) {
+        {
+            CommandBatch batch(context);
+            raster.Run(batch.Handle(), offset);
+            batch.SubmitAndWait();
+        }
+        NoteDepthSurfaceWrite(context, target);
+        Require(DepthSurfaceView(context, target) == view && CachedSampledTexture(context, words) == texture, "fresh native depth lost its attachment or sampled view after drawing");
+        recorder.Sync();
+        check(true, offset);
+    }
+}
+
 void CheckRetirement(Context context, VkFormat format, std::uint32_t samples, std::uint32_t mode) {
     constexpr VkExtent2D extent{5u, 3u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, format == VK_FORMAT_D16_UNORM ? 2u : 4u, samples));
@@ -1556,6 +1620,23 @@ int main(int argc, char** argv) {
             if (std::getenv("ANYPS5_REQUIRE_VULKAN") != nullptr) throw;
             std::printf("skipped, no usable Vulkan device: %s\n", error.what());
             return VulkanTestSkipped;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--initial-owner") {
+            auto initialContext = device->GetContext();
+            std::unique_lock lock(AgcDriver::GuestMemory::GpuMutex());
+            TextureDetiler detiler(initialContext);
+            initialContext.detiler = &detiler;
+            std::uint32_t checked = 0u, unavailable = 0u;
+            for (const auto format : {VK_FORMAT_D16_UNORM, VK_FORMAT_D32_SFLOAT}) {
+                for (const auto samples : {2u, 4u, 8u}) {
+                    if (!DepthSupported(initialContext, format, samples)) { unavailable += 4u; continue; }
+                    for (const bool depthOnly : {false, true}) {
+                        for (const bool one : {false, true}) { CheckInitialOwner(initialContext, format, samples, one, depthOnly); ++checked; }
+                    }
+                }
+            }
+            std::printf("Native depth initial owner cases checked=%u unavailable=%u\n", checked, unavailable);
+            return checked == 0u ? VulkanTestSkipped : 0;
         }
         CheckDrawFeedback();
         const auto context = device->GetContext();
