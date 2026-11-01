@@ -9,7 +9,6 @@ namespace AgcDriver::Graphics {
     void Sampler::Validate(const Context& context, const GuestSamplerResource& descriptor) {
         Require(!descriptor.anisotropyEnable || context.samplerAnisotropy, "guest sampler descriptor requests anisotropic filtering which the device does not support");
         Require(descriptor.maxAnisotropy <= context.limits.maxSamplerAnisotropy, "guest sampler descriptor requests an anisotropy ratio beyond the device limit");
-        Require(descriptor.lodBias >= -context.limits.maxSamplerLodBias && descriptor.lodBias <= context.limits.maxSamplerLodBias, "guest sampler descriptor requests a LOD bias beyond the device limit");
         Require(!(descriptor.unnormalizedCoordinates && descriptor.compareEnable), "guest sampler descriptor with unnormalized coordinates enables depth comparison, which is not implemented");
         if (descriptor.reductionMode != VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT) {
             Require(context.samplerFilterMinmax, "guest sampler descriptor uses a min or max reduction which the device does not support");
@@ -33,7 +32,7 @@ namespace AgcDriver::Graphics {
         info.addressModeU = descriptor.addressModeU;
         info.addressModeV = descriptor.addressModeV;
         info.addressModeW = descriptor.addressModeW;
-        info.mipLodBias = descriptor.lodBias;
+        info.mipLodBias = std::clamp(descriptor.lodBias, -context.limits.maxSamplerLodBias, context.limits.maxSamplerLodBias);
         info.anisotropyEnable = descriptor.anisotropyEnable ? VK_TRUE : VK_FALSE;
         info.maxAnisotropy = descriptor.maxAnisotropy;
         info.compareEnable = descriptor.compareEnable ? VK_TRUE : VK_FALSE;
