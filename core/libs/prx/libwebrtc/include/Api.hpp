@@ -2,12 +2,14 @@
 
 #include "SceTypes.hpp"
 #include "prx/libwebrtc/include/ExpFilter.hpp"
+#include "prx/libwebrtc/include/IpAddress.hpp"
 #include "prx/libwebrtc/include/RtcpCommonHeader.hpp"
 #include "prx/libwebrtc/include/Opus.hpp"
 #include <cstddef>
 #include <cstdint>
 
 struct WebRtcVadInstance;
+#include "prx/libwebrtc/include/TaskQueueBase.hpp"
 
 extern "C" {
 
@@ -27,8 +29,8 @@ int APS5_VABI _ZN3rtc13SocketAddressaSERKS0__nid_postfix(void);
 int APS5_VABI _ZNK3rtc13SocketAddress6ipaddrEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc13SocketAddressC1ERKNS_9IPAddressEi_nid_postfix(void);
 int APS5_VABI _ZNK3rtc13SocketAddress4portEv_nid_postfix(void);
-int APS5_VABI _ZNK3rtc9IPAddress12ipv4_addressEv_nid_postfix(void);
-int APS5_VABI _ZNK3rtc9IPAddress12ipv6_addressEv_nid_postfix(void);
+WebRtcInAddr APS5_VABI _ZNK3rtc9IPAddress12ipv4_addressEv_nid_postfix(const WebRtcIpAddress* address);
+WebRtcIn6Addr APS5_VABI _ZNK3rtc9IPAddress12ipv6_addressEv_nid_postfix(const WebRtcIpAddress* address);
 int APS5_VABI _ZN6webrtc8RmsLevel7AnalyzeEN3rtc9ArrayViewIKsLln4711EEE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc8RmsLevel7AverageEv_nid_postfix(void);
 int APS5_VABI _ZN6webrtc8RmsLevelC1Ev_nid_postfix(void);
@@ -50,7 +52,7 @@ int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerC1ERKS1__nid_postfix(
 int APS5_VABI _ZN6webrtc23PeerConnectionInterface9IceServerD1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc14RTCCertificateD1Ev_nid_postfix(void);
 int APS5_VABI _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(void);
-int APS5_VABI _ZNK3rtc9IPAddresseqERKS0__nid_postfix(void);
+bool APS5_VABI _ZNK3rtc9IPAddresseqERKS0__nid_postfix(const WebRtcIpAddress* address, const WebRtcIpAddress* other);
 int APS5_VABI _ZNK6webrtc8RTCError7messageEv_nid_postfix(void);
 int APS5_VABI _ZN6webrtc21PendingTaskSafetyFlag6CreateEv_nid_postfix(void);
 int APS5_VABI _ZN7cricket5CodecD1Ev_nid_postfix(void);
@@ -66,7 +68,7 @@ int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1ERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc17RtpPacketReceivedD1Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc17CopyOnWriteBuffer24UnshareAndEnsureCapacityEm_nid_postfix(void);
 int APS5_VABI _ZN3rtc17CopyOnWriteBufferC1Emm_nid_postfix(void);
-int APS5_VABI _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix(void);
+WebRtcTaskQueueBase* APS5_VABI _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc10PacketInfoD1Ev_nid_postfix(void);
 int APS5_VABI _ZN6webrtc21RtpHeaderExtensionMapC1EN3rtc9ArrayViewIKNS_12RtpExtensionELln4711EEE_nid_postfix(void);
 int APS5_VABI _ZN6webrtc17RtpPacketReceivedC1EPKNS_21RtpHeaderExtensionMapENS_9TimestampE_nid_postfix(void);
@@ -95,8 +97,8 @@ int APS5_VABI libwebrtcUnknown12(void);
 int APS5_VABI libwebrtcUnknown13(void);
 int APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(void);
 int APS5_VABI _ZN3rtc15CurrentThreadIdEv_nid_postfix(void);
-int APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterC1EPS0__nid_postfix(void);
-int APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterD1Ev_nid_postfix(void);
+void APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterC1EPS0__nid_postfix(WebRtcCurrentTaskQueueSetter* setter, WebRtcTaskQueueBase* taskQueue);
+void APS5_VABI _ZN6webrtc13TaskQueueBase22CurrentTaskQueueSetterD1Ev_nid_postfix(WebRtcCurrentTaskQueueSetter* setter);
 int APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(void);
 int APS5_VABI _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(void);
 int APS5_VABI _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(void);
@@ -148,11 +150,11 @@ int APS5_VABI libwebrtcUnknown18(void);
 int APS5_VABI _ZN3rtc10LogMessageC1EPKciNS_15LoggingSeverityE_nid_postfix(void);
 int APS5_VABI _ZN3rtc10LogMessageD1Ev_nid_postfix(void);
 int APS5_VABI _ZNK3rtc13SocketAddress10IsCompleteEv_nid_postfix(void);
-int APS5_VABI _ZNK3rtc9IPAddress27v4AddressAsHostOrderIntegerEv_nid_postfix(void);
+std::uint32_t APS5_VABI _ZNK3rtc9IPAddress27v4AddressAsHostOrderIntegerEv_nid_postfix(const WebRtcIpAddress* address);
 int APS5_VABI libwebrtcUnknown19(void);
 int APS5_VABI _ZNK3rtc13SocketAddress7IsAnyIPEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc10TruncateIPERKNS_9IPAddressEi_nid_postfix(void);
-int APS5_VABI _ZN3rtc15CountIPMaskBitsERKNS_9IPAddressE_nid_postfix(void);
+int APS5_VABI _ZN3rtc15CountIPMaskBitsERKNS_9IPAddressE_nid_postfix(const WebRtcIpAddress* mask);
 int APS5_VABI _ZN3rtc17AsyncPacketSocketD2Ev_nid_postfix(void);
 int APS5_VABI _ZN3rtc17AsyncPacketSocket20NotifyPacketReceivedERKNS_14ReceivedPacketE_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown20(void);
