@@ -662,18 +662,21 @@ int APS5_VABI sceKernelGetAppInfo(int pid, void* info) {
     constexpr std::size_t TitleIdOffset = 0x10;
     constexpr std::size_t TitleIdBytes = 10;
     constexpr std::size_t MarkerOffset = 0x50;
-    auto* bytes = static_cast<std::uint8_t*>(info);
-    std::memset(bytes, 0, StructureBytes);
+    std::uint8_t record[StructureBytes]{};
     if (own) {
         const auto titleId = GetAppTitleId_nid_postfix();
         char field[TitleIdBytes] = {};
         std::strncpy(field, titleId.value, sizeof(field) - 1);
         const std::uint32_t appId = 1;
-        std::memcpy(bytes, &appId, sizeof(appId));
-        std::memcpy(bytes + TitleIdOffset, field, TitleIdBytes);
+        std::memcpy(record, &appId, sizeof(appId));
+        std::memcpy(record + TitleIdOffset, field, TitleIdBytes);
     }
     const std::uint32_t marker = 0xffffffffu;
-    std::memcpy(bytes + MarkerOffset, &marker, sizeof(marker));
+    std::memcpy(record + MarkerOffset, &marker, sizeof(marker));
+    const int savedErrno = errno;
+    const bool written = WriteGuest(info, record, sizeof(record));
+    errno = savedErrno;
+    if (!written) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -713,9 +716,11 @@ int APS5_VABI getresgid_nid_postfix(std::uint32_t* rgid, std::uint32_t* egid, st
     return 0;
 }
 
+#ifndef __EMSCRIPTEN__
 void APS5_VABI exit_nid_postfix(int code) {
     LibcExit_nid_no_patch(code);
 }
+#endif
 
 [[noreturn]] void APS5_VABI _exit_nid_postfix(int status) {
     LibcTerminate_nid_no_patch(status);
@@ -960,7 +965,7 @@ int APS5_VABI sceKernelUuidCreate(std::uint32_t* uuid) {
     HostEntropy_nid_no_patch(value.data(), sizeof(value));
     value[1] = (value[1] & 0x0fffffffu) | 0x40000000u;
     value[2] = (value[2] & 0xffffff3fu) | 0x80u;
-    std::memcpy(uuid, value.data(), sizeof(value));
+    if (!GuestCopyOut_nid_no_patch(uuid, value.data(), sizeof(value))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -970,7 +975,7 @@ int APS5_VABI sceKernelCreateUuidV4(std::uint8_t* uuid) {
     HostEntropy_nid_no_patch(value.data(), value.size());
     value[6] = static_cast<std::uint8_t>((value[6] & 0x0fu) | 0x40u);
     value[8] = static_cast<std::uint8_t>((value[8] & 0x3fu) | 0x80u);
-    std::memcpy(uuid, value.data(), value.size());
+    if (!GuestCopyOut_nid_no_patch(uuid, value.data(), value.size())) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -1230,7 +1235,7 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
     getrlimit_nid_postfix(guestRlimitNofile, &limit);
 
     std::int64_t tableSize = limit.rlim_cur;
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
     tableSize = std::min(tableSize, static_cast<std::int64_t>(::getdtablesize()));
 #endif
     if (tableSize > std::numeric_limits<int>::max())
@@ -1239,6 +1244,10 @@ int APS5_VABI getdtablesize_nid_postfix(void) {
 }
 
 int APS5_VABI sceKernelIsTrinityMode(void) {
+    return 0;
+}
+
+int APS5_VABI sceKernelHasTrinityMode(void) {
     return 0;
 }
 
@@ -1314,7 +1323,7 @@ int APS5_VABI setresgid_nid_postfix(std::uint32_t rgid, std::uint32_t egid, std:
 }
 
 int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
-    if (count < 0 || count > freebsdGroupsMax) {
+    if (static_cast<std::uint32_t>(count) > static_cast<std::uint32_t>(freebsdGroupsMax) + 1) {
         *__error_nid_postfix() = errnoInvalidArgument;
         return -1;
     }
@@ -1344,8 +1353,9 @@ int APS5_VABI setgroups_nid_postfix(int count, const std::uint32_t* groups) {
 int APS5_VABI getgroups_nid_postfix(int capacity, std::uint32_t* groups) {
     std::lock_guard lock(supplementaryGroupsMutex);
     const int count = static_cast<int>(supplementaryGroups.size());
-    if (capacity == 0) return count;
-    if (capacity < count) {
+    const auto size = static_cast<std::uint32_t>(capacity);
+    if (size == 0) return count;
+    if (size < static_cast<std::uint32_t>(count)) {
         *__error_nid_postfix() = errnoInvalidArgument;
         return -1;
     }

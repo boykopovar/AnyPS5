@@ -17,7 +17,7 @@
 #include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
-#else
+#elif !defined(__EMSCRIPTEN__)
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #endif
 
@@ -149,6 +149,8 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
     info->seg0_addr = region;
     info->seg0_size = size;
     return true;
+#elif defined(__EMSCRIPTEN__)
+    return sceKernelGetModuleInfoForUnwind(addr, 0, info) == 0;
 #else
     const auto mapping = HostMapping::Find(addr, "sceSysmoduleGetModuleInfoForUnwind");
     if (!mapping) {

@@ -25,6 +25,7 @@ DT_JMPREL = 23
 DT_PLTRELSZ = 2
 DT_PLTREL = 20
 DT_STRSZ = 10
+DT_SYMENT = 11
 DT_RELAENT = 9
 DT_REL = 17
 DT_RELA_KIND = 7
@@ -35,7 +36,7 @@ RELA_SIZE = 24
 R_X86_64_NONE = 0
 
 LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
-STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)?jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%rip\)\s+# 0x([0-9a-f]+)")
+STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
 BRANCH = re.compile(r"\b(?:call|jmp)q?\s+0x([0-9a-f]+)")
 REFERENCE = re.compile(r"# 0x([0-9a-f]+)")
 
@@ -51,12 +52,16 @@ class Module:
         self.dynamic = None
         self.read_headers()
         self.tags = self.read_tags()
+        self.strsz = self.require_tag(DT_STRSZ, "DT_STRSZ")
         self.strtab = self.address(self.require_tag(DT_STRTAB, "DT_STRTAB"))
         self.symtab = self.address(self.require_tag(DT_SYMTAB, "DT_SYMTAB"))
-        self.strsz = self.require_tag(DT_STRSZ, "DT_STRSZ")
         if self.strtab + self.strsz > len(self.data):
             raise ModuleError("the string table of DT_STRSZ %#x extends past the end of the file" % self.strsz)
+        self.address(self.tags[DT_STRTAB], self.strsz)
+        if self.require_tag(DT_SYMENT, "DT_SYMENT") != SYMBOL_SIZE:
+            raise ModuleError("DT_SYMENT is not %d" % SYMBOL_SIZE)
         self.symbol_count = self.count_symbols()
+        self.address(self.tags[DT_SYMTAB], self.symbol_count * SYMBOL_SIZE)
         self.check_relocation_tags()
 
     def unpack(self, form, offset):
@@ -98,41 +103,53 @@ class Module:
             raise ModuleError("the dynamic section has no %s" % name)
         return self.tags[tag]
 
-    def address(self, vaddr):
+    def address(self, vaddr, length=1):
         for start, offset, size, _ in self.loads:
-            if start <= vaddr < start + size:
-                return offset + vaddr - start
-        raise ModuleError("address %#x is outside every PT_LOAD segment" % vaddr)
+            if start <= vaddr <= start + size:
+                position = offset + vaddr - start
+                if position + length > len(self.data):
+                    continue
+                covered = vaddr
+                for next_start, next_offset, next_size, _ in sorted(self.loads):
+                    if next_offset - next_start == position - vaddr and next_start <= covered:
+                        covered = max(covered, next_start + next_size)
+                if covered >= vaddr + length:
+                    return position
+        raise ModuleError("range %#x+%#x is outside file-backed PT_LOAD data" % (vaddr, length))
 
     def count_symbols(self):
         if DT_HASH in self.tags:
-            return self.unpack("<I", self.address(self.tags[DT_HASH]) + 4)[0]
+            table = self.tags[DT_HASH]
+            buckets, count = self.unpack("<II", self.address(table, 8))
+            self.address(table, (2 + buckets + count) * 4)
+            return count
         if DT_GNU_HASH in self.tags:
-            return self.count_gnu_symbols(self.address(self.tags[DT_GNU_HASH]))
+            return self.count_gnu_symbols(self.tags[DT_GNU_HASH])
         raise ModuleError("the dynamic section has neither DT_HASH nor DT_GNU_HASH, so the symbol count is unknown")
 
     def count_gnu_symbols(self, table):
-        buckets, symoffset, bloom_size, _ = self.unpack("<IIII", table)
+        buckets, symoffset, bloom_size, _ = self.unpack("<IIII", self.address(table, 16))
         buckets_at = table + 16 + bloom_size * 8
         chains_at = buckets_at + buckets * 4
-        last = max((self.unpack("<I", buckets_at + 4 * index)[0] for index in range(buckets)), default=0)
+        self.address(table, chains_at - table)
+        last = max((self.unpack("<I", self.address(buckets_at + 4 * index, 4))[0] for index in range(buckets)), default=0)
         if last < symoffset:
             return symoffset
-        while not self.unpack("<I", chains_at + 4 * (last - symoffset))[0] & 1:
+        while not self.unpack("<I", self.address(chains_at + 4 * (last - symoffset), 4))[0] & 1:
             last += 1
         return last + 1
 
     def symbol(self, index):
         if index >= self.symbol_count:
             raise ModuleError("symbol index %d is outside the %d symbols of the module" % (index, self.symbol_count))
-        name, info, _, shndx, value, _ = self.unpack("<IBBHQQ", self.symtab + index * SYMBOL_SIZE)
+        name, info, other, shndx, value, _ = self.unpack("<IBBHQQ", self.symtab + index * SYMBOL_SIZE)
         if name >= self.strsz:
             raise ModuleError("symbol %d has a name offset %#x outside DT_STRSZ %#x" % (index, name, self.strsz))
         start = self.strtab + name
         end = self.data.find(b"\0", start, self.strtab + self.strsz)
         if end < 0:
             raise ModuleError("symbol %d has a name unterminated within DT_STRSZ %#x" % (index, self.strsz))
-        return self.data[start:end].decode("utf-8", errors="replace"), shndx, value, info & 0xF
+        return self.data[start:end].decode("utf-8", errors="replace"), shndx, value, info & 0xF, info >> 4, other & 3
 
     def check_relocation_tags(self):
         if DT_REL in self.tags:
@@ -157,7 +174,9 @@ class Module:
         for table, size in self.relocation_tables():
             if size % RELA_SIZE:
                 raise ModuleError("relocation table at %#x has %d bytes, not a multiple of %d" % (table, size, RELA_SIZE))
-            start = self.address(table)
+            if size == 0:
+                continue
+            start = self.address(table, size)
             for position in range(start, start + size, RELA_SIZE):
                 offset, info, _ = self.unpack("<QQq", position)
                 if (info & 0xFFFFFFFF) == R_X86_64_NONE:
@@ -170,8 +189,8 @@ class Module:
         found = {}
         thread_local = {}
         for index in range(1, self.symbol_count):
-            name, shndx, value, kind = self.symbol(index)
-            if shndx == 0 or not name:
+            name, shndx, value, kind, binding, visibility = self.symbol(index)
+            if shndx == 0 or not name or binding == 0 or visibility in (1, 2):
                 continue
             (thread_local if kind == STT_TLS else found).setdefault(value, []).append(name)
         return found, thread_local
@@ -179,12 +198,12 @@ class Module:
     def code_segments(self):
         segments = []
         for vaddr, offset, size, flags in sorted(self.loads):
-            if flags & PF_X:
+            if flags & PF_X and size:
                 if offset + size > len(self.data):
                     raise ModuleError("the executable PT_LOAD segment at %#x extends past the end of the file" % vaddr)
                 segments.append((vaddr, self.data[offset:offset + size]))
         if not segments:
-            raise ModuleError("no executable PT_LOAD segment")
+            raise ModuleError("no executable PT_LOAD segment with file-backed data")
         return segments
 
 
@@ -216,23 +235,35 @@ def disassemble(code, vaddr):
     objdump = gnu_objdump()
     if objdump is None:
         raise ModuleError("GNU binutils objdump was not found as any of %s" % ", ".join(OBJDUMP_NAMES))
+    objdump = str(Path(objdump).absolute())
     with tempfile.TemporaryDirectory() as directory:
         blob = Path(directory) / "text.bin"
         blob.write_bytes(code)
-        command = [objdump, "-D", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
-                   "--adjust-vma=%d" % vaddr, str(blob)]
-        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        command = [objdump, "-D", "--disassemble-zeroes", "-b", "binary", "-m", "i386:x86-64", "--no-show-raw-insn",
+                   "--adjust-vma=%d" % vaddr, blob.name]
+        result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=directory)
     if result.returncode != 0:
         raise ModuleError("objdump failed: %s" % result.stderr.strip())
     return result.stdout.splitlines()
+
+
+def referenced_address(line):
+    if "%fs:" in line or "%gs:" in line:
+        return None
+    reference = REFERENCE.search(line)
+    if reference is None:
+        return None
+    address = int(reference.group(1), 16)
+    return address & 0xFFFFFFFF if "(%eip)" in line else address
 
 
 def find_stubs(listing, slots, namer):
     stubs = {}
     for line in listing:
         match = STUB.match(line)
-        if match and int(match.group(2), 16) in slots:
-            stubs[int(match.group(1), 16)] = namer.resolve(slots[int(match.group(2), 16)])
+        target = referenced_address(line)
+        if match and target in slots:
+            stubs[int(match.group(1), 16)] = namer.resolve(slots[target])
     return stubs
 
 
@@ -241,9 +272,9 @@ def line_note(line, slots, stubs, namer):
     branch = BRANCH.search(line)
     if branch and int(branch.group(1), 16) in stubs:
         note = "   ; -> " + stubs[int(branch.group(1), 16)]
-    reference = REFERENCE.search(line)
-    if reference and int(reference.group(1), 16) in slots:
-        note = "   ; GOT " + namer.resolve(slots[int(reference.group(1), 16)])
+    reference = referenced_address(line)
+    if reference in slots:
+        note = "   ; GOT " + namer.resolve(slots[reference])
     return note
 
 

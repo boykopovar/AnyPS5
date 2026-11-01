@@ -79,6 +79,7 @@ struct ColorTarget {
     std::uint32_t layers = 1;
     std::uint32_t exportIndex = 0;
     bool uintExport = false;
+    bool volume = false;
     std::uint32_t pipeBankXor = 0;
     std::uint32_t samples = 1;
     std::uint32_t coverageSamples = 1;
@@ -89,6 +90,10 @@ struct ColorTarget {
     bool staged = false;
     std::uint16_t stagedMask = 0;
     VkFormat stagedFormat = VK_FORMAT_UNDEFINED;
+
+    std::uint64_t MemoryAddress() const {
+        return volume && tileMode != ColorTileMode::Linear ? surfaceAddress : address;
+    }
 };
 
 struct DepthTarget {

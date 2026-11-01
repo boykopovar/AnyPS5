@@ -17,3 +17,12 @@
 
 - [Content queries](../../../core/libs/prx/libSceContentSearch/Export.cpp) use an empty host library and always report update id 0; the console's initial update id is unverified. No content rows are produced. Every title is assumed to have search permission. Nested filter/sort validation is incomplete: empty nested column sets, null filter values and unknown enum values throw. Guest heap allocation and the platform-dependent minimum heap size are unimplemented. Initialization and outer pointer/count/limit validation follow the supplied module.
 - [Metadata access](../../../core/libs/prx/libSceContentSearch/Export.cpp) cannot open metadata by path or content id because missing-content errors remain unresolved: past their argument checks, both opening calls go through `NotImplemented_nid_no_patch`. No metadata handles are issued. The field-info and value queries reject invalid outer pointers, then go through `NotImplemented_nid_no_patch`, as no metadata id is ever opened and the console's error for one depends on the requested field; closing an unopened handle returns the confirmed invalid-argument error.
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceContentSearch/Export.cpp) - 2 entries observed in the 3.20 export inventory and present in the later 13.60-labelled inventory are import-resolution declarations only. The later inventory label does not authenticate a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Data exports require separate layout and ownership analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `Np8cEpyDFRE` |
+| `Unknown` | `X9e+hZfue0U` |
