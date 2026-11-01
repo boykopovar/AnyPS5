@@ -1,0 +1,41 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI monosgenLegacyUnknown__minus_hPhWKGhnuE_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_1_minus_9PZ6MKKjo_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_3odVOzLMVEk_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_4Bc9qxY6JOw_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_4kiUonWDBLU_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_8VK_minus_q3yEO7M_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_HmWV8JHMYm8_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_IIT_plus_EGxGv8A_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_JDqkg5ihzk0_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_KZKA1qEWr_plus_A_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_LQHIxeqahlg_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_RapLtFkmE5I_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_VOzeHL04Ws0_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_Ybqebr7v8_minus_Y_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_YhoWU6ouoCw_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_ZRqxGlHZaAM_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_dXMGKAzykH0_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_eDglomsck7M_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_eW7NO7wPwt4_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_hY0vHypnMdg_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_kn1yesLMf_minus_Y_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_n5hK0leG0XI_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_nawVeDw1vD4_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_qlTr81UvpT0_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_qwVA_minus_vxAa84_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_r4bOmdTOkfs_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_uKl2mNtDE6o_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_uwr58kSXeO8_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_vk4wujfGsQs_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_vkytkdvu2Rs_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_x39L8AYS1VE_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_xBF8Fgr9ijE_nid_no_patch();
+int APS5_VABI monosgenLegacyUnknown_yHNzl5vZB0k_nid_no_patch();
+
+}
