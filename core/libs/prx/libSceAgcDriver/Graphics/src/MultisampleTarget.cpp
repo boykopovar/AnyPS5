@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include <shared_mutex>
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
@@ -308,7 +309,7 @@ public:
     void destroy(const Allocation& allocation) noexcept {
         if (allocation.view) context.Function<PFN_vkDestroyImageView>("vkDestroyImageView")(context.device, allocation.view, nullptr);
         if (allocation.image) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, allocation.image, nullptr);
-        if (allocation.memory) context.Function<PFN_vkFreeMemory>("vkFreeMemory")(context.device, allocation.memory, nullptr);
+        if (allocation.memory) MemoryAccounting::Free(context, allocation.memory);
     }
 
     void recordToGeneral(VkCommandBuffer commands, VkImage destination, VkPipelineStageFlags destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT, VkAccessFlags destinationAccess = VK_ACCESS_TRANSFER_WRITE_BIT) {
