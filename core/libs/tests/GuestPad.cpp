@@ -175,7 +175,11 @@ static void CheckTouchPadInformation(int handle) {
     Require(info.touchPadInfo.resolution.x == kTouchPadWidth);
     Require(info.touchPadInfo.resolution.y == kTouchPadHeight);
     Require(info.touchPadInfo.pixelDensity == 44.86f);
-    Require(scePadGetControllerInformation(handle + 1, &info) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadGetControllerInformation(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    for (const int invalid : {-1, 0, handle + 1, 9999}) {
+        Require(scePadGetControllerInformation(invalid, &info) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadGetControllerInformation(invalid, nullptr) == PAD_ERROR_INVALID_HANDLE);
+    }
 }
 
 static void CheckExtControllerInformation(int handle) {
