@@ -2,9 +2,9 @@
 
 ### Functional
 
-- All 82 exports remain fail-fast declarations that call `NotImplemented_nid_no_patch`. No fabricated success, unsupported pre-initialization status returns, or HID command dispatch is introduced by this PR. The current emulator has no verified HID transport, device initialization/lifecycle, command handling, or guest-memory output writes for this library.
-- The typed argument lists are **provisional static-analysis hypotheses**, not independently verified ABI signatures. The command identifiers and layouts explored in [the earlier revision of PR #14194](https://github.com/xdCloudy/AnyPS5/blob/498cd1434cdb1b4da55b9d1bbca54e0701213346/core/libs/prx/libSceHidControl/Export.cpp) are retained only as review history; the command bodies have been removed until real transport and error behavior can be established.
-- Remaining work: verify parameters and return ABI against authoritative console evidence, establish HID device transport and lifecycle, validate command codes/payloads, implement output-buffer and guest-memory writes, propagate device errors correctly, and test on hardware.
+- All 82 [libSceHidControl exports](../../../core/libs/prx/libSceHidControl/Export.cpp) remain fail-fast declarations that call `NotImplemented_nid_no_patch`. No fabricated success, unsupported pre-initialization status returns, or HID command dispatch is introduced by this PR. The current emulator has no verified HID transport, device initialization/lifecycle, command handling, or guest-memory output writes for this library.
+- The [libSceHidControl typed argument lists](../../../core/libs/prx/libSceHidControl/include/Api.hpp) are **provisional static-analysis hypotheses**, not independently verified ABI signatures. The command identifiers and layouts explored in [the earlier revision of PR #14194](https://github.com/xdCloudy/AnyPS5/blob/498cd1434cdb1b4da55b9d1bbca54e0701213346/core/libs/prx/libSceHidControl/Export.cpp) are retained only as review history; the command bodies have been removed until real transport and error behavior can be established.
+- Remaining [libSceHidControl work](../../../core/libs/prx/libSceHidControl/Export.cpp): verify parameters and return ABI against authoritative console evidence, establish HID device transport and lifecycle, validate command codes/payloads, implement output-buffer and guest-memory writes, propagate device errors correctly, and test on hardware.
 
 ### Unknown function info
 
