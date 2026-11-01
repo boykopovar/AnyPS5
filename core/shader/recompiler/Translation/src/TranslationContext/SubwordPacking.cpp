@@ -14,7 +14,7 @@ IrU32 TranslationContext::readU32(const RdnaOperand& operand) {
 
 std::array<IrU32, 2> TranslationContext::readU32Pair(const RdnaOperand& operand) {
     switch (operand.kind) {
-        case RdnaOperandKind::LiteralConstant: return {readU32(operand), IrU32(ir.Constant(0u))};
+        case RdnaOperandKind::LiteralConstant: return {readU32(operand), IrU32(ir.Constant(IsSigned64BitIntegerOpcode(currentOpcode) && (operand.value & 0x80000000u) != 0u ? 0xffffffffu : 0u))};
         case RdnaOperandKind::IntegerInlineConstant: return {readU32(operand), IrU32(ir.Constant(operand.signedVal < 0 ? 0xffffffffu : 0u))};
         case RdnaOperandKind::FloatInlineConstant: {
             const auto bits = std::bit_cast<std::uint64_t>(static_cast<double>(std::bit_cast<float>(operand.value)));
