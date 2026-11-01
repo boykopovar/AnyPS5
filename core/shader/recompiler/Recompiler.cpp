@@ -41,6 +41,7 @@
 #include "Optimization/include/Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/include/Optimization/ResourceTracker.hpp"
+#include "Optimization/include/Optimization/VectorWindowIndexNarrower.hpp"
 #include "Optimization/include/Optimization/VectorWindowStoreEliminator.hpp"
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
@@ -290,6 +291,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     constexpr DeadCodeEliminator deadCodeEliminator;
     constexpr ReadLaneEliminator readLaneEliminator;
     constexpr MaskedSelectEliminator maskedSelectEliminator;
+    constexpr VectorWindowIndexNarrower vectorWindowIndexNarrower;
     constexpr VectorWindowStoreEliminator vectorWindowStoreEliminator;
     const auto simplify = [&] {
         dumpIr("translate");
@@ -307,6 +309,11 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             constantFolder.Fold(program);
             ResolveControlFlowIdentities(program);
             deadCodeEliminator.RemoveIdentities(program);
+            deadCodeEliminator.Eliminate(program);
+        }
+
+        if (vectorWindowIndexNarrower.Narrow(program).narrowedLoads != 0u) {
+            constantFolder.Fold(program);
             deadCodeEliminator.Eliminate(program);
         }
 

@@ -1095,6 +1095,30 @@ void verifyMayEvaluate() {
     require(bitEvaluator.Evaluate(Detail::IrNode(&countBits), bitResult) && bitResult == 1u, "Evaluator evaluated BitCount32 incorrectly");
     require(bitEvaluator.Evaluate(Detail::IrNode(&findILsb), bitResult) && bitResult == 2u, "Evaluator evaluated FindILsb32 incorrectly");
     require(bitEvaluator.Evaluate(Detail::IrNode(&findUMsb), bitResult) && bitResult == 2u, "Evaluator evaluated FindUMsb32 incorrectly");
+    struct NanCase {
+        std::uint32_t result;
+        bool quiet;
+        std::uint32_t invalid;
+        std::array<std::uint32_t, 3> sources;
+        std::uint32_t count;
+        std::uint32_t expected;
+        const char* name;
+    };
+    for (const auto& [result, quiet, invalid, sources, count, expected, name] : std::array<NanCase, 7>{{
+             {0x40400000u, true, 0u, {0x3f800000u, 0x40000000u, 0u}, 2u, 0x40400000u, "a number result"},
+             {0x7fc00000u, true, 0u, {0x7f800000u, 0u, 0u}, 2u, 0xffc00000u, "an invalid result of number sources"},
+             {0x7fc00000u, true, 0u, {0x3f800000u, 0x7f812345u, 0u}, 2u, 0x7fc12345u, "a signaling NaN source quieted"},
+             {0x7fc00000u, false, 0u, {0x3f800000u, 0x7f812345u, 0u}, 2u, 0x7f812345u, "a signaling NaN source kept"},
+             {0x7fc00000u, true, 0u, {0x7fc00001u, 0x7fc00002u, 0u}, 2u, 0x7fc00001u, "the first NaN source"},
+             {0x7fc00000u, true, 1u, {0x7f800000u, 0u, 0x7fc00003u}, 3u, 0xffc00000u, "an invalid product before a NaN addend"},
+             {0x7fc00000u, true, 0u, {0x3f800000u, 0x40000000u, 0x7f800003u}, 3u, 0x7fc00003u, "a NaN addend"},
+         }}) {
+        auto& propagated = make(IrOpcode::NanPropagateF32, IrType::F32, {&constant(result), &constant((quiet ? 1u : 0u) | count << 1u), &constant(invalid), &constant(sources[0]), &constant(sources[1]), &constant(sources[2])});
+        require(Detail::Evaluator::MayEvaluate(plan, &propagated), (std::string("MayEvaluate rejected NanPropagateF32 for ") + name).c_str());
+        Detail::Evaluator nanEvaluator(plan, runtime);
+        std::uint32_t bits = 0;
+        require(nanEvaluator.Evaluate(Detail::IrNode(&propagated), bits) && bits == expected, (std::string("Evaluator propagated NaN incorrectly for ") + name).c_str());
+    }
     const std::array<IrOpcode, 7> takenAsEvaluable{IrOpcode::Identity, IrOpcode::Phi, IrOpcode::Void, IrOpcode::GetUserData, IrOpcode::GetShaderBase, IrOpcode::LoadAddressU32, IrOpcode::ReadConstBuffer};
     for (std::uint16_t raw = 0; raw < static_cast<std::uint16_t>(IrOpcode::Count); ++raw) {
         const auto opcode = static_cast<IrOpcode>(raw);

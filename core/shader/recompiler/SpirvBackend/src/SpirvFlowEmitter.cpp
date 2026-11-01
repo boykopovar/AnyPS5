@@ -3,6 +3,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -673,6 +674,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::ImageQueryLod: return Invoke(EmitImageQueryLod, ctx, inst);
         case IrOpcode::ImageRead: return Invoke(EmitImageRead, ctx, inst);
         case IrOpcode::ImageBvhIntersectRay: return Invoke(EmitImageBvhIntersectRay, ctx, inst);
+        case IrOpcode::NanPropagateF32: return Invoke(EmitNanPropagateF32, ctx, inst);
         case IrOpcode::ImageWrite: return Invoke(EmitImageWrite, ctx, inst);
         case IrOpcode::ImageSampleRaw: return Invoke(EmitImageSampleRaw, ctx, inst);
         case IrOpcode::ImageGatherRaw: return Invoke(EmitImageGatherRaw, ctx, inst);
@@ -928,6 +930,55 @@ void EmitWindowLaneGuard(SpirvValueEmitContext& ctx, const IrValue& inst, std::u
     const auto ownLane = Binary(state, spv::OpIEqual, boolean, EmitSubgroupLocalInvocationId(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), lane, ConstantU32(state, state.program.WaveSize() - 1u)));
     const auto overwritten = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpIEqual, boolean, index, slot), Binary(state, spv::OpINotEqual, boolean, value, current));
     EmitIfCondition(state, Binary(state, spv::OpLogicalAnd, boolean, ownLane, overwritten), [&] { RecordBdaFaultWords(state, slot, lane, value, ConstantU32(state, 0u), BdaAbi::FaultReason::WindowLaneSpill); });
+}
+
+std::uint32_t EmitNanPropagateF32(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t result, std::uint32_t, std::uint32_t invalid, std::uint32_t source0, std::uint32_t source1, std::uint32_t source2) {
+    auto& state = ctx.state;
+    const auto flags = inst.Argument(1)->Resolve()->ImmediateU32();
+    const bool quiet = (flags & 1u) != 0u;
+    const auto count = flags >> 1u;
+    const auto u32 = TypeU32(state);
+    const auto boolean = TypeBool(state);
+    const auto isNan = [&](std::uint32_t bits) { return Binary(state, spv::OpUGreaterThan, boolean, Binary(state, spv::OpBitwiseAnd, u32, bits, ConstantU32(state, 0x7fffffffu)), ConstantU32(state, 0x7f800000u)); };
+    const std::array<std::uint32_t, 3> sources{source0, source1, source2};
+    const auto mayBeNan = [&](std::uint32_t index) {
+        const IrValue* source = inst.Argument(3u + index)->Resolve();
+        return !source->HasImmediate() || (source->ImmediateU32() & 0x7fffffffu) > 0x7f800000u;
+    };
+    bool anySource = false;
+    for (std::uint32_t index = 0; index < count; ++index) anySource = anySource || mayBeNan(index);
+    const auto bits = Unary(state, spv::OpBitcast, u32, result);
+    const auto resultNan = isNan(bits);
+    if (!anySource) return Unary(state, spv::OpBitcast, TypeF32(state), Select(state, u32, resultNan, ConstantU32(state, 0xffc00000u), bits));
+    const auto entry = state.currentLabel;
+    const auto propagate = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlDontFlattenMask);
+    state.module.AddFunction(spv::OpBranchConditional, resultNan, propagate, merge);
+    EmitLabel(state, propagate);
+    auto propagated = ConstantU32(state, 0xffc00000u);
+    const bool guardedAddend = count == 3u && !(inst.Argument(2)->Resolve()->HasImmediate() && !inst.Argument(2)->Resolve()->ImmediateBool());
+    const auto repeatsEarlier = [&](std::uint32_t index) {
+        for (std::uint32_t earlier = 0; earlier < index; ++earlier) {
+            if (sources[earlier] == sources[index]) return true;
+        }
+        return false;
+    };
+    for (auto index = count; index-- > 0u;) {
+        if (!mayBeNan(index) || repeatsEarlier(index)) continue;
+        const IrValue* source = inst.Argument(3u + index)->Resolve();
+        const auto sourceBits = source->HasImmediate() ? ConstantU32(state, source->ImmediateU32()) : Unary(state, spv::OpBitcast, u32, sources[index]);
+        auto selected = isNan(sourceBits);
+        if (guardedAddend && index == 2u) selected = Binary(state, spv::OpLogicalAnd, boolean, selected, Unary(state, spv::OpLogicalNot, boolean, invalid));
+        const auto quieted = quiet ? Binary(state, spv::OpBitwiseOr, u32, sourceBits, ConstantU32(state, 0x00400000u)) : sourceBits;
+        propagated = Select(state, u32, selected, quieted, propagated);
+    }
+    const auto propagateExit = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+    const auto value = state.module.AllocateId();
+    state.module.AddFunction(spv::OpPhi, u32, value, propagated, propagateExit, bits, entry);
+    return Unary(state, spv::OpBitcast, TypeF32(state), value);
 }
 
 void EmitDescriptorFault(SpirvValueEmitContext& ctx, const IrValue& inst, std::uint32_t condition, std::uint32_t low, std::uint32_t high, std::uint32_t programCounter) {

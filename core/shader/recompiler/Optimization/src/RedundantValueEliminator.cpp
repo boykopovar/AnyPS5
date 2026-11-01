@@ -42,6 +42,7 @@ bool Recomputable(IrOpcode opcode) {
         case IrOpcode::FPAbs32:
         case IrOpcode::FPNeg32:
         case IrOpcode::FPSaturate32:
+        case IrOpcode::NanPropagateF32:
         case IrOpcode::BitFieldInsert:
         case IrOpcode::BitFieldUExtract:
         case IrOpcode::BitFieldSExtract:

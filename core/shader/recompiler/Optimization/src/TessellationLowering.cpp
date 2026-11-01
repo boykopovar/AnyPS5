@@ -346,6 +346,7 @@ bool CarriesRelativeBits(IrOpcode opcode) {
     case IrOpcode::FPAdd32:
     case IrOpcode::FPSub32:
     case IrOpcode::FPMul32:
+    case IrOpcode::NanPropagateF32:
     case IrOpcode::FPMad32:
     case IrOpcode::FPFma32:
     case IrOpcode::FFma32:
