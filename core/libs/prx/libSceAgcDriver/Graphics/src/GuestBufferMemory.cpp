@@ -5365,6 +5365,16 @@ bool GuestBufferMemory::gpuCopyEligible(const Region& region) const {
     return region.end - region.begin <= gpuCopyLimit();
 }
 
+bool GuestBufferMemory::copyBehindGpuWork(const Region& region, bool locked) const {
+    if (!gpuCopiesEnabled() || region.sparse || !(region.hostBacked || region.writable)) return false;
+    const auto* recorder = Recorder::Active();
+    if (recorder == nullptr) return false;
+    const auto bytes = static_cast<std::size_t>(region.end - region.begin);
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> range{{{region.begin, region.end}}};
+    const bool written = locked ? recorder->PendingWriteOverlaps(region.begin, bytes) : Recorder::SnapshotWriteOverlaps(region.begin, bytes);
+    return written || StorageTexture::AnyPendingOverlaps(range) || AnyShadowedOverlaps(region.begin, bytes);
+}
+
 bool GuestBufferMemory::bindableInPlace(std::uint64_t offset, bool addressable) const {
     if (adjustedRegions && !addressable) return offset % 4 == 0;
     return offset % context.limits.minStorageBufferOffsetAlignment == 0;
@@ -5575,7 +5585,7 @@ void GuestBufferMemory::UploadPrepare(bool addressable) {
             }
             if (misaligned || staged) {
                 if (!staged) {
-                    if (!gpuCopyEligible(region)) continue;
+                    if (!gpuCopyEligible(region) && !copyBehindGpuWork(region, false)) continue;
                     const auto allocateStart = std::chrono::steady_clock::now();
                     region.buffer = std::make_shared<Buffer>(context, static_cast<std::size_t>(region.end - region.begin), gpuCopyUsage(addressable), copyBufferProperties(false));
                     if (profile) allocateUs.fetch_add(microsecondsSince(allocateStart), std::memory_order_relaxed);
@@ -5789,7 +5799,7 @@ void GuestBufferMemory::UploadFinish(bool addressable, std::optional<std::pair<s
                 // region in place (Descriptor prefers `direct`), and a kept buffer would count as copied.
                 region.buffer.reset();
                 region.deviceLocal = false;
-            } else if (entry != nullptr && recorder != nullptr && (staged || gpuCopyEligible(region))) {
+            } else if (entry != nullptr && recorder != nullptr && (staged || gpuCopyEligible(region) || copyBehindGpuWork(region, true))) {
                 // Misaligned in the import (or staged): the GPU copies the sub-range out of it. The
                 // handle and base are taken now, under the import lock: a reconcile by the flush
                 // below could retire the entry (the batch opened below keeps a retired import's
