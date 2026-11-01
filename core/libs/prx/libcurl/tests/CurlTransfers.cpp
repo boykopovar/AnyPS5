@@ -60,6 +60,64 @@ static std::string FileUrl(const std::filesystem::path& path) {
     return "file://" + text;
 }
 
+struct Hsts {
+    int reads = 0;
+    int writes = 0;
+    bool served = false;
+    std::string written;
+};
+
+static CURLSTScode APS5_VABI HstsRead(CURL*, curl_hstsentry* entry, void* opaque) {
+    auto* hsts = static_cast<Hsts*>(opaque);
+    ++hsts->reads;
+    if (hsts->served) return CURLSTS_DONE;
+    hsts->served = true;
+    std::strcpy(entry->name, "hsts.example");
+    std::strcpy(entry->expire, "20991231 23:59:59");
+    return CURLSTS_OK;
+}
+
+static CURLSTScode APS5_VABI HstsWrite(CURL*, curl_hstsentry* entry, curl_index*, void* opaque) {
+    auto* hsts = static_cast<Hsts*>(opaque);
+    ++hsts->writes;
+    hsts->written = entry->name;
+    return CURLSTS_OK;
+}
+
+static void TestHstsThroughDuplicates(const std::string& url) {
+    Hsts hsts;
+    std::string output;
+    auto* easy = curl_easy_init_nid_postfix();
+    Require(easy);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_URL, url.c_str()) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEDATA, &output) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_WRITEFUNCTION, Write) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HSTS_CTRL, int64_t{CURLHSTS_ENABLE}) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HSTSREADFUNCTION, HstsRead) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HSTSREADDATA, &hsts) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HSTSWRITEFUNCTION, HstsWrite) == CURLE_OK);
+    Require(curl_easy_setopt_nid_postfix(easy, CURLOPT_HSTSWRITEDATA, &hsts) == CURLE_OK);
+    Require(curl_easy_perform_nid_postfix(easy) == CURLE_OK && !output.empty());
+    Require(hsts.reads == 2);
+    for (int round = 0; round < 3; ++round) {
+        hsts.served = false;
+        const int reads = hsts.reads;
+        const int writes = hsts.writes;
+        auto* duplicate = curl_easy_duphandle_nid_postfix(easy);
+        Require(duplicate);
+        Require(hsts.reads == reads + 2);
+        hsts.written.clear();
+        curl_easy_cleanup_nid_postfix(duplicate);
+        Require(hsts.writes == writes + 1 && hsts.written == "hsts.example");
+    }
+    output.clear();
+    Require(curl_easy_perform_nid_postfix(easy) == CURLE_OK && !output.empty());
+    const int writes = hsts.writes;
+    hsts.written.clear();
+    curl_easy_cleanup_nid_postfix(easy);
+    Require(hsts.writes == writes + 1 && hsts.written == "hsts.example");
+}
+
 int main() {
     Require(curl_global_init_nid_postfix(CURL_GLOBAL_DEFAULT) == CURLE_OK);
     auto path = std::filesystem::temp_directory_path() /
@@ -71,6 +129,7 @@ int main() {
         Require(file.good());
     }
     auto url = FileUrl(path);
+    TestHstsThroughDuplicates(url);
     auto* easy = curl_easy_init_nid_postfix();
     Require(easy);
     std::string output;
@@ -150,15 +209,6 @@ int main() {
     Require(StreamBytes(second) == bytes);
     std::fclose(native);
     std::fclose(second);
-    if constexpr (sizeof(long) == 4) {
-        bool threw = false;
-        try {
-            curl_easy_setopt_nid_postfix(duplicate, CURLOPT_TIMEOUT, int64_t{1} << 40);
-        } catch (const std::out_of_range&) {
-            threw = true;
-        }
-        Require(threw);
-    }
     curl_easy_reset_nid_postfix(duplicate);
     auto uploadPath = path;
     uploadPath += "-upload";

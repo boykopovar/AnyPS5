@@ -192,7 +192,7 @@ curlioerr Ioctl(CURL* easy, int command, void* opaque) {
 int DefaultSeek(void* opaque, curl_off_t offset, int origin) {
     auto* context = static_cast<EasyContext*>(opaque);
     if (fseek_nid_postfix(static_cast<FileStream*>(context->slots[9].data), offset, origin) == -1)
-        throw std::runtime_error("libcurl default input rewind failed");
+        return CURL_SEEKFUNC_CANTSEEK;
     return CURL_SEEKFUNC_OK;
 }
 
@@ -926,15 +926,16 @@ CURL* APS5_VABI curl_easy_duphandle_nid_postfix(CURL* handle) {
     auto source = FindEasy(handle);
     auto* easy = ::curl_easy_duphandle(handle);
     if (!easy) return nullptr;
+    std::shared_ptr<EasyContext> context;
     try {
-        auto context = std::make_shared<EasyContext>(*source);
-        RebindEasy(easy, context.get());
+        context = std::make_shared<EasyContext>(*source);
         std::lock_guard lock(contextMutex);
-        easies.emplace(easy, std::move(context));
+        easies.emplace(easy, context);
     } catch (const std::bad_alloc&) {
         ::curl_easy_cleanup(easy);
         return nullptr;
     }
+    RebindEasy(easy, context.get());
     return easy;
 }
 
@@ -979,15 +980,16 @@ CURL* APS5_VABI curl_easy_init_nid_postfix() {
     }
     auto* easy = ::curl_easy_init();
     if (!easy) return nullptr;
+    std::shared_ptr<EasyContext> context;
     try {
-        auto context = std::make_shared<EasyContext>();
-        BindEasy(easy, context.get());
+        context = std::make_shared<EasyContext>();
         std::lock_guard lock(contextMutex);
-        easies.emplace(easy, std::move(context));
+        easies.emplace(easy, context);
     } catch (const std::bad_alloc&) {
         ::curl_easy_cleanup(easy);
         return nullptr;
     }
+    BindEasy(easy, context.get());
     return easy;
 }
 
