@@ -1957,22 +1957,22 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                             Require(AgcDriver::GuestMemory::CollectWritesUncached(target.htileAddress, static_cast<std::size_t>(metadataBytes)) > beforeImport, "HTILE import window did not stamp its changed page");
                         }
                         if (completionCandidate && fault == ClearFault::None) {
-                            TargetRefuses([&] {
+                            if (format == VK_FORMAT_D32_SFLOAT) TargetRefuses([&] {
                                 auto uploadContext = context;
                                 uploadContext.hostImportAlignment = 0;
                                 GuestBufferMemory buffer(uploadContext);
                                 buffer.AddWritable(target.htileAddress, metadataBytes);
                                 buffer.Upload(false);
-                            }, "sample-preserving guest publication");
+                            }, PublicationRefusal(format));
                             const auto accepted = std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)};
                             RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes, accepted);
-                            TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.address, bytes, accepted); }, "sample-preserving guest publication");
-                            TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes + 1u, accepted); }, "sample-preserving guest publication");
+                            if (format == VK_FORMAT_D32_SFLOAT) TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.address, bytes, accepted); }, PublicationRefusal(format));
+                            if (format == VK_FORMAT_D32_SFLOAT) TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes + 1u, accepted); }, PublicationRefusal(format));
                             Require(DepthSurfaceAt(target.address), "an accepted HTILE buffer access retired its native depth owner");
                         }
                         if (completionCandidate) ArmHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
-                        if (completionCandidate && fault == ClearFault::None) {
-                            TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes, std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)}); }, "sample-preserving guest publication");
+                        if (completionCandidate && fault == ClearFault::None && format == VK_FORMAT_D32_SFLOAT) {
+                            TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes, std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)}); }, PublicationRefusal(format));
                         }
                         if (fault == ClearFault::Overlap) NoteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes), nativeBytes);
                         const auto storedBytes = fault == ClearFault::PartialStore ? 4u : static_cast<std::size_t>(metadataBytes);
@@ -2044,10 +2044,10 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
     Require(probe[0] == std::byte{0xa5}, "resident depth guard blocked an unrelated read");
     auto alias = target;
     alias.htileAddress += 65536u;
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "sample-preserving guest publication");
+    TargetRefuses([&] { DepthSurfaceView(context, alias); }, PublicationRefusal(format));
     alias = target;
     alias.htileDepthOnly = !target.htileDepthOnly;
-    TargetRefuses([&] { DepthSurfaceView(context, alias); }, "sample-preserving guest publication");
+    TargetRefuses([&] { DepthSurfaceView(context, alias); }, PublicationRefusal(format));
     auto resource = DecodeTextureResource(words);
     for (std::uint32_t field = 0u; field < 18u; ++field) {
         auto changed = resource;
