@@ -91,6 +91,11 @@ int Fail(int error) {
     return -1;
 }
 
+template <typename Field>
+bool Store(Field* field, Field value) {
+    return GuestCopyOut_nid_no_patch(field, &value, sizeof(value));
+}
+
 void Run(Job& job) {
     std::int64_t result = 0;
     if (job.opcode == LioRead) result = job.bytes == 0 ? 0 : pread_nid_postfix(job.descriptor, job.buffer, job.bytes, job.offset);
@@ -134,8 +139,8 @@ std::int64_t Consume(Aio& aio, std::list<std::shared_ptr<Job>>::iterator found) 
     const auto job = *found;
     aio.done.erase(found);
     aio.all.remove(job);
-    job->user->error = job->error;
-    job->user->status = job->status;
+    Store(&job->user->error, std::int64_t{job->error});
+    Store(&job->user->status, job->status);
     return job->error != 0 ? Fail(job->error) : job->status;
 }
 
@@ -149,19 +154,19 @@ std::optional<std::chrono::nanoseconds> WaitTime(const KernelTimespec& time) {
 }
 
 int Queue(GuestAiocb* user, int opcode) {
-    if (user == nullptr) return Fail(GuestEfault);
     auto& aio = Instance();
     std::unique_lock lock(aio.lock);
     aio.used = true;
-    user->status = -1;
-    user->error = 0;
-    user->kernelinfo = reinterpret_cast<void*>(std::intptr_t{-1});
+    Store(&user->status, std::int64_t{-1});
+    Store(&user->error, std::int64_t{0});
+    Store(&user->kernelinfo, reinterpret_cast<void*>(std::intptr_t{-1}));
     const auto fail = [&](int error) {
-        user->error = error;
+        Store(&user->error, std::int64_t{error});
         return Fail(error);
     };
     if (aio.all.size() >= QueuePerProcess) return fail(GuestEagain);
-    const GuestAiocb request = *user;
+    GuestAiocb request{};
+    if (!GuestCopyIn_nid_no_patch(&request, user, sizeof(request))) return fail(GuestEfault);
     if (request.nbytes > IoSizeMax) return Fail(GuestEinval);
     const int notify = request.sigevent.notify;
     if (notify != SigevKevent && notify != SigevSignal && notify != SigevThreadId && notify != SigevNone) return fail(GuestEinval);
@@ -179,9 +184,9 @@ int Queue(GuestAiocb* user, int opcode) {
     const bool vnode = type != 0 && type != TypeFifo;
     if (opcode == LioSync && !vnode) return fail(GuestEinval);
     if (opcode != LioSync && request.offset < 0) return fail(GuestEinval);
-    user->kernelinfo = reinterpret_cast<void*>(aio.nextId++);
+    if (!Store(&user->kernelinfo, reinterpret_cast<void*>(aio.nextId++))) return fail(GuestEinval);
     if (notify != SigevNone) NotImplemented_nid_no_patch("aio completion delivering a signal or a kevent");
-    user->error = GuestEinprogress;
+    Store(&user->error, std::int64_t{GuestEinprogress});
     if (type != TypeRegular && type != TypeDirectory) return fail(GuestEopnotsupp);
     auto job = std::make_shared<Job>(Job{user, request.fildes, opcode, request.offset, request.buf, request.nbytes});
     aio.all.push_back(job);
