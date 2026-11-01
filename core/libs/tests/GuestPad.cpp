@@ -1082,7 +1082,11 @@ int main() {
     Require(scePadSetVibration(-1, &vibMixed) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetVibration(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
 
-    const PadLightBarParam lightOff{0, 0, 0};
+    const PadLightBarBlinkingParameter blinkParam{};
+    Require(scePadSetLightBarBlinking(handle2, &blinkParam) == PAD_OK);
+    Require(scePadSetLightBarBlinking(handle2 + 99, &blinkParam) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarBlinking(-1, &blinkParam) == PAD_ERROR_INVALID_HANDLE);
+    Require(scePadSetLightBarBlinking(handle2, nullptr) == PAD_ERROR_INVALID_ARG);
     const PadLightBarParam lightFull{255, 255, 255};
     const PadLightBarParam lightColor{100, 150, 200};
     Require(scePadSetLightBar(handle2, &lightOff) == PAD_OK);
