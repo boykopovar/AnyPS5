@@ -271,7 +271,19 @@ static void VerifyReportedEventsMoveBehindWaitingOnes() {
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
 }
 
+static void VerifyDeleteInvalidHandle() {
+    Require(sceKernelDeleteEqueue(0) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelDeleteEqueue(-1) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelDeleteEqueue(99999) == SCE_KERNEL_ERROR_EBADF);
+
+    KernelEqueue eq = 0;
+    Require(sceKernelCreateEqueue(&eq, "delete_test") == SCE_OK);
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
+}
+
 int main() {
+    VerifyDeleteInvalidHandle();
     VerifyPeriodicTimer();
     VerifyUserEventReportedOncePerWait();
     VerifyBlockingWaitReportsLevelEventOnce();
