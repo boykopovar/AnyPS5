@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <filesystem>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -38,6 +39,13 @@ static std::size_t NativeDescriptorCount() {
 #ifdef _WIN32
     DWORD count = 0;
     Require(GetProcessHandleCount(GetCurrentProcess(), &count) != 0, "count native handles");
+    return count;
+#elif defined(__linux__)
+    std::size_t count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd")) {
+        static_cast<void>(entry);
+        ++count;
+    }
     return count;
 #else
     std::size_t count = 0;
