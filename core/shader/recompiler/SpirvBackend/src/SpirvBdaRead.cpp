@@ -458,7 +458,10 @@ std::uint32_t EmitElectedBdaRange(SpirvEmitterState& state, std::uint32_t type, 
     state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, elected, electedLabel, merge);
     EmitLabel(state, electedLabel);
-    const auto found = search();
+    const auto found = [&] {
+        PerLaneConstruct construct(state, "an elected BDA range search");
+        return search();
+    }();
     const auto electedExit = state.currentLabel;
     state.module.AddFunction(spv::OpBranch, merge);
     EmitLabel(state, merge);

@@ -74,6 +74,12 @@ std::uint32_t WaveLdsScope(const IrProgram& program, const ShaderWorkgroupInputI
     return threads <= program.WaveSize() ? spv::ScopeWorkgroup : 0u;
 }
 
+bool ReadsWorkgroupTables(const IrProgram& program) {
+    const auto& sources = program.Resources().descriptorSources;
+    const auto selected = [&](std::uint32_t source) { return source < sources.size() && sources[source].tableColumn.has_value() && sources[source].tableColumn->selected; };
+    return std::ranges::any_of(program.Info().samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; }) || std::ranges::any_of(program.Info().images, [&](const ImageResource& image) { return image.table != NoTable && !selected(image.source); });
+}
+
 }
 
 SpirvEmitterState::SpirvEmitterState(const IrProgram& program, const ShaderStageInputInfo& inputInfo) : module(program.Resources().stage == IrShaderStage::Mesh ? 0x00010400u : 0x00010300u), program(program), inputInfo(inputInfo), requirements(AnalyzeProgramRequirements(program)) {
@@ -304,7 +310,9 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     if (state.splitSubgroup && (state.requirements.subgroupBallot || state.requirements.subgroupShuffle)) state.requirements.subgroupLocalInvocationId = true;
     const auto* workgroup = ShaderWorkgroupInputFor(state);
     const bool halfHost = workgroup != nullptr && program.WaveSize() == 64u && workgroup->hostSubgroupSize == 32u;
-    state.spannedWave = halfHost && target.spannedWaves && program.Resources().stage == IrShaderStage::Compute && !state.requirements.computeDerivatives && std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u) == 64u;
+    const bool spannable = halfHost && program.Resources().stage == IrShaderStage::Compute && !state.requirements.computeDerivatives && std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u) == 64u;
+    state.spannedWave = spannable && (target.spannedWaves || (target.spanTableWaves && ReadsWorkgroupTables(program)));
+    state.spannedExchangeGuard = state.spannedWave && !target.spannedWaves;
     state.laneCount = halfHost && !state.spannedWave ? 2u : 1u;
     if (state.spannedWave) {
         state.requirements.subgroupLocalInvocationId = true;

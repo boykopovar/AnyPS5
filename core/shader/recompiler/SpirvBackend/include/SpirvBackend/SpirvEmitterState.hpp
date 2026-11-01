@@ -102,6 +102,8 @@ struct SpirvEmitterState {
     std::uint32_t hostSubgroupSize = 0;
     bool splitSubgroup = false;
     bool spannedWave = false;
+    bool spannedExchangeGuard = false;
+    std::vector<const char*> perLaneConstructs;
     std::uint32_t spannedExchangeVariable = 0;
     bool narrowSubgroupClock = false;
     bool float64DenormPreserve = false;
@@ -272,6 +274,21 @@ struct SpirvEmitterState {
     std::vector<SpirvOutputBinding> outputs;
     std::vector<std::uint32_t> interfaceVariables;
     std::unordered_map<const IrBlock*, std::uint32_t> labels;
+};
+
+class PerLaneConstruct {
+public:
+    PerLaneConstruct(SpirvEmitterState& state, const char* name) : state(state) {
+        state.perLaneConstructs.push_back(name);
+    }
+    ~PerLaneConstruct() {
+        state.perLaneConstructs.pop_back();
+    }
+    PerLaneConstruct(const PerLaneConstruct&) = delete;
+    PerLaneConstruct& operator=(const PerLaneConstruct&) = delete;
+
+private:
+    SpirvEmitterState& state;
 };
 
 struct SpirvValueEmitContext {

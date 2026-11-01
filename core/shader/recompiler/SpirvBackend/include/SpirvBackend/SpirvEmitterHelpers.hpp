@@ -189,7 +189,10 @@ void EmitIfCondition(SpirvEmitterState& state, std::uint32_t condition, TFunctio
     state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, condition, thenLabel, mergeLabel);
     EmitLabel(state, thenLabel);
-    function();
+    {
+        PerLaneConstruct construct(state, "a per-invocation selection");
+        function();
+    }
     state.module.AddFunction(spv::OpBranch, mergeLabel);
     EmitLabel(state, mergeLabel);
 }
@@ -203,7 +206,10 @@ std::uint32_t EmitValueOrDefaultIfCondition(SpirvEmitterState& state, std::uint3
     state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, condition, thenLabel, elseLabel);
     EmitLabel(state, thenLabel);
-    const auto thenValue = function();
+    const auto thenValue = [&] {
+        PerLaneConstruct construct(state, "a per-invocation selection");
+        return function();
+    }();
     state.module.AddFunction(spv::OpBranch, thenExit);
     EmitLabel(state, thenExit);
     state.module.AddFunction(spv::OpBranch, mergeLabel);
@@ -232,12 +238,18 @@ std::uint32_t EmitValueIfElse(SpirvEmitterState& state, std::uint32_t condition,
     state.module.AddFunction(spv::OpSelectionMerge, mergeLabel, spv::SelectionControlMaskNone);
     state.module.AddFunction(spv::OpBranchConditional, condition, thenLabel, elseLabel);
     EmitLabel(state, thenLabel);
-    const auto thenValue = thenFunction();
+    const auto thenValue = [&] {
+        PerLaneConstruct construct(state, "a per-invocation selection");
+        return thenFunction();
+    }();
     state.module.AddFunction(spv::OpBranch, thenExit);
     EmitLabel(state, thenExit);
     state.module.AddFunction(spv::OpBranch, mergeLabel);
     EmitLabel(state, elseLabel);
-    const auto elseValue = elseFunction();
+    const auto elseValue = [&] {
+        PerLaneConstruct construct(state, "a per-invocation selection");
+        return elseFunction();
+    }();
     state.module.AddFunction(spv::OpBranch, elseExit);
     EmitLabel(state, elseExit);
     state.module.AddFunction(spv::OpBranch, mergeLabel);
@@ -273,7 +285,10 @@ std::uint32_t AtomicUpdateTyped(SpirvEmitterState& state, std::uint32_t pointer,
     state.module.AddFunction(spv::OpBranch, header);
     EmitLabel(state, header);
     state.module.AddFunction(spv::OpPhi, type, observed, initial, preheader, exchanged, cont);
-    const auto next = function(observed);
+    const auto next = [&] {
+        PerLaneConstruct construct(state, "a compare-exchange retry loop");
+        return function(observed);
+    }();
     state.module.AddFunction(spv::OpAtomicCompareExchange, type, exchanged, pointer, ConstantU32(state, scope), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), next, observed);
     const auto success = state.module.AllocateId();
     state.module.AddFunction(spv::OpIEqual, TypeBool(state), success, exchanged, observed);

@@ -1,0 +1,15 @@
+add_test_executable(agc_spanned_wave_tests EXCLUDE_FROM_ALL tests/SpannedWaves.cpp)
+target_include_directories(agc_spanned_wave_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+target_link_libraries(agc_spanned_wave_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_spanned_wave_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_spanned_wave_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_spanned_wave_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_spanned_wave_policy COMMAND agc_spanned_wave_tests --policy)
+    add_test(NAME agc_spanned_wave_guard COMMAND agc_spanned_wave_tests --guard)
+    if(WIN32)
+        set_tests_properties(agc_spanned_wave_policy agc_spanned_wave_guard PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
