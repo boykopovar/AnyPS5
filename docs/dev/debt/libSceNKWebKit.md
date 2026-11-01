@@ -45,6 +45,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Calculated length ref-counting](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - WebCore::Length::ref and WebCore::Length::deref throw through NotImplemented_nid_no_patch; they manage ref-counts in the WebCore style engine's global CalculationValueMap, whose internal runtime state is not initialized or pinned.
 - [JSON serialisation](../../../core/libs/prx/libSceNKWebKit/src/WtfJson.cpp) (libSceNKWebKit) - the `writeJSON` virtual slot of `WTF::JSONImpl::Value` and of `ArrayBase` throws through `NotImplemented_nid_no_patch`, like the exported `writeJSON` handlers: serialising a value needs WTF's `StringBuilder` and its double-conversion number formatting, which are not implemented.
 - [Filter operations](../../../core/libs/prx/libSceNKWebKit/Export.cpp) (libSceNKWebKit) - the `WebCore::FilterOperation` subclasses (Default, Blur, DropShadow, InvertLightness, BasicColorMatrix, BasicComponentTransfer) stay stubs: their objects are dispatched through the module's own vtables, which this library does not provide.
+- [Shared string hash](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) (libSceNKWebKit) - `WebCore::computeSharedStringHash` follows the pinned [StringHash.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringHash.h#L220-L227), where `AlreadyHashed::avoidDeletedValue` ORs the sign bit in, so a raw hash of `0xFFFFFFFF` stays `0xFFFFFFFF`; current WebKit `main` XORs it and returns `0x7FFFFFFF`. Which of the two the console module uses is unverified.
 
 ### Known export names; ABI prototypes unverified
 
@@ -3695,8 +3696,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore23TextureMapperFPSCounterC1Ev` | `oSeqX90U4IE` |
 | `_ZN7WebCore23TextureMapperFPSCounterC2Ev` | `enk2-X2re5s` |
 | `_ZN7WebCore23atBoundaryOfGranularityERKNS_15VisiblePositionENS_15TextGranularityENS_18SelectionDirectionE` | `EKRMmXMHBrs` |
-| `_ZN7WebCore23computeSharedStringHashEPKDsj` | `mxfm5iKxLJk` |
-| `_ZN7WebCore23computeSharedStringHashERKN3WTF6StringE` | `STrp1nbSFLw` |
 | `_ZN7WebCore23standardUserAgentForURLERKN3WTF3URLE` | `cPB4kSdgPxg` |
 | `_ZN7WebCore23throwNonFiniteTypeErrorERN3JSC14JSGlobalObjectERNS0_10ThrowScopeE` | `rTcK9MJi7XQ` |
 | `_ZN7WebCore23wrapSerializedCryptoKeyERKN3WTF6VectorIhLm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEES6_RS4_` | `wd4TA00miTA` |
