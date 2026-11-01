@@ -7292,9 +7292,11 @@ void hostImportBudgetTests() {
     memory.memoryHeaps[2] = {256 * MiB, VK_MEMORY_HEAP_DEVICE_LOCAL_BIT};
     Require(HostImportBudget(memory, 16 * GiB) == 4064 * MiB, "imports on a 16 GiB machine take more than half its 8128 MiB host heap");
     memory.memoryHeaps[1].size = 16 * GiB;
-    Require(HostImportBudget(memory, 32 * GiB) == 8 * GiB, "imports on a 32 GiB machine take more than half its 16 GiB host heap");
+    Require(HostImportBudget(memory, 32 * GiB) == 12 * GiB, "a 32 GiB machine does not keep 4 GiB of its 16 GiB host heap from imports");
+    memory.memoryHeaps[1].size = 15911 * MiB;
+    Require(HostImportBudget(memory, 32 * GiB) == 11815 * MiB, "imports on a 32 GiB machine leave no room for the 10466 MiB a title holds at once");
     memory.memoryHeaps[1].size = 32 * GiB;
-    Require(HostImportBudget(memory, 64 * GiB) == 16 * GiB, "imports on a 64 GiB machine take more than half its 32 GiB host heap");
+    Require(HostImportBudget(memory, 64 * GiB) == 28 * GiB, "a 64 GiB machine does not keep 4 GiB of its 32 GiB host heap from imports");
     memory.memoryHeaps[1].size = 3 * GiB;
     Require(HostImportBudget(memory, 16 * GiB) == 1 * GiB, "a 3 GiB host heap does not keep its 2 GiB reserve");
     memory.memoryHeaps[1].size = 8128 * MiB;
@@ -10659,8 +10661,15 @@ void unorm10_11_11TargetTests() {
     changed.context[0x31c] |= 1u << 8u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 6 number type 1");
     changed = queue;
-    changed.context[0x1e0] = 0x40010001u;
     for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = 0;
+    for (const auto replace : {0x40010001u, 0x60050001u}) {
+        changed.context[0x1e0] = replace;
+        const auto replaced = AgcDriver::Graphics::DecodeState(changed);
+        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Unorm10_11_11, "a blend that writes the source color into a 10_11_11 unorm target was refused or kept blending");
+    }
+    changed.context[0x1e0] = 0x40010101u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into a 10_11_11 unorm color target");
+    changed.context[0x1e0] = 0x40010005u;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into a 10_11_11 unorm color target");
     changed = queue;
     changed.context[0x8e] = 3;
@@ -11082,9 +11091,16 @@ void float11_11_10TargetTests() {
         expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "unsupported color format 7 number type " + std::to_string(number) + " component swap 2");
     }
     changed = queue;
-    changed.context[0x1e0] = 0x60010101u;
     for (std::uint32_t i = 0; i < 4; ++i) changed.context[0x105 + i] = 0;
-    expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target");
+    for (const auto replace : {0x40010001u, 0x60010001u, 0x60050001u}) {
+        changed.context[0x1e0] = replace;
+        const auto replaced = AgcDriver::Graphics::DecodeState(changed);
+        Require(replaced.blends.size() == 1 && !replaced.blends[0].blendEnable && replaced.color.packing == ColorExportPacking::Float11_11_10 && replaced.color.componentMapping == 0xc6u, "a blend that writes the source color into an 11_11_10 float target was refused or kept blending");
+    }
+    for (const auto blend : {0x60010101u, 0x40010005u}) {
+        changed.context[0x1e0] = blend;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "blending into an 11_11_10 float color target");
+    }
     changed = queue;
     changed.context[0x8e] = 6;
     expectFailure([&] { AgcDriver::Graphics::DecodeState(changed); }, "partial writes of an 11_11_10 float color target");
