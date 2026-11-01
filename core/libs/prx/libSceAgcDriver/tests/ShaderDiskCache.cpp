@@ -971,7 +971,7 @@ int runLargeFileWrite() {
     } cleanup{directory};
     const auto space = std::filesystem::space(directory, error);
     if (error || space.available < size + (std::uintmax_t{1} << 30u)) {
-        std::cout << "skipping: not enough free disk space for a file of more than 2 GiB\n";
+        std::cout << "skipped, not enough free disk space for a file of more than 2 GiB\n";
         return 77;
     }
     std::vector<std::byte> bytes;

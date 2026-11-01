@@ -56,6 +56,19 @@ class CheckSkipsTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertIn("all expected", result.stdout)
 
+    def test_large_file_disk_space_skip_message_is_expected(self):
+        source = (Path(__file__).resolve().parents[2] / "core/libs/prx/libSceAgcDriver/tests/ShaderDiskCache.cpp").read_text(encoding="utf-8")
+        printed = [line for line in source.splitlines() if "not enough free disk space for a file of more than 2 GiB" in line]
+        self.assertEqual(len(printed), 1)
+        message = printed[0].split('"')[1].replace("\\n", "")
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            junit.write_text(f'<testsuite><testcase name="agc_shader_disk_cache_large_file"><skipped message="SKIP_RETURN_CODE=77"/>'
+                             f'<system-out>{message}</system-out></testcase></testsuite>', encoding="utf-8")
+            result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", "linux"], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, message + "\n" + result.stdout + result.stderr)
+        self.assertIn("all expected", result.stdout)
+
     def test_ctest_status_does_not_allow_missing_or_unexpected_reasons(self):
         reports = (
             '<skipped message="SKIP_RETURN_CODE=77"/>',
