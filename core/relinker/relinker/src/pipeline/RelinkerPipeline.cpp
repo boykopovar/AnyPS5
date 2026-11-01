@@ -126,6 +126,15 @@ RelinkResult RelinkerPipeline::Relink() {
     if (!hasDynamicSegment)
         throw RelinkerException("No PT_DYNAMIC segment found");
 
+    bool hasEhFrameSegment = false;
+    for (const auto& ph : programHeaders) {
+        if (ph.Type != PT_GNU_EH_FRAME)
+            continue;
+        if (hasEhFrameSegment)
+            throw RelinkerException("Multiple PT_GNU_EH_FRAME segments", ph.Offset);
+        hasEhFrameSegment = true;
+    }
+
     auto hasTag = [&](const std::int64_t tag) {
         for (const auto& t : dynTags)
             if (t.Tag == tag)
