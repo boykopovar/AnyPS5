@@ -1331,6 +1331,8 @@ String APS5_VABI _ZNK3WTF3URL30stringCenterEllipsizedToLengthEj(const URL* self,
     if (view.length <= length) return String(Retain(url.impl));
     const StringView parts[] = {LeftView(view, length / 2 - 1), {"...", 3, true}, RightView(view, length / 2 - 2)};
     return ConcatViews(parts, 3);
+}
+
 unsigned APS5_VABI _ZN7WebCore23computeSharedStringHashEPKDsj(const char16_t* characters, unsigned length) {
     return AvoidDeletedHashValue(Hash({characters, length, false}, false));
 }
