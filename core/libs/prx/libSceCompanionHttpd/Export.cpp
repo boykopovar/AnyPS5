@@ -1,4 +1,5 @@
 #include "prx/libSceCompanionHttpd/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -37,7 +38,11 @@ extern "C" {
 
 int APS5_VABI sceCompanionHttpdOptParamInitialize(CompanionHttpdOptParam* param) {
     if (param == nullptr) return CompanionHttpdErrorInvalidParam;
-    std::memset(param, 0, sizeof(*param));
+    CompanionHttpdOptParam zero{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(param, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return CompanionHttpdErrorInvalidParam;
     return 0;
 }
 
