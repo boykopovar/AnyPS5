@@ -20,7 +20,11 @@ struct ShellCoreErrorDialogParam {
 
 struct SystemServiceDaemonEvent;
 struct SystemServiceLocalProcessStatus;
-struct SystemServicePSButtonEvent;
+struct SystemServicePSButtonEvent {
+    std::int32_t eventType;
+    std::uint32_t dataAt8;
+    std::uint64_t dataAt0;
+};
 struct SystemServicePrivacyDefinitionData;
 struct SystemServicePrivacyDefinitionVersion;
 struct SystemServiceTitleWorkaroundInfo;
@@ -353,7 +357,7 @@ int APS5_VABI sceShellCoreUtilAcquireSharePlayCpuBudget();
 int APS5_VABI sceShellCoreUtilActivateAbort(std::intptr_t handle);
 int APS5_VABI sceShellCoreUtilActivateGetStatus(std::intptr_t handle, std::int32_t* status, std::int32_t* result);
 int APS5_VABI sceShellCoreUtilActivateInit(std::int32_t type, std::intptr_t* handle);
-int APS5_VABI sceShellCoreUtilActivateIsActivated(std::intptr_t handle, bool* activated);
+int APS5_VABI sceShellCoreUtilActivateIsActivated(std::int32_t type, bool* activated);
 int APS5_VABI sceShellCoreUtilActivateRecordActivation();
 int APS5_VABI sceShellCoreUtilActivateStart(std::intptr_t handle);
 int APS5_VABI sceShellCoreUtilActivateStartAsync(std::intptr_t handle);

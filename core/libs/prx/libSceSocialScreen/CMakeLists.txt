@@ -1,0 +1,15 @@
+add_library(libSceSocialScreen SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSocialScreen PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceSocialScreen)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_social_screen_tests ${LIBS_INCLUDE_DIR}/tests/GuestSocialScreen.cpp)
+    target_include_directories(guest_social_screen_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_social_screen_tests PRIVATE libSceSocialScreen)
+    configure_windows_unwind(guest_social_screen_tests)
+    add_test(NAME guest_social_screen COMMAND guest_social_screen_tests)
+    if(WIN32)
+        set_tests_properties(guest_social_screen PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSocialScreen>")
+    endif()
+endif()

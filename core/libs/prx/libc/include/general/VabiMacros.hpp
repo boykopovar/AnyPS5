@@ -3,6 +3,8 @@
 
 #ifdef _WIN32
 #define APS5_VABI __attribute__((sysv_abi))
+#elif defined(APS5_WASM_EXPORT_SCAN)
+#define APS5_VABI APS5_VABI
 #else
 #define APS5_VABI
 #endif

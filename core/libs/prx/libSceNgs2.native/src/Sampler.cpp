@@ -58,6 +58,7 @@ void Ngs2ReplaySampler(Ngs2Voice& voice) {
     voice.waveformUserData = 0;
     if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2RestartAtrac9(voice);
     Ngs2RestartSampler(voice);
+    Ngs2PublishBlockQueue(voice);
 }
 
 void Ngs2PrepareSampler(Ngs2Voice& voice) {

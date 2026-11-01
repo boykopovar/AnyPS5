@@ -49,13 +49,20 @@
 #include <cstdint>
 #include <fcntl.h>
 #include <fstream>
+#ifndef __APPLE__
 #include <link.h>
+#endif
 #include <pthread.h>
 #include <sstream>
 #include <sys/ioctl.h>
 #include <sys/uio.h>
 #include <unistd.h>
 #include "prx/libc/include/specifics/linux/HostMapping.hpp"
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
+#include <sys/mman.h>
+#endif
 #endif
 
 namespace AgcDriver::GuestMemory {
@@ -703,6 +710,41 @@ bool describePages(std::uintptr_t address, std::size_t bytes, Emit&& emit) {
             }
             return false;
         }
+#ifdef __APPLE__
+        {
+            mach_vm_address_t region = cursor;
+            mach_vm_size_t regionSize = 0;
+            vm_region_basic_info_data_64_t info{};
+            mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+            mach_port_t object = MACH_PORT_NULL;
+            const auto status = mach_vm_region(mach_task_self(), &region, &regionSize, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+            if (status == KERN_INVALID_ADDRESS) {
+                static_cast<void>(emit(PageRun{cursor, end, false, false}));
+                return true;
+            }
+            if (status != KERN_SUCCESS || regionSize == 0) return false;
+            if (region > cursor) {
+                const auto gapEnd = std::min<std::uintptr_t>(end, region);
+                if (!emit(PageRun{cursor, gapEnd, false, false})) return true;
+                cursor = gapEnd;
+                continue;
+            }
+            bool readable = (info.protection & VM_PROT_READ) != 0;
+            bool writable = readable && (info.protection & VM_PROT_WRITE) != 0;
+            auto next = std::min<std::uintptr_t>(end, region + regionSize);
+            std::uintptr_t watchedEnd = next;
+            const int logical = GuestWriteWatch::GuestWriteWatchProtection_nid_postfix(cursor, next, &watchedEnd);
+            if (logical >= 0) {
+                readable = readable && (logical & PROT_READ) != 0;
+                writable = readable && (logical & PROT_WRITE) != 0;
+            }
+            if (watchedEnd > cursor && watchedEnd < next) next = watchedEnd;
+            recordRun(next, readable, writable);
+            if (!emit(PageRun{cursor, next, readable, writable})) return true;
+            cursor = next;
+            continue;
+        }
+#endif
         std::ifstream maps("/proc/self/maps");
         if (!maps.is_open()) return false;
         std::string line;
@@ -752,6 +794,10 @@ bool onOwnLiveStack(std::uintptr_t address, std::size_t bytes) {
             GetCurrentThreadStackLimits(&lowLimit, &highLimit);
             low = static_cast<std::uintptr_t>(lowLimit);
             high = static_cast<std::uintptr_t>(highLimit);
+#elif defined(__APPLE__)
+            const auto self = pthread_self();
+            high = reinterpret_cast<std::uintptr_t>(pthread_get_stackaddr_np(self));
+            low = high - pthread_get_stacksize_np(self);
 #else
             pthread_attr_t attributes;
             if (pthread_getattr_np(pthread_self(), &attributes) != 0) return;
@@ -1116,7 +1162,10 @@ struct WriteTracker {
 
     bool blockPartWatched(std::uint64_t first, std::uint64_t stop) const {
 #ifdef _WIN32
-        return covers(first, 1) || covers(stop - 1, 1);
+        for (auto page = first; page < stop; page = (page / WritePageBytes + 1) * WritePageBytes) {
+            if (covers(page, 1)) return true;
+        }
+        return false;
 #else
         return GuestWriteWatch::GuestWriteWatchOverlaps_nid_postfix(static_cast<std::uintptr_t>(first), static_cast<std::size_t>(stop - first));
 #endif
@@ -2150,12 +2199,17 @@ thread_local ThreadCollectMemo threadHintMemo;
 bool walkHints(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop) {
     auto cursor = first;
     bool marked = false;
+    StampRuns runs{tracker, StampKind::Cpu};
     while (cursor < stop) {
         std::size_t count = tracker.pages.size();
         if (!GuestArena::GuestArenaCollectWrites_nid_postfix(static_cast<std::uintptr_t>(cursor), static_cast<std::size_t>(stop - cursor), tracker.pages.data(), &count, true)) return false;
         if (count != 0 && !marked) ++tracker.generation;
         marked = marked || count != 0;
-        for (std::size_t i = 0; i < count; ++i) tracker.stampHint(tracker.blockOf(reinterpret_cast<std::uintptr_t>(tracker.pages[i])));
+        for (std::size_t i = 0; i < count; ++i) {
+            const auto page = reinterpret_cast<std::uintptr_t>(tracker.pages[i]);
+            tracker.stampHint(tracker.blockOf(page));
+            if (tracker.coverage.Covers(page, WritePageBytes)) stampWrittenRun(&runs, page, page + WritePageBytes);
+        }
         if (count < tracker.pages.size()) break;
         cursor = reinterpret_cast<std::uintptr_t>(tracker.pages[count - 1]) + WritePageBytes;
     }
@@ -2606,8 +2660,13 @@ std::uint32_t GpuLockThreadTag() {
 }
 
 GpuMutexType& GpuMutex() {
+#ifdef __APPLE__
+    static auto* mutex = new GpuMutexType;
+    return *mutex;
+#else
     static GpuMutexType mutex;
     return mutex;
+#endif
 }
 
 void TagGpuLockThread(std::uint32_t queue) {

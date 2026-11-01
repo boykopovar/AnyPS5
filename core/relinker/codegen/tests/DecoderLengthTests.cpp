@@ -78,6 +78,29 @@ int main() {
             } catch (const Codegen::CodegenException&) {
             }
         }
+        for (const auto* testCase : kDecoderMissingModRmCases) {
+            const auto bytes = parse(testCase);
+            require(truncationRejected(decoder, bytes, bytes.size()), "A truncated " + std::string(testCase) + " was accepted");
+            try {
+                (void)decoder.DecodeInstruction(bytes.data(), bytes.size());
+                throw std::runtime_error("Instruction metadata accepted a missing ModRM for " + std::string(testCase));
+            } catch (const Codegen::CodegenException&) {
+            }
+        }
+        for (const auto& testCase : kDecoderTrapModRmCases) {
+            const std::string name = testCase.Bytes;
+            auto bytes = parse(testCase.Bytes);
+            require(bytes.size() == testCase.Length, "Trap case " + name + " does not hold its own length");
+            require(truncationRejected(decoder, bytes, bytes.size() - 1), "A truncated " + name + " was accepted");
+            bytes.insert(bytes.end(), 15, 0x90);
+            const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
+            require(info.Length == testCase.Length, "Wrong length for " + name);
+            require(info.FlowKind == Codegen::ControlFlowKind::Trap && !info.HasBranchTarget, "Wrong trap metadata for " + name);
+            require(info.HasModRm && info.ModRmByte == testCase.ModRmByte && info.ModRmOffset == 2, "Wrong ModRM metadata for " + name);
+            require(info.HasMemoryOperand == testCase.HasMemoryOperand, "Wrong memory operand presence for " + name);
+            require(info.HasRipRelativeDisp == testCase.HasRipRelativeDisp, "Wrong RIP-relative operand presence for " + name);
+            require(info.RipRelativeDispOffset == testCase.DisplacementOffset, "Wrong RIP-relative displacement offset for " + name);
+        }
         for (const auto& testCase : kDecoderRipRelativeCases) {
             const std::string name = testCase.Bytes;
             auto bytes = parse(testCase.Bytes);
