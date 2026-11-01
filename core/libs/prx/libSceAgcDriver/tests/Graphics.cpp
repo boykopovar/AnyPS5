@@ -2722,9 +2722,14 @@ void DepthStencilTests() {
     Require(volume.color.layers == 1 && volume.renderLayers == 1 && volume.layerExports == 0, "a color view of one 3D depth slice became layered");
     {
         auto mipmapped = queue;
+        alignas(256) std::array<std::byte, 8192> mipMemory{};
+        const auto mipAddress = reinterpret_cast<std::uintptr_t>(mipMemory.data());
+        mipmapped.context[0x318] = static_cast<std::uint32_t>(mipAddress >> 8u);
+        mipmapped.context[0x390] = static_cast<std::uint32_t>(mipAddress >> 40u);
         mipmapped.context[0x3b0] |= 2u << 28u;
         mipmapped.context[0x31b] = (1u << 26u) | (1u << 13u) | 1u;
-        expectFailure([&] { AgcDriver::Graphics::DecodeColorBuffer(mipmapped.context, 0); }, "slot 0, 64x4x4, viewMip 1, maxMip 2, slices 1..1, CB_COLOR_INFO 0x00028028, ATTRIB2 0x200fc003, ATTRIB3 0x0a000003, VIEW 0x04002001");
+        const auto mip = AgcDriver::Graphics::DecodeColorBuffer(mipmapped.context, 0);
+        Require(mip.extent.width == 32u && mip.extent.height == 2u && mip.depth == 4u && mip.depthSlice == 1u && mip.layers == 1u && mip.mip == 1u && mip.mipCount == 3u, "a 3D mip diagnostic fixture did not select its minified view");
     }
     queue.context[0x31b] = 4u | (4u << 13u);
     expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "outside the 3D surface");
@@ -2754,6 +2759,65 @@ void DepthStencilTests() {
     queue.context[0x325] = static_cast<std::uint32_t>(volumeKeys >> 8u);
     queue.context[0x3a8] = static_cast<std::uint32_t>(volumeKeys >> 40u);
     Require(AgcDriver::Graphics::DecodeState(queue).color.dccAddress == volumeKeys, "a DCC 3D color target lost its keys");
+}
+
+void VolumeColorMipTests() {
+    alignas(256) static std::array<std::byte, (1u << 20u) + 65535u> memory{};
+    const auto address = (reinterpret_cast<std::uintptr_t>(memory.data()) + 65535u) & ~std::uintptr_t{65535u};
+    for (const auto mode : {AgcDriver::Graphics::ColorTileMode::Linear, AgcDriver::Graphics::ColorTileMode::Standard4KB, AgcDriver::Graphics::ColorTileMode::S4KBX, AgcDriver::Graphics::ColorTileMode::RenderTarget}) {
+        for (const auto depth : {1u, 8u}) {
+            for (std::uint32_t level = 0u; level < 3u; ++level) {
+                auto queue = makeState();
+                queue.context[0x318] = static_cast<std::uint32_t>(address >> 8u);
+                queue.context[0x390] = static_cast<std::uint32_t>(address >> 40u);
+                queue.context[0x3b0] = (2u << 28u) | (95u << 14u) | 31u;
+                queue.context[0x3b8] = 0x0a000000u | (static_cast<std::uint32_t>(mode) << 14u) | (depth - 1u);
+                const auto viewDepth = std::max(depth >> level, 1u);
+                const auto slice = viewDepth - 1u;
+                queue.context[0x31b] = (level << 26u) | (slice << 13u) | slice;
+                const auto color = AgcDriver::Graphics::DecodeColorBuffer(queue.context, 0);
+                const auto surface = AgcDriver::Graphics::SurfaceForTarget(color);
+                const auto geometry = AgcDriver::Graphics::DescribeSurface(surface);
+                const auto& mip = geometry.mips.at(level);
+                Require(surface.dimension == AgcDriver::Graphics::TextureDimension::k3D && surface.depthOrLastArray + 1u == depth && surface.mipCount == 3u, "a mipmapped volume lost its base depth or dimension");
+                Require(color.extent.width == (96u >> level) && color.extent.height == (32u >> level) && color.depthSlice == slice && color.layers == 1u, "a volume mip selected the wrong extent or depth slice");
+                Require(color.surfaceAddress == address && color.address == address + mip.tiledOffset && color.mipTail == mip.tail, "a volume mip did not use its volume surface layout");
+                if (mode != AgcDriver::Graphics::ColorTileMode::Linear) Require(color.MemoryAddress() == address && color.MemoryAddress() + color.bytes == address + geometry.guestBytes, "a volume mip memory range extends beyond its surface");
+                queue.context[0x31b] = (level << 26u) | ((viewDepth + 3u) << 13u);
+                Require(AgcDriver::Graphics::DecodeColorBuffer(queue.context, 0).layers == viewDepth, "a volume mip did not clamp the view to its minified depth");
+                queue.context[0x31b] = (level << 26u) | (viewDepth << 13u) | viewDepth;
+                expectFailure([&] { AgcDriver::Graphics::DecodeColorBuffer(queue.context, 0); }, "outside the 3D surface");
+            }
+        }
+    }
+    auto queue = makeState();
+    queue.context[0x318] = static_cast<std::uint32_t>(address >> 8u);
+    queue.context[0x390] = static_cast<std::uint32_t>(address >> 40u);
+    queue.context[0x31b] = 0x0000e000u;
+    queue.context[0x31c] = 0x00070428u;
+    queue.context[0x31d] = 0u;
+    queue.context[0x3b0] = 0x101fc07fu;
+    queue.context[0x3b8] = 0x0ea54007u;
+    const auto color = AgcDriver::Graphics::DecodeColorBuffer(queue.context, 0u);
+    Require(AgcDriver::Graphics::SurfaceForTarget(color).dimension == AgcDriver::Graphics::TextureDimension::k3D && color.format == VK_FORMAT_R8G8B8A8_UINT && color.extent.width == 128u && color.extent.height == 128u && color.depth == 8u && color.layers == 8u && color.mipCount == 2u && color.mip == 0u && color.bytes == 655360u, "a two-level 128x128x8 UINT SW_4KB_S_X target decoded incorrectly");
+    queue.context[0x31c] |= 0x10000000u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeColorBuffer(queue.context, 0u); }, "DCC of mipmapped 3D color targets");
+    queue.context[0x31c] = 0x00072428u;
+    expectFailure([&] { AgcDriver::Graphics::DecodeColorBuffer(queue.context, 0u); }, "CMASK fast clears of mipmapped 3D color targets");
+}
+
+void LinearVolumeNonResidentTests() {
+    alignas(256) static std::array<std::byte, (1u << 20u) + 65535u> memory{};
+    const auto address = (reinterpret_cast<std::uintptr_t>(memory.data()) + 65535u) & ~std::uintptr_t{65535u};
+    for (const auto depth : {1u, 4u}) {
+        auto queue = makeState();
+        queue.context[0x318] = static_cast<std::uint32_t>(address >> 8u);
+        queue.context[0x390] = static_cast<std::uint32_t>(address >> 40u);
+        queue.context[0x3b0] = (2u << 28u) | (95u << 14u) | 31u;
+        queue.context[0x3b8] = 0x0a000000u | (static_cast<std::uint32_t>(AgcDriver::Graphics::ColorTileMode::Linear) << 14u) | (depth - 1u);
+        const auto color = AgcDriver::Graphics::DecodeColorBuffer(queue.context, 0);
+        Require(color.volume && color.depth == depth && color.tileMode == AgcDriver::Graphics::ColorTileMode::Linear, "a Linear volume was not decoded as a non-resident volume");
+    }
 }
 
 void OneDimensionalColorTests() {
@@ -3192,6 +3256,22 @@ void depthCopyPassTests() {
 void metadataPassTests() {
     using AgcDriver::Graphics::ColorMetadataPass;
     using AgcDriver::Graphics::DecodeColorMetadataPass;
+    for (const auto mode : {ColorMetadataPass::Mode::Resolve, ColorMetadataPass::Mode::EliminateFastClear, ColorMetadataPass::Mode::DccDecompress}) {
+        for (const auto tileMode : {AgcDriver::Graphics::ColorTileMode::Linear, AgcDriver::Graphics::ColorTileMode::Standard4KB, AgcDriver::Graphics::ColorTileMode::RenderTarget, AgcDriver::Graphics::ColorTileMode::S4KBX}) {
+            for (const bool volume : {false, true}) {
+                AgcDriver::Graphics::ColorTarget target{};
+                target.surfaceAddress = 0x10000u;
+                target.address = 0x18000u;
+                target.bytes = 0x10000u;
+                target.tileMode = tileMode;
+                target.volume = volume;
+                target.mipCount = 2u;
+                const auto begin = volume && tileMode != AgcDriver::Graphics::ColorTileMode::Linear ? target.surfaceAddress : target.address;
+                const auto writes = AgcDriver::Graphics::PipelinedColorMetadataPassWrites({mode, {target}, target});
+                Require(writes == std::vector<std::pair<std::uint64_t, std::uint64_t>>{{begin, begin + target.bytes}}, "a pipelined color metadata write shifted its backing interval");
+            }
+        }
+    }
     auto queue = makeState();
     queue.context[0x0] = 0;
     Require(!DecodeColorMetadataPass(queue).has_value(), "normal color rendering decoded as a metadata pass");
@@ -6704,6 +6784,27 @@ void resourceTests() {
     expectSingleAccepted(changed([](auto& binding) { binding.guestDescriptor[2] = 32768; }), "an unregistered V# past the range limit");
     expectSingleAccepted(changed([](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(0x1000), 8); }), "an unmapped V#");
     expectSingleFailure(changed([&](auto& binding) { binding.guestDescriptor = vsharp(reinterpret_cast<const void*>(state.color.address), 64); }), "aliases the render target");
+    mock = MockVulkan{};
+    {
+        auto color = state.color;
+        color.volume = true;
+        color.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
+        color.surfaceAddress = reinterpret_cast<std::uintptr_t>(guestSecond.data()) - sizeof(guestSecond);
+        color.address = color.surfaceAddress + sizeof(guestSecond) / 2u;
+        color.bytes = sizeof(guestSecond);
+        Require(AgcDriver::Graphics::ShaderResources::BytesUpToTarget(color.surfaceAddress - 240u, 256u, 32u, &color) == 240u, "a strided buffer before a volume was not cut at its backing allocation");
+        Require(AgcDriver::Graphics::ShaderResources::BytesUpToTarget(color.address - 8u, 16u, 32u, &color) == 16u, "a strided buffer inside a volume was cut at its selected mip");
+        ShaderRecompiler::RecompileResult vertex;
+        ShaderRecompiler::RecompileResult fragment;
+        vertex.bindings.push_back(makeBinding(Role::GuestBuffers, 0, 1, vsharp(guestSecond.data(), 8)));
+        {
+            AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0);
+        }
+        color.surfaceAddress = reinterpret_cast<std::uintptr_t>(guestSecond.data());
+        color.address = color.surfaceAddress + sizeof(guestSecond) / 2u;
+        expectFailure([&] { AgcDriver::Graphics::ShaderResources resources(context, vertex, fragment, color, 0, 0); }, "aliases the render target");
+    }
+    Require(mock.live == 0, "volume buffer alias checks leaked Vulkan objects");
     const auto stridedBefore = [&](std::uint32_t past) {
         constexpr std::uint32_t stride = 60;
         constexpr std::uint32_t records = 4;
@@ -12629,6 +12730,10 @@ int main(int argc, char** argv) {
     setenv("APS5_HEAP_MIRROR_MIB", "4", 1);
 #endif
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--linear-volume-nonresident") {
+            LinearVolumeNonResidentTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--descriptor-cache") {
             descriptorCacheTests();
             return 0;
@@ -12947,6 +13052,7 @@ int main(int argc, char** argv) {
         UnusedViewportDepthTests();
         DepthStencilTests();
         OneDimensionalColorTests();
+        VolumeColorMipTests();
         htileDepthClearTests();
         multisampledSingleClearTests();
         htileBufferMaskClearTests();
