@@ -250,8 +250,6 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_annotate_module.py)
             set_tests_properties(annotate_module PROPERTIES TIMEOUT 20)
         endif()
-        add_test(NAME ctest_no_tests_flag COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_ctest_no_tests_flag.py)
-        set_tests_properties(ctest_no_tests_flag PROPERTIES TIMEOUT 20)
         add_test(NAME unwrap_self COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_unwrap_self.py)
         add_test(NAME audit_dump COMMAND ${Python3_EXECUTABLE}
@@ -280,6 +278,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_git.py)
         add_test(NAME tools_configure_diff COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compare_configure_checks.py)
         set_tests_properties(tools_configure_diff PROPERTIES TIMEOUT 20)
+        add_test(NAME ctest_no_tests_flag COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_ctest_no_tests_flag.py)
+        set_tests_properties(ctest_no_tests_flag PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_doc_links COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_doc_links.py)
         add_test(NAME conventions_unknown_nids COMMAND ${Python3_EXECUTABLE}
