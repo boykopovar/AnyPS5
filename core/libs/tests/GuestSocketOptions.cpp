@@ -21,6 +21,7 @@ constexpr int SoLinger = 0x80;
 constexpr int SoReusePort = 0x200;
 constexpr int SoTimestamp = 0x400;
 constexpr int SoNoSigpipe = 0x800;
+constexpr int SoAcceptFilter = 0x1000;
 constexpr int SoSendBuffer = 0x1001;
 constexpr int SoReceiveBuffer = 0x1002;
 constexpr int SoSendLowWater = 0x1003;
@@ -161,6 +162,24 @@ void BooleanOptionsReportTheirBit() {
     const unsigned char narrowFlag = 1;
     Require(SetFails(stream, SolSocket, SoDebug, &narrowFlag, 1, ErrorInvalid), "a flag shorter than an int must fail with EINVAL (22)");
     Require(close_nid_postfix(stream) == 0 && close_nid_postfix(datagram) == 0, "close failed");
+}
+
+void AcceptFilterFollowsFreeBsd() {
+    const int stream = socket_nid_postfix(2, Stream, 0);
+    Require(stream >= 0, "socket failed");
+    Require(SetFails(stream, SolSocket, SoAcceptFilter, nullptr, 0, ErrorInvalid), "removing the accept filter of a socket that is not listening must fail with EINVAL (22)");
+    Require(close_nid_postfix(stream) == 0, "close failed");
+    int listener = -1;
+    Listen(&listener);
+    Require(setsockopt_nid_postfix(listener, SolSocket, SoAcceptFilter, nullptr, 0) == 0, "a NULL SO_ACCEPTFILTER value on a listener removes the filter and returns 0");
+    const std::array<std::uint8_t, 255> shortArgument{};
+    Require(SetFails(listener, SolSocket, SoAcceptFilter, shortArgument.data(), shortArgument.size(), ErrorInvalid), "an SO_ACCEPTFILTER value shorter than struct accept_filter_arg (256 bytes) must fail with EINVAL (22)");
+    std::array<std::uint8_t, 256> filter{};
+    filter.fill(0xbb);
+    std::uint32_t size = filter.size();
+    Require(getsockopt_nid_postfix(listener, SolSocket, SoAcceptFilter, filter.data(), &size) == -1 && *__error_nid_postfix() == ErrorInvalid, "getsockopt of SO_ACCEPTFILTER on a listener without a filter must fail with EINVAL (22)");
+    Require(size == filter.size() && filter[0] == 0xbb && filter[255] == 0xbb, "a failed SO_ACCEPTFILTER get must leave the buffer and its length unchanged");
+    Require(close_nid_postfix(listener) == 0, "close failed");
 }
 
 void ReusePortSharesAPort() {
@@ -412,6 +431,7 @@ int main(int argc, char** argv) {
     ReportsTypeAndListening();
     ReportsAndClearsTheConnectError();
     BooleanOptionsReportTheirBit();
+    AcceptFilterFollowsFreeBsd();
     ReusePortSharesAPort();
     LingerFollowsFreeBsd();
     LengthsFollowFreeBsd();
