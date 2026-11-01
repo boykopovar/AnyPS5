@@ -5,11 +5,13 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -258,8 +260,148 @@ int main() {
     *__error_nid_postfix() = 0;
     Require(dprintf_nid_postfix(1, "nonblocking") == -1);
     Require(*__error_nid_postfix() == 35);
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(1, "nonblocking %s", "va") == -1);
+    Require(*__error_nid_postfix() == 35);
+
+    LibcSetGuestWriteHook_nid_no_patch(+[](int, const void*, std::size_t) APS5_VABI -> std::int64_t {
+        errno = 11;
+        return -1;
+    });
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(1, "deadlock") == -1);
+    Require(*__error_nid_postfix() == 11);
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(1, "deadlock %s", "va") == -1);
+    Require(*__error_nid_postfix() == 11);
 
     LibcSetGuestWriteHook_nid_no_patch(origHook);
+
+#ifndef _WIN32
+    LibcSetGuestWriteHook_nid_no_patch(nullptr);
+    Require(LibcGetGuestWriteHook_nid_no_patch() == nullptr);
+    int pipeFds[2] = {-1, -1};
+    Require(::pipe(pipeFds) == 0);
+    const int readFlags = ::fcntl(pipeFds[0], F_GETFL, 0);
+    Require(readFlags >= 0);
+    Require(::fcntl(pipeFds[0], F_SETFL, readFlags | O_NONBLOCK) == 0);
+    const int writeFlags = ::fcntl(pipeFds[1], F_GETFL, 0);
+    Require(writeFlags >= 0);
+    Require(::fcntl(pipeFds[1], F_SETFL, writeFlags | O_NONBLOCK) == 0);
+
+    *__error_nid_postfix() = 35;
+    Require(dprintf_nid_postfix(pipeFds[1], "a") == 1);
+    Require(*__error_nid_postfix() == 35);
+    char singleByte = 0;
+    Require(::read(pipeFds[0], &singleByte, 1) == 1);
+    Require(singleByte == 'a');
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(pipeFds[1], "") == 0);
+    Require(*__error_nid_postfix() == 0);
+    Require(CallVdprintf(pipeFds[1], "") == 0);
+    Require(*__error_nid_postfix() == 0);
+
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(pipeFds[1], "bc%d", 42) == 4);
+    Require(*__error_nid_postfix() == 0);
+    char freeReadBuf[8]{};
+    Require(::read(pipeFds[0], freeReadBuf, 4) == 4);
+    Require(std::memcmp(freeReadBuf, "bc42", 4) == 0);
+
+    char fillChunk[4096]{};
+    std::memset(fillChunk, 'z', sizeof(fillChunk));
+    std::size_t totalFilled = 0;
+    bool pipeFull = false;
+    for (int i = 0; i < 512; ++i) {
+        const auto written = ::write(pipeFds[1], fillChunk, sizeof(fillChunk));
+        if (written > 0) {
+            totalFilled += static_cast<std::size_t>(written);
+        } else if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            pipeFull = true;
+            break;
+        } else if (written < 0 && errno == EINTR) {
+            continue;
+        } else {
+            Require(false);
+        }
+    }
+    Require(pipeFull);
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(pipeFds[1], "full direct") == -1);
+    Require(*__error_nid_postfix() == 35);
+
+    *__error_nid_postfix() = 0;
+    Require(CallVdprintf(pipeFds[1], "full %s %d", "valist", 999) == -1);
+    Require(*__error_nid_postfix() == 35);
+
+#ifdef __linux__
+    const auto pageSize = ::sysconf(_SC_PAGESIZE);
+    Require(pageSize > 0);
+    const auto pageBytes = static_cast<std::size_t>(pageSize);
+    Require(totalFilled >= pageBytes);
+    std::vector<char> drainPage(pageBytes);
+    std::size_t drained = 0;
+    while (drained < drainPage.size()) {
+        const auto r = ::read(pipeFds[0], drainPage.data() + drained, drainPage.size() - drained);
+        if (r > 0) {
+            drained += static_cast<std::size_t>(r);
+        } else if (r < 0 && errno == EINTR) {
+            continue;
+        } else {
+            Require(false);
+        }
+    }
+    Require(drained == pageBytes);
+
+    std::vector<char> multiPage(pageBytes * 3 + 1, 'k');
+    multiPage.back() = '\0';
+
+    *__error_nid_postfix() = 0;
+    Require(dprintf_nid_postfix(pipeFds[1], "%s", multiPage.data()) == -1);
+    Require(*__error_nid_postfix() == 35);
+
+    std::size_t remainingFillToDrain = totalFilled - pageBytes;
+    while (remainingFillToDrain > 0) {
+        char discard[4096]{};
+        const std::size_t toRead = remainingFillToDrain < sizeof(discard) ? remainingFillToDrain : sizeof(discard);
+        const auto r = ::read(pipeFds[0], discard, toRead);
+        if (r > 0) {
+            remainingFillToDrain -= static_cast<std::size_t>(r);
+        } else if (r < 0 && errno == EINTR) {
+            continue;
+        } else {
+            Require(false);
+        }
+    }
+
+    std::size_t transferredBytes = 0;
+    std::vector<char> verifyBuf(pageBytes);
+    while (transferredBytes < verifyBuf.size()) {
+        const auto r = ::read(pipeFds[0], verifyBuf.data() + transferredBytes, verifyBuf.size() - transferredBytes);
+        if (r > 0) {
+            transferredBytes += static_cast<std::size_t>(r);
+        } else if (r < 0 && errno == EINTR) {
+            continue;
+        } else {
+            Require(false);
+        }
+    }
+    Require(transferredBytes == pageBytes);
+    for (std::size_t i = 0; i < verifyBuf.size(); ++i) {
+        Require(verifyBuf[i] == 'k');
+    }
+
+    char emptyProbe = 0;
+    const auto probeResult = ::read(pipeFds[0], &emptyProbe, 1);
+    Require(probeResult < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+#endif
+
+    Require(::close(pipeFds[0]) == 0);
+    Require(::close(pipeFds[1]) == 0);
+    LibcSetGuestWriteHook_nid_no_patch(origHook);
+#endif
 
     failAllocation = true;
     allocated = nullptr;
