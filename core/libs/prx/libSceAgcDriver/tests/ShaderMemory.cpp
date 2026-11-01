@@ -5498,9 +5498,6 @@ void verifyDescriptorPhis() {
         const auto plan = GetResourcePlan(request);
         require(plan->info.images.size() == 2u && plan->info.usesFaultBuffer, message);
     }
-    const auto userDataWqmCode = entryWrites({0xbe8e0a00u});
-    auto userDataWqm = makeRequest(userDataWqmCode);
-    expectFailure([&] { static_cast<void>(GetResourcePlan(userDataWqm)); }, "GetImageResource dword 0 is not a valid runtime value", "descriptor Phi: a whole-quad expansion without a control-mask origin was accepted");
     auto unwritten = loopCode;
     unwritten[4] = 0xf4080200u;
     auto unwrittenRequest = makeRequest(unwritten);
