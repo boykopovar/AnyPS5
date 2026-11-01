@@ -1,0 +1,5 @@
+- [x] Added negative test coverage for null attr pointer in pthread_mutexattr_gettype / scePthreadMutexattrGettype
+- [x] Verified error return code EINVAL (22)
+- [x] Strictly adhered to 0 comments in C++20 code
+- [x] Checked conventions with check_conventions.py (0 findings)
+- [x] Followed commit and PR guidelines
