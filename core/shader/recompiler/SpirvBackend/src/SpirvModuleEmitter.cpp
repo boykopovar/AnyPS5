@@ -1713,7 +1713,7 @@ static std::uint32_t UnpackF16BitsToF32(SpirvEmitterState& state, std::uint32_t 
     const auto value = state.module.AllocateId();
     state.module.AddFunction(spv::OpExtInst, TypeF32Vector(state, 2), unpacked, GlslStd450(state), GLSLstd450UnpackHalf2x16, bits);
     state.module.AddFunction(spv::OpCompositeExtract, f32, value, unpacked, 0u);
-    if (!nanBits) return value;
+    if (!nanBits || state.float16WidenNans) return value;
     const auto signAndPayload = Binary(state, spv::OpShiftRightArithmetic, u32, Binary(state, spv::OpShiftLeftLogical, u32, bits, ConstantU32(state, 16u)), ConstantU32(state, 3u));
     const auto nan = Unary(state, spv::OpBitcast, f32, Binary(state, spv::OpBitwiseOr, u32, signAndPayload, ConstantU32(state, 0x7f800000u)));
     return Select(state, f32, Unary(state, spv::OpIsNan, TypeBool(state), value), nan, value);
