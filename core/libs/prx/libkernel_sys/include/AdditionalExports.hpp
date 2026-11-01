@@ -54,7 +54,7 @@ int APS5_VABI _dup2_nid_postfix();
 int APS5_VABI _execve_nid_postfix();
 int APS5_VABI _execvpe_nid_postfix();
 int APS5_VABI _wait4_nid_postfix();
-int APS5_VABI adjtime_nid_postfix();
+int APS5_VABI adjtime_nid_postfix(const KernelTimeval* delta, KernelTimeval* oldDelta);
 int APS5_VABI libkernel_sysUnknown_0CV40L3tznI_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_1WXQlxMpnNA_nid_no_patch();
 int APS5_VABI libkernel_sysUnknown_1v23w7Rnkic_nid_no_patch();
