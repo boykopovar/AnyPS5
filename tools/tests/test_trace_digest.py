@@ -775,6 +775,19 @@ class TraceDigestTests(unittest.TestCase):
         self.assertEqual([(entry[3], entry[4]) for entry in trace.slices[1]],
                          [(0, False), (1, True), (0, False)])
 
+    def test_interval_input_rejects_stack_samples(self):
+        path = Path(self.directory.name) / "intervals.jsonl"
+        path.write_text("", encoding="utf-8")
+        for output in ([], ["--json"]):
+            with self.subTest(output=output):
+                result = subprocess.run(
+                    [sys.executable, trace_digest.__file__, str(path), "--stacks", str(self.stacks), *output],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertIn("--stacks requires an event trace, not interval summaries", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_missing_summary_file_is_an_error(self):
         missing = Path(self.directory.name) / "missing.jsonl"
         error = io.StringIO()

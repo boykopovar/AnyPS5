@@ -1,0 +1,1 @@
+target_link_libraries(agc_driver_gcn_display_present_tests PRIVATE decoder_png)
