@@ -2072,7 +2072,7 @@ std::int64_t SendPassing(Socket& socket, const GuestMsghdr& message, std::vector
         header->cmsg_len = CMSG_LEN(descriptors.size() * sizeof(int));
         std::memcpy(CMSG_DATA(header), descriptors.data(), descriptors.size() * sizeof(int));
     }
-    const auto result = ::sendmsg(socket.value, &host, SocketSendFlags(socket, flags));
+    const auto result = ThreadCancel::Native([&] { return ::sendmsg(socket.value, &host, SocketSendFlags(socket, flags)); });
     return result < 0 ? Fail(SendError(socket.type)) : result;
 }
 int GuestFromHostSocket(int domain) {
