@@ -162,6 +162,40 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.path.read_text(encoding="utf-8"), original)
         self.assertEqual(list(self.root.iterdir()), [self.path])
 
+    def test_main_with_explicit_argv(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = pad_input.main([str(self.path), "cross"])
+        self.assertEqual(result, 0)
+        tokens = [int(token) for token in self.path.read_text(encoding="utf-8").split()]
+        self.assertEqual(len(tokens), 3)
+        self.assertEqual(tokens[1], 16384)
+        self.assertEqual(tokens[2], 300)
+
+    def test_main_reconfigures_streams(self):
+        class Stream:
+            def __init__(self):
+                self.encoding = None
+                self.errors = None
+
+            def reconfigure(self, encoding=None, errors=None):
+                self.encoding = encoding
+                self.errors = errors
+
+            def write(self, s):
+                pass
+
+            def flush(self):
+                pass
+
+        out, err = Stream(), Stream()
+        with mock.patch.object(pad_input.sys, "stdout", out), mock.patch.object(pad_input.sys, "stderr", err):
+            result = pad_input.main([str(self.path), "cross"])
+        self.assertEqual(result, 0)
+        self.assertEqual(out.encoding, "utf-8")
+        self.assertEqual(out.errors, "backslashreplace")
+        self.assertEqual(err.encoding, "utf-8")
+        self.assertEqual(err.errors, "backslashreplace")
+
     def test_output_has_consistent_lf_newlines_and_utf8(self):
         self.queue(1000, "cross")
         content = self.path.read_bytes()

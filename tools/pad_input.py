@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import tempfile
 import time
 
@@ -66,7 +67,11 @@ def button_mask(value):
     return mask
 
 
-def main():
+def main(argv=None):
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="Queue a controller pulse for APS5_PAD_INPUT_FILE.")
     parser.add_argument("path", type=Path)
     parser.add_argument("button", help=f"a button name ({', '.join(BUTTONS)}), or several joined by '+' to press them together (for example l1+r1); release must be used alone")
@@ -75,7 +80,7 @@ def main():
     parser.add_argument("--right-stick", type=int, nargs=2, metavar=("X", "Y"))
     parser.add_argument("--touch", type=int, nargs=4, metavar=("X", "Y", "ID", "ACTIVE"),
                         help="touch contact: X 0..1919, Y 0..942, ID 0..127, ACTIVE 0 or 1; keep ID while moving, use 0 to lift")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     try:
         mask = button_mask(args.button)
     except argparse.ArgumentTypeError as error:
@@ -121,7 +126,8 @@ def main():
         if temporary is not None:
             temporary.unlink(missing_ok=True)
     print(f"Queued {args.button}{' with sticks' + sticks if sticks else ''} for {args.hold_ms} ms in {args.path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
