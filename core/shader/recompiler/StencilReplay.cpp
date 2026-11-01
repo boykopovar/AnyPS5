@@ -608,6 +608,12 @@ private:
         return false;
     }
 
+    bool keepsNothing(const IrBlock* block) const {
+        return std::ranges::none_of(block->Instructions(), [](const IrValue* instruction) {
+            return instruction->Opcode() == IrOpcode::Discard || (instruction->Opcode() == IrOpcode::SetAttribute && !Boolean(instruction->Argument(1), false));
+        });
+    }
+
     bool optionalBody(const IrBlock* branch, const IrBlock* body, const IrBlock* merge, const IrValue* predicate) {
         if (body == merge) return false;
         std::set<const IrBlock*> region;
@@ -616,7 +622,11 @@ private:
             const IrBlock* block = pending.back();
             pending.pop_back();
             if (block == merge || !region.insert(block).second) continue;
-            if (block == branch || region.size() > 64u || program.Metadata().blockInfo[blockIndices.at(block)].terminator.kind == TerminatorKind::Return) return false;
+            if (block == branch || region.size() > 64u) return false;
+            if (program.Metadata().blockInfo[blockIndices.at(block)].terminator.kind == TerminatorKind::Return) {
+                if (!keepsNothing(block)) return false;
+                continue;
+            }
             for (const auto* successor : block->Successors()) pending.push_back(successor);
         }
         for (const auto* block : region) {
@@ -642,7 +652,7 @@ private:
         }
         for (const auto* block : region) {
             for (const auto* instruction : block->Instructions()) {
-                if (instruction->Opcode() == IrOpcode::SetAttribute || instruction->Opcode() == IrOpcode::Discard) return false;
+                if ((instruction->Opcode() == IrOpcode::SetAttribute && !Boolean(instruction->Argument(1), false)) || instruction->Opcode() == IrOpcode::Discard) return false;
                 for (const auto& use : instruction->OperandUses()) {
                     if (region.contains(use.user->Parent()) || merged.contains(use.user) || use.user->Opcode() == IrOpcode::Reference || use.user->Opcode() == IrOpcode::ReferenceU32) continue;
                     return false;
