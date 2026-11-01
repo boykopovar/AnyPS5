@@ -1250,12 +1250,16 @@ constexpr std::size_t TrackedEntries = 512;
 struct Collector::Tables {
     std::timed_mutex mutex;
     std::vector<FunctionEntry> functions;
+    std::vector<UnsupportedEntry> unsupported;
+    std::vector<FormatEntry> imageFormats;
+    std::vector<DescriptorEntry> descriptors;
     Truncated dropped;
-    std::set<std::string> droppedFunctionKeys;
+    std::set<std::string> droppedFunctionKeys, droppedUnsupportedKeys, droppedFormatKeys;
     bool droppedSaturated = false;
 };
 
 Collector::Collector(Settings value) : settings(std::move(value)), game(std::make_shared<GameState>()), tables(std::make_shared<Tables>()) {
+    for (auto& nanos : milestoneNanos) nanos = -1;
     for (auto& count : lost) count = 0;
     if (!Hex32(settings.runId)) settings.runId = GenerateRunId();
     host = CurrentHostIdentifiers();
@@ -1379,6 +1383,110 @@ void Collector::NoteLost(int section) {
     lost[section].fetch_add(1, std::memory_order_relaxed);
 }
 
+std::int64_t NanosSince(std::chrono::steady_clock::time_point start) {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+}
+
+void Collector::NoteGpu(GpuInfo gpu) {
+    std::lock_guard guard(machineMutex);
+    machineInfo.gpu = std::move(gpu);
+}
+
+void Collector::NoteMilestone(int milestone) {
+    if (milestone < 0 || milestone > 3 || !started_) return;
+    std::int64_t unset = -1;
+    milestoneNanos[milestone].compare_exchange_strong(unset, NanosSince(started));
+}
+
+void Collector::NoteFramePresented() {
+    if (!started_) return;
+    const auto now = NanosSince(started);
+    if (frames.fetch_add(1, std::memory_order_relaxed) == 0) {
+        firstFrameNanos = now;
+        NoteMilestone(3);
+    }
+    lastFrameNanos = now;
+}
+
+void Collector::NoteShader(int what) {
+    if (!started_) return;
+    (what == 0 ? compiled : what == 1 ? failedShaders : cacheHitCount).fetch_add(1, std::memory_order_relaxed);
+}
+
+void Collector::NoteUnsupportedInstruction(std::optional<std::string> encoding, std::optional<std::string> opcode, std::optional<std::int64_t> opcodeValue, std::string_view) {
+    if (!started_) return;
+    std::unique_lock guard(tables->mutex, std::defer_lock);
+    if (!guard.try_lock_for(settings.tableWait)) {
+        NoteLost(1);
+        return;
+    }
+    auto& list = tables->unsupported;
+    const auto found = std::ranges::find_if(list, [&](const UnsupportedEntry& entry) {
+        return entry.encoding == encoding && entry.opcode == opcode && entry.opcodeValue == opcodeValue;
+    });
+    if (found != list.end()) {
+        ++found->count;
+    } else if (list.size() < TrackedEntries) {
+        list.push_back({encoding, opcode, opcodeValue, std::nullopt, 1});
+    } else if (tables->droppedUnsupportedKeys.size() < 4096u) {
+        const auto key = encoding.value_or("") + "|" + opcode.value_or("") + "|" + (opcodeValue ? std::to_string(*opcodeValue) : std::string());
+        if (tables->droppedUnsupportedKeys.insert(key).second) ++tables->dropped.unsupported;
+    } else {
+        tables->droppedSaturated = true;
+    }
+}
+
+void Collector::SetDescriptorCounters(const std::atomic<unsigned long long>* counters) {
+    descriptorCounters = counters;
+}
+
+void Collector::SetFormatCounters(const std::atomic<unsigned long long>* counters, unsigned count) {
+    formatCounterCount = count;
+    formatCounters = counters;
+}
+
+void Collector::NoteImageFormat(std::int64_t format, std::optional<std::string> name, Status status, int usage) {
+    if (!started_) return;
+    std::unique_lock guard(tables->mutex, std::defer_lock);
+    if (!guard.try_lock_for(settings.tableWait)) {
+        NoteLost(2);
+        return;
+    }
+    auto& list = tables->imageFormats;
+    const auto found = std::ranges::find_if(list, [&](const FormatEntry& entry) { return entry.format == format && entry.status == status && entry.usage == usage; });
+    if (found != list.end()) {
+        ++found->count;
+    } else if (list.size() < TrackedEntries) {
+        list.push_back({format, std::move(name), status, usage, 1});
+    } else if (tables->droppedFormatKeys.size() < 4096u) {
+        if (tables->droppedFormatKeys.insert(std::to_string(format) + "|" + std::to_string(static_cast<int>(status)) + "|" + std::to_string(usage)).second) ++tables->dropped.imageFormats;
+    } else {
+        tables->droppedSaturated = true;
+    }
+}
+
+void Collector::NoteDescriptor(int type, Status status, int usage) {
+    if (!started_) return;
+    std::unique_lock guard(tables->mutex, std::defer_lock);
+    if (!guard.try_lock_for(settings.tableWait)) {
+        NoteLost(3);
+        return;
+    }
+    auto& list = tables->descriptors;
+    const auto found = std::ranges::find_if(list, [&](const DescriptorEntry& entry) { return entry.type == type && entry.status == status && entry.usage == usage; });
+    if (found != list.end()) ++found->count;
+    else if (list.size() < TrackedEntries) list.push_back({type, status, usage, 1});
+    else ++tables->dropped.descriptors;
+}
+
+void Collector::NoteQuitRequested() noexcept {
+    try {
+        std::lock_guard guard(mutex);
+        quitRequested = true;
+    } catch (...) {
+    }
+}
+
 void Collector::NoteMissingFunction(std::string_view library, std::string_view name, std::string_view) {
     if (!started_) return;
     std::unique_lock guard(tables->mutex, std::defer_lock);
@@ -1404,16 +1512,50 @@ void Collector::NoteMissingFunction(std::string_view library, std::string_view n
 Observations Collector::Observe() const {
     Observations o;
     o.coverage = settings.coverage;
+    const auto seconds = [](std::int64_t nanos) { return std::optional<double>(static_cast<double>(nanos) / 1.0e9); };
+    if (milestoneNanos[0] >= 0) o.loaded = seconds(milestoneNanos[0]);
+    if (milestoneNanos[1] >= 0) o.started = seconds(milestoneNanos[1]);
+    if (milestoneNanos[2] >= 0) o.firstDraw = seconds(milestoneNanos[2]);
+    if (milestoneNanos[3] >= 0) o.firstPresent = seconds(milestoneNanos[3]);
+    o.framesPresented = frames;
+    if (o.framesPresented >= 2 && firstFrameNanos >= 0 && lastFrameNanos > firstFrameNanos) {
+        const double window = static_cast<double>(lastFrameNanos - firstFrameNanos) / 1.0e9;
+        o.fpsWindowSeconds = window;
+        o.averageFps = static_cast<double>(o.framesPresented - 1) / window;
+    }
+    o.shadersCompiled = compiled;
+    o.shadersFailed = failedShaders;
+    if (settings.coverage.shaders) o.cacheHits = cacheHitCount.load();
+    if (const auto* counters = descriptorCounters.load()) {
+        for (int type = 0; type < 7; ++type) {
+            for (int usage = 0; usage < 4; ++usage) {
+                const auto count = counters[type * 4 + usage].load(std::memory_order_relaxed);
+                if (count != 0) o.descriptors.push_back({type, Status::Accepted, usage, static_cast<std::int64_t>(count)});
+            }
+        }
+    }
+    if (const auto* counters = formatCounters.load()) {
+        for (unsigned format = 0; format < formatCounterCount.load(); ++format) {
+            const auto count = counters[format].load(std::memory_order_relaxed);
+            if (count != 0) o.imageFormats.push_back({static_cast<std::int64_t>(format), std::nullopt, Status::Accepted, 5, static_cast<std::int64_t>(count)});
+        }
+    }
     std::unique_lock guard(tables->mutex, std::defer_lock);
     if (guard.try_lock_for(settings.tableWait)) {
         o.functions = tables->functions;
+        o.unsupported = tables->unsupported;
+        o.imageFormats.insert(o.imageFormats.end(), tables->imageFormats.begin(), tables->imageFormats.end());
+        o.descriptors.insert(o.descriptors.end(), tables->descriptors.begin(), tables->descriptors.end());
         o.truncated = tables->dropped;
         if (tables->droppedSaturated) o.lostObservations = true;
     } else {
-        o.coverage.missing = false;
+        o.coverage.missing = o.coverage.unsupported = o.coverage.imageFormats = o.coverage.descriptors = false;
     }
     if (lost[0] != 0 && o.coverage.missing) o.truncated.functions += 1;
-    o.lostObservations = o.lostObservations || lost[0] != 0;
+    if (lost[1] != 0 && o.coverage.unsupported) o.truncated.unsupported += 1;
+    if (lost[2] != 0 && o.coverage.imageFormats) o.truncated.imageFormats += 1;
+    if (lost[3] != 0 && o.coverage.descriptors) o.truncated.descriptors += 1;
+    o.lostObservations = o.lostObservations || lost[0] != 0 || lost[1] != 0 || lost[2] != 0 || lost[3] != 0;
     return o;
 }
 
@@ -1431,6 +1573,7 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
                 return;
             }
             state = 1;
+            if (stop.reason == Reason::GuestExit && quitRequested) stop.reason = Reason::QuitRequested;
         }
         if (exit == Exit::Clean) RefreshGame(true);
         try {
@@ -1523,8 +1666,8 @@ bool StartRunReport() noexcept {
         if (*APS5_REPORT_RELEASE != '\0') settings.build.release = APS5_REPORT_RELEASE;
         if (APS5_REPORT_MODIFIED >= 0) settings.build.modified = APS5_REPORT_MODIFIED != 0;
         settings.game = ProvideGame;
-        settings.requiredComponents = {"libkernel"};
-        settings.coverage.missing = true;
+        settings.requiredComponents = {"libkernel", "libSceVideoOut", "libSceAgcDriver"};
+        settings.coverage = {true, true, true, true, true, true};
         auto* created = new RunReport::Collector(std::move(settings));
         if (!created->Start()) {
             delete created;
@@ -1574,6 +1717,73 @@ extern "C" void LibcRunReportRegisterComponent_nid_no_patch(const char* name, co
 extern "C" void LibcRunReportFinishExit_nid_no_patch(int exitCode) noexcept {
     if (collector == nullptr) return;
     collector->Finish(RunReport::Exit::Clean, RunReport::Stop{RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, exitCode);
+}
+
+extern "C" void LibcRunReportQuitRequested_nid_no_patch() noexcept {
+    if (collector != nullptr) collector->NoteQuitRequested();
+}
+
+extern "C" bool LibcRunReportEnabled_nid_no_patch() noexcept {
+    return collector != nullptr;
+}
+
+extern "C" void LibcRunReportSetGpu_nid_no_patch(unsigned vendorId, const char* name, const char* driver, unsigned apiVersion) noexcept {
+    try {
+        if (collector == nullptr) return;
+        RunReport::GpuInfo gpu;
+        gpu.vendor = vendorId == 0x1002u ? "AMD" : vendorId == 0x10deu ? "NVIDIA" : vendorId == 0x8086u ? "Intel" : vendorId == 0x106bu ? "Apple" : "Other";
+        if (name != nullptr && *name != '\0') gpu.name = name;
+        if (driver != nullptr && *driver != '\0') gpu.driver = driver;
+        gpu.vulkan = std::to_string((apiVersion >> 22u) & 0x7fu) + "." + std::to_string((apiVersion >> 12u) & 0x3ffu) + "." + std::to_string(apiVersion & 0xfffu);
+        collector->NoteGpu(std::move(gpu));
+    } catch (...) {
+    }
+}
+
+extern "C" void LibcRunReportMilestone_nid_no_patch(int milestone) noexcept {
+    if (collector != nullptr) collector->NoteMilestone(milestone);
+}
+
+extern "C" void LibcRunReportFramePresented_nid_no_patch() noexcept {
+    if (collector != nullptr) collector->NoteFramePresented();
+}
+
+extern "C" void LibcRunReportShader_nid_no_patch(int what) noexcept {
+    if (collector != nullptr) collector->NoteShader(what);
+}
+
+extern "C" void LibcRunReportUnsupportedInstruction_nid_no_patch(const char* encoding, const char* opcode, long long opcodeValue, const char* file, int line) noexcept {
+    try {
+        if (collector == nullptr) return;
+        const auto source = RunReport::SourceOf(file != nullptr ? file : "", line);
+        collector->NoteUnsupportedInstruction(encoding != nullptr ? std::optional<std::string>(encoding) : std::nullopt, opcode != nullptr ? std::optional<std::string>(opcode) : std::nullopt,
+                                              opcodeValue >= 0 ? std::optional<std::int64_t>(opcodeValue) : std::nullopt, source.value_or(""));
+    } catch (...) {
+    }
+}
+
+extern "C" void LibcRunReportImageFormat_nid_no_patch(unsigned format, const char* name, int status, int usage) noexcept {
+    try {
+        if (collector == nullptr) return;
+        collector->NoteImageFormat(format, name != nullptr ? std::optional<std::string>(name) : std::nullopt,
+                                   static_cast<RunReport::Status>(status >= 0 && status < 3 ? status : 2), usage >= 0 && usage < 6 ? usage : 5);
+    } catch (...) {
+    }
+}
+
+extern "C" void LibcRunReportDescriptor_nid_no_patch(int type, int status, int usage) noexcept {
+    try {
+        if (collector != nullptr) collector->NoteDescriptor(type, static_cast<RunReport::Status>(status >= 0 && status < 3 ? status : 2), usage);
+    } catch (...) {
+    }
+}
+
+extern "C" void LibcRunReportSetDescriptorCounters_nid_no_patch(const std::atomic<unsigned long long>* counters) noexcept {
+    if (collector != nullptr) collector->SetDescriptorCounters(counters);
+}
+
+extern "C" void LibcRunReportSetFormatCounters_nid_no_patch(const std::atomic<unsigned long long>* counters, unsigned count) noexcept {
+    if (collector != nullptr) collector->SetFormatCounters(counters, count);
 }
 
 extern "C" void LibcRunReportMissingFunction_nid_no_patch(const char* name, const char* file, int line) noexcept {

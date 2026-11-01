@@ -2,6 +2,8 @@
 #include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <clocale>
 #include <csignal>
 #include <cstdio>
@@ -187,9 +189,10 @@ void FinishTests() {
     Require(collector.Start(), "the collector did not start");
     Require(SamePath(collector.ReportPath(), executable.path / "anyps5-report.json"), "the report is not next to the executable");
     Require(!fs::exists(collector.ReportPath()), "Start wrote a file");
+    collector.NoteQuitRequested();
     collector.Finish(RunReport::Exit::Clean, {RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, 3);
     const auto report = Read(collector.ReportPath());
-    Require(Contains(report, "\"exit\": \"clean\"") && Contains(report, "\"exitCode\": 3") && Contains(report, "\"reason\": \"guest-exit\"") && Contains(report, "\"recovered\": false"), "the finished report is wrong: " + report);
+    Require(Contains(report, "\"exit\": \"clean\"") && Contains(report, "\"exitCode\": 3") && Contains(report, "\"reason\": \"quit-requested\"") && Contains(report, "\"recovered\": false"), "the finished report is wrong: " + report);
     collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Other, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
     Require(Read(collector.ReportPath()) == report, "a second finish changed the report");
     std::size_t files = 0;
@@ -871,7 +874,7 @@ void ComponentProvenanceTest() {
 
 RunReport::Settings Covered(const fs::path& executable, const fs::path& user, const char* id) {
     auto settings = SettingsFor(executable, user, id);
-    settings.coverage.missing = true;
+    settings.coverage = {true, true, true, true, true, true};
     return settings;
 }
 
@@ -918,10 +921,13 @@ void LostObservationTest() {
     {
         auto held = collector.LockTablesForTest();
         collector.NoteMissingFunction("libTest", "second", "");
+        collector.NoteUnsupportedInstruction("VOP3", "V_X", 7, "");
+        collector.NoteImageFormat(5, std::nullopt, RunReport::Status::Accepted, 0);
+        collector.NoteDescriptor(1, RunReport::Status::Accepted, 0);
     }
     collector.Finish(RunReport::Exit::Clean, {}, 0);
     const auto text = Read(collector.ReportPath());
-    Require(Contains(text, "\"functions\": 1,\n    \"unsupported\": 0,\n    \"imageFormats\": 0,\n    \"descriptors\": 0"), "lost observations are not visible in truncated: " + text.substr(text.find("\"truncated\"")));
+    Require(Contains(text, "\"functions\": 1,\n    \"unsupported\": 1,\n    \"imageFormats\": 1,\n    \"descriptors\": 1"), "lost observations are not visible in truncated: " + text.substr(text.find("\"truncated\"")));
     Require(Contains(text, "\"incomplete\": true"), "a report that lost observations is not marked incomplete");
 }
 
@@ -1015,6 +1021,8 @@ void ObservationPrivacyTest() {
     collector.NoteMissingFunction("lib/../bad", "ok_name", "");
     collector.NoteMissingFunction("libOk", "has space", "");
     collector.NoteMissingFunction("libOk", "/home/someone/f", "");
+    collector.NoteUnsupportedInstruction("VOP 3", "op code", 5000000000LL, "/home/someone/a.cpp:3");
+    collector.NoteImageFormat(7, "name with space", RunReport::Status::Unknown, 99);
     collector.Finish(RunReport::Exit::Clean, {}, 0);
     auto report = SampleReport();
     report.observed.coverage = {true, true, true, true, true, true};
@@ -1026,6 +1034,69 @@ void ObservationPrivacyTest() {
     const auto written = Read(collector.ReportPath());
     Require(Contains(written, "\"name\": \"ok_name\"") && Contains(written, "\"library\": null"), "the valid name was lost or its invalid library kept: " + written);
     Require(Contains(RunReport::Serialize(report), "\"usage\": \"other\""), "an out-of-range usage was not mapped to other");
+}
+
+void ObservationsTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteMilestone(0);
+    collector.NoteMilestone(1);
+    collector.NoteMilestone(1);
+    collector.NoteMilestone(2);
+    for (int index = 0; index < 5; ++index) {
+        collector.NoteFramePresented();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    for (int index = 0; index < 3; ++index) collector.NoteShader(0);
+    collector.NoteShader(1);
+    collector.NoteShader(2);
+    collector.NoteMissingFunction("libSceNpTrophy", "sceNpTrophyCreateContext", "core/libs/prx/libSceNpTrophy/a.cpp:10");
+    collector.NoteMissingFunction("libSceNpTrophy", "sceNpTrophyCreateContext", "core/libs/prx/libSceNpTrophy/a.cpp:10");
+    collector.NoteMissingFunction("", "legacyCaller", "");
+    collector.NoteUnsupportedInstruction("VOP3", "V_CVT_PK_U8_F32", 256, "core/shader/recompiler/Translator/src/Vop3.cpp:812");
+    collector.NoteUnsupportedInstruction(std::nullopt, std::nullopt, 4000, "");
+    collector.NoteImageFormat(12, "GuestFormat12", RunReport::Status::Rejected, 0);
+    collector.NoteDescriptor(4, RunReport::Status::Accepted, 0);
+    collector.NoteDescriptor(4, RunReport::Status::Accepted, 0);
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    const auto text = Read(collector.ReportPath());
+    for (const char* part : {"\"stage\": \"presents\"", "\"loaded\":", "\"started\":", "\"firstDraw\":", "\"firstPresent\":", "\"framesPresented\": 5", "\"compiled\": 3", "\"failed\": 1", "\"cacheHits\": 1",
+                             "\"library\": \"libSceNpTrophy\",\n        \"name\": \"sceNpTrophyCreateContext\",\n        \"calls\": 2", "\"library\": null,\n        \"name\": \"legacyCaller\"",
+                             "\"encoding\": \"VOP3\"", "\"opcodeValue\": 4000", "\"format\": 12", "\"status\": \"rejected\"", "\"type\": \"SampledImage\"", "\"count\": 2",
+                             "\"kind\": \"none\"", "\"reason\": \"guest-exit\"", "\"missing\": true", "\"descriptors\": true"}) {
+        Require(Contains(text, part), std::string("the report lacks ") + part + ": " + text);
+    }
+    Require(!Contains(text, "\"averageFps\": null") && !Contains(text, "\"fpsWindowSeconds\": null"), "five presented frames gave no frame rate: " + text);
+}
+
+void FramesTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteFramePresented();
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    auto text = Read(collector.ReportPath());
+    Require(Contains(text, "\"framesPresented\": 1") && Contains(text, "\"averageFps\": null") && Contains(text, "\"stage\": \"presents\""), "one frame must give a null frame rate: " + text);
+    Directory second, other;
+    RunReport::Collector none(Covered(second.path, other.path, IdB));
+    Require(none.Start(), "the collector did not start");
+    none.NoteMilestone(2);
+    none.Finish(RunReport::Exit::Clean, {}, 0);
+    text = Read(none.ReportPath());
+    Require(Contains(text, "\"framesPresented\": 0") && Contains(text, "\"stage\": \"first-draw\"") && !Contains(text, "firstPresent"), "a run without frames is wrong: " + text);
+}
+
+void FormatOverflowTest() {
+    Directory executable, user;
+    RunReport::Collector collector(Covered(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    for (int round = 0; round < 2; ++round) {
+        for (int format = 0; format < 600; ++format) collector.NoteImageFormat(format, std::nullopt, RunReport::Status::Accepted, 0);
+    }
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    const auto text = Read(collector.ReportPath());
+    Require(Contains(text, "\"imageFormats\": 500,"), "format overflow counted calls, not entries: " + text.substr(text.find("\"truncated\"")));
 }
 
 void CoverageOffTest() {
@@ -1145,6 +1216,27 @@ void ChildMissingFunctionTest() {
     }
 }
 
+void ChildEnabledTest() {
+    Directory directory;
+    const auto copy = CopySelf(directory);
+    RunChild(copy, directory.path, "enabled", "", "APS5_REPORT=1");
+    Require(Read(directory.path / "enabled.txt") == "1", "the runtime does not say the report is on");
+    RunChild(copy, directory.path, "enabled", "", "APS5_REPORT=0");
+    Require(Read(directory.path / "enabled.txt") == "0", "the runtime says the report is on while it is off");
+    RunChild(copy, directory.path, "enabled", "--aps5-report=off", "APS5_REPORT=1");
+    Require(Read(directory.path / "enabled.txt") == "0", "the launch flag did not turn the report off for the hooks");
+}
+
+void ChildGpuTest() {
+    Directory directory;
+    RunChild(CopySelf(directory), directory.path, "gpu");
+    const auto text = Report(directory);
+    for (const char* part : {"\"vendor\": \"NVIDIA\"", "\"name\": \"Test GPU 4090\"", "\"driver\": \"NVIDIA 575.64.03\"", "\"vulkan\": \"1.3.280\""}) {
+        Require(Contains(text, part), std::string("the GPU the device code reported is not in the report: ") + part + ": " + text);
+    }
+    Require(!Contains(text, "\"cpu\": null") && !Contains(text, "\"ramGiB\": null") && !Contains(text, "\"osVersion\": null"), "the host fields of a real run are null: " + text);
+}
+
 void GuestRootIsNotFixedAtLoadTest() {
     Directory directory;
     const auto output = directory.path / "resolved.txt";
@@ -1189,6 +1281,35 @@ int main(int argc, char** argv) {
                 std::ofstream(argv[3]) << ResolvePath_nid_no_patch("x.txt").string();
                 return 0;
             }
+            if (mode == "bench" && argc > 3) {
+                constexpr int rounds = 2000000;
+                std::atomic<unsigned long long> counters[28]{};
+                LibcRunReportSetDescriptorCounters_nid_no_patch(counters);
+                std::ofstream out(argv[3]);
+                const auto measure = [&](const char* name, auto&& call) {
+                    const auto start = std::chrono::steady_clock::now();
+                    for (int index = 0; index < rounds; ++index) call();
+                    const auto nanos = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count();
+                    out << name << " " << static_cast<double>(nanos) / rounds << "\n";
+                };
+                measure("enabled", [] { LibcRunReportEnabled_nid_no_patch(); });
+                measure("frame-presented", [] { LibcRunReportFramePresented_nid_no_patch(); });
+                measure("milestone", [] { LibcRunReportMilestone_nid_no_patch(2); });
+                measure("shader", [] { LibcRunReportShader_nid_no_patch(2); });
+                measure("image-format", [] { LibcRunReportImageFormat_nid_no_patch(12, nullptr, 0, 0); });
+                measure("descriptor", [] { LibcRunReportDescriptor_nid_no_patch(1, 0, 0); });
+                LibcRunReportFinishExit_nid_no_patch(0);
+                return 0;
+            }
+            if (mode == "enabled") {
+                std::ofstream("enabled.txt") << (LibcRunReportEnabled_nid_no_patch() ? "1" : "0");
+                return 0;
+            }
+            if (mode == "gpu") {
+                LibcRunReportSetGpu_nid_no_patch(0x10deu, "Test GPU 4090", "NVIDIA 575.64.03", (1u << 22u) | (3u << 12u) | 280u);
+                LibcRunReportFinishExit_nid_no_patch(0);
+                return 0;
+            }
             if (mode == "caught-missing-function") {
                 try { NotImplemented_nid_no_patch("sceNpCaught_nid_postfix"); } catch (const std::exception&) {}
                 LibcRunReportFinishExit_nid_no_patch(0);
@@ -1226,6 +1347,9 @@ int main(int argc, char** argv) {
         Run("list-order-and-cap", ListOrderAndCapTest);
         Run("size-limit", SizeLimitTest);
         Run("observation-privacy", ObservationPrivacyTest);
+        Run("observations", ObservationsTest);
+        Run("frames", FramesTest);
+        Run("format-overflow", FormatOverflowTest);
         Run("coverage-off", CoverageOffTest);
         Run("lost-observation", LostObservationTest);
         Run("source-boundary", SourceBoundaryTest);
@@ -1247,6 +1371,8 @@ int main(int argc, char** argv) {
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
         Run("child-library-from-source", LibraryFromSourceTest);
+        Run("child-enabled", ChildEnabledTest);
+        Run("child-gpu", ChildGpuTest);
         Run("child-guest-root-not-fixed-at-load", GuestRootIsNotFixedAtLoadTest);
         Run("child-missing-function", ChildMissingFunctionTest);
 #endif

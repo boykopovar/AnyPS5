@@ -25,6 +25,17 @@ extern "C" void LibcRunReportSetGameProvider_nid_no_patch(bool (*provider)(RunRe
 extern "C" void LibcRunReportFinishExit_nid_no_patch(int exitCode) noexcept;
 extern "C" void LibcRunReportRegisterComponent_nid_no_patch(const char* name, const char* commit, int modified) noexcept;
 extern "C" void LibcRunReportMissingFunction_nid_no_patch(const char* name, const char* file, int line) noexcept;
+extern "C" void LibcRunReportQuitRequested_nid_no_patch() noexcept;
+extern "C" bool LibcRunReportEnabled_nid_no_patch() noexcept;
+extern "C" void LibcRunReportMilestone_nid_no_patch(int milestone) noexcept;
+extern "C" void LibcRunReportFramePresented_nid_no_patch() noexcept;
+extern "C" void LibcRunReportShader_nid_no_patch(int what) noexcept;
+extern "C" void LibcRunReportUnsupportedInstruction_nid_no_patch(const char* encoding, const char* opcode, long long opcodeValue, const char* file, int line) noexcept;
+extern "C" void LibcRunReportImageFormat_nid_no_patch(unsigned format, const char* name, int status, int usage) noexcept;
+extern "C" void LibcRunReportDescriptor_nid_no_patch(int type, int status, int usage) noexcept;
+extern "C" void LibcRunReportSetDescriptorCounters_nid_no_patch(const std::atomic<unsigned long long>* counters) noexcept;
+extern "C" void LibcRunReportSetFormatCounters_nid_no_patch(const std::atomic<unsigned long long>* counters, unsigned count) noexcept;
+extern "C" void LibcRunReportSetGpu_nid_no_patch(unsigned vendorId, const char* name, const char* driver, unsigned apiVersion) noexcept;
 
 namespace RunReport {
 
@@ -203,7 +214,17 @@ public:
     bool Finished() const noexcept;
     const std::filesystem::path& ReportPath() const noexcept { return reportPath; }
     Report Snapshot(Exit exit, Stop stop, std::optional<std::int64_t> exitCode) const;
+    void NoteQuitRequested() noexcept;
+    void NoteMilestone(int milestone);
+    void NoteFramePresented();
     void NoteMissingFunction(std::string_view library, std::string_view name, std::string_view source);
+    void NoteShader(int what);
+    void NoteUnsupportedInstruction(std::optional<std::string> encoding, std::optional<std::string> opcode, std::optional<std::int64_t> opcodeValue, std::string_view source);
+    void NoteImageFormat(std::int64_t format, std::optional<std::string> name, Status status, int usage);
+    void NoteDescriptor(int type, Status status, int usage);
+    void NoteGpu(GpuInfo gpu);
+    void SetDescriptorCounters(const std::atomic<unsigned long long>* counters);
+    void SetFormatCounters(const std::atomic<unsigned long long>* counters, unsigned count);
     void NoteGame();
     std::unique_lock<std::timed_mutex> LockTablesForTest();
     struct Tables;
@@ -222,13 +243,22 @@ private:
     std::mutex mutex;
     std::condition_variable changed;
     std::atomic<int> state{0};
+    bool quitRequested = false;
     bool started_ = false;
     struct GameState;
     std::shared_ptr<GameState> game;
     mutable std::mutex machineMutex;
     SystemInfo machineInfo;
     std::shared_ptr<Tables> tables;
+    std::atomic<std::int64_t> milestoneNanos[4];
+    std::atomic<std::int64_t> frames{0};
+    std::atomic<std::int64_t> firstFrameNanos{-1};
+    std::atomic<std::int64_t> lastFrameNanos{-1};
+    std::atomic<std::int64_t> compiled{0}, failedShaders{0}, cacheHitCount{0};
     std::atomic<int> lost[4];
+    std::atomic<const std::atomic<unsigned long long>*> descriptorCounters{nullptr};
+    std::atomic<const std::atomic<unsigned long long>*> formatCounters{nullptr};
+    std::atomic<unsigned> formatCounterCount{0};
     HostIdentifiers host;
 };
 

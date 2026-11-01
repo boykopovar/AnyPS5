@@ -1,7 +1,9 @@
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "RdnaDecoder/include/RdnaDecoder/RdnaDescriptorFormat.hpp"
+#include "prx/libc/include/RunReport.hpp"
 #include <array>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -102,10 +104,18 @@ std::uint32_t remapGuestFormat(std::uint32_t guestFormat) {
     return guestFormat == 30 || guestFormat == 34 || guestFormat == 36 || guestFormat == 43 ? 20 : guestFormat;
 }
 
+std::atomic<unsigned long long> formatUse[kMaxGuestFormat + 1];
+const bool formatCountersShared = (LibcRunReportSetFormatCounters_nid_no_patch(formatUse, kMaxGuestFormat + 1), true);
+
 const FormatEntry& findFormatEntry(std::uint32_t guestFormat) {
     const auto remapped = remapGuestFormat(guestFormat);
     const auto* entry = remapped <= kMaxGuestFormat ? kFormatLookupTable[remapped] : nullptr;
-    if (entry == nullptr) Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
+    if (entry == nullptr) {
+        LibcRunReportImageFormat_nid_no_patch(guestFormat, nullptr, 1, 5);
+        Require(false, "unsupported guest texture format " + std::to_string(guestFormat));
+    }
+    static const bool reporting = LibcRunReportEnabled_nid_no_patch();
+    if (reporting) formatUse[remapped].fetch_add(1, std::memory_order_relaxed);
     return *entry;
 }
 

@@ -131,7 +131,7 @@ add_dependencies(libc run_report_revision)
 target_include_directories(libc PRIVATE ${runReportRevisionRoot})
 
 function(run_report_stamp_components root)
-    foreach(component libkernel)
+    foreach(component libkernel libSceVideoOut libSceAgcDriver)
         if(TARGET ${component})
             target_include_directories(${component} PRIVATE ${root})
             add_dependencies(${component} run_report_revision)

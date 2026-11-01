@@ -93,6 +93,8 @@ private:
     VkDeviceMemory memory = VK_NULL_HANDLE;
 };
 
+void NoteGuestWorkOnCommandBuffer(VkCommandBuffer commands);
+
 class CommandBatch {
 public:
     explicit CommandBatch(const Context& context);
