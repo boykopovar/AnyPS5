@@ -429,6 +429,8 @@ RelinkResult RelinkerPipeline::Relink() {
                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                                 [](const std::uint8_t byte) { return byte != 0; })))
                 throw RelinkerException("Unnamed import symbol is not a null symbol entry", symOff);
+            if (section != SHN_UNDEF && ((raw[symOff + 4] >> 4) < STB_GLOBAL || (raw[symOff + 5] & 3) == 1 || (raw[symOff + 5] & 3) == 2))
+                throw RelinkerException("Relocation names a locally bound defined symbol: " + name, symOff);
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
             const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
             const bool function = symbolType == STT_FUNC;

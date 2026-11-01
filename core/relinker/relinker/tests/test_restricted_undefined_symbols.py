@@ -11,12 +11,15 @@ from test_guest_none_relocations import TARGET, module
 
 TARGETS = (("linux", []), ("pie", ["--lazy-binding"]), ("windows", ["--windows"]), ("macos", ["--macos"]))
 ERROR = "Undefined non-weak symbol has non-default visibility: "
+DEFINED_ERROR = "Relocation names a locally bound defined symbol: "
 
 
-def executable(relocation, visibility, binding=1, referenced=True):
+def executable(relocation, visibility, binding=1, referenced=True, defined=False):
     image = make_image(b"\0lib.so\0symbol\0")
     image[0x63c] = (binding << 4) | 2
     image[0x63d] = visibility
+    if defined:
+        struct.pack_into("<HQ", image, 0x63e, 1, 0x200)
     struct.pack_into("<QQq", image, 0x700, 0x300, (1 << 32) | (relocation if referenced else 0), 0)
     if relocation == 7:
         tags = [(1, 1), (5, 0x600), (10, 15), (6, 0x620), (11, 24), (0x6100003f, 48),
@@ -62,7 +65,7 @@ def main():
             result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=20)
             if rejected:
                 symbol = "shared" if is_guest else "symbol"
-                assert result.returncode == 2 and ERROR + symbol in result.stderr, (
+                assert result.returncode == 2 and rejected + symbol in result.stderr, (
                     name, options, result.returncode, result.stdout, result.stderr)
                 assert not output.exists() and not (case / "app0").exists(), (name, options)
             else:
@@ -82,15 +85,22 @@ def main():
                         lambda visibility, **kw: executable(relocation, visibility, **kw))
                     label = f"{relocation}-{target}-{sce}"
                     for visibility in (1, 2, 3):
-                        convert(label + f"-visibility-{visibility}", make(visibility), options, True)
-                    convert(label + "-local-hidden", make(2, binding=0), options, True)
-                    convert(label + "-default", make(0), options, False)
-                    convert(label + "-weak-default", make(0, binding=2), options, False)
-                    convert(label + "-unreferenced", make(2, referenced=False), options, False)
+                        convert(label + f"-visibility-{visibility}", make(visibility), options, ERROR)
+                    convert(label + "-local-hidden", make(2, binding=0), options, ERROR)
+                    convert(label + "-default", make(0), options, None)
+                    convert(label + "-weak-default", make(0, binding=2), options, None)
+                    convert(label + "-unreferenced", make(2, referenced=False), options, None)
                     if is_guest:
-                        convert(label + "-defined-hidden", make(2, defined=True), options, False)
+                        convert(label + "-defined-hidden", make(2, defined=True), options, None)
                     else:
-                        convert(label + "-filtered", make(2), [*options, "unused-filter=1"], True)
+                        convert(label + "-filtered", make(2), [*options, "unused-filter=1"], ERROR)
+                        convert(label + "-defined-default", make(0, defined=True), options, None)
+                        convert(label + "-defined-protected", make(3, defined=True), options, None)
+                        convert(label + "-defined-local", make(0, binding=0, defined=True), options, DEFINED_ERROR)
+                        convert(label + "-defined-internal", make(1, defined=True), options, DEFINED_ERROR)
+                        convert(label + "-defined-hidden", make(2, defined=True), options, DEFINED_ERROR)
+                        convert(label + "-defined-hidden-filtered", make(2, defined=True),
+                                [*options, "unused-filter=1"], DEFINED_ERROR)
     print(f"Restricted undefined symbol tests passed: {count} conversions ({'guest' if is_guest else 'executable'})")
 
 
