@@ -9845,8 +9845,8 @@ void verifyQuadMaskNeighbourReads() {
         require(stored, "quad mask: the pixel program stores no output");
         return nested;
     };
-    for (const bool demote : {false, true}) {
-        require(!outputStoresNested(compile(constant, true, demote)), "a valid-mask color export under a quad mask is stored inside an EXEC branch, which lets drivers sink implicit-LOD samples out of uniform control flow");
+    for (const auto code : {std::span<const std::uint32_t>(explicitExec), std::span<const std::uint32_t>(constantWqm), std::span<const std::uint32_t>(permute)}) {
+        require(!outputStoresNested(compile(code, true, true)), "a color export of a pixel program that reads neighbour lanes is stored inside an EXEC branch, which lets drivers move those reads out of uniform control flow");
     }
     for (const auto code : {std::span<const std::uint32_t>(explicitExec), std::span<const std::uint32_t>(constantWqm), std::span<const std::uint32_t>(permute)}) {
         const auto unmasked = compile(code, false, false);

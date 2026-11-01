@@ -2169,7 +2169,9 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
     if (exp.kind == ExportTargetKind::Null || exp.en == 0u) {
         return;
     }
-    const bool preserveInactive = state.program.Resources().stage == IrShaderStage::Pixel && exp.kind == ExportTargetKind::Mrt &&
+    const bool readsHelperLanes = state.requirements.neighbourLaneReads ||
+        std::ranges::any_of(state.program.Info().inputs, [](const StageInput& input) { return BarycentricInputOf(input.kind) != input.kind; });
+    const bool preserveInactive = state.program.Resources().stage == IrShaderStage::Pixel && exp.kind == ExportTargetKind::Mrt && readsHelperLanes &&
         std::ranges::none_of(PixelInfo(state).merges, [&](const auto& merge) { return merge.target == exp.index; });
     const auto store = [&]() {
         const auto data = ctx.Arg(inst, 0);
@@ -2275,7 +2277,8 @@ void EmitSetAttribute(SpirvValueEmitContext& ctx, const IrValue& inst) {
         } else if (preserveInactive) {
             auto& shadow = state.exportShadowVariables[variable];
             if (shadow == 0u) {
-                shadow = state.module.DefineGlobalVariable(TypePointer(state, spv::StorageClassPrivate, vectorType), spv::StorageClassPrivate);
+                const auto zero = state.module.Constant(spv::OpConstantNull, vectorType);
+                shadow = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, vectorType), spv::StorageClassPrivate, zero);
                 if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(shadow);
             }
             const auto previous = state.module.AllocateId();
