@@ -1,10 +1,15 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <new>
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
@@ -12,10 +17,28 @@ extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
 
 namespace {
 
+unsigned releases = 0;
+void* lastReleased = nullptr;
+
 void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "libc internal ios_base destructor: %s\n", message);
     std::abort();
+}
+
+void* APS5_VABI TestAllocate(std::size_t size) { return std::malloc(size); }
+void APS5_VABI TestFree(void* pointer) {
+    ++releases;
+    lastReleased = pointer;
+    std::free(pointer);
+}
+void* APS5_VABI TestCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
+void* APS5_VABI TestReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+void* APS5_VABI TestAlign(std::size_t, std::size_t size) { return std::malloc(size); }
+void* APS5_VABI TestRealign(void* pointer, std::size_t size, std::size_t) { return std::realloc(pointer, size); }
+int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
+    *pointer = std::malloc(size);
+    return *pointer ? 0 : 12;
 }
 
 template <typename Function>
@@ -37,6 +60,13 @@ struct GuardedStream {
 }
 
 int main() {
+    const std::array<void*, 10> api{
+        reinterpret_cast<void*>(&TestAllocate), reinterpret_cast<void*>(&TestFree),
+        reinterpret_cast<void*>(&TestCalloc), reinterpret_cast<void*>(&TestReallocate),
+        reinterpret_cast<void*>(&TestAlign), reinterpret_cast<void*>(&TestRealign),
+        reinterpret_cast<void*>(&TestPosixAlign), nullptr, nullptr, nullptr};
+    ApplicationHeapRegister_nid_no_patch(api.data());
+
     GuardedStream object;
     object.stream.locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
     sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(&object.stream);
@@ -56,6 +86,13 @@ int main() {
 
     Require(Throws([] { sceLibcInternalIosBaseCompleteDestructor_nid_no_patch(nullptr); }), "a null stream is rejected");
 
-    std::puts("libc internal ios_base complete-object destructor checks passed");
+    auto* heapStream = new (_Znwm_nid_postfix(sizeof(GuestLocale::IosBase))) GuestLocale::IosBase{};
+    heapStream->locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
+    releases = 0;
+    sceLibcInternalIosBaseDeletingDestructor_nid_no_patch(heapStream);
+    Require(releases == 1 && lastReleased == heapStream, "the deleting destructor frees the stream through operator delete");
+    Require(Throws([] { sceLibcInternalIosBaseDeletingDestructor_nid_no_patch(nullptr); }), "a null stream is rejected by the deleting destructor");
+
+    std::puts("libc internal ios_base destructor checks passed");
     return 0;
 }
