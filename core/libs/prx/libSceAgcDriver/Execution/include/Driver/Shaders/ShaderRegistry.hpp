@@ -127,6 +127,8 @@ struct PreparedShaderState {
     struct Entry {
         std::size_t codeOffset;
         std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+        bool fromDeferredAbi = false;
+        bool matched = false;
     };
     struct Rectangle {
         std::uint64_t vertexId;
@@ -153,6 +155,14 @@ struct PreparedShaderState {
     bool deferred = false;
 };
 struct PreparedShaders : PreparedShaderState {
+    struct DeferredAbi {
+        std::vector<std::uint64_t> key;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> context;
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> primitive;
+        std::weak_ptr<VulkanDevice> device;
+    };
+    std::vector<DeferredAbi> deferredAbis;
+    bool deferredPreparing = false;
     std::mutex mutex;
     std::condition_variable settled;
     std::exception_ptr failure;
@@ -165,6 +175,8 @@ struct RegisteredShaderState {
     Registers shader;
     Registers context;
     Registers userConfig;
+
+    bool operator==(const RegisteredShaderState&) const = default;
 };
 
 struct ShaderSnapshot {
@@ -200,6 +212,9 @@ std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareShaderWithDiagnosti
 
 std::uint64_t NullPixelProgramAddress();
 ShaderSnapshot PrepareNullPixelProgram(const VulkanDevice& device);
+std::uint64_t DepthCopyPixelProgramAddress(bool multisampled);
+std::uint32_t DepthCopyPixelUserWords(bool multisampled);
+ShaderSnapshot PrepareDepthCopyPixelProgram(bool multisampled);
 std::optional<ShaderRecompiler::ShaderFloatMode> RegisteredFloatMode(const ShaderSnapshot& snapshot);
 std::optional<ShaderRecompiler::ShaderFloatMode> DispatchFloatMode(const ShaderSnapshot& snapshot, const Registers& live);
 std::shared_ptr<const ShaderSnapshot> RegisteredHeader(const ShaderRegistry& registry, const Shader* shader);
@@ -208,10 +223,14 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
 void SubmitRegistrationPreparation(std::function<void()> task, const PreparedShaders* prepared = nullptr);
 void PrioritizeRegistrationPreparation(PreparedShaders& prepared);
 void AwaitRegistrationPreparation();
-void SubmitLibraryPrebuild(std::function<void()> task);
+void SubmitLibraryPrebuild(std::function<void()> task, std::uint64_t program = 0);
+bool LibraryPrebuildsWaiting();
+void PrioritizeLibraryPrebuilds(std::span<const std::uint64_t> programs);
+void SubmitComputePrebuild(std::function<void()> task);
 void AwaitLibraryPrebuilds();
 void CloseRegistrationPreparation();
 unsigned RegistrationPreparationThreads();
+std::optional<std::size_t> RegistrationPreparationsPending();
 
 void ResolvePreparedGraphics(const ShaderSnapshot& front, const std::shared_ptr<const ShaderSnapshot>& fragment, std::uint32_t primitiveType, const ShaderRecompiler::SpirvTarget& target, bool deferUnprepared = false);
 

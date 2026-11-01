@@ -1,27 +1,21 @@
+#include "prx/libSceAutoMounterClient/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
-struct AutoMounterUsbDeviceInfo {
-    char deviceName[128];
-    std::byte metadata[22];
-    std::byte data0[256];
-    std::byte padding[2];
-    std::uint64_t data0Size;
-    std::byte data1[256];
-    std::uint64_t data1Size;
-    std::byte data2[256];
-    std::uint64_t data2Size;
-};
-
 static_assert(sizeof(AutoMounterUsbDeviceInfo) == 944);
-static_assert(offsetof(AutoMounterUsbDeviceInfo, data0) == 150);
-static_assert(offsetof(AutoMounterUsbDeviceInfo, data0Size) == 408);
-static_assert(offsetof(AutoMounterUsbDeviceInfo, data1) == 416);
-static_assert(offsetof(AutoMounterUsbDeviceInfo, data1Size) == 672);
-static_assert(offsetof(AutoMounterUsbDeviceInfo, data2) == 680);
-static_assert(offsetof(AutoMounterUsbDeviceInfo, data2Size) == 936);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, totalSpace) == 128);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, availableSpace) == 136);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, vendorId) == 144);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, productId) == 146);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, bcdDevice) == 148);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, manufacturer) == 150);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, manufacturerLength) == 408);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, product) == 416);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, productLength) == 672);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, serialNumber) == 680);
+static_assert(offsetof(AutoMounterUsbDeviceInfo, serialNumberLength) == 936);
 
 extern "C" {
 

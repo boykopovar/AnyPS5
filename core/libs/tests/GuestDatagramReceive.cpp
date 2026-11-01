@@ -1,3 +1,6 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -7,30 +10,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-std::int64_t APS5_VABI sendto_nid_postfix(int, const void*, std::uint64_t, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI recvfrom_nid_postfix(int, void*, std::uint64_t, int, void*, std::uint32_t*);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sceNetInit_nid_postfix();
-int APS5_VABI sceNetSocket(const char*, int, int, int);
-int APS5_VABI sceNetBind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI sceNetConnect(int, const void*, std::uint32_t);
-int APS5_VABI sceNetGetsockname(int, void*, std::uint32_t*);
-int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI sceNetSendto(int, const void*, std::size_t, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI sceNetRecv(int, void*, std::size_t, int);
-std::int64_t APS5_VABI sceNetRecvfrom(int, void*, std::size_t, int, void*, std::uint32_t*);
-int APS5_VABI sceNetSocketClose(int);
-int* APS5_VABI sceNetErrnoLoc();
-}
 
 static void Require(bool condition, const char* message) {
     if (!condition) {
@@ -56,6 +35,7 @@ static void Check(bool net, bool from, int family) {
     const auto bind = [&](int descriptor) {
         return net ? sceNetBind_nid_postfix(descriptor, destination.data(), addressSize) :
             bind_nid_postfix(descriptor, destination.data(), addressSize);
+
     };
     const int bound = bind(receiver);
     if (bound < 0 && family == 28 && *error == 49) {
@@ -80,6 +60,7 @@ static void Check(bool net, bool from, int family) {
             sceNetRecv(receiver, buffer, length, flags);
         return from ? recvfrom_nid_postfix(receiver, buffer, length, flags, address, addressLength) :
             recv_nid_postfix(receiver, buffer, length, flags);
+
     };
     const auto send = [&](const char* data, std::size_t length) {
         Require((net ? sceNetSendto(sender, data, length, 0, destination.data(), addressSize) :
@@ -140,6 +121,21 @@ static void Check(bool net, bool from, int family) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     } while (std::chrono::steady_clock::now() < deadline);
     Require(result == 0 && byte == '!', "empty datagram");
+    if (!net) {
+        send("hello", 5);
+        const auto ready = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        do {
+            result = receive(&byte, 1, 2, nullptr, nullptr);
+            if (result >= 0 || *error != 35) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (std::chrono::steady_clock::now() < ready);
+        Require(result == 1, "wait for the datagram");
+        Require(receive(&byte, 0, 2, nullptr, nullptr) == 0 && receive(&byte, 1, 2, nullptr, nullptr) == 1, "a zero-length peek keeps the datagram");
+        Require(receive(&byte, 0, 0, nullptr, nullptr) == 0, "a zero-length receive returns 0");
+        Require(receive(&byte, 1, 0, nullptr, nullptr) < 0 && *error == 35, "a zero-length receive discards the datagram");
+        Require(fcntl_nid_postfix(receiver, 4, 2) == 0, "make receiver blocking");
+        Require(receive(&byte, 0, 0, nullptr, nullptr) == 0, "a zero-length receive on an empty queue returns 0 without waiting");
+    }
     Require(closeSocket(receiver) == 0, "close receiver");
     Require(closeSocket(sender) == 0, "close sender");
 }
@@ -148,7 +144,14 @@ int main(int argc, char** argv) {
     Require(argc == 2, "expected receive API argument");
     const bool net = std::strncmp(argv[1], "sce", 3) == 0;
     const bool from = std::strstr(argv[1], "from") != nullptr;
-    if (net) Require(sceNetInit_nid_postfix() == 0, "initialize libSceNet");
+    if (net) {
+        Require(sceNetInit_nid_postfix() == 0, "initialize libSceNet");
+        Require(sceNetSocketClose(-1) < 0, "reject invalid descriptor in sceNetSocketClose");
+        Require(*sceNetErrnoLoc() == 9, "bad file descriptor error");
+    } else {
+        Require(close_nid_postfix(-1) < 0, "reject invalid descriptor in close");
+        Require(*__error_nid_postfix() == 9, "bad file descriptor error");
+    }
     Check(net, from, 2);
     Check(net, from, 28);
 }

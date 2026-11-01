@@ -1,35 +1,9 @@
+#include "prx/libSceVoiceQoS/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceVoiceQoSInit(void*, std::uint32_t, std::int32_t);
-int APS5_VABI sceVoiceQoSEnd();
-int APS5_VABI sceVoiceQoSCreateLocalEndpoint(std::int32_t*, std::int32_t, std::int32_t, std::int32_t);
-int APS5_VABI sceVoiceQoSDeleteLocalEndpoint(std::int32_t);
-int APS5_VABI sceVoiceQoSCreateRemoteEndpoint(std::int32_t*);
-int APS5_VABI sceVoiceQoSDeleteRemoteEndpoint(std::int32_t);
-int APS5_VABI sceVoiceQoSConnect(std::int32_t*, std::int32_t, std::int32_t);
-int APS5_VABI sceVoiceQoSDisconnect(std::int32_t);
-int APS5_VABI sceVoiceQoSSetLocalEndpointAttribute(std::int32_t, std::int32_t, const void*, std::int32_t);
-int APS5_VABI sceVoiceQoSSetRemoteEndpointAttribute(std::int32_t, std::int32_t, const void*, std::int32_t);
-int APS5_VABI sceVoiceQoSGetLocalEndpointAttribute(std::int32_t, std::int32_t, void*, std::int32_t);
-int APS5_VABI sceVoiceQoSGetRemoteEndpointAttribute(std::int32_t, std::int32_t, void*, std::int32_t);
-int APS5_VABI sceVoiceQoSGetConnectionAttribute(std::int32_t, std::int32_t, void*, std::int32_t);
-int APS5_VABI sceVoiceQoSGetLocalEndpoint(std::int32_t, std::int32_t*);
-int APS5_VABI sceVoiceQoSGetRemoteEndpoint(std::int32_t, std::int32_t*);
-int APS5_VABI sceVoiceQoSEnableChat();
-int APS5_VABI sceVoiceQoSDisableChat();
-int APS5_VABI sceVoiceQoSGetStatus(std::int32_t, std::int32_t, void*, std::int32_t);
-int APS5_VABI sceVoiceQoSDebugGetStatus(std::int32_t, std::int32_t, void*, std::int32_t);
-int APS5_VABI sceVoiceQoSInitHQ(void*, std::uint32_t, std::int32_t);
-int APS5_VABI sceVoiceQoSSetMode();
-int APS5_VABI sceVoiceQoSTerminate();
-int APS5_VABI sceVoiceQoSReadPacket(std::int32_t, void*, std::uint32_t*);
-int APS5_VABI sceVoiceQoSWritePacket(std::int32_t, const void*, std::uint32_t*);
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

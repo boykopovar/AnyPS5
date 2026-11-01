@@ -1,3 +1,4 @@
+#include "prx/libSceOpusDec/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -8,15 +9,6 @@
 #include <span>
 #include <stdexcept>
 #include <opus.h>
-
-extern "C" {
-int APS5_VABI sceOpusDecInitialize(std::uint32_t*);
-int APS5_VABI sceOpusDecTerminate(const std::uint32_t*);
-int APS5_VABI sceOpusDecGetSize(int);
-int APS5_VABI sceOpusDecCreateEx(const std::uint32_t*, void*, int, int);
-int APS5_VABI sceOpusDecDecode(void*, const std::uint8_t*, int, std::int16_t*, int);
-int APS5_VABI sceOpusDecDestroy(void*);
-}
 
 namespace {
 

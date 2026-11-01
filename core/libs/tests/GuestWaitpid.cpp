@@ -1,12 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
 #include <initializer_list>
-extern "C" {
-int APS5_VABI wait_nid_postfix(int*);
-int APS5_VABI waitpid_nid_postfix(int, int*, int);
-int APS5_VABI getpid_nid_postfix(void);
-int* APS5_VABI __error_nid_postfix();
-}
+
 constexpr int noChild = 10;
 constexpr int invalidArgument = 22;
 constexpr int untouched = 0x5a5a5a5a;

@@ -1,9 +1,9 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libkernel/Module/ModuleArgs.hpp"
 #include <nid/NidCompute.hpp>
 #include <algorithm>
-#include <array>
 #include <condition_variable>
 #include <filesystem>
 #include <cstdio>
@@ -24,17 +24,24 @@
 #else
 #include <dlfcn.h>
 #include <link.h>
+#ifdef __linux__
+#include <unistd.h>
 #endif
+#endif
+#include "prx/libc/include/HostThreadLocal.hpp"
 
 #ifdef _WIN32
 extern "C" void ForgetUnloadedUnwindImages_nid_no_patch();
 #endif
 
 namespace {
-thread_local std::array<char, 512> loaderError{};
+struct LoaderErrorTag;
+std::string& LoaderError() {
+    return HostThreadLocal<std::string, LoaderErrorTag>();
+}
 thread_local bool pendingError = false;
 void Error(const char* message) {
-    std::snprintf(loaderError.data(), loaderError.size(), "%s", message);
+    LoaderError() = message;
     pendingError = true;
 }
 void LoadFailure(const std::filesystem::path& source, const std::filesystem::path& resolved, const std::string& reason) {
@@ -135,8 +142,58 @@ extern "C" {
 char* APS5_VABI dlerror_nid_postfix() {
     if (!pendingError) return nullptr;
     pendingError = false;
-    return loaderError.data();
+    return LoaderError().data();
 }
+#ifdef __linux__
+static void InitializeLinuxGuestModule(void* native) {
+    auto* table = static_cast<std::uint64_t*>(::dlsym(native, "__aps5_guest_lifecycle_nid_no_patch"));
+    if (!table) return;
+    link_map* requested = nullptr;
+    link_map* owner = nullptr;
+    Dl_info info{};
+    if (::dlinfo(native, RTLD_DI_LINKMAP, &requested) != 0 || requested == nullptr ||
+        !::dladdr1(table, &info, reinterpret_cast<void**>(&owner), RTLD_DL_LINKMAP) || owner == nullptr)
+        throw std::runtime_error("dlopen: cannot identify guest lifecycle metadata owner");
+    if (owner != requested) return;
+    if (table[0] != 0x415053354c494658ull) throw std::runtime_error("dlopen: unsupported guest lifecycle metadata");
+    using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
+    using Initializer = void (APS5_VABI *)(int, char**, char**);
+    static std::mutex initializedLock;
+    static std::condition_variable initializedChanged;
+    const auto thread = static_cast<std::uint64_t>(::gettid());
+    std::unique_lock lock(initializedLock);
+    while (table[6] == 1) {
+        if (table[7] == thread) return;
+        initializedChanged.wait(lock);
+    }
+    if (table[6] == 2) return;
+    if (table[6] != 0) throw std::runtime_error("dlopen: deferred guest initialization failed or finalized");
+    table[6] = 1;
+    table[7] = thread;
+    lock.unlock();
+    try {
+        const auto pending = *static_cast<const PendingModuleArgs*>(__aps5_get_pending_module_args_nid_no_patch());
+        const int result = table[2] == 0 ? 0 : reinterpret_cast<Entry>(table[2])(pending.args, pending.argp, nullptr);
+        for (std::uint64_t index = 0; index < table[4]; ++index) {
+            const auto initializer = *reinterpret_cast<Initializer*>(table[8 + index]);
+            if (initializer) initializer(0, nullptr, nullptr);
+        }
+        __aps5_set_module_init_result_nid_no_patch(result);
+        lock.lock();
+        table[6] = 2;
+        table[7] = 0;
+        lock.unlock();
+        initializedChanged.notify_all();
+    } catch (...) {
+        lock.lock();
+        table[6] = 3;
+        table[7] = 0;
+        lock.unlock();
+        initializedChanged.notify_all();
+        throw;
+    }
+}
+#endif
 #ifdef _WIN32
 static void InitializeDeferredModule(HMODULE native) {
     using Entry = int (APS5_VABI *)(std::size_t, const void*, void*);
@@ -228,6 +285,9 @@ void* APS5_VABI dlopen_nid_postfix(const char* path, int flags) {
             if (path) LoadFailure(source, resolved, ::dlerror()); else Error(::dlerror());
             return nullptr;
         }
+#ifdef __linux__
+        if (path) InitializeLinuxGuestModule(module->native);
+#endif
 #endif
         std::lock_guard lock(modulesMutex);
         const auto handle = nextHandle++;

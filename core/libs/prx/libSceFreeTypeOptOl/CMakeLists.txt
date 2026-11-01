@@ -1,0 +1,48 @@
+target_sources(libSceFreeType PRIVATE ${LIBS_INCLUDE_DIR}/prx/libSceFreeType/src/Pfr.cpp)
+
+add_library(libSceFreeTypeOptOl SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceFreeTypeOptOl PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceFreeTypeOptOl PRIVATE libSceFreeType)
+configure_windows_unwind(libSceFreeTypeOptOl)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_freetype_pfr_null_face_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypePfrNull.cpp
+        ${LIBS_INCLUDE_DIR}/prx/libSceFreeType/src/Pfr.cpp ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+    target_include_directories(guest_freetype_pfr_null_face_tests PRIVATE
+        ${LIBS_INCLUDE_DIR} $<TARGET_PROPERTY:freetype,INTERFACE_INCLUDE_DIRECTORIES>)
+    configure_windows_unwind(guest_freetype_pfr_null_face_tests)
+    add_test(NAME guest_freetype_pfr_null_face COMMAND guest_freetype_pfr_null_face_tests)
+    set_tests_properties(guest_freetype_pfr_null_face PROPERTIES TIMEOUT 10)
+    add_test_executable(guest_freetype_pfr_tests ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypePfr.cpp
+        ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)
+    target_include_directories(guest_freetype_pfr_tests PRIVATE ${LIBS_INCLUDE_DIR} ${LIBS_INCLUDE_DIR}/nid/include)
+    target_link_libraries(guest_freetype_pfr_tests PRIVATE freetype ${CMAKE_DL_LIBS})
+    if(WIN32)
+        target_link_libraries(guest_freetype_pfr_tests PRIVATE libc)
+    endif()
+    configure_windows_unwind(guest_freetype_pfr_tests)
+    add_custom_target(guest_freetype_pfr_libraries DEPENDS
+        ${PATCHED_DIR}/libSceFreeType.prx ${PATCHED_DIR}/libSceFreeTypeOptOl.prx ${PATCHED_DIR}/libkernel.prx ${LIBC_PATCHED})
+    add_dependencies(guest_freetype_pfr_tests guest_freetype_pfr_libraries)
+    add_test(NAME guest_freetype_pfr_reference COMMAND guest_freetype_pfr_tests reference)
+    set_tests_properties(guest_freetype_pfr_reference PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_freetype_pfr_reference PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:${UNPATCHED_DIR}")
+    endif()
+    foreach(operation IN ITEMS metrics advance kerning)
+        foreach(mode IN ITEMS raw patched)
+            if(mode STREQUAL "raw")
+                set(pfrDirectory ${UNPATCHED_DIR})
+            else()
+                set(pfrDirectory ${PATCHED_DIR})
+            endif()
+            add_test(NAME guest_freetype_pfr_${operation}_${mode} COMMAND guest_freetype_pfr_tests ${pfrDirectory} ${mode} ${operation})
+            set_tests_properties(guest_freetype_pfr_${operation}_${mode} PROPERTIES TIMEOUT 20)
+            if(WIN32)
+                set_tests_properties(guest_freetype_pfr_${operation}_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:${pfrDirectory}")
+            endif()
+        endforeach()
+    endforeach()
+endif()

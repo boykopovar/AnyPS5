@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -20,8 +21,16 @@ enum class ColorTileMode : std::uint32_t {
     D4KBX = 0x16,
     Z64KBX = 0x18,
     D64KBX = 0x1a,
-    RenderTarget = 0x1b
+    RenderTarget = 0x1b,
+    GcnThin1D = 0x100,
+    GcnDisplay1D = 0x101,
+    GcnDisplay2D = 0x102,
+    GcnThin2D = 0x103
 };
+
+constexpr bool ColorTileModeIsGcn(ColorTileMode mode) {
+    return mode == ColorTileMode::GcnThin1D || mode == ColorTileMode::GcnDisplay1D || mode == ColorTileMode::GcnDisplay2D || mode == ColorTileMode::GcnThin2D;
+}
 
 constexpr bool ColorTileModeIsXor(ColorTileMode mode) {
     return mode == ColorTileMode::S4KBX || mode == ColorTileMode::D4KBX || mode == ColorTileMode::Z64KBX || mode == ColorTileMode::D64KBX || mode == ColorTileMode::RenderTarget;
@@ -32,6 +41,10 @@ constexpr std::uint32_t ColorTileModeBlockBytes(ColorTileMode mode) {
 }
 
 constexpr TextureTileMode ColorTextureTileMode(ColorTileMode mode) {
+    if (mode == ColorTileMode::GcnThin1D) return TextureTileMode::kGcnThin1D;
+    if (mode == ColorTileMode::GcnDisplay1D) return TextureTileMode::kGcnDisplay1D;
+    if (mode == ColorTileMode::GcnDisplay2D) return TextureTileMode::kGcnDisplay2D;
+    if (mode == ColorTileMode::GcnThin2D) return TextureTileMode::kGcnThin2D;
     return mode == ColorTileMode::Linear ? TextureTileMode::kLinear : mode == ColorTileMode::Standard4KB ? TextureTileMode::kStandard4KB : mode == ColorTileMode::Standard64KB ? TextureTileMode::kStandard64KB : mode == ColorTileMode::S4KBX ? TextureTileMode::kS4KBX : mode == ColorTileMode::D4KBX ? TextureTileMode::kD4KBX : mode == ColorTileMode::D64KBX ? TextureTileMode::kD64KBX : mode == ColorTileMode::Z64KBX ? TextureTileMode::kZ64KBX : TextureTileMode::kR64KBX;
 }
 
@@ -43,7 +56,7 @@ public:
     ColorTargetLayout(std::uint32_t width, std::uint32_t height, ColorTileMode mode, std::uint32_t bytesPerElement = 4, std::uint32_t pipeBankXor = 0);
     std::size_t Bytes() const { return bytes; }
     std::size_t LinearBytes() const { return static_cast<std::size_t>(width) * height * elementBytes; }
-    std::size_t Alignment() const { return ColorTileModeBlockBytes(mode); }
+    std::size_t Alignment() const { return blockBytes; }
     std::uint32_t BlocksPerRow() const { return pitch / blockWidth; }
     std::size_t Offset(std::uint32_t x, std::uint32_t y) const;
     void Detile(std::span<const std::byte> source, std::span<std::byte> destination) const;
@@ -59,7 +72,10 @@ private:
     std::uint32_t elementBytes;
     std::uint32_t blockWidth = 1;
     std::uint32_t blockHeight = 1;
+    std::size_t blockBytes = 0;
     std::uint32_t pipeBankXor = 0;
+    bool gcn = false;
+    std::array<std::uint32_t, 16> gcnEquation{};
     // The XOR swizzle is linear over GF(2), so a block offset is xOffsets[x] ^ yOffsets[y].
     const std::uint32_t* xOffsets = nullptr;
     const std::uint32_t* yOffsets = nullptr;
