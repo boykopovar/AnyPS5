@@ -699,6 +699,72 @@ void CheckAmmWrittenWaitsRun() {
     Require(std::atomic_ref<std::uint64_t>(done).load(std::memory_order_acquire) == 0x1234);
 }
 
+template<class TCall>
+bool MapperCallThrows(TCall call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+void CheckAmmMapperCalls() {
+    constexpr std::uint64_t page = 0x4000;
+    constexpr std::uint64_t granule = 0x200000;
+    constexpr std::int32_t cpuReadWrite = 0x03;
+    std::uint64_t start = 0;
+    std::uint64_t end = 0;
+    std::uint64_t multimapStart = 0;
+    std::uint64_t multimapEnd = 0;
+    Require(sceAmprAmmGetVirtualAddressRanges(&start, &end, &multimapStart, &multimapEnd) == 0);
+
+    const std::int64_t memoryEnd = static_cast<std::int64_t>(sceKernelGetDirectMemorySize());
+    std::int64_t offset = -1;
+    Require(sceKernelGiveDirectMemoryToMapper(0, memoryEnd, 0, granule, 1, &offset) == SCE_KERNEL_ERROR_EINVAL && offset == -1);
+    Require(sceKernelGiveDirectMemoryToMapper(0, memoryEnd, page, granule, 1, &offset) == SCE_KERNEL_ERROR_EINVAL && offset == -1);
+    Require(sceKernelGiveDirectMemoryToMapper(0, memoryEnd, granule, page, 1, &offset) == SCE_KERNEL_ERROR_EINVAL && offset == -1);
+    Require(sceKernelGiveDirectMemoryToMapper(0, memoryEnd, granule, granule, 1, &offset) == 0 && offset >= 0);
+
+    std::array<std::uint64_t, 8> param{};
+    param.fill(0xAAAAAAAAAAAAAAAAull);
+    Require(sceKernelMapperGetParam(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    param[0] = 0x39;
+    Require(sceKernelMapperGetParam(param.data()) == SCE_KERNEL_ERROR_EINVAL && param[0] == 0x39 && param[1] == 0xAAAAAAAAAAAAAAAAull);
+    param[0] = 0x28;
+    Require(sceKernelMapperGetParam(param.data()) == 0 && param[0] == 0x38 && param[1] == start && param[2] == end && param[3] == multimapStart && param[4] == multimapEnd
+            && param[5] == 0xAAAAAAAAAAAAAAAAull);
+    param.fill(0xAAAAAAAAAAAAAAAAull);
+    param[0] = 0x10;
+    Require(sceKernelMapperGetParam(param.data()) == 0 && param[0] == 0x38 && param[1] == start && param[2] == 0xAAAAAAAAAAAAAAAAull);
+    param[0] = 0x30;
+    Require(MapperCallThrows([&] { sceKernelMapperGetParam(param.data()); }));
+
+    std::array<std::uint8_t, 64> commands{};
+    std::uint64_t bytes = 0;
+    const std::uint64_t first = start + 0x800000;
+    Require(sceKernelWriteMapDirectCommand(commands.data(), first, static_cast<std::uint64_t>(offset), page, 0, cpuReadWrite, &bytes) == 0);
+    Require(sceKernelCallIndirectBuffer(0, commands.data(), bytes) == 0);
+    const std::uint64_t second = first + page;
+    Require(sceKernelWriteMapDirectCommand(commands.data(), second, static_cast<std::uint64_t>(offset) + page, page, 0, cpuReadWrite, &bytes) == 0);
+    KernelMapperSubmitResult result{7, 7};
+    std::uint32_t id = 0;
+    Require(sceKernelCallIndirectBuffer2(1, commands.data(), bytes, &result, &id) == 0 && result.result == 0 && result.errorOffset == 0 && id != 0);
+    Require(sceKernelWaitCommandBufferCompletion(id) == 0);
+    const std::uint64_t third = second + page;
+    Require(sceKernelWriteMapDirectCommand(commands.data(), third, static_cast<std::uint64_t>(offset) + 2 * page, page, 0, cpuReadWrite, &bytes) == 0);
+    std::uint32_t thirdId = 0;
+    Require(sceKernelCallIndirectBuffer3(2, commands.data(), bytes, &thirdId) == 0 && thirdId > id);
+    Require(sceKernelWaitCommandBufferCompletion(thirdId) == 0);
+    for (const std::uint64_t mapped : {first, second, third}) {
+        auto* byte = reinterpret_cast<volatile std::uint8_t*>(mapped);
+        *byte = 0x5A;
+        Require(*byte == 0x5A);
+    }
+    Require(MapperCallThrows([&] { sceKernelCallIndirectBuffer(3, commands.data(), bytes); }));
+    Require(MapperCallThrows([&] { sceKernelCallIndirectBuffer3(0, nullptr, bytes, &thirdId); }));
+}
+
 void CheckAmmWaitConcurrentSubmits() {
     constexpr int submitters = 4;
     constexpr int submissions = 4000;
@@ -1082,6 +1148,7 @@ int main() {
     CheckAmmWaitCompletion();
     CheckAmmCommandWriters();
     CheckAmmWrittenWaitsRun();
+    CheckAmmMapperCalls();
     CheckAmmWaitConcurrentSubmits();
     CheckSchedSetscheduler();
     CheckSigreturn();
@@ -1126,6 +1193,11 @@ int main() {
     CheckUnsupportedPathconf(_fpathconf_nid_postfix, sharedMemoryDescriptor);
     Require(close_nid_postfix(sharedMemoryDescriptor) == 0);
     Require(shm_unlink_nid_postfix(namedSharedMemory.c_str()) == 0);
+    const int anonymousSharedMemoryDescriptor = shm_open_nid_postfix(reinterpret_cast<const char*>(1), SCE_KERNEL_O_RDWR, 0600);
+    Require(anonymousSharedMemoryDescriptor >= 0);
+    CheckUnsupportedPathconf(fpathconf_nid_postfix, anonymousSharedMemoryDescriptor);
+    CheckUnsupportedPathconf(_fpathconf_nid_postfix, anonymousSharedMemoryDescriptor);
+    Require(close_nid_postfix(anonymousSharedMemoryDescriptor) == 0);
     Require(close_nid_postfix(descriptor) == 0);
     Require(fstatfs_nid_postfix(-1, reinterpret_cast<KernelStatfs*>(viaPublic)) == -1 && Error() == 9);
     Require(fstat_nid_postfix(descriptor, &viaFstat) == -1 && Error() == 9);

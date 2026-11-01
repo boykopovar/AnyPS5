@@ -133,6 +133,20 @@ int StoreTitleId(NpTitleIdObject* out, const char* text, std::size_t length, std
     std::memcpy(out->titleId.data + NP_TITLE_ID_CODE_LENGTH, "_00", 3);
     return 0;
 }
+
+void* const NpCommIdVtable[] = {
+    nullptr, nullptr,
+    reinterpret_cast<void*>(&_ZN3sce2np8NpCommIdD1Ev), reinterpret_cast<void*>(&_ZN3sce2np8NpCommIdD0Ev),
+};
+
+bool IsCommIdText(const char* text) {
+    return std::all_of(text, text + 4, IsTitleIdLetter) && std::all_of(text + 4, text + NP_TITLE_ID_CODE_LENGTH, IsTitleIdDigit) &&
+        text[9] == '_' && IsTitleIdDigit(text[10]) && IsTitleIdDigit(text[11]);
+}
+
+bool SameCommId(const NpCommunicationId& lhs, const NpCommunicationId& rhs) {
+    return std::strncmp(lhs.data, rhs.data, sizeof(lhs.data)) == 0 && lhs.num == rhs.num;
+}
 constexpr std::size_t NP_SDK_VERSION_SIZE = 8;
 constexpr std::size_t NP_RFC3339_BUFFER_MIN = 0x80;
 constexpr std::size_t NP_USER_ID_LIST_SIZE = 20;
@@ -259,17 +273,17 @@ constexpr std::size_t NP_STREAM_CHUNK = 0x100;
 
 int StreamRead(NpStreamReader* self, void* handle, void* out, std::size_t size, std::size_t* read) {
     using Read = int(APS5_VABI*)(NpStreamReader*, void*, void*, std::size_t, std::size_t*);
-    return reinterpret_cast<Read>(self->vtable[2])(self, handle, out, size, read);
+    return reinterpret_cast<Read>(const_cast<void*>(self->vtable[2]))(self, handle, out, size, read);
 }
 
 int StreamWrite(NpStreamWriter* self, void* handle, const void* data, std::size_t size, std::size_t* written) {
     using Write = int(APS5_VABI*)(NpStreamWriter*, void*, const void*, std::size_t, std::size_t*);
-    return reinterpret_cast<Write>(self->vtable[2])(self, handle, data, size, written);
+    return reinterpret_cast<Write>(const_cast<void*>(self->vtable[2]))(self, handle, data, size, written);
 }
 
 int StreamNotify(NpStreamCtx* ctx, const void* data, std::size_t size) {
     using Notify = int(APS5_VABI*)(NpStreamCtx*, const void*, std::size_t);
-    return ctx == nullptr ? 0 : reinterpret_cast<Notify>(ctx->vtable[2])(ctx, data, size);
+    return ctx == nullptr ? 0 : reinterpret_cast<Notify>(const_cast<void*>(ctx->vtable[2]))(ctx, data, size);
 }
 
 int ReadAll(NpStreamReader* self, void* handle, NpStreamCtx* ctx, void* out, std::size_t size, std::size_t* read) {
@@ -1246,8 +1260,116 @@ int APS5_VABI _ZN3sce2np9RefObject6AddRefEv(NpRefObject* self) {
 int APS5_VABI _ZN3sce2np9RefObject7ReleaseEv(NpRefObject* self) {
     using Destroy = void(APS5_VABI*)(NpRefObject*);
     const int count = static_cast<int>(static_cast<std::uint32_t>(sceNpAtomicDec32(&self->refCount)) - 1);
-    if (count == 0) reinterpret_cast<Destroy>(self->vtable[1])(self);
+    if (count == 0) reinterpret_cast<Destroy>(const_cast<void*>(self->vtable[1]))(self);
     return count;
+}
+
+int APS5_VABI sceNpUtilParseTitleId(NpCommunicationId* parts, const char* titleId) {
+    if (titleId == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
+    const std::size_t length = std::strlen(titleId);
+    if (length < 10 || length >= NP_TITLE_ID_SIZE || titleId[9] != '_') return NP_UTIL_ERROR_OUT_OF_RANGE;
+    *parts = {};
+    std::memcpy(parts->data, titleId, sizeof(parts->data));
+    parts->num = static_cast<std::uint8_t>(std::strtol(titleId + 10, nullptr, 10));
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2np8NpCommIdC1Ev(NpCommIdObject* self) {
+    self->vtable = &NpCommIdVtable[2];
+    self->commId = {};
+}
+
+void APS5_VABI _ZN3sce2np8NpCommIdC2Ev(NpCommIdObject* self) {
+    _ZN3sce2np8NpCommIdC1Ev(self);
+}
+
+void APS5_VABI _ZN3sce2np8NpCommIdC1ERKS1_(NpCommIdObject* self, const NpCommIdObject* other) {
+    self->vtable = &NpCommIdVtable[2];
+    self->commId = other->commId;
+}
+
+void APS5_VABI _ZN3sce2np8NpCommIdC2ERKS1_(NpCommIdObject* self, const NpCommIdObject* other) {
+    _ZN3sce2np8NpCommIdC1ERKS1_(self, other);
+}
+
+void APS5_VABI _ZN3sce2np8NpCommIdC1ERK20SceNpCommunicationId(NpCommIdObject* self, const NpCommunicationId* commId) {
+    self->vtable = &NpCommIdVtable[2];
+    self->commId = *commId;
+}
+
+void APS5_VABI _ZN3sce2np8NpCommIdC2ERK20SceNpCommunicationId(NpCommIdObject* self, const NpCommunicationId* commId) {
+    _ZN3sce2np8NpCommIdC1ERK20SceNpCommunicationId(self, commId);
+}
+
+void APS5_VABI _ZN3sce2np8NpCommIdD1Ev(NpCommIdObject*) {}
+
+void APS5_VABI _ZN3sce2np8NpCommIdD2Ev(NpCommIdObject*) {}
+
+void APS5_VABI _ZN3sce2np8NpCommIdD0Ev(NpCommIdObject* self) {
+    _ZN3sce2np6ObjectdlEPv(self);
+}
+
+void APS5_VABI _ZN3sce2np8NpCommId5ClearEv(NpCommIdObject* self) {
+    self->commId = {};
+}
+
+bool APS5_VABI _ZNK3sce2np8NpCommId7IsEmptyEv(const NpCommIdObject* self) {
+    return self->commId.data[0] == '\0' && self->commId.num == 0;
+}
+
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsEPKc(const NpCommIdObject* self, const char* commId) {
+    if (std::strlen(commId) != NP_TITLE_ID_LENGTH || !IsCommIdText(commId)) return false;
+    const auto num = static_cast<std::uint32_t>(std::strtol(commId + 10, nullptr, 10));
+    return self->commId.num == num && std::strncmp(self->commId.data, commId, sizeof(self->commId.data)) == 0;
+}
+
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERKS1_(const NpCommIdObject* self, const NpCommIdObject* other) {
+    return SameCommId(self->commId, other->commId);
+}
+
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(const NpCommIdObject* self, const NpCommunicationId* commId) {
+    return SameCommId(self->commId, *commId);
+}
+
+int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKc(NpCommIdObject* out, const char* text) {
+    if (std::strlen(text) != NP_TITLE_ID_LENGTH || !IsCommIdText(text)) return NP_ERROR_TITLE_ID_INVALID;
+    return NpResult(sceNpUtilParseTitleId(&out->commId, text));
+}
+
+int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char* text, std::size_t length) {
+    if (length != NP_TITLE_ID_LENGTH || !IsCommIdText(text)) return NP_ERROR_TITLE_ID_INVALID;
+    char copy[NP_TITLE_ID_LENGTH + 1] = {};
+    std::memcpy(copy, text, NP_TITLE_ID_LENGTH);
+    return NpResult(sceNpUtilParseTitleId(&out->commId, copy));
+}
+
+int APS5_VABI _ZN3sce2np8NpCommId5BuildERKS1_Pcm(const NpCommIdObject* commId, char* text, std::size_t size) {
+    std::memset(text, 0, size);
+    return NpResult(sceNpUtilBuildTitleId(reinterpret_cast<const NpTitleIdParts*>(&commId->commId), text, size));
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_8NpCommIdES3_(const NpCommIdObject* lhs, const NpCommIdObject* rhs) {
+    return SameCommId(lhs->commId, rhs->commId);
+}
+
+bool APS5_VABI _ZN3sce2npeqERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCommunicationId* lhs, const NpCommIdObject* rhs) {
+    return SameCommId(*lhs, rhs->commId);
+}
+
+bool APS5_VABI _ZN3sce2npeqERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs) {
+    return SameCommId(lhs->commId, *rhs);
+}
+
+bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdES3_(const NpCommIdObject* lhs, const NpCommIdObject* rhs) {
+    return !SameCommId(lhs->commId, rhs->commId);
+}
+
+bool APS5_VABI _ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(const NpCommunicationId* lhs, const NpCommIdObject* rhs) {
+    return !SameCommId(*lhs, rhs->commId);
+}
+
+bool APS5_VABI _ZN3sce2npneERKNS0_8NpCommIdERK20SceNpCommunicationId(const NpCommIdObject* lhs, const NpCommunicationId* rhs) {
+    return !SameCommId(lhs->commId, *rhs);
 }
 
 }

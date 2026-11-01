@@ -54,6 +54,18 @@ int WriteCommand(void* dst, const TCommand& command, std::uint64_t* outSize) {
     return 0;
 }
 
+constexpr std::uint32_t AmmPriorities = 3;
+constexpr std::uint64_t MapperGranuleMask = 0x1FFFFF;
+constexpr std::uint64_t MapperParamBytes = 0x38;
+constexpr std::uint64_t MapperKnownBytes = 0x28;
+
+std::uint32_t CallIndirectBuffer(const char* function, std::uint32_t priority, void* base, std::uint64_t bytes) {
+    if (priority >= AmmPriorities || !base) NotImplemented_nid_no_patch(function);
+    const std::uint64_t submitted = std::uint64_t{static_cast<std::uint32_t>(bytes >> 2u)} << 2u;
+    if (submitted > 0xFFFFFFFFull) NotImplemented_nid_no_patch(function);
+    return AmmSubmit_nid_no_patch(base, static_cast<std::uint32_t>(submitted));
+}
+
 }
 
 extern "C" {
@@ -465,13 +477,21 @@ int APS5_VABI sceKernelBeginAppMount2(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelCallIndirectBuffer(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelCallIndirectBuffer(std::uint32_t priority, void* base, std::uint64_t bytes) {
+    CallIndirectBuffer(__func__, priority, base, bytes);
     return 0;
 }
 
-int APS5_VABI sceKernelCallIndirectBuffer2(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelCallIndirectBuffer2(std::uint32_t priority, void* base, std::uint64_t bytes, KernelMapperSubmitResult* result, std::uint32_t* id) {
+    const auto submitted = CallIndirectBuffer(__func__, priority, base, bytes);
+    if (result) *result = {0, 0};
+    if (id) *id = submitted;
+    return 0;
+}
+
+int APS5_VABI sceKernelCallIndirectBuffer3(std::uint32_t priority, void* base, std::uint64_t bytes, std::uint32_t* id) {
+    const auto submitted = CallIndirectBuffer(__func__, priority, base, bytes);
+    if (id) *id = submitted;
     return 0;
 }
 
@@ -1109,9 +1129,9 @@ int APS5_VABI sceKernelGetVrCaptureSize(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelGiveDirectMemoryToMapper(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceKernelGiveDirectMemoryToMapper(std::int64_t searchStart, std::int64_t searchEnd, std::size_t size, std::size_t alignment, int usage, std::int64_t* offset) {
+    if (size == 0u || ((size | alignment) & MapperGranuleMask) != 0u) return SCE_KERNEL_ERROR_EINVAL;
+    return AmmGiveDirectMemory_nid_no_patch(searchStart, searchEnd, size, alignment, usage, offset);
 }
 
 int APS5_VABI sceKernelHasNeoMode(void) {
@@ -1404,8 +1424,13 @@ int APS5_VABI sceKernelMapTraceMemory(void) {
     return static_cast<int>(0x8002004e);
 }
 
-int APS5_VABI sceKernelMapperGetParam(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceKernelMapperGetParam(std::uint64_t* param) {
+    if (!param || *param > MapperParamBytes) return SCE_KERNEL_ERROR_EINVAL;
+    const auto bytes = *param;
+    if (bytes > MapperKnownBytes) NotImplemented_nid_no_patch(__func__);
+    std::uint64_t values[5]{MapperParamBytes};
+    AmmVirtualAddressRanges_nid_no_patch(&values[1], &values[2], &values[3], &values[4]);
+    std::memcpy(param, values, static_cast<std::size_t>(bytes));
     return 0;
 }
 

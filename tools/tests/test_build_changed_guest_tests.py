@@ -1,7 +1,6 @@
 import contextlib
 import io
 import json
-import re
 from pathlib import Path
 import subprocess
 import sys
@@ -59,6 +58,21 @@ class GuestTestTargets(unittest.TestCase):
         host = self.target("host_tests")
         product = self.target("libScePad", target_type="SHARED_LIBRARY", source="core/libs/prx/libScePad/Export.cpp")
         self.assertEqual(self.selections(self.fixture([guest, host, product]), None), ["guest_pad_tests"])
+
+    def test_selects_changed_guest_test_with_mingw_libc_import_library(self):
+        for fragment in (
+            "core/libs/libs/implib/liblibc.dll.a",
+            r'"C:\build with spaces\core\libs\libs\implib\liblibc.dll.a"',
+        ):
+            with self.subTest(fragment=fragment):
+                guest = self.target("guest_mktime_tests", source="core/libs/tests/GuestMktime.cpp", fragment=fragment)
+                targets = {guest["id"]: guest}
+                source_root = Path(self.temporary.name).resolve()
+                for changed in (["core/libs/tests/GuestMktime.cpp"], ["core/libs/prx/libc/include/SonyCrt.hpp"]):
+                    self.assertEqual(
+                        build_changed_guest_tests.guest_test_targets(source_root, targets, changed),
+                        ["guest_mktime_tests"],
+                    )
 
     def test_changed_source_selects_only_the_changed_target(self):
         guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
@@ -147,16 +161,66 @@ class Main(unittest.TestCase):
             self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx"),
         ])
         calls = []
-        with mock.patch.object(build_changed_guest_tests.subprocess, "run",
-                               side_effect=lambda cmd, **_: calls.append(cmd) or run_result(self.listing() if cmd[:3] == ["ctest", "--test-dir", str(build)] and "--show-only=json-v1" in cmd else "")):
+        selections = []
+        def execute(cmd, **_):
+            calls.append(cmd)
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(self.listing() if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             code = self.main(build, ["core/libs/tests/GuestNp.cpp", "core/libs/tests/Guest.cpp"])
         self.assertEqual(code, 0)
         run_cmd = [cmd for cmd in calls if cmd[0] == "ctest" and not any("--show-only" in part for part in cmd)][0]
-        pattern = run_cmd[run_cmd.index("-R") + 1]
-        self.assertIn(re.escape("guest_np_common_build"), pattern)
-        self.assertIn(re.escape("guest_np_common_fetch"), pattern)
-        self.assertIn(re.escape("guest_pad"), pattern)
+        self.assertEqual(selections, ["0,0,0,1,2,3"])
         self.assertIn("--no-tests=error", run_cmd)
+
+    def test_large_selection_fits_windows_commands_and_preserves_every_test(self):
+        selected = ["guest_" + "long_name_" * 8 + str(index) for index in range(600)]
+        tests = [{"name": "unrelated", "command": ["other.exe"]}]
+        tests += [{"name": f"case [{index}].+ \U0001f600", "command": [f"C:/b/{name}.exe"]}
+                  for index, name in enumerate(selected)]
+        listing = json.dumps({"tests": tests})
+        calls = []
+        seen_indices = []
+        def execute(cmd, **_):
+            length = len(subprocess.list2cmdline(cmd).encode("utf-16-le")) // 2
+            if length >= 32767:
+                raise OSError(206, "Windows command line is too long")
+            calls.append(cmd)
+            if "-I" in cmd:
+                content = Path(cmd[cmd.index("-I") + 1]).read_text()
+                seen_indices.extend(map(int, content.split(",")[3:]))
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute), \
+                mock.patch("select_tests.sys.platform", "win32"):
+            build_changed_guest_tests.run(Path(self.temporary.name), selected, {name: name for name in selected})
+        builds = [cmd[cmd.index("--target") + 1:] for cmd in calls if cmd[0] == "cmake"]
+        self.assertEqual(builds[0], ["libs"])
+        self.assertGreater(len(builds), 2)
+        self.assertEqual([name for batch in builds[1:] for name in batch], selected)
+        self.assertEqual(seen_indices, list(range(2, len(tests) + 1)))
+        self.assertEqual(len([cmd for cmd in calls if "-I" in cmd]), 1)
+
+    def test_ctest_index_file_runs_only_resolved_tests(self):
+        build = Path(self.temporary.name) / "ctest-build"
+        build.mkdir()
+        python = Path(sys.executable).as_posix()
+        body = f'add_test("unrelated" "cmake" "-E" "false")\n'
+        for name in ("selected [one].+", "selected two"):
+            body += f'add_test("{name}" "{python}" "-c" "pass")\n'
+        (build / "CTestTestfile.cmake").write_text(body)
+        real_run = subprocess.run
+        executed = []
+        def execute(cmd, **kwargs):
+            if cmd[0] == "cmake":
+                return run_result()
+            result = real_run(cmd, **kwargs)
+            if "-I" in cmd:
+                executed.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return result
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            build_changed_guest_tests.run(build, ["python_target"], {Path(sys.executable).stem: "python_target"})
+        self.assertEqual(executed, ["0,0,0,2,3"])
 
     def test_a_production_only_change_still_builds_libs_and_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
@@ -173,13 +237,18 @@ class Main(unittest.TestCase):
         build = self.fixture([guest])
         listing = json.dumps({"tests": [{"name": "guest_pad", "command": ["C:/b/tests/pad-renamed.exe"]}]})
         calls = []
-        with mock.patch.object(build_changed_guest_tests.subprocess, "run",
-                               side_effect=lambda cmd, **_: calls.append(cmd) or run_result(listing if "--show-only=json-v1" in cmd else "")):
+        selections = []
+        def execute(cmd, **_):
+            calls.append(cmd)
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
             code = self.main(build, ["core/libs/tests/Guest.cpp"])
         self.assertEqual(code, 0)
         commands = [cmd for cmd in calls if cmd[0] == "ctest" and "--show-only=json-v1" not in cmd]
         self.assertEqual(len(commands), 1)
-        self.assertEqual(commands[0][commands[0].index("-R") + 1], "^(guest_pad)$")
+        self.assertEqual(selections, ["0,0,0,1"])
 
     def test_an_unrelated_change_runs_nothing(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
