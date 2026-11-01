@@ -107,7 +107,9 @@ class PeModule:
                     raise ValueError("COFF string table name is unterminated")
                 text = data[at:end]
             else:
-                text = name.rstrip(b"\0")
+                text, terminator, padding = name.partition(b"\0")
+                if terminator and padding.strip(b"\0"):
+                    raise ValueError("COFF short name has nonzero padding after its terminator")
             result.append((start + value, text.decode("utf-8", "replace")))
         return result
 

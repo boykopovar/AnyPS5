@@ -303,6 +303,29 @@ class SymbolizeSamplesTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "COFF string table"):
                     symbolize_samples.PeModule(path)
 
+    def test_coff_short_names_reject_nonzero_bytes_after_the_terminator(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        original = path.read_bytes()
+        table = struct.unpack_from("<I", original, 0x4C)[0]
+        for name in (b"f\0X\0\0\0\0\0", b"func\0X\0\0", b"name12\0X"):
+            with self.subTest(name=name):
+                data = bytearray(original)
+                data[table + 2 * 18:table + 2 * 18 + 8] = name
+                path.write_bytes(data)
+                with self.assertRaisesRegex(ValueError, "COFF short name"):
+                    symbolize_samples.PeModule(path)
+
+    def test_coff_full_width_and_padded_utf8_names_remain_supported(self):
+        path = self.libs / "libSceAgcDriver.prx"
+        original = path.read_bytes()
+        table = struct.unpack_from("<I", original, 0x4C)[0]
+        for name in ("caf\u00e9abc", "caf\u00e9"):
+            with self.subTest(name=name):
+                data = bytearray(original)
+                data[table + 2 * 18:table + 2 * 18 + 8] = name.encode("utf-8").ljust(8, b"\0")
+                path.write_bytes(data)
+                self.assertEqual(symbolize_samples.PeModule(path).name(0x1010), name)
+
     def test_coff_auxiliary_records_cannot_exceed_the_symbol_count(self):
         path = self.libs / "libSceAgcDriver.prx"
         data = bytearray(path.read_bytes())
