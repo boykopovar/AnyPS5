@@ -231,6 +231,35 @@ class SelectArgumentTests(SelectFixture):
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
             subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
 
+    def test_build_argument_inputs_select_their_consuming_tests(self):
+        cmake, source = self.source / "alpha/CMakeLists.txt", self.source / "alpha/tool.c"
+        header = self.source / "alpha/tool.h"
+        original = cmake.read_text(encoding="utf-8")
+        try:
+            source.write_text('#include "tool.h"\nint main(void) { return TOOL; }\n', encoding="utf-8")
+            header.write_text("#define TOOL 0\n", encoding="utf-8")
+            cmake.write_text(original + "add_executable(alpha_tool tool.c)\n"
+                                        "add_test(NAME alpha_tool_direct COMMAND alpha_tool)\n"
+                                        "add_test(NAME alpha_tool_argument COMMAND alpha_tests $<TARGET_FILE:alpha_tool>)\n"
+                                        "add_test(NAME alpha_tool_definition COMMAND alpha_tests -DTOOL=$<TARGET_FILE:alpha_tool>)\n"
+                                        "add_test(NAME alpha_not_built COMMAND alpha_tests ${CMAKE_BINARY_DIR}/missing.txt ${CMAKE_BINARY_DIR})\n",
+                             encoding="utf-8")
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+            graph = self.build / "argument-graph.json"
+            self.tool("dump", self.build, graph)
+            for changed in ("alpha/tool.c", "alpha/tool.h"):
+                with self.subTest(changed=changed):
+                    self.assertEqual(self.select(changed, graph=graph)[1],
+                                     {"alpha_tool_direct", "alpha_tool_argument", "alpha_tool_definition", "script"})
+            self.assertEqual(self.select("data/input.txt", graph=graph)[1], {"alpha_data", "script"})
+        finally:
+            cmake.write_text(original, encoding="utf-8")
+            source.unlink(missing_ok=True)
+            header.unlink(missing_ok=True)
+            subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
+            subprocess.run(["cmake", "--build", str(self.build)], check=True, capture_output=True)
+
     def test_retargeted_test_does_not_prune_its_previous_executable(self):
         cmake = self.source / "alpha/CMakeLists.txt"
         original = cmake.read_text(encoding="utf-8")
@@ -354,10 +383,42 @@ class NonAsciiDirectoryTests(unittest.TestCase):
         self.assertIn("input: alpha/alpha.h", reasons["alpha"])
         self.assertIn("input: alpha/alpha.h", reasons["alpha_data"])
 
+    @unittest.skipUnless(os.name == "nt", "the ANSI code page exists only on Windows")
+    def test_dependency_written_by_an_ansi_compiler_is_decoded(self):
+        path = r"C:\ação\source\alpha\alpha.h"
+        try:
+            ansi = path.encode("mbcs", "strict")
+        except UnicodeEncodeError:
+            self.skipTest("the ANSI code page cannot represent the fixture directory")
+        self.assertEqual(select_tests.dependency_path(ansi, "."), path)
+        self.assertEqual(select_tests.dependency_path(path.encode("utf-8"), "."), path)
+
+    @unittest.skipUnless(os.name == "nt", "the ANSI code page exists only on Windows")
+    def test_ansi_dependency_that_is_also_valid_utf8_is_decoded_as_the_file_on_disk(self):
+        name = "Ã©"
+        try:
+            ansi = name.encode("mbcs", "strict")
+            utf8 = ansi.decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            self.skipTest("the ANSI code page does not make the fixture directory valid UTF-8")
+        with tempfile.TemporaryDirectory() as directory:
+            header = Path(directory, name, "alpha.h")
+            try:
+                recorded = str(header).encode("mbcs", "strict")
+            except UnicodeEncodeError:
+                self.skipTest("the ANSI code page cannot represent the temporary directory")
+            self.assertEqual(select_tests.dependency_path(recorded, directory), str(Path(directory, utf8, "alpha.h")))
+            header.parent.mkdir()
+            header.write_text("", encoding="utf-8")
+            self.assertEqual(select_tests.dependency_path(recorded, directory), str(header))
+            relative = os.path.join("..", name, "alpha.h")
+            self.assertEqual(select_tests.dependency_path(relative.encode("mbcs"), os.path.join(directory, "build")),
+                             relative)
+
 
 class BuildErrorTests(unittest.TestCase):
     def run_tool(self, *args):
-        return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, text=True, timeout=60)
+        return subprocess.run([sys.executable, "-I", str(TOOL), *map(str, args)], capture_output=True, encoding="utf-8", timeout=60)
 
     def test_explain_rejects_malformed_saved_graph_without_a_traceback(self):
         graphs = (
@@ -647,7 +708,7 @@ class GraphClosureTests(unittest.TestCase):
             changed = root / "changed.txt"
             changed.write_text("src/unit.cpp\n", encoding="utf-8")
             result = subprocess.run([sys.executable, str(Path(select_tests.__file__)), "explain", str(path), str(changed)],
-                                    capture_output=True, text=True, timeout=10)
+                                    capture_output=True, encoding="utf-8", timeout=10)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("unit", result.stderr)
             self.assertIn("closure", result.stderr)

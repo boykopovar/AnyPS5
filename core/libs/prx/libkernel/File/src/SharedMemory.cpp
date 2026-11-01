@@ -640,15 +640,36 @@ int OpenNamedFile(const char* path, int flags, int mode) {
 int CreateAnonymousFile() {
 #ifdef _WIN32
     static std::atomic<unsigned> sequence{0};
-    const auto directory = std::filesystem::temp_directory_path();
-    const auto seed = std::to_string(std::random_device{}());
+    const auto root = std::filesystem::path(WindowsNamedRoot());
+    EnsurePrivateWindowsDirectory(root.parent_path());
+    EnsurePrivateWindowsDirectory(root, true);
+    std::random_device random;
     for (int attempt = 0; attempt < 64; ++attempt) {
-        const auto path = directory / ("anyps5-shm-" + seed + "-" + std::to_string(sequence++));
+        std::vector<std::uint8_t> seed;
+        for (int index = 0; index < 8; ++index) {
+            const auto value = random();
+            for (int shift = 0; shift < 32; shift += 8) seed.push_back(static_cast<std::uint8_t>(value >> shift));
+        }
+        const auto process = ::GetCurrentProcessId();
+        const auto serial = sequence.fetch_add(1, std::memory_order_relaxed);
+        const std::uint32_t identifiers[] = {static_cast<std::uint32_t>(process), static_cast<std::uint32_t>(serial)};
+        for (const auto value : identifiers)
+            for (int shift = 0; shift < 32; shift += 8) seed.push_back(static_cast<std::uint8_t>(value >> shift));
+        const auto digest = Nid::Sha1(seed);
+        std::string name;
+        for (const auto byte : digest) {
+            name += "0123456789abcdef"[byte >> 4];
+            name += "0123456789abcdef"[byte & 15];
+        }
+        const auto path = root / (name + ".dat");
         int descriptor = -1;
         const int error = _wsopen_s(&descriptor, path.c_str(),
                                     _O_CREAT | _O_EXCL | _O_RDWR | _O_BINARY | _O_TEMPORARY | _O_SHORT_LIVED | _O_NOINHERIT,
                                     _SH_DENYNO, _S_IREAD | _S_IWRITE);
-        if (error == 0) return descriptor;
+        if (error == 0) {
+            File::TrackSharedMemoryDescriptor_nid_no_patch(descriptor, true);
+            return descriptor;
+        }
         if (error != EEXIST) {
             errno = error;
             return -1;
