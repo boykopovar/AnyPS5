@@ -303,11 +303,12 @@ static void CheckOrderedFileActions(const std::string& order) {
     const bool reverse = order == "dup-open";
     const bool self = order == "open-self-dup" || order == "close-self-dup";
     const bool chain = order == "dup-replace-dup";
+    const bool untouched = order == "untouched-self-dup";
     if (reverse || chain)
         Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
     if (closed) {
         Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 1) == 0);
-    } else {
+    } else if (!untouched) {
         Check(posix_spawn_file_actions_addopen_nid_postfix(&actions, 1, "/app0/spawn-child.txt", 0x601, 0600) == 0);
     }
     if (chain) {
@@ -315,7 +316,7 @@ static void CheckOrderedFileActions(const std::string& order) {
         Check(posix_spawn_file_actions_addclose_nid_postfix(&actions, 2) == 0);
         Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
     } else if (!reverse) {
-        if (self)
+        if (self || untouched)
             Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 1) == 0);
         if (!closed || !self)
             Check(posix_spawn_file_actions_adddup2_nid_postfix(&actions, 1, 2) == 0);
@@ -333,12 +334,12 @@ static void CheckOrderedFileActions(const std::string& order) {
         Check(status == 0);
         std::ifstream child(app0 / "spawn-child.txt", std::ios::binary);
         const std::string childOutput((std::istreambuf_iterator<char>(child)), std::istreambuf_iterator<char>());
-        Check((childOutput.find("spawn-stdout") != std::string::npos) == !chain);
-        Check((childOutput.find("spawn-stderr") != std::string::npos) == (!reverse && !chain));
+        Check((childOutput.find("spawn-stdout") != std::string::npos) == (!chain && !untouched));
+        Check((childOutput.find("spawn-stderr") != std::string::npos) == (!reverse && !chain && !untouched));
         std::ifstream parent(app0 / "spawn-parent.txt", std::ios::binary);
         const std::string originalOutput((std::istreambuf_iterator<char>(parent)), std::istreambuf_iterator<char>());
-        Check((originalOutput.find("spawn-stdout") != std::string::npos) == chain);
-        Check((originalOutput.find("spawn-stderr") != std::string::npos) == (reverse || chain));
+        Check((originalOutput.find("spawn-stdout") != std::string::npos) == (chain || untouched));
+        Check((originalOutput.find("spawn-stderr") != std::string::npos) == (reverse || chain || untouched));
     }
     CleanupChild();
 }
@@ -462,7 +463,7 @@ int main() {
     CheckAttributes();
     CheckFileActions();
     CheckSpawn();
-    for (const char* order : {"open-dup", "close-dup", "dup-open", "open-self-dup", "close-self-dup", "dup-replace-dup"})
+    for (const char* order : {"open-dup", "close-dup", "dup-open", "open-self-dup", "close-self-dup", "dup-replace-dup", "untouched-self-dup"})
         CheckOrderedFileActions(order);
     CheckSpawnNullProcessId(false);
     CheckSpawnNullProcessId(true);

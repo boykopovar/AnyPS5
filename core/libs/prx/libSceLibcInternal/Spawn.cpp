@@ -256,8 +256,7 @@ int ApplyChildRedirection(ChildStreams& streams, const PosixSpawnFileAction& act
             const HANDLE source = action.descriptor < 3 && streams.modified[action.descriptor]
                 ? streams.handles[action.descriptor] : WindowsDescriptorHandle_nid_no_patch(action.descriptor);
             if (source == INVALID_HANDLE_VALUE) return BadDescriptor;
-            if (action.descriptor != action.newDescriptor)
-                ReplaceChildStream(streams, action.newDescriptor, source);
+            ReplaceChildStream(streams, action.newDescriptor, source);
         }
         return 0;
     case PosixSpawnFileActionKind::Open: {
