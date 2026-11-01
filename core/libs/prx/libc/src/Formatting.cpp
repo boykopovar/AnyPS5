@@ -12,6 +12,7 @@
 #include <memory>
 #include <climits>
 #include <stdexcept>
+#include <cmath>
 
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
@@ -194,6 +195,28 @@ int HostFscanf(std::FILE* stream, const char* format, ...) {
 #endif
     va_end(args);
     return result;
+}
+
+enum class HexPrefix { Valid, InputFailure, MatchingFailure };
+
+HexPrefix CheckHexPrefix(const char* field, unsigned long width, bool floating) {
+    const unsigned long limit = width == 0 ? ULONG_MAX : width;
+    const bool sign = field[0] == '+' || field[0] == '-';
+    unsigned long index = sign ? 1 : 0;
+    if (index + 1 >= limit || field[index] != '0' || (field[index + 1] != 'x' && field[index + 1] != 'X')) return HexPrefix::Valid;
+    index += 2;
+    const auto hexDigit = [&](unsigned long at) { return at < limit && std::isxdigit(static_cast<unsigned char>(field[at])) != 0; };
+    if (hexDigit(index)) return HexPrefix::Valid;
+    if (floating) return index < limit && field[index] == '.' && hexDigit(index + 1) ? HexPrefix::Valid : HexPrefix::MatchingFailure;
+    const bool ended = index >= limit || field[index] == '\0';
+    return ended && !sign ? HexPrefix::InputFailure : HexPrefix::MatchingFailure;
+}
+
+bool DecimalOutOfRange(const std::string& field) {
+    if (field.find_first_of("xX") != std::string::npos) return false;
+    errno = 0;
+    const long double value = std::strtold(field.c_str(), nullptr);
+    return errno == ERANGE && (std::isinf(value) || value == 0.0L);
 }
 
 class StringSource {
@@ -399,14 +422,28 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             capped = wanted == 0 || wanted > limit;
             width = wanted == 0 ? limit : std::min(wanted, limit);
         }
+        const bool narrowInteger = !suppress && std::strchr("diouxX", conversion) != nullptr && (length.empty() || length == "h" || length == "hh");
+        std::uint64_t wideInteger = 0;
         if (width != 0) directive += std::to_string(width);
-        directive += HostLength(length, conversion);
+        directive += narrowInteger ? std::string("ll") : HostLength(length, conversion);
         directive += specifier;
         directive += "%n";
+        const bool floating = std::strchr("aAeEfFgG", conversion) != nullptr;
+        if constexpr (TSource::Contiguous) if (floating || std::strchr("xXip", conversion) != nullptr) {
+            const HexPrefix prefix = CheckHexPrefix(source.Remaining(), width, floating);
+            if (prefix == HexPrefix::InputFailure) return finish(converted ? assigned : EOF);
+            if (prefix == HexPrefix::MatchingFailure) return finish(assigned);
+        }
+        const int savedError = errno;
         int consumed = -1;
-        const int matched = source.Scan(directive.c_str(), suppress, target, &consumed);
+        const int matched = source.Scan(directive.c_str(), suppress, narrowInteger ? &wideInteger : target, &consumed);
+        if constexpr (TSource::Contiguous) if (floating) {
+            const bool outOfRange = consumed > 0 && DecimalOutOfRange(std::string(source.Remaining(), static_cast<std::size_t>(consumed)));
+            errno = outOfRange ? ERANGE : savedError;
+        }
         if (consumed < 0 || (!suppress && matched != 1)) return finish(!converted && source.Peek() == EOF ? EOF : assigned);
         source.Advance(consumed);
+        if (narrowInteger) std::memcpy(target, &wideInteger, length == "hh" ? 1 : length == "h" ? 2 : 4);
         if (capped && conversion != 'c') {
             const int next = source.Peek();
             bool overflow = false;
