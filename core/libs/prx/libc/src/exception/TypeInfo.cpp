@@ -22,23 +22,6 @@ bool APS5_VABI CatchTypeInfo(const std::type_info* self, const std::type_info* t
     return Match(self, thrown, *object);
 }
 
-bool APS5_VABI UpcastTypeInfo(const std::type_info* self, const ClassTypeInfo* base, void** object) {
-    if (!self || !base || !object) throw std::invalid_argument("invalid RTTI upcast arguments");
-    Search search {base};
-    Bases(self, *object, search);
-    if (search.count != 1) return false;
-    *object = search.found;
-    return true;
-}
-
-bool APS5_VABI UpcastTypeInfoResult(const ClassTypeInfo*, const ClassTypeInfo*, const void*, ClassTypeInfo::__upcast_result&) {
-    throw std::runtime_error("RTTI __upcast_result is not supported");
-}
-
-bool APS5_VABI DynamicCastTypeInfo(const ClassTypeInfo*, std::ptrdiff_t, ClassTypeInfo::__sub_kind, const ClassTypeInfo*, const void*, const ClassTypeInfo*, const void*, ClassTypeInfo::__dyncast_result&) {
-    throw std::runtime_error("RTTI __dyncast_result is not supported");
-}
-
 ClassTypeInfo::__sub_kind APS5_VABI FindPublicTypeInfo(const ClassTypeInfo*, std::ptrdiff_t, const void*, const ClassTypeInfo*, const void*) {
     throw std::runtime_error("RTTI __do_find_public_src is not supported");
 }

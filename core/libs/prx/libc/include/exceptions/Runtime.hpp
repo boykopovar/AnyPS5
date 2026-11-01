@@ -49,6 +49,16 @@ inline Header* Primary(Header* header) {
 }
 const char* Kind(const std::type_info*);
 bool Match(const std::type_info* caught, const std::type_info* thrown, void*& object);
+bool APS5_VABI UpcastTypeInfo(const std::type_info* self, const __cxxabiv1::__class_type_info* destination,
+                              void** object);
+bool APS5_VABI UpcastTypeInfoResult(const __cxxabiv1::__class_type_info* self,
+                                   const __cxxabiv1::__class_type_info* destination, const void* object,
+                                   __cxxabiv1::__class_type_info::__upcast_result& result);
+bool APS5_VABI DynamicCastTypeInfo(const __cxxabiv1::__class_type_info* self, std::ptrdiff_t sourceToDestination,
+                                   __cxxabiv1::__class_type_info::__sub_kind accessPath,
+                                   const __cxxabiv1::__class_type_info* destination, const void* object,
+                                   const __cxxabiv1::__class_type_info* source, const void* sourceObject,
+                                   __cxxabiv1::__class_type_info::__dyncast_result& result);
 void Release(void*);
 [[noreturn]] void Terminate();
 }
