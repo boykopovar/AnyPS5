@@ -54,12 +54,14 @@ int main() {
     Require(curl_share_cleanup_nid_postfix(share) == CURLSHE_OK);
     Require(callbackCount == 2);
     Require(curl_share_cleanup_nid_postfix(nullptr) == CURLSHE_INVALID);
+    Require(curl_share_setopt_nid_postfix(nullptr, CURLSHOPT_SHARE, CURL_LOCK_DATA_COOKIE) == CURLSHE_INVALID);
     auto* multi = curl_multi_init_nid_postfix();
     Require(multi != nullptr);
     int running = 99;
     Require(curl_multi_perform_nid_postfix(multi, &running) == CURLM_OK && running == 0);
     int64_t timeout = 99;
     Require(curl_multi_timeout_nid_postfix(multi, &timeout) == CURLM_OK && timeout == -1);
+    Require(curl_multi_timeout_nid_postfix(multi, nullptr) == CURLM_BAD_FUNCTION_ARGUMENT);
     Require(curl_multi_add_handle_nid_postfix(multi, easy) == CURLM_OK);
     Require(curl_multi_add_handle_nid_postfix(multi, easy) == CURLM_ADDED_ALREADY);
     Require(curl_multi_perform_nid_postfix(multi, &running) == CURLM_OK && running == 0);

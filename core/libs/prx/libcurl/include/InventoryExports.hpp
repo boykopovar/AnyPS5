@@ -1,5 +1,4 @@
-#ifndef CORE_LIBS_PRX_LIBCURL_INCLUDE_INVENTORYEXPORTS_HPP
-#define CORE_LIBS_PRX_LIBCURL_INCLUDE_INVENTORYEXPORTS_HPP
+#pragma once
 
 #include "SceTypes.hpp"
 #include "prx/libcurl/include/CurlTypes.hpp"
@@ -107,5 +106,3 @@ std::int32_t APS5_VABI curl_mime_filename_nid_postfix(curl_mimepart* part, const
 int APS5_VABI curl_msprintf_nid_postfix(char* buffer, const char* format, ...);
 
 }
-
-#endif

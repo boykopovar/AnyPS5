@@ -9,6 +9,7 @@
 #include <climits>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 #include <cstdarg>
 #include <memory>
 #include <mutex>
@@ -645,12 +646,12 @@ std::unordered_map<CURLSH*, std::shared_ptr<ShareContext>> shares;
 
 void ShareLock(CURL* easy, curl_lock_data data, curl_lock_access access, void* opaque) {
     auto* context = static_cast<ShareContext*>(opaque);
-    context->lock(easy, data, access, context->data);
+    if (context->lock) context->lock(easy, data, access, context->data);
 }
 
 void ShareUnlock(CURL* easy, curl_lock_data data, void* opaque) {
     auto* context = static_cast<ShareContext*>(opaque);
-    context->unlock(easy, data, context->data);
+    if (context->unlock) context->unlock(easy, data, context->data);
 }
 
 std::shared_ptr<ShareContext> FindShare(CURLSH* share) {
@@ -688,6 +689,7 @@ std::int32_t APS5_VABI curl_multi_socket_action_nid_postfix(CURLM* multi_handle,
 }
 
 std::int32_t APS5_VABI curl_multi_socket_all_nid_postfix(CURLM* multi_handle, int* running_handles) {
+    GuestArena::HostWrite write(running_handles, running_handles ? sizeof(*running_handles) : 0);
     return ::curl_multi_socket_all(multi_handle, running_handles);
 }
 
@@ -701,10 +703,12 @@ std::int32_t APS5_VABI curl_multi_assign_nid_postfix(CURLM* multi_handle, int so
 
 std::int32_t APS5_VABI curl_easy_recv_nid_postfix(CURL* curl, void* buffer, size_t buflen, size_t* n) {
     GuestArena::HostWrite write(buffer, buflen);
+    GuestArena::HostWrite count(n, n ? sizeof(*n) : 0);
     return ::curl_easy_recv(curl, buffer, buflen, n);
 }
 
 std::int32_t APS5_VABI curl_easy_send_nid_postfix(CURL* curl, const void* buffer, size_t buflen, size_t* n) {
+    GuestArena::HostWrite count(n, n ? sizeof(*n) : 0);
     return ::curl_easy_send(curl, buffer, buflen, n);
 }
 
@@ -789,10 +793,12 @@ std::int32_t APS5_VABI curl_multi_remove_handle_nid_postfix(CURLM* multi_handle,
 
 std::int32_t APS5_VABI curl_global_sslset_nid_postfix(std::int32_t guestId, const char* name, const guest_curl_ssl_backend*** avail) {
     const auto id = static_cast<curl_sslbackend>(guestId);
+    GuestArena::HostWrite write(avail, avail ? sizeof(*avail) : 0);
     return ::curl_global_sslset(id, name, reinterpret_cast<const curl_ssl_backend***>(avail));
 }
 
 std::int32_t APS5_VABI curl_multi_perform_nid_postfix(CURLM* multi_handle, int* running_handles) {
+    GuestArena::HostWrite write(running_handles, running_handles ? sizeof(*running_handles) : 0);
     return ::curl_multi_perform(multi_handle, running_handles);
 }
 
@@ -814,6 +820,7 @@ int APS5_VABI curl_strnequal() {
 
 std::int32_t APS5_VABI curl_url_get_nid_postfix(CURLU* handle, std::int32_t guestWhat, char** part, unsigned int flags) {
     const auto what = static_cast<CURLUPart>(guestWhat);
+    GuestArena::HostWrite write(part, part ? sizeof(*part) : 0);
     return ::curl_url_get(handle, what, part, flags);
 }
 
@@ -872,6 +879,7 @@ std::int32_t APS5_VABI curl_easy_setopt_nid_postfix(CURL* handle, std::int32_t g
     }
     if (!::curl_easy_option_by_id(option)) return ::curl_easy_setopt(handle, option);
     auto context = FindEasy(handle);
+    if (!context) throw std::invalid_argument("curl_easy_setopt: unknown easy handle");
     CURL_ARGS_START(guestOption);
     CURLcode result;
     switch (static_cast<int>(option) / 10000) {
@@ -903,6 +911,7 @@ std::int32_t APS5_VABI curl_easy_getinfo_nid_postfix(CURL* handle, std::int32_t 
         if (result == CURLE_OK) *static_cast<int64_t*>(output) = value;
         return result;
     }
+    GuestArena::HostWrite write(output, output ? sizeof(std::uint64_t) : 0);
     return ::curl_easy_getinfo(handle, info, output);
 }
 
@@ -912,6 +921,7 @@ std::int32_t APS5_VABI curl_mime_data_nid_postfix(curl_mimepart* part, const cha
 
 std::int32_t APS5_VABI curl_multi_poll_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
     if (extra_nfds) NotImplemented_nid_no_patch(__func__);
+    GuestArena::HostWrite write(ret, ret ? sizeof(*ret) : 0);
     return ::curl_multi_poll(multi_handle, nullptr, 0, timeout_ms, ret);
 }
 
@@ -933,6 +943,7 @@ std::int32_t APS5_VABI curl_global_init_nid_postfix(long long flags) {
 
 CURL* APS5_VABI curl_easy_duphandle_nid_postfix(CURL* handle) {
     auto source = FindEasy(handle);
+    if (!source) throw std::invalid_argument("curl_easy_duphandle: unknown easy handle");
     auto* easy = ::curl_easy_duphandle(handle);
     if (!easy) return nullptr;
     std::shared_ptr<EasyContext> context;
@@ -977,6 +988,7 @@ struct guest_curl_slist* APS5_VABI curl_slist_append_nid_postfix(struct guest_cu
 
 void APS5_VABI curl_easy_reset_nid_postfix(CURL* handle) {
     auto context = FindEasy(handle);
+    if (!context) throw std::invalid_argument("curl_easy_reset: unknown easy handle");
     ::curl_easy_reset(handle);
     *context = EasyContext{};
     BindEasy(handle, context.get());
@@ -1016,6 +1028,7 @@ std::int32_t APS5_VABI curl_multi_wakeup_nid_postfix(CURLM* multi_handle) {
 
 std::int32_t APS5_VABI curl_multi_wait_nid_postfix(CURLM* multi_handle, struct guest_curl_waitfd extra_fds[], unsigned int extra_nfds, int timeout_ms, int* ret) {
     if (extra_nfds) NotImplemented_nid_no_patch(__func__);
+    GuestArena::HostWrite write(ret, ret ? sizeof(*ret) : 0);
     return ::curl_multi_wait(multi_handle, nullptr, 0, timeout_ms, ret);
 }
 
@@ -1033,7 +1046,7 @@ void APS5_VABI curl_global_cleanup_nid_postfix() {
 std::int32_t APS5_VABI curl_share_setopt_nid_postfix(CURLSH* share_handle, std::int32_t guestOption, ...) {
     const auto option = static_cast<CURLSHoption>(guestOption);
     auto context = FindShare(share_handle);
-    if (!context) return ::curl_share_setopt(share_handle, option);
+    if (!context) return CURLSHE_INVALID;
 #ifdef _WIN32
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, option);
@@ -1051,14 +1064,16 @@ std::int32_t APS5_VABI curl_share_setopt_nid_postfix(CURLSH* share_handle, std::
         break;
     case CURLSHOPT_LOCKFUNC: {
         auto callback = CURL_SHARE_ARG(guest_curl_lock_callback);
+        const auto previous = std::exchange(context->lock, callback);
         result = ::curl_share_setopt(share_handle, option, callback ? ShareLock : nullptr);
-        if (result == CURLSHE_OK) context->lock = callback;
+        if (result != CURLSHE_OK) context->lock = previous;
         break;
     }
     case CURLSHOPT_UNLOCKFUNC: {
         auto callback = CURL_SHARE_ARG(guest_curl_unlock_callback);
+        const auto previous = std::exchange(context->unlock, callback);
         result = ::curl_share_setopt(share_handle, option, callback ? ShareUnlock : nullptr);
-        if (result == CURLSHE_OK) context->unlock = callback;
+        if (result != CURLSHE_OK) context->unlock = previous;
         break;
     }
     case CURLSHOPT_USERDATA: {
@@ -1081,6 +1096,7 @@ std::int32_t APS5_VABI curl_share_setopt_nid_postfix(CURLSH* share_handle, std::
 }
 
 struct guest_CURLMsg* APS5_VABI curl_multi_info_read_nid_postfix(CURLM* multi_handle, int* msgs_in_queue) {
+    GuestArena::HostWrite write(msgs_in_queue, msgs_in_queue ? sizeof(*msgs_in_queue) : 0);
     return reinterpret_cast<guest_CURLMsg*>(::curl_multi_info_read(multi_handle, msgs_in_queue));
 }
 
@@ -1162,8 +1178,9 @@ std::int32_t APS5_VABI curl_mime_filedata_nid_postfix(curl_mimepart* part, const
 }
 
 std::int32_t APS5_VABI curl_multi_timeout_nid_postfix(CURLM* multi_handle, int64_t* milliseconds) {
+    if (!milliseconds) return CURLM_BAD_FUNCTION_ARGUMENT;
     long host_ms = 0;
-    const CURLMcode res = ::curl_multi_timeout(multi_handle, milliseconds ? &host_ms : nullptr);
+    const CURLMcode res = ::curl_multi_timeout(multi_handle, &host_ms);
     if (res == CURLM_OK) {
         *milliseconds = host_ms;
     }
