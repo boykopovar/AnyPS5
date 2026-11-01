@@ -82,8 +82,7 @@ constexpr wchar_t MainExecutableVariableWide[] = L"APS5_EBOOT";
 #endif
 
 [[noreturn]] void UnconvertedExecutable(const std::string& message) {
-    NotImplemented_nid_no_patch(("sceSystemServiceLoadExec: " + message).c_str());
-    std::abort();
+    throw std::runtime_error("sceSystemServiceLoadExec: " + message);
 }
 
 std::string ConvertedExecutableName(const char* path) {
@@ -257,10 +256,10 @@ std::string RunningTitleId() {
 }
 
 void CopyRunningTitleId(const std::string& caller, bool running, char* destination) {
-    if (!running) NotImplemented_nid_no_patch((caller + ": application other than the running title").c_str());
-    if (destination == nullptr) NotImplemented_nid_no_patch((caller + ": null title ID buffer").c_str());
+    if (!running) throw std::runtime_error(caller + ": application other than the running title");
+    if (destination == nullptr) throw std::runtime_error(caller + ": null title ID buffer");
     const std::string titleId = RunningTitleId();
-    if (titleId.size() >= TitleIdBufferSize) NotImplemented_nid_no_patch((caller + ": title ID that does not fit 10 bytes").c_str());
+    if (titleId.size() >= TitleIdBufferSize) throw std::runtime_error(caller + ": title ID that does not fit 10 bytes");
     std::memcpy(destination, titleId.c_str(), titleId.size() + 1);
 }
 
@@ -277,14 +276,14 @@ int RunningAppId(const std::string& caller, const char* titleId) {
 template<typename TValue>
 int AnswerForRunningApp(const std::string& caller, std::int32_t appId, TValue* destination, std::type_identity_t<TValue> value, int nullOutputResult) {
     if (destination == nullptr) return nullOutputResult;
-    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) NotImplemented_nid_no_patch((caller + ": application other than the running title").c_str());
+    if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) throw std::runtime_error(caller + ": application other than the running title");
     *destination = value;
     return SYSTEM_SERVICE_OK;
 }
 
 int ListRunningBigApp(const std::string& caller, std::int32_t* appIds, std::uint32_t capacity, std::uint32_t* count) {
     if (appIds == nullptr || count == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
-    if (capacity == 0) NotImplemented_nid_no_patch((caller + ": a list with no room for the running title").c_str());
+    if (capacity == 0) throw std::runtime_error(caller + ": a list with no room for the running title");
     appIds[0] = SYSTEM_SERVICE_RUNNING_APP_ID;
     *count = 1;
     return SYSTEM_SERVICE_OK;
@@ -543,33 +542,33 @@ int APS5_VABI sceSystemServiceIsAppSuspended(std::int32_t appId, bool* suspended
 
 int APS5_VABI sceLncUtilLoadExec(const char* path, const char* const* argv) {
  if (path == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
- if (path[0] == '\0') NotImplemented_nid_no_patch("sceLncUtilLoadExec: empty path");
+ if (path[0] == '\0') throw std::runtime_error("sceLncUtilLoadExec: empty path");
  return sceSystemServiceLoadExec(path, argv);
 }
 
 int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDump) {
  if (appId != SYSTEM_SERVICE_RUNNING_APP_ID) {
-  NotImplemented_nid_no_patch("sceSystemServiceKillApp: application other than the running title");
+  throw std::runtime_error("sceSystemServiceKillApp: application other than the running title");
  }
  if (how != -1 || reason != 0 || coreDump != 0) {
-  NotImplemented_nid_no_patch("sceSystemServiceKillApp: arguments other than -1, 0 and 0");
+  throw std::runtime_error("sceSystemServiceKillApp: arguments other than -1, 0 and 0");
  }
  LibcExit_nid_no_patch(0);
 }
 
 int APS5_VABI sceLncUtilKillApp(uint32_t appId) {
  if (appId != static_cast<uint32_t>(SYSTEM_SERVICE_RUNNING_APP_ID)) {
-  NotImplemented_nid_no_patch("sceLncUtilKillApp: application other than the running title");
+  throw std::runtime_error("sceLncUtilKillApp: application other than the running title");
  }
  LibcExit_nid_no_patch(0);
 }
 
 int APS5_VABI sceLncUtilKillAppWithReason(uint32_t appId, int reason) {
  if (appId != static_cast<uint32_t>(SYSTEM_SERVICE_RUNNING_APP_ID)) {
-  NotImplemented_nid_no_patch("sceLncUtilKillAppWithReason: application other than the running title");
+  throw std::runtime_error("sceLncUtilKillAppWithReason: application other than the running title");
  }
  if (reason != 0) {
-  NotImplemented_nid_no_patch("sceLncUtilKillAppWithReason: a reason other than 0");
+  throw std::runtime_error("sceLncUtilKillAppWithReason: a reason other than 0");
  }
  LibcExit_nid_no_patch(0);
 }
