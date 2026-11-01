@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <new>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -916,6 +917,36 @@ StringView ViewWithoutFragment(const URL& url) {
     return Slice(view, 0, std::min(url.queryEnd, view.length));
 }
 
+bool IsUnicodeCompatibleASCIIWhitespace(char32_t c) {
+    return c <= ' ' && (c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\f');
+}
+
+std::optional<std::uint16_t> URLPort(const URL& url) {
+    unsigned portLength = (url.bits >> 3) & 7;
+    if (portLength <= 1) return std::nullopt;
+    auto view = View(url.impl);
+    if (url.hostEnd > view.length || portLength > view.length - url.hostEnd) return std::nullopt;
+    auto portView = Slice(view, url.hostEnd + 1, portLength - 1);
+    if (!portView.length) return std::nullopt;
+    unsigned i = 0;
+    while (i < portView.length && IsUnicodeCompatibleASCIIWhitespace(Unit(portView, i))) ++i;
+    if (i < portView.length && Unit(portView, i) == '+') ++i;
+    if (i == portView.length) return std::nullopt;
+    auto firstChar = Unit(portView, i);
+    if (firstChar < '0' || firstChar > '9') return std::nullopt;
+    std::uint32_t val = 0;
+    while (i < portView.length) {
+        auto ch = Unit(portView, i);
+        if (ch < '0' || ch > '9') break;
+        val = val * 10 + (ch - '0');
+        if (val > 65535) return std::nullopt;
+        ++i;
+    }
+    while (i < portView.length && IsUnicodeCompatibleASCIIWhitespace(Unit(portView, i))) ++i;
+    if (i != portView.length) return std::nullopt;
+    return static_cast<std::uint16_t>(val);
+}
+
 }  // namespace
 
 extern "C" {
@@ -923,6 +954,27 @@ bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const URL*
     const auto& first = Checked(a);
     const auto& second = Checked(b);
     return EqualViews(ViewWithoutFragment(first), ViewWithoutFragment(second));
+}
+
+bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const URL* a, const URL* b) {
+    const auto& first = Checked(a);
+    const auto& second = Checked(b);
+    unsigned schemeEndA = first.bits >> 6;
+    unsigned schemeEndB = second.bits >> 6;
+    if (schemeEndA != schemeEndB) return false;
+    unsigned hostStartA = HostStart(first);
+    unsigned hostStartB = HostStart(second);
+    if (first.hostEnd < hostStartA || second.hostEnd < hostStartB) return false;
+    unsigned hostLengthA = first.hostEnd - hostStartA;
+    unsigned hostLengthB = second.hostEnd - hostStartB;
+    if (hostLengthA != hostLengthB) return false;
+    auto viewA = View(first.impl);
+    auto viewB = View(second.impl);
+    if (schemeEndA > viewA.length || schemeEndB > viewB.length) return false;
+    if (hostStartA + hostLengthA > viewA.length || hostStartB + hostLengthB > viewB.length) return false;
+    if (!EqualViews(Slice(viewA, 0, schemeEndA), Slice(viewB, 0, schemeEndB), true)) return false;
+    if (!EqualViews(Slice(viewA, hostStartA, hostLengthA), Slice(viewB, hostStartB, hostLengthB), true)) return false;
+    return URLPort(first) == URLPort(second);
 }
 
 void APS5_VABI _ZN3WTF3URL10invalidateEv(URL* self) {
