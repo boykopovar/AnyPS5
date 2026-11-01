@@ -7,9 +7,9 @@ if(BUILD_TESTING)
     target_link_libraries(guest_font_ft_backoff_tests PRIVATE libSceFont libSceFontFt libc)
     configure_windows_unwind(guest_font_ft_backoff_tests)
     add_test(NAME guest_font_ft_backoff COMMAND guest_font_ft_backoff_tests)
-    set_tests_properties(guest_font_ft_backoff PROPERTIES TIMEOUT 30)
+    set_tests_properties(guest_font_ft_backoff PROPERTIES TIMEOUT 30 RUN_SERIAL TRUE)
     if(WIN32)
-        set_tests_properties(guest_font_ft_backoff PROPERTIES RUN_SERIAL TRUE ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_font_ft_backoff PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFontFt>")
     endif()
 endif()

@@ -1,12 +1,13 @@
 #include "prx/libSceFontFt/include/Api.hpp"
-#include "prx/libc/include/PreciseWait.hpp"
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <stdexcept>
+#include <thread>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +16,7 @@
 #include <filesystem>
 #include <limits>
 #ifdef _WIN32
+#include "prx/libc/include/PreciseWait.hpp"
 #include <windows.h>
 #endif
 
@@ -961,7 +963,11 @@ int FontFt::SupportFormats(FontLibrary library, std::initializer_list<const char
     for (;;) {
         if (native->magic != Font::LIBRARY_MAGIC) return SCE_FONT_ERROR_INVALID_LIBRARY;
         if ((previous & Font::LOCK_BIT) == 0 && lockWord.compare_exchange_weak(previous, previous | Font::LOCK_BIT, std::memory_order_acq_rel)) break;
+#ifdef _WIN32
         PreciseSleepUs(30);
+#else
+        std::this_thread::sleep_for(std::chrono::microseconds(30));
+#endif
         previous = lockWord.load(std::memory_order_acquire);
     }
     const auto unlock = [previous](Font::FontLibNative* locked) {
