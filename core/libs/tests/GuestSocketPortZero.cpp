@@ -88,10 +88,57 @@ static void CheckStream(int family) {
     Require(close_nid_postfix(client) == 0 && close_nid_postfix(listener) == 0, "close");
 }
 
+static void CheckUnspecified(int type) {
+    const int server = socket_nid_postfix(28, type, 0);
+    if (server < 0 && *__error_nid_postfix() == 47) return;
+    Require(server >= 0, "server");
+    auto address = Loopback(28, 28);
+    const int bound = bind_nid_postfix(server, address.data(), 28);
+    if (bound < 0 && *__error_nid_postfix() == 49) {
+        Require(close_nid_postfix(server) == 0, "close");
+        return;
+    }
+    Require(bound == 0, "bind server");
+    if (type == 1) Require(listen_nid_postfix(server, 1) == 0, "listen");
+    std::uint32_t length = address.size();
+    Require(getsockname_nid_postfix(server, address.data(), &length) == 0, "server name");
+    auto unspecified = address;
+    std::memset(unspecified.data() + 8, 0, 16);
+    const int client = socket_nid_postfix(28, type, 0);
+    Require(client >= 0, "client");
+    Address any{};
+    any[0] = 28;
+    any[1] = 28;
+    Require(connect_nid_postfix(client, any.data(), 28) == -1 && *__error_nid_postfix() == 49,
+        "connect to port 0 of the unspecified AF_INET6 address must fail with EADDRNOTAVAIL (49)");
+    Require(connect_nid_postfix(client, unspecified.data(), 28) == 0,
+        "connect to the unspecified AF_INET6 address must reach ::1 on the same port");
+    Address peer{};
+    length = peer.size();
+    Require(getpeername_nid_postfix(client, peer.data(), &length) == 0 && length == 28 && peer[1] == 28
+            && std::memcmp(peer.data() + 2, address.data() + 2, 2) == 0 && std::memcmp(peer.data() + 8, address.data() + 8, 16) == 0,
+        "the peer of a connect to the unspecified AF_INET6 address must be ::1 on the same port");
+    if (type == 1) {
+        const int accepted = accept_nid_postfix(server, nullptr, nullptr);
+        Require(accepted >= 0, "accept");
+        Require(send_nid_postfix(client, "x", 1, 0) == 1, "send");
+        char byte = 0;
+        Require(recv_nid_postfix(accepted, &byte, 1, 0) == 1 && byte == 'x', "receive on the accepted socket");
+        Require(close_nid_postfix(accepted) == 0, "close");
+    } else {
+        Require(send_nid_postfix(client, "y", 1, 0) == 1, "send");
+        char byte = 0;
+        Require(recv_nid_postfix(server, &byte, 1, 0) == 1 && byte == 'y', "receive on ::1");
+    }
+    Require(close_nid_postfix(client) == 0 && close_nid_postfix(server) == 0, "close");
+}
+
 int main() {
     CheckDatagram(2);
     CheckDatagram(28);
     CheckStream(2);
     CheckStream(28);
+    CheckUnspecified(1);
+    CheckUnspecified(2);
     return 0;
 }
