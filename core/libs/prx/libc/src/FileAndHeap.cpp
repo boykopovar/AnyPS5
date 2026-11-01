@@ -558,7 +558,9 @@ size_t APS5_VABI fwrite_nid_postfix(const void* buffer, size_t size, size_t coun
     if (!stream->SwitchToWriting()) return 0;
     GuestArena::GuestArenaPrepareHostRead_nid_no_patch(buffer, bytes);
     const auto result = std::fwrite(buffer, size, count, handle);
+    const int nativeError = errno;
     stream->SyncStatus();
+    if (result < count) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
     return result;
 }
 
@@ -639,7 +641,9 @@ int APS5_VABI fflush_nid_postfix(FileStream* stream) {
     if (native && !(native->_flags & __SWR)) return 0;
 #endif
     const int result = std::fflush(native);
+    const int nativeError = errno;
     if (stream) stream->SyncStatus();
+    if (result != 0) errno = GuestErrnoFromHost_nid_no_patch(nativeError);
     return result;
 }
 

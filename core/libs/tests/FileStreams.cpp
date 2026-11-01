@@ -35,6 +35,145 @@ static void Require(bool condition, const char* message = "File stream check fai
     if (!condition) throw std::runtime_error(message);
 }
 
+static void CheckWriteFlushErrno(const std::string& base) {
+    const std::string path = base + ".write-flush-errno";
+    {
+        auto* stream = fopen_nid_postfix(path.c_str(), "w+b");
+        Require(stream != nullptr);
+        errno = 35;
+        char byte = 'a';
+        Require(fwrite_nid_postfix(&byte, 0, 1, stream) == 0 && errno == 35);
+        Require(fwrite_nid_postfix(&byte, 1, 0, stream) == 0 && errno == 35);
+        Require(fwrite_nid_postfix(&byte, 1, 1, stream) == 1 && errno == 35);
+        Require(fflush_nid_postfix(stream) == 0 && errno == 35);
+        Require(fflush_nid_postfix(nullptr) == 0 && errno == 35);
+        Require(fclose_nid_postfix(stream) == 0 && std::remove(path.c_str()) == 0);
+    }
+#ifndef _WIN32
+    int fds[2];
+    Require(::pipe(fds) == 0);
+    const int readFlags = ::fcntl(fds[0], F_GETFL, 0);
+    Require(readFlags >= 0 && ::fcntl(fds[0], F_SETFL, readFlags | O_NONBLOCK) == 0);
+    const int writeFlags = ::fcntl(fds[1], F_GETFL, 0);
+    Require(writeFlags >= 0 && ::fcntl(fds[1], F_SETFL, writeFlags | O_NONBLOCK) == 0);
+
+    const auto drainPipe = [&] {
+        char drain[4096];
+        while (::read(fds[0], drain, sizeof(drain)) > 0) {}
+    };
+
+    const auto fillPipe = [&] {
+        char chunk[4096]{};
+        for (int step = 0; step < 1000; ++step) {
+            const auto written = ::write(fds[1], chunk, sizeof(chunk));
+            if (written < 0) {
+                Require(errno == EAGAIN || errno == EWOULDBLOCK, "Filling pipe failed unexpectedly");
+                return;
+            }
+        }
+        Require(false, "Pipe did not fill within bounded iterations");
+    };
+
+    {
+        drainPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        FileStream stream(native);
+        errno = 35;
+        char buffer[32]{};
+        Require(fwrite_nid_postfix(buffer, 1, sizeof(buffer), &stream) == sizeof(buffer));
+        Require(errno == 35);
+        Require(fflush_nid_postfix(&stream) == 0);
+        Require(errno == 35);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+    {
+        fillPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        Require(std::setvbuf(native, nullptr, _IONBF, 0) == 0);
+        FileStream stream(native);
+        errno = 0;
+        char byte = 'q';
+        Require(fwrite_nid_postfix(&byte, 1, 1, &stream) == 0);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+#ifdef __linux__
+    {
+        fillPipe();
+        const auto pageSize = ::sysconf(_SC_PAGESIZE);
+        Require(pageSize > 0);
+        const auto pageBytes = static_cast<std::size_t>(pageSize);
+        std::vector<char> drain(pageBytes);
+        const auto drained = ::read(fds[0], drain.data(), drain.size());
+        Require(drained > 0 && static_cast<std::size_t>(drained) == drain.size());
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        Require(std::setvbuf(native, nullptr, _IONBF, 0) == 0);
+        FileStream stream(native);
+        std::vector<char> buffer(pageBytes * 3);
+        errno = 0;
+        Require(fwrite_nid_postfix(buffer.data(), 3, pageBytes, &stream) == pageBytes / 3);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+#endif
+    {
+        fillPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        char streamBuf[512];
+        Require(std::setvbuf(native, streamBuf, _IOFBF, sizeof(streamBuf)) == 0);
+        FileStream stream(native);
+        char payload[16] = "buffered test";
+        errno = 35;
+        Require(fwrite_nid_postfix(payload, 1, sizeof(payload), &stream) == sizeof(payload));
+        Require(errno == 35);
+        errno = 0;
+        Require(fflush_nid_postfix(&stream) == EOF);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+    {
+        fillPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        char streamBuf[512];
+        Require(std::setvbuf(native, streamBuf, _IOFBF, sizeof(streamBuf)) == 0);
+        FileStream stream(native);
+        char payload[16] = "global test";
+        Require(fwrite_nid_postfix(payload, 1, sizeof(payload), &stream) == sizeof(payload));
+        errno = 0;
+        Require(fflush_nid_postfix(nullptr) == EOF);
+        Require(errno == 35);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+
+    drainPipe();
+    Require(::close(fds[1]) == 0);
+    Require(::close(fds[0]) == 0);
+#endif
+}
+
 template<typename TAction>
 static void ExpectException(TAction action) {
     try {
@@ -488,6 +627,7 @@ int main(int argc, char** argv) {
     CheckZeroSizedTransfers(argv[1]);
     CheckUpdateStreamReadsAfterWrites(argv[1]);
     CheckStreamWritesAfterReads(argv[1]);
+    CheckWriteFlushErrno(argv[1]);
     Require(_Stdout_nid_postfix.GetHandle() == stdout);
     Require(_Stderr_nid_postfix.GetHandle() == stderr);
     Require(fputs_nid_postfix("stdout object works\n", &_Stdout_nid_postfix) >= 0);
