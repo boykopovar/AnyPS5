@@ -161,6 +161,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
     require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
+    require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
     require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
@@ -174,6 +175,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
     require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
+    require(left.layerReplaySafe == right.layerReplaySafe, prefix + "layer replay proof differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
     require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
     for (std::size_t i = 0; i < left.fragmentParameters.size(); ++i) {
@@ -265,6 +267,7 @@ RecompileResult sampleResult() {
     result.readsDepthRemapPush = true;
     result.bdaAbiVersion = 3;
     result.descriptorFaults = 2;
+    result.windowLaneGuards = 7u;
     result.memoryOffsetDword = 7;
     result.hostSubgroupSize = 32;
     result.fullSubgroups = true;
@@ -287,6 +290,7 @@ RecompileResult sampleResult() {
     result.stencilReferences = {0u, 17u, 255u};
     result.stencilReplaySafe = true;
     result.bdaWrites = true;
+    result.layerReplaySafe = true;
     result.stencilReferenceDword = 23u;
     result.poisonedSrtReads = 3;
     result.shaderDataUserWords = {2u, 0xffffffffu, 9u};
@@ -360,6 +364,7 @@ CompiledVariant sampleVariant() {
     image.emulatedCompare = 0x1a07u;
     image.table = 0;
     image.tableOperation = TableOperation::Unsupported;
+    image.targetMerge = true;
     info.info.images = {image};
     ResourceMaterializer::PrepareImageModes(info.info);
     info.info.samplers = {{7, 0x10, 3, true, false, SamplerUseExplicitLod | SamplerUseGather, true, 1}};
