@@ -24,6 +24,7 @@ int APS5_VABI sceSaveDataGetMountInfo(const SaveDataMountPoint* mountPoint, Save
 int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mountPoint, uint32_t paramType, void* paramBuf, size_t paramBufSize, size_t* gotSize);
 int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mountPoint, SaveDataIcon* icon);
 int APS5_VABI sceSaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mountResult);
+int APS5_VABI sceSaveDataMount2(const SaveDataMount2* mount, SaveDataMountResult* mountResult);
 int APS5_VABI sceSaveDataPrepare(const SaveDataMountPoint* mountPoint, const SaveDataPrepareParam* param);
 int APS5_VABI sceSaveDataSaveIcon(const SaveDataMountPoint* mountPoint, const SaveDataIcon* icon);
 int APS5_VABI sceSaveDataSaveIconByPath(const SaveDataMountPoint* mountPoint, const char* path);
