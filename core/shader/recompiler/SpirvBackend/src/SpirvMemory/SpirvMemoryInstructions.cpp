@@ -3,6 +3,7 @@
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "SpirvBackend/SpirvBufferFormat.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
@@ -1535,7 +1536,7 @@ std::uint32_t AtomicFloatCompareSwap(SpirvEmitterState& state, std::uint32_t old
 
 std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
-    if (state.flattenedSrtVariable == 0) {
+    if (!HasFlattenedSrt(state)) {
         ctx.Fail(inst, "requires the flattened SRT descriptor");
     }
     const auto& resources = state.program.Resources();
@@ -1551,13 +1552,7 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
                 ctx.Fail(inst, "reads a guarded SRT slot without a fault buffer");
             }
             const auto u32 = TypeU32(state);
-            const auto load = [&](std::uint32_t index) {
-                const auto pointer = state.module.AllocateId();
-                state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.flattenedSrtVariable, ConstantU32(state, 0u), index);
-                const auto value = state.module.AllocateId();
-                state.module.AddFunction(spv::OpLoad, u32, value, pointer);
-                return value;
-            };
+            const auto load = [&](std::uint32_t index) { return EmitFlattenedSrtLoad(state, index); };
             const auto guard = static_cast<std::uint32_t>(found - guarded.begin());
             const auto flag = load(ConstantU32(state, resources.srtGuardOffset + guard));
             const auto poisoned = Binary(state, spv::OpINotEqual, TypeBool(state), flag, ConstantU32(state, 0u));
@@ -1573,11 +1568,7 @@ std::uint32_t EmitReadConst(SpirvValueEmitContext& ctx, const IrValue& inst) {
             StopBdaInvocationIf(state, poisoned);
         }
     }
-    const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, state.flattenedSrtVariable, ConstantU32(state, 0u), ctx.Arg(inst, 1));
-    const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, pointer);
-    return value;
+    return EmitFlattenedSrtLoad(state, ctx.Arg(inst, 1));
 }
 
 void EmitReadConstBuffer(SpirvValueEmitContext& ctx, const IrValue& inst) {

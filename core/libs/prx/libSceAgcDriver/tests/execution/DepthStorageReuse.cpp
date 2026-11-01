@@ -45,7 +45,7 @@ void Read(AgcDriver::VulkanDevice& device, std::uint32_t format, std::uint32_t w
     const ShaderRecompiler::ShaderComputeStageInfo compute{{32, 1, 1}, 0u, {false, false, false}, false, 1};
     ShaderRecompiler::RecompileRequest request{
         {ShaderRecompiler::ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0, {}},
-        {32, 0, data, compute, std::nullopt, std::nullopt, memory}, device.Target(), {0, 0, 0, 128},
+        {32, 0, data, compute, std::nullopt, std::nullopt, memory}, device.ComputeTarget(64), {0, 0, 0, 128},
     };
     request.useCache = false;
     const auto shader = ShaderRecompiler::Recompile(request);
