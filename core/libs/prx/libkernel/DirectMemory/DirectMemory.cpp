@@ -8,6 +8,7 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -623,19 +624,24 @@ void ErasePhysMappings(std::uint64_t first, std::uint64_t last) {
     }
 }
 
-void ValidatePhysicalRange(std::uint64_t phys, std::size_t len) {
+std::optional<std::uint64_t> FirstUnallocatedPage(std::uint64_t phys, std::size_t len) {
     const auto last = phys + len;
     auto it = g_physBlocks.upper_bound(phys);
     if (it != g_physBlocks.begin()) --it;
     for (auto cursor = phys; cursor < last;) {
-        if (it == g_physBlocks.end() || it->first > cursor || it->second.end <= cursor) {
-            char message[160];
-            std::snprintf(message, sizeof(message), "direct memory range 0x%llx+0x%zx references unallocated physical page 0x%llx", static_cast<unsigned long long>(phys), len, static_cast<unsigned long long>(cursor));
-            throw std::invalid_argument(message);
-        }
+        if (it == g_physBlocks.end() || it->first > cursor || it->second.end <= cursor) return cursor;
         cursor = std::min(last, it->second.end);
         ++it;
     }
+    return std::nullopt;
+}
+
+void ValidatePhysicalRange(std::uint64_t phys, std::size_t len) {
+    const auto missing = FirstUnallocatedPage(phys, len);
+    if (!missing) return;
+    char message[160];
+    std::snprintf(message, sizeof(message), "direct memory range 0x%llx+0x%zx references unallocated physical page 0x%llx", static_cast<unsigned long long>(phys), len, static_cast<unsigned long long>(*missing));
+    throw std::invalid_argument(message);
 }
 
 #if defined(__linux__)
@@ -1075,6 +1081,10 @@ int DoMapDirect(void** addr, size_t len, int prot, int flags, int64_t physStart,
         return SCE_KERNEL_ERROR_EINVAL;
     }
     if ((prot & ~0x3F7) == 0 && (prot & GuestProtCpuExecute) != 0) return SCE_KERNEL_ERROR_EINVAL;
+    {
+        std::lock_guard lock(g_directLock);
+        if (FirstUnallocatedPage(static_cast<std::uint64_t>(physStart), len)) return SCE_KERNEL_ERROR_ENOMEM;
+    }
     GuestAllocations::Mutation mutation;
     flags = PlaceHintInReservation(*addr, len, flags);
     if (FixedNoOverwriteConflict(mutation, *addr, len, flags)) return SCE_KERNEL_ERROR_ENOMEM;
@@ -1645,6 +1655,21 @@ bool QueryDirectMapping(std::uintptr_t address, std::uintptr_t* start, std::uint
     *offset = it->second.phys;
     *memoryType = it->second.memoryType;
     return true;
+}
+
+bool DirectMemoryAliased(std::uintptr_t address, std::size_t bytes) {
+    const auto end = address + bytes;
+    std::lock_guard lock(g_directLock);
+    auto it = g_directMappings.upper_bound(address);
+    if (it != g_directMappings.begin()) --it;
+    for (; it != g_directMappings.end() && it->first < end; ++it) {
+        if (it->second.end <= address) continue;
+        const auto first = std::max<std::uintptr_t>(address, it->first);
+        const auto last = std::min<std::uintptr_t>(end, it->second.end);
+        const auto phys = it->second.phys + (first - it->first);
+        if (MappingsSharingPhys(phys, phys + (last - first)).size() > 1) return true;
+    }
+    return false;
 }
 
 std::vector<DirectMemoryView> DirectMemoryViews(int64_t start, size_t len) {

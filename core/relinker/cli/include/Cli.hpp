@@ -23,6 +23,7 @@ struct Args {
     bool toMacos = false;
     bool lazyBinding = false;
     bool autorun = false;
+    bool dryRun = false;
     bool windowsDiagnostics = false;
     bool windowsGui = false;
     std::optional<std::uint64_t> windowsFixedBase;

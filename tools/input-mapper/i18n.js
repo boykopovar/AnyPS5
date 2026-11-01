@@ -30,8 +30,8 @@ export const locales = [
         "direction": "ltr"
     },
     {
-        "code": "pt",
-        "name": "Português",
+        "code": "pt-BR",
+        "name": "Português (Brasil)",
         "direction": "ltr"
     },
     {
@@ -464,7 +464,7 @@ export const messages = {
         "searchOptions": "Cerca opzioni",
         "noOptions": "Nessuna opzione trovata."
     },
-    "pt": {
+    "pt-BR": {
         "controls": "Controles",
         "configuration": "Configuração",
         "help": "Ajuda",
@@ -1291,5 +1291,6 @@ export function diagnostic(locale, message) {
 }
 
 export function initialLocale(savedLocale) {
+    if (savedLocale === 'pt') savedLocale = 'pt-BR';
     return locales.some(item => item.code === savedLocale) ? savedLocale : 'en';
 }
