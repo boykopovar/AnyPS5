@@ -6,6 +6,7 @@ target_include_directories(agc_driver_presentation_pass_tests PRIVATE
         ${LIBS_INCLUDE_DIR}
         ${CMAKE_SOURCE_DIR}/core/shader/recompiler
         ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
+        ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
 )
 
 target_link_libraries(agc_driver_presentation_pass_tests PRIVATE
@@ -21,8 +22,10 @@ if(BUILD_TESTING)
     set_target_properties(agc_driver_presentation_pass_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
     add_test(NAME agc_driver_presentation_pass COMMAND agc_driver_presentation_pass_tests)
     set_tests_properties(agc_driver_presentation_pass PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    add_test(NAME agc_driver_presentation_pass_gpu_heap COMMAND agc_driver_presentation_pass_tests)
+    set_tests_properties(agc_driver_presentation_pass_gpu_heap PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_GPU_HEAP=1;APS5_VERIFY_GPU_HEAP=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
-        set_tests_properties(agc_driver_presentation_pass PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_presentation_pass agc_driver_presentation_pass_gpu_heap PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

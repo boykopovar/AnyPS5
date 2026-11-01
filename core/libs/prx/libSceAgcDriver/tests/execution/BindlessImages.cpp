@@ -1,9 +1,11 @@
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "ImageTableAbi.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 
@@ -56,8 +58,12 @@ void Run(AgcDriver::VulkanDevice& device) {
         const auto output = Buffer(data.output.data(), 0u, 256u);
         std::copy(output.begin(), output.end(), data.srt.begin() + 12u);
         const ShaderComputeStageInfo compute{{threads, 1u, 1u}, 0u, {false, false, false}, false, 1u};
-        RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, regions}, device.Target(), {0u, 0u, 0u, 128u}};
+        const bool heap = AgcDriver::Graphics::DescriptorHeapEnabled();
+        auto target = device.Target();
+        target.gpuResolvedImages = heap;
+        RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, regions}, target, {0u, 0u, 0u, 128u}};
         const auto shader = Recompile(request);
+        Require(shader.gpuResolvedImages == heap, heap ? "the compute heap did not take the table stage" : "a table stage took the heap without it");
         if (artifact.variantId == 0u) artifact = shader;
         else Require(shader.cacheHit && shader.variantId == artifact.variantId, "bindless table changed the compiled artifact");
         if (iteration == 1u) {

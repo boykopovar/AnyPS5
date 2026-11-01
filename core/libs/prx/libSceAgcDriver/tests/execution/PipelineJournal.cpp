@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
@@ -15,6 +16,7 @@
 #include "../NarrowConstantStoreFixture.hpp"
 #include "Recompiler.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "HeapSampleKernel.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -27,6 +29,7 @@
 #endif
 #include <array>
 #include <bit>
+#include <cmath>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -304,10 +307,50 @@ Totals Snapshot() {
     return {AgcDriver::Graphics::PipelineJournalTotals(), AgcDriver::Graphics::PipelineStoreTotals()};
 }
 
+alignas(256) std::array<std::uint8_t, 1024> SampleTexture{};
+alignas(4096) std::array<float, 1024> SampleOutput{};
+
+void DispatchSample(AgcDriver::VulkanDevice& device, const char* what) {
+    SampleOutput.fill(-1.0f);
+    const auto result = CompileSampleKernel(device, SampleTexture.data(), SampleOutput.data());
+    Require(result.gpuResolvedImages, std::string(what) + ": the sampling compute stage is not GPU mode");
+    const auto before = AgcDriver::Graphics::HeapComputeStages();
+    device.Dispatch(result, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(SampleCode.data()));
+    device.WaitIdle();
+    Require(AgcDriver::Graphics::HeapComputeStages() > before, std::string(what) + ": the heap did not take the sampling compute stage");
+    RequireSampled(SampleOutput.data(), SampleTexel, what);
+}
+
+void HeapJournalTests() {
+    FillTexels(SampleTexture, SampleTexel);
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the first device is required once the second opened");
+        device->WaitForPipelineJournalReplay();
+        DispatchSample(*device, "first run");
+        Require(device->ComputePipelinesCreated() == 1, "the first run did not build exactly one compute pipeline");
+        AgcDriver::Graphics::FlushPipelineJournal();
+        Require(Snapshot().journal.recordedCompute == 1, "the first run did not record the GPU-mode compute pipeline");
+        Require(AgcDriver::Graphics::PipelineJournalPath().filename() == "pipelines-heap.journal", "the GPU-mode pipelines were recorded in the journal the per-draw binding model replays");
+    }
+    {
+        const auto device = OpenVulkanTestDevice();
+        Require(device != nullptr, "the second device could not be opened");
+        device->WaitForPipelineJournalReplay();
+        const auto replayed = Snapshot();
+        Require(replayed.journal.replayedCompute == 1 && replayed.journal.replayFailed == 0 && replayed.journal.replayRejected == 0, "the replay did not build the GPU-mode compute pipeline");
+        Require(device->ComputePipelinesCreated() == 1, "the replay did not build the compute pipeline on the new device");
+        Require(device->DescriptorHeapComputePipelines() == 1, "the replay did not build the GPU-mode compute pipeline on the descriptor heap");
+        DispatchSample(*device, "second run");
+        Require(device->ComputePipelinesCreated() == 1, "the second run's dispatch built a compute pipeline the replay had built");
+    }
+}
+
 void JournalTests() {
     using namespace NarrowConstantStoreFixture;
     Require(AgcDriver::Graphics::PipelineJournalEnabled(), "the pipeline journal is disabled although the shader cache directory is set");
     const auto journalPath = AgcDriver::Graphics::PipelineJournalPath();
+    Require(journalPath.filename() == (AgcDriver::Graphics::GpuHeapEnabled() ? "pipelines-heap.journal" : "pipelines.journal"), "the pipeline journal file does not match the GPU heap mode");
     Block compute(BlockBytes);
     Block target(ColorTargetLayout(Width, Height, ColorTileMode::Linear, 2).Bytes());
     const auto computeCode = ComputeCode(0);
@@ -771,6 +814,12 @@ int main(int argc, char** argv) {
         }
         if (argc >= 2 && std::string(argv[1]) == "--benchmark") {
             Benchmark(argc >= 3 ? static_cast<std::uint32_t>(std::strtoul(argv[2], nullptr, 10)) : 24u);
+            return 0;
+        }
+        if (argc >= 2 && std::string(argv[1]) == "--gpu-heap") {
+            if (AgcDriver::Graphics::GpuHeapEnabled() && SkipWithoutDescriptorHeap()) return VulkanTestSkipped;
+            HeapJournalTests();
+            std::puts("pipeline journal record and replay of a GPU-mode compute stage passed");
             return 0;
         }
         JournalTests();

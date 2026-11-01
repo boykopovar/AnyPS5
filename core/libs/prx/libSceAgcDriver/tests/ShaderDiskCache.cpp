@@ -161,6 +161,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.spirv == right.spirv, prefix + "SPIR-V differs");
     require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
     require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
+    require(left.deviceImageTables == right.deviceImageTables, prefix + "device image table flag differs");
     require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
     require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
     require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
@@ -196,6 +197,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
     require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
     require(left.userDataRegisterReads == right.userDataRegisterReads, prefix + "user data register read mask differs");
+    require(left.deviceImageInterfaces == right.deviceImageInterfaces && left.deviceSamplerClasses == right.deviceSamplerClasses, prefix + "device image interfaces differ");
     for (std::size_t i = 0; i < left.imageTablePoison.size(); ++i) {
         const auto& a = left.imageTablePoison[i];
         const auto& b = right.imageTablePoison[i];
@@ -265,6 +267,9 @@ RecompileResult sampleResult() {
     result.readsDepthRemapPush = true;
     result.bdaAbiVersion = 3;
     result.descriptorFaults = 2;
+    result.deviceImageTables = true;
+    result.deviceImageInterfaces = {0x1234567890abcdefull, 0u, 42u};
+    result.deviceSamplerClasses = {3u, 0u};
     result.memoryOffsetDword = 7;
     result.hostSubgroupSize = 32;
     result.fullSubgroups = true;
@@ -355,6 +360,7 @@ CompiledVariant sampleVariant() {
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
     image.optionalDescriptor = true;
+    image.deviceTable = true;
     image.byElements = 4;
     image.byComponents = 1;
     image.emulatedCompare = 0x1a07u;

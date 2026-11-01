@@ -409,8 +409,7 @@ ResidentBuffer::ResidentBuffer(const Context& context, std::uint64_t base, std::
             index = last;
         }
         submit(binds);
-        const VkBufferDeviceAddressInfo addressInfo{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, nullptr, buffer};
-        address = context.Function<PFN_vkGetBufferDeviceAddressKHR>("vkGetBufferDeviceAddressKHR")(context.device, &addressInfo);
+        address = BufferDeviceAddress(context, buffer);
         if (address == 0) fail("vkGetBufferDeviceAddressKHR of a resident heap mirror", VK_ERROR_UNKNOWN);
     } catch (...) {
         release();

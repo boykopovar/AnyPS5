@@ -7,6 +7,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/SrtWalker.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BindlessHeap.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -66,6 +67,17 @@ constexpr std::size_t WideKernelOffset = 2048;
 constexpr std::size_t WideHeapOffset = 65536;
 constexpr std::array<std::size_t, 3> WideSlots{SrtSlots - 1u, SrtSlots - 2u, SrtSlots - 3u};
 constexpr std::array<std::uint32_t, 17> WideTableCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x9310b010u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
+constexpr std::uint32_t Format32UInt = 20;
+constexpr std::uint32_t AtomicRecords = 16;
+constexpr std::uint32_t AtomicWidth = 64;
+constexpr std::size_t AtomicKernelOffset = 1024;
+constexpr std::size_t AtomicSurfaceBytes = AtomicWidth * 4u;
+constexpr std::uint32_t AtomicElement = 5;
+constexpr std::uint32_t Format16x4Float = 71;
+constexpr std::size_t StoreSurfaceBytes = AtomicWidth * 8u;
+constexpr std::uint64_t StoredTexel = 0x3c00ull | 0x3800ull << 16u | 0x4000ull << 32u | 0xbc00ull << 48u;
+constexpr std::array<std::uint32_t, 23> StoreTableCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x2c240086u, 0x4a222485u, 0x7e200511u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0x7e020280u, 0x7e0402f2u, 0x7e0602f0u, 0x7e0802f4u, 0x7e0a02f3u, 0xbf8c3f70u, 0xf0200f08u, 0x00050200u, 0xbf810000u};
+constexpr std::array<std::uint32_t, 25> AtomicTableCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x2c240086u, 0x4a222485u, 0x7e200511u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0x7e020280u, 0x7e040281u, 0x34060082u, 0xbf8c3f70u, 0xf0442108u, 0x00050200u, 0xbf8c3f70u, 0xe0701000u, 0x80070203u, 0xbf8c3f70u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 17> TableCode{0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080300u, 0xfa000020u, 0xf4080700u, 0xfa000030u, 0x7e200500u, 0x8f108510u, 0xf42c0502u, 0x20000000u, 0xf09c0f08u, 0x00450000u, 0xe0700000u, 0x80070000u, 0xbf810000u};
 
 constexpr std::size_t VertexOffset = 256;
@@ -151,12 +163,19 @@ void Prepare(const GuestBlock& block) {
 
 void TablesChangingPerDispatch(const GuestBlock& block) {
     auto& cache = AgcDriver::Graphics::SharedResourceCache();
+    const auto heapStages = AgcDriver::Graphics::HeapComputeStages();
     std::uint64_t most = 0;
     for (std::uint32_t dispatch = 0; dispatch < 6; ++dispatch) {
         SetRecord(block, dispatch * 977u % Records, Elements + dispatch % Spare);
         Dispatch(block, 0);
         most = std::max(most, cache.TableElements());
     }
+    const bool tableFitsHeap = AgcDriver::Graphics::BindlessHeap::ImageSlotCapacity() >= Elements + Spare;
+    if (AgcDriver::Graphics::DescriptorHeapEnabled() && tableFitsHeap) {
+        Require(AgcDriver::Graphics::HeapComputeStages() > heapStages, "image table cache bounds: the dispatches did not take the descriptor heap");
+        return;
+    }
+    if (AgcDriver::Graphics::DescriptorHeapEnabled()) Require(AgcDriver::Graphics::HeapComputeStages() == heapStages, "image table cache bounds: a table stage with more images than the heap's slots took the heap");
     Require(most >= Elements, "image table cache bounds: no dispatch kept its table in the resource cache");
     Require(most <= AgcDriver::Graphics::ResourceCache::TableElementBudget(), "image table cache bounds: tables that changed every dispatch kept " + std::to_string(most) + " table elements in the resource cache, over its budget of " + std::to_string(AgcDriver::Graphics::ResourceCache::TableElementBudget()));
 }
@@ -352,6 +371,68 @@ void VouchedLookups(const GuestBlock& block) {
     std::puts("image table vouched lookups passed");
 }
 
+std::uint32_t AtomicStart(std::uint32_t texel) { return texel * 7u + 3u; }
+
+template <typename FillSurface>
+void PrepareAtomicRecords(const GuestBlock& block, const void* kernel, std::size_t kernelBytes, std::uint32_t format, std::size_t surfaceBytes, FillSurface&& fillSurface) {
+    std::memcpy(block.Bytes(AtomicKernelOffset), kernel, kernelBytes);
+    for (std::uint32_t record = 0; record < AtomicRecords; ++record) {
+        const auto surface = TexturesOffset + static_cast<std::size_t>(record) * surfaceBytes;
+        fillSurface(record, block.Bytes(surface));
+        const auto address = block.At(surface);
+        const std::array<std::uint32_t, 8> words{static_cast<std::uint32_t>(address >> 8u), static_cast<std::uint32_t>((address >> 40u) & 0xffu) | (format << 20u) | (((AtomicWidth - 1u) & 3u) << 30u), (AtomicWidth - 1u) >> 2u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+        std::memcpy(block.Bytes(HeapOffset + static_cast<std::size_t>(record) * Stride), words.data(), sizeof(words));
+    }
+    auto* srt = reinterpret_cast<std::uint32_t*>(block.Bytes(SrtOffset));
+    std::fill(srt, srt + SrtBytes / 4u, 0u);
+    const auto heap = V(block.At(HeapOffset), Stride, AtomicRecords);
+    const auto output = V(block.At(OutputOffset), 0u, 4096u);
+    std::copy(heap.begin(), heap.end(), srt);
+    std::copy(output.begin(), output.end(), srt + 12);
+}
+
+void AtomicTable(const GuestBlock& block) {
+    PrepareAtomicRecords(block, AtomicTableCode.data(), sizeof(AtomicTableCode), Format32UInt, AtomicSurfaceBytes, [](std::uint32_t record, std::uint8_t* surface) {
+        auto* texels = reinterpret_cast<std::uint32_t*>(surface);
+        for (std::uint32_t texel = 0; texel < AtomicWidth; ++texel) texels[texel] = AtomicStart(texel) + record * 1000u;
+    });
+    const auto heapStages = AgcDriver::Graphics::HeapComputeStages();
+    for (std::uint32_t dispatch = 0; dispatch < 2; ++dispatch) {
+        std::memset(block.Bytes(OutputOffset), 0xee, AtomicWidth * 4u);
+        Dispatch(block, 0, AtomicKernelOffset);
+        std::array<std::uint32_t, AtomicWidth> returned{};
+        AgcDriver::GuestMemory::Read(block.At(OutputOffset), std::as_writable_bytes(std::span(returned)));
+        for (std::uint32_t texel = 0; texel < AtomicWidth; ++texel) {
+            const auto expected = AtomicStart(texel) + AtomicElement * 1000u + dispatch;
+            Require(returned[texel] == expected, "image table atomics: dispatch " + std::to_string(dispatch) + " texel " + std::to_string(texel) + " returned " + std::to_string(returned[texel]) + ", expected " + std::to_string(expected));
+        }
+    }
+    if (AgcDriver::Graphics::DescriptorHeapEnabled()) Require(AgcDriver::Graphics::HeapComputeStages() > heapStages, "image table atomics: the dispatches did not take the descriptor heap");
+    std::puts("image table atomics passed");
+}
+
+bool StoreTable(const GuestBlock& block) {
+    PrepareAtomicRecords(block, StoreTableCode.data(), sizeof(StoreTableCode), Format16x4Float, StoreSurfaceBytes,
+                         [](std::uint32_t, std::uint8_t* surface) { std::memset(surface, 0, StoreSurfaceBytes); });
+    const auto heapStages = AgcDriver::Graphics::HeapComputeStages();
+    Dispatch(block, 0, AtomicKernelOffset);
+    if (!AgcDriver::Graphics::DescriptorHeapEnabled()) {
+        std::puts("image table store skipped: per-dispatch image tables have no uint storage view (docs/dev/debt/libSceAgcDriver.md)");
+        return false;
+    }
+    std::array<std::uint64_t, AtomicWidth> texels{};
+    AgcDriver::GuestMemory::Read(block.At(TexturesOffset + static_cast<std::size_t>(AtomicElement) * StoreSurfaceBytes), std::as_writable_bytes(std::span(texels)));
+    for (std::uint32_t texel = 0; texel < AtomicWidth; ++texel) {
+        char text[160];
+        std::snprintf(text, sizeof(text), "image table store: texel %u of a 16_16_16_16_FLOAT table element holds 0x%016llx, expected 0x%016llx", texel,
+                      static_cast<unsigned long long>(texels[texel]), static_cast<unsigned long long>(StoredTexel));
+        Require(texels[texel] == StoredTexel, text);
+    }
+    Require(AgcDriver::Graphics::HeapComputeStages() > heapStages, "image table store: the dispatch did not take the descriptor heap");
+    std::puts("image table store passed");
+    return true;
+}
+
 struct QueuedDraw {
     std::atomic<bool> release{false};
 
@@ -489,6 +570,16 @@ int main(int argc, char** argv) {
         Prepare(block);
         if (argc == 2 && std::string(argv[1]) == "--vouched-lookups") {
             VouchedLookups(block);
+            AgcDriverShutdown_nid_postfix();
+            return 0;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--store-table") {
+            const bool ran = StoreTable(block);
+            AgcDriverShutdown_nid_postfix();
+            return ran ? 0 : VulkanTestSkipped;
+        }
+        if (argc == 2 && std::string(argv[1]) == "--atomic-table") {
+            AtomicTable(block);
             AgcDriverShutdown_nid_postfix();
             return 0;
         }

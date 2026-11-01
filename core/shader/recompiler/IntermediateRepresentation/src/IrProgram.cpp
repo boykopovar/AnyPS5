@@ -907,6 +907,24 @@ std::uint32_t NativeBinding(IrShaderStage stage, DescriptorBindingKind kind) {
     return RuntimeAbi::BindingNumber(static_cast<RuntimeAbi::Stage>(group), kind);
 }
 
+bool SharedHeapArray(const IrBindingLayout& layout, DescriptorBindingKind kind, bool gpuResolved) {
+    return gpuResolved && (kind == DescriptorBindingKind::Samplers || layout.HeapImageKind(kind));
+}
+
+std::uint32_t DescriptorBindingNumber(const IrBindingLayout& layout, DescriptorBindingKind kind, IrShaderStage stage, bool gpuResolved) {
+    return NativeBinding(SharedHeapArray(layout, kind, gpuResolved) ? IrShaderStage::Pixel : stage, kind);
+}
+
+std::uint32_t DescriptorSetNumber(const IrBindingLayout& layout, DescriptorBindingKind kind, IrShaderStage stage, bool gpuResolved, bool fragmentDescriptorSet, bool plan) {
+    if (kind == DescriptorBindingKind::Gds && layout.UsesDataAddress()) return RuntimeAbi::GpuGdsSet;
+    if (gpuResolved) {
+        if (SharedHeapArray(layout, kind, true)) return RuntimeAbi::FragmentDescriptorSet;
+        if (kind == DescriptorBindingKind::ShaderData || kind == DescriptorBindingKind::FlattenedSrt) return plan ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::GpuDataSet;
+        return RuntimeAbi::DescriptorSet;
+    }
+    return fragmentDescriptorSet && stage == IrShaderStage::Pixel ? RuntimeAbi::FragmentDescriptorSet : RuntimeAbi::DescriptorSet;
+}
+
 ImageResourceClass ImageBindingResourceClass(DescriptorBindingKind kind) {
     const auto value = static_cast<std::uint32_t>(kind);
     if (value >= FirstImageBinding && value < FirstStorageImageBinding) {

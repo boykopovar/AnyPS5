@@ -116,6 +116,18 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcTextureDetileAddressedShaderSpv ${agcTextureDetileGeneratedDir}/TextureDetileAddressed.spv)
+set(agcTextureDetileAddressedShaderHeader ${agcTextureDetileGeneratedDir}/TextureDetileAddressed_spv.h)
+add_custom_command(
+        OUTPUT "${agcTextureDetileAddressedShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -DADDRESSED=1 -o "${agcTextureDetileAddressedShaderSpv}" "${agcTextureDetileShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTextureDetileAddressedShaderSpv} -DOUTPUT=${agcTextureDetileAddressedShaderHeader}
+        -DSYMBOL=TEXTURE_DETILE_ADDRESSED_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcTextureDetileShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcTextureRepackShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/TextureRepack.comp)
 set(agcTextureRepackShaderSpv ${agcTextureDetileGeneratedDir}/TextureRepack.spv)
 set(agcTextureRepackShaderHeader ${agcTextureDetileGeneratedDir}/TextureRepack_spv.h)
@@ -125,6 +137,17 @@ add_custom_command(
         COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcTextureRepackShaderSpv}" "${agcTextureRepackShaderSource}"
         COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTextureRepackShaderSpv} -DOUTPUT=${agcTextureRepackShaderHeader}
         -DSYMBOL=TEXTURE_REPACK_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcTextureRepackShaderSource}" glslang-standalone
+        VERBATIM
+)
+set(agcTextureRepackAddressedShaderSpv ${agcTextureDetileGeneratedDir}/TextureRepackAddressed.spv)
+set(agcTextureRepackAddressedShaderHeader ${agcTextureDetileGeneratedDir}/TextureRepackAddressed_spv.h)
+add_custom_command(
+        OUTPUT "${agcTextureRepackAddressedShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -DADDRESSED=1 -o "${agcTextureRepackAddressedShaderSpv}" "${agcTextureRepackShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcTextureRepackAddressedShaderSpv} -DOUTPUT=${agcTextureRepackAddressedShaderHeader}
+        -DSYMBOL=TEXTURE_REPACK_ADDRESSED_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
         DEPENDS "${agcTextureRepackShaderSource}" glslang-standalone
         VERBATIM
 )
@@ -261,6 +284,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCache.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCacheStatistics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawCapture.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/HeapStages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawDecode.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawLookup.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Draw/DrawPipeline.cpp
@@ -338,6 +362,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeferredDestruction.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/MemoryAccounting.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/PlaceholderImages.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DescriptorHeapObjects.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Recorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ParallelCompare.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/ShaderInputState.cpp
@@ -365,6 +390,9 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/UnitShadow.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/Sampler.cpp
         ${agcSampleOrderShaderHeaders}
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/BindlessHeap.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeviceImageKeys.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/src/DeviceImageTable.cpp
         ${agcTextureDetileShaderHeader}
         ${agcReadbackHeaders}
         ${agcMultisampleUploadHeader}
@@ -372,6 +400,8 @@ set(agcDriverSources
         ${agcMeshArgumentsShaderHeader}
         ${agcTextureDetileImageShaderHeader}
         ${agcTextureRepackShaderHeader}
+        ${agcTextureDetileAddressedShaderHeader}
+        ${agcTextureRepackAddressedShaderHeader}
         ${agcDispatchArgumentsShaderHeader}
         ${agcSampleCounterShaderHeader}
         ${agcSampleDumpsShaderHeader}
@@ -597,12 +627,29 @@ function(agc_add_default_test agcTest)
     endif()
 endfunction()
 
-function(agc_add_draw_pipeline_test agcTestName)
-    add_test(NAME ${agcTestName}_draw_pipeline COMMAND ${agcTestName}_tests)
-    set_tests_properties(${agcTestName}_draw_pipeline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=32;APS5_PIPELINE_DISPATCH=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
-    if(WIN32)
-        set_tests_properties(${agcTestName}_draw_pipeline PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+function(agc_add_env_test agcTestName agcTestTarget)
+    cmake_parse_arguments(PARSE_ARGV 2 agcEnvTest "NO_WORKING_DIRECTORY" "TIMEOUT" "ARGS;ENV")
+    add_test(NAME ${agcTestName} COMMAND ${agcTestTarget} ${agcEnvTest_ARGS})
+    set_tests_properties(${agcTestName} PROPERTIES ENVIRONMENT "${agcEnvTest_ENV}" SKIP_RETURN_CODE 77)
+    if(NOT agcEnvTest_NO_WORKING_DIRECTORY)
+        set_tests_properties(${agcTestName} PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     endif()
+    if(agcEnvTest_TIMEOUT)
+        set_tests_properties(${agcTestName} PROPERTIES TIMEOUT ${agcEnvTest_TIMEOUT})
+    endif()
+    if(WIN32)
+        set_tests_properties(${agcTestName} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endfunction()
+
+function(agc_add_draw_pipeline_test agcTestName)
+    agc_add_env_test(${agcTestName}_draw_pipeline ${agcTestName}_tests
+            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_DRAW_PIPELINE=1 APS5_PIPELINED_DRAWS=32 APS5_PIPELINE_DISPATCH=1)
+endfunction()
+
+function(agc_add_gpu_heap_test agcTestName)
+    agc_add_env_test(${agcTestName}_gpu_heap ${agcTestName}_tests
+            ENV ANYPS5_NO_SHADER_CACHE=1 APS5_GPU_HEAP=1 APS5_VERIFY_GPU_HEAP=1 APS5_DRAW_PIPELINE=1 APS5_PIPELINED_DRAWS=32 APS5_PIPELINE_DISPATCH=1)
 endfunction()
 
 function(agc_add_spirv_mode_tests agcTest)
@@ -908,6 +955,6 @@ endif()
 
 if(BUILD_TESTING)
     get_directory_property(agcRegisteredTests TESTS)
-    list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal|agc_pipeline_store_replay_growth)$")
+    list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal|agc_driver_pipeline_journal_gpu_heap|agc_pipeline_store_replay_growth)$")
     set_property(TEST ${agcRegisteredTests} APPEND PROPERTY ENVIRONMENT "APS5_NO_PIPELINE_JOURNAL=1")
 endif()

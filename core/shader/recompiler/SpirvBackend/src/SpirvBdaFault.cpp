@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <stdexcept>
@@ -12,6 +13,8 @@ std::uint32_t BdaConstant(SpirvEmitterState& state, std::uint64_t value) {
 }
 
 std::uint32_t BdaWord(SpirvEmitterState& state, std::uint32_t variable, std::uint32_t index) {
+    if (state.BdaAddressed() && variable == state.bdaPagetableVariable) return EmitRootAddressReadOnlyWordPointer(state, RuntimeAbi::RootPagetableAddress, index);
+    if (state.BdaAddressed() && variable == state.faultBufferVariable) return EmitRootAddressWordPointer(state, RuntimeAbi::RootFaultAddress, index);
     const auto pointer = state.module.AllocateId();
     state.module.AddFunction(spv::OpAccessChain, TypeStorageBufferElementPointer(state), pointer, variable, ConstantU32(state, 0u), index);
     return pointer;
@@ -19,7 +22,8 @@ std::uint32_t BdaWord(SpirvEmitterState& state, std::uint32_t variable, std::uin
 
 std::uint32_t BdaLoadWord(SpirvEmitterState& state, std::uint32_t index) {
     const auto value = state.module.AllocateId();
-    state.module.AddFunction(spv::OpLoad, TypeU32(state), value, BdaWord(state, state.bdaPagetableVariable, index));
+    if (state.BdaAddressed()) state.module.AddFunction(spv::OpLoad, TypeU32(state), value, BdaWord(state, state.bdaPagetableVariable, index), spv::MemoryAccessAlignedMask, 4u);
+    else state.module.AddFunction(spv::OpLoad, TypeU32(state), value, BdaWord(state, state.bdaPagetableVariable, index));
     return value;
 }
 
@@ -60,7 +64,8 @@ void DefineBdaFaultFunction(SpirvEmitterState& state) {
     const auto won = Binary(state, spv::OpIEqual, TypeBool(state), previous, ConstantU32(state, 0u));
     EmitIfCondition(state, won, [&] {
         const auto store = [&](std::uint32_t index, std::uint32_t value) {
-            state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value);
+            if (state.BdaAddressed()) state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value, spv::MemoryAccessAlignedMask, 4u);
+            else state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value);
         };
         store(1, reason);
         store(2, words ? address : Unary(state, spv::OpUConvert, TypeU32(state), address));
