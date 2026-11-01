@@ -778,6 +778,36 @@ void testBackToBack() {
     LibcRunShutdown_nid_postfix();
 }
 
+void testFrameLimit() {
+    const char* limit = std::getenv("ANYPS5_FPS_LIMIT");
+    check(limit != nullptr && std::string(limit) == "20", "the frame limit test runs with ANYPS5_FPS_LIMIT=20");
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::array<std::vector<std::byte>, 2> allocations{std::vector<std::byte>(6 * 65536 + 65535), std::vector<std::byte>(6 * 65536 + 65535)};
+    std::array<VideoOutBuffers, 2> buffers{};
+    for (std::size_t i = 0; i < buffers.size(); ++i) {
+        const auto storage = alignedBuffer(allocations[i]);
+        fillBuffer(storage, 259, 137);
+        buffers[i] = {storage.data(), nullptr, {nullptr, nullptr}};
+    }
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, buffers.data(), 2, &attribute, 0, nullptr);
+    constexpr int flips = 6;
+    int64_t argument = 1000;
+    const auto begin = std::chrono::steady_clock::now();
+    for (int index = 0; index < flips; ++index) sceVideoOutSubmitFlip(handle, index % 2, 1, ++argument);
+    std::unique_lock lock(cfg->mutex);
+    check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == flips; }), "the limited presentations did not complete");
+    if (cfg->failure) std::rethrow_exception(cfg->failure);
+    const auto elapsed = std::chrono::steady_clock::now() - begin;
+    lock.unlock();
+    check(elapsed >= std::chrono::milliseconds(245), "six flips under ANYPS5_FPS_LIMIT=20 completed in under five periods of 50 ms");
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 std::uint32_t busyLoopResult(std::uint32_t iterations) {
     std::uint32_t value = 1;
     for (std::uint32_t i = 0; i < iterations; ++i) value = value * value + 1u;
@@ -1265,6 +1295,7 @@ int runTests(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "controls") testControls();
         else if (argc == 2 && std::string(argv[1]) == "present") testPresentation();
         else if (argc == 2 && std::string(argv[1]) == "backtoback") testBackToBack();
+        else if (argc == 2 && std::string(argv[1]) == "fps_limit") testFrameLimit();
         else if (argc == 2 && std::string(argv[1]) == "dcc") testCompressedPresentation();
         else if (argc == 2 && std::string(argv[1]) == "pacing") testReleaseVblank();
         else if (argc == 2 && std::string(argv[1]) == "aftergpu") testFlipAfterGpuWork();

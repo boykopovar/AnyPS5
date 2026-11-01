@@ -60,4 +60,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_savedata_cancel PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
+
+    add_test_executable(guest_savedata_host_space_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataHostSpace.cpp)
+    target_include_directories(guest_savedata_host_space_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_savedata_host_space_tests PRIVATE libSceSaveData.native libc)
+    configure_windows_unwind(guest_savedata_host_space_tests)
+    add_test(NAME guest_savedata_host_space COMMAND guest_savedata_host_space_tests)
+    if(WIN32)
+        set_tests_properties(guest_savedata_host_space PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+    endif()
 endif()

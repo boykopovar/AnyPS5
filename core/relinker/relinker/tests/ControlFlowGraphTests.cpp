@@ -9,6 +9,28 @@
 #include <string>
 #include <limits>
 #include <chrono>
+#include <cstdlib>
+#include <new>
+
+namespace {
+
+bool failAllocations = false;
+
+}
+
+void* operator new(std::size_t size) {
+    if (failAllocations) throw std::bad_alloc();
+    if (void* memory = std::malloc(size == 0 ? 1 : size)) return memory;
+    throw std::bad_alloc();
+}
+
+void operator delete(void* memory) noexcept {
+    std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+    std::free(memory);
+}
 
 namespace {
 
@@ -143,6 +165,41 @@ void CheckRelocatedTransfers() {
     RequireOffsets(*unresolved, {0, 6, 7, 8});
 }
 
+void CheckSegmentRelativeTransfers() {
+    for (const auto segment : {0x00, 0x26, 0x2e, 0x36, 0x3e, 0x64, 0x65}) {
+        for (const bool address32 : {false, true}) {
+            for (const bool call : {false, true}) {
+                Bytes text;
+                if (segment != 0) text.push_back(static_cast<std::uint8_t>(segment));
+                if (address32) text.push_back(0x67);
+                text.insert(text.end(), {0xff, static_cast<std::uint8_t>(call ? 0x15 : 0x25), 0, 0, 0, 0});
+                const auto next = text.size();
+                text.push_back(0xc3);
+                text.resize(32, 0x90);
+                text.push_back(0xc3);
+                const auto slot = TextAddress + 0x1000;
+                SetDisplacement(text, next - 4, next, slot);
+                Pointers pointers;
+                pointers.Slots = {{address32 ? static_cast<std::uint32_t>(slot) : slot, TextAddress + 32}};
+                const auto graph = BuildControlFlowGraph(text, TextAddress, TextAddress, {}, pointers);
+                std::unordered_set<VirtualAddress> expected{TextAddress};
+                if (call) expected.insert(TextAddress + next);
+                if (segment != 0x64 && segment != 0x65) expected.insert(TextAddress + 32);
+                Require(graph->ReachableVaddrs() == expected, "Segment-relative transfer followed a flat relocation slot");
+                if (segment == 0x64 || segment == 0x65) {
+                    text[32] = 0x0f;
+                    const auto unmapped = BuildControlFlowGraph(text, TextAddress, TextAddress, {}, pointers);
+                    Require(unmapped->ReachableVaddrs() == expected, "Segment-relative transfer decoded unrelated bytes");
+                    const auto explicitRoot = BuildControlFlowGraph(Bytes(text.begin(), text.begin() + 32), TextAddress,
+                        TextAddress, {TextAddress + 31}, pointers);
+                    expected.insert(TextAddress + 31);
+                    Require(explicitRoot->ReachableVaddrs() == expected, "Segment-relative transfer discarded an explicit root");
+                }
+            }
+        }
+    }
+}
+
 void CheckAddressSizeOverride() {
     constexpr auto slot = TextAddress + 0x1000;
     Bytes text{0x67, 0xff, 0x15, 0, 0, 0, 0, 0x90, 0xc3, 0x67, 0xff, 0x25, 0, 0, 0, 0, 0x90, 0x90, 0xc3};
@@ -175,6 +232,12 @@ void CheckCodeAddresses() {
     RequireOffsets(*ordinary, {0, 7});
     const auto addresses = BuildControlFlowGraph(text, TextAddress, TextAddress, {}, pointers, true);
     RequireOffsets(*addresses, {0, 7, 16});
+    for (const std::uint8_t segment : {0x64, 0x65}) {
+        auto prefixed = text;
+        prefixed.insert(prefixed.begin(), segment);
+        const auto graph = BuildControlFlowGraph(prefixed, TextAddress, TextAddress, {}, pointers, true);
+        RequireOffsets(*graph, {0, 8, 17});
+    }
 }
 
 void CheckSpeculativeRoots() {
@@ -253,6 +316,45 @@ void CheckBorrowedReachability() {
                                              {TextAddress + 3, TextAddress + 4}, pointers, false, reachable);
     RequireOffsets(*second, {0, 1, 3, 4});
     RequireOffsets(*first, {0, 1, 3, 4});
+}
+
+void CheckReachedMap() {
+    const Pointers pointers;
+    const Bytes text{0x90, 0x90, 0xc3, 0x90, 0xc3};
+    const std::span<const std::uint8_t> code(text);
+    std::vector<std::uint8_t> reached(text.size(), 0);
+    reached[1] = 1;
+    Require(ExtendControlFlowGraph(code, TextAddress, TextAddress, {}, pointers, false, reached) == std::vector<VirtualAddress>{TextAddress},
+            "The walk did not stop at an instruction the map already marks");
+    Require(ExtendControlFlowGraph(code, TextAddress, TextAddress + 3, {TextAddress + 4, TextAddress + 3}, pointers, false, reached) == std::vector<VirtualAddress>{TextAddress + 3, TextAddress + 4},
+            "Newly reached instructions were not returned once each in address order");
+    Require(reached == std::vector<std::uint8_t>{1, 1, 0, 1, 1}, "The map does not mark exactly the reached instructions");
+    Require(ExtendControlFlowGraph(code, TextAddress, TextAddress, {TextAddress + 3}, pointers, false, reached).empty(), "A walk of reached code returned instructions");
+    std::vector<std::uint8_t> shortMap(text.size() - 1, 0);
+    bool threw = false;
+    try {
+        ExtendControlFlowGraph(code, TextAddress, TextAddress, {}, pointers, false, shortMap);
+    } catch (const RelinkerException&) {
+        threw = true;
+    }
+    Require(threw, "A map shorter than the text was accepted");
+}
+
+void CheckAllocationFailureDuringWalk() {
+    const Pointers pointers;
+    Bytes text(8192, 0x90);
+    text.push_back(0xc3);
+    std::unordered_set<VirtualAddress> reachable;
+    bool threw = false;
+    try {
+        BuildControlFlowGraph(std::span<const std::uint8_t>(text), TextAddress, TextAddress, {}, pointers, false, reachable, [](std::uint64_t count) {
+            if (count >= 4096) failAllocations = true;
+        });
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    failAllocations = false;
+    Require(threw, "An allocation failure during the walk did not reach the caller as std::bad_alloc");
 }
 
 void CheckAddressOverflow() {
@@ -647,11 +749,14 @@ int main() {
         CheckCallsBeforeZeroPadding();
         CheckCallsThatStillFallThrough();
         CheckRelocatedTransfers();
+        CheckSegmentRelativeTransfers();
         CheckAddressSizeOverride();
         CheckCodeAddresses();
         CheckSpeculativeRoots();
         CheckTrailingZeroRoots();
         CheckBorrowedReachability();
+        CheckReachedMap();
+        CheckAllocationFailureDuringWalk();
         CheckAddressOverflow();
         CheckHighVirtualAddress();
         CheckRelativeJumpTables();

@@ -25,7 +25,10 @@ enum class InputControl {
     ToggleFullscreen,
     TogglePerformanceOverlay,
     Screenshot,
-    ShowPadStatus
+    ShowPadStatus,
+    VolumeUp,
+    VolumeDown,
+    ToggleMute
 };
 
 enum class PadButton : std::uint32_t {

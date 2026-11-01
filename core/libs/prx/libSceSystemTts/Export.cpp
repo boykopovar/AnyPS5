@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceSystemTts/include/InventoryExports.hpp"
 #include "prx/libSceSystemTts/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -46,5 +48,14 @@ int APS5_VABI sceSystemTtsRepeat() {
 int APS5_VABI sceSystemTtsWait() {
     NotImplemented_nid_no_patch(__func__);
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceSystemTtsUnknown_aIz2UUh6oi0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("aIz2UUh6oi0", libSceSystemTtsUnknown_aIz2UUh6oi0_nid_no_patch);
 
 }

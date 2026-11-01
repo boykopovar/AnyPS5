@@ -1,5 +1,17 @@
 # libSceSysmodule technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceSysmodule/InventoryExports.cpp) - 5 entries present in both version-labelled images are import-resolution declarations only. All belong to module `libSceSysmodule`; two have logical library `libSceSysmodule` and three have logical library `libSceSysmodule_jvm`. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `5gs662NWKhE` |
+| `Unknown` | `6XFxHG0KhBg` |
+| `Unknown` | `9Q9uHJVfB4w` |
+| `Unknown` | `kMn8gDsKp9Y` |
+| `Unknown` | `uQqnJudN5fY` |
+
 ### Silent stubs
 
 - [sceSysmoduleIsLoaded, sceSysmoduleLoadModule, sceSysmoduleUnloadModule](../../../core/libs/prx/libSceSysmodule/Export.cpp) (libSceSysmodule) accept the 141 ids `sceSysmoduleIsLoaded` did not reject in a payload process on a PS5 (firmware 13.60) and return `0x805A1000` for every other id, as the console does; that includes 51 ids the module table names from older firmware, such as 0x0001 (`libSceAudioOut`) and 0x0080 (`libSceJson`). Load and unload are counted as measured. The 21 accepted ids the table does not name (0x0111, 0x0117, 0x011c to 0x011f, 0x0121 to 0x0124, 0x0129, 0x012c to 0x012e, 0x0133, 0x0134, 0x0136 and 0x013a to 0x013d) are logged and return 0 without loading anything, so `sceSysmoduleIsLoaded` reports them as loaded; which module each loads is not known. Loading id 0x00ff ended the payload process. One title (PPSA04354) calls `sceSysmoduleIsLoaded` with id 0x96 at twelve sites and loads it only when the result is 0x805a1001; any other result lets it continue.

@@ -69,6 +69,36 @@ class AuditDumpTests(unittest.TestCase):
         with self.assertRaises(unwrap_self.Refused):
             audit_dump.prepare(self.dump, self.root / "source", log=lambda text: None)
 
+    def test_extended_module_suffixes_are_staged_at_every_module_location(self):
+        locations = (*audit_dump.STANDARD_DIRECTORIES, *audit_dump.EXTRA_DIRECTORIES, ".")
+        names = ("plain.prx", "shared.sprx", "user.suprx", "debug.debug_prx", "upper.SUPRX", "upper.DEBUG_PRX")
+        staged = []
+        for location in locations:
+            for index, name in enumerate(names):
+                relative = Path(location) / name
+                self.module(relative, ELF if index % 2 else SELF)
+                staged.append(relative)
+            for name in ("backup.suprx.bak", "debug.debug_prx.txt"):
+                self.module(Path(location) / name, b"not a module")
+        original = {path: path.read_bytes() for path in self.dump.rglob("*") if path.is_file()}
+        source = self.root / "source"
+        directories, extra = audit_dump.prepare(self.dump, source, log=lambda text: None)
+        for relative in staged:
+            self.assertTrue((source / relative).read_bytes().startswith(ELF), str(relative))
+        copied = {path.relative_to(source) for path in source.rglob("*") if path.is_file()}
+        self.assertEqual(copied, {Path("eboot.elf"), *staged})
+        self.assertEqual(directories, [source / location for location in locations])
+        self.assertEqual(extra, [*audit_dump.EXTRA_DIRECTORIES, "."])
+        self.assertEqual({path: path.read_bytes() for path in original}, original)
+
+    def test_invalid_extended_modules_are_not_silently_skipped(self):
+        for name in ("bad.suprx", "bad.debug_prx"):
+            with self.subTest(name=name):
+                self.module("sce_module/" + name, b"MZ" + b"\0" * 62)
+                with self.assertRaises(unwrap_self.Refused):
+                    audit_dump.prepare(self.dump, self.root / "source", log=lambda text: None)
+                (self.dump / "sce_module" / name).unlink()
+
     def test_the_relinker_gets_the_registry_windows_and_module_dir_options(self):
         with mock.patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run:
             audit_dump.convert(self.relinker, self.root / "source", self.root / "out" / "app.exe", ["Media/Modules", "."], True)
@@ -229,6 +259,50 @@ class AuditDumpTests(unittest.TestCase):
         convert.assert_not_called()
         audit.assert_not_called()
 
+    def test_work_cleanup_refuses_relinker_or_libraries_in_generated_directories(self):
+        for generated in ("source", "output"):
+            for kind in ("relinker", "libs"):
+                with self.subTest(generated=generated, kind=kind), tempfile.TemporaryDirectory() as directory:
+                    work = Path(directory)
+                    target = work / generated / "nested"
+                    target.mkdir(parents=True)
+                    marker = target / "keep.prx"
+                    marker.write_bytes(b"keep")
+                    relinker = marker if kind == "relinker" else self.relinker
+                    libs = target if kind == "libs" else self.root / "libs"
+                    with mock.patch.object(audit_dump, "prepare") as prepare, \
+                            mock.patch.object(audit_dump, "convert") as convert, \
+                            self.assertRaises(SystemExit) as error:
+                        self.run_main(self.dump, "--relinker", relinker, "--libs", libs, "--work", work)
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertEqual(marker.read_bytes(), b"keep")
+                    prepare.assert_not_called()
+                    convert.assert_not_called()
+
+    def test_work_cleanup_refuses_outward_input_links(self):
+        for generated in ("source", "output"):
+            for kind in ("relinker", "libs"):
+                with self.subTest(generated=generated, kind=kind), tempfile.TemporaryDirectory() as directory:
+                    work = Path(directory)
+                    nested = work / generated / "nested"
+                    nested.mkdir(parents=True)
+                    outside = self.relinker if kind == "relinker" else self.root
+                    link = nested / "input-link"
+                    try:
+                        os.symlink(outside, link, target_is_directory=kind == "libs")
+                    except OSError:
+                        self.skipTest("symbolic links unavailable")
+                    relinker = link if kind == "relinker" else self.relinker
+                    libs = link if kind == "libs" else self.root
+                    with mock.patch.object(audit_dump, "prepare") as prepare, \
+                            mock.patch.object(audit_dump, "convert") as convert, \
+                            self.assertRaises(SystemExit) as error:
+                        self.run_main(self.dump, "--relinker", relinker, "--libs", libs, "--work", work)
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertTrue(link.is_symlink())
+                    prepare.assert_not_called()
+                    convert.assert_not_called()
+
     def test_symbolic_link_loops_are_usage_errors_before_input_is_removed(self):
         loop = self.root / "loop"
         try:
@@ -238,6 +312,8 @@ class AuditDumpTests(unittest.TestCase):
         for name, arguments, expected in (
             ("work", ("--relinker", self.relinker, "--work", loop), "cannot check work directory against the input dump"),
             ("relinker", ("--relinker", loop), "no such relinker"),
+            ("json", ("--relinker", self.relinker, "--json", loop), "cannot check JSON output against the input dump"),
+            ("libs", ("--relinker", self.relinker, "--libs", loop), "cannot check work directory against input"),
         ):
             with self.subTest(name=name):
                 errors = io.StringIO()

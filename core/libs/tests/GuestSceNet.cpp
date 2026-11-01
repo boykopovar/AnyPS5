@@ -20,6 +20,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceNet/src/ResolverTestHooks.hpp"
 #include "SceTypes.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -91,7 +92,7 @@ static bool Failed(std::int64_t result, int error) {
 template<typename TBody>
 static std::string CaptureStdout(TBody body) {
     std::fflush(stdout);
-    std::FILE* capture = std::tmpfile();
+    std::FILE* capture = TemporaryFile::Open();
     Require(capture != nullptr);
 #ifdef _WIN32
     const int saved = _dup(_fileno(stdout));
@@ -189,7 +190,7 @@ static void CheckStreamSender(int family) {
 
 template <typename Diagnostic>
 static std::string CaptureDiagnostic(Diagnostic diagnostic) {
-    auto* file = std::tmpfile();
+    auto* file = TemporaryFile::Open();
     Require(file != nullptr);
     Require(std::fflush(stdout) == 0);
 #ifdef _WIN32
@@ -681,6 +682,10 @@ static void CheckRejectedArguments() {
     Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), -1, 0, 0), 22));
     Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, -1, 0), 22));
     Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, 0, 2), 22));
+    for (const int timeout : {1, 999999})
+        Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), timeout, 0, 0), 22));
+    for (const int timeout : {1000000, 0x7fffffff})
+        Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), timeout, 0, 0), 9));
     for (const int flags : {0, 1, 0x10000, 0x10001})
         Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 0, 0, flags), 9));
 }
@@ -2211,7 +2216,12 @@ int main() {
     for (int i = 0; i < 16; ++i) {
         Require(in6addr_any_nid_postfix[i] == 0);
         Require(in6addr_loopback_nid_postfix[i] == (i == 15 ? 1 : 0));
+        Require(sce_net_in6addr_loopback_nid_postfix[i] == (i == 15 ? 1 : 0));
+        Require(sce_net_in6addr_nodelocal_allnodes_nid_postfix[i] == (i == 0 ? 0xff : i == 1 || i == 15 ? 1 : 0));
+        Require(sce_net_in6addr_linklocal_allrouters_nid_postfix[i] == (i == 0 ? 0xff : i == 1 || i == 15 ? 2 : 0));
     }
+    Require(sce_net_dummy_nid_postfix == 0);
+    Require(&sce_net_in6addr_loopback_nid_postfix[0] != &in6addr_loopback_nid_postfix[0]);
     for (const int flags : {0, 1, -1}) {
         Require(sceNetClearDnsCache(flags) == static_cast<int>(0x804101C8));
         Require(*sceNetErrnoLoc() == 200);

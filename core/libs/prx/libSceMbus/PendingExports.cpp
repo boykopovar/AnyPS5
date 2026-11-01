@@ -86,18 +86,22 @@ int APS5_VABI sceMbusCheckDriverCallback() {
 }
 
 int APS5_VABI sceMbusConvertToLocalDeviceId(std::uint64_t deviceId, std::uint32_t* localId, std::uint32_t* deviceClass) {
-    NotImplemented_nid_no_patch(__func__);
+    if (localId != nullptr) *localId = static_cast<std::uint32_t>(deviceId);
+    if (deviceClass != nullptr) *deviceClass = static_cast<std::uint32_t>(deviceId >> 48);
     return 0;
 }
 
 int APS5_VABI sceMbusConvertToLocalDeviceId2(std::uint64_t deviceId, std::uint32_t deviceClass, std::uint64_t* localId) {
-    NotImplemented_nid_no_patch(__func__);
+    if (deviceClass != deviceId >> 48) NotImplemented_nid_no_patch("sceMbusConvertToLocalDeviceId2: a device class other than the identifier's");
+    if (localId != nullptr) *localId = deviceId & 0xFFFFFFFFFFFFull;
     return 0;
 }
 
 int APS5_VABI sceMbusConvertToMbusDeviceId(std::uint64_t localId, std::uint32_t deviceClass, std::uint64_t* deviceId) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    constexpr auto unconvertibleClass = static_cast<std::int32_t>(0x809B0008u);
+    const bool convertible = deviceClass == 0x10 || deviceClass == 0x20;
+    if (deviceId != nullptr) *deviceId = convertible ? (static_cast<std::uint64_t>(deviceClass) << 48) | localId : 0;
+    return convertible ? 0 : unconvertibleClass;
 }
 
 int APS5_VABI sceMbusDebugAcquireControl(std::uint64_t control, std::int32_t first, std::int32_t second, std::int32_t processId) {

@@ -20,7 +20,11 @@ struct ShellCoreErrorDialogParam {
 
 struct SystemServiceDaemonEvent;
 struct SystemServiceLocalProcessStatus;
-struct SystemServicePSButtonEvent;
+struct SystemServicePSButtonEvent {
+    std::int32_t eventType;
+    std::uint32_t dataAt8;
+    std::uint64_t dataAt0;
+};
 struct SystemServicePrivacyDefinitionData;
 struct SystemServicePrivacyDefinitionVersion;
 struct SystemServiceTitleWorkaroundInfo;

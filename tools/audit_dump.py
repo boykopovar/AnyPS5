@@ -1,4 +1,5 @@
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -10,7 +11,7 @@ import import_audit
 import unwrap_self
 
 DESCRIPTION = """Audit the imports of an extracted title before it is launched. Unwraps the dump's eboot.bin and the modules
-it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/Plugins/, and .prx files beside
+it ships (sce_module/, sce_modules/ and prx/, Unity's Media/Modules/ and Media/Plugins/, and module files beside
 eboot.bin) into a work directory, converts them with relinker --registry, and runs tools/import_audit.py on the
 registries with the unwrapped modules as --modules. The dump is only read; the source/ and output/ directories of a
 reused --work directory are emptied first. Exit code: that of import_audit.py, or 2
@@ -18,7 +19,7 @@ when unwrapping or conversion fails."""
 
 STANDARD_DIRECTORIES = ("sce_module", "sce_modules", "prx")
 EXTRA_DIRECTORIES = ("Media/Modules", "Media/Plugins")
-MODULE_SUFFIXES = (".prx", ".sprx")
+MODULE_SUFFIXES = import_audit.MODULE_FILE_SUFFIXES
 ELF_MAGIC = b"\x7fELF"
 
 
@@ -143,6 +144,15 @@ def main(argv=None):
                 parser.error(f"{generated}: cannot check work directory against the input dump: {error}")
             if dump_path.is_relative_to(generated_path) or generated_path.is_relative_to(dump_path):
                 parser.error(f"{generated}: work directory overlaps the input dump")
+            for input_path in (Path(args.relinker), *(Path(library) for library in args.libs)):
+                try:
+                    resolved = comparison_path(input_path)
+                except (OSError, RuntimeError) as error:
+                    parser.error(f"{input_path}: cannot check work directory against input: {error}")
+                supplied = Path(os.path.abspath(input_path))
+                generated_spelling = Path(os.path.abspath(generated))
+                if supplied.is_relative_to(generated_spelling) or resolved.is_relative_to(generated_path):
+                    parser.error(f"{generated}: work directory contains input {input_path}")
         for generated in (source, output):
             try:
                 if generated.is_symlink():
