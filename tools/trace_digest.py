@@ -191,6 +191,35 @@ def load_stacks(path):
     return stacks
 
 
+def persistent_peaks(values):
+    parent = list(range(len(values)))
+    peak = list(range(len(values)))
+    active = [False] * len(values)
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    peaks = []
+    for index in sorted(range(len(values)), key=lambda position: (-values[position], position)):
+        active[index] = True
+        for neighbour in (index - 1, index + 1):
+            if not 0 <= neighbour < len(values) or not active[neighbour]:
+                continue
+            first, second = find(index), find(neighbour)
+            if first == second:
+                continue
+            low, high = sorted((first, second), key=lambda root: (-values[peak[root]], peak[root]))[::-1]
+            peaks.append((peak[low], values[peak[low]] - values[index]))
+            parent[low] = high
+    if values:
+        top = peak[find(0)]
+        peaks.append((top, values[top] - min(values)))
+    return sorted((entry for entry in peaks if entry[1] > 0), key=lambda entry: (-entry[1], entry[0]))
+
+
 def digest(trace, summary=None, stacks=None, worst=5, top=10):
     window_ms = summary["window"]["ms"] if summary else None
     frames = trace.frames(window_ms * 1000.0 if window_ms is not None else None)
@@ -209,6 +238,10 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
         slowest.append({"present": present, "ms": (end - begin) / 1000.0, "at_ms": begin / 1000.0,
                         "slices": [{"name": name, "thread": thread, "ms": us / 1000.0} for (name, thread), us in inside.most_common(4)]})
     result["slowest_frames"] = slowest
+
+    durations = [(end - begin) / 1000.0 for _, begin, end, _ in frames]
+    result["persistent_spikes"] = [{"present": frames[index][3], "ms": durations[index], "at_ms": frames[index][1] / 1000.0, "persistence_ms": persistence}
+                                   for index, persistence in persistent_peaks(durations)[:top]]
 
     threads = []
     totals = collections.Counter()
@@ -317,6 +350,11 @@ def markdown(result):
     for frame in result["slowest_frames"]:
         parts = ", ".join(f"{entry['name']} ({entry['thread']}) {entry['ms']:.1f}" for entry in frame["slices"])
         lines.append(f"- present {frame['present']}: {frame['ms']:.1f} ms at {frame['at_ms']:.0f} ms: {parts}")
+    lines.append("")
+    lines.append("**Persistent spikes** (frame time above the fastest frame that separates it from a longer frame; one entry per stall, not per frame)")
+    lines.append("")
+    for spike in result["persistent_spikes"]:
+        lines.append(f"- present {spike['present']}: {spike['ms']:.1f} ms at {spike['at_ms']:.0f} ms, persistence {spike['persistence_ms']:.1f} ms")
     lines.append("")
     lines.append("**Threads** (ms per frame)")
     lines.append("")
