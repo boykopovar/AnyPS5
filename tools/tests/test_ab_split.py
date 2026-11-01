@@ -62,6 +62,75 @@ def log():
 
 
 class AbSplitTests(unittest.TestCase):
+    def test_noise_uses_only_consecutive_phase_indices(self):
+        for indices, expected in (((0, 1, 2), 30.0), ((0, 3, 4), 20.0),
+                                  ((0, 1, 4), 40.0), ((0, 3, 6), None),
+                                  ((10, 11, 12), 30.0)):
+            with self.subTest(indices=indices):
+                phases = [{"kind": kind, "index": index}
+                          for kind, index in zip(("A", "B", "A"), indices)]
+                result = ab_split.noise([100.0, 140.0, 120.0], phases)
+                if expected is None:
+                    self.assertIsNone(result)
+                else:
+                    self.assertEqual(result, {"mean": expected, "se": None, "sd": None, "n": 1})
+
+    def test_gaps_leave_phase_means_available_without_a_noise_estimate(self):
+        lines = [line.replace("phase B 1 ", "phase B 3 ")
+                 .replace("phase A 2 ", "phase A 6 ")
+                 .replace("phase B 3 begins at present 220", "phase B 7 begins at present 220")
+                 for line in log()]
+        result = ab_split.split(lines)
+        busy = next(row for row in result["metrics"] if row["metric"] == "GPU busy ms/frame")
+        self.assertEqual((busy["a"], busy["b"], busy["change"]), (105.0, 130.0, 25.0))
+        self.assertIsNone(busy["noise"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "gaps.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            for flags in ([], ["--json"]):
+                with self.subTest(flags=flags):
+                    run = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), *flags],
+                                         capture_output=True, text=True, encoding="utf-8", timeout=5)
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    if flags:
+                        self.assertTrue(all(row["noise"] is None for row in json.loads(run.stdout)["metrics"]))
+                    else:
+                        self.assertNotIn("(n 1)", run.stdout)
+
+    def test_concatenated_runs_cannot_mix_phase_statistics(self):
+        lines = log() + log()
+        with self.assertRaisesRegex(ValueError, "multiple A/B runs"):
+            ab_split.split(lines)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mixed.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), "--json"],
+                                    capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("multiple A/B runs", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_concatenated_runs_without_a_second_header_are_refused(self):
+        lines = log() + [line for line in log() if not line.startswith("[ab] in-run A/B:")]
+        with self.assertRaisesRegex(ValueError, "phase index restarts"):
+            ab_split.split(lines)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "headerless.log"
+            path.write_text("".join(lines), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(path), "--json"],
+                                    capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("phase index restarts", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_partial_capture_starting_at_a_later_phase_is_accepted(self):
+        lines = [line for line in log() if not line.startswith("[ab] in-run A/B:")]
+        start = next(i for i, line in enumerate(lines) if line.startswith("[ab] phase B 1 begins"))
+        result = ab_split.split(lines[start:])
+        self.assertEqual([phase["index"] for phase in result["phases"]], [1, 2, 3])
+
     def test_settled_phase_requires_matching_kind_and_index(self):
         lines = [
             "[ab] phase A 0 begins at present 100 (t 10.000 s)\n",
@@ -149,6 +218,46 @@ class AbSplitTests(unittest.TestCase):
             failed = run(str(empty))
             self.assertEqual(failed.returncode, 2)
             self.assertIn("FAIL: no [ab] phase lines", failed.stderr)
+
+
+    def test_nonfinite_inputs_and_overflowing_statistics_fail_without_json(self):
+        huge = "9" * 400
+        for kind, line in (("present", f"[present] 1 presents ({huge} dropped GPU busy 1 ms idle gaps 1 ms"),
+                           ("gputime", f"[gputime] 1 ms of GPU time; 1 presents; by program: 0x1 x1 {huge}ms; by class:"),
+                           ("gputime", f"[gputime] 1 ms of GPU time; 1 presents; by program: 0x1 x1 1ms; by class: color x1 {huge}ms 1MiB (per present"),
+                           ("draw", f"[draw] pipelined: 1 commits at 1 us each; 1 enqueued behind waiting 1 us per draw for room; drains: a 1 ({huge} ms)"),
+                           ("syncwait", f"[syncwait] (x): a 1/{huge}ms")):
+            with self.subTest(kind=kind), self.assertRaisesRegex(ValueError, "non-finite"):
+                ab_split.parse_report(kind, line)
+        phase = lambda k, i: f"[ab] phase {k} {i} settled at present 1 (t 1 s)"
+        lines = []
+        for k, i, busy in (("A", 0, "1"), ("B", 1, "9" * 308), ("A", 2, "1"), ("B", 3, "1")):
+            lines += [f"[ab] phase {k} {i} begins at present 0 (t 0 s)", phase(k, i),
+                      "[present] warmup", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
+        with self.assertRaises(ValueError):
+            ab_split.split(lines)
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / "invalid.log"
+            log.write_text("\n".join(lines), encoding="utf-8")
+            result = subprocess.run([sys.executable, str(Path(ab_split.__file__)), str(log), "--json"], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("Traceback", result.stderr)
+
+
+    def test_finite_input_weights_cannot_overflow_into_a_zero_metric(self):
+        for value in (1.0, 1e-300):
+            rows = [{"weight": 9e307, "value": value}] * 3
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "non-finite"):
+                ab_split.weighted(rows, "value", "weight")
+
+    def test_overflowing_change_percentage_fails(self):
+        lines = []
+        for k, i, busy in (("A", 0, "0." + "0" * 300 + "1"), ("B", 1, "1" + "0" * 300)):
+            lines += [f"[ab] phase {k} {i} begins at present 0 (t 0 s)", f"[ab] phase {k} {i} settled at present 1 (t 1 s)",
+                      "[present] warmup", f"[present] 1 presents (0 dropped GPU busy {busy} ms idle gaps 1 ms"]
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.split(lines)
 
 
 if __name__ == "__main__":

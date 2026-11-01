@@ -12,7 +12,7 @@ namespace AgcDriver::DriverDetail {
 namespace {
 
 bool runtimeRegister(std::uint32_t offset) {
-    return offset - 0x00cu < 32u || offset - 0x08cu < 32u || offset - 0x10cu < 32u || offset == 0x082u || offset == 0x083u || offset == 0x102u || offset == 0x103u;
+    return offset - 0x00cu < 32u || offset - 0x04cu < 16u || offset - 0x08cu < 32u || offset - 0x10cu < 32u || offset == 0x082u || offset == 0x083u || offset == 0x102u || offset == 0x103u;
 }
 
 const auto& registerMasks() {
@@ -71,10 +71,11 @@ std::uint64_t RegisterStateKey(const QueueState& queue, bool allUserWords, bool 
             mixPart(part, it->second);
         }
     };
-    for (const auto base : {0x00cu, 0x08cu, 0x10cu}) {
+    for (const auto base : {0x00cu, 0x04cu, 0x08cu, 0x10cu}) {
+        const auto limit = base == 0x04cu ? 16u : 32u;
         const auto resources = queue.shader.find(base - 1);
         const auto count = resources == queue.shader.end() ? 0u : ((resources->second >> 1u) & 0x1fu) | (((resources->second >> 27u) & 1u) << 5u);
-        words(base, allUserWords ? 32u : std::min(count, 32u), userData);
+        words(base, allUserWords ? limit : std::min(count, limit), userData);
     }
     words(0x082u, 2, auxiliary);
     words(0x102u, 2, auxiliary);
@@ -86,7 +87,7 @@ std::uint64_t RegisterStateKey(const QueueState& queue, bool allUserWords, bool 
 std::uint64_t DrawShaderSetKey(const QueueState& queue, const ShaderRegistry& registry) {
     std::uint64_t key = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) { key = (key ^ value) * 0x100000001b3ull; };
-    for (const auto base : {0x008u, 0x088u, 0x0c8u, 0x108u, 0x148u}) {
+    for (const auto base : {0x008u, 0x048u, 0x088u, 0x0c8u, 0x108u, 0x148u}) {
         const auto low = queue.shader.find(base);
         const auto high = queue.shader.find(base + 1);
         if (low == queue.shader.end() || high == queue.shader.end()) { mix(0); continue; }
@@ -167,7 +168,7 @@ std::uint64_t Driver::drawRegisterKey(const QueueState& queue, const ShaderRegis
         (*components)[4] = DrawShaderSetKey(queue, registry);
     }
     mix(deviceSerial);
-    for (const auto base : {0x008u, 0x088u, 0x0c8u, 0x108u, 0x148u}) {
+    for (const auto base : {0x008u, 0x048u, 0x088u, 0x0c8u, 0x108u, 0x148u}) {
         const auto low = queue.shader.find(base);
         const auto high = queue.shader.find(base + 1);
         if (low == queue.shader.end() || high == queue.shader.end()) {
@@ -262,7 +263,7 @@ bool Driver::sameDecode(const DrawDecode& a, const DrawDecode& b) {
         const auto& y = b.programs[i];
         if (x.binary.stage != y.binary.stage || x.binary.codeAddress != y.binary.codeAddress || x.userDataBase != y.userDataBase || x.firstUserSgpr != y.firstUserSgpr || x.userData != y.userData || x.snapshot != y.snapshot || x.codeOffset != y.codeOffset || x.tailContinuation != y.tailContinuation) return false;
     }
-    if (p.targetExportPacking != q.targetExportPacking || p.dualSourceBlend != q.dualSourceBlend || p.reversedBlend != q.reversedBlend || p.targetMerge != q.targetMerge || p.alphaToCoverage != q.alphaToCoverage || p.rasterPrimitive != q.rasterPrimitive || p.ditheredAlphaToCoverage != q.ditheredAlphaToCoverage || p.ditheredAlphaSamples != q.ditheredAlphaSamples || p.quadPixelMask != q.quadPixelMask || p.quadSampleMask != q.quadSampleMask || p.iteratesSamples != q.iteratesSamples || p.positionLocation != q.positionLocation || p.sampleLocations != q.sampleLocations || p.sampleOrder != q.sampleOrder) return false;
+    if (p.targetExportPacking != q.targetExportPacking || p.dualSourceBlend != q.dualSourceBlend || p.reversedBlend != q.reversedBlend || p.targetMerges != q.targetMerges || p.alphaToCoverage != q.alphaToCoverage || p.rasterPrimitive != q.rasterPrimitive || p.ditheredAlphaToCoverage != q.ditheredAlphaToCoverage || p.ditheredAlphaSamples != q.ditheredAlphaSamples || p.quadPixelMask != q.quadPixelMask || p.quadSampleMask != q.quadSampleMask || p.iteratesSamples != q.iteratesSamples || p.positionLocation != q.positionLocation || p.sampleLocations != q.sampleLocations || p.sampleOrder != q.sampleOrder) return false;
     if (s.samples != t.samples || s.mergedCoverage != t.mergedCoverage || s.truncatedCoverage != t.truncatedCoverage || s.quadSampleMask != t.quadSampleMask || s.pixelEarlyZ != t.pixelEarlyZ || s.pixelKill != t.pixelKill) return false;
     return true;
 }

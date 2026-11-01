@@ -1,5 +1,7 @@
 # libSceNpManager technical debt
 
+- [Older callable NIDs](../../../core/libs/prx/libSceNpManager/Export.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary logical-library qualifier and one uses ForSys; qualified guest resolution is unverified.
+
 ### Silent stubs
 
 - [sceNpUnregisterPlusEventCallback](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - returns 0 whether or not a callback was registered, as `sceNpUnregisterPremiumEventCallback` does: `sceNpRegisterPlusEventCallback` keeps no callback, and a signed-out user gets no plus events
@@ -9,7 +11,161 @@
 
 ### Unknown function info
 
-- [sceNpWaitAsync](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager, NID `jyi5p9XWUSs`) - the public PS5 3.20 inventory identifies this as a function. Its signature, request completion, output and error behavior are not verified for PS5, so the no-parameter placeholder throws instead of reporting a fabricated completion result.
+- [libSceNpManager additional exports](../../../core/libs/prx/libSceNpManager/AdditionalExports.cpp) - 148 callable exports have import-resolution declarations only. Parameter lists, return types and behavior remain unverified. Parameterless `int` declarations are placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. Unresolved names use literal NID aliases; no runtime functionality or data objects are fabricated. Existing providers and exports supplied by open pull requests are excluded.
+
+| Name | NID |
+| --- | --- |
+| `sceNpAsmClientExtAbortRequest` | `Xi517rrV8MU` |
+| `sceNpAsmClientExtCreateRequest` | `yB12TC6fbPo` |
+| `sceNpAsmClientExtDeleteRequest` | `yuQrMTiR28k` |
+| `sceNpAsmClientExtGetPlayingTitleNpTitleToken` | `zj5wKSAva+Y` |
+| `sceNpAsmClientExtInitialize` | `kKCa1japBxI` |
+| `sceNpAsmClientExtTerminate` | `yODgcWKSa8Q` |
+| `sceNpAsmClientGetNpComInfo2WithHmac` | `fX+iM4sZIl0` |
+| `sceNpIntUnregisterCheckCallback` | `IS5vEAFgl0c` |
+| `sceNpManagerIntBindSandbox` | `rBQUkjrchjw` |
+| `sceNpManagerIntClearAdultToChildConversionFlag` | `vkJy2+W0pJw` |
+| `sceNpManagerIntClearBcAccessToken` | `vMbEH4rT5CM` |
+| `sceNpManagerIntCreateLocalSandboxAdminLoginContext` | `WM9LDa0us3s` |
+| `sceNpManagerIntGetAdultToChildConversionFlag` | `vuKj6MA2ODU` |
+| `sceNpManagerIntGetBcAccessTokenWithCheck` | `vuAkL6Dj-JA` |
+| `sceNpManagerIntGetBcAccessToken` | `odAzwN-S9G4` |
+| `sceNpManagerIntGetCachedAccountInfo` | `mZV+Pm4hvbI` |
+| `sceNpManagerIntGetClientCredentialJwtAccessToken` | `PuKANq-Ceqo` |
+| `sceNpManagerIntGetLocalSandboxAdminSigninState` | `ADcwKq8Qcxo` |
+| `sceNpManagerIntGetSandboxList` | `ZxR0uns1XX8` |
+| `sceNpManagerIntGetSandboxState` | `x7Dni-pgA+c` |
+| `sceNpManagerIntGetStreamingSandboxSecret` | `9aQPQa73zus` |
+| `sceNpManagerIntGetVshSandboxClientId` | `J4pZ9rzjc5s` |
+| `sceNpManagerIntSetStreamingSandboxSecret` | `LCgXXwy-Gpg` |
+| `sceNpManagerIntSignoutLocalSandboxAdmin` | `qNiQYsQ2fnw` |
+| `sceNpPush2SetDataType` | `4CkpTzOLZKQ` |
+| `sceNpPushSetNpCommunicationId` | `rjatoAGW+Fo` |
+| `sceNpPushUnsetNpCommunicationId` | `j1YsEXl5ta4` |
+| `sceNpRegisterGamePresenceCallbackA` | `KswxLxk4c1Y` |
+| `sceNpSandboxIntAbortRequest` | `u0apsYwuTvE` |
+| `sceNpSandboxIntCreateRequest` | `7IC43AzCrQU` |
+| `sceNpSandboxIntDeleteRequest` | `lkgRBuVtWFM` |
+| `sceNpSandboxIntGetStreamingSandboxSecret` | `n1tgdduEHu8` |
+| `sceNpSandboxIntSetStreamingSandboxSecret` | `OTYUXXdJNbg` |
+| `Unknown` | `+JmXFo3Jh6g` |
+| `Unknown` | `+RtbJcybMNk` |
+| `Unknown` | `+fUJ4QmdNxg` |
+| `Unknown` | `+pfQKES7Ghc` |
+| `Unknown` | `-1Q057TFjDE` |
+| `Unknown` | `-5ZuQ1HlZNY` |
+| `Unknown` | `-OrDVMqLIG4` |
+| `Unknown` | `-QFXnlDhLNM` |
+| `Unknown` | `095ladq7hQ8` |
+| `Unknown` | `0cZdUbbTaMw` |
+| `Unknown` | `1I4EiKvohEo` |
+| `Unknown` | `2o4V3QCvnfg` |
+| `Unknown` | `397uJvLrlrM` |
+| `Unknown` | `3ikctjJYPtk` |
+| `Unknown` | `3sU9cWXBN98` |
+| `Unknown` | `4gVqbwFkKGY` |
+| `Unknown` | `5FWkeFFM1WI` |
+| `Unknown` | `5PZ+-JHIT4c` |
+| `Unknown` | `5vBBomYPg+s` |
+| `Unknown` | `6Xm6QTvYTTg` |
+| `Unknown` | `6ijl2h7IowA` |
+| `Unknown` | `7d3y0wXbeGY` |
+| `Unknown` | `81ldjv-ybsA` |
+| `Unknown` | `899ScRQvFV0` |
+| `Unknown` | `AydqLDpvliU` |
+| `Unknown` | `BQA2KNZr2H0` |
+| `Unknown` | `DDiKTyHJivk` |
+| `Unknown` | `DOzHoIo+UK8` |
+| `Unknown` | `Dw8yC2rYpT0` |
+| `Unknown` | `ETxHcJD5oXQ` |
+| `Unknown` | `EtNn1ccn8Ag` |
+| `Unknown` | `FN+wQFzswlE` |
+| `Unknown` | `FkASC9R1kx4` |
+| `Unknown` | `G6+sdb0fbv8` |
+| `Unknown` | `GRp4UNp-eCM` |
+| `Unknown` | `Gv4cB8leZaU` |
+| `Unknown` | `HZg8fgworHI` |
+| `Unknown` | `IIlDaVo7WP4` |
+| `Unknown` | `IfxfTgE2NAc` |
+| `Unknown` | `JYo9EMmaQ7s` |
+| `Unknown` | `Jj4yV5S0Eqw` |
+| `Unknown` | `JkRtteRXHYw` |
+| `Unknown` | `K2pL81xeJA0` |
+| `Unknown` | `K3B--gWssAk` |
+| `Unknown` | `L1nYyNP96jo` |
+| `Unknown` | `LOWrIw66+LQ` |
+| `Unknown` | `LpAjW2-Kc14` |
+| `Unknown` | `OCHXnB7YbzM` |
+| `Unknown` | `P0MZl8cQW78` |
+| `Unknown` | `Q49ghYqIP88` |
+| `Unknown` | `QZJ5fC0tP8M` |
+| `Unknown` | `Qcfj2Iu7f3U` |
+| `Unknown` | `TEoGLlZg+r0` |
+| `Unknown` | `TICPek76Nqc` |
+| `Unknown` | `ThztfmL2j0Y` |
+| `Unknown` | `VCYDmZygruk` |
+| `Unknown` | `VGkLQcESh5k` |
+| `Unknown` | `VisjSq4l+Aw` |
+| `Unknown` | `WNGXUCbdhko` |
+| `Unknown` | `WmA5X4w-4Sg` |
+| `Unknown` | `Wzgnd+m18pQ` |
+| `Unknown` | `XbMB+c1klnE` |
+| `Unknown` | `XcJr6IO6YVU` |
+| `Unknown` | `ZEHVWGnY1vI` |
+| `Unknown` | `aQaOGIVChN4` |
+| `Unknown` | `aqQDBO03Uw4` |
+| `Unknown` | `b1nDsAsD4Fo` |
+| `Unknown` | `ckzOf3ihNWs` |
+| `Unknown` | `dQ8bBTwkMwg` |
+| `Unknown` | `dg8Hm7kd4lg` |
+| `Unknown` | `e-J4TWuAGlw` |
+| `Unknown` | `enOG3JM+sFE` |
+| `Unknown` | `gQygKbb3w6E` |
+| `Unknown` | `gg2CzDord9E` |
+| `Unknown` | `glO5Roao0-0` |
+| `Unknown` | `hABPod2fe5Y` |
+| `Unknown` | `hNBwchvmG90` |
+| `Unknown` | `hT6stxLyZpg` |
+| `Unknown` | `hmUTinCeFlQ` |
+| `Unknown` | `i8Iq1bRTvBI` |
+| `Unknown` | `i9PldiC93Dg` |
+| `Unknown` | `iC9I+uYJfAw` |
+| `Unknown` | `j26eOWbUwwo` |
+| `Unknown` | `j6YmS-P2zAA` |
+| `Unknown` | `jwp0ATrWM+w` |
+| `Unknown` | `kpLofCwJceQ` |
+| `Unknown` | `krFzyfMTVKo` |
+| `Unknown` | `ksopIxjKA6g` |
+| `Unknown` | `lB7tiCkrHcw` |
+| `Unknown` | `lQfpsyGl4Nc` |
+| `Unknown` | `lTaV2Wd+8YA` |
+| `Unknown` | `lekBhfAviCg` |
+| `Unknown` | `mMqV4jGYBzE` |
+| `Unknown` | `nCZMI3Hdzb4` |
+| `Unknown` | `p7wseS6VIsU` |
+| `Unknown` | `q7oPgJVIywI` |
+| `Unknown` | `s7LodS0Puh8` |
+| `Unknown` | `sUonpM7eAg8` |
+| `Unknown` | `syPuHCOrl-M` |
+| `Unknown` | `tCmBna70C6w` |
+| `Unknown` | `tHq7rNTBQp0` |
+| `Unknown` | `u4zM1slIDrI` |
+| `Unknown` | `ue6sId17JRE` |
+| `Unknown` | `ukG+D0QVfuQ` |
+| `Unknown` | `uqHeyEjZlpA` |
+| `Unknown` | `v+6TY5GrDHA` |
+| `Unknown` | `vWxlv7-lH78` |
+| `Unknown` | `vsJdqui4uB8` |
+| `Unknown` | `wN0tvi6mb3o` |
+| `Unknown` | `wfhYv1uGwqE` |
+| `Unknown` | `wfjSUV5QuDQ` |
+| `Unknown` | `wzijRFAxDnk` |
+| `Unknown` | `y2cDXtZoz2s` |
+| `Unknown` | `z8eiw8+UfEo` |
+| `Unknown` | `zLktx8v2g+Y` |
+
+- [sceNpWaitAsync](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - not measured on a PS5: how the console waits on a request still running is unknown. No request is ever running here, so it never blocks and gives `sceNpPollAsync`'s answers, with that entry's gaps, as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/45837a89a617ac394c1844ec95a28471fb79ec08/src/core/libraries/np/np_manager.cpp#L402-L452) does with two identical bodies. The `(request id, result)` signature follows shadPS4 and [SharpProspero](https://github.com/SvenGDK/SharpProspero/blob/5dfdb4b0b166e83dc9ae275001afb695f12c7174/src/SharpProspero/Interop/Np/NpAccount.cs#L138-L146)
+
 - [libSceNpManager pending exports](../../../core/libs/prx/libSceNpManager/Export.cpp) - 144 named callable exports are present in the local `libSceNpManager.sprx` export table and the public PS5 3.20 symbol list. Their signatures and behavior are unverified; each declaration uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`.
 
 - [sceNpGetSandboxInfo](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager, NID `ZVZ++68nNI8`) - the name hashes to the imported NID (found with nidhunt, confirmed with `tools/nid_names.py`). STAR WARS: Galactic Racer (PPSA28416) imports it; its OnlineSubsystemPS5 calls it with one pointer to a 0x50-byte stack buffer and reads the buffer as a string (discussions/3086). The returned string, the exact parameter struct and console errors are unknown, so every call throws without reading or writing caller memory. A working implementation belongs with that title's bring-up.
@@ -48,3 +204,25 @@
 - [sceNpManagerIntGetAccountId, sceNpManagerIntGetAccountIdSdk, sceNpManagerIntGetUserIdByAccountId](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - still throw: their answer or their input is an account id, and what a signed-out user's account id is depends on the offline account-id model of [#6990](https://github.com/boykopovar/AnyPS5/pull/6990) and [#7412](https://github.com/boykopovar/AnyPS5/pull/7412), as for `sceNpIdMapperAccountIdToNpId`
 - [sceNpPollAsync](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - a null result pointer returns `SCE_NP_ERROR_INVALID_ARGUMENT` before the id is read, a request id that was never created or was deleted returns `SCE_NP_ERROR_REQUEST_NOT_FOUND` without writing the caller's result, and a live request keeps its signed-out completion `0` with `SCE_NP_ERROR_SIGNED_OUT`, as [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/81be949167d0060b08f26dc3e055a0b640d129c8/src/core/libraries/np/np_manager.cpp) does in `sceNpPollAsync` ([#9277](https://github.com/boykopovar/AnyPS5/issues/9277)). The parts of that model beyond the validation are not implemented: shadPS4 keeps a per-request state machine decorated by `sceNpCheckNpAvailability` and neighbors and refuses `InvalidId` for a ready async request in wait/poll, whose completion publication, poll-versus-wait precedence and already-complete errors remain unattributable to the PS5
 - [sceNpCreateAsyncRequest](../../../core/libs/prx/libSceNpManager/Export.cpp) (libSceNpManager) - the parameter is not read ([NpCreateAsyncRequestParameter](../../../core/libs/SceTypes.hpp) is a 0x40-byte opaque blob, so shadPS4's nonnull check and `size == sizeof` reject ([81be949167d0060b08f26dc3e055a0b640d129c8](https://github.com/shadps4-emu/shadPS4/blob/81be949167d0060b08f26dc3e055a0b640d129c8/src/core/libraries/np/np_manager.cpp)) cannot be applied without inventing a layout) and no async kind or completion state is stored until the console's contract for them is evidenced ([#9277](https://github.com/boykopovar/AnyPS5/issues/9277))
+
+#### Additional-export identity evidence
+
+This additional inventory is the inspected `libSceNpManager` ELF function-export table: defined `STT_FUNC` entries with 11-character NIDs. The module-parameter record contains version words `0x13590001` at `0x10` and `0x13600007` at `0x14`; the earlier 13.60 wording referred to that SDK-formatted metadata and does not independently attest retail firmware or introduction dates.
+
+The [reproducible static audit](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298) yields **539 unique function NIDs**, set digest `cbae5a1be711881f881e750ded1e817aba9e4f0cde69fdaee47f29585ceb3ecd` (sorted unique ASCII NIDs, each followed by LF, hashed with SHA-256), and confirms all 148 proposed entries. The [independent 13.42 comparison](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6469181950) also reports all 148 entries in a 539-NID module. That corroborates membership in the reviewer's reference; it does not identify the two images as the same binary or authenticate firmware provenance. The older 3.20 inventory is not the evidence for this additional set. The symbol table supplies hashes and callable kind, not C prototypes or plaintext spellings.
+
+All 33 named declarations were matched by recomputing candidate spellings against the function NIDs; none is assigned by ordinal or neighbouring address. The [repository-pinned aerolib table](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) contains 22 of the pairs. The other 11 candidates occur in the [public ps5rs identity database at commit `2304be5131221bae0dac24b9767cabffda33f747`](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv); each independently hashes to a function NID in the inspected table. That public database supports spelling only, not firmware attribution or ABI. The remaining 115 exports stay NID-only.
+
+| Supplemental candidate spelling | NID |
+| --- | --- |
+| `sceNpManagerIntClearBcAccessToken` | `vMbEH4rT5CM` |
+| `sceNpManagerIntSetStreamingSandboxSecret` | `LCgXXwy-Gpg` |
+| `sceNpManagerIntGetClientCredentialJwtAccessToken` | `PuKANq-Ceqo` |
+| `sceNpManagerIntGetStreamingSandboxSecret` | `9aQPQa73zus` |
+| `sceNpSandboxIntSetStreamingSandboxSecret` | `OTYUXXdJNbg` |
+| `sceNpSandboxIntCreateRequest` | `7IC43AzCrQU` |
+| `sceNpSandboxIntDeleteRequest` | `lkgRBuVtWFM` |
+| `sceNpSandboxIntAbortRequest` | `u0apsYwuTvE` |
+| `sceNpSandboxIntGetStreamingSandboxSecret` | `n1tgdduEHu8` |
+| `sceNpAsmClientExtTerminate` | `yODgcWKSa8Q` |
+| `sceNpPush2SetDataType` | `4CkpTzOLZKQ` |
