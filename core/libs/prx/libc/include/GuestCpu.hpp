@@ -6,9 +6,12 @@
 
 #if defined(__x86_64__)
 
+#include <x86intrin.h>
 #include <xmmintrin.h>
 
 namespace GuestCpu {
+
+inline std::uint64_t ReadTsc() { return __rdtsc(); }
 
 inline std::uint32_t Mxcsr() { return _mm_getcsr(); }
 inline void SetMxcsr(const std::uint32_t value) { _mm_setcsr(value); }
