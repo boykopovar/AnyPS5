@@ -4,6 +4,7 @@ import collections
 import gzip
 import html
 import json
+import math
 import sys
 import zlib
 from pathlib import Path
@@ -23,7 +24,37 @@ RAMP = "._:-=+*#%@"
 
 
 def is_wait(name):
-    return name.startswith("GpuMutex.wait.") or "wait" in name.rsplit(".", 1)[-1].lower()
+    return "wait" in name.lower()
+
+
+def _event_value(value, label, index):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"trace event {index}: {label} must be a finite number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"trace event {index}: {label} must be a finite number") from None
+    if not math.isfinite(number) or abs(number) >= 1e300:
+        raise ValueError(f"trace event {index}: {label} must be a finite number")
+    return number
+
+
+def _event_number(event, key, index):
+    return _event_value(event.get(key), key, index)
+
+
+def _event_tid(event, index):
+    tid = event.get("tid")
+    if isinstance(tid, bool) or not isinstance(tid, int):
+        raise ValueError(f"trace event {index}: tid must be an integer")
+    return tid
+
+
+def _event_args(event, index):
+    args = event.get("args", {})
+    if not isinstance(args, dict):
+        raise ValueError(f"trace event {index}: args must be an object")
+    return args
 
 
 class Trace:
@@ -33,20 +64,42 @@ class Trace:
         self.presents = []
         self.folded = collections.defaultdict(float)
         self.batched = []
-        events = document if isinstance(document, list) else (document.get("traceEvents") or [])
-        for event in events:
+        if not isinstance(document, (list, dict)):
+            raise ValueError("trace must be an event array or object")
+        events = document if isinstance(document, list) else document.get("traceEvents", [])
+        if not isinstance(events, list):
+            raise ValueError("traceEvents must be an array")
+        for index, event in enumerate(events):
+            if not isinstance(event, dict):
+                raise ValueError(f"trace event {index} must be an object")
             phase = event.get("ph")
             if phase == "M" and event.get("name") == "thread_name":
-                self.threads[event["tid"]] = event["args"]["name"]
+                tid = _event_tid(event, index)
+                name = _event_args(event, index).get("name")
+                if not isinstance(name, str):
+                    raise ValueError(f"trace event {index}: args.name must be a string")
+                self.threads[tid] = name
             elif phase == "X":
-                self.slices[event["tid"]].append([float(event["ts"]), float(event["dur"]), event["name"], 0, False])
-                batch = event.get("args", {}).get("batch")
-                if batch:
-                    self.batched.append((event["tid"], float(event["ts"]), float(event["dur"]), event["name"], batch))
+                tid = _event_tid(event, index)
+                name = event.get("name")
+                if not isinstance(name, str):
+                    raise ValueError(f"trace event {index}: name must be a string")
+                ts = _event_number(event, "ts", index)
+                dur = _event_number(event, "dur", index)
+                if dur < 0:
+                    raise ValueError(f"trace event {index}: dur must be non-negative")
+                self.slices[tid].append([ts, dur, name, 0, False])
+                args = _event_args(event, index)
+                if "batch" in args:
+                    batch = args["batch"]
+                    if isinstance(batch, bool) or not isinstance(batch, (int, str)):
+                        raise ValueError(f"trace event {index}: args.batch must be an integer or a string")
+                    self.batched.append((tid, ts, dur, name, batch))
             elif phase == "i" and event.get("name") == "present":
-                self.presents.append((float(event["ts"]), event.get("args", {}).get("present")))
+                self.presents.append((_event_number(event, "ts", index), _event_args(event, index).get("present")))
             elif phase == "C":
-                self.folded[event["tid"]] += sum(float(value) for value in event.get("args", {}).values())
+                tid = _event_tid(event, index)
+                self.folded[tid] += sum(_event_value(value, "args value", index) for value in _event_args(event, index).values())
         self.presents.sort()
         for slices in self.slices.values():
             slices.sort(key=lambda entry: (entry[0], -entry[1]))
@@ -58,6 +111,17 @@ class Trace:
                 entry[3] = len(stack)
                 entry[4] = any(is_wait(parent[2]) for parent in stack)
                 stack.append(entry)
+
+    def select_threads(self, names):
+        available = self.threads.keys() | self.slices.keys() | self.folded.keys()
+        unknown = set(names) - {self.name(tid) for tid in available}
+        if unknown:
+            raise ValueError("unknown thread: " + ", ".join(sorted(unknown)))
+        selected = {tid for tid in available if self.name(tid) in names}
+        self.threads = {tid: name for tid, name in self.threads.items() if tid in selected}
+        self.slices = {tid: slices for tid, slices in self.slices.items() if tid in selected}
+        self.folded = {tid: value for tid, value in self.folded.items() if tid in selected}
+        self.batched = [entry for entry in self.batched if entry[0] in selected]
 
     def name(self, tid):
         return self.threads.get(tid, f"tid {tid}")
@@ -72,15 +136,36 @@ class Trace:
 
 def load_trace(path):
     opener = gzip.open if str(path).endswith(".gz") else open
-    with opener(path, "rt", encoding="utf-8") as handle:
-        return Trace(json.load(handle))
+    with opener(path, "rt", encoding="utf-8-sig") as handle:
+        try:
+            document = json.load(handle)
+        except RecursionError as error:
+            raise ValueError(f"{path}: trace JSON nesting is too deep: {error}") from error
+        return Trace(document)
+
+
+def load_summary_lines(path, numbered=False):
+    records = []
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").split("\n"), 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"{path}:{number}: invalid JSON: {error.msg}") from error
+        except RecursionError as error:
+            raise ValueError(f"{path}:{number}: JSON nesting is too deep") from error
+        if not isinstance(record, dict):
+            raise ValueError(f"{path}:{number}: summary record must be an object")
+        records.append((number, record) if numbered else record)
+    return records
 
 
 def load_summary(path, trace_path):
     candidate = Path(path) if path else Path(trace_path).with_name("aps5-summary.jsonl")
     if not candidate.exists():
         return None
-    lines = [json.loads(line) for line in candidate.read_text(encoding="utf-8").splitlines() if line.strip()]
+    lines = load_summary_lines(candidate)
     name = Path(trace_path).name
     alternate = name[:-3] if name.endswith(".gz") else name + ".gz"
     for filename in (name, alternate):
@@ -92,7 +177,7 @@ def load_summary(path, trace_path):
 
 def load_stacks(path):
     stacks = []
-    for number, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(Path(path).read_text(encoding="utf-8-sig").splitlines(), 1):
         if line.startswith("#") or not line.strip():
             continue
         frames, _, count = line.rpartition(" ")
@@ -143,8 +228,8 @@ def digest(trace, summary=None, stacks=None, worst=5, top=10):
                         leaders[name] += overlap
                 if is_wait(name) and not nested:
                     waited += overlap
-            if is_wait(name) and not nested:
-                waits.append((dur, name, trace.name(tid), ts))
+            if is_wait(name) and not nested and (overlap > 0 or not frames):
+                waits.append((overlap, name, trace.name(tid), max(ts, frames[0][1]) if frames else ts))
         threads.append({"thread": trace.name(tid), "busy_ms_per_frame": (traced - waited) / 1000.0 / count,
                         "wait_ms_per_frame": waited / 1000.0 / count,
                         "untraced_ms_per_frame": max(span_us - traced, 0.0) / 1000.0 / count,
@@ -209,6 +294,9 @@ def table_cell(value):
 
 def markdown(result):
     lines = []
+    if result.get("thread_filter"):
+        lines += ["Thread filter: " + ", ".join(table_cell(name) for name in result["thread_filter"])
+                  + ". Frame bounds, summary and stack samples remain capture-wide.", ""]
     summary = result["summary"]
     if summary:
         frame = summary["frame_ms"]
@@ -264,8 +352,50 @@ def markdown(result):
 
 
 def load_intervals(path):
-    lines = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
-    return [line for line in lines if "interval_start_s" in line]
+    lines = []
+    for number, record in load_summary_lines(path, numbered=True):
+        if "interval_start_s" not in record:
+            continue
+        try:
+            validate_interval(record)
+        except ValueError as error:
+            raise ValueError(f"{path}:{number}: {error}") from error
+        lines.append(record)
+    return lines
+
+
+def interval_number(value, field):
+    try:
+        valid = type(value) in (int, float) and math.isfinite(value) and value >= 0
+    except OverflowError:
+        valid = False
+    if not valid:
+        raise ValueError(f"{field} must be a finite non-negative number")
+    return value
+
+
+def validate_interval(record):
+    start = interval_number(record.get("interval_start_s"), "interval_start_s")
+    end = interval_number(record.get("interval_end_s"), "interval_end_s")
+    if end < start:
+        raise ValueError("interval_end_s must not precede interval_start_s")
+    if type(record.get("presents")) is not int or record["presents"] < 0:
+        raise ValueError("presents must be a non-negative integer")
+    frames = record.get("frame_ms")
+    if not isinstance(frames, dict):
+        raise ValueError("frame_ms must be an object")
+    values = [interval_number(frames.get(field), f"frame_ms.{field}") for field in ("p50", "p90", "p99", "max")]
+    if values != sorted(values):
+        raise ValueError("frame_ms must satisfy p50 <= p90 <= p99 <= max")
+    interval_number(record.get("gpu_busy_ms_per_present"), "gpu_busy_ms_per_present")
+    for field in ("worker_busy_pct", "top_phases_ms_per_frame"):
+        values = record.get(field, {})
+        if not isinstance(values, dict):
+            raise ValueError(f"{field} must be an object")
+        for name, value in values.items():
+            interval_number(value, f"{field}.{name}")
+    if "trace_dropped" in record and type(record["trace_dropped"]) is not bool:
+        raise ValueError("trace_dropped must be a boolean")
 
 
 def sparkline(values):
@@ -280,15 +410,17 @@ def digest_intervals(lines):
     for line in lines:
         workers = line.get("worker_busy_pct", {})
         busiest = max(workers.items(), key=lambda entry: entry[1]) if workers else None
-        phases = list(line.get("top_phases_ms_per_frame", {}).items())
+        phases = line.get("top_phases_ms_per_frame", {})
+        largest = max(phases.items(), key=lambda entry: entry[1]) if phases else None
         rows.append({"start_s": line["interval_start_s"], "end_s": line["interval_end_s"], "presents": line["presents"],
                      "frame_ms": line["frame_ms"], "gpu_busy_ms_per_present": line["gpu_busy_ms_per_present"],
                      "busiest_worker": {"thread": busiest[0], "pct": busiest[1]} if busiest else None,
-                     "top_phase": {"name": phases[0][0], "ms_per_frame": phases[0][1]} if phases else None,
+                     "top_phase": {"name": largest[0], "ms_per_frame": largest[1]} if largest else None,
                      "trace_dropped": line.get("trace_dropped", False)})
     first = lines[0] if lines else {}
-    keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution")
-    changed = [index for index, line in enumerate(lines) if any(line.get(key) != first.get(key) for key in keys)]
+    keys = ("commit", "dirty", "env", "gpu", "driver", "os", "resolution",
+            "cpu", "cpu_threads", "memory_mib", "title_id", "title", "content_version")
+    changed = [index for index in range(1, len(lines)) if any(lines[index].get(key) != lines[index - 1].get(key) for key in keys)]
     return {"intervals": rows, "identity": {key: first.get(key) for key in keys}, "identity_changed_at": changed}
 
 
@@ -301,7 +433,7 @@ def markdown_intervals(result):
              f"{identity['gpu']}, {identity['driver']}, {identity['os']}, {identity['resolution']}, commit {identity['commit']}"
              f"{' (dirty)' if identity.get('dirty') else ''}"]
     if result["identity_changed_at"]:
-        lines.append("commit, environment, GPU, driver or OS changed at interval " + ", ".join(str(index + 1) for index in result["identity_changed_at"]))
+        lines.append("build, environment, host, resolution or title metadata changed at interval " + ", ".join(str(index + 1) for index in result["identity_changed_at"]))
     lines += ["", "| # | seconds | presents | p50 | p90 | p99 | max | GPU busy | busiest worker | largest phase |", "|---|---|---|---|---|---|---|---|---|---|"]
     for index, row in enumerate(rows, 1):
         frame = row["frame_ms"]
@@ -323,33 +455,47 @@ def nonnegative_integer(value):
 
 
 def main(arguments=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("trace", help="aps5-trace-*.json.gz (or .json), or a .jsonl summary file with APS5_TRACE_SUMMARY_EVERY lines")
     parser.add_argument("--summary", help="file with the summary line (default: aps5-summary.jsonl next to the trace)")
     parser.add_argument("--stacks", help="collapsed-stack file of APS5_SAMPLE_WORKER (<file stem>.collapsed.txt)")
+    parser.add_argument("--thread", action="append", default=[], metavar="NAME",
+                        help="include event tracks with this exact thread name; repeat to select several tracks")
     parser.add_argument("--frames", type=nonnegative_integer, default=5, help="slowest frames to list (default 5)")
     parser.add_argument("--top", type=nonnegative_integer, default=10, help="entries per list (default 10)")
     parser.add_argument("--json", action="store_true", help="print the digest as JSON")
     options = parser.parse_args(arguments)
     if options.summary and not Path(options.summary).is_file():
         parser.error(f"summary file not found: {options.summary}")
+    if options.thread and options.trace.endswith(".jsonl"):
+        parser.error("--thread requires an event trace, not interval summaries")
+    if options.stacks and options.trace.endswith(".jsonl"):
+        parser.error("--stacks requires an event trace, not interval summaries")
     if options.trace.endswith(".jsonl"):
         result = digest_intervals(load_intervals(options.trace))
+        if options.summary:
+            parser.error("--summary requires an event trace, not interval summaries")
         sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown_intervals(result))
         return 0
     try:
         stacks = load_stacks(options.stacks) if options.stacks else None
     except (OSError, ValueError) as error:
         parser.error(str(error))
-    result = digest(load_trace(options.trace), load_summary(options.summary, options.trace),
+    trace = load_trace(options.trace)
+    if options.thread:
+        trace.select_threads(options.thread)
+    result = digest(trace, load_summary(options.summary, options.trace),
                     stacks, options.frames, options.top)
+    if options.thread:
+        result["thread_filter"] = sorted(set(options.thread))
     sys.stdout.write(json.dumps(result, indent=1) + "\n" if options.json else markdown(result))
     return 0
 
 
 if __name__ == "__main__":
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     try:
         sys.exit(main())
     except (EOFError, OSError, ValueError, zlib.error) as error:

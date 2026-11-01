@@ -23,6 +23,8 @@ constexpr std::size_t StencilPlaneBytes = 256u * 256u;
 alignas(4096) std::array<std::byte, DepthPlaneBytes> Depth{};
 alignas(4096) std::array<std::byte, StencilPlaneBytes> Stencil{};
 alignas(4096) std::array<std::byte, DepthPlaneBytes> HtileDepth{};
+alignas(4096) std::array<std::byte, DepthPlaneBytes> AliasDepth{};
+alignas(4096) std::array<std::byte, StencilPlaneBytes> AliasStencil{};
 alignas(256) std::array<std::uint32_t, HtileBytes / 4u> Htile{};
 
 VkStencilOpState StencilState(VkCompareOp compare, VkStencilOp pass, std::uint32_t reference) {
@@ -91,6 +93,14 @@ int main() {
         AgcDriver::Graphics::NoteDepthMetadataFill(htiled.depth, DepthPlaneBytes, 0u);
         AgcDriver::Graphics::NoteHtileDepthClear(htiled.htile, HtileBytes);
         Require(Draw(*device, shaders, htiled, {}) == Covered, "an HTILE clear kernel after a depth plane fill of 0.0 did not clear the depth to DB_DEPTH_CLEAR (1.0)");
+        Htile.fill(0xfffff3ffu);
+        AgcDriver::Graphics::NoteDepthMetadataFill(stencil, StencilPlaneBytes, 0x07070707u);
+        const Surface stencilAlias{reinterpret_cast<std::uintptr_t>(AliasDepth.data()), stencil, htiled.htile, false, VK_FORMAT_D32_SFLOAT_S8_UINT};
+        Require(Draw(*device, shaders, stencilAlias, StencilEquals(7u)) == Covered, "a new attachment lost its inherited pending stencil fill");
+
+        AgcDriver::Graphics::NoteDepthMetadataFill(stencilAlias.depth, DepthPlaneBytes, 0u);
+        const Surface depthAlias{stencilAlias.depth, reinterpret_cast<std::uintptr_t>(AliasStencil.data()), htiled.htile, false, VK_FORMAT_D32_SFLOAT_S8_UINT};
+        Require(Draw(*device, shaders, depthAlias, {}) == 0u, "a new attachment lost its inherited pending depth fill");
         std::puts("depth plane fill tests passed");
         return 0;
     } catch (const std::exception& error) {

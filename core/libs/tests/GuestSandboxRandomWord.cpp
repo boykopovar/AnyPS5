@@ -1,15 +1,11 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
-
-extern "C" {
-const char* APS5_VABI sceKernelGetFsSandboxRandomWord();
-int APS5_VABI open_nid_postfix(const char*, int, int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 

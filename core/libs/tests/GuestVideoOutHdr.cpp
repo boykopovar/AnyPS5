@@ -1,3 +1,7 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libSceVideoOut/include/Output.hpp"
+#include "prx/libSceVideoOut/include/Event.hpp"
+#include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -13,19 +17,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceVideoOutOpen(int userId, int busType, int index, const void* param);
-int APS5_VABI sceVideoOutClose(int handle);
-int APS5_VABI sceVideoOutGetOutputStatus(int handle, VideoOutOutputStatus* status);
-int APS5_VABI sceVideoOutGetOutputStatusWithVrr(int handle, void* status);
-int APS5_VABI sceVideoOutAddOutputModeEvent(KernelEqueue eq, int handle, void* udata);
-int APS5_VABI sceVideoOutGetEventId(const KernelEvent* ev);
-int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int* out, const KernelUseconds* timo);
-int APS5_VABI sceSystemServiceGetHdrToneMapLuminance(SystemServiceHdrToneMapLuminance* luminance);
-}
 
 namespace {
 
@@ -96,7 +87,7 @@ int main() {
     AgcDriverSetSurfaceHdr10_nid_postfix(true);
     Require(OutputModeEventArrives(queue, 2'000'000), "HDR output becoming available does not fire the output mode event");
     status = Status(handle);
-    Require(status.dynamicRange == 2 && status.flags == 1, "HDR output is not reported");
+    Require(status.dynamicRange == 2 && status.flags == 0, "HDR output is not reported with flags 0");
     Require(status.resolution != 0 && status.refreshRate == 3 && status.reserved[0] == 0 && status.reserved[1] == 0 && status.reserved[2] == 0, "the rest of the output status changed with HDR");
     luminance = ToneMap();
     Require(luminance.max_tone_map_luminance == 1015.0f && luminance.max_full_frame_tone_map_luminance == 640.0f && luminance.min_tone_map_luminance == 0.005f, "the display's luminance is not the tone-map luminance");

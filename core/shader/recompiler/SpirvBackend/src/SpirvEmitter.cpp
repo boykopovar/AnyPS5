@@ -9,6 +9,7 @@
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <bit>
+#include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
@@ -18,8 +19,14 @@ namespace ShaderRecompiler {
 
 namespace {
 
+std::string FailureText(const IrProgram& program) {
+    char hash[24];
+    std::snprintf(hash, sizeof(hash), "%llx", static_cast<unsigned long long>(program.Resources().shaderHash));
+    return std::string("SPIR-V emission failed: hash=0x") + hash + " stage=" + std::to_string(static_cast<unsigned>(program.Resources().stage));
+}
+
 [[noreturn]] void FailProgram(const IrProgram& program, const char* reason) {
-    throw std::runtime_error("SPIR-V emission failed: hash=0x" + std::to_string(program.Resources().shaderHash) + " stage=" + std::to_string(static_cast<unsigned>(program.Resources().stage)) + " reason=" + reason);
+    throw std::runtime_error(FailureText(program) + " reason=" + reason);
 }
 
 const ShaderWorkgroupInputInfo* ShaderWorkgroupInputFor(const SpirvEmitterState& state) {
@@ -126,7 +133,7 @@ std::uint32_t SpirvValueEmitContext::Ballot(const IrValue* predicate) {
     const auto lowWord = state.module.AllocateId();
     const auto highWord = state.module.AllocateId();
     const auto ballot = state.module.AllocateId();
-    state.module.AddFunction(spv::OpGroupNonUniformBallot, ballotType, high, scope, half == 1u ? Def(predicate) : otherHalf->Def(predicate));
+    state.module.AddSubgroupBallot(ballotType, high, scope, half == 1u ? Def(predicate) : otherHalf->Def(predicate));
     state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), lowWord, low, 0u);
     state.module.AddFunction(spv::OpCompositeExtract, TypeU32(state), highWord, high, 0u);
     state.module.AddFunction(spv::OpCompositeConstruct, ballotType, ballot, lowWord, highWord, ConstantU32(state, 0u), ConstantU32(state, 0u));
@@ -233,7 +240,7 @@ std::uint32_t SpirvValueEmitContext::Label(const IrBlock* block) const {
 }
 
 [[noreturn]] void SpirvValueEmitContext::Fail(const IrValue& inst, const char* reason) const {
-    throw std::runtime_error("SPIR-V emission failed: hash=0x" + std::to_string(state.program.Resources().shaderHash) + " stage=" + std::to_string(static_cast<unsigned>(state.program.Resources().stage)) + " opcode=" + std::string(IrOpcodeName(inst.Opcode())) + " reason=" + reason);
+    throw std::runtime_error(FailureText(state.program) + " opcode=" + std::string(IrOpcodeName(inst.Opcode())) + " reason=" + reason);
 }
 
 std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const CompiledBindingLayout& bindings, const SpirvTargetOptions& target) const {
@@ -257,11 +264,37 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.nonConstantImageOffsets = target.nonConstantImageOffsets;
     state.narrowSubgroupClock = target.narrowSubgroupClock;
     state.float64DenormPreserve = target.float64DenormPreserve;
+    state.depthRangeRemap = target.depthRangeRemap;
     state.registrationModules = target.registrationModules;
     state.fragmentDescriptorSet = target.fragmentDescriptorSet;
+    state.meshBarycentricPixel = target.meshBarycentricPixel;
+    state.meshBarycentricVertex = target.meshBarycentricVertex;
+    state.barycentricSmoothLocation = target.barycentricSmoothLocation;
+    state.barycentricLinearLocation = target.barycentricLinearLocation;
+    state.barycentricPositionsLocation = target.barycentricPositionsLocation;
+    state.meshExportedLocations = target.meshExportedLocations;
+    state.meshPerVertexLocations = target.meshPerVertexLocations;
     state.float16DenormPreserve = target.float16DenormPreserve;
     state.robustBufferAccess2 = target.robustBufferAccess2;
+    state.exactRobustLoads = target.robustBufferAccess2 && target.exactRobustLoads;
+    state.float32FlushToZero = target.float32FlushToZero;
+    state.waveLdsMemoryBarriers = target.waveLdsMemoryBarriers;
+    state.float32DenormPreserve = target.float32DenormPreserve;
+    state.fusedExactArithmetic = target.fusedExactArithmetic;
+    state.deviceScopeLdsMemoryBarriers = target.deviceScopeLdsMemoryBarriers;
+    state.ldsLockFences = target.ldsLockFences;
     state.hostSubgroupSize = target.subgroupSize;
+    if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
+        state.pixelFunctionLdsBuffer = true;
+        state.requirements.subgroupLocalInvocationId = true;
+        state.requirements.subgroupBallot = true;
+    }
+    if (state.requirements.ldsLock && LdsInDeviceMemory(state) && std::find(target.supportedCapabilities.begin(), target.supportedCapabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != target.supportedCapabilities.end()) {
+        state.requirements.ldsLock = false;
+        state.requirements.ldsBufferInt64Atomics = true;
+    }
+    const bool int64Atomics = std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != state.supportedCapabilities.end();
+    state.requirements.bufferU64View = state.requirements.bufferInt64Atomics || (state.requirements.coherentBufferPairs && int64Atomics);
     if (HostSubgroupSingleLane(state)) {
         state.requirements.subgroupBallot = false;
         state.requirements.subgroupShuffle = false;
@@ -291,10 +324,15 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     if (const char* guard = std::getenv("APS5_LOOP_GUARD")) state.loopGuardLimit = static_cast<std::uint32_t>(std::strtoul(guard, nullptr, 0));
     // Stopped invocations would leave the wave LDS barriers incomplete.
     state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.spannedWave && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
+    state.meshWindowBuffer = target.meshWindowBuffer && program.Resources().stage == IrShaderStage::Mesh && program.Metadata().vectorWindowSize != 0u && state.laneCount * MeshWindowInvocations(state) * program.Metadata().vectorWindowSize <= MeshWindowSlotDwords;
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
-    if (info != nullptr) info->fullSubgroups = state.spannedWave;
+    if (info != nullptr) {
+        info->fullSubgroups = state.spannedWave;
+        info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
+        info->meshWindowBuffer = state.meshWindowBuffer;
+    }
     return state.module.Finalize();
 }
 

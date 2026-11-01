@@ -3,6 +3,7 @@
 
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "Recompiler.hpp"
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,17 +23,20 @@ public:
         std::uint32_t stage = 0;
         std::uint64_t shader = 0;
         std::vector<ShaderRecompiler::ImageTableEntryPoison> poison;
-        std::vector<std::string> messages;
+        std::vector<std::shared_ptr<const std::string>> messages;
     };
     void SetImageTables(std::vector<ImageTableFaults> tables, std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges);
+    struct SrtGuardFaults {
+        std::uint32_t stage = 0;
+        std::vector<std::uint32_t> flattenedSrt;
+    };
+    void SetSrtGuards(std::vector<SrtGuardFaults> guards);
     // APS5_PROFILE_DRAW: page tables served from the per-device cache and built anew (cumulative),
     // and how many recent tables the cache holds right now.
     struct TableCacheStats {
         std::uint64_t hits = 0;
         std::uint64_t misses = 0;
         std::size_t held = 0;
-        // Hits served by the cached address space's serial alone (no hash, no compare; see
-        // GuestBufferMemory::CachedAddressTable), counted in `hits` too.
         std::uint64_t spaceTables = 0;
         // Why the most recently used table did not serve a build ([bda-table] first-differing entry
         // class): its owners were gone (expired weak reference), or its word hash differed, split by
@@ -52,11 +56,13 @@ private:
     // same device addresses share one buffer while one of them is alive (see the table cache in
     // BdaResources.cpp, which refers to it weakly).
     void markWrittenPages() const;
+    void checkSrtGuard() const;
     std::shared_ptr<Buffer> table;
     std::unique_ptr<Buffer> fault;
     std::size_t tableBytes = 0;
     std::vector<ImageTableFaults> imageTables;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> imageTableRanges;
+    std::vector<SrtGuardFaults> srtGuards;
 };
 
 }

@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/MallocManagedSize.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <bit>
@@ -11,8 +13,6 @@
 #include <set>
 #include <stdexcept>
 #include <utility>
-
-extern "C" int* APS5_VABI __error_nid_postfix();
 
 namespace {
 
@@ -125,17 +125,6 @@ bool InsideAllocation(const Arena& arena, std::uintptr_t start, std::size_t size
     --found;
     return found->second.used && size <= found->second.end - start && start - found->first <= found->second.end - found->first - size;
 }
-
-struct MallocManagedSize {
-    std::uint16_t size;
-    std::uint16_t version;
-    std::uint32_t reserved;
-    std::size_t maxSystemSize;
-    std::size_t currentSystemSize;
-    std::size_t maxInuseSize;
-    std::size_t currentInuseSize;
-};
-static_assert(sizeof(MallocManagedSize) == 0x28);
 
 int FillStats(void* handle, MallocManagedSize* stats) {
     if (!stats || stats->size < sizeof(MallocManagedSize)) return 22;
@@ -324,9 +313,15 @@ void* APS5_VABI sceLibcPafMspaceMalloc_nid_postfix(void* handle, std::size_t siz
     return sceLibcMspaceMalloc_nid_postfix(handle, size);
 }
 
+void* APS5_VABI sceLibcPafMspaceMemalign_nid_postfix(void* handle, std::size_t alignment, std::size_t size, const void* owner) {
+    (void)owner;
+    return sceLibcMspaceMemalign_nid_postfix(handle, alignment, size);
+}
+
 void APS5_VABI sceLibcPafMspaceFree_nid_postfix(void* handle, void* pointer, const void* owner) {
     (void)owner;
     sceLibcMspaceFree_nid_postfix(handle, pointer);
+
 }
 
 void* APS5_VABI sceLibcPafMspaceCalloc_nid_postfix(void* handle, std::size_t count, std::size_t size, const void* owner) {
@@ -342,6 +337,11 @@ void* APS5_VABI sceLibcPafMspaceRealloc_nid_postfix(void* handle, void* pointer,
 void* APS5_VABI sceLibcPafMspaceReallocalign_nid_postfix(void* handle, void* pointer, std::size_t alignment, std::size_t size, const void* owner) {
     (void)owner;
     return sceLibcMspaceReallocalign_nid_postfix(handle, pointer, alignment, size);
+}
+
+int APS5_VABI sceLibcPafMspacePosixMemalign_nid_postfix(void* handle, void** result, std::size_t alignment, std::size_t size, const void* owner) {
+    (void)owner;
+    return sceLibcMspacePosixMemalign_nid_postfix(handle, result, alignment, size);
 }
 
 int APS5_VABI sceLibcPafMspaceMallocStats_nid_postfix(void* handle, MallocManagedSize* stats) {

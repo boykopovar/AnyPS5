@@ -74,6 +74,12 @@ struct InaccessibleRead {
     std::uint64_t address = 0;
 };
 
+enum class EvaluatorReads : std::uint8_t {
+    Nothing,
+    Arguments,
+    Closure,
+};
+
 class DenseValues {
 public:
     struct Slot {
@@ -173,10 +179,13 @@ public:
     BasicEvaluator& operator=(const BasicEvaluator&) = delete;
 
     static bool MayEvaluate(const IrResourcePlan& program, IrValue* value, const IrValue* activeMask = nullptr);
+    static bool MayDecide(const IrResourcePlan& program, IrValue* value);
+    static EvaluatorReads Reads(const IrResourcePlan& program, const IrValue& value);
     bool Evaluate(TNode value, std::uint32_t& result);
     bool EvaluateWide(TNode value, std::uint64_t& result);
     void ReportInaccessibleReads(InaccessibleRead* sink) { _inaccessible = sink; }
     void ReportNullRootReads(std::uint32_t* sink) { _nullRoots = sink; }
+    void SetDescriptorBytes(std::size_t bytes) { _descriptorBytes = bytes; }
 
 private:
     static bool MayEvaluate(const IrResourcePlan& program, IrValue* value, const IrValue* activeMask, std::unordered_set<const IrValue*>& firstLanes);
@@ -199,6 +208,8 @@ private:
     const void* _firstLane = nullptr;
     InaccessibleRead* _inaccessible = nullptr;
     std::uint32_t* _nullRoots = nullptr;
+    std::uint32_t _addressDepth = 0;
+    std::size_t _descriptorBytes = 0;
     EvaluatedValues _cache;
     std::vector<IrValue*> _visiting;
     DenseValues _dense;

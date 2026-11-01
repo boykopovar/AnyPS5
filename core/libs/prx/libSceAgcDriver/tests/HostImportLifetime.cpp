@@ -507,22 +507,26 @@ void productionWaiterFailure(Fixture& fixture) {
 }
 
 void partialUnmap(Fixture& fixture) {
-    Allocation allocation(fixture, 3);
+    constexpr std::size_t PartUnits = 16;
+    Allocation allocation(fixture, 3 * PartUnits);
     Allocation unrelated(fixture);
+    const auto part = PartUnits * allocation.alignment;
     const auto imported = fixture.Import(allocation.Address(), allocation.bytes);
     const auto other = fixture.Import(unrelated.Address(), unrelated.bytes);
-    auto* middle = static_cast<std::byte*>(allocation.data) + allocation.alignment;
+    auto* middle = static_cast<std::byte*>(allocation.data) + part;
     {
         GuestAllocations::Mutation mutation;
-        mutation.Unmap(middle, allocation.alignment, [&](const void* piece, std::size_t bytes, const void* original, bool last) {
+        mutation.Unmap(middle, part, [&](const void* piece, std::size_t bytes, const void* original, bool last) {
             requireFreed(imported);
             Require(!other->freed.load(), "partial unmap retired a disjoint host import");
-            Require(piece == middle && bytes == allocation.alignment && original == allocation.data && !last, "partial unmap changed the wrong guest extent");
+            Require(piece == middle && bytes == part && original == allocation.data && !last, "partial unmap changed the wrong guest extent");
         });
     }
-    Require(!RegisteredReadableCovers(reinterpret_cast<std::uint64_t>(middle), allocation.alignment), "the middle of a partial unmap remains registered");
-    const auto low = fixture.Import(allocation.Address(), allocation.alignment);
-    const auto high = fixture.Import(allocation.Address() + 2 * allocation.alignment, allocation.alignment);
+    Require(!RegisteredReadableCovers(reinterpret_cast<std::uint64_t>(middle), part), "the middle of a partial unmap remains registered");
+    const auto low = fixture.Import(allocation.Address(), part);
+    const auto high = fixture.Import(allocation.Address() + 2 * part, part);
+    Require(imported->freed.load(), "the side kept from an unmap inside the host import reused memory imported across the unmapped range");
+    Require(high->address == allocation.Address() + 2 * part && high->bytes == part, "the kept side of the host import does not cover its remaining range");
     Require(!low->freed.load() && !high->freed.load() && !other->freed.load(), "remaining partial mappings could not be imported");
     {
         GuestAllocations::Mutation mutation;

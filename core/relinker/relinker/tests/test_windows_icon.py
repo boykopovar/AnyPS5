@@ -95,7 +95,7 @@ def main():
     relinker = Path(sys.argv[1]).resolve()
     with tempfile.TemporaryDirectory(prefix="anyps5-icon-") as directory:
         work = Path(directory)
-        app = work / "app with spaces"
+        app = work / "app with spaces \u65e5\u672c"
         app.mkdir()
         source = app / "eboot.bin"
         source.write_bytes(fixture())
@@ -104,7 +104,7 @@ def main():
         def relink(name):
             output = work / f"{name}.exe"
             result = subprocess.run([str(relinker), "--skip-sce-module", "--windows", str(source), str(output)],
-                                    cwd=work, capture_output=True, text=True, timeout=20)
+                                    cwd=work, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
             return result, output
 
         result, output = relink("missing-initial")

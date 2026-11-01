@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <array>
+#include <initializer_list>
 
 namespace {
 
@@ -125,6 +126,17 @@ void reject(TAction action, const char* expected) {
     throw std::runtime_error(std::string("missing contract rejection: ") + expected);
 }
 
+std::uint32_t CallSites(const std::vector<std::uint32_t>& spirv, const char* name) {
+    std::uint32_t function = 0;
+    std::uint32_t calls = 0;
+    for (std::size_t at = 5; at < spirv.size() && (spirv[at] >> 16u) != 0u; at += spirv[at] >> 16u) {
+        const auto opcode = spirv[at] & 0xffffu;
+        if (opcode == spv::OpName && std::strcmp(reinterpret_cast<const char*>(&spirv[at + 2u]), name) == 0) function = spirv[at + 1u];
+        if (opcode == spv::OpFunctionCall && function != 0u && spirv[at + 3u] == function) ++calls;
+    }
+    return calls;
+}
+
 }
 
 void RunBdaContractTests() {
@@ -181,4 +193,14 @@ void RunBdaContractTests() {
     invalid[0] = invalid[0] == 'A' ? 'B' : 'A';
     reject([&] { static_cast<void>(serializer.Deserialize(invalid)); }, "request signature");
     reject([&] { static_cast<void>(serializer.Deserialize("NVNQQWMAAAA=")); }, "serialization version");
+    const auto ordered = [](std::initializer_list<BdaAbi::Range> ranges) { return BdaAbi::RangesOrdered(ranges.begin(), ranges.size()); };
+    AgcDriver::Graphics::Require(ordered({}) && ordered({{0x1000, 0x2000, 1, 1, 0}, {0x2000, 0x2000, 1, 1, 0}, {0x2000, 0x3000, 1, 1, 0}, {0x4000, 0x5000, 1, 1, 0}}), "ascending BDA ranges were refused");
+    AgcDriver::Graphics::Require(ordered({{0x1000, 0x3000, 1, 1, 0}, {0x2f00, 0x3100, 1, 1, 0}}), "BDA ranges ascending by begin and overlapping were refused");
+    AgcDriver::Graphics::Require(!ordered({{0x4000, 0x5000, 1, 1, 0}, {0x1000, 0x2000, 1, 1, 0}}), "unsorted BDA ranges were accepted");
+    for (const std::uint32_t bits : {8u, 16u, 32u}) {
+        const auto shader = MakeBdaWriteTestShader(0x7fff1235fffdULL, 0xa1b2c3d4u, bits, false);
+        const auto lookups = CallSites(shader, "get_bda_write_pointer");
+        const auto loops = CallSites(shader, "write_bda_bytes");
+        AgcDriver::Graphics::Require(loops == 1u && lookups == (bits == 32u ? 2u : 1u), "a runtime V# write of " + std::to_string(bits) + " bits has " + std::to_string(lookups) + " write lookups and " + std::to_string(loops) + " byte-loop calls, not its byte path through write_bda_bytes");
+    }
 }

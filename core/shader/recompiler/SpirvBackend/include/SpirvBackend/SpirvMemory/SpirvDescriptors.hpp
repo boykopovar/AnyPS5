@@ -21,6 +21,7 @@ void DecorateTableNonUniform(SpirvEmitterState& state, std::uint32_t id);
 bool TablePointSampled(const ImageResource& image);
 bool TableModeEmitted(const ImageResource& mode);
 std::uint32_t StorageImageDescriptorPointer(SpirvEmitterState& state, std::uint32_t resource);
+std::uint32_t EmitStorageImageRead(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t coord, std::uint32_t sample);
 void EmitStorageImageWrite(SpirvEmitterState& state, std::uint32_t resource, std::uint32_t mipLod, std::uint32_t coord, std::uint32_t texel, std::uint32_t sample);
 const RdnaImageDimensionInfo& RdnaImageDimensionInfoFor(RdnaImageDimension dimension);
 [[noreturn]] void ExitDescriptorBindingFailure(const SpirvEmitterState& state, DescriptorBindingKind kind, std::uint32_t resource, const char* reason);

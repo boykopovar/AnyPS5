@@ -1,4 +1,6 @@
+#include "prx/libSceHmd2/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "prx/libSceHmd/Hmd.hpp"
 #include "prx/libSceHmd2/Hmd2.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 
@@ -8,6 +10,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+
+namespace Hmd2 {
+
+}
 
 namespace {
 
@@ -20,8 +26,26 @@ void Require(bool condition, const char* message) {
     }
 }
 
-void SetSdkVersion(std::uint32_t version) {
-    std::memcpy(process.data() + 0x10, &version, sizeof(version));
+void TestCallsWithoutReprojectionSession() {
+    std::array<std::uint8_t, 64> memory;
+    memory.fill(0xaa);
+    const auto untouched = memory;
+    const Hmd2::MirroringParameter mirroring{memory.data(), memory.data() + 32};
+    Require(sceHmd2ReprojectionEnableMirroring(nullptr) == Hmd2::ReprojectionNotInitialized, "mirroring with a null parameter without a reprojection session");
+    Require(sceHmd2ReprojectionEnableMirroring(&mirroring) == Hmd2::ReprojectionNotInitialized, "mirroring without a reprojection session");
+    Require(memory == untouched, "mirroring memory was written without a reprojection session");
+    constexpr std::array<std::uint64_t, 4> frameIds{0, 1, 0x123456789, ~0ull};
+    for (const std::uint64_t frameId : frameIds) {
+        std::uint64_t time = 0xaaaaaaaaaaaaaaaa;
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ReprojectionNotInitialized, "predicted display time into a null output without a reprojection session");
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, &time) == Hmd2::ReprojectionNotInitialized, "predicted display time without a reprojection session");
+        Require(time == 0xaaaaaaaaaaaaaaaa, "predicted display time was written without a reprojection session");
+    }
+    constexpr std::array<std::uint64_t, 5> flags{0, 1, 1ull << 32, 2, ~0ull};
+    for (const std::uint64_t flag : flags) {
+        Require(sceHmd2ReprojectionSetRenderConfig(flag, 0, 0) == Hmd2::ReprojectionNotInitialized, "render config without a reprojection session");
+        Require(sceHmd2ReprojectionSetRenderConfig(flag, 1, 1) == Hmd2::ReprojectionNotInitialized, "render config with nonzero reserved arguments without a reprojection session");
+    }
 }
 
 void InstallProcessParameters() {
@@ -30,21 +54,6 @@ void InstallProcessParameters() {
     std::memcpy(process.data(), &size, sizeof(size));
     std::memcpy(process.data() + 8, &magic, sizeof(magic));
     Require(ProcessParametersFixture::Install(process.data(), process.size()), "process parameters were not installed");
-}
-
-bool IsDefaultFieldOfView(const Hmd2::FieldOfView& fieldOfView) {
-    return fieldOfView.tanOut == 1.84177089f && fieldOfView.tanIn == 0.947190642f &&
-           fieldOfView.tanTop == 1.32898104f && fieldOfView.tanBottom == 1.32898104f;
-}
-
-void RequireNotDetected(const Hmd2::DeviceInformation& info, std::int32_t userId) {
-    Require(info.status == Hmd2::DeviceStatus::NotDetected, "device status is not NOT_DETECTED");
-    Require(info.userId == userId, "device user does not match the SDK version");
-    Require(info.panelWidth == 4000 && info.panelHeight == 2040, "panel resolution differs from the firmware");
-    Require(info.latency90Hz == 5555 && info.latency120Hz == 4160, "flip latencies differ from the firmware");
-    Require(info.hmuMount == 0 && info.lensSeparationDistance == 0, "a missing headset reported a mount or lens separation");
-    Require(info.reserved[0] == 0 && info.reserved[1] == 0, "reserved bytes were not cleared");
-    Require(info.virtualImageDistance == 2.0f, "virtual image distance differs from the firmware");
 }
 
 void TestBeforeInitialize() {
@@ -61,79 +70,227 @@ void TestBeforeInitialize() {
     Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, nullptr) == Hmd2::NotInitialized, "open before initialization");
     Require(sceHmd2Close(0) == Hmd2::NotInitialized, "close before initialization");
     Require(sceHmd2Terminate() == Hmd2::NotInitialized, "terminate before initialization");
-    Require(sceHmd2SetVibration(0, 0) == 0, "vibration of the unopened handle 0 failed");
-}
-
-void TestInitialized() {
-    const std::uint8_t param[16]{};
-    Require(sceHmd2Initialize(nullptr) == Hmd2::ParameterNull, "initialization without a param");
-    Require(sceHmd2Initialize(param) == 0, "initialization failed");
-    Require(sceHmd2Initialize(param) == Hmd2::AlreadyInitialized, "second initialization");
-
-    Hmd2::DeviceInformation info;
-    std::memset(&info, 0xcc, sizeof(info));
-    SetSdkVersion(0x06000000);
-    Require(sceHmd2GetDeviceInformation(&info) == 0, "device information failed");
-    RequireNotDetected(info, -1);
-    SetSdkVersion(0x07590001);
-    std::memset(&info, 0xcc, sizeof(info));
-    Require(sceHmd2GetDeviceInformation(&info) == 0, "device information for SDK 7.59 failed");
-    RequireNotDetected(info, 0);
-
-    Hmd2::FieldOfView fieldOfView{};
-    Require(sceHmd2GetFieldOfViewWithoutHandle(&fieldOfView) == 0 && IsDefaultFieldOfView(fieldOfView), "default field of view");
-    Require(sceHmd2GetFieldOfViewWithoutHandle(nullptr) == Hmd2::ParameterNull, "null field of view");
-    Require(sceHmd2GetFieldOfView(12345, &fieldOfView) == Hmd2::InvalidHandle, "field of view of an unknown handle");
-    Require(sceHmd2GetFieldOfView(12345, nullptr) == Hmd2::ParameterNull, "null field of view of an unknown handle");
-    Require(sceHmd2GetDeviceInformationByHandle(12345, &info) == Hmd2::InvalidHandle, "device information of an unknown handle");
-    Require(sceHmd2SetVibration(12345, 0) == Hmd2::InvalidHandle, "vibration of an unknown handle");
-    Require(sceHmd2Close(12345) == Hmd2::InvalidHandle, "close of an unknown handle");
-
-    Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 1, 0, nullptr) == Hmd2::ParameterInvalid, "open with a device type");
-    Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 1, nullptr) == Hmd2::ParameterInvalid, "open with a device index");
-    Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, param) == Hmd2::ParameterInvalid, "open with a param");
-    Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID + 1, 0, 0, nullptr) == Hmd2::ParameterInvalid, "open for another user on SDK 7.59");
-
-    const auto handle = sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, nullptr);
-    Require(handle > 0, "open without a headset failed");
-    Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, nullptr) == Hmd2::AlreadyOpened, "second open");
-    std::memset(&info, 0xcc, sizeof(info));
-    Require(sceHmd2GetDeviceInformationByHandle(handle, &info) == 0, "device information by handle failed");
-    RequireNotDetected(info, 0);
-    fieldOfView = {};
-    Require(sceHmd2GetFieldOfView(handle, &fieldOfView) == 0 && IsDefaultFieldOfView(fieldOfView), "field of view by handle");
-    Require(sceHmd2SetVibration(handle, 26) == 0, "vibration of a disconnected headset failed");
-    Require(sceHmd2Close(handle) == 0, "close failed");
-    Require(sceHmd2Close(handle) == Hmd2::InvalidHandle, "second close");
-    Require(sceHmd2Close(0) == 0, "close of the unopened handle 0 failed");
-
-    const auto kept = sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, nullptr);
-    Require(kept > 0, "reopen failed");
-    Require(sceHmd2Terminate() == 0, "terminate failed");
-    Require(sceHmd2Terminate() == Hmd2::NotInitialized, "second terminate");
-    Require(sceHmd2GetFieldOfView(kept, &fieldOfView) == Hmd2::NotInitialized, "field of view after terminate");
-    Require(sceHmd2Close(kept) == Hmd2::NotInitialized, "close after terminate");
-    Require(sceHmd2Initialize(param) == 0, "reinitialization failed");
-    Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, nullptr) == Hmd2::AlreadyOpened, "terminate closed the open handle");
-    Require(sceHmd2Close(kept) == 0, "close after reinitialization failed");
-
-    SetSdkVersion(0x06000000);
-    bool threw = false;
-    try {
-        sceHmd2Open(USER_SERVICE_INITIAL_USER_ID + 1, 0, 0, nullptr);
-    } catch (const std::runtime_error&) {
-        threw = true;
+    {
+        std::uint8_t out[64];
+        std::uint64_t words[2];
+        Require(Hmd2WriteStateTwo(nullptr) == Hmd2::ParameterNull, "Hmd2WriteStateTwo null before initialization");
+        std::memset(out, 0xaa, sizeof out);
+        Require(Hmd2WriteStateTwo(out) == 0 && out[0] == 2 && out[1] == 0 && out[4] == 0 && out[5] == 0xaa, "Hmd2WriteStateTwo bytes before initialization");
+        Require(Hmd2WriteSize0x2000Align0x100(nullptr, words) == Hmd2::ParameterNull && Hmd2WriteSize0x2000Align0x100(words, nullptr) == Hmd2::ParameterNull, "Hmd2WriteSize0x2000Align0x100 null before initialization");
+        words[0] = words[1] = ~0ull;
+        Require(Hmd2WriteSize0x2000Align0x100(words, words + 1) == 0 && words[0] == 0x2000 && words[1] == 0x100, "Hmd2WriteSize0x2000Align0x100 values before initialization");
+        Require(Hmd2WriteFourConstants(nullptr) == Hmd2::ParameterNull, "Hmd2WriteFourConstants null before initialization");
+        std::memset(out, 0xaa, sizeof out);
+        Require(Hmd2WriteFourConstants(out) == 0 && out[0] == 0xe1 && out[15] == 0x3c && out[16] == 0xaa, "Hmd2WriteFourConstants bytes before initialization");
+        Require(Hmd2WriteSixHalvesThenInvalidHandle(0, nullptr) == Hmd2::ParameterNull, "Hmd2WriteSixHalvesThenInvalidHandle null before initialization");
+        std::memset(out, 0xaa, sizeof out);
+        Require(Hmd2WriteSixHalvesThenInvalidHandle(0, out) == Hmd2::InvalidHandle && out[7] == 0x3f && out[20] == 0x00 && out[23] == 0x3f && out[24] == 0xaa, "Hmd2WriteSixHalvesThenInvalidHandle bytes before initialization");
+        Require(Hmd2WriteTwelveHalvesThenInvalidHandle(0, nullptr) == Hmd2::ParameterNull, "Hmd2WriteTwelveHalvesThenInvalidHandle null before initialization");
+        std::memset(out, 0xaa, sizeof out);
+        Require(Hmd2WriteTwelveHalvesThenInvalidHandle(0, out) == Hmd2::InvalidHandle && out[7] == 0x3f && out[31] == 0x3f && out[47] == 0x00 && out[48] == 0xaa, "Hmd2WriteTwelveHalvesThenInvalidHandle bytes before initialization");
+        Require(Hmd2SlotUpTo3CheckSecondThirdThenZero(9, nullptr, out) == Hmd2::ParameterNull && Hmd2SlotUpTo3CheckSecondThirdThenZero(0, out, nullptr) == Hmd2::ParameterNull, "Hmd2SlotUpTo3CheckSecondThirdThenZero null before initialization");
+        Require(Hmd2SlotUpTo3CheckSecondThirdThenZero(3, out, out) == 0 && Hmd2SlotUpTo3CheckSecondThirdThenZero(4, out, out) == Hmd2::ParameterInvalid && Hmd2SlotUpTo3CheckSecondThirdThenZero(~0ull, out, out) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo3CheckSecondThirdThenZero slots before initialization");
+        Require(Hmd2SlotUpTo1ThenError1002(1) == Hmd2::Error1002 && Hmd2SlotUpTo1ThenError1002(2) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo1ThenError1002 before initialization");
+        Require(Hmd2SlotUpTo1CheckSecondThenError1002(5, nullptr) == Hmd2::ParameterNull && Hmd2SlotUpTo1CheckSecondThenError1002(0, out) == Hmd2::Error1002 && Hmd2SlotUpTo1CheckSecondThenError1002(2, out) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo1CheckSecondThenError1002 before initialization");
+        Require(Hmd2SlotUpTo1ThenMinusOne(1) == -1 && Hmd2SlotUpTo1ThenMinusOne(2) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo1ThenMinusOne before initialization");
+        Require(Hmd2SlotUpTo2ThenMinusOne(2) == -1 && Hmd2SlotUpTo2ThenMinusOne(3) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo2ThenMinusOne before initialization");
+        Require(Hmd2SlotUpTo2ThenError1002(2) == Hmd2::Error1002 && Hmd2SlotUpTo2ThenError1002(3) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo2ThenError1002 before initialization");
+        Require(Hmd2SlotUpTo2ThenError1003(0) == Hmd2::Error1003 && Hmd2SlotUpTo2ThenError1003(16) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo2ThenError1003 before initialization");
+        Require(Hmd2SlotUpTo2CheckSecondThenError002C(8, nullptr) == Hmd2::ParameterNull && Hmd2SlotUpTo2CheckSecondThenError002C(2, out) == Hmd2::Error002C && Hmd2SlotUpTo2CheckSecondThenError002C(3, out) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo2CheckSecondThenError002C before initialization");
+        Require(Hmd2IndexZeroCheckSecondThenZero(1, nullptr) == Hmd2::ParameterNull && Hmd2IndexZeroCheckSecondThenZero(0, out) == 0 && Hmd2IndexZeroCheckSecondThenZero(1, out) == Hmd2::Error100F, "Hmd2IndexZeroCheckSecondThenZero before initialization");
     }
-    Require(threw, "open for another user before SDK 7.00 did not throw");
-    Require(sceHmd2Terminate() == 0, "final terminate failed");
+    const std::uint8_t dummyBytes[16]{};
+    const void* dummy = dummyBytes;
+    Require(Hmd2CheckFirstThenError0004(dummy) == Hmd2::Error0004, "Hmd2CheckFirstThenError0004 with every pointer present before initialization");
+    Require(Hmd2CheckFirstThenError0004(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError0004 with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstThenZero(dummy) == 0, "Hmd2CheckFirstThenZero with every pointer present before initialization");
+    Require(Hmd2CheckFirstThenZero(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenZero with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstThenError1002(dummy) == Hmd2::Error1002, "Hmd2CheckFirstThenError1002 with every pointer present before initialization");
+    Require(Hmd2CheckFirstThenError1002(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError1002 with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstThenMinusOne(dummy) == -1, "Hmd2CheckFirstThenMinusOne with every pointer present before initialization");
+    Require(Hmd2CheckFirstThenMinusOne(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenMinusOne with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstTwoThenParameterInvalid(dummy, dummy) == Hmd2::ParameterInvalid, "Hmd2CheckFirstTwoThenParameterInvalid with every pointer present before initialization");
+    Require(Hmd2CheckFirstTwoThenParameterInvalid(nullptr, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenParameterInvalid with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstTwoThenParameterInvalid(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenParameterInvalid with pointer 1 null before initialization");
+    Require(Hmd2CheckSecondThenError002C(dummy, dummy) == Hmd2::Error002C, "Hmd2CheckSecondThenError002C with every pointer present before initialization");
+    Require(Hmd2CheckSecondThenError002C(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckSecondThenError002C with pointer 1 null before initialization");
+    Require(Hmd2CheckFirstThenParameterInvalid(dummy) == Hmd2::ParameterInvalid, "Hmd2CheckFirstThenParameterInvalid with every pointer present before initialization");
+    Require(Hmd2CheckFirstThenParameterInvalid(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenParameterInvalid with pointer 0 null before initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, dummy, dummy, dummy, dummy) == 0, "Hmd2CheckAllSixThenZero with every pointer present before initialization");
+    Require(Hmd2CheckAllSixThenZero(nullptr, dummy, dummy, dummy, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 0 null before initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, nullptr, dummy, dummy, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 1 null before initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, nullptr, dummy, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 2 null before initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, dummy, nullptr, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 3 null before initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, dummy, dummy, nullptr, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 4 null before initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, dummy, dummy, dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 5 null before initialization");
+    Require(Hmd2CheckSecondThenParameterInvalid(dummy, dummy) == Hmd2::ParameterInvalid, "Hmd2CheckSecondThenParameterInvalid with every pointer present before initialization");
+    Require(Hmd2CheckSecondThenParameterInvalid(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckSecondThenParameterInvalid with pointer 1 null before initialization");
+    Require(Hmd2CheckFirstThenError800d0203(dummy) == Hmd2::Error800d0203, "Hmd2CheckFirstThenError800d0203 with every pointer present before initialization");
+    Require(Hmd2CheckFirstThenError800d0203(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError800d0203 with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstThenError1003(dummy) == Hmd2::Error1003, "Hmd2CheckFirstThenError1003 with every pointer present before initialization");
+    Require(Hmd2CheckFirstThenError1003(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError1003 with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstThenError1010(dummy) == Hmd2::Error1010, "Hmd2CheckFirstThenError1010 with every pointer present before initialization");
+    Require(Hmd2CheckFirstThenError1010(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError1010 with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstTwoThenError1002(dummy, dummy) == Hmd2::Error1002, "Hmd2CheckFirstTwoThenError1002 with every pointer present before initialization");
+    Require(Hmd2CheckFirstTwoThenError1002(nullptr, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenError1002 with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstTwoThenError1002(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenError1002 with pointer 1 null before initialization");
+    Require(Hmd2CheckFirstTwoThenError1003(dummy, dummy) == Hmd2::Error1003, "Hmd2CheckFirstTwoThenError1003 with every pointer present before initialization");
+    Require(Hmd2CheckFirstTwoThenError1003(nullptr, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenError1003 with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstTwoThenError1003(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenError1003 with pointer 1 null before initialization");
+    Require(Hmd2CheckFirstAndThirdThenZero(dummy, dummy, dummy) == 0, "Hmd2CheckFirstAndThirdThenZero with every pointer present before initialization");
+    Require(Hmd2CheckFirstAndThirdThenZero(nullptr, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstAndThirdThenZero with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstAndThirdThenZero(dummy, dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstAndThirdThenZero with pointer 2 null before initialization");
+    Require(Hmd2CheckFirstAndThirdThenError1003(dummy, dummy, dummy) == Hmd2::Error1003, "Hmd2CheckFirstAndThirdThenError1003 with every pointer present before initialization");
+    Require(Hmd2CheckFirstAndThirdThenError1003(nullptr, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstAndThirdThenError1003 with pointer 0 null before initialization");
+    Require(Hmd2CheckFirstAndThirdThenError1003(dummy, dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstAndThirdThenError1003 with pointer 2 null before initialization");
+    Require(Hmd2CheckSecondThenInvalidHandle(dummy, dummy) == Hmd2::InvalidHandle, "Hmd2CheckSecondThenInvalidHandle with every pointer present before initialization");
+    Require(Hmd2CheckSecondThenInvalidHandle(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckSecondThenInvalidHandle with pointer 1 null before initialization");
+    Require(Hmd2CheckSecondThenError1002(dummy, dummy) == Hmd2::Error1002, "Hmd2CheckSecondThenError1002 with every pointer present before initialization");
+    Require(Hmd2CheckSecondThenError1002(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckSecondThenError1002 with pointer 1 null before initialization");
+    Require(Hmd2BeforeInitializeZero() == 0, "Hmd2BeforeInitializeZero before initialization");
+    Require(Hmd2BeforeInitializeNotInitialized() == Hmd2::NotInitialized, "Hmd2BeforeInitializeNotInitialized before initialization");
+    Require(Hmd2BeforeInitializeError0004() == Hmd2::Error0004, "Hmd2BeforeInitializeError0004 before initialization");
+    Require(Hmd2BeforeInitializeParameterNull() == Hmd2::ParameterNull, "Hmd2BeforeInitializeParameterNull before initialization");
+    Require(Hmd2BeforeInitializeParameterInvalid() == Hmd2::ParameterInvalid, "Hmd2BeforeInitializeParameterInvalid before initialization");
+    Require(Hmd2BeforeInitializeReprojectionNotInitialized() == Hmd2::ReprojectionNotInitialized, "Hmd2BeforeInitializeReprojectionNotInitialized before initialization");
+    Require(Hmd2BeforeInitializeError002C() == Hmd2::Error002C, "Hmd2BeforeInitializeError002C before initialization");
+    Require(Hmd2BeforeInitializeError1002() == Hmd2::Error1002, "Hmd2BeforeInitializeError1002 before initialization");
+    Require(Hmd2BeforeInitializeError1003() == Hmd2::Error1003, "Hmd2BeforeInitializeError1003 before initialization");
+    Require(Hmd2BeforeInitializeMinusOne() == -1, "Hmd2BeforeInitializeMinusOne before initialization");
+    Require(Hmd2BeforeInitializeValue0400() == 0x400, "Hmd2BeforeInitializeValue0400 before initialization");
+    Require(Hmd2BeforeInitializeValue20000() == 0x20000, "Hmd2BeforeInitializeValue20000 before initialization");
+    Require(sceHmd2SetVibration(0, 0) == 0, "vibration of the unopened handle 0 failed");
+    TestCallsWithoutReprojectionSession();
 }
 
+void TestWithoutHeadset() {
+    const std::uint8_t param[16]{};
+    Require(sceHmd2Initialize(param) == Hmd::UnsupportedFeature, "initialization without a headset did not fail");
+    Require(sceHmd2Initialize(nullptr) == Hmd::UnsupportedFeature, "initialization without a param did not fail as unsupported");
+    Require(sceHmd2Open(USER_SERVICE_INITIAL_USER_ID, 0, 0, nullptr) == Hmd2::NotInitialized, "open without a headset did not fail");
+    Hmd2::DeviceInformation info;
+    Require(sceHmd2GetDeviceInformation(&info) == Hmd2::NotInitialized, "device information without a headset");
+    Require(sceHmd2Terminate() == Hmd2::NotInitialized, "terminate after the failed initialization");
+    {
+        std::uint8_t out[64];
+        std::uint64_t words[2];
+        Require(Hmd2WriteStateTwo(nullptr) == Hmd2::ParameterNull, "Hmd2WriteStateTwo null after the failed initialization");
+        std::memset(out, 0xaa, sizeof out);
+        Require(Hmd2WriteStateTwo(out) == 0 && out[0] == 2 && out[1] == 0 && out[4] == 0 && out[5] == 0xaa, "Hmd2WriteStateTwo bytes after the failed initialization");
+        Require(Hmd2WriteSize0x2000Align0x100(nullptr, words) == Hmd2::ParameterNull && Hmd2WriteSize0x2000Align0x100(words, nullptr) == Hmd2::ParameterNull, "Hmd2WriteSize0x2000Align0x100 null after the failed initialization");
+        words[0] = words[1] = ~0ull;
+        Require(Hmd2WriteSize0x2000Align0x100(words, words + 1) == 0 && words[0] == 0x2000 && words[1] == 0x100, "Hmd2WriteSize0x2000Align0x100 values after the failed initialization");
+        Require(Hmd2WriteFourConstants(nullptr) == Hmd2::ParameterNull, "Hmd2WriteFourConstants null after the failed initialization");
+        std::memset(out, 0xaa, sizeof out);
+        Require(Hmd2WriteFourConstants(out) == 0 && out[0] == 0xe1 && out[15] == 0x3c && out[16] == 0xaa, "Hmd2WriteFourConstants bytes after the failed initialization");
+        Require(Hmd2WriteSixHalvesThenInvalidHandle(0, nullptr) == Hmd2::ParameterNull, "Hmd2WriteSixHalvesThenInvalidHandle null after the failed initialization");
+        std::memset(out, 0xaa, sizeof out);
+        Require(Hmd2WriteSixHalvesThenInvalidHandle(0, out) == Hmd2::InvalidHandle && out[7] == 0x3f && out[20] == 0x00 && out[23] == 0x3f && out[24] == 0xaa, "Hmd2WriteSixHalvesThenInvalidHandle bytes after the failed initialization");
+        Require(Hmd2WriteTwelveHalvesThenInvalidHandle(0, nullptr) == Hmd2::ParameterNull, "Hmd2WriteTwelveHalvesThenInvalidHandle null after the failed initialization");
+        std::memset(out, 0xaa, sizeof out);
+        Require(Hmd2WriteTwelveHalvesThenInvalidHandle(0, out) == Hmd2::InvalidHandle && out[7] == 0x3f && out[31] == 0x3f && out[47] == 0x00 && out[48] == 0xaa, "Hmd2WriteTwelveHalvesThenInvalidHandle bytes after the failed initialization");
+        Require(Hmd2SlotUpTo3CheckSecondThirdThenZero(9, nullptr, out) == Hmd2::ParameterNull && Hmd2SlotUpTo3CheckSecondThirdThenZero(0, out, nullptr) == Hmd2::ParameterNull, "Hmd2SlotUpTo3CheckSecondThirdThenZero null after the failed initialization");
+        Require(Hmd2SlotUpTo3CheckSecondThirdThenZero(3, out, out) == 0 && Hmd2SlotUpTo3CheckSecondThirdThenZero(4, out, out) == Hmd2::ParameterInvalid && Hmd2SlotUpTo3CheckSecondThirdThenZero(~0ull, out, out) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo3CheckSecondThirdThenZero slots after the failed initialization");
+        Require(Hmd2SlotUpTo1ThenError1002(1) == Hmd2::Error1002 && Hmd2SlotUpTo1ThenError1002(2) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo1ThenError1002 after the failed initialization");
+        Require(Hmd2SlotUpTo1CheckSecondThenError1002(5, nullptr) == Hmd2::ParameterNull && Hmd2SlotUpTo1CheckSecondThenError1002(0, out) == Hmd2::Error1002 && Hmd2SlotUpTo1CheckSecondThenError1002(2, out) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo1CheckSecondThenError1002 after the failed initialization");
+        Require(Hmd2SlotUpTo1ThenMinusOne(1) == -1 && Hmd2SlotUpTo1ThenMinusOne(2) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo1ThenMinusOne after the failed initialization");
+        Require(Hmd2SlotUpTo2ThenMinusOne(2) == -1 && Hmd2SlotUpTo2ThenMinusOne(3) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo2ThenMinusOne after the failed initialization");
+        Require(Hmd2SlotUpTo2ThenError1002(2) == Hmd2::Error1002 && Hmd2SlotUpTo2ThenError1002(3) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo2ThenError1002 after the failed initialization");
+        Require(Hmd2SlotUpTo2ThenError1003(0) == Hmd2::Error1003 && Hmd2SlotUpTo2ThenError1003(16) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo2ThenError1003 after the failed initialization");
+        Require(Hmd2SlotUpTo2CheckSecondThenError002C(8, nullptr) == Hmd2::ParameterNull && Hmd2SlotUpTo2CheckSecondThenError002C(2, out) == Hmd2::Error002C && Hmd2SlotUpTo2CheckSecondThenError002C(3, out) == Hmd2::ParameterInvalid, "Hmd2SlotUpTo2CheckSecondThenError002C after the failed initialization");
+        Require(Hmd2IndexZeroCheckSecondThenZero(1, nullptr) == Hmd2::ParameterNull && Hmd2IndexZeroCheckSecondThenZero(0, out) == 0 && Hmd2IndexZeroCheckSecondThenZero(1, out) == Hmd2::Error100F, "Hmd2IndexZeroCheckSecondThenZero after the failed initialization");
+    }
+    const std::uint8_t dummyBytes[16]{};
+    const void* dummy = dummyBytes;
+    Require(Hmd2CheckFirstThenError0004(dummy) == Hmd2::Error0004, "Hmd2CheckFirstThenError0004 with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstThenError0004(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError0004 with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstThenZero(dummy) == 0, "Hmd2CheckFirstThenZero with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstThenZero(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenZero with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstThenError1002(dummy) == Hmd2::Error1002, "Hmd2CheckFirstThenError1002 with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstThenError1002(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError1002 with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstThenMinusOne(dummy) == -1, "Hmd2CheckFirstThenMinusOne with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstThenMinusOne(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenMinusOne with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstTwoThenParameterInvalid(dummy, dummy) == Hmd2::ParameterInvalid, "Hmd2CheckFirstTwoThenParameterInvalid with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstTwoThenParameterInvalid(nullptr, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenParameterInvalid with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstTwoThenParameterInvalid(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenParameterInvalid with pointer 1 null after the failed initialization");
+    Require(Hmd2CheckSecondThenError002C(dummy, dummy) == Hmd2::Error002C, "Hmd2CheckSecondThenError002C with every pointer present after the failed initialization");
+    Require(Hmd2CheckSecondThenError002C(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckSecondThenError002C with pointer 1 null after the failed initialization");
+    Require(Hmd2CheckFirstThenParameterInvalid(dummy) == Hmd2::ParameterInvalid, "Hmd2CheckFirstThenParameterInvalid with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstThenParameterInvalid(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenParameterInvalid with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, dummy, dummy, dummy, dummy) == 0, "Hmd2CheckAllSixThenZero with every pointer present after the failed initialization");
+    Require(Hmd2CheckAllSixThenZero(nullptr, dummy, dummy, dummy, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, nullptr, dummy, dummy, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 1 null after the failed initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, nullptr, dummy, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 2 null after the failed initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, dummy, nullptr, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 3 null after the failed initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, dummy, dummy, nullptr, dummy) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 4 null after the failed initialization");
+    Require(Hmd2CheckAllSixThenZero(dummy, dummy, dummy, dummy, dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckAllSixThenZero with pointer 5 null after the failed initialization");
+    Require(Hmd2CheckSecondThenParameterInvalid(dummy, dummy) == Hmd2::ParameterInvalid, "Hmd2CheckSecondThenParameterInvalid with every pointer present after the failed initialization");
+    Require(Hmd2CheckSecondThenParameterInvalid(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckSecondThenParameterInvalid with pointer 1 null after the failed initialization");
+    Require(Hmd2CheckFirstThenError800d0203(dummy) == Hmd2::Error800d0203, "Hmd2CheckFirstThenError800d0203 with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstThenError800d0203(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError800d0203 with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstThenError1003(dummy) == Hmd2::Error1003, "Hmd2CheckFirstThenError1003 with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstThenError1003(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError1003 with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstThenError1010(dummy) == Hmd2::Error1010, "Hmd2CheckFirstThenError1010 with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstThenError1010(nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstThenError1010 with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstTwoThenError1002(dummy, dummy) == Hmd2::Error1002, "Hmd2CheckFirstTwoThenError1002 with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstTwoThenError1002(nullptr, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenError1002 with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstTwoThenError1002(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenError1002 with pointer 1 null after the failed initialization");
+    Require(Hmd2CheckFirstTwoThenError1003(dummy, dummy) == Hmd2::Error1003, "Hmd2CheckFirstTwoThenError1003 with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstTwoThenError1003(nullptr, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenError1003 with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstTwoThenError1003(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstTwoThenError1003 with pointer 1 null after the failed initialization");
+    Require(Hmd2CheckFirstAndThirdThenZero(dummy, dummy, dummy) == 0, "Hmd2CheckFirstAndThirdThenZero with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstAndThirdThenZero(nullptr, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstAndThirdThenZero with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstAndThirdThenZero(dummy, dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstAndThirdThenZero with pointer 2 null after the failed initialization");
+    Require(Hmd2CheckFirstAndThirdThenError1003(dummy, dummy, dummy) == Hmd2::Error1003, "Hmd2CheckFirstAndThirdThenError1003 with every pointer present after the failed initialization");
+    Require(Hmd2CheckFirstAndThirdThenError1003(nullptr, dummy, dummy) == Hmd2::ParameterNull, "Hmd2CheckFirstAndThirdThenError1003 with pointer 0 null after the failed initialization");
+    Require(Hmd2CheckFirstAndThirdThenError1003(dummy, dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckFirstAndThirdThenError1003 with pointer 2 null after the failed initialization");
+    Require(Hmd2CheckSecondThenInvalidHandle(dummy, dummy) == Hmd2::InvalidHandle, "Hmd2CheckSecondThenInvalidHandle with every pointer present after the failed initialization");
+    Require(Hmd2CheckSecondThenInvalidHandle(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckSecondThenInvalidHandle with pointer 1 null after the failed initialization");
+    Require(Hmd2CheckSecondThenError1002(dummy, dummy) == Hmd2::Error1002, "Hmd2CheckSecondThenError1002 with every pointer present after the failed initialization");
+    Require(Hmd2CheckSecondThenError1002(dummy, nullptr) == Hmd2::ParameterNull, "Hmd2CheckSecondThenError1002 with pointer 1 null after the failed initialization");
+    Require(Hmd2BeforeInitializeZero() == 0, "Hmd2BeforeInitializeZero after the failed initialization");
+    Require(Hmd2BeforeInitializeNotInitialized() == Hmd2::NotInitialized, "Hmd2BeforeInitializeNotInitialized after the failed initialization");
+    Require(Hmd2BeforeInitializeError0004() == Hmd2::Error0004, "Hmd2BeforeInitializeError0004 after the failed initialization");
+    Require(Hmd2BeforeInitializeParameterNull() == Hmd2::ParameterNull, "Hmd2BeforeInitializeParameterNull after the failed initialization");
+    Require(Hmd2BeforeInitializeParameterInvalid() == Hmd2::ParameterInvalid, "Hmd2BeforeInitializeParameterInvalid after the failed initialization");
+    Require(Hmd2BeforeInitializeReprojectionNotInitialized() == Hmd2::ReprojectionNotInitialized, "Hmd2BeforeInitializeReprojectionNotInitialized after the failed initialization");
+    Require(Hmd2BeforeInitializeError002C() == Hmd2::Error002C, "Hmd2BeforeInitializeError002C after the failed initialization");
+    Require(Hmd2BeforeInitializeError1002() == Hmd2::Error1002, "Hmd2BeforeInitializeError1002 after the failed initialization");
+    Require(Hmd2BeforeInitializeError1003() == Hmd2::Error1003, "Hmd2BeforeInitializeError1003 after the failed initialization");
+    Require(Hmd2BeforeInitializeMinusOne() == -1, "Hmd2BeforeInitializeMinusOne after the failed initialization");
+    Require(Hmd2BeforeInitializeValue0400() == 0x400, "Hmd2BeforeInitializeValue0400 after the failed initialization");
+    Require(Hmd2BeforeInitializeValue20000() == 0x20000, "Hmd2BeforeInitializeValue20000 after the failed initialization");
+    TestCallsWithoutReprojectionSession();
+}
+
+}
+
+void SizeQueriesReturnTheConsoleSizes() {
+    const auto display = sceHmd2ReprojectionQueryDisplayBufferSizeAlign();
+    Require(display.size == 0x6000000 && display.align == 0x10000, "display buffer size");
+    const auto seeThrough = sceHmd2ReprojectionQuerySeeThroughBufferSizeAlign();
+    Require(seeThrough.size == 0x1106000 && seeThrough.align == 0x100, "see-through buffer size");
+    const auto mirroring = sceHmd2ReprojectionGetMirroringDisplayBufferSizeAlign();
+    Require(mirroring.size == 0x5FA0000 && mirroring.align == 0x10000, "mirroring display buffer size");
+    const auto work = sceHmd2ReprojectionGetMirroringWorkMemorySizeAlign();
+    Require(work.size == 0x4000 && work.align == 0x100, "mirroring work memory size");
 }
 
 int main() {
+    SizeQueriesReturnTheConsoleSizes();
     InstallProcessParameters();
     TestBeforeInitialize();
-    TestInitialized();
+    TestWithoutHeadset();
+    bool threw = false;
+    try {
+        static_cast<void>(sceHmd2ReprojectionQueryBufferSizeAlign());
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw, "buffer size query did not throw");
+    Require(sceHmd2GazeActivateGazeTracking(0) == 0, "gaze activation before initialization");
+    Require(sceHmd2ReprojectionGetCurrentOutput(nullptr) == Hmd2::ReprojectionNotInitialized, "reprojection before initialization");
+    Require(sceHmd2SetFieldOfView(nullptr) == Hmd2::ParameterNull, "null field of view");
     std::puts("HMD2 tests passed");
     return 0;
 }

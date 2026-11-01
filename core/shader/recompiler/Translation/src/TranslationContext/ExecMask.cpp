@@ -15,7 +15,12 @@ IrU32 TranslationContext::hostExecWord(std::uint32_t half) {
     if (half != 0u && program.WaveSize() != 64u) {
         return word;
     }
-    return IrU32(ir.BitwiseAnd(word.Value(), ballotMask(IrU1(ir.ConstantBool(true)))[half].Value()));
+    auto active = ballotMask(IrU1(ir.ConstantBool(true)));
+    if (program.Resources().stage == IrShaderStage::Pixel) {
+        const IrU64 lanes(ir.ConstructU64(active[0].Value(), active[1].Value()));
+        active = extractU64(IrU64(ir.Emit(IrOpcode::WqmU64, IrType::U64, {&lanes.Value()})));
+    }
+    return IrU32(ir.BitwiseAnd(word.Value(), active[half].Value()));
 }
 
 IrU1 TranslationContext::threadBit(const std::array<IrU32, 2>& mask) {

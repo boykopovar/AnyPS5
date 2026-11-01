@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -14,11 +15,60 @@
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 
 using AgcDriver::Graphics::Require;
 using ShaderRecompiler::ShaderStage;
+
+class StderrCapture {
+public:
+    StderrCapture() {
+        std::fflush(stderr);
+        file = TemporaryFile::Open();
+        Require(file != nullptr, "cannot open a temporary file for stderr");
+#ifdef _WIN32
+        saved = _dup(_fileno(stderr));
+        _dup2(_fileno(file), _fileno(stderr));
+#else
+        saved = dup(fileno(stderr));
+        dup2(fileno(file), fileno(stderr));
+#endif
+    }
+    std::string Finish() {
+        std::fflush(stderr);
+#ifdef _WIN32
+        _dup2(saved, _fileno(stderr));
+        _close(saved);
+#else
+        dup2(saved, fileno(stderr));
+        close(saved);
+#endif
+        std::rewind(file);
+        std::string text;
+        char buffer[4096];
+        for (std::size_t read = 0; (read = std::fread(buffer, 1, sizeof(buffer), file)) != 0;) text.append(buffer, read);
+        std::fclose(file);
+        std::fwrite(text.data(), 1, text.size(), stderr);
+        return text;
+    }
+
+private:
+    std::FILE* file = nullptr;
+    int saved = -1;
+};
 
 constexpr std::uint32_t Threads = 256;
 constexpr std::uint32_t Iterations = 16;
@@ -167,6 +217,32 @@ alignas(256) constexpr auto LoadedParityCode = Unrolled<1>(
         0xbf810000,
     }));
 
+alignas(256) constexpr auto MisalignedCode = Unrolled<1>(
+    std::to_array<std::uint32_t>({
+        0x34100083,
+        0x7e020280,
+        0x7e0402c1,
+        0x7e060280,
+        0x7e080281,
+        0x7e0c0280,
+        0x7e0e0280,
+        0xd9340000, 0x00000601,
+        0xbf8cc07f,
+        0xbf8a0000,
+    }),
+    std::to_array<std::uint32_t>({
+        0xd9000004, 0x00000201,
+        0xbf8cc07f,
+    }),
+    std::to_array<std::uint32_t>({
+        0xbf8cc07f,
+        0xbf8a0000,
+        0xd9d80000, 0x0a000001,
+        0xbf8cc07f,
+        0xe0741000, 0x80010a08,
+        0xbf810000,
+    }));
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
@@ -213,7 +289,7 @@ std::uint64_t WorkgroupBytes(std::span<const std::uint32_t> words) {
     return total;
 }
 
-void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const char* name, std::uint64_t operations, std::uint32_t repeats, std::uint32_t ldsDwords = LdsDwords, std::optional<std::uint32_t> expectedDeviceDwords = std::nullopt) {
+ShaderRecompiler::RecompileResult Compile(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, std::uint32_t ldsDwords) {
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
     const auto output = BufferDescriptor(Output.data(), static_cast<std::uint32_t>(Output.size() * 4u));
@@ -228,10 +304,14 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
         {0, 0, 0, 128}
     };
     request.useCache = false;
-    const auto result = ShaderRecompiler::Recompile(request);
+    return ShaderRecompiler::Recompile(request);
+}
+
+void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, const char* name, std::uint64_t operations, std::uint32_t repeats, std::uint32_t ldsDwords = LdsDwords, std::optional<std::uint32_t> expectedDeviceDwords = std::nullopt) {
+    const auto result = Compile(device, code, ldsDwords);
     if (expectedDeviceDwords) {
         const auto bytes = WorkgroupBytes(result.spirv.Words());
-        const auto limit = request.target.maxWorkgroupSharedMemoryBytes;
+        const auto limit = device.Target().maxWorkgroupSharedMemoryBytes;
         Require(bytes <= limit, "lds lock budget: guest LDS and lock exceed the device limit before dispatch");
         Require(result.workgroupMemoryDwords == *expectedDeviceDwords, "lds lock budget: unexpected device-backed LDS allocation before dispatch");
         if (*expectedDeviceDwords == 0u) Require(bytes == limit, "lds lock budget: exact-fit case did not retain its lock");
@@ -246,6 +326,23 @@ void Run(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code, c
     if (expectedDeviceDwords) std::printf("lds lock budget: %s GPU readback verified across 256 lanes\n", name);
 }
 
+void Misaligned(AgcDriver::VulkanDevice& device, std::uint32_t ldsDwords, const char* lds) {
+    const auto result = Compile(device, MisalignedCode, ldsDwords);
+    Output.fill(0xdeadbeefu);
+    StderrCapture capture;
+    try {
+        device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(MisalignedCode.data()));
+        device.WaitIdle();
+    } catch (...) {
+        static_cast<void>(capture.Finish());
+        throw;
+    }
+    const auto log = capture.Finish();
+    Require(log.find("BDA access failed: address=0x4 instruction=0x2c bytes=8 ") != std::string::npos && log.find("reason=7") != std::string::npos, std::string("lds lock budget: misaligned ds_add_u64 on ") + lds + " LDS did not fault");
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Require(Output[tid * 2u] == 0u && Output[tid * 2u + 1u] == 0u, std::string("lds lock budget: misaligned ds_add_u64 on ") + lds + " LDS changed the slot: lane " + std::to_string(tid) + " read " + Hex(Output[tid * 2u] | (static_cast<std::uint64_t>(Output[tid * 2u + 1u]) << 32u)));
+    std::printf("lds lock budget: misaligned ds_add_u64 on %s LDS faulted\n", lds);
+}
+
 void LockBudget(AgcDriver::VulkanDevice& device) {
     const auto target = device.Target();
     const auto limit = target.maxWorkgroupSharedMemoryBytes;
@@ -253,7 +350,10 @@ void LockBudget(AgcDriver::VulkanDevice& device) {
     if (std::getenv("ANYPS5_REQUIRE_ROBUST2") != nullptr) Require(target.robustBufferAccess2, "lds lock budget: robustBufferAccess2 was not enabled");
     Require(limit >= 32u && limit % 4u == 0u, "lds lock budget: unexpected device shared-memory limit");
     const auto operations = static_cast<std::uint64_t>(Threads) * Iterations;
-    Run(device, UniformCode, "limit", operations, 1, limit / 4u, limit / 4u + 1u);
+    Run(device, UniformCode, "limit", operations, 1, limit / 4u, (limit / 4u + 2u) & ~1u);
+    const auto& capabilities = target.supportedCapabilities;
+    if (std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityInt64Atomics)) != capabilities.end()) Misaligned(device, limit / 4u, "device-backed");
+    Misaligned(device, LdsDwords, "workgroup");
     Run(device, UniformCode, "limit-4", operations, 1, (limit - 4u) / 4u, 0u);
     std::puts("lds lock budget tests passed");
 }

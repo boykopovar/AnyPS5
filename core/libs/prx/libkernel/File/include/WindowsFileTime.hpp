@@ -38,6 +38,10 @@ public:
 
     static int Failure(DWORD error) {
         const auto condition = std::system_category().default_error_condition(static_cast<int>(error));
+#ifdef ELOOP
+        if (error == ERROR_CANT_RESOLVE_FILENAME) errno = ELOOP;
+        else
+#endif
         if (condition == std::errc::no_such_file_or_directory) errno = ENOENT;
         else if (condition == std::errc::permission_denied) errno = EACCES;
         else if (condition == std::errc::bad_file_descriptor) errno = EBADF;

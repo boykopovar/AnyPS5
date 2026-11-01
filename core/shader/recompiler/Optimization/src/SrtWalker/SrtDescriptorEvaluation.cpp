@@ -65,8 +65,10 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
     BasicEvaluator<TNode> cleanEvaluator(program, cleanRuntime);
     BasicEvaluator<TNode> evaluator(program, runtime, cleanFlatSlots, &cleanEvaluator);
     std::vector<std::uint8_t> active;
+    std::vector<std::uint8_t> activeFlat;
     if (evaluateFlat) {
         active.assign(program.descriptorSources.size() + program.info.images.size(), 1u);
+        activeFlat.assign(program.srtReads.size(), 1u);
     }
     if (evaluateFlat && !program.controlFlow.empty()) {
         for (const auto& block : program.controlFlow) {
@@ -76,6 +78,7 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
             for (const auto image : block.images) {
                 active.at(program.descriptorSources.size() + image) = 0u;
             }
+            for (const auto slot : block.flatSlots) activeFlat.at(slot) = 0u;
         }
         std::vector<std::uint8_t> visited(program.controlFlow.size());
         std::vector<std::uint32_t> pending {0};
@@ -97,6 +100,7 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
             for (const auto image : block.images) {
                 active[program.descriptorSources.size() + image] = 1u;
             }
+            for (const auto slot : block.flatSlots) activeFlat.at(slot) = 1u;
             std::uint32_t condition = 0;
             TNode conditionValue{};
             const auto nullRootsBefore = conditionNullRoots;
@@ -133,7 +137,13 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
         if (!evaluateFlat || active[sourceIndex]) {
             for (std::uint32_t index = 0; index < source->dwordCount; index++) {
                 inaccessible = {};
-                if (!evaluator.Evaluate(TNode::SourceDword(program, sourceIndex, index), value.dwords[index])) {
+                const auto remainingBytes = source->dwordCount > 1u ? static_cast<std::size_t>(source->dwordCount - index) * sizeof(std::uint32_t) : 0u;
+                evaluator.SetDescriptorBytes(remainingBytes);
+                cleanEvaluator.SetDescriptorBytes(remainingBytes);
+                const bool evaluatedDword = evaluator.Evaluate(TNode::SourceDword(program, sourceIndex, index), value.dwords[index]);
+                evaluator.SetDescriptorBytes(0u);
+                cleanEvaluator.SetDescriptorBytes(0u);
+                if (!evaluatedDword) {
                     if (inaccessible.read != nullptr) {
                         if (debug) std::fprintf(stderr, "[srt] descriptor source %u reads inaccessible 0x%llx at pc 0x%x: zero words\n", sourceIndex, static_cast<unsigned long long>(inaccessible.address), inaccessible.read->Flags<MemoryFlags>().pc);
                         value.dwords.fill(0u);
@@ -158,6 +168,7 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
         flattened.resize(program.srtReads.size());
         for (std::uint32_t slot = 0; slot < program.srtReads.size(); ++slot) {
             const auto& read = program.srtReads[slot];
+            if (read.flatOffset < activeFlat.size() && activeFlat[read.flatOffset] == 0u) continue;
             const bool clean = read.flatOffset < cleanFlatSlots.size() && cleanFlatSlots[read.flatOffset] != 0u;
             auto& selected = clean ? cleanEvaluator : evaluator;
             // A pure slot's raw read is reachable from no root, so it was not evaluated (nor
@@ -183,7 +194,7 @@ bool evaluateRuntimeSources(const IrResourcePlan& program, std::span<const std::
             }
         }
         for (const auto& [sourceIndex, read] : zeroedSources) {
-            const auto pc = read.read->Flags<MemoryFlags>().pc;
+            const auto pc = read.read->template Flags<MemoryFlags>().pc;
             if (std::none_of(poisoned.begin(), poisoned.end(), [&](const SrtReadPoison& entry) { return entry.pc == pc && entry.address == read.address; })) {
                 char address[64];
                 std::snprintf(address, sizeof(address), "0x%llx at pc 0x%x", static_cast<unsigned long long>(read.address), pc);
@@ -230,9 +241,38 @@ std::string describeDifference(const std::vector<DescriptorValue>& compactResult
 }
 
 bool interpretRuntimeSources(const IrResourcePlan& program, std::span<const std::uint32_t> sources, const SrtRuntime& runtime, std::vector<DescriptorValue>& results, std::vector<std::uint32_t>& flat, bool evaluateFlat, std::span<const std::uint8_t> cleanFlatSlots, std::vector<std::uint8_t>& activeSources, std::vector<SrtReadPoison>* poison, std::uint32_t* nullRootReads) {
-    if (program.compact.values.empty()) return evaluateRuntimeSources<IrNode>(program, sources, runtime, results, flat, evaluateFlat, cleanFlatSlots, activeSources, poison, nullRootReads);
+    auto* trace = runtime.readTrace;
+    const auto leavesBefore = trace != nullptr ? trace->leaves.size() : 0;
+    const auto readsBefore = trace != nullptr ? trace->otherReads.size() : 0;
+    auto* use = runtime.userDataUse;
+    const auto baseBefore = use != nullptr ? use->asBase : 0;
+    const auto valueBefore = use != nullptr ? use->asValue : 0;
+    const auto useReadsBefore = use != nullptr ? use->reads.size() : 0;
+    const auto runWithRetry = [&](auto evaluateFn) {
+        for (std::uint32_t attempt = 0; attempt < 3u; ++attempt) {
+            if (attempt != 0u) {
+                if (trace != nullptr) {
+                    trace->leaves.resize(leavesBefore);
+                    trace->otherReads.resize(readsBefore);
+                    trace->leaf = nullptr;
+                }
+                if (use != nullptr) {
+                    use->asBase = baseBefore;
+                    use->asValue = valueBefore;
+                    use->reads.resize(useReadsBefore);
+                }
+            }
+            const SrtForceSyncScope forceSync(runtime, attempt == 2u);
+            const auto invalidationsBefore = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
+            const bool ok = evaluateFn();
+            if (!ok) return false;
+            if (runtime.descriptorScope == nullptr || runtime.descriptorScope(runtime.userContext, 0u) == invalidationsBefore) return true;
+        }
+        return false;
+    };
+    if (program.compact.values.empty()) return runWithRetry([&] { return evaluateRuntimeSources<IrNode>(program, sources, runtime, results, flat, evaluateFlat, cleanFlatSlots, activeSources, poison, nullRootReads); });
     prefetchCompactPlan(program.compact);
-    const bool evaluated = evaluateRuntimeSources<CompactNode>(program, sources, runtime, results, flat, evaluateFlat, cleanFlatSlots, activeSources, poison, nullRootReads);
+    const bool evaluated = runWithRetry([&] { return evaluateRuntimeSources<CompactNode>(program, sources, runtime, results, flat, evaluateFlat, cleanFlatSlots, activeSources, poison, nullRootReads); });
     static const bool verify = std::getenv("APS5_VERIFY_SRT_COMPACT") != nullptr;
     if (verify) {
         const auto compactReason = RuntimeSourceFailureReason();

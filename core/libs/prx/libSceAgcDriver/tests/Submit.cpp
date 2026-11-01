@@ -1,9 +1,13 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
@@ -30,13 +34,22 @@
 #include <windows.h>
 #endif
 
-extern "C" int APS5_VABI sceKernelCreateEqueue(KernelEqueue* eq, const char* name);
-extern "C" int APS5_VABI sceKernelDeleteEqueue(KernelEqueue eq);
-
 static_assert(sizeof(Packet) == 16);
 static_assert(offsetof(Packet, addr) == 0);
 static_assert(offsetof(Packet, dw_num) == 8);
 static_assert(offsetof(Packet, flags) == 12);
+
+namespace AgcDriver::DriverDetail {
+
+struct DriverTestAccess {
+    static std::uint64_t LabelTaken(std::uint32_t queue, const volatile std::uint32_t* address) {
+        auto& driver = Driver::Get();
+        std::lock_guard lock(driver.labelStoresMutex);
+        return driver.labelTakes.Taken(queue, reinterpret_cast<std::uintptr_t>(address));
+    }
+};
+
+}
 
 namespace {
 
@@ -88,7 +101,9 @@ void testValidation() {
     expectFailure([] { sceAgcDriverAgrSubmitDcb(nullptr); });
     expectFailure([] { sceAgcDriverSubmitAcb(0x20, nullptr); });
     expectFailure([&] { sceAgcDriverSubmitAcb(0, &packet); });
-    expectFailure([&] { sceAgcDriverSubmitAcb(0x58, &packet); });
+    check(sceAgcDriverSubmitAcb(0x58, &packet) == 0, "queue 0x58 submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    expectFailure([&] { sceAgcDriverSubmitAcb(0x59, &packet); });
     packet.dw_num = 2;
     expectFailure([&] { sceAgcDriverSubmitDcb(&packet); });
     packet.dw_num = 3;
@@ -113,6 +128,14 @@ void testValidation() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testThreadDimensionGroups() {
+    using AgcDriver::DriverDetail::ThreadDimensionGroups;
+    check(ThreadDimensionGroups(0, 64) == 0, "no threads need no groups");
+    check(ThreadDimensionGroups(64, 64) == 1 && ThreadDimensionGroups(65, 64) == 2, "a partial group still counts");
+    check(ThreadDimensionGroups(0xffffffffu, 1) == 0xffffffffu, "one thread per group keeps the thread count");
+    check(ThreadDimensionGroups(0xffffffffu, 64) == 0x4000000u, "a thread count near 2^32 wrapped before the division");
+}
+
 void testReadOnlyResummarize() {
     std::vector<std::uint32_t> commands;
     for (const auto [offset, value] : {std::pair{0x000u, 0x10u}, {0x200u, 0x007007f3u}, {0x010u, 0xa0000183u}, {0x011u, 0x20000180u}, {0x8eu, 0xffffffffu}, {0x8fu, 0u}, {0x1c4u, 0u}, {0x203u, 0u}}) {
@@ -129,12 +152,13 @@ void testClearState() {
     const auto shader = graphics.shader;
     const auto userConfig = graphics.userConfig;
     graphics.ClearContext();
-    check(graphics.context == AgcDriver::InitialContextRegisters(), "CLEAR_STATE retained context registers");
+    check(graphics.context == AgcDriver::ClearStateContextRegisters(), "CLEAR_STATE retained context registers");
     check(graphics.shader == shader && graphics.userConfig == userConfig, "CLEAR_STATE reset unrelated registers");
     check(graphics.context.count(0x1b3) == 1 && graphics.context.at(0x1b3) == 0 && graphics.context.count(0x1b4) == 1 && graphics.context.at(0x1b4) == 0, "CLEAR_STATE left SPI_PS_INPUT_ENA/ADDR unset");
+    check(graphics.context.at(0x1b6) == 2u, "CLEAR_STATE did not leave SPI_PS_IN_CONTROL at its clear-state NUM_INTERP of 2");
     graphics.context.emplace(0x10, 31);
     graphics.ClearContext();
-    check(graphics.context == AgcDriver::InitialContextRegisters(), "repeated CLEAR_STATE retained context registers");
+    check(graphics.context == AgcDriver::ClearStateContextRegisters(), "repeated CLEAR_STATE retained context registers");
 
     std::array<std::uint32_t, 3> words{0xc0001200, 0, 0};
     Packet packet{words.data(), 2, 0, {}};
@@ -195,11 +219,27 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverAddEqEvent(eq, 0, &graphicsTag) == 0, "graphics event registration failed");
     check(sceAgcDriverAddEqEvent(eq, 0x20, &computeTag) == 0, "compute event registration failed");
     expectFailure([] { sceAgcDriverAddEqEvent(0, 0, nullptr); });
+    struct Output final : AgcDriver::IVideoOutput, AgcDriver::IFlipRequest, std::enable_shared_from_this<Output> {
+        std::atomic<int> ready{0};
+        std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return shared_from_this(); }
+        void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override { ready.fetch_add(1); }
+        void Fail(std::exception_ptr error) noexcept override { if (!error) std::terminate(); }
+    };
+    const auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
+    std::array<std::uint32_t, 6> flip{AgcDriver::FlipPacketHeader, 7, 0xfffffffeu, 1, 0, 0};
+    Packet flipPacket{flip.data(), static_cast<std::uint32_t>(flip.size()), 0, {}};
+    std::array<KernelEvent, 2> events{};
+    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip-only queue submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->ready.load() == 1, "flip-only queue flip was not handed to its output");
+    check(AgcDriver::Graphics::HostImportFramesEnded() == 1, "the first flip did not end a host import frame");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 1 && sceAgcDriverGetEqEventType(events.data()) == 0, "flip on a queue that never requested a release interrupt did not raise its event");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip-only queue event was not cleared");
     std::array<std::uint32_t, 8> words{0xc0064900, 0, 1u << 24u, 0, 0, 0, 0, 0};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     check(sceAgcDriverSubmitDcb(&packet) == 0 && sceAgcDriverSubmitDcb(&packet) == 0, "interrupt submit failed");
     AgcDriverWaitIdle_nid_postfix();
-    std::array<KernelEvent, 2> events{};
     check(owner->GetTriggeredEvents(events.data(), 2) == 1, "graphics end-of-pipe interrupt was not delivered to its queue only");
     check(events[0].filter == -14 && events[0].udata == &graphicsTag && events[0].data == 2 && sceAgcDriverGetEqEventType(events.data()) == 0, "graphics end-of-pipe event encoding is wrong");
     check(sceAgcDriverGetEqContextId(events.data()) == 0, "graphics end-of-pipe event reports another context");
@@ -212,21 +252,47 @@ void testEndOfPipeInterrupts() {
     check(sceAgcDriverSubmitDcb(&packet) == 0, "plain release submit failed");
     AgcDriverWaitIdle_nid_postfix();
     check(owner->GetTriggeredEvents(events.data(), 2) == 0, "release without INT_SEL raised an interrupt");
-    struct Output final : AgcDriver::IVideoOutput, AgcDriver::IFlipRequest, std::enable_shared_from_this<Output> {
-        std::atomic<int> ready{0};
-        std::shared_ptr<AgcDriver::IFlipRequest> Reserve(const AgcDriver::FlipInfo&) override { return shared_from_this(); }
-        void GpuReady(const std::shared_ptr<AgcDriver::FrameTiming>&) override { ready.fetch_add(1); }
-        void Fail(std::exception_ptr error) noexcept override { if (!error) std::terminate(); }
-    };
-    const auto output = std::make_shared<Output>();
-    AgcDriverRegisterVideoOutput_nid_postfix(7, output);
-    std::array<std::uint32_t, 6> flip{AgcDriver::FlipPacketHeader, 7, 0xfffffffeu, 1, 0, 0};
-    Packet flipPacket{flip.data(), static_cast<std::uint32_t>(flip.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip submit failed");
+    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip after a release interrupt submit failed");
     AgcDriverWaitIdle_nid_postfix();
-    check(output->ready.load() == 1, "flip was not handed to its output");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 1 && events[0].udata == &graphicsTag && events[0].data == 1 && sceAgcDriverGetEqEventType(events.data()) == 0, "flip did not raise the graphics end-of-pipe event");
-    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip event was not cleared");
+    check(output->ready.load() == 2, "flip after a release interrupt was not handed to its output");
+    check(AgcDriver::Graphics::HostImportFramesEnded() == 2, "a flip packet executed on the queue did not end a host import frame");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 0, "flip on a queue that already raised its own release interrupt raised a second event");
+    words[2] = 1u << 24u;
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "release before sustained flips submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1, "a release interrupt did not deliver on a queue whose flip event is suppressed");
+    std::uint32_t sustainedFlips = 0;
+    std::uint32_t flipsUntilEvent = 0;
+    while (sustainedFlips < 8 && flipsUntilEvent == 0) {
+        check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "sustained flip submit failed");
+        AgcDriverWaitIdle_nid_postfix();
+        ++sustainedFlips;
+        check(output->ready.load() == static_cast<int>(2 + sustainedFlips), "sustained flip was not handed to its output");
+        if (owner->GetTriggeredEvents(events.data(), 2) != 0) flipsUntilEvent = sustainedFlips;
+    }
+    check(flipsUntilEvent != 0, "a flip never raised an event again on a queue whose own release interrupts stopped");
+    check(flipsUntilEvent > 2, "a flip raised an event within two flips of the queue's own release interrupt");
+    check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip after the latch cleared submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(output->ready.load() == static_cast<int>(3 + sustainedFlips), "flip after the latch cleared was not handed to its output");
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1, "a flip did not raise an event after the latch cleared");
+    words[2] = 1u << 24u;
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "release after a cleared latch submit failed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(owner->GetTriggeredEvents(events.data(), 2) == 1, "a release interrupt did not deliver after the latch cleared");
+    for (int index = 0; index < 2; ++index) {
+        check(sceAgcDriverSubmitDcb(&flipPacket) == 0, "flip paired with a release interrupt submit failed");
+        AgcDriverWaitIdle_nid_postfix();
+        check(output->ready.load() == static_cast<int>(4 + sustainedFlips + index), "flip paired with a release interrupt was not handed to its output");
+        check(owner->GetTriggeredEvents(events.data(), 2) == 0, "a flip raised an event within two flips of the queue's own release interrupt");
+    }
+    const auto framesBefore = AgcDriver::Graphics::HostImportFramesEnded();
+    const auto readyBefore = output->ready.load();
+    std::thread([] { AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{7, -1, 1, 0}); }).join();
+    AgcDriverWaitIdle_nid_postfix();
+    static_cast<void>(owner->GetTriggeredEvents(events.data(), 2));
+    check(output->ready.load() == readyBefore + 1, "flip from a thread that never submitted queue 0 was not handed to its output");
+    check(AgcDriver::Graphics::HostImportFramesEnded() == framesBefore + 1, "a CPU flip from a thread that never submitted queue 0 did not end a host import frame");
     AgcDriverUnregisterVideoOutput_nid_postfix(7, output);
     alignas(8) static volatile std::uint64_t label = 0;
     const auto labelAddress = reinterpret_cast<std::uintptr_t>(&label);
@@ -368,6 +434,85 @@ void testLabelHeldAtSubmission() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testLabelTakenAndResetInOneSubmission() {
+    alignas(64) static volatile std::uint32_t gate = 0, label = 0, first = 0, waiting = 0, second = 0;
+    submit(0x20, commands(waitEqual(&gate, 1), waitEqual(&label, 1), writeData(&label, 0), writeData(&first, 1), writeData(&waiting, 1), waitEqual(&label, 1), writeData(&second, 1)));
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&label, 1, "producer label never landed");
+    gate = 1;
+    waitFor(&waiting, 1, "consumer never reached its second label wait");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(first == 1 && second == 0, "a label store its own queue had taken and reset satisfied the queue's next wait, or the wait expired");
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&second, 1, "consumer did not resume after a new producer label");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testLabelTakenAndResetByEarlierSubmission() {
+    alignas(64) static volatile std::uint32_t gate = 0, label = 0, first = 0, second = 0;
+    submit(0x20, commands(waitEqual(&gate, 1), waitEqual(&label, 1), writeData(&label, 0), writeData(&first, 1)));
+    submit(0x20, commands(waitEqual(&label, 1), writeData(&label, 0), writeData(&second, 1)));
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&label, 1, "producer label never landed");
+    gate = 1;
+    waitFor(&first, 1, "consumer never passed its first label wait");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(second == 0, "a label store an earlier submission of the queue had taken and reset satisfied a later submission's wait, or the wait expired");
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&second, 1, "the later submission did not resume after a new producer label");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testLabelTakesRetire() {
+    using AgcDriver::DriverDetail::LabelTakes;
+    auto takes = std::make_unique<LabelTakes>();
+    constexpr std::uint64_t label = 0x1000, other = 0x2000;
+    takes->Pass(0x20, label, 10);
+    check(takes->MayHavePass(0x20, label) && takes->Taken(0x20, label) == 0, "a passed wait was not kept for the store that takes it");
+    takes->Take(0x20, label);
+    check(takes->Taken(0x20, label) == 10 && !takes->MayHavePass(0x20, label), "the queue's own store did not turn its pass into a take");
+    takes->Retire(0x20, 9);
+    check(takes->Taken(0x20, label) == 10, "a take was dropped while a submission of the queue entered before it could still wait");
+    takes->Retire(0x28, 20);
+    check(takes->Taken(0x20, label) == 10, "another queue's submission retired a take");
+    takes->Retire(0x20, 10);
+    check(takes->Taken(0x20, label) == 0 && takes->Empty(), "a take was kept after every submission of the queue that could wait entered after it");
+    takes->Pass(0x20, label, 30);
+    takes->Pass(0x20, label, 40);
+    takes->Retire(0x20, 30);
+    check(takes->MayHavePass(0x20, label), "an older pass on the dword retired its newer pass");
+    takes->Take(0x20, label);
+    takes->Retire(0x20, 39);
+    check(takes->Taken(0x20, label) == 40, "a take was retired by a submission entered before it");
+    takes->Pass(0x20, other, 50);
+    takes->Pass(0x28, label, 50);
+    takes->Retire(0x20, 50);
+    check(takes->Taken(0x20, label) == 0 && !takes->MayHavePass(0x20, other), "a submission of the queue entered after its passes and take did not retire them");
+    check(takes->MayHavePass(0x28, label) && !takes->Empty(), "a submission of one queue retired another queue's pass");
+    takes->Retire(0x28, 50);
+    check(takes->Empty(), "a pass was kept after every submission of its queue entered after it");
+}
+
+void testLabelTakeRetiredByLaterSubmission() {
+    using AgcDriver::DriverDetail::DriverTestAccess;
+    alignas(64) static volatile std::uint32_t gate = 0, label = 0, first = 0, second = 0, third = 0;
+    submit(0x20, commands(waitEqual(&gate, 1), waitEqual(&label, 1), writeData(&label, 0), writeData(&first, 1)));
+    submit(0x20, commands(waitEqual(&label, 1), writeData(&second, 1)));
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&label, 1, "producer label never landed");
+    gate = 1;
+    waitFor(&first, 1, "consumer never passed its first label wait");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(second == 0, "a label store an earlier submission of the queue had taken and reset satisfied a later submission's wait, or the wait expired");
+    check(DriverTestAccess::LabelTaken(0x20, &label) != 0, "a take was dropped while a submission of the queue entered before it was waiting");
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&second, 1, "the later submission did not resume after a new producer label");
+    submit(0x20, commands(writeData(&third, 1)));
+    waitFor(&third, 1, "a submission entered after the take never ran");
+    check(DriverTestAccess::LabelTaken(0x20, &label) == 0, "a take was kept after a submission of the queue entered after it started");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testWaitFreeSubmissionAfterEarlierQueue0Work() {
     alignas(64) static volatile std::uint32_t first = 0, second = 0;
     constexpr std::uint32_t writes = 20000;
@@ -401,6 +546,31 @@ void testWaitFreeSubmissionBehindHeldOne() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testQueue0SubmissionAfterEarlierWaitFreeWork() {
+    alignas(64) static volatile std::uint32_t first = 0, second = 0;
+    constexpr std::uint32_t writes = 20000;
+    std::vector<std::uint32_t> words;
+    for (std::uint32_t i = 1; i <= writes; ++i) {
+        const auto write = writeData(&first, i);
+        words.insert(words.end(), write.begin(), write.end());
+    }
+    submit(0x20, words);
+    submit(0, commands(writeData(&second, 1)));
+    waitFor(&second, 1, "queue 0's submission never ran");
+    check(first == writes, "queue 0 ran a submission before another queue's earlier wait-free submission finished");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
+void testQueue0SubmissionBehindWaitingQueue() {
+    alignas(64) static volatile std::uint32_t label = 0, other = 0, done = 0;
+    submit(0x20, commands(waitEqual(&label, 1)));
+    submit(0x20, commands(writeData(&other, 1)));
+    submit(0, commands(writeData(&label, 1), writeData(&done, 1)));
+    check(waitFor(&done, 1, "queue 0 never ran while another queue waited on it") < std::chrono::milliseconds(500), "queue 0 waited for a wait-free submission queued behind another queue's wait on queue 0");
+    waitFor(&other, 1, "the wait-free submission behind the satisfied wait never ran");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testMultiAcbs() {
     alignas(64) static volatile std::uint32_t value = 0, done = 0, gate = 0;
     check(sceAgcDriverSubmitMultiAcbs(0x20, nullptr, nullptr, 0) == 0, "empty multi-ACB submit failed");
@@ -413,6 +583,9 @@ void testMultiAcbs() {
     check(sceAgcDriverSubmitMultiAcbs(0, nullptr, nullptr, 0) == 0, "empty multi-ACB submit checked its queue");
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, nullptr, sizes.data(), 1); });
     expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, addresses.data(), nullptr, 1); });
+    std::array<std::uint32_t*, 1> nullAcbs{nullptr};
+    std::array<std::uint32_t, 1> nonZeroAcbSizes{4};
+    expectFailure([&] { sceAgcDriverSubmitMultiAcbs(0x20, nullAcbs.data(), nonZeroAcbSizes.data(), 1); });
     check(value == 0, "a rejected multi-ACB submit ran a command buffer");
     for (std::uint32_t queue : {0x20u, 0x57u}) {
         value = 0;
@@ -468,6 +641,11 @@ void testMultiSubmissions() {
     expectFailure([&] { sceAgcDriverAgrSubmitMultiDcbs(invalidAddresses.data(), nullptr, 1); });
     expectFailure([&] { sceAgcDriverSubmitMultiDcbs(invalidAddresses.data(), invalidSizes.data(), 1); });
     expectFailure([&] { sceAgcDriverAgrSubmitMultiDcbs(invalidAddresses.data(), invalidSizes.data(), 1); });
+    std::array<std::uint32_t*, 1> nullAddresses{nullptr};
+    std::array<std::uint32_t, 1> nonZeroSizes{4};
+    expectFailure([&] { sceAgcDriverSubmitMultiDcbs(nullAddresses.data(), nonZeroSizes.data(), 1); });
+    expectFailure([&] { sceAgcDriverAgrSubmitMultiDcbs(nullAddresses.data(), nonZeroSizes.data(), 1); });
+    expectFailure([&] { sceAgcDriverSubmitMultiDcbs(invalidAddresses.data(), invalidSizes.data(), std::numeric_limits<std::uint32_t>::max()); });
     for (bool agr : {false, true}) {
         value = 0;
         done = 0;
@@ -517,6 +695,44 @@ void testLargeDataFill() {
     GuestHeap::GuestHeapFree_nid_postfix(produced);
 }
 
+void labelResetByItsQueueBeforeItLanded(bool wide, std::size_t resetWord) {
+    alignas(64) static volatile std::uint32_t gate = 0, second = 0;
+    gate = 0;
+    second = 0;
+    constexpr std::uint32_t fillBytes = 4u << 20u, blockBytes = fillBytes + (1u << 20u);
+    auto* block = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, blockBytes));
+    auto* label = static_cast<volatile std::uint32_t*>(block + (fillBytes + 65536) / 4);
+    auto* reset = label + resetWord;
+    const std::uint64_t awaited = 1ull << (resetWord * 32u);
+    submit(0x20, commands(dataFill(block, 0, blockBytes)));
+    AgcDriverWaitIdle_nid_postfix();
+    const auto gpuLabelsBefore = AgcDriver::DriverDetail::gpuLabels.load();
+    if (wide) submit(0x20, commands(waitEqual(&gate, 1), waitEqual64(label, awaited, ~0ull), dataFill(block, 0x5a5a5a5au, fillBytes), writeData(reset, 0), waitEqual64(label, awaited, ~0ull), writeData(&second, 1)));
+    else submit(0x20, commands(waitEqual(&gate, 1), waitEqual(label, 1), dataFill(block, 0x5a5a5a5au, fillBytes), writeData(label, 0), waitEqual(label, 1), writeData(&second, 1)));
+    submit(0, commands(writeData(reset, 1)));
+    waitFor(reset, 1, "producer label never landed");
+    gate = 1;
+    waitFor(reset, 0, "the consumer's reset of the label never landed");
+    check(AgcDriver::DriverDetail::gpuLabels.load() > gpuLabelsBefore, "the consumer's reset of the label was not stored on the GPU behind the fill");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(second == 0, !wide ? "a wait passed on a label value its own queue had already reset, before the reset reached memory, or the wait expired"
+                       : resetWord == 0 ? "an 8-byte wait passed on a label whose low dword its own queue had already reset, before the reset reached memory, or the wait expired"
+                                        : "an 8-byte wait passed on a label whose high dword its own queue had already reset, before the reset reached memory, or the wait expired");
+    submit(0, commands(writeData(reset, 1)));
+    waitFor(&second, 1, "the consumer did not resume after a new producer label");
+    AgcDriverWaitIdle_nid_postfix();
+    GuestHeap::GuestHeapFree_nid_postfix(block);
+}
+
+void testLabelResetByItsQueueBeforeItLanded() {
+    labelResetByItsQueueBeforeItLanded(false, 0);
+}
+
+void testWideLabelPartlyResetByItsQueueBeforeItLanded() {
+    labelResetByItsQueueBeforeItLanded(true, 0);
+    labelResetByItsQueueBeforeItLanded(true, 1);
+}
+
 void testCopyIntoHostMemory() {
     constexpr std::size_t words = 32768;
     constexpr auto bytes = static_cast<std::uint32_t>(words * 4);
@@ -536,6 +752,48 @@ void testCopyIntoHostMemory() {
         check(std::equal(destination.begin(), destination.end(), produced), label ? "a copy into host memory behind a label into its destination lost bytes" : "a copy into host memory did not see the GPU copy into its source");
         check(AgcDriver::DriverDetail::copiesToHostMemory.load() == copiesBefore + 1, "a copy into host memory drained instead of syncing its source");
     }
+    GuestHeap::GuestHeapFree_nid_postfix(source);
+    GuestHeap::GuestHeapFree_nid_postfix(produced);
+}
+
+void testSmallCopyBehindPendingSource() {
+    alignas(64) static volatile std::uint32_t copied = 0, settledCopied = 0, hostCopied = 0;
+    constexpr std::size_t words = 32768;
+    constexpr auto bytes = static_cast<std::uint32_t>(words * 4);
+    constexpr std::size_t smallWords = 1024;
+    constexpr auto smallBytes = static_cast<std::uint32_t>(smallWords * 4);
+    auto* produced = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    auto* source = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, bytes));
+    auto* destination = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, smallBytes));
+    for (std::size_t i = 0; i < words; ++i) {
+        produced[i] = 0xc3000000u | static_cast<std::uint32_t>(i);
+        source[i] = 0x3c000000u | static_cast<std::uint32_t>(i);
+    }
+    std::fill(destination, destination + smallWords, 0u);
+    const auto before = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    submit(0, commands(memoryCopy(source, produced, bytes), memoryCopy(destination, source, smallBytes), writeData(&copied, 1)));
+    waitFor(&copied, 1, "the label after a small copy behind a pending source never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::equal(destination, destination + smallWords, produced), "a small copy did not see the GPU copy into its source before it");
+    check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == before, "a small copy queued behind the pipeline write into its source was recorded inline");
+    std::fill(destination, destination + smallWords, 0u);
+    const auto settled = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    submit(0, commands(memoryCopy(destination, produced, smallBytes), writeData(&settledCopied, 1)));
+    waitFor(&settledCopied, 1, "the label after a small copy of a settled source never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::equal(destination, destination + smallWords, produced), "a small copy of a settled source lost bytes");
+    check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == settled, "a small copy of a settled source was recorded on the GPU");
+    std::vector<std::uint32_t> hostDestination(smallWords);
+    for (std::size_t i = 0; i < words; ++i) source[i] = 0x3c000000u | static_cast<std::uint32_t>(i);
+    const auto hostCopies = AgcDriver::DriverDetail::copiesBehindPendingSources.load();
+    const auto aliasChecks = AgcDriver::VulkanDevice::CopyAliasCounts().noSource;
+    submit(0, commands(memoryCopy(source, produced, bytes), memoryCopy(hostDestination.data(), source, smallBytes), writeData(&hostCopied, 1)));
+    waitFor(&hostCopied, 1, "the label after a small copy into memory that is not imported never landed");
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::equal(hostDestination.begin(), hostDestination.end(), produced), "a small copy into memory that is not imported did not see the GPU copy into its source");
+    check(AgcDriver::DriverDetail::copiesBehindPendingSources.load() == hostCopies, "a small copy into memory that is not imported was recorded on the GPU");
+    check(AgcDriver::VulkanDevice::CopyAliasCounts().noSource == aliasChecks + 1, "a small copy into memory that is not imported went through the GPU copy before its CPU path");
+    GuestHeap::GuestHeapFree_nid_postfix(destination);
     GuestHeap::GuestHeapFree_nid_postfix(source);
     GuestHeap::GuestHeapFree_nid_postfix(produced);
 }
@@ -784,6 +1042,36 @@ void testRegisteredVertexWorkgroupRouting() {
     check(expectFailure([&] { static_cast<void>(VertexWorkgroupRequired(queue, registry)); }).find("reserved graphics program address") != std::string::npos, "reserved NGG program address bits were accepted");
 }
 
+void testRegisteredFastLaunchWorkgroupVertex() {
+    alignas(256) static const std::array<std::uint32_t, 6> code{
+        0xd8340000u, 0x00000100u, 0xbf8a0000u, 0xf80008cfu, 0x00000000u, 0xbf810000u,
+    };
+    struct Header {
+        Shader shader{};
+        ShaderUserData userData{};
+        std::array<ShaderRegister, 4> registers{};
+    };
+    alignas(8) static Header header{};
+    const auto address = reinterpret_cast<std::uintptr_t>(code.data());
+    header.shader.file_header = 0x34333231u;
+    header.shader.version = 0x18u;
+    header.shader.header_size = sizeof(Header);
+    header.shader.shader_size = sizeof(code);
+    header.shader.code = code.data();
+    header.shader.type = 2u;
+    header.shader.user_data = &header.userData;
+    header.registers = {{{0x0c8u, static_cast<std::uint32_t>(address >> 8u)}, {0x0c9u, static_cast<std::uint32_t>(address >> 40u)}, {0x08au, 0x022c0245u}, {0x08bu, 0x0009002au}}};
+    header.shader.sh_registers = header.registers.data();
+    header.shader.num_sh_registers = header.registers.size();
+    AgcDriverRegisterShader_nid_postfix(&header.shader);
+    const std::array<const Shader*, 1> stages{&header.shader};
+    const std::array<ShaderRegister, 6> context{{
+        {0x2d5u, 0x00482030u}, {0x1ffu, 32u}, {0x2ceu, 32u}, {0x2d3u, 64u}, {0x29bu, 2u}, {0x2abu, 4u},
+    }};
+    const std::array<ShaderRegister, 2> primitive{{{0x242u, 1u}, {0x25bu, 0x201u}}};
+    AgcDriverResolveGraphicsStagesAbi_nid_postfix(stages, context, primitive);
+}
+
 void testWorkerFailure() {
     std::array<std::uint32_t, 5> words{0xc0031500, 1, 1, 1, 0x41};
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
@@ -804,6 +1092,12 @@ void testWorkerFailure() {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--eop-interrupts") {
+            testEndOfPipeInterrupts();
+            LibcRunShutdown_nid_postfix();
+            std::puts("AGC end-of-pipe interrupt queue mode tests passed");
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--readonly-resummarize") {
             testReadOnlyResummarize();
             LibcRunShutdown_nid_postfix();
@@ -812,6 +1106,13 @@ int main(int argc, char** argv) {
         }
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2 && std::string_view(argv[1]) == "--small-copy-sync") {
+            testHeaderWithoutProgramAddress();
+            testSmallCopyBehindPendingSource();
+            LibcRunShutdown_nid_postfix();
+            std::puts("Small copies with APS5_COPY_SYNC passed");
+            return 0;
+        }
         alignas(256) std::array<std::uint32_t, 64> rawCode{};
         rawCode.fill(0xbf800000);
         rawCode[0] = 0xbe8003ff;
@@ -835,7 +1136,8 @@ int main(int argc, char** argv) {
         });
         for (auto& reader : readers) reader.join();
         for (const auto& snapshot : concurrent) check(snapshot == branched, "concurrent raw compute readers lost snapshot reuse");
-        alignas(256) std::array<std::array<std::uint32_t, 64>, 65> programs{};
+        struct alignas(256) RawProgram : std::array<std::uint32_t, 64> {};
+        std::vector<RawProgram> programs(4097);
         for (auto& program : programs) program[0] = 0xbf810000;
         const auto firstAddress = reinterpret_cast<std::uintptr_t>(programs.front().data());
         readers.clear();
@@ -845,6 +1147,9 @@ int main(int argc, char** argv) {
         for (auto& reader : readers) reader.join();
         for (const auto& snapshot : concurrent) check(snapshot == concurrent.front(), "concurrent raw compute misses duplicated snapshots");
         const auto evicted = AgcDriver::DriverDetail::ReadRawShader(firstAddress);
+        for (std::size_t i = 1; i <= 400; ++i)
+            AgcDriver::DriverDetail::ReadRawShader(reinterpret_cast<std::uintptr_t>(programs[i].data()));
+        check(AgcDriver::DriverDetail::ReadRawShader(firstAddress) == evicted, "raw shader cache evicted a program while a title used only 401");
         for (std::size_t i = 1; i < programs.size(); ++i)
             AgcDriver::DriverDetail::ReadRawShader(reinterpret_cast<std::uintptr_t>(programs[i].data()));
         check(AgcDriver::DriverDetail::ReadRawShader(firstAddress) != evicted && evicted->code[0] == 0xbf810000,
@@ -886,25 +1191,36 @@ int main(int argc, char** argv) {
         testProgramWorkgroupUse();
         testVertexTailSnapshots();
         testRegisteredVertexWorkgroupRouting();
+        testRegisteredFastLaunchWorkgroupVertex();
         testEvents();
         testValidation();
+        testThreadDimensionGroups();
         testClearState();
         testSubmissions();
         testEndOfPipeInterrupts();
         testLabelStoredSinceSubmission();
         testEndOfPipeLabelsWithoutWork();
         testLabelHeldAtSubmission();
+        testLabelTakenAndResetInOneSubmission();
+        testLabelTakenAndResetByEarlierSubmission();
+        testLabelTakesRetire();
+        testLabelTakeRetiredByLaterSubmission();
         testWideLabelStoredSinceSubmission();
         testWaitFreeSubmissionAfterEarlierQueue0Work();
         testWaitFreeSubmissionQueue0WaitsOn();
         testMultiAcbs();
         testWaitFreeSubmissionBehindHeldOne();
         testWaitFreeSubmissionTheCpuWaitsFor();
+        testQueue0SubmissionAfterEarlierWaitFreeWork();
+        testQueue0SubmissionBehindWaitingQueue();
         testMultiSubmissions();
         testShaderHeaderAlignment();
         testHeaderWithoutProgramAddress();
         testCopyIntoHostMemory();
         testLargeDataFill();
+        testLabelResetByItsQueueBeforeItLanded();
+        testWideLabelPartlyResetByItsQueueBeforeItLanded();
+        testSmallCopyBehindPendingSource();
         testRegisteredFloatMode();
         testDispatchFloatMode();
         testReadOnlyResummarize();

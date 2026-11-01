@@ -21,7 +21,7 @@ EXPECTED = [
 ]
 
 
-def repository(root, fillers):
+def repository(root, fillers, exports=0):
     def git(*args):
         subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test",
                         "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
@@ -39,12 +39,18 @@ def repository(root, fillers):
     write("docs/dev/debt/libSceExample.md",
           f"# libSceExample technical debt\n\n### Silent stubs\n\n- [Known](../../../{EXPORT}) - layout unknown.\n")
     write("core/libs/prx/libSceOther/src/Other.cpp", "int APS5_VABI sceShared() { return now(); }\n")
+    if exports:
+        names = [f"sceMany{index:04d}" + "LongExportName" * 6 for index in range(exports)]
+        write("core/libs/prx/libSceOther/src/Many.cpp",
+              f"int APS5_VABI {names[-1]}Extra() {{ return now(); }}\nint APS5_VABI {names[-1]}() {{ return now(); }}\n")
     write("removed.txt", "removed\n")
     git("add", ".")
     git("commit", "-qm", "docs: add base")
     git("tag", "base")
     write(EXPORT, "int APS5_VABI sceExample() { return 0; }\nint APS5_VABI sceShared() { return now(); }\nint value; // note\n")
     write(UNLISTED, "int APS5_VABI sceUnlisted() { return 0; }\n")
+    if exports:
+        write("core/libs/prx/libSceMany/Export.cpp", "".join(f"int APS5_VABI {name}() {{ return now(); }}\n" for name in names))
     write("data.txt", b"\xff\xfe not utf-8\n")
     write("docs/user/Café.md", "# Café\n")
     (root / "removed.txt").unlink()
@@ -109,6 +115,16 @@ class BlobReadTests(unittest.TestCase):
         many_findings, many = self.run_checks(self.roots[40])
         self.assertEqual(many_findings, few_findings)
         self.assertEqual(many, few)
+
+    def test_many_exports_keep_duplicate_detection(self):
+        root = Path(self.directory.name) / "many-exports"
+        root.mkdir()
+        repository(root, 2, exports=400)
+        findings, _ = self.run_checks(root)
+        self.assertEqual(findings, sorted(EXPECTED + [
+            ("duplicate-export", "core/libs/prx/libSceMany/Export.cpp", 400,
+             "sceMany0399" + "LongExportName" * 6 + " is also in libSceOther")
+        ]))
 
 
 if __name__ == "__main__":

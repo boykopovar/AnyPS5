@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
@@ -98,12 +99,26 @@ std::vector<std::uint32_t> Pm4Packet(std::uint32_t opcode, std::initializer_list
     return words;
 }
 
+Graphics::Recorder* testRecorder = nullptr;
+Graphics::Recorder* driverRecorder = nullptr;
+
+void UseTestDevice(AgcDriver::VulkanDevice& device) {
+    testRecorder = AgcDriver::VulkanDeviceTestAccess::ContextOf(device).recorder;
+    Require(testRecorder != nullptr, "depth clear: the test device has no recorder");
+    testRecorder->Activate();
+}
+
 void Submit(std::vector<std::vector<std::uint32_t>> packets) {
     std::vector<std::uint32_t> words;
     for (const auto& packet : packets) words.insert(words.end(), packet.begin(), packet.end());
     Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    if (driverRecorder != nullptr) driverRecorder->Activate();
     Require(sceAgcDriverSubmitDcb(&dcb) == 0, "depth clear: DCB submission failed");
     AgcDriverWaitIdle_nid_postfix();
+    if (driverRecorder == nullptr) {
+        driverRecorder = Graphics::Recorder::Active();
+        Require(driverRecorder != nullptr && driverRecorder != testRecorder, "depth clear: the driver's device did not activate its own recorder");
+    }
 }
 
 std::array<std::uint32_t, 8> TextureDescriptor(std::uint64_t address, std::uint32_t format, std::uint32_t tile = TileLinear, std::uint32_t type = Type2DArray) {
@@ -284,6 +299,7 @@ void RequireDepthTexels(AgcDriver::VulkanDevice& device, const GuestBlock& plane
 }
 
 Graphics::DepthClearStatistics ClearSequence(AgcDriver::VulkanDevice& device, const Shaders& shaders, int mode) {
+    UseTestDevice(device);
     Graphics::SetDepthPlaneClearForTest(mode != 0);
     const auto before = Graphics::DepthClearCounts();
     const std::string label = "mode " + std::to_string(mode) + ": ";
@@ -341,6 +357,7 @@ Graphics::DepthClearStatistics ClearSequence(AgcDriver::VulkanDevice& device, co
 }
 
 void IntegerViewCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, int mode) {
+    UseTestDevice(device);
     Graphics::SetDepthPlaneClearForTest(mode != 0);
     const auto before = Graphics::DepthClearCounts();
     const std::string label = "integer view, mode " + std::to_string(mode) + ": ";
@@ -362,6 +379,7 @@ void IntegerViewCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, in
 }
 
 void DriverMatchCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, int mode) {
+    UseTestDevice(device);
     Graphics::SetDepthPlaneClearForTest(mode != 0);
     const auto before = Graphics::DepthClearCounts();
     const std::string label = "driver submit, mode " + std::to_string(mode) + ": ";
@@ -379,6 +397,7 @@ void DriverMatchCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, in
 }
 
 void SixteenBitCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, int mode) {
+    UseTestDevice(device);
     Graphics::SetDepthPlaneClearForTest(mode != 0);
     const auto before = Graphics::DepthClearCounts();
     const std::string label = "16-bit plane, mode " + std::to_string(mode) + ": ";
@@ -443,6 +462,7 @@ void SixteenBitCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, int
 }
 
 void StencilCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, int mode) {
+    UseTestDevice(device);
     Graphics::SetDepthPlaneClearForTest(mode != 0);
     const auto before = Graphics::DepthClearCounts();
     const std::string label = "depth and stencil, mode " + std::to_string(mode) + ": ";
@@ -462,6 +482,40 @@ void StencilCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, int mo
     const auto difference = Difference(Graphics::DepthClearCounts(), before);
     if (mode == 0) Require(difference.matched == 0u && difference.clears == 0u, label + "the lever counted with the switch off");
     else Require(difference.clears == 1u, label + "the clear was not taken (" + std::to_string(difference.clears) + " clears, " + std::to_string(Declined(difference)) + " declined)");
+}
+
+void PlaneFillCase(AgcDriver::VulkanDevice& device, const Shaders& shaders, int mode) {
+    UseTestDevice(device);
+    Graphics::SetDepthPlaneClearForTest(mode != 0);
+    const auto before = Graphics::DepthClearCounts();
+    const std::string label = "plane fill, mode " + std::to_string(mode) + ": ";
+    auto& code = NewBlock();
+    std::memcpy(code.Data(), ClearKernel.data(), sizeof(ClearKernel));
+    auto& plane = NewBlock();
+    auto& color = NewBlock();
+    const Surface surface{plane.Address(), 0, 0, false, VK_FORMAT_D32_SFLOAT};
+    const auto planeBytes = static_cast<std::size_t>(Graphics::DepthSliceBytes({Width, Height}, 4u));
+    const auto drawLess = [&] { return Draw(device, shaders, surface, {.depthCompare = VK_COMPARE_OP_LESS}); };
+    const auto drawGreater = [&] { return Draw(device, shaders, surface, {.depthCompare = VK_COMPARE_OP_GREATER}); };
+    Require(Draw(device, shaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == Covered, label + "the producer did not cover the plane");
+    Require(drawLess() == 0u, label + "the plane does not hold the 0.5 the producer wrote");
+
+    Graphics::NoteDepthMetadataFill(plane.Address(), planeBytes, std::bit_cast<std::uint32_t>(0.125f));
+    Require(drawGreater() == Covered, label + "a plane fill of 0.125 did not clear the depth");
+    Graphics::NoteDepthMetadataFill(plane.Address(), planeBytes, std::bit_cast<std::uint32_t>(1.0f));
+    SetColor(color, 0.25f);
+    RunClear(device, code, plane, color, Format32Float, 8, 4);
+    Require(drawLess() == 0u, label + "a clear to 0.25 after a plane fill of 1.0 left the fill in the depth");
+    Require(drawGreater() == Covered, label + "a clear to 0.25 after a plane fill of 1.0 did not leave 0.25 everywhere");
+
+    SetColor(color, 1.0f);
+    RunClear(device, code, plane, color, Format32Float, 8, 4);
+    Graphics::NoteDepthMetadataFill(plane.Address(), planeBytes, std::bit_cast<std::uint32_t>(0.125f));
+    Require(drawLess() == 0u, label + "a plane fill of 0.125 after a clear to 1.0 left the clear in the depth");
+    Require(drawGreater() == Covered, label + "a plane fill of 0.125 after a clear to 1.0 did not leave 0.125 everywhere");
+    const auto difference = Difference(Graphics::DepthClearCounts(), before);
+    if (mode == 0) Require(difference.matched == 0u && difference.clears == 0u, label + "the lever counted with the switch off");
+    else Require(difference.clears == 2u, label + "the lever took " + std::to_string(difference.clears) + " clears, expected 2");
 }
 
 }
@@ -502,6 +556,7 @@ int main() {
         for (const int mode : {0, 1}) run(mode == 0 ? "integer view, switch off" : "integer view, lever", [&] { IntegerViewCase(*device, shaders, mode); });
         for (const int mode : {0, 1}) run(mode == 0 ? "16-bit plane, switch off" : "16-bit plane, lever", [&] { SixteenBitCase(*device, shaders, mode); });
         for (const int mode : {0, 1}) run(mode == 0 ? "depth and stencil, switch off" : "depth and stencil, lever", [&] { StencilCase(*device, shaders, mode); });
+        for (const int mode : {0, 1}) run(mode == 0 ? "plane fill, switch off" : "plane fill, lever", [&] { PlaneFillCase(*device, shaders, mode); });
         for (const int mode : {0, 1}) run(mode == 0 ? "driver submit, switch off" : "driver submit, lever", [&] { DriverMatchCase(*device, shaders, mode); });
         Graphics::SetDepthPlaneClearForTest(true);
         LibcRunShutdown_nid_postfix();

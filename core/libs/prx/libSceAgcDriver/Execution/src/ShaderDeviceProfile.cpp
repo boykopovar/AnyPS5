@@ -52,6 +52,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     checkFeature(spv::CapabilityImageGatherExtended, core.shaderImageGatherExtended == VK_TRUE, "shaderImageGatherExtended");
     checkFeature(spv::CapabilityClipDistance, core.shaderClipDistance == VK_TRUE, "shaderClipDistance");
     checkFeature(spv::CapabilityMinLod, core.shaderResourceMinLod == VK_TRUE, "shaderResourceMinLod");
+    checkFeature(spv::CapabilityInterpolationFunction, core.sampleRateShading == VK_TRUE, "sampleRateShading");
     checkFeature(spv::CapabilityStorageImageMultisample, core.shaderStorageImageMultisample == VK_TRUE, "shaderStorageImageMultisample");
     checkFeature(spv::CapabilityStorageImageReadWithoutFormat, core.shaderStorageImageReadWithoutFormat == VK_TRUE, "shaderStorageImageReadWithoutFormat");
     checkFeature(spv::CapabilityStorageImageWriteWithoutFormat, core.shaderStorageImageWriteWithoutFormat == VK_TRUE, "shaderStorageImageWriteWithoutFormat");
@@ -70,6 +71,7 @@ ShaderDeviceProfile::ShaderDeviceProfile(const ShaderRecompiler::SpirvTarget& ta
     checkFeature(spv::CapabilityDrawParameters, drawParameters != nullptr && drawParameters->shaderDrawParameters == VK_TRUE, "shaderDrawParameters");
     checkFeature(spv::CapabilityShaderClockKHR, clock != nullptr && clock->shaderSubgroupClock == VK_TRUE && clock->shaderDeviceClock == VK_TRUE, "shader clock");
     Require(!target.fragmentShaderBarycentricEnabled || barycentricEnabled, "shader device profile exposes disabled barycentrics");
+    Require(!target.fragmentBarycentricBuiltins || barycentricEnabled, "shader device profile exposes disabled barycentric built-ins");
     Require(!target.mesh || meshEnabled, "shader device profile exposes disabled mesh shaders");
     Require(!target.nonConstantImageOffsets || (maintenance8 != nullptr && maintenance8->maintenance8 == VK_TRUE), "shader device profile exposes disabled maintenance8");
     Require(!target.tessellation || core.tessellationShader == VK_TRUE, "shader device profile exposes disabled tessellation");

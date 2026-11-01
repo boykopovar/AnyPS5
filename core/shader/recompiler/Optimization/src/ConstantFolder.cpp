@@ -7,6 +7,7 @@
 #include <bit>
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -82,6 +83,152 @@ bool isLaneIndex(const IrValue& value) {
     return value.Opcode() == IrOpcode::LaneId;
 }
 
+std::uint32_t possibleBits(const IrValue& value, unsigned depth = 0) {
+    if (value.HasImmediate() && value.Type() == IrType::U32) return value.ImmediateU32();
+    if (depth >= 8u || value.Type() != IrType::U32) return UINT32_MAX;
+    const auto arg = [&](std::size_t index) -> const IrValue& { return *value.Argument(index)->Resolve(); };
+    const auto immediate = [&](std::size_t index) { return arg(index).HasImmediate() && arg(index).Type() == IrType::U32; };
+    switch (value.Opcode()) {
+        case IrOpcode::BitwiseAnd32: return possibleBits(arg(0), depth + 1) & possibleBits(arg(1), depth + 1);
+        case IrOpcode::BitwiseOr32:
+        case IrOpcode::BitwiseXor32: return possibleBits(arg(0), depth + 1) | possibleBits(arg(1), depth + 1);
+        case IrOpcode::BitFieldUExtract:
+            if (immediate(2) && arg(2).ImmediateU32() < 32u) return (std::uint32_t{1} << arg(2).ImmediateU32()) - 1u;
+            return UINT32_MAX;
+        case IrOpcode::ShiftLeftLogical32:
+            if (immediate(1) && arg(1).ImmediateU32() < 32u) return possibleBits(arg(0), depth + 1) << arg(1).ImmediateU32();
+            return UINT32_MAX;
+        case IrOpcode::ShiftRightLogical32:
+            if (immediate(1) && arg(1).ImmediateU32() < 32u) return possibleBits(arg(0), depth + 1) >> arg(1).ImmediateU32();
+            return UINT32_MAX;
+        case IrOpcode::ConvertU32U16: return 0xffffu;
+        case IrOpcode::ConvertU32U8: return 0xffu;
+        case IrOpcode::SelectU32: return possibleBits(arg(1), depth + 1) | possibleBits(arg(2), depth + 1);
+        default: return UINT32_MAX;
+    }
+}
+
+bool readThroughUnusedBits(IrValue& value, std::size_t index, std::uint32_t demanded) {
+    bool changed = false;
+    for (unsigned step = 0; step < 16u; ++step) {
+        auto& operand = resolveArg(value, index);
+        if (operand.Type() != IrType::U32) break;
+        IrValue* next = nullptr;
+        for (std::size_t side = 0; side < 2u && next == nullptr; ++side) {
+            if (operand.Opcode() == IrOpcode::BitwiseAnd32) {
+                auto& mask = resolveArg(operand, side);
+                if (isImmediate(mask, IrType::U32) && (demanded & ~mask.ImmediateU32()) == 0u) next = &resolveArg(operand, 1u - side);
+            } else if (operand.Opcode() == IrOpcode::BitwiseOr32 || operand.Opcode() == IrOpcode::BitwiseXor32) {
+                if ((possibleBits(resolveArg(operand, side)) & demanded) == 0u) next = &resolveArg(operand, 1u - side);
+            }
+        }
+        if (next == nullptr) break;
+        value.ReplaceArgument(index, next);
+        changed = true;
+    }
+    return changed;
+}
+
+bool maskedPart(IrValue& value, IrValue*& source, std::uint32_t& mask) {
+    const auto immediate = [&](IrValue& owner, std::size_t index, std::uint32_t& result) {
+        auto& argument = resolveArg(owner, index);
+        if (!isImmediate(argument, IrType::U32)) return false;
+        result = argument.ImmediateU32();
+        return true;
+    };
+    std::uint32_t first = 0;
+    std::uint32_t second = 0;
+    switch (value.Opcode()) {
+        case IrOpcode::BitwiseAnd32:
+            for (std::size_t side = 0; side < 2u; ++side) {
+                if (immediate(value, side, mask)) {
+                    source = &resolveArg(value, 1u - side);
+                    return !isImmediate(*source, IrType::U32);
+                }
+            }
+            return false;
+        case IrOpcode::BitFieldUExtract:
+            if (!immediate(value, 1, first) || !immediate(value, 2, second) || first != 0u || second == 0u || second >= 32u) return false;
+            source = &resolveArg(value, 0);
+            mask = (std::uint32_t{1} << second) - 1u;
+            return true;
+        case IrOpcode::ShiftLeftLogical32: {
+            if (!immediate(value, 1, first) || first == 0u || first >= 32u) return false;
+            auto& inner = resolveArg(value, 0);
+            std::uint32_t offset = 0;
+            std::uint32_t count = 0;
+            if (inner.Opcode() == IrOpcode::BitFieldUExtract && immediate(inner, 1, offset) && immediate(inner, 2, count) && offset == first && count > 0u && count <= 32u - offset) {
+                source = &resolveArg(inner, 0);
+                mask = (count == 32u - offset ? UINT32_MAX : (std::uint32_t{1} << (offset + count)) - 1u) & (UINT32_MAX << offset);
+                return true;
+            }
+            if (inner.Opcode() == IrOpcode::ShiftRightLogical32 && immediate(inner, 1, offset) && offset == first) {
+                source = &resolveArg(inner, 0);
+                mask = UINT32_MAX << first;
+                return true;
+            }
+            return false;
+        }
+        default: return false;
+    }
+}
+
+bool mergeMaskedParts(IrProgram& program, IrValue& value) {
+    IrValue* left = nullptr;
+    IrValue* right = nullptr;
+    std::uint32_t leftMask = 0;
+    std::uint32_t rightMask = 0;
+    if (!maskedPart(resolveArg(value, 0), left, leftMask) || !maskedPart(resolveArg(value, 1), right, rightMask) || left != right) return false;
+    if ((leftMask | rightMask) == UINT32_MAX) {
+        replaceWith(value, *left);
+        return true;
+    }
+    if (value.Opcode() != IrOpcode::BitwiseOr32) return false;
+    IrBuilder builder(program);
+    value.ReplaceOpcode(IrOpcode::BitwiseAnd32);
+    value.ReplaceArgument(0, left);
+    value.ReplaceArgument(1, &builder.Constant(leftMask | rightMask));
+    return true;
+}
+
+bool foldRedundantMask(IrValue& value) {
+    for (std::size_t side = 0; side < 2u; ++side) {
+        auto& mask = resolveArg(value, side);
+        auto& operand = resolveArg(value, 1u - side);
+        if (!isImmediate(mask, IrType::U32)) continue;
+        const auto keep = mask.ImmediateU32();
+        if ((possibleBits(operand) & ~keep) == 0u) {
+            replaceWith(value, operand);
+            return true;
+        }
+        if (operand.Opcode() == IrOpcode::BitwiseAnd32) {
+            for (std::size_t part = 0; part < 2u; ++part) {
+                auto& inner = resolveArg(operand, part);
+                if (isImmediate(inner, IrType::U32) && (keep & ~inner.ImmediateU32()) == 0u) {
+                    value.ReplaceArgument(1u - side, &resolveArg(operand, 1u - part));
+                    foldRedundantMask(value);
+                    return true;
+                }
+            }
+        }
+        if (operand.Opcode() == IrOpcode::BitwiseOr32) {
+            for (std::size_t part = 0; part < 2u; ++part) {
+                if ((possibleBits(resolveArg(operand, part)) & keep) == 0u) {
+                    value.ReplaceArgument(1u - side, &resolveArg(operand, 1u - part));
+                    foldRedundantMask(value);
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool feedsMultiply(const IrValue& value) {
+    const auto& uses = value.Uses();
+    return std::any_of(uses.begin(), uses.end(), [](const IrValue* use) { return use->Opcode() == IrOpcode::IMul32; });
+}
+
 bool isImmediateU32(const IrValue& value, std::uint32_t immediate) {
     return isImmediate(value, IrType::U32) && value.ImmediateU32() == immediate;
 }
@@ -98,19 +245,7 @@ bool runsAllStartingLanes(const IrProgram& program, const IrBlock* target) {
     return false;
 }
 
-bool holdsStartingLanes(const IrProgram& program, const IrValue& word, std::uint32_t index, std::uint32_t depth = 0) {
-    if (depth > 8u) return false;
-    if (word.Opcode() == IrOpcode::BitwiseAnd32) {
-        return holdsStartingLanes(program, resolveArg(word, 0), index, depth + 1u) && holdsStartingLanes(program, resolveArg(word, 1), index, depth + 1u);
-    }
-    if (word.Opcode() == IrOpcode::BitwiseOr32) {
-        return holdsStartingLanes(program, resolveArg(word, 0), index, depth + 1u) || holdsStartingLanes(program, resolveArg(word, 1), index, depth + 1u);
-    }
-    if (word.Opcode() != IrOpcode::CompositeExtractU32x4 || !isImmediateU32(resolveArg(word, 1), index)) return false;
-    const auto& ballot = resolveArg(word, 0);
-    if (ballot.Opcode() != IrOpcode::Ballot || !runsAllStartingLanes(program, ballot.Parent())) return false;
-    const auto& condition = resolveArg(ballot, 0);
-    if (isImmediate(condition, IrType::U1)) return condition.ImmediateBool();
+bool isRealLaneCondition(const IrValue& condition) {
     if (condition.Opcode() != IrOpcode::IEqual32) return false;
     const auto helper = [](const IrValue& value) {
         if (value.Opcode() != IrOpcode::GetBuiltin) return false;
@@ -122,7 +257,49 @@ bool holdsStartingLanes(const IrProgram& program, const IrValue& word, std::uint
     return (helper(lhs) && isImmediateU32(rhs, 0u)) || (helper(rhs) && isImmediateU32(lhs, 0u));
 }
 
-bool foldStartingQuadBitTest(const IrProgram& program, IrBuilder& builder, IrValue& inst) {
+enum class LaneCoverage { Real, Quads };
+
+constexpr std::uint32_t StartingLaneDepth = 8u;
+
+bool holdsStartingLanes(const IrProgram& program, const IrValue& word, std::uint32_t index, LaneCoverage coverage, std::uint32_t depth = 0) {
+    if (depth > StartingLaneDepth) return false;
+    if (word.Opcode() == IrOpcode::BitwiseAnd32) {
+        return holdsStartingLanes(program, resolveArg(word, 0), index, coverage, depth + 1u) && holdsStartingLanes(program, resolveArg(word, 1), index, coverage, depth + 1u);
+    }
+    if (word.Opcode() == IrOpcode::BitwiseOr32) {
+        return holdsStartingLanes(program, resolveArg(word, 0), index, coverage, depth + 1u) || holdsStartingLanes(program, resolveArg(word, 1), index, coverage, depth + 1u);
+    }
+    if (word.Opcode() == IrOpcode::CompositeExtractU64 && isImmediateU32(resolveArg(word, 1), index)) {
+        const auto& mask = resolveArg(word, 0);
+        if (mask.Opcode() != IrOpcode::WqmU64) return false;
+        const auto& lanes = resolveArg(mask, 0);
+        return lanes.Opcode() == IrOpcode::CompositeConstructU64 && holdsStartingLanes(program, resolveArg(lanes, index), index, LaneCoverage::Real, depth + 1u);
+    }
+    if (coverage == LaneCoverage::Quads) return false;
+    if (word.Opcode() != IrOpcode::CompositeExtractU32x4 || !isImmediateU32(resolveArg(word, 1), index)) return false;
+    const auto& ballot = resolveArg(word, 0);
+    if (ballot.Opcode() != IrOpcode::Ballot || !runsAllStartingLanes(program, ballot.Parent())) return false;
+    const auto& condition = resolveArg(ballot, 0);
+    return isImmediate(condition, IrType::U1) ? condition.ImmediateBool() : isRealLaneCondition(condition);
+}
+
+IrValue* startingRealLaneCondition(const IrProgram& program, const IrValue& word, std::uint32_t index, std::uint32_t depth = 0u) {
+    if (depth > StartingLaneDepth) return nullptr;
+    if (word.Opcode() == IrOpcode::BitwiseAnd32) {
+        for (std::size_t side = 0u; side < 2u; ++side) {
+            auto* condition = startingRealLaneCondition(program, resolveArg(word, side), index, depth + 1u);
+            if (condition != nullptr && holdsStartingLanes(program, resolveArg(word, 1u - side), index, LaneCoverage::Real, depth + 1u)) return condition;
+        }
+        return nullptr;
+    }
+    if (word.Opcode() != IrOpcode::CompositeExtractU32x4 || !isImmediateU32(resolveArg(word, 1), index)) return nullptr;
+    const auto& ballot = resolveArg(word, 0);
+    if (ballot.Opcode() != IrOpcode::Ballot || !runsAllStartingLanes(program, ballot.Parent())) return nullptr;
+    auto& condition = resolveArg(ballot, 0);
+    return isRealLaneCondition(condition) ? &condition : nullptr;
+}
+
+bool foldStartingLaneBitTest(const IrProgram& program, IrBuilder& builder, IrValue& inst) {
     if (program.Resources().stage != IrShaderStage::Pixel) return false;
     auto& left = resolveArg(inst, 0);
     auto& right = resolveArg(inst, 1);
@@ -144,14 +321,13 @@ bool foldStartingQuadBitTest(const IrProgram& program, IrBuilder& builder, IrVal
     } else if (program.WaveSize() != 32u) {
         return false;
     }
-    if (low->Opcode() != IrOpcode::CompositeExtractU64 || !isImmediateU32(resolveArg(*low, 1), 0u)) return false;
-    const auto& wqm = resolveArg(*low, 0);
-    if (high != nullptr && (high->Opcode() != IrOpcode::CompositeExtractU64 || &resolveArg(*high, 0) != &wqm || !isImmediateU32(resolveArg(*high, 1), 1u))) return false;
-    if (wqm.Opcode() != IrOpcode::WqmU64) return false;
-    const auto& lanes = resolveArg(wqm, 0);
-    if (lanes.Opcode() != IrOpcode::CompositeConstructU64 || !holdsStartingLanes(program, resolveArg(lanes, 0), 0u)) return false;
-    if (high != nullptr && !holdsStartingLanes(program, resolveArg(lanes, 1), 1u)) return false;
-    replaceWith(inst, builder.ConstantBool(true));
+    if (holdsStartingLanes(program, *low, 0u, LaneCoverage::Quads) && (high == nullptr || holdsStartingLanes(program, *high, 1u, LaneCoverage::Quads))) {
+        replaceWith(inst, builder.ConstantBool(true));
+        return true;
+    }
+    auto* condition = startingRealLaneCondition(program, *low, 0u);
+    if (condition == nullptr || (high != nullptr && startingRealLaneCondition(program, *high, 1u) != condition)) return false;
+    replaceWith(inst, *condition);
     return true;
 }
 
@@ -163,6 +339,295 @@ template <typename TFunction> bool foldU32Compare(IrBuilder& builder, IrValue& i
     }
     replaceWith(inst, builder.ConstantBool(function(lhs.ImmediateU32(), rhs.ImmediateU32())));
     return true;
+}
+
+constexpr std::size_t ValueSetLimit = 64u;
+constexpr std::uint32_t ValueSetDepth = 6u;
+
+using ValueSet = std::optional<std::vector<std::uint32_t>>;
+
+ValueSet normalizedSet(std::vector<std::uint32_t> values) {
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+    if (values.size() > ValueSetLimit) return std::nullopt;
+    return values;
+}
+
+ValueSet rangeSet(std::uint32_t count) {
+    std::vector<std::uint32_t> values(count);
+    for (std::uint32_t index = 0u; index < count; ++index) values[index] = index;
+    return values;
+}
+
+template <typename TFunction> ValueSet mappedSet(const ValueSet& source, TFunction function) {
+    if (!source) return std::nullopt;
+    std::vector<std::uint32_t> values;
+    values.reserve(source->size());
+    for (const std::uint32_t value : *source) values.push_back(static_cast<std::uint32_t>(function(value)));
+    return normalizedSet(std::move(values));
+}
+
+struct KnownBits {
+    std::uint32_t zero = 0u;
+    std::uint32_t one = 0u;
+};
+
+constexpr std::uint32_t KnownBitsDepth = 6u;
+constexpr std::uint32_t FactBudget = 2048u;
+
+std::uint32_t lowMask(std::uint32_t bits) {
+    return bits >= 32u ? 0xffffffffu : (std::uint32_t{1} << bits) - 1u;
+}
+
+KnownBits commonBits(const KnownBits& lhs, const KnownBits& rhs) {
+    return {lhs.zero & rhs.zero, lhs.one & rhs.one};
+}
+
+KnownBits knownBits(const IrValue& value, std::uint32_t depth, std::uint32_t& budget) {
+    if (isImmediate(value, IrType::U32)) return {~value.ImmediateU32(), value.ImmediateU32()};
+    if (value.Type() != IrType::U32 || depth == 0u || budget == 0u) return {};
+    --budget;
+    const auto argument = [&](std::size_t index) { return knownBits(resolveArg(value, index), depth - 1u, budget); };
+    switch (value.Opcode()) {
+        case IrOpcode::ShiftLeftLogical32: {
+            auto& amount = resolveArg(value, 1);
+            if (!isImmediate(amount, IrType::U32) || amount.ImmediateU32() >= 32u) return {};
+            const std::uint32_t shift = amount.ImmediateU32();
+            const KnownBits source = argument(0);
+            return {(source.zero << shift) | lowMask(shift), source.one << shift};
+        }
+        case IrOpcode::ShiftRightLogical32: {
+            auto& amount = resolveArg(value, 1);
+            if (!isImmediate(amount, IrType::U32) || amount.ImmediateU32() >= 32u) return {};
+            const std::uint32_t shift = amount.ImmediateU32();
+            const KnownBits source = argument(0);
+            return {(source.zero >> shift) | ~(0xffffffffu >> shift), source.one >> shift};
+        }
+        case IrOpcode::BitFieldUExtract: {
+            auto& offset = resolveArg(value, 1);
+            auto& count = resolveArg(value, 2);
+            if (!isImmediate(offset, IrType::U32) || !isImmediate(count, IrType::U32) || count.ImmediateU32() > 32u || offset.ImmediateU32() > 32u - count.ImmediateU32()) return {};
+            const std::uint32_t mask = lowMask(count.ImmediateU32());
+            if (mask == 0u) return {0xffffffffu, 0u};
+            const KnownBits source = argument(0);
+            const std::uint32_t shift = offset.ImmediateU32();
+            return {((source.zero >> shift) & mask) | ~mask, (source.one >> shift) & mask};
+        }
+        case IrOpcode::BitwiseAnd32: {
+            const KnownBits lhs = argument(0);
+            const KnownBits rhs = argument(1);
+            return {lhs.zero | rhs.zero, lhs.one & rhs.one};
+        }
+        case IrOpcode::BitwiseOr32: {
+            const KnownBits lhs = argument(0);
+            const KnownBits rhs = argument(1);
+            return {lhs.zero & rhs.zero, lhs.one | rhs.one};
+        }
+        case IrOpcode::BitwiseXor32: {
+            const KnownBits lhs = argument(0);
+            const KnownBits rhs = argument(1);
+            return {(lhs.zero & rhs.zero) | (lhs.one & rhs.one), (lhs.zero & rhs.one) | (lhs.one & rhs.zero)};
+        }
+        case IrOpcode::IAdd32: {
+            const KnownBits lhs = argument(0);
+            const KnownBits rhs = argument(1);
+            const std::uint32_t mask = lowMask(static_cast<std::uint32_t>(std::countr_one((lhs.zero | lhs.one) & (rhs.zero | rhs.one))));
+            const std::uint32_t sum = lhs.one + rhs.one;
+            return {~sum & mask, sum & mask};
+        }
+        case IrOpcode::IMul32: {
+            const KnownBits lhs = argument(0);
+            const KnownBits rhs = argument(1);
+            return {lowMask(static_cast<std::uint32_t>(std::countr_one(lhs.zero) + std::countr_one(rhs.zero))), 0u};
+        }
+        case IrOpcode::UMin32: {
+            const KnownBits lhs = argument(0);
+            const KnownBits rhs = argument(1);
+            KnownBits result = commonBits(lhs, rhs);
+            result.zero |= ~lowMask(static_cast<std::uint32_t>(std::bit_width(std::min(~lhs.zero, ~rhs.zero))));
+            return result;
+        }
+        case IrOpcode::SelectU32:
+            return commonBits(argument(1), argument(2));
+        case IrOpcode::ReadFirstLane:
+        case IrOpcode::ReadLane:
+            return argument(0);
+        case IrOpcode::Phi: {
+            std::optional<KnownBits> result;
+            for (std::size_t index = 0; index < value.ArgumentCount(); index++) {
+                const IrValue* incoming = value.Argument(index)->Resolve();
+                if (incoming == &value) continue;
+                if (budget == 0u) return {};
+                --budget;
+                const KnownBits bits = knownBits(*incoming, depth - 1u, budget);
+                result = result ? commonBits(*result, bits) : bits;
+                if (result->zero == 0u && result->one == 0u) return {};
+            }
+            return result.value_or(KnownBits{});
+        }
+        default:
+            return {};
+    }
+}
+
+ValueSet possibleValues(const IrValue& value, std::uint32_t depth, std::uint32_t& budget);
+
+bool immediateOperand(const IrValue& inst, const IrValue*& other, std::uint32_t& immediate) {
+    auto& lhs = resolveArg(inst, 0);
+    auto& rhs = resolveArg(inst, 1);
+    if (isImmediate(rhs, IrType::U32)) {
+        other = &lhs;
+        immediate = rhs.ImmediateU32();
+        return true;
+    }
+    if (isImmediate(lhs, IrType::U32)) {
+        other = &rhs;
+        immediate = lhs.ImmediateU32();
+        return true;
+    }
+    return false;
+}
+
+ValueSet possibleValues(const IrValue& value, std::uint32_t depth, std::uint32_t& budget) {
+    if (isImmediate(value, IrType::U32)) return std::vector<std::uint32_t>{value.ImmediateU32()};
+    if (value.Type() != IrType::U32 || depth == 0u || budget == 0u) return std::nullopt;
+    --budget;
+    const IrValue* other = nullptr;
+    std::uint32_t immediate = 0u;
+    switch (value.Opcode()) {
+        case IrOpcode::ShiftRightLogical32: {
+            auto& amount = resolveArg(value, 1);
+            if (!isImmediate(amount, IrType::U32) || amount.ImmediateU32() >= 32u) return std::nullopt;
+            const std::uint32_t shift = amount.ImmediateU32();
+            if (ValueSet source = possibleValues(resolveArg(value, 0), depth - 1u, budget)) return mappedSet(source, [shift](std::uint32_t v) { return v >> shift; });
+            if (shift < 26u) return std::nullopt;
+            return rangeSet(std::uint32_t{1} << (32u - shift));
+        }
+        case IrOpcode::ShiftLeftLogical32: {
+            auto& amount = resolveArg(value, 1);
+            if (!isImmediate(amount, IrType::U32) || amount.ImmediateU32() >= 32u) return std::nullopt;
+            const std::uint32_t shift = amount.ImmediateU32();
+            return mappedSet(possibleValues(resolveArg(value, 0), depth - 1u, budget), [shift](std::uint32_t v) { return v << shift; });
+        }
+        case IrOpcode::BitFieldUExtract: {
+            auto& offset = resolveArg(value, 1);
+            auto& count = resolveArg(value, 2);
+            if (!isImmediate(offset, IrType::U32) || !isImmediate(count, IrType::U32) || count.ImmediateU32() == 0u || count.ImmediateU32() > 6u || offset.ImmediateU32() > 32u - count.ImmediateU32()) return std::nullopt;
+            const std::uint32_t shift = offset.ImmediateU32();
+            const std::uint32_t mask = (std::uint32_t{1} << count.ImmediateU32()) - 1u;
+            if (ValueSet source = possibleValues(resolveArg(value, 0), depth - 1u, budget)) return mappedSet(source, [shift, mask](std::uint32_t v) { return (v >> shift) & mask; });
+            return rangeSet(mask + 1u);
+        }
+        case IrOpcode::BitwiseAnd32: {
+            if (!immediateOperand(value, other, immediate)) return std::nullopt;
+            if (ValueSet source = possibleValues(*other, depth - 1u, budget)) return mappedSet(source, [immediate](std::uint32_t v) { return v & immediate; });
+            const KnownBits bits = knownBits(*other, depth - 1u, budget);
+            const std::uint32_t mask = immediate & ~(bits.zero | bits.one);
+            const std::uint32_t fixed = immediate & bits.one;
+            if (std::popcount(mask) > 6) return std::nullopt;
+            std::vector<std::uint32_t> values;
+            std::uint32_t subset = 0u;
+            do {
+                values.push_back(subset | fixed);
+                subset = (subset - mask) & mask;
+            } while (subset != 0u);
+            return normalizedSet(std::move(values));
+        }
+        case IrOpcode::BitwiseOr32:
+            if (!immediateOperand(value, other, immediate)) return std::nullopt;
+            return mappedSet(possibleValues(*other, depth - 1u, budget), [immediate](std::uint32_t v) { return v | immediate; });
+        case IrOpcode::BitwiseXor32:
+            if (!immediateOperand(value, other, immediate)) return std::nullopt;
+            return mappedSet(possibleValues(*other, depth - 1u, budget), [immediate](std::uint32_t v) { return v ^ immediate; });
+        case IrOpcode::IMul32:
+            if (!immediateOperand(value, other, immediate)) return std::nullopt;
+            return mappedSet(possibleValues(*other, depth - 1u, budget), [immediate](std::uint32_t v) { return v * immediate; });
+        case IrOpcode::IAdd32: {
+            const ValueSet lhs = possibleValues(resolveArg(value, 0), depth - 1u, budget);
+            const ValueSet rhs = lhs ? possibleValues(resolveArg(value, 1), depth - 1u, budget) : std::nullopt;
+            if (!rhs || lhs->size() + rhs->size() - 1u > ValueSetLimit) return std::nullopt;
+            std::vector<std::uint32_t> values;
+            for (const std::uint32_t left : *lhs) {
+                for (const std::uint32_t right : *rhs) values.push_back(left + right);
+            }
+            return normalizedSet(std::move(values));
+        }
+        case IrOpcode::UMin32: {
+            if (!immediateOperand(value, other, immediate)) return std::nullopt;
+            const std::uint32_t limit = immediate;
+            if (ValueSet source = possibleValues(*other, depth - 1u, budget)) return mappedSet(source, [limit](std::uint32_t v) { return std::min(v, limit); });
+            if (limit >= ValueSetLimit) return std::nullopt;
+            return rangeSet(limit + 1u);
+        }
+        case IrOpcode::SelectU32: {
+            ValueSet lhs = possibleValues(resolveArg(value, 1), depth - 1u, budget);
+            const ValueSet rhs = lhs ? possibleValues(resolveArg(value, 2), depth - 1u, budget) : std::nullopt;
+            if (!rhs) return std::nullopt;
+            lhs->insert(lhs->end(), rhs->begin(), rhs->end());
+            return normalizedSet(std::move(*lhs));
+        }
+        default:
+            return std::nullopt;
+    }
+}
+
+class OperandFacts {
+public:
+    KnownBits Bits(const IrValue& value) {
+        if (const auto found = bits.find(&value); found != bits.end()) return found->second;
+        std::uint32_t budget = FactBudget;
+        return bits.emplace(&value, knownBits(value, KnownBitsDepth, budget)).first->second;
+    }
+
+    const ValueSet& Values(const IrValue& value) {
+        if (const auto found = values.find(&value); found != values.end()) return found->second;
+        std::uint32_t budget = FactBudget;
+        return values.emplace(&value, possibleValues(value, ValueSetDepth, budget)).first->second;
+    }
+
+private:
+    std::unordered_map<const IrValue*, KnownBits> bits;
+    std::unordered_map<const IrValue*, ValueSet> values;
+};
+
+bool foldEqualityByValueSet(IrBuilder& builder, IrValue& inst, bool equal, OperandFacts& facts) {
+    const IrValue* other = nullptr;
+    std::uint32_t immediate = 0u;
+    if (!immediateOperand(inst, other, immediate)) return false;
+    const KnownBits bits = facts.Bits(*other);
+    if (((immediate & bits.zero) | (~immediate & bits.one)) != 0u) {
+        replaceWith(inst, builder.ConstantBool(!equal));
+        return true;
+    }
+    const ValueSet& values = facts.Values(*other);
+    if (!values) return false;
+    const bool contains = std::binary_search(values->begin(), values->end(), immediate);
+    if (contains && values->size() != 1u) return false;
+    replaceWith(inst, builder.ConstantBool(contains == equal));
+    return true;
+}
+
+bool foldULessThanByRange(IrBuilder& builder, IrValue& inst, OperandFacts& facts) {
+    auto& lhs = resolveArg(inst, 0);
+    auto& rhs = resolveArg(inst, 1);
+    if (!isImmediate(rhs, IrType::U32) || isImmediate(lhs, IrType::U32)) return false;
+    const std::uint32_t limit = rhs.ImmediateU32();
+    const KnownBits bits = facts.Bits(lhs);
+    std::uint32_t lowest = bits.one;
+    std::uint32_t highest = ~bits.zero;
+    if (const ValueSet& values = facts.Values(lhs); values && !values->empty()) {
+        lowest = std::max(lowest, values->front());
+        highest = std::min(highest, values->back());
+    }
+    if (highest < limit) {
+        replaceWith(inst, builder.ConstantBool(true));
+        return true;
+    }
+    if (lowest >= limit) {
+        replaceWith(inst, builder.ConstantBool(false));
+        return true;
+    }
+    return false;
 }
 
 template <typename TFunction> bool foldU64Compare(IrBuilder& builder, IrValue& inst, TFunction function) {
@@ -300,7 +765,7 @@ bool forwardsWord(const IrUse& use) {
 
 void collectReaders(IrValue& value, std::vector<IrUse>& readers) {
     std::unordered_set<const IrValue*> visited{&value};
-    std::vector<std::pair<std::vector<IrUse>, std::size_t>> pending;
+    std::vector<std::pair<IrUseList, std::size_t>> pending;
     pending.emplace_back(value.OperandUses(), 0u);
     while (!pending.empty()) {
         auto& [uses, next] = pending.back();
@@ -346,11 +811,15 @@ IrValue& insertBuiltin(IrProgram& program, IrBuilder& builder, IrValue& next, St
     return insertBefore(program, next, IrOpcode::GetBuiltin, builder.Constant(static_cast<std::uint32_t>(kind)), builder.Constant(0u));
 }
 
+IrValue& sampleNumber(IrProgram& program, IrBuilder& builder, IrValue& next) {
+    return program.Metadata().pixelIteratesSamples ? insertBuiltin(program, builder, next, StageInputKind::SampleId) : builder.Constant(0u);
+}
+
 void lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancillary) {
     if (!isPackedAncillary(ancillary)) {
         return;
     }
-    const std::vector<IrUse> uses = ancillary.OperandUses();
+    const IrUseList uses = ancillary.OperandUses();
     std::vector<IrUse> direct;
     std::vector<IrUse> forwarded;
     for (const IrUse& use : uses) {
@@ -394,7 +863,7 @@ void lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancil
     const auto field = [&](std::size_t index) -> IrValue& {
         if (fields[index] == nullptr && index == 1u) fields[index] = &insertBefore(program, ancillary, IrOpcode::IMul32, insertBuiltin(program, builder, ancillary, StageInputKind::Layer), insertBuiltin(program, builder, ancillary, StageInputKind::LayerExported));
         if (fields[index] == nullptr) {
-            fields[index] = &insertBuiltin(program, builder, ancillary, StageInputKind::SampleId);
+            fields[index] = &sampleNumber(program, builder, ancillary);
         }
         return *fields[index];
     };
@@ -419,9 +888,7 @@ void lowerPackedAncillary(IrProgram& program, IrBuilder& builder, IrValue& ancil
     }
 }
 
-} // namespace
-
-bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
+bool tryFoldValue(IrProgram& program, IrValue& value, OperandFacts& facts) {
     IrBuilder builder(program);
     switch (value.Opcode()) {
         case IrOpcode::Phi: return foldPhi(value);
@@ -446,6 +913,20 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
         }
         case IrOpcode::BitFieldUExtract:
         case IrOpcode::BitFieldSExtract: {
+            if (isImmediate(resolveArg(value, 1), IrType::U32) && isImmediate(resolveArg(value, 2), IrType::U32)) {
+                const auto fieldOffset = resolveArg(value, 1).ImmediateU32();
+                const auto fieldCount = resolveArg(value, 2).ImmediateU32();
+                if (fieldCount > 0u && fieldCount < 32u && fieldOffset < 32u && fieldCount <= 32u - fieldOffset) readThroughUnusedBits(value, 0, ((std::uint32_t{1} << fieldCount) - 1u) << fieldOffset);
+            }
+            if (resolveArg(value, 0).Opcode() == IrOpcode::ShiftLeftLogical32 && isImmediate(resolveArg(value, 1), IrType::U32) && isImmediate(resolveArg(value, 2), IrType::U32)) {
+                auto& shifted = resolveArg(value, 0);
+                auto& amount = resolveArg(shifted, 1);
+                const auto fieldOffset = resolveArg(value, 1).ImmediateU32();
+                if (isImmediate(amount, IrType::U32) && amount.ImmediateU32() > 0u && amount.ImmediateU32() < 32u && fieldOffset >= amount.ImmediateU32() && fieldOffset < 32u) {
+                    value.ReplaceArgument(1, &builder.Constant(fieldOffset - amount.ImmediateU32()));
+                    value.ReplaceArgument(0, &resolveArg(shifted, 0));
+                }
+            }
             auto& source = resolveArg(value, 0);
             auto& offset = resolveArg(value, 1);
             auto& count = resolveArg(value, 2);
@@ -455,6 +936,10 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
                     replaceWith(value, builder.Constant(0u));
                     return true;
                 }
+            }
+            if (value.Opcode() == IrOpcode::BitFieldUExtract && isImmediateU32(offset, 0u) && isImmediate(count, IrType::U32) && count.ImmediateU32() < 32u && !isImmediate(source, IrType::U32) && (possibleBits(source) >> count.ImmediateU32()) == 0u && !feedsMultiply(value)) {
+                replaceWith(value, source);
+                return true;
             }
             if (!isImmediate(source, IrType::U32) || !isImmediate(offset, IrType::U32) || !isImmediate(count, IrType::U32) || offset.ImmediateU32() > 32u || count.ImmediateU32() > 32u - offset.ImmediateU32()) {
                 return false;
@@ -478,6 +963,7 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
         case IrOpcode::BitCastU32F32: return foldBitCast(builder, value, IrOpcode::BitCastF32U32);
         case IrOpcode::BitCastF32U32: return foldBitCast(builder, value, IrOpcode::BitCastU32F32);
         case IrOpcode::ConvertU16U32: {
+            readThroughUnusedBits(value, 0, 0xffffu);
             auto& operand = resolveArg(value, 0);
             if (!isImmediate(operand, IrType::U32)) {
                 return false;
@@ -615,6 +1101,7 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
             if (foldU32(builder, value, [](std::uint32_t a, std::uint32_t b) { return a << (b & 31u); })) {
                 return true;
             }
+            if (isImmediate(resolveArg(value, 1), IrType::U32)) readThroughUnusedBits(value, 0, UINT32_MAX >> (resolveArg(value, 1).ImmediateU32() & 31u));
             auto& shift = resolveArg(value, 1);
             if (isImmediate(shift, IrType::U32) && (shift.ImmediateU32() & 31u) == 0u) {
                 replaceWith(value, resolveArg(value, 0));
@@ -631,9 +1118,26 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
                 replaceWith(value, resolveArg(value, 0));
                 return true;
             }
+            if (!isImmediate(shift, IrType::U32)) return false;
+            const auto amount = shift.ImmediateU32() & 31u;
+            readThroughUnusedBits(value, 0, UINT32_MAX << amount);
+            auto& shifted = resolveArg(value, 0);
+            if (shifted.Opcode() == IrOpcode::ShiftLeftLogical32 && isImmediate(resolveArg(shifted, 1), IrType::U32) && (resolveArg(shifted, 1).ImmediateU32() & 31u) == amount) {
+                auto& inner = resolveArg(shifted, 0);
+                if ((possibleBits(inner) & ~(UINT32_MAX >> amount)) == 0u) {
+                    replaceWith(value, inner);
+                    return true;
+                }
+                value.ReplaceOpcode(IrOpcode::BitwiseAnd32);
+                value.ReplaceArgument(0, &inner);
+                value.ReplaceArgument(1, &builder.Constant(UINT32_MAX >> amount));
+                foldRedundantMask(value);
+                return true;
+            }
             return false;
         }
         case IrOpcode::ShiftRightArithmetic32: {
+            if (isImmediate(resolveArg(value, 1), IrType::U32)) readThroughUnusedBits(value, 0, UINT32_MAX << (resolveArg(value, 1).ImmediateU32() & 31u));
             return foldU32(builder, value, [](std::uint32_t a, std::uint32_t b) { return static_cast<std::uint32_t>(std::bit_cast<std::int32_t>(a) >> (b & 31u)); });
         }
         case IrOpcode::ShiftLeftLogical64: {
@@ -665,7 +1169,14 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
             if (foldU32(builder, value, [](std::uint32_t a, std::uint32_t b) { return a & b; })) {
                 return true;
             }
-            return replaceBinaryIdentity(value, IrType::U32, 0xffffffffu);
+            if (replaceBinaryIdentity(value, IrType::U32, 0xffffffffu)) return true;
+            if (foldRedundantMask(value)) return true;
+            bool changed = false;
+            for (std::size_t side = 0; side < 2u; ++side) {
+                if (isImmediate(resolveArg(value, side), IrType::U32)) changed |= readThroughUnusedBits(value, 1u - side, resolveArg(value, side).ImmediateU32());
+            }
+            if (changed) foldRedundantMask(value);
+            return changed;
         }
         case IrOpcode::BitwiseAnd64: {
             if (foldU64(builder, value, [](std::uint64_t a, std::uint64_t b) { return a & b; })) {
@@ -679,7 +1190,8 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
             if (foldU32(builder, value, [opcode](std::uint32_t a, std::uint32_t b) { return opcode == IrOpcode::BitwiseOr32 ? a | b : a ^ b; })) {
                 return true;
             }
-            return replaceBinaryIdentity(value, IrType::U32, 0u);
+            if (replaceBinaryIdentity(value, IrType::U32, 0u)) return true;
+            return opcode == IrOpcode::BitwiseOr32 && mergeMaskedParts(program, value);
         }
         case IrOpcode::BitwiseNot32: {
             auto& operand = resolveArg(value, 0);
@@ -737,9 +1249,9 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
         case IrOpcode::UMax32: {
             return foldU32(builder, value, [](std::uint32_t a, std::uint32_t b) { return std::max(a, b); });
         }
-        case IrOpcode::IEqual32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a == b; });
-        case IrOpcode::INotEqual32: return foldConstantBitTest(builder, value) || foldStartingQuadBitTest(program, builder, value) || foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a != b; });
-        case IrOpcode::ULessThan32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a < b; });
+        case IrOpcode::IEqual32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a == b; }) || foldEqualityByValueSet(builder, value, true, facts);
+        case IrOpcode::INotEqual32: return foldConstantBitTest(builder, value) || foldStartingLaneBitTest(program, builder, value) || foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a != b; }) || foldEqualityByValueSet(builder, value, false, facts);
+        case IrOpcode::ULessThan32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a < b; }) || foldULessThanByRange(builder, value, facts);
         case IrOpcode::ULessThanEqual32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a <= b; });
         case IrOpcode::UGreaterThan32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a > b; });
         case IrOpcode::UGreaterThanEqual32: return foldU32Compare(builder, value, [](std::uint32_t a, std::uint32_t b) { return a >= b; });
@@ -830,10 +1342,30 @@ bool ConstantFolder::tryFoldValue(IrProgram& program, IrValue& value) const {
     }
 }
 
+} // namespace
+
 void ConstantFolder::Fold(IrProgram& program, std::span<IrBlock* const> blocks) const {
+    OperandFacts facts;
     for (IrBlock* block : blocks) {
         for (IrValue* inst : block->Instructions()) {
-            const auto success = tryFoldValue(program, *inst);
+            const auto success = tryFoldValue(program, *inst, facts);
+        }
+    }
+    std::vector<IrValue*> phis;
+    for (IrBlock* block : blocks) {
+        for (IrValue* inst : block->Instructions()) {
+            if (inst->Opcode() == IrOpcode::Phi) {
+                phis.push_back(inst);
+            }
+        }
+    }
+    bool folded = true;
+    while (folded) {
+        folded = false;
+        for (IrValue* phi : phis) {
+            if (phi->Opcode() == IrOpcode::Phi && foldPhi(*phi)) {
+                folded = true;
+            }
         }
     }
     std::vector<IrValue*> words;
@@ -882,7 +1414,7 @@ bool ConstantFolder::ComposePackedAncillary(IrProgram& program) const {
     IrBuilder builder(program);
     for (IrValue* word : words) {
         IrValue& primitive = insertBuiltin(program, builder, *word, StageInputKind::RasterPrimitive);
-        IrValue& sample = insertBefore(program, *word, IrOpcode::ShiftLeftLogical32, insertBuiltin(program, builder, *word, StageInputKind::SampleId), builder.Constant(8u));
+        IrValue& sample = insertBefore(program, *word, IrOpcode::ShiftLeftLogical32, sampleNumber(program, builder, *word), builder.Constant(8u));
         IrValue& exportedLayer = insertBefore(program, *word, IrOpcode::IMul32, insertBuiltin(program, builder, *word, StageInputKind::Layer), insertBuiltin(program, builder, *word, StageInputKind::LayerExported));
         IrValue& layer = insertBefore(program, *word, IrOpcode::ShiftLeftLogical32, exportedLayer, builder.Constant(16u));
         IrValue& fields = insertBefore(program, *word, IrOpcode::BitwiseOr32, sample, layer);
