@@ -1,0 +1,10 @@
+if(ANYPS5_ENABLE_SPIRV_TOOLS)
+    add_test_executable(agc_spirv_optimizer_tests EXCLUDE_FROM_ALL tests/SpirvOptimizer.cpp)
+    target_link_libraries(agc_spirv_optimizer_tests PRIVATE shader_recompiler_agc_driver libc SPIRV-Tools-static)
+    set_target_properties(agc_spirv_optimizer_tests PROPERTIES CXX_EXTENSIONS OFF)
+    configure_windows_unwind(agc_spirv_optimizer_tests)
+endif()
+
+if(BUILD_TESTING)
+    agc_add_spirv_mode_tests(agc_spirv_optimizer_tests)
+endif()

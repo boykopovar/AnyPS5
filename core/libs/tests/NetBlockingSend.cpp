@@ -130,6 +130,14 @@ int main(int argc, char** argv) {
     {
         Connection connection;
         auto sending = std::async(std::launch::async, [&] { return Send(api, connection.sender, bytes); });
+        const auto entered = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        char peeked = 0;
+        bool arrived = false;
+        while (!arrived && std::chrono::steady_clock::now() < entered) {
+            arrived = sceNetRecv(connection.receiver, &peeked, 1, NET_MSG_PEEK | NET_MSG_DONTWAIT) > 0;
+            if (!arrived) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        Require(arrived, "send did not reach the receiver before abort");
         Require(sending.wait_for(std::chrono::milliseconds(50)) == std::future_status::timeout, "send did not wait before abort");
         Require(sceNetSocketAbort(connection.sender, 0) == 0, "abort a blocked send");
         Require(sending.wait_for(std::chrono::seconds(2)) == std::future_status::ready, "abort did not wake a blocked send");
