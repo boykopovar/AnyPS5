@@ -31,6 +31,18 @@ static uint64_t g_languageMask = PLAYGO_LANGUAGE_MASK_ALL;
 static constexpr int SCE_PLAYGO_ERROR_BAD_CHUNK_ID = static_cast<int>(0x80B2000C);
 static constexpr int SCE_PLAYGO_ERROR_BAD_SIZE = static_cast<int>(0x80B2000B);
 static constexpr int SCE_PLAYGO_ERROR_BAD_LOCUS = static_cast<int>(0x80B20010);
+static constexpr int SCE_PLAYGO_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80B20004);
+static constexpr int SCE_PLAYGO_ERROR_NOT_INITIALIZED = static_cast<int>(0x80B20005);
+static constexpr int SCE_PLAYGO_ERROR_BAD_SPEED = static_cast<int>(0x80B2000D);
+static constexpr int SCE_PLAYGO_ERROR_EPERM = static_cast<int>(0x80B2000F);
+static constexpr int SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE = static_cast<int>(0x80B20024);
+static constexpr int SCE_PLAYGO_ERROR_BAD_SCENARIO_CONFIGURATION = static_cast<int>(0x80B20026);
+static constexpr int32_t PLAYGO_INSTALL_SPEED_SUSPENDED = 0;
+static constexpr uint32_t PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO = 1;
+static constexpr uint32_t PLAYGO_OPTIONAL_CHUNK_TYPE_LAST = 2;
+static constexpr uint64_t PLAYGO_SCENARIO_MASK_ALL = 0x1F;
+
+static bool g_initialized = false;
 
 struct ChunkTable {
     std::set<uint16_t> ids{0};
@@ -127,6 +139,17 @@ static int ValidateChunks(const uint16_t* chunk_ids, uint32_t number_of_entries)
     return 0;
 }
 
+static uint64_t SupportedOptionalChunkMask(uint32_t type) {
+    return type == PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO ? PLAYGO_SCENARIO_MASK_ALL : PLAYGO_OPTIONAL_CHUNK_MASK_ALL;
+}
+
+static int ValidateOptionalChunkRequest(uint32_t type, const PlayGoOptionalChunk* option) {
+    if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    if (type > PLAYGO_OPTIONAL_CHUNK_TYPE_LAST) return SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE;
+    if (type == PLAYGO_OPTIONAL_CHUNK_TYPE_SCENARIO && (option->bitmask & ~PLAYGO_SCENARIO_MASK_ALL) != 0) return SCE_PLAYGO_ERROR_BAD_SCENARIO_CONFIGURATION;
+    return 0;
+}
+
 extern "C" {
 
 int APS5_VABI scePlayGoClose(int handle) {
@@ -190,8 +213,8 @@ int APS5_VABI scePlayGoGetLocus(int handle, const uint16_t* chunkIds, uint32_t n
 int APS5_VABI scePlayGoGetOptionalChunk(int handle, std::uint32_t type, PlayGoOptionalChunk* option) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
-    if (type > 2) return static_cast<int>(0x80B20024);
-    option->bitmask = PLAYGO_OPTIONAL_CHUNK_MASK_ALL;
+    if (type > PLAYGO_OPTIONAL_CHUNK_TYPE_LAST) return SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE;
+    option->bitmask = SupportedOptionalChunkMask(type);
     return 0;
 }
 
@@ -204,15 +227,19 @@ int APS5_VABI scePlayGoGetProgress(int handle, const uint16_t* chunk_ids, uint32
     return 0;
 }
 
-int APS5_VABI scePlayGoGetRequiredDisc() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI scePlayGoGetRequiredDisc(int handle, std::uint32_t type, const PlayGoOptionalChunk* option, uint32_t* out_required_disc) {
+    if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
+    if (!out_required_disc) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    if (const int error = ValidateOptionalChunkRequest(type, option)) return error;
+    *out_required_disc = 0;
+    return 0;
 }
 
 int APS5_VABI scePlayGoGetSupportedOptionalChunk(int handle, std::uint32_t type, PlayGoOptionalChunk* option) {
     if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
     if (!option) return SCE_PLAYGO_ERROR_BAD_POINTER;
-    if (type > 2) return static_cast<int>(0x80B20024);
-    option->bitmask = PLAYGO_OPTIONAL_CHUNK_MASK_ALL;
+    if (type > PLAYGO_OPTIONAL_CHUNK_TYPE_LAST) return SCE_PLAYGO_ERROR_BAD_OPTIONAL_TYPE;
+    option->bitmask = SupportedOptionalChunkMask(type);
     return 0;
 }
 
@@ -227,6 +254,7 @@ int APS5_VABI scePlayGoGetToDoList(int handle, PlayGoToDo* out_todo_list, uint32
 
 int APS5_VABI scePlayGoInitialize(const PlayGoInitParams* init) {
     if (!init) return SCE_PLAYGO_ERROR_BAD_POINTER;
+    g_initialized = true;
     return 0;
 }
 
@@ -256,8 +284,13 @@ int APS5_VABI scePlayGoSetInstallSpeed(int handle, int32_t speed) {
     return 0;
 }
 
-int APS5_VABI scePlayGoSetInstallSpeed2() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI scePlayGoSetInstallSpeed2(int32_t reserved, uint32_t speed) {
+    if (!g_initialized) return SCE_PLAYGO_ERROR_NOT_INITIALIZED;
+    if (reserved != 0) return SCE_PLAYGO_ERROR_INVALID_ARGUMENT;
+    if (speed > static_cast<uint32_t>(PLAYGO_INSTALL_SPEED_FULL)) return SCE_PLAYGO_ERROR_BAD_SPEED;
+    if (speed == static_cast<uint32_t>(PLAYGO_INSTALL_SPEED_SUSPENDED)) return SCE_PLAYGO_ERROR_EPERM;
+    g_installSpeed = static_cast<int32_t>(speed);
+    return 0;
 }
 
 int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint32_t number_of_entries) {
@@ -273,16 +306,19 @@ int APS5_VABI scePlayGoSetToDoList(int handle, const PlayGoToDo* todo_list, uint
 }
 
 int APS5_VABI scePlayGoTerminate(void) {
+    g_initialized = false;
     return 0;
 }
 
-int APS5_VABI scePlayGoRequestNextChunk() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI scePlayGoRequestNextChunk(int handle, const void* reserved) {
+    if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
+    if (reserved) return SCE_PLAYGO_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
-int APS5_VABI scePlayGoRequestOptionalChunk() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI scePlayGoRequestOptionalChunk(int handle, std::uint32_t type, const PlayGoOptionalChunk* option) {
+    if (handle != PLAYGO_HANDLE) return SCE_PLAYGO_ERROR_BAD_HANDLE;
+    return ValidateOptionalChunkRequest(type, option);
 }
 
 int APS5_VABI scePlayGoSetLanguageMask(int handle, uint64_t language_mask) {

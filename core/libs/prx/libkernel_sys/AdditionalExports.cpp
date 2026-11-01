@@ -1358,10 +1358,6 @@ int APS5_VABI sceKernelAddFGCInfo() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelCallIndirectBuffer3() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceKernelCreateUuidV1() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1451,10 +1447,6 @@ int APS5_VABI sceKernelGetToolMemoryRange() {
 }
 
 int APS5_VABI sceKernelGetUpdatemode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelHasTrinityMode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1659,10 +1651,6 @@ int APS5_VABI sceKernelUseCronosKura() {
 }
 
 int APS5_VABI sceKernelUseCronosStreaming() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI sceKernelWriteUnmapToPrtCommand() {
     NotImplemented_nid_no_patch(__func__);
 }
 

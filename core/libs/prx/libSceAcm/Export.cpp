@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceAcm/include/InventoryExports.hpp"
 #include "prx/libSceAcm/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -398,7 +400,12 @@ int APS5_VABI sceAcm_Panner(AcmBatchInfo* batch, std::uint32_t sourceCount, cons
 }
 
 int APS5_VABI sceAcmBatchJobPriority(AcmBatchInfo* batch, std::uint32_t priority) {
-    NotImplemented_nid_no_patch(__func__);
+    if (!batch || priority >= 4) return SCE_ACM_ERROR_BAD_POINTER;
+    const auto offset = batch->offset;
+    if (offset > batch->buffer_size || batch->buffer_size - offset < 8) return static_cast<int>(0x81940009);
+    const std::uint64_t job = 0x10 | (static_cast<std::uint64_t>(priority) << 8);
+    std::memcpy(static_cast<std::byte*>(batch->buffer) + offset, &job, sizeof(job));
+    batch->offset = offset + sizeof(job);
     return 0;
 }
 
@@ -415,5 +422,34 @@ int APS5_VABI sceAcmBatchJobNotification() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("9+f3tPdeyP0", libSceAcmUnknown_9_plus_f3tPdeyP0_nid_no_patch);
+
+int APS5_VABI libSceAcmUnknown_DvsnlQr4yyk_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("DvsnlQr4yyk", libSceAcmUnknown_DvsnlQr4yyk_nid_no_patch);
+
+int APS5_VABI libSceAcmUnknown_PLNywpi1zR4_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("PLNywpi1zR4", libSceAcmUnknown_PLNywpi1zR4_nid_no_patch);
+
+int APS5_VABI libSceAcmUnknown_YpYvibqaqz0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("YpYvibqaqz0", libSceAcmUnknown_YpYvibqaqz0_nid_no_patch);
+
+int APS5_VABI libSceAcmUnknown_ngDRON91_plus__minus_Y_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ngDRON91+-Y", libSceAcmUnknown_ngDRON91_plus__minus_Y_nid_no_patch);
 
 }

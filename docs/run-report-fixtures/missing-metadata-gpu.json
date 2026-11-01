@@ -1,0 +1,66 @@
+{
+  "format": "anyps5-report",
+  "version": 1,
+  "generated": "2026-10-29T12:00:00Z",
+  "anyps5": {
+    "commit": null,
+    "release": null,
+    "modified": null
+  },
+  "game": {
+    "titleId": null,
+    "contentId": null,
+    "contentVersion": null,
+    "name": null
+  },
+  "system": {
+    "os": "linux",
+    "osVersion": null,
+    "cpu": null,
+    "ramGiB": null,
+    "gpu": null
+  },
+  "run": {
+    "id": "1c8e0b5d3a7f4962b4d1e9f6a30c5782",
+    "seconds": 2.1,
+    "exit": "abort",
+    "exitCode": 1,
+    "stage": "unknown",
+    "milestones": {},
+    "framesPresented": 0,
+    "averageFps": null,
+    "fpsWindowSeconds": null,
+    "recovered": false,
+    "incomplete": false
+  },
+  "coverage": {
+    "milestones": false,
+    "missing": true,
+    "shaders": true,
+    "unsupported": true,
+    "imageFormats": true,
+    "descriptors": true
+  },
+  "truncated": {
+    "functions": 0,
+    "unsupported": 0,
+    "imageFormats": 0,
+    "descriptors": 0
+  },
+  "missing": {
+    "functions": []
+  },
+  "shaders": {
+    "compiled": 0,
+    "failed": 0,
+    "unsupported": [],
+    "imageFormats": [],
+    "descriptors": []
+  },
+  "stop": {
+    "kind": "other",
+    "reason": "other",
+    "message": "The run ended before the game metadata and the GPU were set up.",
+    "source": null
+  }
+}

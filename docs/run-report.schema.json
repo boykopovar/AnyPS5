@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnyPS5 run report",
+  "description": "anyps5-report.json, version 1. A value the runtime cannot know is null, never a guess. The file is at most 65,536 bytes of UTF-8 (checked by the writer and the tests, not expressible here). Milestone ordering is checked by the tests, not here.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "generated", "anyps5", "game", "system", "run", "coverage", "truncated", "missing", "shaders", "stop"],
+  "properties": {
+    "format": { "const": "anyps5-report" },
+    "version": { "const": 1 },
+    "generated": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+    "anyps5": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "release", "modified"],
+      "properties": {
+        "commit": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+        "release": { "type": ["string", "null"], "pattern": "^v[0-9A-Za-z][0-9A-Za-z._-]{0,63}$" },
+        "modified": { "type": ["boolean", "null"] }
+      }
+    },
+    "game": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["titleId", "contentId", "contentVersion", "name"],
+      "properties": {
+        "titleId": { "type": ["string", "null"], "pattern": "^[A-Z]{4}[0-9]{5}$" },
+        "contentId": { "type": ["string", "null"], "pattern": "^[A-Z0-9_-]{1,48}$" },
+        "contentVersion": { "type": ["string", "null"], "pattern": "^[0-9A-Za-z._-]{1,32}$" },
+        "name": { "$ref": "#/$defs/nullableText" }
+      }
+    },
+    "system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "osVersion", "cpu", "ramGiB", "gpu"],
+      "properties": {
+        "os": { "enum": ["linux", "windows", "macos", null] },
+        "osVersion": { "$ref": "#/$defs/nullableText" },
+        "cpu": { "$ref": "#/$defs/nullableText" },
+        "ramGiB": { "type": ["integer", "null"], "minimum": 1, "maximum": 1048576 },
+        "gpu": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["vendor", "name", "driver", "vulkan"],
+          "properties": {
+            "vendor": { "enum": ["AMD", "NVIDIA", "Intel", "Apple", "Other", null] },
+            "name": { "$ref": "#/$defs/nullableText" },
+            "driver": { "$ref": "#/$defs/nullableText" },
+            "vulkan": { "type": ["string", "null"], "pattern": "^[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,5}$" }
+          }
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "seconds", "exit", "exitCode", "stage", "milestones", "framesPresented", "averageFps", "fpsWindowSeconds", "recovered", "incomplete"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+        "seconds": { "$ref": "#/$defs/seconds" },
+        "exit": { "enum": ["clean", "crash", "abort", "killed"] },
+        "exitCode": { "type": ["integer", "null"], "minimum": -2147483648, "maximum": 4294967295 },
+        "stage": { "enum": ["unknown", "loads", "starts", "first-draw", "presents"] },
+        "milestones": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "loaded": { "$ref": "#/$defs/seconds" },
+            "started": { "$ref": "#/$defs/seconds" },
+            "firstDraw": { "$ref": "#/$defs/seconds" },
+            "firstPresent": { "$ref": "#/$defs/seconds" }
+          }
+        },
+        "framesPresented": { "$ref": "#/$defs/count" },
+        "averageFps": { "type": ["number", "null"], "minimum": 0, "maximum": 1000000 },
+        "fpsWindowSeconds": { "type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1000000000 },
+        "recovered": { "type": "boolean" },
+        "incomplete": { "type": "boolean" }
+      },
+      "allOf": [
+        { "if": { "properties": { "stage": { "const": "unknown" } }, "required": ["stage"] }, "then": { "properties": { "milestones": { "maxProperties": 0 } } } },
+        { "if": { "properties": { "stage": { "const": "loads" } }, "required": ["stage"] }, "then": { "properties": { "milestones": { "required": ["loaded"] } } } },
+        { "if": { "properties": { "stage": { "const": "starts" } }, "required": ["stage"] }, "then": { "properties": { "milestones": { "required": ["started"] } } } },
+        { "if": { "properties": { "stage": { "const": "first-draw" } }, "required": ["stage"] }, "then": { "properties": { "milestones": { "required": ["firstDraw"] } } } },
+        { "if": { "properties": { "stage": { "const": "presents" } }, "required": ["stage"] }, "then": { "properties": { "milestones": { "required": ["firstPresent"] } } } },
+        { "if": { "properties": { "framesPresented": { "maximum": 1 } }, "required": ["framesPresented"] }, "then": { "properties": { "averageFps": { "type": "null" }, "fpsWindowSeconds": { "type": "null" } } } },
+        { "if": { "properties": { "recovered": { "const": true } }, "required": ["recovered"] }, "then": { "properties": { "incomplete": { "const": true }, "exit": { "const": "killed" }, "exitCode": { "type": "null" } } } },
+        { "if": { "properties": { "exit": { "const": "killed" } }, "required": ["exit"] }, "then": { "properties": { "recovered": { "const": true } } } }
+      ]
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["milestones", "missing", "shaders", "unsupported", "imageFormats", "descriptors"],
+      "properties": {
+        "milestones": { "type": "boolean" },
+        "missing": { "type": "boolean" },
+        "shaders": { "type": "boolean" },
+        "unsupported": { "type": "boolean" },
+        "imageFormats": { "type": "boolean" },
+        "descriptors": { "type": "boolean" }
+      }
+    },
+    "truncated": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["functions", "unsupported", "imageFormats", "descriptors"],
+      "properties": {
+        "functions": { "$ref": "#/$defs/count" },
+        "unsupported": { "$ref": "#/$defs/count" },
+        "imageFormats": { "$ref": "#/$defs/count" },
+        "descriptors": { "$ref": "#/$defs/count" }
+      }
+    },
+    "missing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["functions"],
+      "properties": {
+        "functions": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["library", "name", "calls"],
+            "properties": {
+              "library": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_.-]{1,64}$" },
+              "name": { "type": "string", "pattern": "^[A-Za-z0-9_.$]{1,128}$" },
+              "calls": { "$ref": "#/$defs/positiveCount" }
+            }
+          }
+        }
+      }
+    },
+    "shaders": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compiled", "failed", "unsupported", "imageFormats", "descriptors"],
+      "properties": {
+        "compiled": { "$ref": "#/$defs/count" },
+        "failed": { "$ref": "#/$defs/count" },
+        "cacheHits": { "$ref": "#/$defs/count" },
+        "unsupported": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["encoding", "opcode", "opcodeValue", "modifiers", "count"],
+            "properties": {
+              "encoding": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_]{1,32}$" },
+              "opcode": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_]{1,64}$" },
+              "opcodeValue": { "type": ["integer", "null"], "minimum": 0, "maximum": 4294967295 },
+              "modifiers": {
+                "type": ["array", "null"],
+                "maxItems": 16,
+                "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}$" }
+              },
+              "count": { "$ref": "#/$defs/positiveCount" }
+            }
+          }
+        },
+        "imageFormats": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["format", "name", "status", "usage", "count"],
+            "properties": {
+              "format": { "type": "integer", "minimum": 0, "maximum": 4294967295 },
+              "name": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9_]{1,64}$" },
+              "status": { "enum": ["accepted", "rejected", "unknown"] },
+              "usage": { "$ref": "#/$defs/formatUsage" },
+              "count": { "$ref": "#/$defs/positiveCount" }
+            }
+          }
+        },
+        "descriptors": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "status", "usage", "count"],
+            "properties": {
+              "type": { "enum": ["UniformBuffer", "StorageBuffer", "UniformTexelBuffer", "StorageTexelBuffer", "SampledImage", "StorageImage", "Sampler"] },
+              "status": { "enum": ["accepted", "rejected", "unknown"] },
+              "usage": { "$ref": "#/$defs/descriptorUsage" },
+              "count": { "$ref": "#/$defs/positiveCount" }
+            }
+          }
+        }
+      }
+    },
+    "stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "reason", "message", "source"],
+      "properties": {
+        "kind": { "enum": ["none", "missing-function", "unsupported-shader", "unsupported-format", "crash", "assert", "other"] },
+        "reason": { "enum": ["guest-exit", "quit-requested", "runtime-stop", "crash", "unclean-unknown", "other"] },
+        "message": { "$ref": "#/$defs/text" },
+        "source": { "type": ["string", "null"], "pattern": "^(?!.*\\.\\.)[A-Za-z0-9_][A-Za-z0-9_./+-]{0,254}:[0-9]{1,9}$" }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "none" } }, "required": ["kind"] }, "then": { "properties": { "reason": { "enum": ["guest-exit", "quit-requested"] } } } },
+        { "if": { "properties": { "reason": { "enum": ["guest-exit", "quit-requested"] } }, "required": ["reason"] }, "then": { "properties": { "kind": { "const": "none" } } } },
+        { "if": { "properties": { "reason": { "const": "unclean-unknown" } }, "required": ["reason"] }, "then": { "properties": { "kind": { "const": "other" } } } },
+        { "if": { "properties": { "reason": { "const": "runtime-stop" } }, "required": ["reason"] }, "then": { "properties": { "kind": { "enum": ["missing-function", "unsupported-shader", "unsupported-format", "other"] } } } },
+        { "if": { "properties": { "kind": { "enum": ["crash", "assert"] } }, "required": ["kind"] }, "then": { "properties": { "reason": { "const": "crash" } } } }
+      ]
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "run": { "properties": { "exit": { "const": "clean" } }, "required": ["exit"] } }, "required": ["run"] }, "then": { "properties": { "stop": { "properties": { "kind": { "const": "none" } } } } } },
+    { "if": { "properties": { "stop": { "properties": { "kind": { "const": "none" } }, "required": ["kind"] } }, "required": ["stop"] }, "then": { "properties": { "run": { "properties": { "exit": { "const": "clean" } } } } } },
+    { "if": { "properties": { "run": { "properties": { "recovered": { "const": true } }, "required": ["recovered"] } }, "required": ["run"] }, "then": { "properties": { "stop": { "properties": { "kind": { "const": "other" }, "reason": { "const": "unclean-unknown" } } } } } },
+    { "if": { "properties": { "stop": { "properties": { "reason": { "const": "unclean-unknown" } }, "required": ["reason"] } }, "required": ["stop"] }, "then": { "properties": { "run": { "properties": { "recovered": { "const": true } } } } } },
+    { "if": { "properties": { "coverage": { "properties": { "milestones": { "const": false } }, "required": ["milestones"] } }, "required": ["coverage"] },
+      "then": { "properties": { "run": { "properties": { "stage": { "const": "unknown" }, "framesPresented": { "const": 0 } } } } } },
+    { "if": { "properties": { "coverage": { "properties": { "missing": { "const": false } }, "required": ["missing"] } }, "required": ["coverage"] },
+      "then": { "properties": { "missing": { "properties": { "functions": { "maxItems": 0 } } }, "truncated": { "properties": { "functions": { "const": 0 } } } } } },
+    { "if": { "properties": { "coverage": { "properties": { "shaders": { "const": false } }, "required": ["shaders"] } }, "required": ["coverage"] },
+      "then": { "properties": { "shaders": { "properties": { "compiled": { "const": 0 }, "failed": { "const": 0 } } } } } },
+    { "if": { "properties": { "coverage": { "properties": { "unsupported": { "const": false } }, "required": ["unsupported"] } }, "required": ["coverage"] },
+      "then": { "properties": { "shaders": { "properties": { "unsupported": { "maxItems": 0 } } }, "truncated": { "properties": { "unsupported": { "const": 0 } } } } } },
+    { "if": { "properties": { "coverage": { "properties": { "imageFormats": { "const": false } }, "required": ["imageFormats"] } }, "required": ["coverage"] },
+      "then": { "properties": { "shaders": { "properties": { "imageFormats": { "maxItems": 0 } } }, "truncated": { "properties": { "imageFormats": { "const": 0 } } } } } },
+    { "if": { "properties": { "coverage": { "properties": { "descriptors": { "const": false } }, "required": ["descriptors"] } }, "required": ["coverage"] },
+      "then": { "properties": { "shaders": { "properties": { "descriptors": { "maxItems": 0 } } }, "truncated": { "properties": { "descriptors": { "const": 0 } } } } } }
+  ],
+  "$defs": {
+    "seconds": { "type": "number", "minimum": 0, "maximum": 1000000000 },
+    "count": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "positiveCount": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "text": { "type": "string", "minLength": 1, "maxLength": 300, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+    "nullableText": { "type": ["string", "null"], "minLength": 1, "maxLength": 300, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" },
+    "formatUsage": { "enum": ["sampled", "storage", "color-target", "depth-target", "transfer", "other"] },
+    "descriptorUsage": { "enum": ["read", "write", "atomic", "other"] }
+  }
+}

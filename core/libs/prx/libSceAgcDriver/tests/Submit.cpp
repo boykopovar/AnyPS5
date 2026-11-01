@@ -39,6 +39,18 @@ static_assert(offsetof(Packet, addr) == 0);
 static_assert(offsetof(Packet, dw_num) == 8);
 static_assert(offsetof(Packet, flags) == 12);
 
+namespace AgcDriver::DriverDetail {
+
+struct DriverTestAccess {
+    static std::uint64_t LabelTaken(std::uint32_t queue, const volatile std::uint32_t* address) {
+        auto& driver = Driver::Get();
+        std::lock_guard lock(driver.labelStoresMutex);
+        return driver.labelTakes.Taken(queue, reinterpret_cast<std::uintptr_t>(address));
+    }
+};
+
+}
+
 namespace {
 
 void check(bool condition, const char* message) {
@@ -451,6 +463,56 @@ void testLabelTakenAndResetByEarlierSubmission() {
     AgcDriverWaitIdle_nid_postfix();
 }
 
+void testLabelTakesRetire() {
+    using AgcDriver::DriverDetail::LabelTakes;
+    auto takes = std::make_unique<LabelTakes>();
+    constexpr std::uint64_t label = 0x1000, other = 0x2000;
+    takes->Pass(0x20, label, 10);
+    check(takes->MayHavePass(0x20, label) && takes->Taken(0x20, label) == 0, "a passed wait was not kept for the store that takes it");
+    takes->Take(0x20, label);
+    check(takes->Taken(0x20, label) == 10 && !takes->MayHavePass(0x20, label), "the queue's own store did not turn its pass into a take");
+    takes->Retire(0x20, 9);
+    check(takes->Taken(0x20, label) == 10, "a take was dropped while a submission of the queue entered before it could still wait");
+    takes->Retire(0x28, 20);
+    check(takes->Taken(0x20, label) == 10, "another queue's submission retired a take");
+    takes->Retire(0x20, 10);
+    check(takes->Taken(0x20, label) == 0 && takes->Empty(), "a take was kept after every submission of the queue that could wait entered after it");
+    takes->Pass(0x20, label, 30);
+    takes->Pass(0x20, label, 40);
+    takes->Retire(0x20, 30);
+    check(takes->MayHavePass(0x20, label), "an older pass on the dword retired its newer pass");
+    takes->Take(0x20, label);
+    takes->Retire(0x20, 39);
+    check(takes->Taken(0x20, label) == 40, "a take was retired by a submission entered before it");
+    takes->Pass(0x20, other, 50);
+    takes->Pass(0x28, label, 50);
+    takes->Retire(0x20, 50);
+    check(takes->Taken(0x20, label) == 0 && !takes->MayHavePass(0x20, other), "a submission of the queue entered after its passes and take did not retire them");
+    check(takes->MayHavePass(0x28, label) && !takes->Empty(), "a submission of one queue retired another queue's pass");
+    takes->Retire(0x28, 50);
+    check(takes->Empty(), "a pass was kept after every submission of its queue entered after it");
+}
+
+void testLabelTakeRetiredByLaterSubmission() {
+    using AgcDriver::DriverDetail::DriverTestAccess;
+    alignas(64) static volatile std::uint32_t gate = 0, label = 0, first = 0, second = 0, third = 0;
+    submit(0x20, commands(waitEqual(&gate, 1), waitEqual(&label, 1), writeData(&label, 0), writeData(&first, 1)));
+    submit(0x20, commands(waitEqual(&label, 1), writeData(&second, 1)));
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&label, 1, "producer label never landed");
+    gate = 1;
+    waitFor(&first, 1, "consumer never passed its first label wait");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(second == 0, "a label store an earlier submission of the queue had taken and reset satisfied a later submission's wait, or the wait expired");
+    check(DriverTestAccess::LabelTaken(0x20, &label) != 0, "a take was dropped while a submission of the queue entered before it was waiting");
+    submit(0, commands(writeData(&label, 1)));
+    waitFor(&second, 1, "the later submission did not resume after a new producer label");
+    submit(0x20, commands(writeData(&third, 1)));
+    waitFor(&third, 1, "a submission entered after the take never ran");
+    check(DriverTestAccess::LabelTaken(0x20, &label) == 0, "a take was kept after a submission of the queue entered after it started");
+    AgcDriverWaitIdle_nid_postfix();
+}
+
 void testWaitFreeSubmissionAfterEarlierQueue0Work() {
     alignas(64) static volatile std::uint32_t first = 0, second = 0;
     constexpr std::uint32_t writes = 20000;
@@ -631,6 +693,44 @@ void testLargeDataFill() {
     check(AgcDriver::DriverDetail::dmaFills.load() == fillsBefore + 1, "a DMA_DATA fill larger than 64 KiB was not stored as a buffer fill");
     GuestHeap::GuestHeapFree_nid_postfix(destination);
     GuestHeap::GuestHeapFree_nid_postfix(produced);
+}
+
+void labelResetByItsQueueBeforeItLanded(bool wide, std::size_t resetWord) {
+    alignas(64) static volatile std::uint32_t gate = 0, second = 0;
+    gate = 0;
+    second = 0;
+    constexpr std::uint32_t fillBytes = 4u << 20u, blockBytes = fillBytes + (1u << 20u);
+    auto* block = static_cast<std::uint32_t*>(GuestHeap::GuestHeapAlignForGpu_nid_postfix(65536, blockBytes));
+    auto* label = static_cast<volatile std::uint32_t*>(block + (fillBytes + 65536) / 4);
+    auto* reset = label + resetWord;
+    const std::uint64_t awaited = 1ull << (resetWord * 32u);
+    submit(0x20, commands(dataFill(block, 0, blockBytes)));
+    AgcDriverWaitIdle_nid_postfix();
+    const auto gpuLabelsBefore = AgcDriver::DriverDetail::gpuLabels.load();
+    if (wide) submit(0x20, commands(waitEqual(&gate, 1), waitEqual64(label, awaited, ~0ull), dataFill(block, 0x5a5a5a5au, fillBytes), writeData(reset, 0), waitEqual64(label, awaited, ~0ull), writeData(&second, 1)));
+    else submit(0x20, commands(waitEqual(&gate, 1), waitEqual(label, 1), dataFill(block, 0x5a5a5a5au, fillBytes), writeData(label, 0), waitEqual(label, 1), writeData(&second, 1)));
+    submit(0, commands(writeData(reset, 1)));
+    waitFor(reset, 1, "producer label never landed");
+    gate = 1;
+    waitFor(reset, 0, "the consumer's reset of the label never landed");
+    check(AgcDriver::DriverDetail::gpuLabels.load() > gpuLabelsBefore, "the consumer's reset of the label was not stored on the GPU behind the fill");
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+    check(second == 0, !wide ? "a wait passed on a label value its own queue had already reset, before the reset reached memory, or the wait expired"
+                       : resetWord == 0 ? "an 8-byte wait passed on a label whose low dword its own queue had already reset, before the reset reached memory, or the wait expired"
+                                        : "an 8-byte wait passed on a label whose high dword its own queue had already reset, before the reset reached memory, or the wait expired");
+    submit(0, commands(writeData(reset, 1)));
+    waitFor(&second, 1, "the consumer did not resume after a new producer label");
+    AgcDriverWaitIdle_nid_postfix();
+    GuestHeap::GuestHeapFree_nid_postfix(block);
+}
+
+void testLabelResetByItsQueueBeforeItLanded() {
+    labelResetByItsQueueBeforeItLanded(false, 0);
+}
+
+void testWideLabelPartlyResetByItsQueueBeforeItLanded() {
+    labelResetByItsQueueBeforeItLanded(true, 0);
+    labelResetByItsQueueBeforeItLanded(true, 1);
 }
 
 void testCopyIntoHostMemory() {
@@ -1103,6 +1203,8 @@ int main(int argc, char** argv) {
         testLabelHeldAtSubmission();
         testLabelTakenAndResetInOneSubmission();
         testLabelTakenAndResetByEarlierSubmission();
+        testLabelTakesRetire();
+        testLabelTakeRetiredByLaterSubmission();
         testWideLabelStoredSinceSubmission();
         testWaitFreeSubmissionAfterEarlierQueue0Work();
         testWaitFreeSubmissionQueue0WaitsOn();
@@ -1116,6 +1218,8 @@ int main(int argc, char** argv) {
         testHeaderWithoutProgramAddress();
         testCopyIntoHostMemory();
         testLargeDataFill();
+        testLabelResetByItsQueueBeforeItLanded();
+        testWideLabelPartlyResetByItsQueueBeforeItLanded();
         testSmallCopyBehindPendingSource();
         testRegisteredFloatMode();
         testDispatchFloatMode();
