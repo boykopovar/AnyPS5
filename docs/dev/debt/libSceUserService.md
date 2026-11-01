@@ -69,11 +69,11 @@
 - [sceUserServiceSetGlsBroadcastersComment](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetGlsCameraTransparency](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetIsHrtfEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceGetCurrentUserGroupIndex](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetCurrentUserGroupIndex](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int32_t* index)` and dispatches user group query `0x30018`; AnyPS5 reads the current index from offset `0x44` in `/system_data/priv/home/user_list.dat`, matching the SceShellCore 13.60 handler.
 - [sceUserServiceGetPbtcThursdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetPbtcFridayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetSystemLoggerHashedAccountIdTtl](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceGetRegisteredHomeUserIdList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetRegisteredHomeUserIdList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the 13.60 managed wrapper recovers `(int32_t* userIds, int32_t* count)` and returns up to 16 IDs; AnyPS5 fills the list from its existing connected-user model, matching `sceUserServiceGetRegisteredUserIdList`.
 - [sceUserServiceSetVolumeForGenericUSB](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetControlCenterFunctionControlSettings](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetAudioFocus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
@@ -106,7 +106,7 @@
 - [sceUserServiceSetIsFakePremium](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetAccessibilityKeyremapDataAston](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetKeyRepeatSpeed](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceSetUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int groupIndex, const char* name)` and dispatches update `0x3001c`; AnyPS5 writes names up to 128 bytes to `/system_data/priv/home/user_group_name.dat.<groupIndex>` with the recovered create, truncate, and mode flags. Missing slots are writable only when they are the next group slot.
 - [sceUserServiceGetParentalDvdRegion](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetGlsCameraDepthLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetParentalContentControl](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
@@ -133,7 +133,7 @@
 - [sceUserServiceSetPbtcSaturdayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetSystemLoggerHashedAccountIdParam](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetHearingAssistUsePreset](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceGetUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int groupIndex, char* name, size_t size)` and dispatches query `0x3001b`; AnyPS5 reads up to 128 bytes from `/system_data/priv/home/user_group_name.dat.<groupIndex>`, using `User Group <groupIndex + 1>` when the file is absent or empty.
 - [sceUserServiceSetAutoLoginEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetIPDLeft](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetHintShowFlag](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
@@ -366,7 +366,7 @@
 - [sceUserServiceSetUserStatus](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetEventFilterTeamEvent](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetPsCloudFeedbackTime](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceSetUserGroupIndex](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetUserGroupIndex](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware 13.60 validates the group slot, maps `-1` to `INT_MAX`, and writes Registry key `0x7410000`; AnyPS5 validates against `/system_data/priv/home/user_list.dat.<index>` and stores the selected index at offset `0x44` in `/system_data/priv/home/user_list.dat`.
 - [sceUserServiceSetPartyMuteListA](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetNpLanguageCode2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetShareStatus2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
@@ -418,7 +418,7 @@
 - [sceUserServiceSetNpOnlineId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetA11yControllerBName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetSaveDataAutoSync](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceGetDefaultNewUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetDefaultNewUserGroupName](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(char* name, size_t size)` and dispatches query `0x3001d`; AnyPS5 selects the first missing group slot among 128 using `/system_data/priv/home/user_list.dat.<index>` and formats `User Group <slot + 1>`.
 - [sceUserServiceGetHmd2Brightness](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetHoldAudioOutDevice](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetVibrationStrength](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
@@ -482,7 +482,7 @@
 - [sceUserServiceGetHmd2GazeActivate](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetGlsCameraPosition](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetGlsMessageFilterLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceGetUserGroupNameList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetUserGroupNameList](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int groupIndex, char* nameList, size_t size, int32_t* count)` and dispatches query `0x3001a`; it reads up to 16 IDs from the group file (or the global list for index `-1`) and writes fixed 17-byte name slots. AnyPS5 resolves IDs supported by its user-name model; unsupported IDs return `USER_SERVICE_ERROR_UNKNOWN_USER` because shell user configuration is not modeled.
 - [sceUserServiceSetVoiceAgentEnableFeedback](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetGazeActivate](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetGlsIsTwitterEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
@@ -551,7 +551,7 @@
 - [sceUserServiceSetIsHrtfEnabled](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetParentalGameAgeLevel](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetNotificationBehavior](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceGetUserGroupNum](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetUserGroupNum](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int32_t* count)` and dispatches query `0x30017`; AnyPS5 scans `/system_data/priv/home/user_list.dat.<index>` from slot 0 and counts consecutive existing slots up to 128, matching the SceShellCore 13.60 handler.
 - [sceUserServiceSetPartySettingFlags](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetGlsCameraEffect](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetPbtcSundayHoursEnd](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature

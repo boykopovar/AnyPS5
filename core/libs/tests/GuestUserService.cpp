@@ -193,6 +193,26 @@ int main() {
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + 1, &color) == USER_SERVICE_OK);
     Require(color == 1);
 
+    char homePath[64]{};
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(std::strcmp(homePath, "/user/home/10000000") == 0);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(std::strstr(homePath, "/priv/home/10000000") != nullptr);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, nullptr, 37) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 36) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 37) == USER_SERVICE_OK);
+    Require(std::strlen(homePath) == 36);
+    Require(sceUserServiceGetCurrentUserGroupIndex(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceSetUserGroupIndex(-2) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceSetUserGroupIndex(129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupName(0, nullptr, 129) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupName(0, homePath, 128) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetUserGroupName(0, homePath, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, &age_level) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     Require(sceUserServiceGetAgeLevel(USER_SERVICE_INITIAL_USER_ID + 1, nullptr) == USER_SERVICE_ERROR_NOT_LOGGED_IN);
     privacy = 0x5a5a;
