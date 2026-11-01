@@ -8,6 +8,9 @@
 #include "prx/libSceSsl/libSceSsl.hpp"
 #include "prx/libSceVisionManager/libSceVisionManager.hpp"
 #include "prx/libmdbg_syscore/libmdbg_syscore.hpp"
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 
 namespace {
@@ -18,6 +21,28 @@ void CheckAvSetting() {
     constexpr int AvSettingError = static_cast<int>(0x802A00FF);
     Require(sceAvSettingSetDisplayBlackLevel() == AvSettingError);
     Require(sceAvSettingTerm() == AvSettingError);
+}
+
+void CheckAvSettingCallbackFuncsInit(void (APS5_VABI* initialize)(void*), std::size_t size) {
+    initialize(nullptr);
+    constexpr std::size_t Offset = 8;
+    for (const std::uint8_t fill : {std::uint8_t{0xaa}, std::uint8_t{0x00}, std::uint8_t{0xff}}) {
+        std::array<std::uint8_t, 0x40> buffer{};
+        buffer.fill(fill);
+        initialize(buffer.data() + Offset);
+        for (std::size_t i = 0; i < buffer.size(); ++i) {
+            const bool inside = i >= Offset && i < Offset + size;
+            const std::uint8_t expected = !inside ? fill : i == Offset ? static_cast<std::uint8_t>(size) : 0;
+            Require(buffer[i] == expected);
+        }
+    }
+}
+
+void CheckAvSettingCallbackFuncs() {
+    CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInit, 0x20);
+    CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInit_, 0x20);
+    CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInitForLnc, 0x10);
+    CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInitForLnc_, 0x10);
 }
 
 void CheckComposite() {
@@ -78,6 +103,7 @@ void CheckDebugSyscore() {
 
 int main() {
     CheckAvSetting();
+    CheckAvSettingCallbackFuncs();
     CheckComposite();
     CheckFsInternal();
     CheckHttpCacheAndPlayReady();
