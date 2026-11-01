@@ -112,6 +112,41 @@ class ImportRelocationTests(unittest.TestCase):
                 with self.assertRaisesRegex(annotate_module.ModuleError, "DT_SYMENT"):
                     annotate_module.Module(data)
 
+    def test_unsupported_elf_header_layout_is_rejected(self):
+        for form, offset, value in (("<B", 6, 0), ("<I", 20, 0), ("<H", 52, 63),
+                                    ("<H", 54, 48), ("<Q", 32, 63), ("<H", 56, 0xFFFF)):
+            with self.subTest(offset=offset, value=value):
+                image = bytearray(build_module())
+                struct.pack_into(form, image, offset, value)
+                with self.assertRaises(annotate_module.ModuleError):
+                    annotate_module.Module(image)
+        self.assertTrue(annotate_module.Module(build_module()).exports())
+
+    def test_short_program_headers_cannot_overlap_parser_reads(self):
+        image = bytearray(build_module())
+        struct.pack_into("<HH", image, 54, 48, 2)
+        struct.pack_into("<IIQQQQQQ", image, 64, 1, 7, 0x1000, 0x1000, 0, 0x1810, 0x1810, 1)
+        struct.pack_into("<IIQQQQQQ", image, 112, 2, 6, 0x2300, 0x2300, 0, 144, 144, 8)
+        with self.assertRaisesRegex(annotate_module.ModuleError, "program header size"):
+            annotate_module.Module(image)
+
+    def test_missing_program_headers_report_the_missing_dynamic_header(self):
+        for offset in (0, 63, 64):
+            with self.subTest(offset=offset):
+                image = bytearray(build_module())
+                struct.pack_into("<Q", image, 32, offset)
+                struct.pack_into("<H", image, 56, 0)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "^no PT_DYNAMIC program header$"):
+                    annotate_module.Module(image)
+
+    def test_nonempty_program_header_tables_must_fit_outside_the_elf_header(self):
+        for offset in (0, 63, len(build_module()) - 55, 1 << 63):
+            with self.subTest(offset=offset):
+                image = bytearray(build_module())
+                struct.pack_into("<Q", image, 32, offset)
+                with self.assertRaisesRegex(annotate_module.ModuleError, "program header table is outside"):
+                    annotate_module.Module(image)
+
     def test_tables_cannot_read_file_padding_past_the_load_segment(self):
         for tag in (5, 6, 23):
             with self.subTest(tag=tag):
