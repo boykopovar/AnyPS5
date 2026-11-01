@@ -15,6 +15,8 @@ on:
       - tools/nid_names.py
       - tools/observed_imports.py
       - tools/progress.py
+      - tools/shader_scan.py
+      - tools/rdna2_isa_forms.txt
       - tools/progress_history.py
       - tools/stub_origins.py
       - tools/rdna_isa.txt
@@ -51,7 +53,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 tools/build_web.py --build build-wasm --release
-      - run: python3 tools/progress.py --origins build-wasm/web
+      - run: python3 tools/progress.py --origins --require-shader-source build-wasm/web
       - run: python3 tools/progress_history.py build-wasm/web
       - uses: actions/upload-pages-artifact@v5
         with:

@@ -450,6 +450,11 @@ public:
     // GuestMemory::GpuMutex only, as Refresh is; never from a build's stage A.
     DccKeys UploadedKeys() const { return uploadedKeys; }
     DccKeys FilledKeys() const { return filledKeys; }
+    bool HasWritesSinceFill() const { return writes > writesAtFill && std::any_of(layerWrittenSinceFill.begin(), layerWrittenSinceFill.end(), [](bool written) { return written; }); }
+    bool HasWritesSinceFill(std::uint32_t unit) const { return unit < layerWrittenSinceFill.size() && layerWrittenSinceFill[unit]; }
+    bool LayerPending(std::uint32_t unit) const { return unit < layerPending.size() && layerPending[unit]; }
+    bool LayerWrittenSinceFill(std::uint32_t unit) const { return unit < layerWrittenSinceFill.size() && layerWrittenSinceFill[unit]; }
+    std::span<const std::byte> Original() const { return original; }
     bool GuestSnapshotValid() const { return originalHolds(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)); }
     DccKeyProof& KeyProof() const { return keyProof; }
     DccRangeProof& TargetKeyProof() const { return targetKeyProof; }
@@ -494,6 +499,8 @@ private:
     // APS5_BLOCK_WRITEBACK_EACH=1 stores the touched units only).
     void writeBack(std::uint64_t address, std::size_t bytes);
     void writeBackLayers(const std::vector<bool>& layers);
+    void releaseReadTraps(bool sharingPages);
+    void storeTrappedOverlaps(const char* reason);
     bool unchangedSinceBaseline(std::uint64_t from, std::uint64_t to) const;
     void saveBeforeUnwatch();
     void forgetKeptAtUnwatch(std::uint32_t unit);
@@ -756,6 +763,7 @@ private:
     // Results are on the GPU only (guarded by the pending-write registry lock).
     bool dirty = false;
     bool drawnListed = false;
+    mutable std::atomic<bool> readTrapped{false};
     bool drawnWhole = false;
     bool drawingTarget = false;
     bool pendingFromOthers = false;
@@ -763,6 +771,9 @@ private:
     std::vector<std::uint64_t> storeNotes;
     std::uint64_t version = 0;
     std::uint64_t writes = 0;
+    std::uint64_t writesAtFill = 0;
+    bool keysFilledSinceRefresh = false;
+    std::vector<bool> layerWrittenSinceFill;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.
     std::vector<bool> layerOriginal;
     std::map<std::uint64_t, std::uint64_t> keptAtUnwatch;

@@ -55,6 +55,27 @@ The map shows them: when any of these records exists, the site also gets `progre
 
 Each point keeps the observed and unobserved split (`libraries.unobserved` and `libraries.declared_total` in `history.json`, next to `done`, `total` and `percent`) and the sha of the commit it was measured at. Points measured before this field existed have neither and are drawn with no unobserved stubs. The chart adds an observed-stubs line (red) and an unobserved-stubs line (grey) to the library panel, with their own labels and tooltip numbers, and the table gives the commit of each day as a link plus how many functions were declared since the previous day, so a jump in stubs points at the commit that added them. The per-commit cache accepts both record shapes.
 
+## Shader recompiler numbers
+
+The shaders badge and the "Shader recompiler: counted from the code" section of the progress page come from [`tools/shader_scan.py`](../../tools/shader_scan.py). They are counted from the shader recompiler's code, not from playing games, so they say nothing about whether a game runs. The older "GPU shader instructions" figure counted instruction names that have an `RdnaOpcode` enumerator and reached 100%; the badge, the progress map panel ("Shader forms decoded") and the page now show the forms instead. That figure stays in `progress.json` under `shaders` for comparisons and history, and is shown only when the shader source scan cannot run (a local run without `--require-shader-source`).
+
+The scan takes every encoded form of every instruction in AMD's RDNA 2 instruction set from [`tools/rdna2_isa_forms.txt`](../../tools/rdna2_isa_forms.txt). A form is the base encoding, the VOP3 encoding of a VOP1, VOP2 or VOPC instruction, or a DPP16 or DPP8 word on a VOP1 or VOP2 instruction. SDWA forms are not counted, because whether the decoder accepts one depends on selector bits that a source scan cannot tell apart.
+
+- **Decoded:** the decoder's opcode tables under `core/shader/recompiler/RdnaDecoder/src` map the form to an `RdnaOpcode`, applying the same VOP3 opcode offsets and the VOP2 and DPP refusals as the decoder. The badge shows decoded forms out of all base and VOP3 forms.
+- **Translated:** that `RdnaOpcode` has a `case` label in `TranslationContext::emitScalar`, `emitVector`, `emitMemory` or `emitInterpolation`. A case label shows the translator handles the opcode at all, not that the translation is correct.
+- **DPP forms** are reported separately.
+- **Unsupported throws:** `throw` statements under `core/shader/recompiler` (tests excluded) whose message or exception type says unsupported or not implemented.
+
+The "Still needed" panel under the progress map, and the matching section of the progress page, list what is left, all read from the same scan:
+
+- the forms the decoder does not decode (base and VOP3 forms, then DPP forms separately) and the decoded opcodes the translator has no `case` for, by name, grouped by encoding and form;
+- the unsupported-throw sites as bars per recompiler area (the first directory under `core/shader/recompiler`; top-level files are "Recompiler"). `progress.json` carries the per-site file, line and message under `shader_source.throw_sites`;
+- image formats as bars: sampled and typed-buffer formats from the recompiler's format tables (`IrBufferFormat`, `DefinedImageFormats`, `kFormatInfoTable`, `GetFormatInfo`), and formats the driver maps to a Vulkan format in `libSceAgcDriver/Graphics/src/TextureFormat.cpp` (`kFormatLookup` and `remapGuestFormat`).
+
+When the recompiler is restructured so a table or function cannot be found, the scan stops with an error naming it. The Pages workflows pass `--require-shader-source`, so nothing is published from a failed scan; without the flag `progress.py` prints a warning and leaves the shader source numbers out.
+
+`tools/rdna2_isa_forms.txt` is derived from AMD's machine-readable ISA XML (`amdgpu_isa_rdna2.xml`, published under the MIT licence; the file keeps AMD's copyright and permission notice). To refresh it for a newer release, run `python3 tools/progress.py --regenerate-isa-forms amdgpu_isa_rdna2.xml`.
+
 ## Comparisons
 
 Comparisons identify functions by library and name. When a head group becomes a shared-source wrapper, its previous definitions are compared under the source library's identity. Removing a duplicate implementation is reported as sharing sources, without reporting the retained functions as removed.
