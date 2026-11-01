@@ -296,6 +296,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_LABEL_BATCH_SUBMIT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/DeferredLabels.cpp` |  | disables batched label submission |
 | `APS5_NO_LABEL_PACKET_FLUSH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Packets/PacketFlush.cpp` |  | disables the label flush between packets, which runs only when batched label submission is off (`APS5_NO_LABEL_BATCH_SUBMIT` or `APS5_NO_LABEL_BATCHING`) |
 | `APS5_NO_LABEL_READBACK_STORE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | leaves pending linear and small storage images on the GPU at a label instead of storing them before it |
+| `APS5_NO_LABEL_READ_TRAP` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | on macOS, stores pending linear and small storage images before a label instead of trapping reads of their pages until something stores them |
 | `APS5_NO_LABEL_RUNS` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Recorder.cpp` |  | records every store in a run of its own between a barrier pair |
 | `APS5_NO_LABEL_SHORTCUT` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | disables the pending-label table shortcut in a memory wait |
 | `APS5_NO_LAYER_CLEAR` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | tracks every surface as one layer instead of per array layer |
@@ -628,6 +629,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_VERIFY_DIRECT_COLLECT` | presence | `core/libs/prx/libc/include/WindowsMappings.hpp` |  | queries the regions of each private-memory collect read from the allocation map and throws when that collect succeeded over memory that is no longer committed private |
 | `APS5_WATCH_ADDR` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | absolute hex address whose writes are reported after its page is committed |
 | `APS5_WATCH_WRITE` | integer | `core/libs/prx/libc/src/specifics/windows/CrashReport.cpp` |  | guest ELF vaddr whose 8-byte writes are reported by single-stepping the protected page |
+| `APS5_WRITE_WATCH_FAULT_AHEAD` | integer | `core/libs/prx/libc/src/GuestWriteWatch.cpp` | 32 | on macOS, at most this many pages, up to the end of the faulting page's 64 KiB block, that a write fault unprotects and records as written when the two pages before it were written since the last collection; 0 or 1 unprotects only the faulting page |
 
 ### libkernel
 
