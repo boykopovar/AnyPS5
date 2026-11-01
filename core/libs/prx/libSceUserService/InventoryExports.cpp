@@ -90,7 +90,7 @@ int APS5_VABI libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(std::uint32_t us
     if (path == nullptr) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
-    if (size < 0x25) {
+    if (size <= 0x25) {
         return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
     }
     std::snprintf(path, size, "/%s/eap/rodata/home/%08x", sceKernelGetFsSandboxRandomWord(), userId);

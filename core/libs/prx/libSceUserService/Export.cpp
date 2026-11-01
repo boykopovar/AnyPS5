@@ -100,6 +100,9 @@ static int ReportKeyboardSetting(int user_id, int32_t* type, int32_t (*value)())
  return USER_SERVICE_OK;
 }
 bool UserGroupSlotExists(int index) {
+    if (index < 0 || index > 128) {
+        return false;
+    }
     char path[64];
     std::snprintf(path, sizeof(path), "/system_data/priv/home/user_list.dat.%d", index);
     FileStat status{};
@@ -693,7 +696,7 @@ int APS5_VABI sceUserServiceSetUserGroupName(int groupIndex, const char* name) {
     if (bytesWritten < 0) {
         return static_cast<int>(bytesWritten);
     }
-    return USER_SERVICE_OK;
+    return bytesWritten == static_cast<std::int64_t>(nameSize) ? USER_SERVICE_OK : SCE_KERNEL_ERROR_EIO;
 }
 
 int APS5_VABI sceUserServiceGetParentalDvdRegion(void) {
@@ -834,6 +837,9 @@ int APS5_VABI sceUserServiceGetUserGroupName(int groupIndex, char* name, std::si
         return USER_SERVICE_ERROR_BUFFER_TOO_SHORT;
     }
     if (size != 129) {
+        return USER_SERVICE_ERROR_INVALID_ARGUMENT;
+    }
+    if (!UserGroupSlotExists(groupIndex)) {
         return USER_SERVICE_ERROR_INVALID_ARGUMENT;
     }
     std::memset(name, 0, size);
