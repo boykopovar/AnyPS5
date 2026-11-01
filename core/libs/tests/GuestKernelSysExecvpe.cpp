@@ -7,7 +7,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -30,16 +29,6 @@ void RequireFailure(int result, int error, const char* message) {
     Require(result == -1 && *__error_nid_postfix() == error, message);
 }
 
-template <typename TCall> void RequireThrows(TCall call, const std::string& expected, const char* message) {
-    try {
-        call();
-    } catch (const std::runtime_error& value) {
-        Require(value.what() == expected, message);
-        return;
-    }
-    Require(false, message);
-}
-
 void WriteFile(const char* name, const char* content, std::streamsize bytes, std::filesystem::perms mode) {
     std::ofstream file(name, std::ios::binary);
     file.write(content, bytes);
@@ -59,11 +48,13 @@ int main() {
     char* const argv[] = {first, second, nullptr};
     constexpr auto fullExecute = std::filesystem::perms::owner_all | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec;
     constexpr auto plainRead = std::filesystem::perms::owner_read | std::filesystem::perms::owner_write | std::filesystem::perms::group_read | std::filesystem::perms::others_read;
-    constexpr char elfBody[] = "\x7f" "ELFreference";
-    constexpr char scriptBody[] = "#!/bin/sh\necho pairs\n";
+    constexpr char plainBody[] = "plain data";
     RequireFailure(_execvpe_nid_postfix("", argv, nullptr), GuestEnoent, "execvpe with an empty name did not fail with ENOENT");
     RequireFailure(_execvpe_nid_postfix(nullptr, argv, nullptr), GuestEfault, "execvpe with a null name did not fail with EFAULT");
     RequireFailure(_execvpe_nid_postfix("kernel_execvpe_absent.bin", nullptr, nullptr), GuestEnoent, "execvpe with a null argv did not fail with ENOENT");
+    const std::string longName(1024 * 1024, 'x');
+    RequireFailure(_execvpe_nid_postfix(longName.c_str(), argv, nullptr), GuestEnoent, "an overlong name did not end the bounded search");
+    RequireFailure(_execvpe_nid_postfix(("/" + longName).c_str(), argv, nullptr), GuestEnoent, "an overlong slash-qualified name did not end the bounded search");
     const std::string oversized(2048, 'a');
     std::vector<std::string> storage;
     std::vector<char*> oversizedArgv;
@@ -73,20 +64,14 @@ int main() {
     }
     oversizedArgv.push_back(nullptr);
     RequireFailure(_execvpe_nid_postfix("kernel_execvpe_absent.bin", oversizedArgv.data(), nullptr), GuestE2big, "execvpe with arguments beyond ARG_MAX did not fail with E2BIG");
-    WriteFile("kernel_execvpe_elf.bin", elfBody, sizeof(elfBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
-    RequireThrows([&argv] { _execvpe_nid_postfix("./kernel_execvpe_elf.bin", argv, nullptr); },
-        "execve: replacing the process image with ./kernel_execvpe_elf.bin is not supported, program activation is not modelled",
-        "execvpe with a slash in the name did not refuse activation");
-    std::filesystem::remove("kernel_execvpe_elf.bin");
+    WriteFile("kernel_execvpe_data.bin", plainBody, sizeof(plainBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
+    RequireFailure(_execvpe_nid_postfix("./kernel_execvpe_data.bin", argv, nullptr), GuestEnoent, "execvpe did not return ENOENT for a missing shell");
+    std::filesystem::remove("kernel_execvpe_data.bin");
     std::filesystem::create_directory("bin");
-    WriteFile("bin/sh", elfBody, sizeof(elfBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
-    RequireThrows([&argv] { _execvpe_nid_postfix("./bin/sh", argv, nullptr); },
-        "execve: replacing the process image with ./bin/sh is not supported, program activation is not modelled",
-        "execvpe of the shell by path did not refuse activation");
+    WriteFile("bin/sh", "", 0, static_cast<std::filesystem::perms>(fullExecute));
+    RequireFailure(_execvpe_nid_postfix("./bin/sh", argv, nullptr), GuestEnoexec, "execvpe did not reach the empty shell through its search and fallback");
     WriteFile("bin/plain.bin", "plain", 5, static_cast<std::filesystem::perms>(fullExecute));
-    RequireThrows([&argv] { _execvpe_nid_postfix("./bin/plain.bin", argv, nullptr); },
-        "execve: replacing the process image with /bin/sh is not supported, program activation is not modelled",
-        "execvpe of a slash-named plain file did not redirect to and refuse the shell");
+    RequireFailure(_execvpe_nid_postfix("./bin/plain.bin", argv, nullptr), GuestEnoexec, "execvpe did not reach the empty shell through its search and fallback");
     std::filesystem::create_directory("sbin");
     RequireFailure(_execvpe_nid_postfix("kernel_execvpe_absent.bin", argv, nullptr), GuestEnoent, "execvpe with the default search path and a missing file did not fail with ENOENT");
 #ifndef _WIN32
@@ -96,34 +81,22 @@ int main() {
 #endif
     std::filesystem::create_directory("usr");
     std::filesystem::create_directory("usr/bin");
-    WriteFile("usr/bin/kernel_execvpe_elf.bin", elfBody, sizeof(elfBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
-    RequireThrows([&argv] { _execvpe_nid_postfix("kernel_execvpe_elf.bin", argv, nullptr); },
-        "execve: replacing the process image with /usr/bin/kernel_execvpe_elf.bin is not supported, program activation is not modelled",
-        "execvpe did not search the default path and refuse the found image");
+    WriteFile("usr/bin/kernel_execvpe_data.bin", plainBody, sizeof(plainBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
+    RequireFailure(_execvpe_nid_postfix("kernel_execvpe_data.bin", argv, nullptr), GuestEnoexec, "execvpe did not reach the empty shell through its search and fallback");
     std::filesystem::create_directory("sandbox");
-    WriteFile("sandbox/kernel_execvpe_tool.bin", elfBody, sizeof(elfBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
+    WriteFile("sandbox/kernel_execvpe_tool.bin", plainBody, sizeof(plainBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
     setenv_nid_postfix("PATH", "/sandbox", 1);
-    RequireThrows([&argv] { _execvpe_nid_postfix("kernel_execvpe_tool.bin", argv, nullptr); },
-        "execve: replacing the process image with /sandbox/kernel_execvpe_tool.bin is not supported, program activation is not modelled",
-        "execvpe did not follow the guest PATH and refuse the found image");
+    RequireFailure(_execvpe_nid_postfix("kernel_execvpe_tool.bin", argv, nullptr), GuestEnoexec, "execvpe did not reach the empty shell through its search and fallback");
     unsetenv_nid_postfix("PATH");
     RequireFailure(_execvpe_nid_postfix("kernel_execvpe_tool.bin", argv, nullptr), GuestEnoent, "execvpe with a cleared PATH did not fail with ENOENT");
-    WriteFile("kernel_execvpe_tool.bin", elfBody, sizeof(elfBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
+    WriteFile("kernel_execvpe_tool.bin", plainBody, sizeof(plainBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
     setenv_nid_postfix("PATH", "", 1);
-    RequireThrows([&argv] { _execvpe_nid_postfix("kernel_execvpe_tool.bin", argv, nullptr); },
-        "execve: replacing the process image with ./kernel_execvpe_tool.bin is not supported, program activation is not modelled",
-        "execvpe with an empty PATH did not search the current directory");
+    RequireFailure(_execvpe_nid_postfix("kernel_execvpe_tool.bin", argv, nullptr), GuestEnoexec, "execvpe did not reach the empty shell through its search and fallback");
     unsetenv_nid_postfix("PATH");
     std::filesystem::remove("kernel_execvpe_tool.bin");
-    WriteFile("sandbox/kernel_execvpe_job.bin", scriptBody, sizeof(scriptBody) - 1, static_cast<std::filesystem::perms>(fullExecute));
     setenv_nid_postfix("PATH", "/sandbox", 1);
-    RequireThrows([&argv] { _execvpe_nid_postfix("kernel_execvpe_job.bin", argv, nullptr); },
-        "execve: running the script /sandbox/kernel_execvpe_job.bin is not supported, script interpreters are not modelled",
-        "execvpe of a script did not refuse the interpreter");
     WriteFile("sandbox/kernel_execvpe_plain.bin", "plain", 5, static_cast<std::filesystem::perms>(fullExecute));
-    RequireThrows([&argv] { _execvpe_nid_postfix("kernel_execvpe_plain.bin", argv, nullptr); },
-        "execve: replacing the process image with /bin/sh is not supported, program activation is not modelled",
-        "execvpe of an unrecognised file did not redirect to and refuse the shell");
+    RequireFailure(_execvpe_nid_postfix("kernel_execvpe_plain.bin", argv, nullptr), GuestEnoexec, "execvpe did not reach the empty shell through its search and fallback");
     std::filesystem::remove("bin/sh");
     RequireFailure(_execvpe_nid_postfix("./bin/plain.bin", argv, nullptr), GuestEnoent, "execvpe of a slash-named plain file without the shell did not fail with ENOENT");
     std::filesystem::remove("bin/plain.bin");
@@ -135,9 +108,8 @@ int main() {
     RequireFailure(_execvpe_nid_postfix("kernel_execvpe_plain.bin", argv, nullptr), GuestEnoent, "execvpe over a missing first element did not fail with ENOENT");
     unsetenv_nid_postfix("PATH");
     std::filesystem::remove("sandbox/kernel_execvpe_tool.bin");
-    std::filesystem::remove("sandbox/kernel_execvpe_job.bin");
     std::filesystem::remove("sandbox/kernel_execvpe_plain.bin");
-    std::filesystem::remove("usr/bin/kernel_execvpe_elf.bin");
+    std::filesystem::remove("usr/bin/kernel_execvpe_data.bin");
     std::filesystem::remove("scripts/kernel_execvpe_plain.bin");
     std::filesystem::remove("bin");
     std::filesystem::remove("sbin");

@@ -7,7 +7,6 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -30,16 +29,6 @@ void Require(bool condition, const char* message) {
 
 void RequireFailure(int result, int error, const char* message) {
     Require(result == -1 && *__error_nid_postfix() == error, message);
-}
-
-template <typename TCall> void RequireThrows(TCall call, const std::string& expected, const char* message) {
-    try {
-        call();
-    } catch (const std::runtime_error& value) {
-        Require(value.what() == expected, message);
-        return;
-    }
-    Require(false, message);
 }
 
 std::string RepeatedComponents(std::size_t length) {
@@ -83,7 +72,6 @@ int main() {
     Require(tooLongPath.size() == 1025, "the 1024 byte unterminated pathname test built the wrong length");
     RequireFailure(_execve_nid_postfix(tooLongPath.c_str(), emptyArgv, nullptr), GuestEnametoolong, "execve with an unterminated 1024 byte pathname did not fail with ENAMETOOLONG");
     RequireFailure(_execve_nid_postfix("", emptyArgv, nullptr), GuestEnoent, "execve with an empty pathname did not fail with ENOENT");
-    RequireFailure(_execve_nid_postfix(nullptr, emptyArgv, nullptr), GuestEnoent, "execve with a null pathname did not fail with ENOENT");
     RequireFailure(_execve_nid_postfix("kernel_execve_missing.bin", argv, environment), GuestEnoent, "execve of a missing file did not fail with ENOENT");
     constexpr char prefixBody[] = "prefix";
     WriteFile("kernel_execve_prefix.bin", prefixBody, sizeof(prefixBody) - 1, std::filesystem::perms::owner_all);
@@ -100,26 +88,6 @@ int main() {
     WriteFile("kernel_execve_unexec.bin", "just data", 9, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write | std::filesystem::perms::group_read | std::filesystem::perms::others_read);
     RequireFailure(_execve_nid_postfix("kernel_execve_unexec.bin", argv, nullptr), GuestEacces, "execve without execute bits did not fail with EACCES");
 #endif
-    constexpr char elfBody[] = "\x7f" "ELFreference";
-    WriteFile("kernel_execve_elf.bin", elfBody, sizeof(elfBody) - 1, std::filesystem::perms::owner_all | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec);
-    RequireThrows([&emptyArgv] { _execve_nid_postfix("kernel_execve_elf.bin", emptyArgv, nullptr); },
-        "execve: replacing the process image with kernel_execve_elf.bin is not supported, program activation is not modelled",
-        "execve of an ELF image did not refuse replacement");
-    constexpr unsigned char selfBody[] = {0x4f, 0x15, 0x3d, 0x1d, 'r', 'e', 'f', 'e', 'r', 'e', 'n', 'c', 'e'};
-    WriteFile("kernel_execve_self.bin", reinterpret_cast<const char*>(selfBody), sizeof(selfBody), std::filesystem::perms::owner_all | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec);
-    RequireThrows([&emptyArgv] { _execve_nid_postfix("kernel_execve_self.bin", emptyArgv, nullptr); },
-        "execve: replacing the process image with kernel_execve_self.bin is not supported, program activation is not modelled",
-        "execve of a SELF image did not refuse replacement");
-    constexpr unsigned char payloadBody[] = {0x54, 0x14, 0xf5, 0xee, 'r', 'e', 'f'};
-    WriteFile("kernel_execve_payload.bin", reinterpret_cast<const char*>(payloadBody), sizeof(payloadBody), std::filesystem::perms::owner_all | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec);
-    RequireThrows([&emptyArgv] { _execve_nid_postfix("kernel_execve_payload.bin", emptyArgv, nullptr); },
-        "execve: replacing the process image with kernel_execve_payload.bin is not supported, program activation is not modelled",
-        "execve of a PS5 SELF payload did not refuse replacement");
-    constexpr char scriptBody[] = "#!/bin/sh\necho double\n";
-    WriteFile("kernel_execve_script.bin", scriptBody, sizeof(scriptBody) - 1, std::filesystem::perms::owner_all | std::filesystem::perms::group_exec | std::filesystem::perms::others_exec);
-    RequireThrows([&emptyArgv] { _execve_nid_postfix("kernel_execve_script.bin", emptyArgv, nullptr); },
-        "execve: running the script kernel_execve_script.bin is not supported, script interpreters are not modelled",
-        "execve of a script did not refuse the interpreter");
     const std::string oversized(2048, 'a');
     std::vector<std::string> storage;
     storage.reserve(128);
@@ -136,10 +104,6 @@ int main() {
     std::filesystem::remove("kernel_execve_short.bin");
     std::filesystem::remove("kernel_execve_plain.bin");
     std::filesystem::remove("kernel_execve_unexec.bin");
-    std::filesystem::remove("kernel_execve_elf.bin");
-    std::filesystem::remove("kernel_execve_self.bin");
-    std::filesystem::remove("kernel_execve_payload.bin");
-    std::filesystem::remove("kernel_execve_script.bin");
     std::filesystem::remove("kernel_execve_dir");
     std::puts("guest_kernel_sys_execve passed");
     return 0;

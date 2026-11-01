@@ -2,13 +2,15 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
+#include "prx/libkernel/include/Api.hpp"
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 extern "C" {
@@ -201,7 +203,7 @@ int APS5_VABI _dup2_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp) {
+static int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* envp) {
     constexpr int GuestEfault = 14;
     constexpr int GuestEacces = 13;
     constexpr int GuestEnoexec = 8;
@@ -220,7 +222,7 @@ int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* e
             const std::size_t boundary = 4096 - address % 4096;
             const std::size_t bytes = boundary < maxLength - read ? boundary : maxLength - read;
             char buffer[4096];
-            if (!GuestCopyIn_nid_no_patch(buffer, guest + read, bytes)) return GuestEfault;
+            if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(address), bytes)) return GuestEfault;
             const auto end = static_cast<const char*>(std::memchr(buffer, 0, bytes));
             if (end != nullptr) {
                 copy.append(buffer, static_cast<std::size_t>(end - buffer));
@@ -238,6 +240,8 @@ int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* e
         if (error != 0) return fail(error);
     }
     std::string text;
+    std::vector<std::string> arguments;
+    std::vector<std::string> environment;
     std::size_t stringspace = GuestArgMax;
     for (char* const* slot = argv;; ++slot) {
         char* argument = nullptr;
@@ -247,6 +251,7 @@ int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* e
         const int error = gather(argument, stringspace, text);
         if (error != 0) return fail(error == GuestEnametoolong ? GuestE2big : error);
         stringspace -= text.size() + 1;
+        arguments.push_back(std::move(text));
     }
     if (envp != nullptr) {
         for (char* const* slot = envp;; ++slot) {
@@ -257,9 +262,11 @@ int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* e
             const int error = gather(variable, stringspace, text);
             if (error != 0) return fail(error == GuestEnametoolong ? GuestE2big : error);
             stringspace -= text.size() + 1;
+            environment.push_back(std::move(text));
         }
     }
-    if (path == nullptr || fname.empty()) return fail(GuestEnoent);
+    if (path == nullptr) NotImplemented_nid_no_patch(__func__);
+    if (fname.empty()) return fail(GuestEnoent);
     std::filesystem::path native;
     if (const int error = ResolvePathError_nid_no_patch(fname.c_str(), native)) return fail(error);
     std::error_code statusError;
@@ -284,7 +291,7 @@ int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* e
     image.read(reinterpret_cast<char*>(header), sizeof(header));
     if (image.gcount() < static_cast<std::streamsize>(sizeof(header))) return fail(GuestEnoexec);
     if (header[0] == '#' && header[1] == '!') {
-        throw std::runtime_error(std::string("execve: running the script ") + fname + " is not supported, script interpreters are not modelled");
+        NotImplemented_nid_no_patch(__func__);
     }
     constexpr unsigned char ElfMagic[] = {0x7f, 0x45, 0x4c, 0x46};
     constexpr unsigned char Ps4SelfMagic[] = {0x4f, 0x15, 0x3d, 0x1d};
@@ -292,7 +299,13 @@ int GuestExecve_nid_no_patch(const char* path, char* const* argv, char* const* e
     if (std::memcmp(header, ElfMagic, sizeof(ElfMagic)) == 0 ||
         std::memcmp(header, Ps4SelfMagic, sizeof(Ps4SelfMagic)) == 0 ||
         std::memcmp(header, Ps5SelfMagic, sizeof(Ps5SelfMagic)) == 0) {
-        throw std::runtime_error(std::string("execve: replacing the process image with ") + fname + " is not supported, program activation is not modelled");
+        std::vector<char*> argumentPointers;
+        for (auto& argument : arguments) argumentPointers.push_back(argument.data());
+        argumentPointers.push_back(nullptr);
+        std::vector<char*> environmentPointers;
+        for (auto& variable : environment) environmentPointers.push_back(variable.data());
+        environmentPointers.push_back(nullptr);
+        return execve_nid_postfix(fname.c_str(), argumentPointers.data(), environmentPointers.data());
     }
     return fail(GuestEnoexec);
 }
@@ -323,11 +336,12 @@ int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* co
     if (!CopyGuestEnvironment_nid_no_patch("PATH", searchPath)) searchPath = std::string(DefaultSearchPath);
     std::string nameText;
     if (name != nullptr) {
-        for (std::size_t read = 0;;) {
+        for (std::size_t read = 0; read < GuestCandidateMax;) {
             const auto address = reinterpret_cast<std::uintptr_t>(name) + read;
-            const std::size_t bytes = 4096 - address % 4096;
+            const std::size_t boundary = 4096 - address % 4096;
+            const std::size_t bytes = std::min(boundary, GuestCandidateMax - read);
             char buffer[4096];
-            if (!GuestCopyIn_nid_no_patch(buffer, name + read, bytes)) return fail(GuestEfault);
+            if (!GuestCopyIn_nid_no_patch(buffer, reinterpret_cast<const void*>(address), bytes)) return fail(GuestEfault);
             const auto end = static_cast<const char*>(std::memchr(buffer, 0, bytes));
             if (end != nullptr) {
                 nameText.append(buffer, static_cast<std::size_t>(end - buffer));
@@ -339,6 +353,7 @@ int APS5_VABI _execvpe_nid_postfix(const char* name, char* const* argv, char* co
     } else {
         return fail(GuestEfault);
     }
+    if (nameText.size() == GuestCandidateMax) return fail(GuestEnoent);
     bool accessFailure = false;
     const auto ladder = [&](const std::string& candidate) {
         GuestExecve_nid_no_patch(candidate.c_str(), argv, envp);
