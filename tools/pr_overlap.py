@@ -105,7 +105,7 @@ def page(url):
     return (out, "") if blank is None else (out[:blank.start()], out[blank.end():])
 
 
-def json_pages(out):
+def decode_pages(out):
     decoder = json.JSONDecoder()
     offset = 0
     pages = []
@@ -119,6 +119,37 @@ def json_pages(out):
             raise ValueError("gh api returned a non-array page")
         pages.append(found)
     return pages
+
+
+def repair_escapes(text):
+    repaired = []
+    offset = 0
+    while offset < len(text):
+        character = text[offset]
+        if character != "\\":
+            repaired.append(character)
+            offset += 1
+            continue
+        following = text[offset + 1:offset + 2]
+        if following in ('"', "\\", "/", "b", "f", "n", "r", "t"):
+            repaired.append(text[offset:offset + 2])
+            offset += 2
+        elif following == "u" and re.fullmatch(r"[0-9a-fA-F]{4}", text[offset + 2:offset + 6]):
+            repaired.append(text[offset:offset + 6])
+            offset += 6
+        else:
+            repaired.append("\\\\")
+            offset += 1
+    return "".join(repaired)
+
+
+def json_pages(out):
+    try:
+        return decode_pages(out)
+    except json.JSONDecodeError as error:
+        if "escape" not in error.msg:
+            raise
+    return decode_pages(repair_escapes(out))
 
 
 def open_prs(base):

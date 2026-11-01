@@ -359,6 +359,14 @@ static void RequireSbcCode(const std::uint8_t* profile, std::uint8_t sbc, std::u
     RequireSbcToUtf8(profile, sbc, expected);
 }
 
+static bool MeasuredHole(const std::uint8_t* profile, int sbc) {
+    const std::initializer_list<int> cp1254 = {0x81, 0x8D, 0x8E, 0x8F, 0x90, 0x9D, 0x9E};
+    const std::initializer_list<int> cp1258 = {0x81, 0x8A, 0x8D, 0x8E, 0x8F, 0x90, 0x9A, 0x9D, 0x9E};
+    if (profile == sceCesRefersUcsProfileCp1254()) return std::find(cp1254.begin(), cp1254.end(), sbc) != cp1254.end();
+    if (profile == sceCesRefersUcsProfileCp1258()) return std::find(cp1258.begin(), cp1258.end(), sbc) != cp1258.end();
+    return false;
+}
+
 static void CheckSingleByteProfiles() {
     constexpr int unassignedCode = static_cast<int>(0x805C0020);
     const auto getters = {sceCesRefersUcsProfileIso8859_1, sceCesRefersUcsProfileIso8859_2, sceCesRefersUcsProfileIso8859_4, sceCesRefersUcsProfileIso8859_5, sceCesRefersUcsProfileIso8859_9, sceCesRefersUcsProfileIso8859_10, sceCesRefersUcsProfileIso8859_13, sceCesRefersUcsProfileIso8859_14, sceCesRefersUcsProfileIso8859_15, sceCesRefersUcsProfileIso8859_16, sceCesRefersUcsProfileCp437, sceCesRefersUcsProfileCp737, sceCesRefersUcsProfileCp775, sceCesRefersUcsProfileCp850, sceCesRefersUcsProfileCp852, sceCesRefersUcsProfileCp855, sceCesRefersUcsProfileCp860, sceCesRefersUcsProfileCp861, sceCesRefersUcsProfileCp862, sceCesRefersUcsProfileCp863, sceCesRefersUcsProfileCp865, sceCesRefersUcsProfileCp866, sceCesRefersUcsProfileKoi8R, sceCesRefersUcsProfileKoi8U, sceCesRefersUcsProfileCp1254, sceCesRefersUcsProfileCp1256, sceCesRefersUcsProfileCp1258, sceCesRefersUcsProfileCp858};
@@ -378,6 +386,12 @@ static void CheckSingleByteProfiles() {
             std::uint8_t cp[4] = {};
             std::uint32_t cpLength = 0;
             std::uint8_t back = 0;
+            if (MeasuredHole(profile, sbc)) {
+                std::uint32_t code = 0x5A5A5A5A;
+                Require(sceCesSbcToUtf32(profile, static_cast<std::uint8_t>(sbc), &code) == unassignedCode && code == 0x5A5A5A5A);
+                Require(sceCesUtf32ToSbc(static_cast<std::uint32_t>(sbc), profile, &back) == unassignedCode);
+                continue;
+            }
             Require(sceCesSbcToUtf8(profile, static_cast<std::uint8_t>(sbc), cp, sizeof(cp), &cpLength) == 0);
             if (sbc < 0x80) Require(cpLength == 1 && cp[0] == sbc);
             Require(sceCesUtf8ToSbc(cp, cpLength, &cpLength, profile, &back) == 0 && back == sbc);

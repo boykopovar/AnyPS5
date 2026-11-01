@@ -97,7 +97,7 @@ std::int64_t APS5_VABI ASN1_INTEGER_get_nid_postfix(const Asn1String* value) {
     const bool negative = integer.type == 0x102;
     const auto limit = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()) + negative;
     if (magnitude > limit)
-        NotImplemented_nid_no_patch(__func__);
+        throw std::invalid_argument(std::string(__func__) + ": unrepresentable signed integer");
     if (negative && magnitude != 0) return -static_cast<std::int64_t>(magnitude - 1) - 1;
     return static_cast<std::int64_t>(magnitude);
 }
