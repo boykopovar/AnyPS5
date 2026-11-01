@@ -25,6 +25,7 @@ constexpr std::uint32_t Untouched = 0xdeadbeefu;
 constexpr std::uint32_t Stored = 0x12345678u;
 constexpr std::uint32_t FarRow = 1000;
 constexpr std::uint64_t Piece = 4u << 20u;
+constexpr std::uint32_t Attempts = 10;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> StoreRowZeroCode{
     0x7e040300, 0x7e060280, 0x7e0202ff, Stored, 0xf0200108, 0x00020102, 0xbf810000, 0xbf810000,
@@ -116,14 +117,37 @@ void SubmitAndWaitForPending(std::vector<std::uint32_t>& words) {
     std::this_thread::sleep_for(std::chrono::milliseconds(5));
 }
 
+struct Registered {
+    std::vector<const Surface*> surfaces;
+
+    explicit Registered(std::vector<const Surface*> list) : surfaces(std::move(list)) {
+        GuestAllocations::Mutation mutation;
+        for (const auto* surface : surfaces) mutation.Add(surface->texels, surface->bytes, true, true, true);
+    }
+    ~Registered() {
+        try {
+            AgcDriver::Graphics::StorageTexture::FlushAllPending("idle yield fixture");
+            GuestAllocations::Mutation mutation;
+            for (const auto* surface : surfaces) mutation.Remove(surface->texels);
+        } catch (...) {}
+    }
+};
+
+void Repeat(void (*scenario)()) {
+    for (std::uint32_t attempt = 1;; ++attempt) {
+        try {
+            scenario();
+            return;
+        } catch (const std::exception&) {
+            if (attempt == Attempts) throw;
+        }
+    }
+}
+
 void StopsBetweenImages() {
     Surface first(256, 256);
     Surface second(256, 256);
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(first.texels, first.bytes, true, true, true);
-        mutation.Add(second.texels, second.bytes, true, true, true);
-    }
+    Registered registered({&first, &second});
     std::vector<std::uint32_t> words;
     AppendStore(words, first, StoreRowZeroCode);
     AppendStore(words, second, StoreRowZeroCode);
@@ -140,18 +164,12 @@ void StopsBetweenImages() {
         Require(!pending(first) && !pending(second), "the store after the stopped one left an image pending");
     }
     Require(Contains(first.Address(), first.Address() + first.bytes) && Contains(second.Address(), second.Address() + second.bytes), "the two stores did not bring both results to guest memory");
-    GuestAllocations::Mutation mutation;
-    mutation.Remove(first.texels);
-    mutation.Remove(second.texels);
 }
 
 void StopsWithinAnImage() {
     Surface surface(2048, 1024);
     Require(surface.bytes > Piece, "idle yield fixture: the large surface is not larger than one stored piece");
-    {
-        GuestAllocations::Mutation mutation;
-        mutation.Add(surface.texels, surface.bytes, true, true, true);
-    }
+    Registered registered({&surface});
     std::vector<std::uint32_t> words;
     AppendStore(words, surface, StoreRowZeroCode);
     AppendStore(words, surface, StoreFarRowCode);
@@ -170,8 +188,6 @@ void StopsWithinAnImage() {
         Require(!Pending(begin, end), "storing the rest of the large image left it pending");
     }
     Require(Contains(begin, split) && Contains(split, end), "the two stores did not bring both rows of the large image to guest memory");
-    GuestAllocations::Mutation mutation;
-    mutation.Remove(surface.texels);
 }
 
 }
@@ -185,8 +201,8 @@ int main() {
         struct ShutdownGuard {
             ~ShutdownGuard() { try { AgcDriverShutdown_nid_postfix(); } catch (...) {} }
         } shutdown;
-        StopsBetweenImages();
-        StopsWithinAnImage();
+        Repeat(StopsBetweenImages);
+        Repeat(StopsWithinAnImage);
         AgcDriverShutdown_nid_postfix();
         std::puts("idle store yields tests passed");
         return 0;

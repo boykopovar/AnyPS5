@@ -945,9 +945,21 @@ bool JavaScriptProtocol(StringView view) {
     return false;
 }
 
+StringView ViewWithoutFragment(const URL& url) {
+    auto view = View(url.impl);
+    if (!(url.bits & 1)) return view;
+    return Slice(view, 0, std::min(url.queryEnd, view.length));
+}
+
 }  // namespace
 
 extern "C" {
+bool APS5_VABI _ZN3WTF31equalIgnoringFragmentIdentifierERKNS_3URLES2_(const URL* a, const URL* b) {
+    const auto& first = Checked(a);
+    const auto& second = Checked(b);
+    return EqualViews(ViewWithoutFragment(first), ViewWithoutFragment(second));
+}
+
 void APS5_VABI _ZN3WTF3URL10invalidateEv(URL* self) {
     auto& url = Checked(self);
     url.bits = 0;
