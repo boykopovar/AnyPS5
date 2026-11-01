@@ -1516,7 +1516,11 @@ private:
             }
             for (IrValue* value : tuple) {
                 if (Rematerialize(value, position, false, phiSearchDepth) == nullptr) {
-                    return GiveUp(web, "a descriptor dword is not rebuilt from user data, the SRT and uniform operations before the read (" + RebuildBlocker(value, phiSearchDepth) + ")");
+                    if (StrictDescriptorWebs()) {
+                        return GiveUp(web, "a descriptor dword is not rebuilt from user data, the SRT and uniform operations before the read (" + RebuildBlocker(value, phiSearchDepth) + ")");
+                    }
+                    web.foldedValue = true;
+                    return &m_builder.Constant(DescriptorWeb::foldedArm);
                 }
             }
             const auto same = std::ranges::find_if(web.arms, [&](const std::vector<IrValue*>& arm) {
@@ -1685,7 +1689,7 @@ private:
             }
         }
         if (selector == nullptr || web.arms.empty()) {
-            const std::string reason = !web.failure.empty() ? web.failure : web.foldedValue ? std::string("every path's descriptor depends on the program counter, EXEC, a lane mask, the lane index or texels") : std::string("no descriptor was found on any path");
+            const std::string reason = !web.failure.empty() ? web.failure : web.foldedValue ? std::string("no path's descriptor can be rebuilt from supported runtime values") : std::string("no descriptor was found on any path");
             for (std::uint32_t slot = 0; slot < handleCount; slot++) {
                 if (split[slot]) {
                     m_splitFailures.try_emplace(handles[slot], reason);
