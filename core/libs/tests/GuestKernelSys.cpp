@@ -1134,6 +1134,47 @@ void CheckUnsupportedPathconf(F fn, int descriptor) {
         Require(fn(descriptor, name) == -1 && Error() == 45);
 }
 
+static void CheckGetfsstat() {
+    constexpr std::int64_t Size = sizeof(KernelStatfs);
+    constexpr int MntWait = 1;
+    constexpr int MntNowait = 2;
+    KernelStatfs slots[2];
+    auto Fill = [&] { std::memset(slots, 0x5a, sizeof(slots)); };
+    auto Untouched = [&](int index) {
+        const auto* bytes = reinterpret_cast<const unsigned char*>(&slots[index]);
+        for (std::size_t i = 0; i < sizeof(KernelStatfs); ++i) if (bytes[i] != 0x5a) return false;
+        return true;
+    };
+    for (const int mode : {0, 3, -1, 4}) {
+        Fill();
+        Require(getfsstat_nid_postfix(slots, Size, mode) == -1 && Error() == 22 && Untouched(0));
+    }
+    Require(getfsstat_nid_postfix(slots, -1, MntWait) == -1 && Error() == 22);
+    Require(getfsstat_nid_postfix(nullptr, -Size, MntNowait) == -1 && Error() == 22);
+    Fill();
+    Require(getfsstat_nid_postfix(slots, 0, MntWait) == 1 && Untouched(0));
+    Require(getfsstat_nid_postfix(nullptr, 0, MntNowait) == 1);
+    Require(getfsstat_nid_postfix(slots, Size - 1, MntWait) == 0 && Untouched(0));
+    Require(getfsstat_nid_postfix(slots, 1, MntNowait) == 0 && Untouched(0));
+    Require(getfsstat_nid_postfix(nullptr, Size - 1, MntWait) == 1);
+    Require(getfsstat_nid_postfix(nullptr, Size, MntWait) == 1);
+    Require(getfsstat_nid_postfix(nullptr, INT64_C(0x100000000) + Size, MntNowait) == 1);
+    Require(getfsstat_nid_postfix(nullptr, INT64_C(-0x100000000) + Size, MntNowait) == -1 && Error() == 22);
+    Require(getfsstat_nid_postfix(reinterpret_cast<KernelStatfs*>(0x10), Size, MntNowait) == -1 && Error() == 14);
+    for (const int mode : {MntWait, MntNowait}) {
+        Fill();
+        Require(getfsstat_nid_postfix(slots, 2 * Size, mode) == 1);
+        Require(Untouched(1));
+        Require(slots[0].f_version == 0x20030518 && slots[0].f_bsize != 0 && slots[0].f_blocks != 0 && slots[0].f_namemax >= 255);
+        const int top = open_nid_postfix("/", 0, 0);
+        Require(top >= 0);
+        KernelStatfs expected{};
+        Require(_fstatfs_nid_postfix(top, &expected) == 0);
+        Require(close_nid_postfix(top) == 0);
+        Require(slots[0].f_bsize == expected.f_bsize && slots[0].f_blocks == expected.f_blocks && slots[0].f_flags == expected.f_flags);
+    }
+}
+
 int main() {
 #ifdef _WIN32
     auto hostDirectorySpelling = std::filesystem::current_path().native();
@@ -1210,6 +1251,7 @@ int main() {
     Require(fstat_nid_postfix(-1, &viaFstat) == -1 && Error() == 9);
     Require(fpathconf_nid_postfix(descriptor, 4) == -1 && Error() == 9);
     Require(_fpathconf_nid_postfix(descriptor, 4) == -1 && Error() == 9);
+    CheckGetfsstat();
     const int dirDescriptor = open_nid_postfix(root.generic_string().c_str(), 0, 0);
     Require(dirDescriptor >= 0);
     CheckDescriptorPathconf(fpathconf_nid_postfix, dirDescriptor);
