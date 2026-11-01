@@ -907,7 +907,6 @@ int APS5_VABI sceUserServiceGetVoiceAgentEnableFeedback(void) {
 }
 
 int APS5_VABI sceUserServiceIsKratosUser(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1064,9 +1063,8 @@ int APS5_VABI sceUserServiceSetIPDLeft(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetKratosPrimaryUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceGetKratosPrimaryUser(int*) {
+ return USER_SERVICE_ERROR_NOT_SUPPORTED;
 }
 
 int APS5_VABI sceUserServiceLogout(void) {
@@ -1390,7 +1388,6 @@ int APS5_VABI sceUserServiceSetHearingAssistSeparateLR(void) {
 }
 
 int APS5_VABI sceUserServiceIsUserStorageAccountBound(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -1499,9 +1496,11 @@ int APS5_VABI sceUserServiceGetHmd2Vibration(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsLoggedIn(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsLoggedIn(int userId) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ return IsUserLoggedIn(userId) ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceGetPbtcMondayHoursStart(void) {
@@ -1524,9 +1523,8 @@ int APS5_VABI sceUserServiceGetIsQuickSignup(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsKratosPrimaryUser(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceUserServiceIsKratosPrimaryUser(int) {
+ return false;
 }
 
 int APS5_VABI sceUserServiceSetVoiceAgentEnableWup(void) {
@@ -1549,9 +1547,11 @@ int APS5_VABI sceUserServiceSetGlsHintFlag(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceIsLoggedInWithoutLock(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceUserServiceIsLoggedInWithoutLock(int userId) {
+ if (!initialized.load()) {
+  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ }
+ return IsUserLoggedIn(userId) ? 1 : 0;
 }
 
 int APS5_VABI sceUserServiceSetShareStatus3(void) {
@@ -2086,7 +2086,7 @@ int APS5_VABI sceUserServiceSetShareStatus2(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceSetForegroundUser(void) {
+int APS5_VABI sceUserServiceSetForegroundUser(int userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2196,7 +2196,7 @@ int APS5_VABI sceUserServiceGetPbtcTuesdayDuration(void) {
     return 0;
 }
 
-int APS5_VABI sceUserServiceGetUserWithHearingAssist(void) {
+int APS5_VABI sceUserServiceGetUserWithHearingAssist(std::int32_t* userId) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

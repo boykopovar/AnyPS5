@@ -45,6 +45,10 @@
 
 ### Unknown function info
 
+- [sceUserServiceGetKratosPrimaryUser, sceUserServiceIsKratosPrimaryUser and sceUserServiceIsKratosUser](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware supports Kratos user queries only when the kernel reports Cronos. AnyPS5's current host model is non-Cronos, so GetKratosPrimaryUser returns `0x80960006` and both Boolean queries return false. Cronos-mode behavior remains unmodelled.
+- [sceUserServiceIsLoggedIn and sceUserServiceIsLoggedInWithoutLock](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - firmware 13.60 checks membership in its logged-in user list and returns 1 or 0 after checking initialization. AnyPS5 uses its connected-user list for the same query.
+- [sceUserServiceIsUserStorageAccountBound](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - AnyPS5 has no linked PSN or online-storage account state; the export returns false, matching its existing zero account-ID model. Bound-account behavior is not modeled.
+- [sceUserServiceIsKratosPrimaryUser](../../../core/libs/prx/libSceUserService/Export.cpp) - returns false for AnyPS5's non-Cronos host model; Cronos-mode behavior is unavailable.
 - [sceUserServiceGetLoginUserIdList and sceUserServiceGetEvent for user 0](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - under ANYPS5_PAD_PORT0_STATE=controller user 0 logs out when its controller is removed and logs in when it returns, after a hold of 500 ms that AnyPS5 chooses. Whether the console logs the initial user out on controller removal, how long it takes and which event it sends are not measured. The default mode keeps user 0 logged in as before.
 - [sceUserServiceGetNpAccountId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the account id for a logged-in user with no linked PSN account is assumed to be 0 with success; libSceNpManager's `sceNpGetAccountIdA` answers the same question with `SCE_NP_ERROR_SIGNED_OUT`. Console measurement on PS4 Pro firmware 10.71 confirms a user that is not logged in returns `0x80960105` (`USER_SERVICE_ERROR_UNKNOWN_USER`) and leaves the output untouched, differing from `sceUserServiceGetUserName`.
 - [Older settings exports](../../../core/libs/prx/libSceUserService/LegacyExports.cpp) - Forty callable NIDs are declared as throwing placeholders for older software. Their signatures and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. The corresponding NIDs are absent from the later version-labelled inventory. Representative later settings functions use a related dispatch pattern, which does not establish compatibility for these settings. No functionality is implemented.
@@ -175,7 +179,6 @@
 - [sceUserServiceGetHomeDirectory](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetPbtcSundayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetIPDLeft](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceGetKratosPrimaryUser](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetNpDateOfBirth](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetPbtcWednesdayHoursStart](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetSparkEqParam](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
@@ -370,7 +373,7 @@
 - [sceUserServiceSetPartyMuteListA](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetNpLanguageCode2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetShareStatus2](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceSetForegroundUser](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceSetForegroundUser](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - the 13.60 managed wrapper recovers `(int userId)`; foreground-user state is not modeled.
 - [sceUserServiceSetGlsAccessTokenTwitch](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetNpOfflineAccountAdult](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetGamePresets](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
@@ -391,7 +394,7 @@
 - [sceUserServiceGetPartyChatTranscriptionLanguageType](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetVoiceAgentTtsVolume](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetPbtcTuesdayDuration](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
-- [sceUserServiceGetUserWithHearingAssist](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
+- [sceUserServiceGetUserWithHearingAssist](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - 13.60 ABI is `(int32_t* userId)` and dispatches query `0x3002b`; the result comes from the unavailable UserService backend, so the export still throws.
 - [sceUserServiceGetNpOnlineId](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceGetHintShowFlag3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
 - [sceUserServiceSetNotificationSettings_3](../../../core/libs/prx/libSceUserService/Export.cpp) (libSceUserService) - unknown signature
