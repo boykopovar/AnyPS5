@@ -1,5 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
 #include <stdexcept>
 #ifndef _WIN32
 #include <unistd.h>
@@ -63,6 +65,46 @@ int APS5_VABI _ZN3WTF18constantTimeMemcmpEPKvS1_m(const void* voidA, const void*
         result |= static_cast<std::uint8_t>(a[i] ^ b[i]);
     }
     return result;
+}
+
+}
+
+extern "C" {
+
+int APS5_VABI _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(const NKWebKit::WtfAbi::String& path, int mode, bool permission, bool failIfFileExists) {
+    const auto representation = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&path, 0);
+    if (!representation.buffer) return -1;
+    int flags = SCE_KERNEL_O_RDONLY;
+    switch (mode) {
+    case 1: flags = SCE_KERNEL_O_WRONLY | SCE_KERNEL_O_CREAT | SCE_KERNEL_O_TRUNC; break;
+    case 2: flags = SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT; break;
+    }
+    if (failIfFileExists) flags |= SCE_KERNEL_O_CREAT | SCE_KERNEL_O_EXCL;
+    return open_nid_postfix(reinterpret_cast<const char*>(representation.buffer + 1), flags, permission ? 0666 : 0600);
+}
+
+void APS5_VABI _ZN3WTF14FileSystemImpl9closeFileERi(int& handle) {
+    if (handle != -1) {
+        close_nid_postfix(handle);
+        handle = -1;
+    }
+}
+
+long long APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(int handle, long long offset, int origin) {
+    const int whence = origin == 1 ? 1 : origin == 2 ? 2 : 0;
+    return lseek_nid_postfix(handle, offset, whence);
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl12truncateFileEix(int handle, long long offset) {
+    return ftruncate_nid_postfix(handle, offset) == 0;
+}
+
+int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE(const NKWebKit::WtfAbi::String& path, int mode, unsigned lockMode) {
+    return _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(path, mode, true, false);
+}
+
+void APS5_VABI _ZN3WTF14FileSystemImpl18unlockAndCloseFileEi(int handle) {
+    _ZN3WTF14FileSystemImpl9closeFileERi(handle);
 }
 
 }
