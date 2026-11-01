@@ -9,6 +9,8 @@
 
 namespace {
 
+constexpr int SCE_USER_SERVICE_ERROR_INVALID_PARAM = USER_SERVICE_ERROR_INVALID_ARGUMENT;
+
 void Require(bool value) { if (!value) std::abort(); }
 
 void SetLanguage(const char* value) {
@@ -174,7 +176,19 @@ int main() {
     Require(threwZoom);
 
     char name[32]{};
-    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, nullptr, 0) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(0, nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(-1, nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(static_cast<int>(0xFFFFFFFFu), nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(USER_SERVICE_USER_ID_INVALID, nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID - 1, nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(0x20000000, nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(123, nullptr, sizeof(name)) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(0, nullptr, 0) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(-1, nullptr, 0) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
+    Require(sceUserServiceGetUserName(static_cast<int>(0xFFFFFFFFu), nullptr, 0) == SCE_USER_SERVICE_ERROR_INVALID_PARAM);
     Require(sceUserServiceGetUserName(123, name, sizeof(name)) == USER_SERVICE_ERROR_UNKNOWN_USER);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, 5) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_OK);
