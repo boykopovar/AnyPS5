@@ -453,6 +453,13 @@ String SharedSubstring(const String* string, unsigned start, unsigned length) {
     return String(result);
 }
 
+std::size_t ReverseFind(StringView view, char16_t value, unsigned start) {
+    if (!view.length) return NotFound;
+    std::size_t i = std::min(start, view.length - 1);
+    do { if (Unit(view, static_cast<unsigned>(i)) == value) return i; } while (i--);
+    return NotFound;
+}
+
 template<typename T> String IntegerString(T value) {
     char buffer[32];
     auto result = std::to_chars(buffer, buffer + sizeof(buffer), value);
@@ -671,11 +678,7 @@ std::int32_t APS5_VABI _ZNK3WTF6String19characterStartingAtEj(const String* self
 }
 
 std::size_t APS5_VABI _ZN3WTF10StringImpl11reverseFindEDsj(const StringImpl* self, char16_t value, unsigned start) {
-    auto view = View(&Checked(self));
-    if (!view.length) return NotFound;
-    std::size_t i = std::min(start, view.length - 1);
-    do { if (Unit(view, static_cast<unsigned>(i)) == value) return i; } while (i--);
-    return NotFound;
+    return ReverseFind(View(&Checked(self)), value, start);
 }
 
 String APS5_VABI _ZN3WTF10StringImpl9substringEjj(const StringImpl* self, unsigned start, unsigned length) {
@@ -916,6 +919,43 @@ StringView ViewWithoutFragment(const URL& url) {
     return Slice(view, 0, std::min(url.queryEnd, view.length));
 }
 
+bool IsLeadSurrogate(char16_t value) { return (value & 0xFC00) == 0xD800; }
+
+bool IsTrailSurrogate(char16_t value) { return (value & 0xFC00) == 0xDC00; }
+
+bool NeedsFileNameEscape(char16_t value, char16_t previous, char16_t next) {
+    if (value <= 127) {
+        if (value < 0x20 || value == 0x7F) return true;
+        switch (value) {
+        case ' ': case '"': case '%': case '*': case '/': case ':': case '<': case '>': case '?': case '\\': case '|':
+            return true;
+        default:
+            return false;
+        }
+    }
+    if (IsLeadSurrogate(value) && !IsTrailSurrogate(next)) return true;
+    return IsTrailSurrogate(value) && !IsLeadSurrogate(previous);
+}
+
+void AppendHex(std::u16string& output, unsigned value, unsigned digits) {
+    static constexpr char16_t Digits[] = u"0123456789ABCDEF";
+    for (unsigned shift = digits * 4; shift;) {
+        shift -= 4;
+        output.push_back(Digits[(value >> shift) & 15]);
+    }
+}
+
+bool IsHexUnit(char16_t value) {
+    return (value >= '0' && value <= '9') || ((value | 32) >= 'a' && (value | 32) <= 'f');
+}
+
+unsigned HexUnitValue(char16_t value) { return value < 'A' ? value - '0' : (value - 'A' + 10) & 15; }
+
+String FinishFileName(const std::u16string& output) {
+    if (output.size() > MaxStringLength) throw std::length_error("WTF string exceeds maximum length");
+    return String(CopyImpl({output.data(), static_cast<unsigned>(output.size()), false}, true));
+}
+
 }  // namespace
 
 extern "C" {
@@ -1020,6 +1060,76 @@ bool APS5_VABI _ZN3WTF22protocolIsInHTTPFamilyENS_10StringViewE(StringView view)
     if (view.length < 5) return false;
     if ((Unit(view, 0) | 32) != 'h' || (Unit(view, 1) | 32) != 't' || (Unit(view, 2) | 32) != 't' || (Unit(view, 3) | 32) != 'p') return false;
     return Unit(view, 4) == ':' || ((Unit(view, 4) | 32) == 's' && view.length >= 6 && Unit(view, 5) == ':');
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl17encodeForFileNameERKNS_6StringE(const String* input) {
+    const auto& string = Checked(input);
+    auto view = View(string.impl);
+    if (!view.length) return String(Retain(string.impl));
+    std::u16string output;
+    output.reserve(view.length);
+    for (unsigned i = 0; i < view.length; ++i) {
+        auto value = Unit(view, i);
+        auto previous = i ? Unit(view, i - 1) : char16_t{0};
+        auto next = i + 1 < view.length ? Unit(view, i + 1) : char16_t{0};
+        if (!NeedsFileNameEscape(value, previous, next)) {
+            output.push_back(value);
+            continue;
+        }
+        if (value <= 255) {
+            output.push_back(u'%');
+            AppendHex(output, value, 2);
+        } else {
+            output.push_back(u'%');
+            output.push_back(u'+');
+            AppendHex(output, value, 4);
+        }
+        if (output.size() > MaxStringLength) throw std::length_error("WTF string exceeds maximum length");
+    }
+    return FinishFileName(output);
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl18decodeFromFilenameERKNS_6StringE(const String* input) {
+    const auto& string = Checked(input);
+    auto view = View(string.impl);
+    if (!view.length) return String(Retain(string.impl));
+    std::u16string output;
+    output.reserve(view.length);
+    for (unsigned i = 0; i < view.length; ++i) {
+        if (Unit(view, i) != '%') {
+            output.push_back(Unit(view, i));
+            continue;
+        }
+        if (std::size_t(i) + 2 >= view.length) return String();
+        if (Unit(view, i + 1) != '+') {
+            if (!IsHexUnit(Unit(view, i + 1)) || !IsHexUnit(Unit(view, i + 2))) return String();
+            output.push_back(static_cast<char16_t>(HexUnitValue(Unit(view, i + 1)) << 4 | HexUnitValue(Unit(view, i + 2))));
+            i += 2;
+            continue;
+        }
+        if (std::size_t(i) + 5 >= view.length) return String();
+        unsigned value = 0;
+        for (unsigned j = 2; j < 6; ++j) {
+            if (!IsHexUnit(Unit(view, i + j))) return String();
+            value = value << 4 | HexUnitValue(Unit(view, i + j));
+        }
+        output.push_back(static_cast<char16_t>(value));
+        i += 5;
+    }
+    return FinishFileName(output);
+}
+
+String APS5_VABI _ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoringTrailingSlashERKNS_6StringE(const String* input) {
+    const auto& string = Checked(input);
+    auto view = View(string.impl);
+    std::size_t position = ReverseFind(view, u'/', 0xFFFFFFFFU);
+    if (position == NotFound) return String(Retain(string.impl));
+    std::size_t end = view.length - 1;
+    if (position == end) {
+        --end;
+        position = ReverseFind(view, u'/', static_cast<unsigned>(end));
+    }
+    return Substring(string.impl, static_cast<unsigned>(position + 1), static_cast<unsigned>(end - position));
 }
 
 }
