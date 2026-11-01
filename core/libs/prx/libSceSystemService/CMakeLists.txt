@@ -4,6 +4,17 @@ target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStora
 configure_windows_unwind(libSceSystemService)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_app_messaging_event_flags_tests ${LIBS_INCLUDE_DIR}/tests/GuestAppMessagingEventFlags.cpp)
+    target_include_directories(guest_app_messaging_event_flags_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_app_messaging_event_flags_tests PRIVATE libSceSystemService libkernel libc)
+    configure_windows_unwind(guest_app_messaging_event_flags_tests)
+    add_test(NAME guest_app_messaging_event_flags COMMAND guest_app_messaging_event_flags_tests)
+    set_tests_properties(guest_app_messaging_event_flags PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_app_messaging_event_flags PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSystemService>")
+    endif()
+
     if(WIN32)
         add_test_executable(guest_system_service_path_boundary_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServicePathBoundary.cpp)
         target_include_directories(guest_system_service_path_boundary_tests PRIVATE ${LIBS_INCLUDE_DIR})
