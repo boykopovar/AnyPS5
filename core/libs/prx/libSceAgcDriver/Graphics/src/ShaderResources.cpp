@@ -652,6 +652,16 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0) 
     return cached.budget;
 }
 
+std::size_t storageEntries() {
+    static const std::size_t entries = [] {
+        const char* text = std::getenv("APS5_STORAGE_CACHE_ENTRIES");
+        if (text == nullptr || *text == '\0') return std::size_t{2048};
+        const auto parsed = std::strtoull(text, nullptr, 10);
+        return parsed != 0 ? static_cast<std::size_t>(parsed) : std::numeric_limits<std::size_t>::max();
+    }();
+    return entries;
+}
+
 std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     if (const auto forced = forcedCacheBudget(); forced != 0) return forced;
     if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) return TextureCacheBudget(context.memory);
@@ -1149,11 +1159,11 @@ std::list<CachedStorageTexture>::iterator findStorageByImage(StorageTextureCache
 }
 
 // Evicts an entry: its pending results go to guest memory first (the image may die with the entry).
-std::shared_ptr<StorageTexture> evictStorage(StorageTextureCache& cache, std::list<CachedStorageTexture>::iterator it) {
+std::shared_ptr<StorageTexture> evictStorage(StorageTextureCache& cache, std::list<CachedStorageTexture>::iterator it, const char* reason = "cache eviction") {
     auto texture = it->texture;
     it->texture->SetCached(false);
     noteUncached(it->texture);
-    it->texture->Flush();
+    it->texture->Flush(reason);
     cache.bytes -= it->accounted;
     cache.index.erase(it->key);
     cache.byImage.erase(it->texture.get());
@@ -1296,7 +1306,11 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
             if (auto* recorder = Recorder::Active(); keepNew && recorder != nullptr && GuestMemory::GpuMutex().HeldByThisThread() && recorder->Recording()) recorder->Keep(entry.texture);
             entry.accounted = heldBytes(*entry.texture);
             const auto budget = storageBudget(context, cache.bytes + entry.accounted);
-            while (!cache.entries.empty() && cache.bytes + entry.accounted > budget) evicted.push_back(evictStorage(cache, std::prev(cache.entries.end())));
+            while (!cache.entries.empty()) {
+                const bool overBudget = cache.bytes + entry.accounted > budget;
+                if (!overBudget && cache.entries.size() < storageEntries()) break;
+                evicted.push_back(evictStorage(cache, std::prev(cache.entries.end()), overBudget ? "cache eviction" : "entry cap"));
+            }
             cache.bytes += entry.accounted;
             texture = entry.texture;
             cache.entries.push_front(std::move(entry));

@@ -133,6 +133,7 @@ struct StorageTraffic {
     std::array<std::pair<std::uint64_t, std::uint64_t>, 4> uploads{};
     std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> uploadReasons;
     std::map<std::string, std::pair<std::uint64_t, std::uint64_t>> drawnStores;
+    std::map<std::string, std::uint64_t> evictions;
     std::uint64_t directWriteBacks = 0;
     std::chrono::steady_clock::time_point lastReport = std::chrono::steady_clock::now();
 };
@@ -172,6 +173,12 @@ void reportStorageTraffic(StorageTraffic& traffic) {
         std::snprintf(text, sizeof(text), " %llu/%.1f", static_cast<unsigned long long>(totals.first), totals.second / 1048576.0);
         line += " " + reason + text;
     }
+    line += "; evictions by reason (count/MiB flushed):";
+    for (const auto& [reason, count] : traffic.evictions) {
+        const auto flushed = traffic.writeBacks.find(reason);
+        std::snprintf(text, sizeof(text), " %llu/%.1f", static_cast<unsigned long long>(count), flushed != traffic.writeBacks.end() ? flushed->second.second / 1048576.0 : 0.0);
+        line += " " + reason + text;
+    }
     std::string drawnLine;
     for (const auto& [reason, totals] : traffic.drawnStores) {
         std::snprintf(text, sizeof(text), " %llu/%.1f", static_cast<unsigned long long>(totals.first), totals.second / 1048576.0);
@@ -185,6 +192,7 @@ void reportStorageTraffic(StorageTraffic& traffic) {
     traffic.writeBacks.clear();
     traffic.uploadReasons.clear();
     traffic.drawnStores.clear();
+    traffic.evictions.clear();
     traffic.directWriteBacks = 0;
 }
 
@@ -214,6 +222,13 @@ void countStorageWriteBack(std::uint64_t bytes, bool direct, bool drawn = false)
         stores.second += bytes;
     }
     reportStorageTraffic(traffic);
+}
+
+void countStorageEviction(const char* reason) {
+    if (!LookupOutcomes::Profiled()) return;
+    auto& traffic = Traffic();
+    std::lock_guard lock(traffic.mutex);
+    ++traffic.evictions[reason];
 }
 
 // Every storage image alive, for the fill HLE's cover check (StorageTexture::ClassifyFill): the
@@ -4227,8 +4242,9 @@ std::uint64_t StorageTexture::storeDrawnRect(const DrawnArea& area, std::span<co
     return storedBytes;
 }
 
-void StorageTexture::Flush() {
-    storeTrappedOverlaps("cache eviction");
+void StorageTexture::Flush(const char* reason) {
+    storeTrappedOverlaps(reason);
+    countStorageEviction(reason);
     {
         auto& live = Live();
         std::lock_guard lock(live.mutex);
@@ -4243,7 +4259,7 @@ void StorageTexture::Flush() {
         BumpPendingSerial();
     }
     std::lock_guard gpu(GuestMemory::GpuMutex());
-    const auto previous = std::exchange(flushReason, "cache eviction");
+    const auto previous = std::exchange(flushReason, reason);
     writeBack(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
     flushReason = previous;
 }
