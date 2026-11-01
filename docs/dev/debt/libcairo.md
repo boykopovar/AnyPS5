@@ -1,8 +1,12 @@
 # libcairo technical debt
 
+### Functional image and surface exports
+
+- [Surface.cpp](../../../core/libs/prx/libcairo/Surface.cpp) implements 19 Cairo image/surface/stride exports, including borrowed pixel buffers, owned images, image formats and stride validation, surface references, subsurfaces and device scale. The backing store is synchronous host memory, so flush and mark-dirty require no deferred synchronization. Tested against native Cairo 1.18 surface metadata and error codes; no PS5 device comparison or drawing backend is claimed.
+
 ### Callable exports
 
-- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 161 callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and the [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. Prototypes and behavior are unverified; these declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
+- [Callable exports](../../../core/libs/prx/libcairo/Export.cpp) - 142 still-unimplemented callable NIDs match the [public 3.20 catalogue](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libcairo.c) and the [selected export metadata](https://gist.github.com/kyon-eth/a0bb48f2b3070a5eac8a638810f195f2/a3838ac54ebcc0bbfeb3cc46002a9a2dcce4dbdc) from two version-labelled images (SHA-256 `ec2158e0c5875316d200037d7f4bc48861626451752523f6930d687307c75ef8`). The labels are not authenticated. The remaining prototypes and behavior are unverified; their declarations throw through `NotImplemented_nid_no_patch` and implement no runtime functionality.
 
 | Name | NID |
 | --- | --- |
@@ -15,7 +19,6 @@
 | `cairo_stroke_extents` | `1K5ly63m6fo` |
 | `cairo_arc_negative` | `2w5H3b3yPqw` |
 | `cairo_new_sub_path` | `36Wm5aIJUFY` |
-| `cairo_image_surface_get_stride` | `3DtP-+fNq0c` |
 | `cairo_user_to_device` | `3grQ1jCgta8` |
 | `cairo_reference` | `3pmBdB-bl8w` |
 | `cairo_set_antialias` | `3urTbaMTNyE` |
@@ -24,9 +27,7 @@
 | `cairo_image_surface_create_from_png_stream` | `4dvdsqyLM8c` |
 | `cairo_get_fill_rule` | `4e7O-m-JWVM` |
 | `cairo_ft_scaled_font_lock_face` | `4gDTaBZH8lo` |
-| `cairo_surface_destroy` | `4svUXLrNYXs` |
 | `cairo_glyph_path` | `54HrgUIQHOk` |
-| `cairo_surface_set_device_scale` | `5CJXb1X+okk` |
 | `cairo_get_dash` | `5OZ1YwHyHd8` |
 | `cairo_set_source_rgb` | `6DvK+OdIPW4` |
 | `cairo_scaled_font_destroy` | `6Y3HHedGzlw` |
@@ -35,7 +36,6 @@
 | `cairo_matrix_invert` | `8Aa+vkMrTB8` |
 | `cairo_scaled_font_get_font_options` | `8SOxQrQ7AfQ` |
 | `cairo_matrix_init_translate` | `8cDupwx3X+Y` |
-| `cairo_surface_get_type` | `8viKdiZL7j4` |
 | `cairo_in_stroke` | `8zMm0QOWZAA` |
 | `cairo_scaled_font_get_ctm` | `A++pFuyxZPg` |
 | `cairo_set_font_size` | `A-0StSi2AwA` |
@@ -44,11 +44,9 @@
 | `cairo_pattern_set_extend` | `Ax867+0HUgA` |
 | `cairo_set_source_rgba` | `BZFvjfb9xDk` |
 | `cairo_ft_font_face_create_for_pattern` | `By6b1vjSVok` |
-| `cairo_image_surface_get_height` | `CKmxM--7U88` |
 | `cairo_mask` | `D1KYCZ80Sac` |
 | `cairo_get_line_width` | `D45IcsszyQI` |
 | `cairo_curve_to` | `DOCnSv1cXx8` |
-| `cairo_surface_reference` | `Dv1FqxQxOkw` |
 | `cairo_copy_path` | `E2E+DDLhCRg` |
 | `cairo_rectangle` | `E5LkpnAY7po` |
 | `cairo_matrix_multiply` | `E5rWAm1VaRM` |
@@ -56,7 +54,6 @@
 | `cairo_user_to_device_distance` | `F2ZShEhLU8Y` |
 | `cairo_scaled_font_extents` | `FbWFbLUQOys` |
 | `cairo_show_glyphs` | `FnhwGKKZOjU` |
-| `cairo_surface_create_similar` | `Gn3ZBaH2rK0` |
 | `cairo_mesh_pattern_curve_to` | `H9bwCsWw7LA` |
 | `cairo_scaled_font_get_font_matrix` | `HKjYBSCx3mY` |
 | `cairo_mesh_pattern_line_to` | `HTB1uUwgSVQ` |
@@ -66,7 +63,6 @@
 | `cairo_set_miter_limit` | `IKnEk6g6ZV0` |
 | `cairo_translate` | `IdKE2DrNBck` |
 | `cairo_font_face_destroy` | `IgBFcd4cF28` |
-| `cairo_surface_status` | `JBH18i-WCu0` |
 | `cairo_scaled_font_text_extents` | `Jk9paxbMQsk` |
 | `cairo_has_current_point` | `JwQxC4dA5DY` |
 | `cairo_pattern_create_linear` | `K62jNcRGQdY` |
@@ -75,7 +71,6 @@
 | `cairo_clip_extents` | `LJNqwiDWTm0` |
 | `cairo_set_scaled_font` | `LUh-6rZhniA` |
 | `cairo_matrix_transform_point` | `LdSTmOZ-KDs` |
-| `cairo_image_surface_get_format` | `LrT15KUYBvc` |
 | `cairo_region_create` | `MGMwq9DNMyE` |
 | `cairo_fill` | `Ndvm8s28Gyc` |
 | `cairo_matrix_transform_distance` | `NsFZqlmmZ9E` |
@@ -87,7 +82,6 @@
 | `cairo_identity_matrix` | `PaSEtyxiC0o` |
 | `cairo_save` | `Pj8asGd55jA` |
 | `cairo_clip` | `PkGZZi1G2Gw` |
-| `cairo_surface_flush` | `Pu24S09J+MQ` |
 | `cairo_pattern_create_for_surface` | `Q6xyruheFCE` |
 | `cairo_arc` | `R0TePTSHd2k` |
 | `cairo_stroke_preserve` | `RzM4ZhlKzPg` |
@@ -99,11 +93,9 @@
 | `cairo_set_fill_rule` | `THcHgZElshs` |
 | `cairo_get_miter_limit` | `TWtGBP-grBM` |
 | `cairo_get_antialias` | `U4Ajvh3L57k` |
-| `cairo_surface_get_device_scale` | `UKeNl8mVbsc` |
 | `cairo_mesh_pattern_begin_patch` | `Ux6XxakVN+8` |
 | `cairo_mesh_pattern_end_patch` | `VBA3H7mYG70` |
 | `cairo_get_target` | `Wr3nsor1aNc` |
-| `cairo_surface_mark_dirty_rectangle` | `X64Wjxgh1L4` |
 | `cairo_append_path` | `XX9tocaUX+g` |
 | `cairo_region_union_rectangle` | `Ya+vgrJjBQE` |
 | `cairo_region_reference` | `Yarxt1LHaf0` |
@@ -130,7 +122,6 @@
 | `cairo_push_group` | `hlh15JjNtWg` |
 | `cairo_font_options_destroy` | `huXPyr6A9to` |
 | `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
-| `cairo_image_surface_get_width` | `inWumYPZgtw` |
 | `cairo_font_options_create` | `j2xKmRzIV84` |
 | `cairo_device_to_user` | `jyf32aEUoMs` |
 | `cairo_font_options_set_antialias` | `kNua19l9-0I` |
@@ -147,8 +138,6 @@
 | `cairo_show_text` | `psdqLsaPnkk` |
 | `cairo_set_font_face` | `qzEwpfbLVxI` |
 | `cairo_close_path` | `rENdf2qgOE4` |
-| `cairo_image_surface_create` | `ry52QkQeAWo` |
-| `cairo_format_stride_for_width` | `s9BsLfgWTeM` |
 | `cairo_create` | `sfmawT-nIUc` |
 | `cairo_get_current_point` | `sinmW4Wm6OQ` |
 | `cairo_move_to` | `smpeN8iWrcc` |
@@ -157,13 +146,9 @@
 | `cairo_matrix_rotate` | `uIoYWKOA9yo` |
 | `cairo_scaled_font_create` | `uKNPDudJTmo` |
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
-| `cairo_surface_get_content` | `ut+atyIgpQw` |
 | `cairo_set_source_surface` | `vcN1gg+gWRg` |
 | `cairo_region_destroy` | `vnHq+jcDKBM` |
-| `cairo_image_surface_get_data` | `wHTcu1PV-MU` |
-| `cairo_surface_create_for_rectangle` | `wJzrbtZ7MOk` |
 | `cairo_device_destroy` | `wO1D4B90k0k` |
-| `cairo_image_surface_create_for_data` | `wlO4ljYI06M` |
 | `cairo_pattern_add_color_stop_rgba` | `xXWrbaaPNNg` |
 | `cairo_region_num_rectangles` | `xoe4ss9GmYc` |
 | `cairo_set_line_width` | `zwMGP3ASKMI` |
