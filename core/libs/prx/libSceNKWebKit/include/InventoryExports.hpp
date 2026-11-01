@@ -1886,7 +1886,6 @@ int APS5_VABI _ZN3WTF25activateSignalHandlersForENS_6SignalE();
 int APS5_VABI _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E();
 int APS5_VABI _ZN3WTF26getAndResetAccumulatedLogsEv();
 int APS5_VABI _ZN3WTF26normalizeLineEndingsToCRLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE();
-int APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_();
 int APS5_VABI _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE();
 int APS5_VABI _ZN3WTF28encodeWithURLEscapeSequencesERKNS_6StringE();
 int APS5_VABI _ZN3WTF28normalizeLineEndingsToNativeEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE();

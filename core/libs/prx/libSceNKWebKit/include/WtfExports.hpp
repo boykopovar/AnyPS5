@@ -104,6 +104,7 @@ WTF::TimeWithDynamicClockType APS5_VABI _ZN3WTF24TimeWithDynamicClockType3nowENS
 WTF::LocalTimeOffset APS5_VABI _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(double, WTF::TimeType);
 void APS5_VABI _ZN3WTF25fastDecommitAlignedMemoryEPvm(void*, std::size_t);
 void APS5_VABI _ZN3WTF25fastMallocDumpMallocStatsEv();
+bool APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_(const NKWebKit::WtfAbi::URL* a, const NKWebKit::WtfAbi::URL* b);
 void APS5_VABI _ZN3WTF27releaseFastMallocFreeMemoryEv();
 void APS5_VABI _ZN3WTF29cryptographicallyRandomValuesEPvm(void* buffer, std::size_t length);
 bool APS5_VABI _ZN3WTF29equalIgnoringASCIICaseNonNullEPKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl* a, const NKWebKit::WtfAbi::StringImpl* b);

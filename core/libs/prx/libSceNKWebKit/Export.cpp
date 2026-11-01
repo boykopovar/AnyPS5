@@ -19668,10 +19668,6 @@ int APS5_VABI _ZN3WTF26normalizeLineEndingsToCRLFEONS_6VectorIhLm0ENS_15CrashOnO
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF27protocolHostAndPortAreEqualERKNS_3URLES2_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
