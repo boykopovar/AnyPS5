@@ -37,6 +37,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/RunReport.hpp"
 
 namespace {
 
@@ -684,6 +685,7 @@ std::optional<AgcDriver::DisplayBuffer> VideoOutDriver::overlayPlane() {
 }
 
 void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& started) {
+    LibcRunReportBeginWorker_nid_no_patch();
     try {
         OnMainThread([&] {
             window.Ensure(VIDEO_OUT_DEFAULT_WIDTH, VIDEO_OUT_DEFAULT_HEIGHT);

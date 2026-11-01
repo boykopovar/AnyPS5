@@ -13,7 +13,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
+
+#define RUN_REPORT_HAS_FINISH_HOOK 1
 
 struct RunReportGame {
     char titleId[16];
@@ -23,6 +26,10 @@ struct RunReportGame {
 
 extern "C" void LibcRunReportSetGameProvider_nid_no_patch(bool (*provider)(RunReportGame*));
 extern "C" void LibcRunReportFinishExit_nid_no_patch(int exitCode) noexcept;
+extern "C" const char* LibcRunReportRelaunchEnvironment_nid_no_patch() noexcept;
+extern "C" void LibcRunReportResume_nid_no_patch() noexcept;
+extern "C" bool LibcRunReportHandoff_nid_no_patch(int exitCode) noexcept;
+extern "C" void LibcRunReportBeginWorker_nid_no_patch() noexcept;
 extern "C" void LibcRunReportRegisterComponent_nid_no_patch(const char* name, const char* commit, int modified) noexcept;
 extern "C" void LibcRunReportMissingFunction_nid_no_patch(const char* name, const char* file, int line) noexcept;
 
@@ -166,9 +173,15 @@ struct Settings {
     std::filesystem::path executableDirectory;
     std::filesystem::path userStateDirectory;
     std::string runId;
+    bool worker = true;
     BuildInfo build;
     std::function<GameInfo()> game;
+    std::function<void()> beforeCheckpointRemoval;
+    std::function<void()> duringCheckpointWrite;
+    std::chrono::milliseconds checkpointInterval{5000};
+    std::chrono::milliseconds lockWait{2000};
     std::chrono::milliseconds tableWait{200};
+    bool deferredWorker = false;
     std::vector<std::string> requiredComponents;
     std::optional<SystemInfo> machine;
     Coverage coverage;
@@ -191,6 +204,24 @@ std::filesystem::path UserStateDirectory();
 bool WriteAtomically(const std::filesystem::path& target, std::string_view bytes, std::string_view uniqueName, std::string& error);
 bool ReadBounded(const std::filesystem::path& path, std::size_t limit, std::string& bytes);
 bool FolderIsReachable(const std::filesystem::path& folder);
+std::vector<std::filesystem::path> RecoverAbandonedRuns(const std::vector<std::filesystem::path>& directories, std::string& warnings, const std::vector<std::filesystem::path>& nestedRoots = {});
+std::optional<Report> ParseCheckpoint(std::string_view bytes, std::string_view id, const HostIdentifiers& host);
+
+class FileLock {
+public:
+    static std::unique_ptr<FileLock> TryAcquire(const std::filesystem::path& path, bool& busy);
+    ~FileLock();
+    FileLock(const FileLock&) = delete;
+    FileLock& operator=(const FileLock&) = delete;
+    bool IsCurrent() const;
+    void RemoveAndRelease();
+    void* NativeHandle() const;
+private:
+    FileLock() = default;
+    struct Handle;
+    std::unique_ptr<Handle> handle;
+    std::filesystem::path path;
+};
 
 class Collector {
 public:
@@ -202,27 +233,48 @@ public:
     void Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCode);
     bool Finished() const noexcept;
     const std::filesystem::path& ReportPath() const noexcept { return reportPath; }
-    Report Snapshot(Exit exit, Stop stop, std::optional<std::int64_t> exitCode) const;
+    const std::filesystem::path& CheckpointPath() const noexcept { return checkpointPath; }
+    Report Snapshot(Exit exit, Stop stop, std::optional<std::int64_t> exitCode, bool recovered) const;
     void NoteMissingFunction(std::string_view library, std::string_view name, std::string_view source);
     void NoteGame();
+    bool WriteCheckpoint();
+    bool WriteCheckpoint(std::chrono::milliseconds wait);
+    bool Resume();
+    bool Finalized() const noexcept { return finalized; }
+    void BeginWorker();
     std::unique_lock<std::timed_mutex> LockTablesForTest();
     struct Tables;
 
 private:
+    void Work();
     void RefreshGame(bool force = false);
     BuildInfo Provenance() const;
+    void CheckpointSoon();
     Observations Observe() const;
     void NoteLost(int section);
 
     Settings settings;
-    std::vector<std::filesystem::path> candidates;
-    std::filesystem::path executableFolder;
+    std::filesystem::path directory;
     std::filesystem::path reportPath;
+    std::filesystem::path checkpointPath;
+    std::filesystem::path lockPath;
+    std::unique_ptr<FileLock> lock;
     std::chrono::steady_clock::time_point started;
     std::mutex mutex;
+    std::timed_mutex writeMutex;
     std::condition_variable changed;
+    std::thread worker;
+    bool stopWorker = false;
+    bool workerBusy = false;
     std::atomic<int> state{0};
     bool started_ = false;
+    bool workerRunning = false;
+    bool workerWanted = false;
+    bool reportPublished = false;
+    std::string publishedBytes;
+    std::atomic<bool> finalized{false};
+    std::atomic<int> checkpointsRequested{0};
+    std::atomic<bool> checkpointWanted{false};
     struct GameState;
     std::shared_ptr<GameState> game;
     mutable std::mutex machineMutex;

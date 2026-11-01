@@ -80,6 +80,7 @@ RunReport::Settings SettingsFor(const fs::path& executable, const fs::path& user
     settings.executableDirectory = executable;
     settings.userStateDirectory = user;
     settings.runId = id;
+    settings.worker = false;
     return settings;
 }
 
@@ -186,10 +187,13 @@ void FinishTests() {
     RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
     Require(collector.Start(), "the collector did not start");
     Require(SamePath(collector.ReportPath(), executable.path / "anyps5-report.json"), "the report is not next to the executable");
-    Require(!fs::exists(collector.ReportPath()), "Start wrote a file");
+    const auto checkpoint = Read(collector.CheckpointPath());
+    Require(Contains(checkpoint, "\"recovered\": true") && Contains(checkpoint, "\"exit\": \"killed\"") && Contains(checkpoint, "\"reason\": \"unclean-unknown\"") && Contains(checkpoint, "\"exitCode\": null") && Contains(checkpoint, "\"incomplete\": true"), "the checkpoint is not a recovered report");
+    Require(fs::exists(executable.path / ("anyps5-report." + std::string(IdA) + ".lock")), "the run holds no lock file");
     collector.Finish(RunReport::Exit::Clean, {RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, 3);
     const auto report = Read(collector.ReportPath());
     Require(Contains(report, "\"exit\": \"clean\"") && Contains(report, "\"exitCode\": 3") && Contains(report, "\"reason\": \"guest-exit\"") && Contains(report, "\"recovered\": false"), "the finished report is wrong: " + report);
+    Require(!fs::exists(collector.CheckpointPath()) && !fs::exists(executable.path / ("anyps5-report." + std::string(IdA) + ".lock")), "the checkpoint or lock survived a clean finish");
     collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Other, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
     Require(Read(collector.ReportPath()) == report, "a second finish changed the report");
     std::size_t files = 0;
@@ -213,16 +217,13 @@ void FallbackTests() {
     Directory root, user;
     std::ofstream(root.path / "file") << "not a directory";
     RunReport::Collector collector(SettingsFor(root.path / "file" / "below", user.path, IdA));
-    Require(collector.Start(), "the collector did not start");
-    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(collector.Start(), "the collector did not fall back to the user folder");
     Require(SamePath(collector.ReportPath(), user.path / "reports" / IdA / "anyps5-report.json"), "the fallback report is not under reports/<run id>/");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
     Require(fs::exists(collector.ReportPath()), "the fallback report was not written");
     RunReport::Collector nowhere(SettingsFor(root.path / "file" / "below", root.path / "file" / "also", IdB));
-    Require(nowhere.Start(), "a collector with a folder to try did not start");
+    Require(!nowhere.Start(), "a collector with no writable folder started");
     nowhere.Finish(RunReport::Exit::Clean, {}, 0);
-    Require(nowhere.Finished() && !fs::exists(root.path / "file" / "below") && !fs::exists(root.path / "file" / "also"), "a report was made where no folder can exist");
-    RunReport::Collector none(SettingsFor({}, {}, IdB));
-    Require(!none.Start(), "a collector with no folder at all started");
 }
 
 void AtomicTests() {
@@ -281,6 +282,8 @@ void FinishWhileProviderBlockedTest() {
     Directory executable, user;
     std::mutex metadata;
     auto settings = SettingsFor(executable.path, user.path, IdA);
+    settings.worker = true;
+    settings.checkpointInterval = std::chrono::milliseconds(10);
     settings.game = [&metadata] {
         std::lock_guard guard(metadata);
         RunReport::GameInfo game;
@@ -288,16 +291,17 @@ void FinishWhileProviderBlockedTest() {
         return game;
     };
     RunReport::Collector collector(std::move(settings));
+    Require(collector.Start(), "the collector did not start");
     std::unique_lock held(metadata);
-    std::thread starter([&collector] { collector.Start(); });
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     auto done = std::async(std::launch::async, [&collector] { collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Assert, RunReport::Reason::Crash, std::nullopt}, std::nullopt); });
     const bool returned = done.wait_for(std::chrono::seconds(8)) == std::future_status::ready;
     held.unlock();
     done.wait();
-    starter.join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
     Require(returned, "Finish blocked while the game metadata lock was held");
     Require(Contains(Read(collector.ReportPath()), "\"kind\": \"assert\""), "the report of the assertion was not written");
+    Require(!fs::exists(collector.CheckpointPath()), "the checkpoint survived the finish");
 }
 
 void CleanFinishReadsGameOnceTest() {
@@ -331,9 +335,7 @@ void ParentLinkTest() {
     fs::create_directory_symlink(other.path, user.path / "reports");
     std::ofstream(directory.path / "file") << "not a directory";
     RunReport::Collector collector(SettingsFor(directory.path / "file" / "below", user.path, IdA));
-    Require(collector.Start(), "the collector did not start");
-    collector.Finish(RunReport::Exit::Clean, {}, 0);
-    Require(!fs::exists(other.path / IdA / "anyps5-report.json"), "a collector used the reports folder that was a link");
+    Require(!collector.Start(), "a collector used the reports folder that was a link");
     std::size_t entries = 0;
     for (const auto& entry : fs::directory_iterator(other.path)) { static_cast<void>(entry); ++entries; }
     Require(entries == 0, "something was written through the planted reports link");
@@ -365,6 +367,8 @@ void PrivacySweepTest() {
     ::setenv("HOSTNAME", "canary-host-9", 1);
     Directory executable, user;
     auto settings = SettingsFor(executable.path, user.path, IdA);
+    settings.worker = true;
+    settings.checkpointInterval = std::chrono::milliseconds(10);
     settings.game = [] {
         RunReport::GameInfo game;
         game.titleId = "PPSA12345";
@@ -374,10 +378,14 @@ void PrivacySweepTest() {
     };
     RunReport::Collector collector(std::move(settings));
     Require(collector.Start(), "the collector did not start");
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    const auto checkpoint = Read(collector.CheckpointPath());
     collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Other, RunReport::Reason::Crash, std::string("canary-host-9 at /home/canaryuser9/x")}, std::nullopt);
     const auto report = Read(collector.ReportPath());
-    for (const char* canary : {"canaryuser9", "canary-host-9", "/home/", "@", "::"}) {
-        Require(!Contains(report, canary), std::string("the output contains the canary ") + canary + ": " + report);
+    for (const auto& text : {checkpoint, report}) {
+        for (const char* canary : {"canaryuser9", "canary-host-9", "/home/", "@", "::"}) {
+            Require(!Contains(text, canary), std::string("the output contains the canary ") + canary + ": " + text);
+        }
     }
     Require(Contains(report, "\"source\": null") && Contains(report, "\"name\": null"), "the private fields were not dropped: " + report);
 #endif
@@ -394,6 +402,8 @@ void PrivacySweepEverythingTest() {
     ::setenv("HOSTNAME", "canary-host-9", 1);
     Directory executable, user;
     auto settings = Covered(executable.path, user.path, IdA);
+    settings.worker = true;
+    settings.checkpointInterval = std::chrono::milliseconds(10);
     settings.game = [] {
         RunReport::GameInfo game;
         game.titleId = "PPSA12345";
@@ -407,13 +417,37 @@ void PrivacySweepEverythingTest() {
     collector.NoteMissingFunction("lib/home/canaryuser9", "fn_ok", "C:\\Users\\canaryuser9\\core\\a.cpp");
     collector.NoteMissingFunction("lib_192.0.2.123", "account_123456789012", "");
     collector.NoteMissingFunction("libOk", "fn_ok", "");
-    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto checkpoint = Read(collector.CheckpointPath());
+    collector.Finish(RunReport::Exit::Abort, RunReport::Stop{RunReport::Kind::Other, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
     const auto report = Read(collector.ReportPath());
-    Require(!report.empty(), "the report is empty");
-    for (const char* canary : {"canaryuser9", "canary-host-9", "/home/", "C:\\", "Users", "@", "192.0.2.123", "123456789012"}) {
-        Require(!Contains(report, canary), std::string("the report contains the canary ") + canary + ": " + report);
+    for (const auto& text : {checkpoint, report}) {
+        Require(!text.empty(), "an output is empty");
+        for (const char* canary : {"canaryuser9", "canary-host-9", "/home/", "C:\\", "Users", "@", "192.0.2.123", "123456789012"}) {
+            Require(!Contains(text, canary), std::string("the output contains the canary ") + canary + ": " + text);
+        }
+        Require(Contains(text, "\"fn_ok\""), "the clean entries next to the canaries were lost: " + text);
     }
-    Require(Contains(report, "\"fn_ok\""), "the clean entry next to the canaries was lost: " + report);
+    {
+        Directory other, userOther;
+        auto abandonedSettings = Covered(other.path, userOther.path, IdB);
+        abandonedSettings.worker = true;
+        abandonedSettings.checkpointInterval = std::chrono::milliseconds(10);
+        {
+            RunReport::Collector abandoned(std::move(abandonedSettings));
+            Require(abandoned.Start(), "the collector did not start");
+            abandoned.NoteMissingFunction("libcanaryuser9", "fn_canaryuser9_call", "");
+            abandoned.NoteMissingFunction("lib_192.0.2.123", "account_123456789012", "");
+            abandoned.NoteMissingFunction("libOk", "fn_ok", "");
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        RunReport::Collector next(Covered(other.path, userOther.path, "cccccccccccccccccccccccccccccccc"));
+        Require(next.Start(), "the next collector did not start");
+        const auto recovered = Read(other.path / "reports" / IdB / "anyps5-report.json");
+        Require(!Contains(recovered, "canaryuser9") && !Contains(recovered, "canary-host-9") && !Contains(recovered, "192.0.2.123") && !Contains(recovered, "123456789012"), "the recovered report contains a canary: " + recovered);
+        Require(Contains(recovered, "\"recovered\": true") && Contains(recovered, "\"stage\": \"unknown\"") && Contains(recovered, "\"fn_ok\""), "the recovered report lost its clean content: " + recovered);
+        next.Finish(RunReport::Exit::Clean, {}, 0);
+    }
 #endif
 }
 
@@ -841,6 +875,7 @@ void EarlyIdentityTest() {
     };
     RunReport::Collector collector(std::move(settings));
     Require(collector.Start(), "the collector did not start");
+    Require(Contains(Read(collector.CheckpointPath()), "\"titleId\": \"PPSA12345\""), "the first checkpoint does not name the game");
     collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Assert, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
     Require(Contains(Read(collector.ReportPath()), "\"titleId\": \"PPSA12345\"") && Contains(Read(collector.ReportPath()), "\"name\": \"Example Game\""), "a run that failed early was reported without its game");
 }
@@ -1028,6 +1063,482 @@ void ObservationPrivacyTest() {
     Require(Contains(RunReport::Serialize(report), "\"usage\": \"other\""), "an out-of-range usage was not mapped to other");
 }
 
+void RecoveryTests() {
+    Directory executable, user;
+    {
+        RunReport::Collector abandoned(SettingsFor(executable.path, user.path, IdA));
+        Require(abandoned.Start(), "the first collector did not start");
+        RunReport::Collector live(SettingsFor(executable.path, user.path, IdB));
+        Require(live.Start(), "the second collector did not start");
+        Require(!fs::exists(executable.path / "reports"), "a live run's checkpoint was recovered");
+        RunReport::Collector third(SettingsFor(executable.path, user.path, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        Require(third.Start(), "the third collector did not start");
+        Require(!fs::exists(executable.path / "reports"), "a live run's checkpoint was recovered by a later run");
+        third.Finish(RunReport::Exit::Clean, {}, 0);
+        live.Finish(RunReport::Exit::Clean, {}, 0);
+    }
+    Require(fs::exists(executable.path / ("anyps5-report." + std::string(IdA) + ".ckpt")), "the abandoned checkpoint is gone");
+    RunReport::Collector next(SettingsFor(executable.path, user.path, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+    Require(next.Start(), "the next collector did not start");
+    const auto recovered = executable.path / "reports" / IdA / "anyps5-report.json";
+    const auto text = Read(recovered);
+    Require(Contains(text, "\"recovered\": true") && Contains(text, "\"incomplete\": true") && Contains(text, "\"exit\": \"killed\"") && Contains(text, std::string("\"id\": \"") + IdA + "\""), "the recovered report is wrong: " + text);
+    Require(!fs::exists(executable.path / ("anyps5-report." + std::string(IdA) + ".ckpt")) && !fs::exists(executable.path / ("anyps5-report." + std::string(IdA) + ".lock")), "the recovered run's checkpoint or lock survived");
+    Require(!Contains(Read(executable.path / "anyps5-report.json"), IdA), "recovery overwrote the adjacent report");
+    next.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(fs::exists(executable.path / "anyps5-report.json") && fs::exists(recovered), "a later report replaced the recovered one");
+}
+
+void WorkerTests() {
+    Directory executable, user;
+    auto settings = SettingsFor(executable.path, user.path, IdA);
+    settings.worker = true;
+    settings.checkpointInterval = std::chrono::milliseconds(20);
+    RunReport::Collector collector(std::move(settings));
+    Require(collector.Start(), "the collector did not start");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    std::string first, later;
+    for (int attempt = 0; first.empty() && std::chrono::steady_clock::now() < deadline; ++attempt) {
+        first = Read(collector.CheckpointPath());
+        if (first.empty()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    Require(!first.empty(), "the checkpoint could not be read after the collector started");
+    for (int attempt = 0; std::chrono::steady_clock::now() < deadline && (later.empty() || later == first || !Contains(later, "\"recovered\": true")); ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(17 + attempt % 7));
+        later = Read(collector.CheckpointPath());
+    }
+    Require(!later.empty() && later != first && Contains(later, "\"recovered\": true"), "the checkpoint worker did not refresh the checkpoint (last read " + std::to_string(later.size()) + " bytes, first " + std::to_string(first.size()) + " bytes)");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(!fs::exists(collector.CheckpointPath()), "the checkpoint survived a finish with a worker");
+}
+
+void FallbackRecoveryTest() {
+    Directory root, user;
+    std::ofstream(root.path / "file") << "not a directory";
+    const auto unwritable = root.path / "file" / "below";
+    {
+        RunReport::Collector abandoned(SettingsFor(unwritable, user.path, IdA));
+        Require(abandoned.Start(), "the collector did not fall back to the user folder");
+        Require(fs::exists(user.path / "reports" / IdA / ("anyps5-report." + std::string(IdA) + ".ckpt")), "the fallback run has no checkpoint");
+    }
+    RunReport::Collector next(SettingsFor(unwritable, user.path, IdB));
+    Require(next.Start(), "the next collector did not fall back to the user folder");
+    const auto text = Read(user.path / "reports" / IdA / "anyps5-report.json");
+    Require(Contains(text, "\"recovered\": true") && Contains(text, "\"exit\": \"killed\"") && Contains(text, std::string("\"id\": \"") + IdA + "\""), "the fallback run was not recovered: " + text);
+    Require(!fs::exists(user.path / "reports" / IdA / ("anyps5-report." + std::string(IdA) + ".ckpt")), "the recovered fallback checkpoint survived");
+    next.Finish(RunReport::Exit::Clean, {}, 0);
+}
+
+void RemovalBeforeUnlockTest() {
+#if !defined(_WIN32) && defined(RUN_REPORT_HAS_FINISH_HOOK)
+    Directory executable, user;
+    auto settings = SettingsFor(executable.path, user.path, IdA);
+    bool recoveredDuringFinish = false;
+    settings.beforeCheckpointRemoval = [&] {
+        std::string warnings;
+        recoveredDuringFinish = !RunReport::RecoverAbandonedRuns({executable.path}, warnings).empty();
+    };
+    RunReport::Collector collector(std::move(settings));
+    Require(collector.Start(), "the collector did not start");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(!recoveredDuringFinish && !fs::exists(executable.path / "reports"), "a finishing run's checkpoint was recovered while the run still held its lock");
+#else
+    throw NotRun("this tree has no finish hook");
+#endif
+}
+
+void FinishRecoverStressTest() {
+#ifdef _WIN32
+    throw NotRun("POSIX lock semantics");
+#else
+    Directory executable, user;
+    std::atomic<bool> stop{false};
+    std::atomic<int> falsePositives{0};
+    std::thread recoverer([&] {
+        while (!stop) {
+            std::string warnings;
+            falsePositives += static_cast<int>(RunReport::RecoverAbandonedRuns({executable.path}, warnings).size());
+        }
+    });
+    for (int round = 0; round < 400; ++round) {
+        RunReport::Collector collector(SettingsFor(executable.path, user.path, round % 2 ? IdA : IdB));
+        if (!collector.Start()) continue;
+        collector.Finish(RunReport::Exit::Clean, {}, 0);
+    }
+    stop = true;
+    recoverer.join();
+    Require(falsePositives == 0, "a run that finished cleanly was recovered as killed " + std::to_string(falsePositives.load()) + " times");
+#endif
+}
+
+std::string CheckpointBody(const std::string& id, const std::string& name, const std::string& generated = "2026-10-29T12:00:00Z") {
+    auto report = SampleReport();
+    report.generated = generated;
+    report.runId = id;
+    report.exit = RunReport::Exit::Killed;
+    report.exitCode.reset();
+    report.recovered = report.incomplete = true;
+    report.stop = {RunReport::Kind::Other, RunReport::Reason::UncleanUnknown, std::nullopt};
+    report.game.name = name;
+    RunReport::HostIdentifiers none;
+    return RunReport::Serialize(report, none);
+}
+
+void PlantCheckpoint(const fs::path& directory, const std::string& id, const std::string& body) {
+    std::ofstream(directory / ("anyps5-report." + id + ".ckpt"), std::ios::binary) << body;
+}
+
+void RecoveryValidationTest() {
+    Directory executable, user;
+    PlantCheckpoint(executable.path, IdA, "{\"private\": \"alice@example.com /home/alice\"}\n");
+    PlantCheckpoint(executable.path, IdB, CheckpointBody(IdA, "Example Game"));
+    PlantCheckpoint(executable.path, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", std::string(RunReport::MaxBytes + 10u, ' '));
+    PlantCheckpoint(executable.path, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", CheckpointBody("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "Example Game").substr(0, 200));
+    PlantCheckpoint(executable.path, "cccccccccccccccccccccccccccccccc", [] { auto body = CheckpointBody("cccccccccccccccccccccccccccccccc", "Example Game"); body.replace(body.find("2026-10-29T12:00:00Z"), 20u, "not a time"); return body; }());
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, "dddddddddddddddddddddddddddddddd"));
+    Require(collector.Start(), "the collector did not start");
+    std::size_t published = 0;
+    if (fs::exists(executable.path / "reports")) {
+        for (const auto& entry : fs::recursive_directory_iterator(executable.path / "reports")) {
+            if (entry.is_regular_file()) ++published;
+        }
+    }
+    std::string names;
+    if (fs::exists(executable.path / "reports")) {
+        for (const auto& entry : fs::recursive_directory_iterator(executable.path / "reports")) names += entry.path().string() + " ";
+    }
+    Require(published == 0, "an invalid checkpoint was published as a recovered report (" + std::to_string(published) + " files): " + names);
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+}
+
+void RecoverySanitizesTest() {
+    Directory executable, user;
+    constexpr const char* IdC = "cccccccccccccccccccccccccccccccc";
+    PlantCheckpoint(executable.path, IdC, CheckpointBody(IdC, "Example Game"));
+    auto dirty = CheckpointBody(IdA, "Example Game");
+    dirty.replace(dirty.find("Example Game"), 12u, "see fe80::1 and bob@example.com");
+    PlantCheckpoint(executable.path, IdA, dirty);
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, IdB));
+    Require(collector.Start(), "the collector did not start");
+    const auto good = Read(executable.path / "reports" / IdC / "anyps5-report.json");
+    Require(Contains(good, "\"recovered\": true") && Contains(good, "\"name\": \"Example Game\""), "a valid checkpoint was not recovered: " + good);
+    Require(!fs::exists(executable.path / "reports" / IdA / "anyps5-report.json"), "a checkpoint with private text was republished");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+}
+
+void RecoveryRejectsLinkTest() {
+#ifdef _WIN32
+    throw NotRun("symbolic links need a privilege here");
+#else
+    Directory executable, user, elsewhere;
+    const auto real = elsewhere.path / "real.ckpt";
+    std::ofstream(real, std::ios::binary) << CheckpointBody(IdA, "Example Game");
+    fs::create_symlink(real, executable.path / ("anyps5-report." + std::string(IdA) + ".ckpt"));
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, IdB));
+    Require(collector.Start(), "the collector did not start");
+    Require(!fs::exists(executable.path / "reports" / IdA / "anyps5-report.json"), "a checkpoint that is a symbolic link was recovered");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+#endif
+}
+
+void HostileFieldLiveAndRecoveredTest() {
+#ifdef _WIN32
+    throw NotRun("the abandoned-run recovery here uses POSIX files");
+#else
+    struct Field {
+        const char* name;
+        const char* clean;
+    };
+    const Field fields[] = {{"library", "libOk"}, {"function", "\"fn_other\""}, {"encoding", "OP_OK"}, {"opcode", "VOP3"}, {"format name", "\"format\": 1"}, {"content version", "\"titleId\""}, {"release", "\"commit\""}};
+    for (const std::string unsafe : {"192.0.2.123", "lib_192.0.2.123", "fn192.0.2.123", "fn_203.0.113.7_call", "a10.0.0.1b", "acct123456789012", "deadbeefcafe0123456"}) {
+        for (std::size_t index = 0; index < std::size(fields); ++index) {
+            if (index == 2 || index == 3 || index == 4) continue;
+            const auto describe = std::string(fields[index].name) + " = " + unsafe;
+            const auto fill = [&](RunReport::Collector& collector) {
+                const bool library = index == 0, function = index == 1, encoding = index == 2, opcode = index == 3, format = index == 4;
+                collector.NoteMissingFunction(library ? unsafe : "libOk", function ? unsafe : "fn_ok", "");
+                collector.NoteMissingFunction("libOk", "fn_other", "");
+            };
+            const auto settingsFor = [&](Directory& executable, Directory& user, const char* id) {
+                auto settings = Covered(executable.path, user.path, id);
+                settings.worker = true;
+                settings.checkpointInterval = std::chrono::milliseconds(10);
+                settings.build.commit = std::string(40, 'a');
+                if (index == 5) settings.game = [&] { RunReport::GameInfo game; game.titleId = "PPSA12345"; game.contentVersion = unsafe; return game; };
+                if (index == 6) settings.build.release = "v" + unsafe;
+                return settings;
+            };
+            const auto check = [&](const std::string& text, const char* where) {
+                Require(!Contains(text, unsafe), std::string(where) + " kept the unsafe " + describe + ": " + text);
+                Require(Contains(text, std::string(40, 'a')), std::string(where) + " lost the commit next to the unsafe " + describe + ": " + text);
+                Require(Contains(text, fields[index].clean), std::string(where) + " lost the clean value next to the unsafe " + describe + ": " + text);
+                Require(Contains(text, "\"fn_other\""), std::string(where) + " lost an entry that had no unsafe value, for " + describe + ": " + text);
+            };
+            Directory executable, user;
+            {
+                RunReport::Collector live(settingsFor(executable, user, IdA));
+                Require(live.Start(), "the collector did not start");
+                fill(live);
+                live.Finish(RunReport::Exit::Clean, {}, 0);
+                check(Read(live.ReportPath()), "the live report");
+            }
+            Directory other, userOther;
+            {
+                RunReport::Collector abandoned(settingsFor(other, userOther, IdB));
+                Require(abandoned.Start(), "the collector did not start");
+                fill(abandoned);
+                for (int attempt = 0; attempt < 300; ++attempt) {
+                    if (Contains(Read(abandoned.CheckpointPath()), "\"fn_other\"")) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            }
+            RunReport::Collector next(Covered(other.path, userOther.path, "cccccccccccccccccccccccccccccccc"));
+            Require(next.Start(), "the next collector did not start");
+            const auto recovered = Read(other.path / "reports" / IdB / "anyps5-report.json");
+            Require(Contains(recovered, "\"recovered\": true"), "no recovered report for " + describe);
+            check(recovered, "the recovered report");
+            next.Finish(RunReport::Exit::Clean, {}, 0);
+        }
+    }
+#endif
+}
+
+void MachineLiveAndRecoveredTest() {
+#ifdef _WIN32
+    throw NotRun("environment canaries are POSIX here");
+#else
+    ::setenv("USER", "canaryuser9", 1);
+    ::setenv("LOGNAME", "canaryuser9", 1);
+    ::setenv("HOME", "/home/canaryuser9", 1);
+    ::setenv("HOSTNAME", "canary-host-9", 1);
+    const char* hostile[] = {"canaryuser9", "canary-host-9", "a1b2c3d4-e5f6-4a3b-8c9d-aabbccddeeff", "/home/someone/x"};
+    for (const std::string canary : hostile) {
+        for (int field = 0; field < 4; ++field) {
+            auto machine = CleanMachine();
+            const std::string value = "x " + canary;
+            if (field == 0) machine.osVersion = value;
+            if (field == 1) machine.cpu = value;
+            if (field == 2) machine.gpu->name = value;
+            if (field == 3) machine.gpu->driver = value;
+            const auto describe = "field " + std::to_string(field) + " = " + canary;
+            const auto settingsFor = [&](Directory& executable, Directory& user, const char* id) {
+                auto settings = Covered(executable.path, user.path, id);
+                settings.worker = true;
+                settings.checkpointInterval = std::chrono::milliseconds(10);
+                settings.machine = machine;
+                return settings;
+            };
+            const auto check = [&](const std::string& text, const char* where) {
+                Require(!Contains(text, canary), std::string(where) + " kept the hostile " + describe + ": " + text);
+                Require(Contains(text, "\"ramGiB\": 32") && Contains(text, "\"vulkan\": \"1.3.280\""), std::string(where) + " lost a clean machine value next to the hostile " + describe + ": " + text);
+            };
+            Directory executable, user;
+            {
+                RunReport::Collector live(settingsFor(executable, user, IdA));
+                Require(live.Start(), "the collector did not start");
+                live.Finish(RunReport::Exit::Clean, {}, 0);
+                check(Read(live.ReportPath()), "the live report");
+            }
+            Directory other, userOther;
+            {
+                RunReport::Collector abandoned(settingsFor(other, userOther, IdB));
+                Require(abandoned.Start(), "the collector did not start");
+                for (int attempt = 0; attempt < 300; ++attempt) {
+                    if (Contains(Read(abandoned.CheckpointPath()), "\"ramGiB\"")) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+            }
+            RunReport::Collector next(Covered(other.path, userOther.path, "cccccccccccccccccccccccccccccccc"));
+            Require(next.Start(), "the next collector did not start");
+            const auto recovered = Read(other.path / "reports" / IdB / "anyps5-report.json");
+            Require(Contains(recovered, "\"recovered\": true"), "no recovered report for " + describe);
+            check(recovered, "the recovered report");
+            next.Finish(RunReport::Exit::Clean, {}, 0);
+        }
+    }
+#endif
+}
+
+void FinishWithStalledWriteTest() {
+    Directory executable, user;
+    std::atomic<bool> armed{false}, stuck{false}, release{false};
+    auto settings = SettingsFor(executable.path, user.path, IdA);
+    settings.worker = true;
+    settings.checkpointInterval = std::chrono::milliseconds(10);
+    settings.lockWait = std::chrono::milliseconds(150);
+    settings.duringCheckpointWrite = [&] {
+        if (!armed) return;
+        stuck = true;
+        while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    };
+    RunReport::Collector collector(std::move(settings));
+    Require(collector.Start(), "the collector did not start");
+    armed = true;
+    for (int attempt = 0; attempt < 400 && !stuck; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Require(stuck, "the checkpoint worker never reached the write");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    const bool wrote = fs::exists(collector.ReportPath());
+    const bool kept = fs::exists(collector.CheckpointPath());
+    release = true;
+    Require(!wrote && kept, "Finish went on to replace the files while a checkpoint write was in progress");
+}
+
+void ResumeTest() {
+    Directory executable, user;
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(collector.Finished() && !fs::exists(collector.CheckpointPath()), "the first finish did not finish");
+    Require(collector.Resume(), "the finished run could not be reopened");
+    Require(!collector.Finished() && fs::exists(collector.CheckpointPath()) && fs::exists(executable.path / ("anyps5-report." + std::string(IdA) + ".lock")), "a reopened run has no checkpoint and lock");
+    std::string warnings;
+    Require(RunReport::RecoverAbandonedRuns({executable.path}, warnings).empty(), "a reopened run was recovered while it was running");
+    collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Other, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
+    Require(Contains(Read(collector.ReportPath()), "\"exit\": \"abort\"") && !fs::exists(collector.CheckpointPath()), "the second finish did not replace the report");
+}
+
+void StrictCheckpointTest() {
+    Directory executable, user;
+    constexpr const char* IdC = "cccccccccccccccccccccccccccccccc";
+    const auto good = CheckpointBody(IdA, "Example Game");
+    RunReport::HostIdentifiers host;
+    Require(RunReport::ParseCheckpoint(good, IdA, host).has_value(), "a genuine checkpoint was rejected");
+    auto missing = CheckpointBody(IdC, "Example Game");
+    const auto at = missing.find("  \"coverage\": {");
+    Require(at != std::string::npos, "the sample has no coverage object");
+    missing.erase(at, missing.find("},\n", at) + 3u - at);
+    auto extra = CheckpointBody(IdB, "Example Game");
+    extra.insert(extra.find("\"format\""), "\"extra\": 1,\n  ");
+    PlantCheckpoint(executable.path, IdC, missing);
+    PlantCheckpoint(executable.path, IdB, extra);
+    Require(!RunReport::ParseCheckpoint(missing, IdC, host) && !RunReport::ParseCheckpoint(extra, IdB, host), "a checkpoint that is not in the frozen shape was accepted");
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    Require(!fs::exists(executable.path / "reports"), "part of an invalid checkpoint was republished");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+}
+
+void ResumeBlockedWorkerTest() {
+    Directory executable, user;
+    std::mutex metadata;
+    auto settings = SettingsFor(executable.path, user.path, IdA);
+    settings.worker = true;
+    settings.checkpointInterval = std::chrono::milliseconds(10);
+    settings.game = [&metadata] {
+        std::lock_guard guard(metadata);
+        return RunReport::GameInfo{};
+    };
+    RunReport::Collector collector(std::move(settings));
+    std::unique_lock held(metadata);
+    Require(collector.Start(), "the collector did not start");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Other, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
+    auto resumed = std::async(std::launch::async, [&collector] { return collector.Resume(); });
+    const bool returned = resumed.wait_for(std::chrono::seconds(8)) == std::future_status::ready;
+    held.unlock();
+    const bool ok = resumed.get();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Require(returned, "Resume waited for a worker that was blocked behind the metadata lock");
+    Require(ok && !collector.Finished(), "the run was not reopened");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    Require(fs::exists(collector.ReportPath()), "the reopened run did not finish");
+}
+
+void ResumeRetractsReportTest() {
+    Directory executable, user;
+    {
+        RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
+        Require(collector.Start(), "the collector did not start");
+        collector.Finish(RunReport::Exit::Clean, {}, 0);
+        Require(fs::exists(collector.ReportPath()), "the handoff wrote no report");
+        Require(collector.Resume(), "the run was not reopened");
+        Require(!fs::exists(executable.path / "anyps5-report.json"), "the clean report of the failed handoff stayed visible after the run resumed");
+    }
+    RunReport::Collector next(SettingsFor(executable.path, user.path, IdB));
+    Require(next.Start(), "the next collector did not start");
+    Require(!fs::exists(executable.path / "anyps5-report.json") && Contains(Read(executable.path / "reports" / IdA / "anyps5-report.json"), "\"exit\": \"killed\""), "a killed resumed run is not reported as killed");
+    next.Finish(RunReport::Exit::Clean, {}, 0);
+}
+
+void ResumeKeepsNewerReportTest() {
+    Directory executable, user;
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    const std::string newer = RunReport::Serialize(SampleReport());
+    std::string error;
+    Require(RunReport::WriteAtomically(collector.ReportPath(), newer, "bbbbbbbb", error), "the newer report was not written: " + error);
+    Require(collector.Resume(), "the run was not reopened");
+    Require(Read(collector.ReportPath()) == newer, "Resume deleted a newer completed report");
+}
+
+void HandoffOutcomeTest() {
+    {
+        Directory executable, user;
+        RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
+        Require(collector.Start(), "the collector did not start");
+        collector.Finish(RunReport::Exit::Clean, {}, 0);
+        Require(collector.Finalized(), "a finished handoff was not reported as finalized");
+    }
+    Directory executable, user;
+    std::atomic<bool> armed{false}, stuck{false}, release{false};
+    auto settings = SettingsFor(executable.path, user.path, IdB);
+    settings.worker = true;
+    settings.checkpointInterval = std::chrono::milliseconds(10);
+    settings.lockWait = std::chrono::milliseconds(150);
+    settings.duringCheckpointWrite = [&] {
+        if (!armed) return;
+        stuck = true;
+        while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    };
+    RunReport::Collector collector(std::move(settings));
+    Require(collector.Start(), "the collector did not start");
+    armed = true;
+    for (int attempt = 0; attempt < 400 && !stuck; ++attempt) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    Require(stuck, "the checkpoint worker never reached the write");
+    collector.Finish(RunReport::Exit::Clean, {}, 0);
+    const bool finalized = collector.Finalized();
+    release = true;
+    Require(!finalized, "a handoff that left a checkpoint write in progress was reported as finalized, so a relaunch would close its descriptors");
+}
+
+void DeferredWorkerTest() {
+    Directory executable, user;
+    auto settings = Covered(executable.path, user.path, IdA);
+    settings.worker = false;
+    settings.deferredWorker = true;
+    settings.checkpointInterval = std::chrono::milliseconds(10);
+    RunReport::Collector collector(std::move(settings));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteMissingFunction("libX", "fnY", "");
+    bool written = false;
+    for (int attempt = 0; attempt < 200 && !written; ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        written = Contains(Read(collector.CheckpointPath()), "\"fnY\"");
+    }
+    Require(written, "no worker was started to write the checkpoint of an early observation");
+}
+
+void CheckpointDoesNotBlockHooksTest() {
+    Directory executable, user;
+    std::atomic<bool> armed{false}, release{false};
+    auto settings = Covered(executable.path, user.path, IdA);
+    settings.duringCheckpointWrite = [&] {
+        if (!armed) return;
+        while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    };
+    RunReport::Collector collector(std::move(settings));
+    Require(collector.Start(), "the collector did not start");
+    armed = true;
+    auto hooks = std::async(std::launch::async, [&] {
+        collector.NoteMissingFunction("libTest", "f", "");
+    });
+    const bool returned = hooks.wait_for(std::chrono::seconds(2)) == std::future_status::ready;
+    release = true;
+    hooks.wait();
+    Require(returned, "an observation hook waited for a checkpoint write");
+}
+
 void CoverageOffTest() {
     Directory executable, user;
     RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
@@ -1145,6 +1656,43 @@ void ChildMissingFunctionTest() {
     }
 }
 
+void ChildKillTest() {
+    Directory directory;
+    const auto copy = CopySelf(directory);
+    RunChild(copy, directory.path, "kill");
+    Require(!fs::exists(directory.path / "anyps5-report.json"), "a killed run wrote a report");
+    std::string checkpoint;
+    for (const auto& entry : fs::directory_iterator(directory.path)) {
+        if (entry.path().extension() == ".ckpt") checkpoint = entry.path().filename().string();
+    }
+    Require(!checkpoint.empty(), "a killed run left no checkpoint");
+    const auto killedId = checkpoint.substr(std::string("anyps5-report.").size(), 32u);
+    RunChild(copy, directory.path, "exit");
+    const auto recovered = Read(directory.path / "reports" / killedId / "anyps5-report.json");
+    Require(Contains(recovered, "\"recovered\": true") && Contains(recovered, "\"exit\": \"killed\"") && Contains(recovered, "\"incomplete\": true"), "the next start did not recover the killed run's report: " + recovered);
+    Require(Contains(Report(directory), "\"exitCode\": 7"), "the run after a killed one did not write its own report");
+}
+
+void ChildReturnTest() {
+    Directory directory;
+    const auto copy = CopySelf(directory);
+    RunChild(copy, directory.path, "return");
+    const auto text = Report(directory);
+    Require(Contains(text, "\"exit\": \"clean\"") && Contains(text, "\"recovered\": false"), "returning from the entry did not write a clean report: " + text);
+    for (const auto& entry : fs::directory_iterator(directory.path)) {
+        Require(entry.path().extension() != ".ckpt" && entry.path().extension() != ".lock", "a clean run left " + entry.path().filename().string());
+    }
+    RunChild(copy, directory.path, "return");
+    Require(!fs::exists(directory.path / "reports"), "the next start reported the clean run as killed");
+}
+
+void ChildRelaunchEnvironmentTest() {
+    Directory directory;
+    const auto copy = CopySelf(directory);
+    RunChild(copy, directory.path, "relaunch-env", "--aps5-report=off", "APS5_REPORT=1");
+    Require(Contains(Read(directory.path / "relaunch.txt"), "0"), "the choice made with --aps5-report=off is not passed on to a relaunch");
+}
+
 void GuestRootIsNotFixedAtLoadTest() {
     Directory directory;
     const auto output = directory.path / "resolved.txt";
@@ -1189,6 +1737,12 @@ int main(int argc, char** argv) {
                 std::ofstream(argv[3]) << ResolvePath_nid_no_patch("x.txt").string();
                 return 0;
             }
+            if (mode == "return") return 5;
+            if (mode == "relaunch-env") {
+                const char* choice = LibcRunReportRelaunchEnvironment_nid_no_patch();
+                std::ofstream("relaunch.txt") << (choice != nullptr ? choice : "unset");
+                return 0;
+            }
             if (mode == "caught-missing-function") {
                 try { NotImplemented_nid_no_patch("sceNpCaught_nid_postfix"); } catch (const std::exception&) {}
                 LibcRunReportFinishExit_nid_no_patch(0);
@@ -1226,6 +1780,25 @@ int main(int argc, char** argv) {
         Run("list-order-and-cap", ListOrderAndCapTest);
         Run("size-limit", SizeLimitTest);
         Run("observation-privacy", ObservationPrivacyTest);
+        Run("recovery", RecoveryTests);
+        Run("worker", WorkerTests);
+        Run("fallback-recovery", FallbackRecoveryTest);
+        Run("removal-before-unlock", RemovalBeforeUnlockTest);
+        Run("finish-recover-stress", FinishRecoverStressTest);
+        Run("recovery-validation", RecoveryValidationTest);
+        Run("recovery-sanitizes", RecoverySanitizesTest);
+        Run("recovery-rejects-link", RecoveryRejectsLinkTest);
+        Run("hostile-field-live-and-recovered", HostileFieldLiveAndRecoveredTest);
+        Run("machine-live-and-recovered", MachineLiveAndRecoveredTest);
+        Run("finish-with-stalled-write", FinishWithStalledWriteTest);
+        Run("resume", ResumeTest);
+        Run("strict-checkpoint", StrictCheckpointTest);
+        Run("resume-blocked-worker", ResumeBlockedWorkerTest);
+        Run("resume-retracts-report", ResumeRetractsReportTest);
+        Run("resume-keeps-newer-report", ResumeKeepsNewerReportTest);
+        Run("handoff-outcome", HandoffOutcomeTest);
+        Run("deferred-worker", DeferredWorkerTest);
+        Run("checkpoint-does-not-block-hooks", CheckpointDoesNotBlockHooksTest);
         Run("coverage-off", CoverageOffTest);
         Run("lost-observation", LostObservationTest);
         Run("source-boundary", SourceBoundaryTest);
@@ -1247,6 +1820,9 @@ int main(int argc, char** argv) {
         Run("child-exit", ChildExitTest);
         Run("child-flag", ChildFlagTest);
         Run("child-library-from-source", LibraryFromSourceTest);
+        Run("child-kill-and-recover", ChildKillTest);
+        Run("child-return-from-entry", ChildReturnTest);
+        Run("child-relaunch-environment", ChildRelaunchEnvironmentTest);
         Run("child-guest-root-not-fixed-at-load", GuestRootIsNotFixedAtLoadTest);
         Run("child-missing-function", ChildMissingFunctionTest);
 #endif

@@ -12,7 +12,13 @@ The report is written by default. Turn it off with the launch flag `--aps5-repor
 
 `anyps5-report.json` is written next to the game's executable. If that folder can't be written, it goes to the AnyPS5 data folder under `reports/<run id>/` and the runtime prints where. `run.id` is that same id: 32 lowercase hex characters, random per run.
 
-The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that is killed, crashes or aborts writes no report.
+The report is written once, when the run ends through the guest's `exit` or `_exit`, and on Linux and macOS also when the entry returns or the host calls `std::exit`. On Windows only `exit` and `_exit` write a report: a return from the entry writes none, because exit handlers of a DLL run inside the loader lock. The Windows and macOS code and the junction test have not been run. A run that ends without writing its report is recovered at the next start (see below).
+
+While a run is in progress, `anyps5-report.<run id>.ckpt` and `.lock` files sit in the same folder; a run killed from outside can leave them there until the next start recovers it. A checkpoint is refreshed every five seconds, so a recovered report's `seconds` can be up to five seconds short.
+
+A recovered report is read back strictly. A checkpoint is turned into a report only when it is exactly what the runtime would have written; one that is damaged, from another run, or that the privacy filter would change is dropped whole (it is renamed to `anyps5-report.<run id>.invalid` and no report is made for that run), never published in part.
+
+If a run ends without writing its report (power loss, forced kill, a crash the runtime can't handle), the next start writes a report for it, marked `recovered` and `incomplete`, with `exit: "killed"`. That means the run ended uncleanly for an unknown cause. It is not proof that anything killed the process.
 
 ## What `anyps5.modified` means
 
@@ -34,11 +40,11 @@ Every text value in the report goes through the same filter for user names, host
 | `exit` | `clean` for a run that ended through the exit path. |
 | `exitCode` | The process exit code when known, otherwise null. |
 | `framesPresented` | 0: this build does not count frames. |
-| `recovered`, `incomplete` | `incomplete` is true when an observation had to be dropped. |
+| `recovered`, `incomplete` | Both true on a report written at the next start for a run that ended uncleanly. `incomplete` is also true when an observation had to be dropped. |
 
 ## Stop
 
-`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. The schema lists the other kinds and reasons; this build writes only these.
+`stop.kind` is `none` and `stop.reason` is `guest-exit` for a run that ended through the exit path. A report recovered at the next start has `exit: killed`, `recovered: true`, `incomplete: true`, `stop.kind: other` and `stop.reason: unclean-unknown`. The schema lists the other kinds and reasons; this build writes only these.
 
 ## What `system` holds
 
