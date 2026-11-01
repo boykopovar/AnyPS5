@@ -934,6 +934,10 @@ int main(int argc, char* argv[]) {
     if (mode == "contiguous") return Contiguous();
     if (mode == "double_ended") return DoubleEnded();
     if (mode == "memory") return Memory();
+    if (mode == "fatal_control") {
+        std::fprintf(stderr, "ERROR: AddressSanitizer: use-after-poison on address 0x000000001010 at pc 0x000000002000 bp 0x000000003000 sp 0x000000004000\nREAD of size 4 at 0x000000001010 thread T-1\nABORTING\n");
+        return 2;
+    }
     Reset();
     __asan_poison_memory_region(buffer.data() + 16, 16);
     if (mode == "exp_load4") {
