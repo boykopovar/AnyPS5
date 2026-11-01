@@ -341,7 +341,10 @@ bool HandleSse4a(EXCEPTION_POINTERS* info) {
     auto* context = info->ContextRecord;
     const auto rip = context->Rip;
     std::uint8_t bytes[sse4a::kMaxInstructionSize];
-    const std::size_t available = ReadCode(rip, bytes, sizeof(bytes));
+    const std::size_t pageRest = 0x1000 - (rip & 0xfff);
+    const std::size_t fetched = std::min(pageRest, sizeof(bytes));
+    std::memcpy(bytes, reinterpret_cast<const void*>(rip), fetched);
+    const std::size_t available = fetched + (fetched < sizeof(bytes) ? ReadCode(rip + fetched, bytes + fetched, sizeof(bytes) - fetched) : 0);
     sse4a::Instruction instruction;
     sse4a::Field field;
     if (!sse4a::Emulate(bytes, available, *context, &instruction, &field)) return false;
