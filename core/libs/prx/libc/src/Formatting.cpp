@@ -261,6 +261,7 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             const char expected = *cursor == '%' ? '%' : *cursor;
             cursor += *cursor == '%' ? 2 : 1;
             if (expected == '%') while (std::isspace(source.Peek())) source.Skip();
+            if (static_cast<unsigned char>(expected) >= 0x80) return finish(assigned);
             if (source.Peek() != static_cast<unsigned char>(expected)) return finish(!converted && source.Peek() == EOF ? EOF : assigned);
             source.Skip();
             continue;
