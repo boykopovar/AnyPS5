@@ -209,6 +209,17 @@ static void ReceiveAnsweredWithoutTheHost() {
     Require(shutdown_nid_postfix(accepted, 0) == 0);
     int queued = -1;
     Require(ioctl_nid_postfix(accepted, ReadableBytes, &queued) == 0 && queued == 0);
+    Require(ioctl_nid_postfix(accepted, ReadableBytes, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
+    Require(_ioctl_nid_postfix(accepted, ReadableBytes, reinterpret_cast<void*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
+    std::int64_t physical = 0;
+    void* page = nullptr;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, 0x4000, 0, 0, &physical) == 0);
+    Require(sceKernelMapDirectMemory(&page, 0x4000, 3, 0, physical, 0) == 0);
+    Require(sceKernelMprotect(page, 0x4000, 1) == 0);
+    Require(ioctl_nid_postfix(accepted, 0x4004667f, page) == -1 && *__error_nid_postfix() == 14);
+    Require(_ioctl_nid_postfix(accepted, 0x4004667f, page) == -1 && *__error_nid_postfix() == 14);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(page), 0x4000) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, 0x4000) == 0);
     Require(recv_nid_postfix(accepted, received, sizeof(received), 0) == 0);
     Require(recv_nid_postfix(accepted, received, sizeof(received), DontWait) == 0);
     senderSize = sender.size();
