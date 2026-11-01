@@ -370,6 +370,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-15-intel]
         configuration: [Debug, Release]
+        exclude:
+          - os: macos-15-intel
+            configuration: ${{ github.event_name == 'pull_request' && 'Debug' || 'none' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
@@ -403,7 +406,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15-intel, macos-15]
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["macos-15"]') || fromJSON('["macos-15-intel", "macos-15"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:
