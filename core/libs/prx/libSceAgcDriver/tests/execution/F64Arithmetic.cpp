@@ -203,6 +203,56 @@ std::uint64_t MinMaxReference(std::uint64_t lhs, std::uint64_t rhs, bool maximum
     return maximum ? (std::bit_cast<double>(lhs) > std::bit_cast<double>(rhs) ? lhs : rhs) : (std::bit_cast<double>(lhs) < std::bit_cast<double>(rhs) ? lhs : rhs);
 }
 
+void CheckClamp(AgcDriver::VulkanDevice& device) {
+    constexpr std::array<std::uint64_t, 20> values{
+        0x7ff8123456789abcull, 0xfff8abcdef012345ull,
+        0x7ff0000000000123ull, 0xfff0000000000456ull,
+        0x7ff4000000000000ull, 0xfff4000000000000ull,
+        0x7ff0000000000000ull, 0xfff0000000000000ull,
+        0x0000000000000000ull, 0x8000000000000000ull,
+        0xbff0000000000000ull, 0xbfe0000000000000ull,
+        0x3fe0000000000000ull, 0x3fefffffffffffffull,
+        0x3ff0000000000000ull, 0x3ff0000000000001ull,
+        0x4000000000000000ull, 0x3fe000007ff00001ull,
+        0x7ff8000000000000ull, 0xfff8000000000000ull,
+    };
+    constexpr std::array<std::uint32_t, 4> instructions{5u, 7u, 13u, 15u};
+    constexpr std::array<std::uint32_t, 4> offsets{0u, 2u, 8u, 10u};
+    for (const bool ieee : {false, true}) {
+        for (const bool dx10 : {false, true}) {
+            const ShaderRecompiler::ShaderFloatMode mode{0xf0u, dx10, ieee, false};
+            for (std::uint32_t operation = 0u; operation < instructions.size(); ++operation) {
+                for (std::uint32_t tid = 0u; tid < Threads; ++tid) {
+                    const auto value = values[tid % values.size()];
+                    const auto rhs = operation == 0u ? 0x8000000000000000ull : operation == 1u ? 0x3ff0000000000000ull : value;
+                    Input[tid * Inputs] = static_cast<std::uint32_t>(value);
+                    Input[tid * Inputs + 1u] = static_cast<std::uint32_t>(value >> 32u);
+                    Input[tid * Inputs + 2u] = static_cast<std::uint32_t>(rhs);
+                    Input[tid * Inputs + 3u] = static_cast<std::uint32_t>(rhs >> 32u);
+                }
+                Run(device, Code, mode);
+                const auto unclamped = Output;
+                alignas(256) auto code = Code;
+                code[instructions[operation]] |= 0x8000u;
+                Run(device, code, mode);
+                for (std::uint32_t tid = 0u; tid < Threads; ++tid) {
+                    const auto offset = tid * Results + offsets[operation];
+                    const auto plain = static_cast<std::uint64_t>(unclamped[offset]) | (static_cast<std::uint64_t>(unclamped[offset + 1u]) << 32u);
+                    const bool nan = (plain & 0x7fffffffffffffffull) > 0x7ff0000000000000ull;
+                    const auto value = values[tid % values.size()];
+                    const auto expected = nan ? (dx10 ? 0ull : plain) : (value >> 63u) != 0u ? 0ull : std::min<std::uint64_t>(value, 0x3ff0000000000000ull);
+                    for (std::uint32_t word = 0u; word < 2u; ++word) {
+                        const auto actual = Output[offset + word];
+                        const auto expectedWord = static_cast<std::uint32_t>(expected >> (word * 32u));
+                        Require(actual == expectedWord, "f64 clamp DX10_CLAMP " + std::to_string(dx10) + " IEEE " + std::to_string(ieee) + " lane " + std::to_string(tid) + " " + Names[offsets[operation] + word] + " is " + Hex(actual) + ", expected " + Hex(expectedWord));
+                    }
+                }
+            }
+            std::printf("f64 clamp DX10_CLAMP %u IEEE %u: add/mul/min/max bit checks passed\n", dx10 ? 1u : 0u, ieee ? 1u : 0u);
+        }
+    }
+}
+
 void CheckMinMaxDenormals(AgcDriver::VulkanDevice& device) {
     const bool canPreserveDenormals = device.Target().float64DenormPreserve;
     constexpr std::array<std::array<std::uint64_t, 2>, Threads> rows{{
@@ -287,6 +337,7 @@ int main() {
             Run(*device, Code, ieee ? std::optional{ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false}} : std::nullopt);
             Check();
         }
+        CheckClamp(*device);
         CheckMinMaxDenormals(*device);
         std::puts("f64 arithmetic tests passed");
         return 0;
