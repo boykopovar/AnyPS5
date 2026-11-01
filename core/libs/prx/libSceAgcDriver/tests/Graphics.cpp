@@ -12770,7 +12770,7 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         {
             std::vector<std::byte> currentJournal;
             Require(ShaderRecompiler::ReadWholeFile(journalFile, currentJournal), "cannot read the current journal for version rejection");
-            for (const std::uint32_t previousFormat : {10u, 2u}) {
+            for (const std::uint32_t previousFormat : {14u, 13u, 12u, 10u, 2u}) {
                 std::fstream file(journalFile, std::ios::in | std::ios::out | std::ios::binary | std::ios::trunc);
                 file.write(reinterpret_cast<const char*>(currentJournal.data()), static_cast<std::streamsize>(currentJournal.size()));
                 file.seekp(4);
