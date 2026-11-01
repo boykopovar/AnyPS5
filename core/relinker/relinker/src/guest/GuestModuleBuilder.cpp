@@ -3,6 +3,7 @@
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
+#include <elfpatcher/general/ElfConstants.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
 #include <domain/ImportModule.hpp>
 #include <io/NativePath.hpp>
@@ -27,15 +28,33 @@ namespace {
 std::optional<Domain::VirtualAddress> FindGuestPathconfImportAddress(const GuestImage& image) {
     std::optional<Domain::VirtualAddress> candidate;
     for (const auto* table : {&image.Dynamic.RelaPltData, &image.Dynamic.RelaData}) {
-        for (std::size_t position = 0; position < table->size(); position += 24) {
+        for (std::size_t position = 0; position + 24 <= table->size(); position += 24) {
             const auto info = Io::ReadU64(*table, position + 8);
             const auto relType = static_cast<std::uint32_t>(info);
-            if (relType == 0) continue;
+            if (relType != Elfpatcher::R_X86_64_JUMP_SLOT &&
+                relType != Elfpatcher::R_X86_64_GLOB_DAT &&
+                relType != Elfpatcher::R_X86_64_64) {
+                continue;
+            }
+            const auto addend = static_cast<std::int64_t>(Io::ReadU64(*table, position + 16));
+            if (addend != 0) {
+                continue;
+            }
             const auto symbolIndex = static_cast<std::size_t>(info >> 32);
-            if (symbolIndex >= image.Symbols.size()) continue;
+            if (symbolIndex >= image.Symbols.size()) {
+                continue;
+            }
             const auto& symbol = image.Symbols[symbolIndex];
-            if (symbol.Section != 0) continue;
-            if (!symbol.Library.empty() && !symbol.Library.starts_with("libkernel")) continue;
+            if (symbol.Section != 0) {
+                continue;
+            }
+            const auto symType = symbol.Info & 0x0F;
+            if (symType != Elfpatcher::STT_FUNC && symType != Elfpatcher::STT_NOTYPE) {
+                continue;
+            }
+            if (!symbol.Library.empty() && !symbol.Library.starts_with("libkernel")) {
+                continue;
+            }
             std::string_view name = symbol.Name;
             const auto hashPos = name.find('#');
             if (hashPos != std::string_view::npos) {
@@ -43,7 +62,7 @@ std::optional<Domain::VirtualAddress> FindGuestPathconfImportAddress(const Guest
             }
             if (name == "pathconf" || name == "oc98+zOImus" || name == "pathconf_nid_postfix") {
                 const auto target = Io::ReadU64(*table, position);
-                if (table == &image.Dynamic.RelaPltData || relType == 7) {
+                if (relType == Elfpatcher::R_X86_64_JUMP_SLOT) {
                     return target;
                 }
                 if (!candidate) {
