@@ -380,9 +380,9 @@ int APS5_VABI sceKernelAioWaitRequests(int32_t* id, int32_t num, int32_t* state,
 #ifdef ANYPS5_AIO_TESTING
         waiter.Observe();
 #endif
-        if (usec != nullptr && *usec != 0) {
+        if (usec != nullptr) {
             const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
-            if (elapsed > static_cast<std::int64_t>(*usec)) {
+            if (elapsed >= static_cast<std::int64_t>(*usec)) {
                 std::lock_guard<std::mutex> lock(g_mutex);
                 for (int32_t i = 0; i < num; ++i) state[i] = ReportLocked(id[i]);
                 return SCE_KERNEL_ERROR_ETIMEDOUT;
@@ -411,9 +411,9 @@ int APS5_VABI sceKernelAioWaitRequest(int32_t id, int32_t* state, uint32_t* usec
 #ifdef ANYPS5_AIO_TESTING
         waiter.Observe();
 #endif
-        if (usec != nullptr && *usec != 0) {
+        if (usec != nullptr) {
             const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
-            if (elapsed > static_cast<std::int64_t>(*usec)) {
+            if (elapsed >= static_cast<std::int64_t>(*usec)) {
                 *state = current;
                 return SCE_KERNEL_ERROR_ETIMEDOUT;
             }

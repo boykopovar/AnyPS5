@@ -208,6 +208,22 @@ static void CheckAioProcessingOwnership(bool fail) {
     Check(sceKernelAioPollRequest(pending, &state) == 0 && state == 2);
     std::uint32_t timeout = 1000;
     Check(sceKernelAioWaitRequest(pending, &state, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && state == 2);
+    std::uint32_t zeroTimeout = 0;
+    Check(sceKernelAioWaitRequest(pending, &state, &zeroTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT && state == 2);
+    std::int32_t pendingIds[1]{pending};
+    std::int32_t pendingStates[1]{-7};
+    Check(sceKernelAioWaitRequests(pendingIds, 1, pendingStates, 1, &zeroTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT && pendingStates[0] == 2);
+    std::int32_t completedState = -7;
+    Check(sceKernelAioWaitRequest(completed, &completedState, &zeroTimeout) == 0 && completedState == 0x10003);
+    std::int32_t completedIds[1]{completed};
+    std::int32_t completedStates[1]{-7};
+    Check(sceKernelAioWaitRequests(completedIds, 1, completedStates, 1, &zeroTimeout) == 0 && completedStates[0] == 0x10003);
+    std::int32_t mixedIds[2]{completed, pending};
+    std::int32_t mixedStates[2]{-7, -7};
+    Check(sceKernelAioWaitRequests(mixedIds, 2, mixedStates, 1, &zeroTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT && mixedStates[0] == 0x10003 && mixedStates[1] == 2);
+    mixedStates[0] = -7;
+    mixedStates[1] = -7;
+    Check(sceKernelAioWaitRequests(mixedIds, 2, mixedStates, 2, &zeroTimeout) == 0 && mixedStates[0] == 0x10003 && mixedStates[1] == 2);
     std::atomic<bool> waiterDone{false};
     std::int32_t waited = -7;
     std::thread waiter([&] {
