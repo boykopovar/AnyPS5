@@ -1,13 +1,18 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import tracemalloc
 import unittest
 from pathlib import Path
 
 SCRIPT = 'inspect_self.py'
 TOOLS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(TOOLS))
+import inspect_self
 
 
 class Tests(unittest.TestCase):
@@ -55,6 +60,49 @@ class Tests(unittest.TestCase):
             self.assertEqual(result.returncode, 2, result.stdout)
             self.assertEqual(result.stdout, "")
             self.assertNotIn("Traceback", result.stderr)
+
+    def test_large_payload_is_not_copied_into_the_python_heap(self):
+        source = self.root / "large.self"
+        with source.open("wb") as output:
+            output.write(self.fixture())
+            for _ in range(64):
+                output.write(bytes(128 * 1024))
+        before = source.stat()
+        printed = io.StringIO()
+        started_tracing = not tracemalloc.is_tracing()
+        if started_tracing:
+            tracemalloc.start()
+        tracemalloc.reset_peak()
+        baseline, _ = tracemalloc.get_traced_memory()
+        try:
+            with contextlib.redirect_stdout(printed):
+                code = inspect_self.main([str(source)])
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            if started_tracing:
+                tracemalloc.stop()
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(printed.getvalue())["size"], 0x500 + 8 * 1024 * 1024)
+        self.assertLess(peak - baseline, 2 * 1024 * 1024)
+        self.assertEqual(source.stat().st_mtime_ns, before.st_mtime_ns)
+        self.assertEqual(source.stat().st_mode, before.st_mode)
+        source.rename(self.root / "closed.self")
+
+    def test_invalid_metadata_releases_the_input_file(self):
+        source = self.root / "invalid.self"
+        data = self.fixture()
+        data[0x184] = 1
+        source.write_bytes(data)
+        errors = io.StringIO()
+        printed = io.StringIO()
+        with contextlib.redirect_stderr(errors), contextlib.redirect_stdout(printed):
+            with self.assertRaises(SystemExit) as caught:
+                inspect_self.main([str(source)])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("not 64-bit little-endian", errors.getvalue())
+        self.assertEqual(printed.getvalue(), "")
+        self.assertEqual(source.read_bytes(), data)
+        source.unlink()
 
 
 if __name__ == "__main__":
