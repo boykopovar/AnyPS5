@@ -1,6 +1,7 @@
 from pathlib import Path
 import contextlib
 import io
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,8 @@ LIMITATIONS = [
     "skipped, the device reports 4 lanes",
     "skipped, subgroup size 8",
     "skipped, no display",
+    "skipped, the host has not enough free disk space for a file of more than 2 GiB",
+    "skipped, the host cannot allocate a buffer of more than 2 GiB",
 ]
 
 OTHER = [
@@ -462,6 +465,7 @@ class SkipReportTests(unittest.TestCase):
 
 
 class NotRunTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ctest"), "CTest is required to write a real JUnit report")
     def test_real_notrun_case_is_rejected_before_windows_agc_exemption(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -37,6 +37,7 @@ static void CheckProsperoSystemSwVersion() {
 static void CheckAllowedSdkVersionOnSystem() {
     *__error_nid_postfix() = 13;
     Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(reinterpret_cast<std::uint32_t*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     std::uint32_t allowed = 0xaaaaaaaa;
     Require(sceKernelGetAllowedSdkVersionOnSystem_nid_postfix(&allowed) == 0);
     SceKernelProsperoSystemSwVersion system{};

@@ -494,6 +494,7 @@ private:
     static constexpr std::uint8_t Written = 0x10;
     static constexpr std::uint8_t Protected = 0x20;
     static constexpr std::uint8_t Fresh = 0x40;
+    static constexpr std::uintptr_t FaultAheadBlock = 65536;
 
     struct Range {
         std::uintptr_t end;
@@ -538,6 +539,7 @@ private:
     };
 
     Watch() {
+        if (const char* ahead = std::getenv("APS5_WRITE_WATCH_FAULT_AHEAD")) _faultAhead = static_cast<std::size_t>(std::strtoul(ahead, nullptr, 0));
         if (std::getenv("APS5_NO_WRITE_WATCH") != nullptr) return;
         struct sigaction action {};
         action.sa_sigaction = &Watch::fault;
@@ -591,10 +593,20 @@ private:
         if (it == _ranges.begin()) return false;
         --it;
         if (page >= it->second.end) return false;
-        auto& state = it->second.pages[(page - it->first) / _page];
+        auto& pages = it->second.pages;
+        const auto index = static_cast<std::size_t>((page - it->first) / _page);
+        auto& state = pages[index];
         if ((state & Protected) != 0) {
-            if (::mprotect(reinterpret_cast<void*>(page), _page, state & ProtectionMask) != 0) return false;
-            state = static_cast<std::uint8_t>((state & (ProtectionMask | Fresh)) | Written);
+            const auto protection = state & ProtectionMask;
+            const auto writtenOpen = [&](std::size_t at) { return (pages[at] & (Written | Protected)) == Written && (pages[at] & ProtectionMask) == protection; };
+            std::size_t count = 1;
+            if (_faultAhead > 1 && index >= 2 && writtenOpen(index - 1) && writtenOpen(index - 2)) {
+                const auto blockPages = static_cast<std::size_t>(((page | (FaultAheadBlock - 1)) + 1 - page) / _page);
+                const auto limit = std::min({_faultAhead, blockPages, pages.size() - index});
+                while (count < limit && (pages[index + count] & Protected) != 0 && (pages[index + count] & ProtectionMask) == protection) ++count;
+            }
+            if (::mprotect(reinterpret_cast<void*>(page), count * _page, protection) != 0) return false;
+            for (std::size_t at = index; at < index + count; ++at) pages[at] = static_cast<std::uint8_t>((pages[at] & (ProtectionMask | Fresh)) | Written);
             return true;
         }
         if ((state & PROT_WRITE) == 0) return false;
@@ -681,6 +693,7 @@ private:
     }
 
     const std::uintptr_t _page = static_cast<std::uintptr_t>(::getpagesize());
+    std::size_t _faultAhead = 32;
     bool _available = false;
     Mutex _lock;
     std::map<std::uintptr_t, Range> _ranges;
