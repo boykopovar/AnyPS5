@@ -74,6 +74,10 @@ class TitleIdTests(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertEqual(pr_labels.title_ids(body), expected)
 
+    def test_checklist_unblocks_wins_over_an_earlier_prose_line(self):
+        body = "### Tested\nUnblocks: none in this change.\n### Checklist\n- [x] Unblocks: PPSA01325 #3232\n"
+        self.assertEqual(pr_labels.title_ids(body), {"PPSA01325"})
+
     def test_none_body(self):
         self.assertEqual(pr_labels.title_ids(None), set())
 
