@@ -239,6 +239,7 @@ public:
     bool HoldsLease() const { return guestMemory.HoldsLease(); }
     bool BdaReadOnly() const { return usesBda && bdaReadOnly; }
     bool UsesAddressTable() const { return usesBda; }
+    bool UpdatesGuestStateAtCompletion() const { return HasCopiedWrites() || (usesBda && !bdaReadOnly); }
     std::size_t CopiedBytes() const { return guestMemory.CopiedBytes(); }
     bool WritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.WritesOverlap(address, bytes); }
     bool CopiedWritesOverlap(std::uint64_t address, std::size_t bytes) const { return guestMemory.CopiedWritesOverlap(address, bytes); }

@@ -123,7 +123,7 @@ public:
     static constexpr std::size_t KeptIndexRangeIndices = 4096;
     bool KnownHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::optional<std::uint32_t>& highest);
     void KeepHighestIndex(std::uint64_t address, std::size_t bytes, SnapshotUse use, std::uint64_t generation, std::uint64_t registryGeneration, std::optional<std::uint32_t> highest);
-    void OnComplete(std::function<void()> action);
+    void OnComplete(std::function<void()> action, bool updatesGuestState = false);
     void NotePendingWrite(std::uint64_t address, std::size_t bytes);
     void NotePendingFill(std::uint64_t address, std::size_t bytes, std::uint8_t value);
     void NotePendingWordFill(std::uint64_t address, std::size_t bytes, std::uint32_t word);
@@ -421,6 +421,7 @@ public:
     // write-back completions (OnComplete) of unfinished batches: a reaper retires them when every
     // worker sleeps, as for the labels above;
     static std::uint64_t PendingWriteBackCompletions();
+    static std::uint64_t PendingGuestStateCompletions();
     // dispatches and draws recorded since the last submit (the driver counts them: CountRecordedWork),
     // so a batch is submitted after a bounded amount of work (APS5_BATCH_CAP).
     static std::uint64_t RecordedWorkSinceSubmit();
@@ -627,6 +628,7 @@ private:
         std::uint32_t completionStoreCount = 0;
         // Write-back completions (OnComplete), likewise.
         std::uint32_t writeBackCompletionCount = 0;
+        std::uint32_t guestStateCompletionCount = 0;
         // The ranges of the completion labels also stored on the GPU, and whether each entered the
         // pending count (NoteWrittenBack counts one the first time a write-back overlaps it).
         struct CompletionLabel {
