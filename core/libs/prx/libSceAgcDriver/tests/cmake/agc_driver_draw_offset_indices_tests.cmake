@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_draw_offset_indices_poisoned COMMAND agc_driver_draw_offset_indices_tests)
+    set_tests_properties(agc_driver_draw_offset_indices_poisoned PROPERTIES ENVIRONMENT "APS5_POISON_VERTEX_PREFIX=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_test(NAME agc_driver_draw_offset_indices_poisoned_in_place COMMAND agc_driver_draw_offset_indices_tests)
+    set_tests_properties(agc_driver_draw_offset_indices_poisoned_in_place PROPERTIES ENVIRONMENT "APS5_POISON_VERTEX_PREFIX=1;APS5_DRAW_INPUTS_IN_PLACE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_draw_offset_indices_poisoned agc_driver_draw_offset_indices_poisoned_in_place PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
