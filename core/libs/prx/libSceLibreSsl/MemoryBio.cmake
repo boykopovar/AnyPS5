@@ -22,7 +22,8 @@ if(BUILD_TESTING)
         target_link_libraries(guest_libressl_bio_patched_tests PRIVATE libc)
     endif()
     add_custom_target(libressl_bio_patched_libraries DEPENDS
-        ${PATCHED_DIR}/libSceLibreSsl.prx ${PATCHED_DIR}/libc.prx ${PATCHED_DIR}/libkernel.prx)
+        ${PATCHED_DIR}/libSceLibreSsl.prx ${PATCHED_DIR}/libc.prx ${PATCHED_DIR}/libkernel.prx
+        ${PATCHED_DIR}/libSceNet.prx ${PATCHED_DIR}/libSceNetCtl.prx)
     add_dependencies(guest_libressl_bio_patched_tests libressl_bio_patched_libraries)
     add_test(NAME guest_libressl_bio_patched COMMAND guest_libressl_bio_patched_tests ${PATCHED_DIR})
     set_tests_properties(guest_libressl_bio_patched PROPERTIES TIMEOUT 30)
