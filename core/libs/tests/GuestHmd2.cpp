@@ -26,6 +26,28 @@ void Require(bool condition, const char* message) {
     }
 }
 
+void TestCallsWithoutReprojectionSession() {
+    std::array<std::uint8_t, 64> memory;
+    memory.fill(0xaa);
+    const auto untouched = memory;
+    const Hmd2::MirroringParameter mirroring{memory.data(), memory.data() + 32};
+    Require(sceHmd2ReprojectionEnableMirroring(nullptr) == Hmd2::ReprojectionNotInitialized, "mirroring with a null parameter without a reprojection session");
+    Require(sceHmd2ReprojectionEnableMirroring(&mirroring) == Hmd2::ReprojectionNotInitialized, "mirroring without a reprojection session");
+    Require(memory == untouched, "mirroring memory was written without a reprojection session");
+    constexpr std::array<std::uint64_t, 4> frameIds{0, 1, 0x123456789, ~0ull};
+    for (const std::uint64_t frameId : frameIds) {
+        std::uint64_t time = 0xaaaaaaaaaaaaaaaa;
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, nullptr) == Hmd2::ReprojectionNotInitialized, "predicted display time into a null output without a reprojection session");
+        Require(sceHmd2ReprojectionGetPredictedDisplayTime(frameId, &time) == Hmd2::ReprojectionNotInitialized, "predicted display time without a reprojection session");
+        Require(time == 0xaaaaaaaaaaaaaaaa, "predicted display time was written without a reprojection session");
+    }
+    constexpr std::array<std::uint64_t, 5> flags{0, 1, 1ull << 32, 2, ~0ull};
+    for (const std::uint64_t flag : flags) {
+        Require(sceHmd2ReprojectionSetRenderConfig(flag, 0, 0) == Hmd2::ReprojectionNotInitialized, "render config without a reprojection session");
+        Require(sceHmd2ReprojectionSetRenderConfig(flag, 1, 1) == Hmd2::ReprojectionNotInitialized, "render config with nonzero reserved arguments without a reprojection session");
+    }
+}
+
 void InstallProcessParameters() {
     const std::uint64_t size = process.size();
     const std::uint32_t magic = 0x4942524f;
@@ -138,6 +160,7 @@ void TestBeforeInitialize() {
     Require(Hmd2BeforeInitializeValue0400() == 0x400, "Hmd2BeforeInitializeValue0400 before initialization");
     Require(Hmd2BeforeInitializeValue20000() == 0x20000, "Hmd2BeforeInitializeValue20000 before initialization");
     Require(sceHmd2SetVibration(0, 0) == 0, "vibration of the unopened handle 0 failed");
+    TestCallsWithoutReprojectionSession();
 }
 
 void TestWithoutHeadset() {
@@ -237,6 +260,7 @@ void TestWithoutHeadset() {
     Require(Hmd2BeforeInitializeMinusOne() == -1, "Hmd2BeforeInitializeMinusOne after the failed initialization");
     Require(Hmd2BeforeInitializeValue0400() == 0x400, "Hmd2BeforeInitializeValue0400 after the failed initialization");
     Require(Hmd2BeforeInitializeValue20000() == 0x20000, "Hmd2BeforeInitializeValue20000 after the failed initialization");
+    TestCallsWithoutReprojectionSession();
 }
 
 }

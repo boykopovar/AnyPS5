@@ -162,25 +162,45 @@ class CheckCompileModeTests(unittest.TestCase):
                             else:
                                 self.assertIn("1 translation units compile", result.stdout)
 
-    def test_preprocessing_modes_reach_syntax_errors(self):
-        self.check_modes((("-E",), ("--preprocess",)))
+    def test_short_preprocessing_mode_reaches_syntax_errors(self):
+        self.check_modes((("-E",),))
 
-    def test_dependency_modes_reach_syntax_errors(self):
-        self.check_modes((("-M",), ("--dependencies",)), dependency=True)
+    def test_long_preprocessing_mode_reaches_syntax_errors(self):
+        self.check_modes((("--preprocess",),))
 
-    def test_user_dependency_modes_reach_syntax_errors(self):
-        self.check_modes((("-MM",), ("--user-dependencies",)), dependency=True)
+    def test_short_dependency_mode_reaches_syntax_errors(self):
+        self.check_modes((("-M",),), dependency=True)
 
-    def test_generated_header_mode_does_not_hide_missing_headers(self):
-        self.check_modes((("-M", "-MG"), ("--dependencies", "--print-missing-file-dependencies")),
-                         dependency=True, invalid='#include "missing_generated_header.h"\n',
+    def test_long_dependency_mode_reaches_syntax_errors(self):
+        self.check_modes((("--dependencies",),), dependency=True)
+
+    def test_short_user_dependency_mode_reaches_syntax_errors(self):
+        self.check_modes((("-MM",),), dependency=True)
+
+    def test_long_user_dependency_mode_reaches_syntax_errors(self):
+        self.check_modes((("--user-dependencies",),), dependency=True)
+
+    def check_generated_header_mode(self, flags):
+        self.check_modes((flags,), dependency=True, invalid='#include "missing_generated_header.h"\n',
                          marker="missing_generated_header.h")
 
-    def test_preprocessor_output_companions_do_not_block_syntax_checks(self):
-        self.check_modes((("-Werror", "-E", "-P"), ("-Werror", "--preprocess", "--no-line-commands")))
+    def test_short_generated_header_mode_does_not_hide_missing_headers(self):
+        self.check_generated_header_mode(("-M", "-MG"))
 
-    def test_macro_dump_modes_still_check_syntax(self):
-        self.check_modes((("-Werror", "-E", "-dM"), ("-Werror", "-E", "-dD")))
+    def test_long_generated_header_mode_does_not_hide_missing_headers(self):
+        self.check_generated_header_mode(("--dependencies", "--print-missing-file-dependencies"))
+
+    def test_short_preprocessor_output_companions_do_not_block_syntax_checks(self):
+        self.check_modes((("-Werror", "-E", "-P"),))
+
+    def test_long_preprocessor_output_companions_do_not_block_syntax_checks(self):
+        self.check_modes((("-Werror", "--preprocess", "--no-line-commands"),))
+
+    def test_macro_only_dump_mode_still_checks_syntax(self):
+        self.check_modes((("-Werror", "-E", "-dM"),))
+
+    def test_macro_and_output_dump_mode_still_checks_syntax(self):
+        self.check_modes((("-Werror", "-E", "-dD"),))
 
     def test_include_dump_mode_still_checks_syntax(self):
         self.check_modes((("-Werror", "-E", "-dI"),))
@@ -191,8 +211,11 @@ class CheckCompileModeTests(unittest.TestCase):
     def test_trailing_preprocessing_mode_still_checks_syntax(self):
         self.check_modes((("-E",),), trailing=True)
 
-    def test_comment_output_modes_still_check_syntax(self):
-        self.check_modes((("-Werror", "-E", "-C"), ("-Werror", "-E", "-CC")))
+    def test_comment_output_mode_still_checks_syntax(self):
+        self.check_modes((("-Werror", "-E", "-C"),))
+
+    def test_macro_comment_output_mode_still_checks_syntax(self):
+        self.check_modes((("-Werror", "-E", "-CC"),))
 
     def test_joined_definitions_before_preprocessing_modes_are_preserved(self):
         self.check_modes((("-DANOTHER_MACRO", "-E"),))

@@ -2,11 +2,13 @@
 #include "prx/libSceNpWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <thread>
 
 namespace {
 
@@ -25,6 +27,8 @@ constexpr int HandleNotFound = static_cast<int>(0x8055290Du);
 constexpr int ServicePushEventFilterNotFound = static_cast<int>(0x8055290Eu);
 constexpr int ServicePushEventCallbackNotFound = static_cast<int>(0x8055290Fu);
 constexpr int SignedInUserNotFound = static_cast<int>(0x80552910u);
+constexpr int HttpInvalidId = static_cast<int>(0x80431100u);
+constexpr int HttpInvalidResponse = static_cast<int>(0x80432060u);
 
 constexpr int MethodGet = 0;
 constexpr int MethodPost = 1;
@@ -138,6 +142,10 @@ void TestRequests() {
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content without a type");
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content is checked before the user context");
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPatch, nullptr, &request) == InvalidArgument, "PATCH with SDK 2.50 or later");
+    SetSdkVersion(0x05050001);
+    request = 0;
+    Require(sceNpWebApiCreateRequest(user, "userProfile", "/v1/users/me/profile", 99, nullptr, &request) == InvalidArgument && request == 0, "method 99 at SDK 0x05050001");
+    SetSdkVersion(0x04508001);
     Require(sceNpWebApiCreateRequest(user + 1, "group", "/path", MethodGet, nullptr, &request) == UserContextNotFound, "request of an unknown user context");
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodGet, nullptr, &request) == LibContextNotFound, "request of user context 0");
     Require(sceNpWebApiCreateRequest(-1, "group", "/path", MethodGet, nullptr, &request) == LibContextNotFound, "request of user context -1");
@@ -172,6 +180,49 @@ void TestRequests() {
     Require(sceNpWebApiSendRequest(second, nullptr, 0) == UserContextNotFound, "request of a deleted user context");
     Require(sceNpWebApiDeleteRequest(second) == UserContextNotFound, "delete a request of a deleted user context");
     Require(sceNpWebApiTerminate(context) == 0, "terminate the request library context");
+}
+
+void TestResponses() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for responses");
+    std::int64_t request = 0;
+    std::int64_t aborted = 0;
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &request) == 0, "request for responses");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &aborted) == 0, "request to abort");
+    Require(sceNpWebApiSendRequest(request, nullptr, 0) == NotSignedIn, "the request is never sent");
+    Require(sceNpWebApiAbortRequest(aborted) == 0, "abort the second request");
+
+    std::array<char, 8> data{};
+    data.fill('x');
+    Require(sceNpWebApiReadData(request, nullptr, data.size()) == InvalidArgument, "read without a buffer");
+    Require(sceNpWebApiReadData(request, data.data(), 0) == InvalidArgument, "read of zero bytes");
+    Require(sceNpWebApiReadData(-1, nullptr, 0) == InvalidArgument, "the buffer is checked before the request");
+    Require(sceNpWebApiReadData(-1, data.data(), data.size()) == LibContextNotFound, "read request -1");
+    Require(sceNpWebApiReadData(static_cast<std::int64_t>(user + 1) << 32 | 1, data.data(), data.size()) == UserContextNotFound, "read a request of an unknown user context");
+    Require(sceNpWebApiReadData(request + 0x10000, data.data(), data.size()) == RequestNotFound, "read an unknown request");
+    Require(sceNpWebApiReadData(request, data.data(), data.size()) == HttpInvalidId, "read a request that was never sent");
+    Require(sceNpWebApiReadData(aborted, data.data(), data.size()) == Aborted, "read an aborted request");
+    Require(data[0] == 'x' && data[7] == 'x', "a failed read leaves the buffer alone");
+
+    std::array<char, 8> value{};
+    value.fill('x');
+    std::size_t length = 123;
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, nullptr, value.data(), value.size()) == InvalidArgument, "header value without a field name");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, "Content-Type", nullptr, value.size()) == InvalidArgument, "header value without a buffer");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, "Content-Type", value.data(), 0) == InvalidArgument, "header value with an empty buffer");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request, nullptr, &length) == InvalidArgument, "header length without a field name");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request, "Content-Type", nullptr) == InvalidArgument, "header length without an output");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(-1, "Content-Type", value.data(), value.size()) == LibContextNotFound, "header value of request -1");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request + 0x10000, "Content-Type", &length) == RequestNotFound, "header length of an unknown request");
+    Require(sceNpWebApiGetHttpResponseHeaderValue(request, "Content-Type", value.data(), value.size()) == HttpInvalidResponse, "header value of a request that was never sent");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(request, "Content-Type", &length) == HttpInvalidResponse, "header length of a request that was never sent");
+    Require(sceNpWebApiGetHttpResponseHeaderValueLength(aborted, "Content-Type", &length) == HttpInvalidResponse, "header length of an aborted request");
+    Require(value[0] == 'x' && value[7] == 'x' && length == 123, "a failed header query leaves the outputs alone");
+
+    Require(sceNpWebApiDeleteRequest(request) == 0 && sceNpWebApiDeleteRequest(aborted) == 0, "delete the response requests");
+    Require(sceNpWebApiReadData(request, data.data(), data.size()) == RequestNotFound, "read a deleted request");
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the response library context");
 }
 
 void TestPushEventCallbacks() {
@@ -238,6 +289,143 @@ void TestOlderSdks() {
     Require(sceNpWebApiTerminate(context) == 0, "terminate the older SDK library context");
 }
 
+void TestHandleOperations() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int other = sceNpWebApiInitialize(1, 0x10000);
+    const int handle = sceNpWebApiCreateHandle(context);
+    Require(context > 0 && other > 0 && handle > 0, "library contexts and handle for handle operations");
+
+    Require(sceNpWebApiAbortHandle(0x8000, handle) == LibContextNotFound, "abort a handle of an unknown context");
+    Require(sceNpWebApiAbortHandle(other, handle) == HandleNotFound, "abort a handle through another context");
+    Require(sceNpWebApiAbortHandle(context, handle) == 0, "abort the handle");
+    Require(sceNpWebApiAbortHandle(context, handle) == 0, "abort the handle twice");
+    Require(sceNpWebApiSetHandleTimeout(0x8000, handle, 1000) == LibContextNotFound, "handle timeout of an unknown context");
+    Require(sceNpWebApiSetHandleTimeout(other, handle, 1000) == HandleNotFound, "handle timeout through another context");
+    Require(sceNpWebApiSetHandleTimeout(context, handle, 1000) == 0, "set the handle timeout");
+    Require(sceNpWebApiSetHandleTimeout(context, handle, 0) == 0, "clear the handle timeout");
+    Require(sceNpWebApiDeleteHandle(context, handle) == 0, "delete the aborted handle");
+    Require(sceNpWebApiAbortHandle(context, handle) == HandleNotFound, "abort a deleted handle");
+    Require(sceNpWebApiSetHandleTimeout(context, handle, 1000) == HandleNotFound, "timeout of a deleted handle");
+
+    SetSdkVersion(0x02500000);
+    const int older = sceNpWebApiCreateHandle(context);
+    Require(older > 0, "handle before SDK 3.00");
+    Require(sceNpWebApiSetHandleTimeout(context, older, 1000) == HandleNotFound, "a handle created before SDK 3.00 has no timer");
+    Require(sceNpWebApiAbortHandle(context, older) == 0, "abort a handle created before SDK 3.00");
+    SetSdkVersion(0x04508001);
+    Require(sceNpWebApiSetHandleTimeout(context, older, 1000) == HandleNotFound, "the timer is decided when the handle is created");
+    Require(sceNpWebApiDeleteHandle(context, older) == 0, "delete the handle created before SDK 3.00");
+
+    Require(sceNpWebApiTerminate(context) == 0 && sceNpWebApiTerminate(other) == 0, "terminate the handle library contexts");
+}
+
+void TestRequestOptions() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for request options");
+    std::int64_t request = 0;
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &request) == 0, "request for options");
+    const std::int64_t unknownUser = static_cast<std::int64_t>(user + 1) << 32 | 1;
+
+    Require(sceNpWebApiAddHttpRequestHeader(request, nullptr, "value") == InvalidArgument, "header without a field name");
+    Require(sceNpWebApiAddHttpRequestHeader(request, "Accept", nullptr) == InvalidArgument, "header without a value");
+    Require(sceNpWebApiAddHttpRequestHeader(-1, nullptr, "value") == InvalidArgument, "the header is checked before the request");
+    Require(sceNpWebApiAddHttpRequestHeader(-1, "Accept", "application/json") == LibContextNotFound, "header of request -1");
+    Require(sceNpWebApiAddHttpRequestHeader(unknownUser, "Accept", "application/json") == UserContextNotFound, "header of a request of an unknown user context");
+    Require(sceNpWebApiAddHttpRequestHeader(request + 0x10000, "Accept", "application/json") == RequestNotFound, "header of an unknown request");
+    Require(sceNpWebApiAddHttpRequestHeader(request, "Accept", "application/json") == 0, "add a header");
+    Require(sceNpWebApiAddHttpRequestHeader(request, "Accept", "application/json") == 0, "add the same header twice");
+
+    Require(sceNpWebApiSetMultipartContentType(-1, "multipart/mixed", "boundary") == LibContextNotFound, "multipart type of request -1");
+    Require(sceNpWebApiSetMultipartContentType(unknownUser, "multipart/mixed", "boundary") == UserContextNotFound, "multipart type of a request of an unknown user context");
+    Require(sceNpWebApiSetMultipartContentType(request + 0x10000, "multipart/mixed", "boundary") == RequestNotFound, "multipart type of an unknown request");
+    Require(sceNpWebApiSetMultipartContentType(request, nullptr, nullptr) == 0, "multipart type without a name or boundary");
+    Require(sceNpWebApiSetMultipartContentType(request, "multipart/mixed", "boundary") == 0, "multipart type of a request that is not multipart");
+
+    Require(sceNpWebApiSetRequestTimeout(-1, 1000) == LibContextNotFound, "timeout of request -1");
+    Require(sceNpWebApiSetRequestTimeout(unknownUser, 1000) == UserContextNotFound, "timeout of a request of an unknown user context");
+    Require(sceNpWebApiSetRequestTimeout(request + 0x10000, 1000) == RequestNotFound, "timeout of an unknown request");
+    Require(sceNpWebApiSetRequestTimeout(request, 0) == 0, "request without a timeout");
+
+    std::array<char, 32> information{};
+    information.fill('x');
+    Require(sceNpWebApiSendRequest2(request, body, sizeof(body), information.data()) == NotSignedIn, "a request cannot be sent without a signed-in user");
+    Require(sceNpWebApiSendRequest2(request, nullptr, 0, nullptr) == NotSignedIn, "send without response information");
+    Require(information[0] == 'x' && information[31] == 'x', "a failed send leaves the response information alone");
+    Require(sceNpWebApiSendRequest2(-1, nullptr, 0, nullptr) == LibContextNotFound, "send request -1");
+    Require(sceNpWebApiSendRequest2(unknownUser, nullptr, 0, nullptr) == UserContextNotFound, "send a request of an unknown user context");
+    Require(sceNpWebApiSendRequest2(request + 0x10000, nullptr, 0, nullptr) == RequestNotFound, "send an unknown request");
+    Require(sceNpWebApiAbortRequest(request) == 0, "abort the request with options");
+    Require(sceNpWebApiSendRequest2(request, nullptr, 0, nullptr) == Aborted, "send an aborted request");
+
+    Require(sceNpWebApiDeleteRequest(request) == 0, "delete the request with options");
+    Require(sceNpWebApiAddHttpRequestHeader(request, "Accept", "application/json") == RequestNotFound, "header of a deleted request");
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the request options library context");
+}
+
+void TestMultipartRequests() {
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for multipart requests");
+
+    std::int64_t request = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, nullptr, "/path", MethodPost, &request) == InvalidArgument, "multipart request without an API group");
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", nullptr, MethodPost, &request) == InvalidArgument, "multipart request without a path");
+    Require(sceNpWebApiCreateMultipartRequest(0, "group", "/path", MethodPatch, &request) == InvalidArgument, "the method is checked before the user context from SDK 2.50");
+    Require(sceNpWebApiCreateMultipartRequest(user + 1, "group", "/path", MethodPost, &request) == UserContextNotFound, "multipart request of an unknown user context");
+    Require(sceNpWebApiCreateMultipartRequest(0, "group", "/path", MethodPost, &request) == LibContextNotFound, "multipart request of user context 0");
+    Require(request == 0, "a failed multipart request leaves the id alone");
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, nullptr) == 0, "multipart request without an id output");
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &request) == 0, "create a multipart request");
+    Require(static_cast<int>(request >> 32) == user && (request & 0xffffffff) != 0, "multipart request id holds its user context");
+
+    Require(sceNpWebApiSetMultipartContentType(request, "multipart/mixed", "boundary") == 0, "multipart type");
+    Require(sceNpWebApiAddHttpRequestHeader(request, "Accept", "application/json") == 0, "header of a multipart request");
+    Require(sceNpWebApiSendRequest(request, body, sizeof(body)) == InvalidArgument, "a multipart request has no part 0");
+    Require(sceNpWebApiSendRequest2(request, body, sizeof(body), nullptr) == InvalidArgument, "a multipart request has no part 0 for SendRequest2");
+    Require(sceNpWebApiAbortRequest(request) == 0, "abort the multipart request");
+    Require(sceNpWebApiSendRequest(request, nullptr, 0) == InvalidArgument, "the part is checked before the abort");
+    Require(sceNpWebApiDeleteRequest(request) == 0, "delete the multipart request");
+    Require(sceNpWebApiSendRequest(request, nullptr, 0) == RequestNotFound, "send a deleted multipart request");
+
+    SetSdkVersion(0x02000000);
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPatch, &request) == 0, "multipart PATCH before SDK 2.50");
+    SetSdkVersion(0x04508001);
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the multipart library context");
+}
+
+void TestRequestTimeouts() {
+    sceNpWebApiCheckTimeout();
+    const int context = sceNpWebApiInitialize(1, 0x10000);
+    const int user = sceNpWebApiCreateContext(context, onlineId);
+    Require(user > 0, "user context for timeouts");
+    std::int64_t timed = 0;
+    std::int64_t untimed = 0;
+    std::int64_t unsent = 0;
+    std::int64_t distant = 0;
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &timed) == 0, "request with a timeout");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &untimed) == 0, "request without a timeout");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &unsent) == 0, "request with a timeout that is never sent");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodGet, nullptr, &distant) == 0, "request with a distant timeout");
+    Require(sceNpWebApiSetRequestTimeout(timed, 1) == 0 && sceNpWebApiSetRequestTimeout(unsent, 1) == 0, "set short timeouts");
+    Require(sceNpWebApiSetRequestTimeout(distant, 0xffffffffu) == 0, "set a distant timeout");
+
+    Require(sceNpWebApiSendRequest(timed, nullptr, 0) == NotSignedIn, "sending starts the request timer");
+    Require(sceNpWebApiSendRequest(untimed, nullptr, 0) == NotSignedIn, "send the request without a timeout");
+    Require(sceNpWebApiSendRequest(distant, nullptr, 0) == NotSignedIn, "send the request with a distant timeout");
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    sceNpWebApiCheckTimeout();
+
+    Require(sceNpWebApiAbortRequest(timed) == 0, "abort a timed out request");
+    Require(sceNpWebApiSendRequest(timed, nullptr, 0) == NotSignedIn, "a timed out request is not reported as aborted");
+    Require(sceNpWebApiAbortRequest(untimed) == 0 && sceNpWebApiSendRequest(untimed, nullptr, 0) == Aborted, "a request without a timeout does not time out");
+    Require(sceNpWebApiAbortRequest(unsent) == 0 && sceNpWebApiSendRequest(unsent, nullptr, 0) == Aborted, "the timer starts when the request is sent");
+    Require(sceNpWebApiAbortRequest(distant) == 0 && sceNpWebApiSendRequest(distant, nullptr, 0) == Aborted, "a distant timeout has not passed");
+
+    Require(sceNpWebApiTerminate(context) == 0, "terminate the timeout library context");
+    sceNpWebApiCheckTimeout();
+}
+
 }
 
 int main() {
@@ -246,7 +434,12 @@ int main() {
     TestLibraryContexts();
     TestUserContexts();
     TestRequests();
+    TestResponses();
     TestPushEventCallbacks();
     TestOlderSdks();
+    TestHandleOperations();
+    TestRequestOptions();
+    TestMultipartRequests();
+    TestRequestTimeouts();
     return 0;
 }

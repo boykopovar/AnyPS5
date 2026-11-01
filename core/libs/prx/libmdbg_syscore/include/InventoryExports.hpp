@@ -1,0 +1,31 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI libmdbg_syscoreUnknown__minus_Os5MER7Z6w_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_63yQzeKlH74_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_9Z4GhOWZL6U_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_AOE76xS3KE8_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_HAuOlaAs6n0_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_KSF5BlhhUwA_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_KnjWLw4OOEg_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_MOLL_minus_OygpCA_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_Wlgt1fK0WIg_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_Y4XKdJ9yi9w_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_g0xdmqI4Kfo_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_gRIqTUqqQmo_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_h3hpY6kIB3c_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_hAZNCht1_plus_T0_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_iJTmUN3_plus_2A8_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_iLMtKDbkQwM_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_irUK9RMoEQo_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_mORgO8Woq_plus_E_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_oNkb_plus_v3gFg0_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_oSQ_plus_lkHQhI8_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_og6sdu_minus_o9GE_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_qi6vA_plus_rh1K4_nid_no_patch();
+int APS5_VABI libmdbg_syscoreUnknown_wrKerXOBJ8U_nid_no_patch();
+
+}

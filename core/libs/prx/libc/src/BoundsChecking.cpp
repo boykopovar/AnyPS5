@@ -54,7 +54,7 @@ void* APS5_VABI bsearch_s_nid_postfix(const void* key, const void* base, std::si
         return nullptr;
     }
     if (count == 0) return nullptr;
-    if (!key || !base || !compare || size == 0) {
+    if (!key || !base || !compare) {
         violation("bsearch_s: bad argument", guestEinval);
         return nullptr;
     }

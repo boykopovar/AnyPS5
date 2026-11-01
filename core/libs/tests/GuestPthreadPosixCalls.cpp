@@ -89,5 +89,9 @@ int main() {
     Check(pthread_setcancelstate_nid_postfix(CancelDisable, &old) == 0 && old == CancelEnable);
     Check(pthread_setcancelstate_nid_postfix(CancelEnable, &old) == 0 && old == CancelDisable);
     Check(pthread_setcancelstate_nid_postfix(CancelEnable, &old) == 0 && old == CancelEnable);
+    for (const int invalid : {2, -1}) Check(pthread_setcancelstate_nid_postfix(invalid, &old) == GuestEinval);
+    Check(pthread_setcancelstate_nid_postfix(CancelDisable, &old) == 0 && old == CancelEnable);
+    Check(pthread_setcancelstate_nid_postfix(3, nullptr) == GuestEinval);
+    Check(pthread_setcancelstate_nid_postfix(CancelEnable, &old) == 0 && old == CancelDisable);
     return 0;
 }

@@ -264,6 +264,10 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
         if (binding.control == InputControl::ToggleFullscreen && keyboard && down && !pressed[index]) requests.toggleFullscreen = true;
         if (binding.control == InputControl::TogglePerformanceOverlay && keyboard && down && !pressed[index]) requests.togglePerformanceOverlay = true;
         if (binding.control == InputControl::Screenshot && keyboard && down && !pressed[index]) requests.screenshot = true;
+        if (binding.control == InputControl::ShowPadStatus && keyboard && down && !pressed[index]) requests.showPadStatus = true;
+        if (binding.control == InputControl::VolumeUp && keyboard && down && !pressed[index]) requests.volumeUp = true;
+        if (binding.control == InputControl::VolumeDown && keyboard && down && !pressed[index]) requests.volumeDown = true;
+        if (binding.control == InputControl::ToggleMute && keyboard && down && !pressed[index]) requests.toggleMute = true;
         if (binding.control == InputControl::ToggleMouse && down && !pressed[index]) requests.toggleMouse = true;
         pressed[index] = down;
     }
@@ -304,6 +308,10 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
             case InputControl::ToggleFullscreen: break;
             case InputControl::TogglePerformanceOverlay: break;
             case InputControl::Screenshot: break;
+            case InputControl::ShowPadStatus: break;
+            case InputControl::VolumeUp: break;
+            case InputControl::VolumeDown: break;
+            case InputControl::ToggleMute: break;
         }
     }
     const auto input = stickInput();
@@ -313,8 +321,9 @@ PadInputState Pad::KeyboardMouse::Compose(const PadInputState& controller) const
     }
     if (mouseMode) {
         const auto deflection = mouse.Deflection();
-        state.sticks[2] = StickByte(deflection[0]);
-        state.sticks[3] = StickByte(deflection[1]);
+        const std::size_t offset = configuration.settings.mouseControlsRightStick ? 2 : 0;
+        state.sticks[offset] = StickByte(deflection[0]);
+        state.sticks[offset + 1] = StickByte(deflection[1]);
     }
     if (configuration.settings.triggerRampMs > 0.0) {
         state.analogButtonsL2 = std::max(state.analogButtonsL2, triggerByte(triggerAxes[0]));
