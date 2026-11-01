@@ -277,7 +277,7 @@ int APS5_VABI sceHidControlGetPswCommand(std::uint32_t param_1, std::int64_t par
 
 int APS5_VABI sceHidControlGetPswDeviceIdFromIdxAdd(std::uint32_t param_1, std::uint32_t param_2, std::int64_t param_3) {
     if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 12> cmd{};
+    std::array<std::uint8_t, 16> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU32(cmd.data() + 4, param_2);
     putU64(cmd.data() + 8, param_3);
@@ -306,7 +306,7 @@ int APS5_VABI sceHidControlGetPswDeviceNameForNearby() {
 
 int APS5_VABI sceHidControlGetPswEqBandValues(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3) {
     if (!g_initialized) return kStatus3001;
-    std::array<std::uint8_t, 12> cmd{};
+    std::array<std::uint8_t, 16> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU32(cmd.data() + 4, param_2);
     putU64(cmd.data() + 8, param_3);
@@ -315,7 +315,7 @@ int APS5_VABI sceHidControlGetPswEqBandValues(std::uint32_t param_1, std::int32_
 
 int APS5_VABI sceHidControlGetPswEqPresetName(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3) {
     if (!g_initialized) return kStatus3001;
-    std::array<std::uint8_t, 12> cmd{};
+    std::array<std::uint8_t, 16> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU32(cmd.data() + 4, param_2);
     putU64(cmd.data() + 8, param_3);
@@ -470,7 +470,7 @@ int APS5_VABI sceHidControlPswUpdateSendData(std::uint32_t param_1, std::int64_t
 
 int APS5_VABI sceHidControlPswUpdateStart(std::uint32_t param_1, std::int64_t param_2) {
     if (!g_initialized) return kNotReady;
-    std::array<std::uint8_t, 4> cmd{};
+    std::array<std::uint8_t, 12> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU64(cmd.data() + 4, param_2);
     return runCmd(CMD_8028487e, cmd);
@@ -582,7 +582,7 @@ int APS5_VABI sceHidControlSetPswDeviceName(std::uint32_t param_1, std::int64_t 
 
 int APS5_VABI sceHidControlSetPswEqBandValues(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3) {
     if (!g_initialized) return kStatus3001;
-    std::array<std::uint8_t, 12> cmd{};
+    std::array<std::uint8_t, 16> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU32(cmd.data() + 4, param_2);
     putU64(cmd.data() + 8, param_3);
@@ -591,7 +591,7 @@ int APS5_VABI sceHidControlSetPswEqBandValues(std::uint32_t param_1, std::int32_
 
 int APS5_VABI sceHidControlSetPswEqPresetName(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3) {
     if (!g_initialized) return kStatus3001;
-    std::array<std::uint8_t, 12> cmd{};
+    std::array<std::uint8_t, 16> cmd{};
     putU32(cmd.data() + 0, param_1);
     putU32(cmd.data() + 4, param_2);
     putU64(cmd.data() + 8, param_3);
