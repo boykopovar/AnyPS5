@@ -5423,6 +5423,7 @@ struct MockVulkan {
     std::vector<MockDescriptorWrite> writes;
     std::map<VkSampler, VkSamplerCreateFlags> samplerFlags;
     std::uint32_t samplerCreateCount = 0;
+    float samplerLodBias = 0.0f;
     std::vector<VkCopyDescriptorSet> copies;
     bool allowCopies = false;
     std::uint32_t boundSets = 0;
@@ -5606,6 +5607,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockFreeDescriptorSets(VkDevice, VkDescriptorPool
 VKAPI_ATTR VkResult VKAPI_CALL mockCreateSampler(VkDevice, const VkSamplerCreateInfo* info, const VkAllocationCallbacks*, VkSampler* sampler) {
     *sampler = makeHandle<VkSampler>();
     mock.samplerFlags[*sampler] = info->flags;
+    mock.samplerLodBias = info->mipLodBias;
     ++mock.samplerCreateCount;
     ++mock.live;
     return VK_SUCCESS;
@@ -7224,8 +7226,9 @@ void samplerTableDeviceLimitTests(std::optional<std::uint32_t> selected = std::n
     namespace Abi = ShaderRecompiler::ImageTableAbi;
     constexpr auto count = 2u * Abi::SamplerEntryElements;
     const std::array<std::uint32_t, 4> valid{0x92u, (4u * 256u) << 12u, 0u, 0u};
-    const std::array<std::array<std::uint32_t, 4>, 3> invalid{{
+    const std::array<std::array<std::uint32_t, 4>, 4> invalid{{
         {0x92u, valid[1], 256u, 0u},
+        {0x92u, valid[1], 0x1000u, 0u},
         {0x92u | (2u << 9u), valid[1], (2u << 20u) | (2u << 22u), 0u},
         {0x92u | (1u << 29u), valid[1], 0u, 0u}
     }};
@@ -7277,6 +7280,32 @@ void samplerTableDeviceLimitTests(std::optional<std::uint32_t> selected = std::n
             Require(mock.live == 0 && mock.samplerFlags.empty(), "sampler device validation leaked Vulkan objects");
         }
     }
+}
+
+void samplerLodBiasTests() {
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.samplerAnisotropy = true;
+    context.limits.maxSamplerAnisotropy = 2.0f;
+    context.limits.maxSamplerLodBias = 10.0f;
+    const auto hostBias = [&](std::uint32_t field) {
+        const std::array<std::uint32_t, 4> words{0x92u, (4u * 256u) << 12u, field, 0u};
+        AgcDriver::Graphics::Sampler sampler(context, AgcDriver::Graphics::DecodeSamplerResource(words));
+        return mock.samplerLodBias;
+    };
+    Require(hostBias(256u) == 1.0f, "a positive LOD bias within the device limit changed");
+    Require(hostBias(0x3f00u) == -1.0f, "a negative LOD bias within the device limit changed");
+    Require(hostBias(0xa00u) == 10.0f, "a LOD bias at the device limit changed");
+    Require(hostBias(0x1facu) == 0.0f, "a host sampler kept a positive LOD bias the shader applies");
+    Require(hostBias(0x2000u) == 0.0f, "a host sampler kept a negative LOD bias the shader applies");
+    bool rejected = false;
+    try {
+        hostBias(0xf00u);
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    Require(rejected, "a LOD bias beyond the device limit that the shader does not apply was accepted");
+    Require(mock.live == 0 && mock.samplerFlags.empty(), "the sampler LOD bias checks leaked Vulkan objects");
 }
 
 void hostImportBudgetTests() {
@@ -13039,7 +13068,7 @@ int main(int argc, char** argv) {
             imageTableSnapshotAllocationTests();
             return 0;
         }
-        const std::array<std::string_view, 3> samplerCases{"--sampler-table-lod-bias", "--sampler-table-anisotropy", "--sampler-table-reduction-compare"};
+        const std::array<std::string_view, 4> samplerCases{"--sampler-table-lod-bias", "--sampler-table-lod-bias-beyond-threshold", "--sampler-table-anisotropy", "--sampler-table-reduction-compare"};
         for (std::uint32_t index = 0; index < samplerCases.size(); ++index) {
             if (argc == 2 && std::string_view(argv[1]) == samplerCases[index]) {
                 samplerTableDeviceLimitTests(index);
@@ -13205,6 +13234,7 @@ int main(int argc, char** argv) {
         imageTableAllocationTests();
         imageTableSnapshotAllocationTests();
         samplerTableNonSeamlessCubeTests();
+        samplerLodBiasTests();
         samplerTableDeviceLimitTests();
         tableUpdateAfterBindTests();
         misalignedShaderDataTests();
