@@ -576,7 +576,6 @@ bool ExecWindowsImage(const std::filesystem::path& target) {
 
 extern "C" {
 
-// unknown data
 const char* __progname_nid_postfix = "eboot.bin";
 static char* emptyEnvironment[1];
 char** environ_nid_postfix = emptyEnvironment;
