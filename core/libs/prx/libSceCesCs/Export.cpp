@@ -806,6 +806,24 @@ bool isJisX0213Plane2Row(uint32_t row) {
     return std::find(std::begin(JIS_X0213_PLANE2_ROWS), std::end(JIS_X0213_PLANE2_ROWS), static_cast<uint8_t>(row)) != std::end(JIS_X0213_PLANE2_ROWS);
 }
 
+constexpr uint16_t JIS_X0213_TWO_CODE_POINT_CELLS[25] = {
+    0x0457, 0x0458, 0x0459, 0x045A, 0x045B, 0x0557, 0x0558, 0x0559, 0x055A, 0x055B, 0x055C, 0x055D, 0x055E,
+    0x0658, 0x0B24, 0x0B28, 0x0B29, 0x0B2A, 0x0B2B, 0x0B2C, 0x0B2D, 0x0B2E, 0x0B2F, 0x0B45, 0x0B46,
+};
+
+bool isJisX0213Assigned(uint32_t plane, uint32_t row, uint32_t cell) {
+    const uint32_t index = (row - 1) * 94 + (cell - 1);
+    if (plane == 2) return JisX0213::PLANE2[index] != 0;
+    if (JisX0213::PLANE1[index] != 0) return true;
+    return std::find(std::begin(JIS_X0213_TWO_CODE_POINT_CELLS), std::end(JIS_X0213_TWO_CODE_POINT_CELLS), static_cast<uint16_t>(row << 8 | cell)) != std::end(JIS_X0213_TWO_CODE_POINT_CELLS);
+}
+
+uint32_t jisLevel(uint32_t plane, uint32_t row, uint32_t cell) {
+    if (plane == 2) return 4;
+    if (!isCp932ExtensionRow(row) && JisX0208::TO_UCS2[(row - 1) * 94 + (cell - 1)] != 0) return row <= 47 ? 1 : 2;
+    return 3;
+}
+
 struct Jis2004Cell {
     uint32_t code;
     uint16_t cell;
@@ -2162,6 +2180,16 @@ int APS5_VABI sceCesSJisCodeToJisX0213(uint16_t sjisCode, uint8_t* men, uint8_t*
     *ku = row <= 94 ? static_cast<uint8_t>(row) : JIS_X0213_PLANE2_ROWS[row - 95];
     *ten = static_cast<uint8_t>(cell);
     return 0;
+}
+
+int APS5_VABI sceCesJisGetLevel(uint8_t plane, uint8_t row, uint8_t cell, uint32_t* level) {
+    if (plane < 1 || plane > 2 || row < 1 || row > 94 || cell < 1 || cell > 94) {
+        if (level) *level = 0;
+        return CES_ERROR_ILLEGAL_CODE;
+    }
+    if (!level) return CES_ERROR_INVALID_PARAMETER;
+    *level = jisLevel(plane, row, cell);
+    return isJisX0213Assigned(plane, row, cell) ? 0 : CES_ERROR_UNASSIGNED_CODE;
 }
 
 int APS5_VABI sceCesJisX0213ToSJisCode(uint8_t men, uint8_t ku, uint8_t ten, uint16_t* sjisCode) {
