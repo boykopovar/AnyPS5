@@ -13,6 +13,8 @@ void EmitImageOperation(SpirvModule& module, const IrValue& value, std::uint32_t
 
 void EmitImageOperation(SpirvValueEmitContext& context, const IrValue& value, std::uint32_t resultId);
 
+void DefineDeviceImageLookup(SpirvEmitterState& state);
+
 }
 
 #endif

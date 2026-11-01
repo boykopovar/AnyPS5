@@ -21,6 +21,7 @@ struct ShaderInfo {
     std::vector<std::vector<ImageResource>> runtimeImageModes;
     std::vector<SamplerResource> samplers;
     std::vector<SampledResourcePair> sampledPairs;
+    std::vector<DeviceImageUse> deviceImageUses;
     std::vector<StageInput> inputs;
     std::vector<StageOutput> outputs;
     std::array<std::uint8_t, 32> vertexFetchComponents {};

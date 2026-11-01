@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <bit>
 #include <cstdio>
 #include <cstdlib>
@@ -131,6 +132,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
             if (std::find(it->spaceKeys.begin(), it->spaceKeys.end(), key) == it->spaceKeys.end()) continue;
             if (auto shared = it->buffer.lock(); shared != nullptr) {
                 tableBytes = shared->Bytes().size();
+                tableGuardSerial = guardSerial;
                 ++cache.hits;
                 ++cache.classes.spaceTables;
                 table = std::move(shared);
@@ -142,6 +144,7 @@ BdaResources::BdaResources(const Context& context, const GuestBufferMemory& memo
         }
     }
     auto filtered = ExcludeMultisampleTargetRanges(context.device, addressRanges, guardSerial);
+    tableGuardSerial = guardSerial;
     const auto& ranges = filtered.has_value() ? *filtered : addressRanges;
     Require(ranges.size() <= std::numeric_limits<std::uint32_t>::max(), "BDA table range count overflow");
     Require(ranges.size() <= (std::numeric_limits<std::size_t>::max() - sizeof(ShaderRecompiler::BdaAbi::Header)) / sizeof(ShaderRecompiler::BdaAbi::Range), "BDA table size overflow");
@@ -225,6 +228,21 @@ BdaResources::TableCacheStats BdaResources::TableCacheCounters() {
 VkDescriptorBufferInfo BdaResources::Table() const {
     Require(table != nullptr, "BDA page table was not requested");
     return {table->Handle(), 0, tableBytes};
+}
+
+bool BdaResources::TableGuardCurrent(VkDevice device, std::span<const ShaderRecompiler::BdaAbi::Range> ranges) {
+    if (table == nullptr || tableGuardSerial == MultisampleTargetRangeGeneration()) return true;
+    auto generation = tableGuardSerial;
+    const auto filtered = ExcludeMultisampleTargetRanges(device, ranges, generation);
+    const auto expected = filtered.has_value() ? std::span<const ShaderRecompiler::BdaAbi::Range>(*filtered) : ranges;
+    const auto bytes = table->Bytes().first(tableBytes);
+    ShaderRecompiler::BdaAbi::Header header{};
+    if (bytes.size() < sizeof(header)) return false;
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    if (header.count != expected.size() || (bytes.size() - sizeof(header)) / sizeof(ShaderRecompiler::BdaAbi::Range) < expected.size()) return false;
+    if (!expected.empty() && std::memcmp(bytes.data() + sizeof(header), expected.data(), expected.size() * sizeof(ShaderRecompiler::BdaAbi::Range)) != 0) return false;
+    tableGuardSerial = generation;
+    return true;
 }
 
 VkDescriptorBufferInfo BdaResources::Fault() const {

@@ -6,6 +6,9 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <bit>
+#include <string_view>
+#include <vector>
+#include <span>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -357,8 +360,12 @@ private:
         append(key, value.largePixelFunctionLdsBuffer);
         append(key, value.pixelFunctionStorageDwords);
         append(key, value.deviceScopeLdsMemoryBarriers);
+        append(key, value.gpuResolvedImages);
+        append(key, value.descriptorMemory);
+        append(key, value.heapDataUniformDwords);
         append(key, value.ldsLockFences);
         append(key, value.meshWindowBuffer);
+        append(key, value.deviceImageTables);
     }
 };
 
