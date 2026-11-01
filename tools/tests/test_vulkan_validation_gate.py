@@ -16,6 +16,16 @@ import vulkan_validation_gate as gate
 
 
 class ReportTests(unittest.TestCase):
+    def test_soft_timeout_signals_cannot_extend_the_gate_budget(self):
+        for grace in (None, 1, 60):
+            with self.subTest(grace=grace):
+                properties = [{"name": "TIMEOUT", "value": 1}, {"name": "TIMEOUT_SIGNAL_NAME", "value": "SIGUSR1"}]
+                if grace is not None:
+                    properties.append({"name": "TIMEOUT_SIGNAL_GRACE_PERIOD", "value": grace})
+                with self.assertRaisesRegex(gate.GateError, "TIMEOUT_SIGNAL_NAME"):
+                    gate.check_timeouts([{"name": "probe", "properties": properties}], 1)
+        gate.check_timeouts([{"name": "probe", "properties": [{"name": "TIMEOUT_SIGNAL_NAME", "value": ""}]}], 1)
+
     def test_effective_timeouts_cannot_override_the_requested_limit(self):
         for value in (0, 2, -1, float("inf"), float("nan"), "1", True):
             with self.subTest(value=value), self.assertRaisesRegex(gate.GateError, "probe: TIMEOUT"):
