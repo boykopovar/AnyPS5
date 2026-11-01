@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceWebBrowserDialog/include/InventoryExports.hpp"
 #include "prx/libSceWebBrowserDialog/include/Api.hpp"
+#include <cerrno>
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
@@ -78,9 +79,18 @@ int APS5_VABI sceWebBrowserDialogClose(void) {
 
 int APS5_VABI sceWebBrowserDialogGetResult(WebBrowserDialogResult* result) {
     if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
-    if (std::any_of(std::begin(result->reserved), std::end(result->reserved), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
-    if (result->extended != nullptr) {
-        const auto& extended = *result->extended;
+    WebBrowserDialogResult localResult{};
+    const int savedErrnoIn = errno;
+    const bool inCopied = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
+    errno = savedErrnoIn;
+    if (!inCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
+    if (std::any_of(std::begin(localResult.reserved), std::end(localResult.reserved), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
+    if (localResult.extended != nullptr) {
+        WebBrowserDialogExtendedResult extended{};
+        const int savedErrnoExt = errno;
+        const bool extCopied = GuestCopyIn_nid_no_patch(&extended, localResult.extended, sizeof(extended));
+        errno = savedErrnoExt;
+        if (!extCopied) return COMMON_DIALOG_ERROR_ARG_NULL;
         if (extended.size != sizeof(extended)) return COMMON_DIALOG_ERROR_PARAMETER;
         if (std::any_of(std::begin(extended.reserved0), std::end(extended.reserved0), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
         if (std::any_of(std::begin(extended.reserved1), std::end(extended.reserved1), [](std::uint8_t value) { return value != 0; })) return COMMON_DIALOG_ERROR_PARAMETER;
@@ -88,7 +98,11 @@ int APS5_VABI sceWebBrowserDialogGetResult(WebBrowserDialogResult* result) {
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    result->result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    localResult.result = COMMON_DIALOG_RESULT_USER_CANCELED;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedErrno;
+    if (!copied) return COMMON_DIALOG_ERROR_ARG_NULL;
     return 0;
 }
 
