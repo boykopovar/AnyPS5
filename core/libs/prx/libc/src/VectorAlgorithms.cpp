@@ -5,7 +5,7 @@
 #include <bit>
 #include <type_traits>
 
-#if defined(__SSE2__) || defined(_M_X64) || defined(_M_AMD64)
+#if !defined(ANYPS5_LIBC_FORCE_SCALAR) && (defined(__SSE2__) || defined(_M_X64) || defined(_M_AMD64))
 #include <emmintrin.h>
 #define APS5_LIBC_HAS_SSE2 1
 #endif

@@ -816,8 +816,16 @@ if(BUILD_TESTING)
     target_link_libraries(guest_vector_algorithms_tests PRIVATE libc)
     configure_windows_unwind(guest_vector_algorithms_tests)
     add_test(NAME guest_vector_algorithms COMMAND guest_vector_algorithms_tests)
+    add_test_executable(guest_vector_algorithms_scalar_tests
+        ${LIBS_INCLUDE_DIR}/tests/GuestVectorAlgorithms.cpp src/VectorAlgorithms.cpp)
+    target_include_directories(guest_vector_algorithms_scalar_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_compile_definitions(guest_vector_algorithms_scalar_tests PRIVATE ANYPS5_LIBC_FORCE_SCALAR)
+    target_link_libraries(guest_vector_algorithms_scalar_tests PRIVATE libc)
+    configure_windows_unwind(guest_vector_algorithms_scalar_tests)
+    add_test(NAME guest_vector_algorithms_scalar COMMAND guest_vector_algorithms_scalar_tests)
+    set_tests_properties(guest_vector_algorithms_scalar PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_vector_algorithms PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_vector_algorithms guest_vector_algorithms_scalar PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_memrchr_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemrchr.cpp)
