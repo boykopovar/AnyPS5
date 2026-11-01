@@ -74,19 +74,6 @@ struct HeapWalkMemo {
         return &ways;
     }
 
-    std::vector<HeapWalkEntry>& slot(std::uint64_t key) {
-        for (std::size_t drained = 0; drained < HeapWalkDrain && !previous.empty(); ++drained) {
-            release(previous.begin()->second);
-            previous.erase(previous.begin());
-        }
-        if (current.size() >= HeapWalkMemoKeys && !current.contains(key)) {
-            for (const auto& [old, ways] : previous) release(ways);
-            previous = std::move(current);
-            current.clear();
-        }
-        return current[key];
-    }
-
     void remember(std::uint64_t key, HeapWalkEntry entry) {
         auto& ways = slot(key);
         if (ways.size() >= HeapWalkWays) {
@@ -94,13 +81,27 @@ struct HeapWalkMemo {
             ways.pop_back();
         }
         charge(entry);
-        entry.stored = ++stores;
+        touch(entry);
         ways.insert(ways.begin(), std::move(entry));
         if (budget != 0 && heldBytes > budget) trim();
     }
 
     void touch(HeapWalkEntry& entry) {
         entry.stored = ++stores;
+    }
+
+private:
+    std::vector<HeapWalkEntry>& slot(std::uint64_t key) {
+        for (std::size_t drained = 0; drained < HeapWalkDrain && !previous.empty(); ++drained) {
+            release(previous.begin()->second);
+            previous.erase(previous.begin());
+        }
+        if (current.size() >= HeapWalkMemoKeys && !current.contains(key)) {
+            retirePrevious();
+            previous = std::move(current);
+            current.clear();
+        }
+        return current[key];
     }
 
     template <typename TObject, typename TSize>
@@ -138,6 +139,11 @@ struct HeapWalkMemo {
 
     void release(const std::vector<HeapWalkEntry>& ways) {
         for (const auto& entry : ways) drop(entry);
+    }
+
+    void retirePrevious() {
+        for (const auto& [key, ways] : previous) release(ways);
+        previous.clear();
     }
 
     void trim();

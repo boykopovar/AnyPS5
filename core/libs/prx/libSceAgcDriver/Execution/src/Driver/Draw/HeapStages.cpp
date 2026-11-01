@@ -393,8 +393,7 @@ std::uint64_t HeapWalkMemoBudget() {
 }
 
 void HeapWalkMemo::trim() {
-    for (const auto& [key, ways] : previous) release(ways);
-    previous.clear();
+    retirePrevious();
     if (heldBytes <= budget) return;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> stamps;
     for (const auto& [key, ways] : current) {
