@@ -422,7 +422,21 @@ static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
     Require(sceFontSetupRenderEffectSlant(font, 0.25f) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
     Require(sceFontSetupRenderEffectWeight(font, 1.02f, 0.98f, 0) == SCE_FONT_ERROR_NOT_BOUND_RENDERER);
     Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_ERROR_NOT_BOUND_RENDERER && slant == 0.0f);
+    float scaleW = 1.0f;
+    float scaleH = 1.0f;
+    Require(sceFontGetRenderScalePixel(font, &scaleW, &scaleH) == SCE_FONT_ERROR_NOT_BOUND_RENDERER && scaleW == 0.0f && scaleH == 0.0f);
+    Require(sceFontSetEffectWeight(font, 1.02f, 0.98f, 0) == SCE_FONT_OK);
+    Require(sceFontGetEffectWeight(font, &weightX, &weightY, &mode) == SCE_FONT_OK && near(weightX, 1.02f) && near(weightY, 0.98f) && mode == 0);
+    Require(sceFontSetEffectWeight(font, 1.0f, 1.0f, 0) == SCE_FONT_OK);
     Require(sceFontBindRenderer(font, renderer) == SCE_FONT_OK);
+    float pixelW = 0.0f;
+    float pixelH = 0.0f;
+    Require(sceFontGetRenderScalePixel(font, &pixelW, &pixelH) == SCE_FONT_OK);
+    Require(sceFontSetupRenderScalePixel(font, 24.0f, 32.0f) == SCE_FONT_OK);
+    Require(sceFontGetRenderScalePixel(font, &scaleW, &scaleH) == SCE_FONT_OK && scaleW == 24.0f && scaleH == 32.0f);
+    Require(sceFontSetupRenderScalePoint(font, 12.0f, 18.0f) == SCE_FONT_OK);
+    Require(sceFontGetRenderScalePoint(font, &scaleW, &scaleH) == SCE_FONT_OK && scaleW == 12.0f && scaleH == 18.0f);
+    Require(sceFontSetupRenderScalePixel(font, pixelW, pixelH) == SCE_FONT_OK);
     Require(sceFontSetupRenderEffectSlant(font, 0.25f) == SCE_FONT_OK);
     Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 0.25f);
     Require(sceFontSetupRenderEffectSlant(font, 2.0f) == SCE_FONT_OK);
@@ -451,11 +465,29 @@ static void CheckGlyphScale(FontHandle font, const FontMemory* memory, float exp
     }
     Require(width == expectedW && height == expectedH);
     Require(glyph->em_size == static_cast<std::uint16_t>(std::lround(expectedH)));
+    const FontGlyphMetrics* metrics = sceFontGlyphRefersMetrics(glyph);
+    const FontGlyphMetricsHorizontal* horizontal = sceFontGlyphRefersMetricsHorizontal(glyph);
+    const FontGlyphMetricsHorizontalX* horizontalX = sceFontGlyphRefersMetricsHorizontalX(glyph);
+    const FontGlyphMetricsHorizontalAdvance* advance = sceFontGlyphRefersMetricsHorizontalAdvance(glyph);
+    Require(metrics != nullptr && horizontal != nullptr && horizontalX != nullptr && advance != nullptr && metrics->Horizontal.advance > 0.0f);
+    Require(horizontal->width == metrics->width && horizontal->height == metrics->height && horizontal->horizontal.bearing_x == metrics->Horizontal.bearingX &&
+            horizontal->horizontal.bearing_y == metrics->Horizontal.bearingY && horizontal->horizontal.advance == metrics->Horizontal.advance);
+    Require(horizontalX->width == metrics->width && horizontalX->horizontal.bearing_x == metrics->Horizontal.bearingX && horizontalX->horizontal.advance == metrics->Horizontal.advance);
+    Require(advance->horizontal.advance == metrics->Horizontal.advance);
+    const int glyphForm = sceFontGlyphGetGlyphForm(glyph);
+    Require(glyphForm >= 0 && sceFontGlyphGetMetricsForm(glyph) >= 0);
+    Require((sceFontGlyphRefersOutline(glyph) != nullptr) == (glyphForm == 1));
+    Require(sceFontGlyphGetGlyphForm(nullptr) == SCE_FONT_ERROR_INVALID_GLYPH && sceFontGlyphGetMetricsForm(nullptr) == SCE_FONT_ERROR_INVALID_GLYPH);
+    Require(sceFontGlyphRefersMetrics(nullptr) == nullptr && sceFontGlyphRefersMetricsHorizontal(nullptr) == nullptr && sceFontGlyphRefersOutline(nullptr) == nullptr);
     Require(sceFontDeleteGlyph(memory, &glyph) == SCE_FONT_OK && glyph == nullptr);
 }
 
 static void CheckPointAndDpiScale(FontHandle font, FontLibrary library, const FontMemory* memory, FontRenderer renderer) {
     FontKerning kerning{};
+    FontLibrary owner = nullptr;
+    Require(sceFontGetLibrary(font, &owner) == SCE_FONT_OK && owner == library);
+    Require(sceFontGetLibrary(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    for (std::uint32_t openMode = 0; openMode <= 2; ++openMode) Require(sceFontSetFontsOpenMode(library, openMode) == SCE_FONT_OK);
     Require(sceFontSetScalePoint(font, 20.0f, 30.0f) == SCE_FONT_OK);
     CheckGlyphScale(font, memory, 40.0f, 60.0f);
     Require(sceFontGetKerning(font, 'A', 'V', &kerning) == SCE_FONT_OK && KerningIs(kerning, -8.0f));
