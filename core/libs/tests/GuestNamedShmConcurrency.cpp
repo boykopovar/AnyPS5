@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "nid/Sha1.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -13,16 +15,6 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-extern "C" {
-int APS5_VABI shm_open_nid_postfix(const char*, int, int);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-std::int64_t APS5_VABI pwrite_nid_disambig1_nid_postfix(int, const void*, std::size_t, std::int64_t);
-std::int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int, FileStat*);
-int APS5_VABI fchmod_nid_postfix(int, int);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 namespace {
 using Unlink = int (*)(const char*);

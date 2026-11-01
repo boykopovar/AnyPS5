@@ -1,0 +1,16 @@
+add_library(libSceOpusCeltEnc SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+target_include_directories(libSceOpusCeltEnc PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceOpusCeltEnc PRIVATE opus)
+configure_windows_unwind(libSceOpusCeltEnc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_opus_celt_enc_tests ${LIBS_INCLUDE_DIR}/tests/GuestOpusCeltEnc.cpp)
+    target_include_directories(guest_opus_celt_enc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_opus_celt_enc_tests PRIVATE libSceOpusCeltEnc libc opus)
+    configure_windows_unwind(guest_opus_celt_enc_tests)
+    add_test(NAME guest_opus_celt_enc COMMAND guest_opus_celt_enc_tests)
+    if(WIN32)
+        set_tests_properties(guest_opus_celt_enc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceOpusCeltEnc>")
+    endif()
+endif()

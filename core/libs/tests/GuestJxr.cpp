@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -5,11 +7,6 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-void* APS5_VABI malloc_nid_postfix(std::size_t size);
-std::int64_t APS5_VABI PKFree_nid_postfix(void** memory);
-}
 
 namespace {
 

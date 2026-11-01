@@ -89,6 +89,10 @@ class Build:
                 leaves.add(name)
         return sorted(leaves)
 
+    def outputs(self, paths):
+        built = {line.rpartition(": ")[0] for line in self.run("-t", "targets", "all").splitlines()}
+        return [path for path in paths if path in built]
+
     def tests(self, *arguments):
         listing = json.loads(subprocess.run(["ctest", "--test-dir", self.path, "--show-only=json-v1", *arguments],
                                             capture_output=True, text=True, check=True).stdout)
@@ -143,6 +147,39 @@ def relative(path, root):
     return path[root_len + 1:].replace(os.sep, "/")
 
 
+def paths(arguments):
+    for argument in arguments:
+        value = argument.partition("=")[2] if argument.startswith("-D") else argument
+        if os.path.isabs(value):
+            yield value
+
+
+def changed_paths(path):
+    data = Path(path).read_bytes()
+    if b"\0" in data:
+        return [name for name in data.decode("utf-8").split("\0") if name]
+    text = data.decode("utf-8-sig")
+    return [line.strip() for line in text.splitlines() if line.strip()]
+
+
+def dependency_path(data, base):
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        if sys.platform != "win32":
+            raise
+        return data.decode("mbcs")
+    if sys.platform != "win32":
+        return text
+    try:
+        ansi = data.decode("mbcs")
+    except UnicodeDecodeError:
+        return text
+    if ansi != text and os.path.exists(os.path.join(base, ansi)) and not os.path.exists(os.path.join(base, text)):
+        return ansi
+    return text
+
+
 def chunks(names):
     batch, size = [], 0
     for name in names:
@@ -158,19 +195,46 @@ def chunks(names):
         yield batch
 
 
+def load_graph(path):
+    try:
+        graph = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except RecursionError as error:
+        raise ValueError(f"{path}: test graph is nested too deeply") from error
+    if not isinstance(graph, dict) or not isinstance(graph.get("tests"), dict) or not isinstance(graph.get("closures"), dict):
+        raise ValueError(f"{path}: invalid test graph (expected tests and closures objects)")
+    fields = ("registered", "arguments", "sets", "requires", "depends")
+    for name, test in graph["tests"].items():
+        if (not isinstance(name, str) or not isinstance(test, dict) or "target" not in test
+                or not (test["target"] is None or isinstance(test["target"], str))
+                or any(not isinstance(test.get(field), list)
+                       or any(not isinstance(item, str) for item in test[field]) for field in fields)):
+            raise ValueError(f"{path}: invalid test graph entry {name!r}")
+    for name, paths in graph["closures"].items():
+        if not isinstance(name, str) or not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+            raise ValueError(f"{path}: invalid test graph closure {name!r}")
+    for name, test in graph["tests"].items():
+        if test["target"] is not None and test["target"] not in graph["closures"]:
+            raise ValueError(f"{path}: invalid test graph entry {name!r}: missing closure for {test['target']!r}")
+    return graph
+
+
 def dump(build, out):
     deps = collections.defaultdict(set)
     current = None
-    for line in build.run("-t", "deps").splitlines():
-        if not line.startswith(" ") and ": #deps" in line:
-            current = build.key(line.split(": #deps")[0])
+    recorded = subprocess.run([build.program, "-C", build.path, "-t", "deps"], capture_output=True, check=True).stdout
+    for line in recorded.splitlines():
+        if not line.startswith(b" ") and b": #deps" in line:
+            current = build.key(line.split(b": #deps")[0].decode(build.encoding))
         elif line.strip() and current:
-            path = build.repo(line.strip())
+            path = build.repo(dependency_path(line.strip(), build.path))
             if path:
                 deps[current].add(path)
     listing, listed = build.tests()
     graph = listing["backtraceGraph"]
-    targets = {build.target(t) for t in listed} - {None}
+    arguments = {test["name"]: {build.output(path) for path in paths((test.get("command") or [])[1:])} - {None}
+                 for test in listed}
+    outputs = set(build.outputs(sorted(set().union(*arguments.values()))))
+    targets = ({build.target(t) for t in listed} - {None}) | outputs
     nodes = build.walk(sorted(targets))
     closures = {}
     for target in sorted(targets):
@@ -193,13 +257,14 @@ def dump(build, out):
             registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        arguments = sorted({build.repo(a) for a in (test.get("command") or [])[1:] if os.path.isabs(a)} - {None})
-        tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": arguments,
+        inputs = {build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
+        inputs.update(path for target in arguments[test["name"]] & outputs for path in closures[target])
+        tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": sorted(inputs),
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),
                                "depends": props.get("DEPENDS", []), "target": build.target(test)}
     with open(out, "w", encoding="utf-8") as file:
         json.dump({"tests": tests, "closures": closures}, file)
-    print(f"{len(tests)} tests, {len(closures)} test executables, {len(deps)} objects with header deps")
+    print(f"{len(tests)} tests, {len(closures)} build targets, {len(deps)} objects with header deps")
 
 
 def select(graph, changed, reasons=None):
@@ -254,9 +319,10 @@ def plan(build, graph, picked):
     run = [i for i, t in enumerate(listed, 1) if t["name"] in names]
     if any(not t.get("command") for t in listed if t["name"] in names):
         return run, build.leaves(), len(listed)
-    keep = {build.output(a) for t in listed if t["name"] in names for a in t.get("command") or [] if os.path.isabs(a)}
+    keep = {build.output(a) for t in listed if t["name"] in names for a in paths(t.get("command") or [])}
     skip = {build.target(t) for t in listed if t["name"] not in names} - keep - {None}
-    return run, [t for t in build.leaves() if t not in skip], len(listed)
+    targets = [t for t in build.leaves() if t not in skip]
+    return run, targets + build.outputs(sorted(keep - set(targets) - {None})), len(listed)
 
 
 def escape(name):
@@ -275,10 +341,10 @@ def main(argv=None):
     s = sub.add_parser("select", help="write a ninja file and a ctest index list for a configured tree")
     s.add_argument("build")
     s.add_argument("graph")
-    s.add_argument("changed", help="file with one changed path per line")
+    s.add_argument("changed", help="file with newline-separated or Git -z NUL-separated changed paths")
     e = sub.add_parser("explain", help="explain saved-graph selections without a configured build; CTest may add fixtures")
     e.add_argument("graph", type=Path)
-    e.add_argument("changed", type=Path, help="file with one changed path per line")
+    e.add_argument("changed", type=Path, help="file with newline-separated or Git -z NUL-separated changed paths")
     c = sub.add_parser("ctest", help="run ctest on a tree, limited to the selected tests if select wrote any")
     c.add_argument("build")
     c.add_argument("arguments", nargs=argparse.REMAINDER, help="ctest arguments")
@@ -289,8 +355,8 @@ def main(argv=None):
         return subprocess.run(["ctest", "--test-dir", args.build, *args.arguments, *extra]).returncode
     if args.command == "explain":
         try:
-            graph = json.loads(args.graph.read_text(encoding="utf-8-sig"))
-            changed = [line.strip() for line in args.changed.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+            graph = load_graph(args.graph)
+            changed = changed_paths(args.changed)
             reasons = {}
             picked, full = select(graph, changed, reasons)
         except (OSError, ValueError) as error:
@@ -311,8 +377,11 @@ def main(argv=None):
     if not os.path.exists(args.graph):
         print("full run: no test graph")
         return 0
-    graph = json.loads(Path(args.graph).read_text(encoding="utf-8-sig"))
-    changed = [line.strip() for line in Path(args.changed).read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+    try:
+        graph = load_graph(args.graph)
+        changed = changed_paths(args.changed)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
     picked, full = select(graph, changed)
     if picked is None:
         print(f"full run: {', '.join(full[:5])}")

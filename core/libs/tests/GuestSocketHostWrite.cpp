@@ -1,3 +1,7 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libSceNet/include/Net.hpp"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "prx/libc/include/GuestArena.hpp"
@@ -12,56 +16,7 @@
 #include <cstring>
 #include <thread>
 
-struct NetIovec {
-    void* base;
-    std::uint64_t length;
-};
-
-struct NetMsghdr {
-    void* name;
-    std::uint32_t nameLength;
-    NetIovec* iov;
-    int iovLength;
-    void* control;
-    std::uint32_t controlLength;
-    int flags;
-};
 static_assert(sizeof(NetMsghdr) == 48 && offsetof(NetMsghdr, iov) == 16 && offsetof(NetMsghdr, flags) == 44);
-
-extern "C" {
-int APS5_VABI socket_nid_postfix(int, int, int);
-int APS5_VABI bind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI getsockname_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI listen_nid_postfix(int, int);
-int APS5_VABI connect_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI accept_nid_postfix(int, void*, std::uint32_t*);
-int APS5_VABI fcntl_nid_postfix(int, int, ...);
-std::int64_t APS5_VABI sendto_nid_postfix(int, const void*, std::uint64_t, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI recv_nid_postfix(int, void*, std::uint64_t, int);
-std::int64_t APS5_VABI recvfrom_nid_postfix(int, void*, std::uint64_t, int, void*, std::uint32_t*);
-std::int64_t APS5_VABI read_nid_postfix(int, void*, std::uint64_t);
-std::int64_t APS5_VABI sceKernelRead(int, void*, std::size_t);
-int APS5_VABI close_nid_postfix(int);
-int* APS5_VABI __error_nid_postfix();
-int APS5_VABI sceNetSocket(const char*, int, int, int);
-int APS5_VABI sceNetBind_nid_postfix(int, const void*, std::uint32_t);
-int APS5_VABI sceNetGetsockname(int, void*, std::uint32_t*);
-int APS5_VABI sceNetListen(int, int);
-int APS5_VABI sceNetConnect(int, const void*, std::uint32_t);
-int APS5_VABI sceNetAccept(int, void*, std::uint32_t*);
-int APS5_VABI sceNetSetsockopt(int, int, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI sceNetSendto(int, const void*, std::size_t, int, const void*, std::uint32_t);
-std::int64_t APS5_VABI sceNetRecv(int, void*, std::size_t, int);
-std::int64_t APS5_VABI sceNetRecvfrom(int, void*, std::size_t, int, void*, std::uint32_t*);
-std::int64_t APS5_VABI sceNetRecvmsg(int, NetMsghdr*, int);
-int APS5_VABI sceNetSocketClose(int);
-int* APS5_VABI sceNetErrnoLoc();
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelMprotect(void*, std::size_t, int);
-int APS5_VABI sceKernelMunmap(void*, std::size_t);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-}
 
 static void Require(bool value, const char* message) {
     if (!value) {
@@ -94,6 +49,7 @@ int main(int argc, char** argv) {
     const auto create = [&] {
         return net ? sceNetSocket(nullptr, 2, stream ? 1 : 2, stream ? 6 : 17) :
             socket_nid_postfix(2, stream ? 1 : 2, stream ? 6 : 17);
+
     };
     int receiver = create();
     const int sender = create();
@@ -156,6 +112,7 @@ int main(int argc, char** argv) {
         do {
             result = net ? sceNetRecv(receiver, buffer.data(), buffer.size(), 2) :
                 recv_nid_postfix(receiver, buffer.data(), buffer.size(), 2);
+
             if (result == sizeof(payload) || (result < 0 && *error != 35)) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         } while (std::chrono::steady_clock::now() < deadline);
@@ -312,8 +269,8 @@ int main(int argc, char** argv) {
             Require(sceKernelMprotect(static_cast<char*>(outputMapping) + page, page, 3) == 0,
                 "restore bytes beyond the sender address");
         }
-        Require(sceKernelMunmap(outputTwin, page * 2) == 0, "unmap the second sender output mapping");
-        Require(sceKernelMunmap(outputMapping, page * 2) == 0, "unmap sender outputs");
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(outputTwin), page * 2) == 0, "unmap the second sender output mapping");
+        Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(outputMapping), page * 2) == 0, "unmap sender outputs");
         Require(sceKernelReleaseDirectMemory(outputPhysical, page * 2) == 0, "release sender output memory");
     }
     reset();
@@ -355,7 +312,7 @@ int main(int argc, char** argv) {
         waitForPacket();
         Require(sceNetRecvmsg(receiver, message, 0) == static_cast<int>(0x8041010eu) && *error == 14,
             "read-only message outputs fail with EFAULT");
-        Require(message->flags == -1 && message->controlLength == 123, "rejected message outputs unchanged");
+        Require(message->flags == -1 && message->control_length == 123, "rejected message outputs unchanged");
         Require(receive(recovery.data(), recovery.size(), 0, nullptr, nullptr) == sizeof(payload),
             "a rejected message preserves queued data");
         Require(sceKernelMprotect(twin, page, 3) == 0, "restore receive message write permission");
@@ -411,7 +368,7 @@ int main(int argc, char** argv) {
     Require(Protection(buffer) == PAGE_READONLY, "completed receive can be rearmed");
     Require((net ? sceNetSocketClose(sender) : close_nid_postfix(sender)) == 0, "close sender");
     Require((net ? sceNetSocketClose(receiver) : close_nid_postfix(receiver)) == 0, "close receiver");
-    Require(sceKernelMunmap(twin, page * 2) == 0, "unmap the second direct memory mapping");
-    Require(sceKernelMunmap(mapping, page * 2) == 0, "unmap direct memory");
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(twin), page * 2) == 0, "unmap the second direct memory mapping");
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), page * 2) == 0, "unmap direct memory");
     Require(sceKernelReleaseDirectMemory(physical, page * 2) == 0, "release direct memory");
 }

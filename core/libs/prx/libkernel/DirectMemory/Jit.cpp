@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
@@ -177,6 +178,11 @@ int DuplicateDescriptor(int descriptor) {
 void ForgetJitSharedMemory(int descriptor) {
     std::lock_guard lock(g_jitLock);
     g_jitDescriptors.erase(descriptor);
+}
+
+bool IsJitSharedMemory(int descriptor) {
+    std::lock_guard lock(g_jitLock);
+    return g_jitDescriptors.contains(descriptor);
 }
 
 void DuplicateJitSharedMemory(int from, int to) {

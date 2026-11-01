@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -61,6 +62,23 @@ int LockedCompareExchange(volatile unsigned char* flag, std::size_t size, volati
 }
 
 extern "C" {
+
+std::uint8_t APS5_VABI _Fetch_and_seq_cst_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value) { return __atomic_fetch_and(target, value, __ATOMIC_SEQ_CST); }
+std::uint16_t APS5_VABI _Fetch_and_seq_cst_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value) { return __atomic_fetch_and(target, value, __ATOMIC_SEQ_CST); }
+std::uint32_t APS5_VABI _Fetch_and_seq_cst_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value) { return __atomic_fetch_and(target, value, __ATOMIC_SEQ_CST); }
+
+std::uint8_t APS5_VABI _Fetch_or_seq_cst_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value) { return __atomic_fetch_or(target, value, __ATOMIC_SEQ_CST); }
+std::uint16_t APS5_VABI _Fetch_or_seq_cst_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value) { return __atomic_fetch_or(target, value, __ATOMIC_SEQ_CST); }
+std::uint32_t APS5_VABI _Fetch_or_seq_cst_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value) { return __atomic_fetch_or(target, value, __ATOMIC_SEQ_CST); }
+
+std::uint8_t APS5_VABI _Fetch_xor_seq_cst_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
+std::uint16_t APS5_VABI _Fetch_xor_seq_cst_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
+std::uint32_t APS5_VABI _Fetch_xor_seq_cst_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
+
+std::uint64_t APS5_VABI _Fetch_add_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value) { return __atomic_fetch_add(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI _Fetch_and_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value) { return __atomic_fetch_and(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI _Fetch_or_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value) { return __atomic_fetch_or(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI _Fetch_xor_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
 
 void APS5_VABI _Atomic_store_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int) { Store(target, value); }
 void APS5_VABI _Atomic_store_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { Store(target, value); }
@@ -171,5 +189,62 @@ int APS5_VABI _Atomic_compare_exchange_strong_nid_postfix(volatile unsigned char
 int APS5_VABI _Atomic_compare_exchange_weak_nid_postfix(volatile unsigned char* flag, std::size_t size, volatile void* target, void* expected, const void* desired, int, int) {
     return LockedCompareExchange(flag, size, target, expected, desired);
 }
+
+
+std::uint8_t APS5_VABI __atomic_load_1_nid_postfix(const volatile std::uint8_t* target, int) { return __atomic_load_n(target, __ATOMIC_SEQ_CST); }
+std::uint16_t APS5_VABI __atomic_load_2_nid_postfix(const volatile std::uint16_t* target, int) { return __atomic_load_n(target, __ATOMIC_SEQ_CST); }
+std::uint32_t APS5_VABI __atomic_load_4_nid_postfix(const volatile std::uint32_t* target, int) { return __atomic_load_n(target, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI __atomic_load_8_nid_postfix(const volatile std::uint64_t* target, int) { return __atomic_load_n(target, __ATOMIC_SEQ_CST); }
+
+void APS5_VABI __atomic_store_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int) { Store(target, value); }
+void APS5_VABI __atomic_store_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { Store(target, value); }
+void APS5_VABI __atomic_store_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int) { Store(target, value); }
+void APS5_VABI __atomic_store_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value, int) { Store(target, value); }
+
+std::uint8_t APS5_VABI __atomic_exchange_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int) { return Exchange(target, value); }
+std::uint16_t APS5_VABI __atomic_exchange_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { return Exchange(target, value); }
+std::uint32_t APS5_VABI __atomic_exchange_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int) { return Exchange(target, value); }
+std::uint64_t APS5_VABI __atomic_exchange_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value, int) { return Exchange(target, value); }
+
+int APS5_VABI __atomic_compare_exchange_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t* expected, std::uint8_t desired, int, int) {
+    return CompareExchange(target, expected, desired);
+}
+
+int APS5_VABI __atomic_compare_exchange_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t* expected, std::uint16_t desired, int, int) {
+    return CompareExchange(target, expected, desired);
+}
+
+int APS5_VABI __atomic_compare_exchange_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t* expected, std::uint32_t desired, int, int) {
+    return CompareExchange(target, expected, desired);
+}
+
+int APS5_VABI __atomic_compare_exchange_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t* expected, std::uint64_t desired, int, int) {
+    return CompareExchange(target, expected, desired);
+}
+
+std::uint8_t APS5_VABI __atomic_fetch_add_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int) { return __atomic_fetch_add(target, value, __ATOMIC_SEQ_CST); }
+std::uint16_t APS5_VABI __atomic_fetch_add_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { return __atomic_fetch_add(target, value, __ATOMIC_SEQ_CST); }
+std::uint32_t APS5_VABI __atomic_fetch_add_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int) { return __atomic_fetch_add(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI __atomic_fetch_add_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value, int) { return __atomic_fetch_add(target, value, __ATOMIC_SEQ_CST); }
+
+std::uint8_t APS5_VABI __atomic_fetch_sub_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int) { return __atomic_fetch_sub(target, value, __ATOMIC_SEQ_CST); }
+std::uint16_t APS5_VABI __atomic_fetch_sub_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { return __atomic_fetch_sub(target, value, __ATOMIC_SEQ_CST); }
+std::uint32_t APS5_VABI __atomic_fetch_sub_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int) { return __atomic_fetch_sub(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI __atomic_fetch_sub_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value, int) { return __atomic_fetch_sub(target, value, __ATOMIC_SEQ_CST); }
+
+std::uint8_t APS5_VABI __atomic_fetch_and_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int) { return __atomic_fetch_and(target, value, __ATOMIC_SEQ_CST); }
+std::uint16_t APS5_VABI __atomic_fetch_and_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { return __atomic_fetch_and(target, value, __ATOMIC_SEQ_CST); }
+std::uint32_t APS5_VABI __atomic_fetch_and_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int) { return __atomic_fetch_and(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI __atomic_fetch_and_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value, int) { return __atomic_fetch_and(target, value, __ATOMIC_SEQ_CST); }
+
+std::uint8_t APS5_VABI __atomic_fetch_or_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int) { return __atomic_fetch_or(target, value, __ATOMIC_SEQ_CST); }
+std::uint16_t APS5_VABI __atomic_fetch_or_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { return __atomic_fetch_or(target, value, __ATOMIC_SEQ_CST); }
+std::uint32_t APS5_VABI __atomic_fetch_or_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int) { return __atomic_fetch_or(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI __atomic_fetch_or_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value, int) { return __atomic_fetch_or(target, value, __ATOMIC_SEQ_CST); }
+
+std::uint8_t APS5_VABI __atomic_fetch_xor_1_nid_postfix(volatile std::uint8_t* target, std::uint8_t value, int) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
+std::uint16_t APS5_VABI __atomic_fetch_xor_2_nid_postfix(volatile std::uint16_t* target, std::uint16_t value, int) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
+std::uint32_t APS5_VABI __atomic_fetch_xor_4_nid_postfix(volatile std::uint32_t* target, std::uint32_t value, int) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
+std::uint64_t APS5_VABI __atomic_fetch_xor_8_nid_postfix(volatile std::uint64_t* target, std::uint64_t value, int) { return __atomic_fetch_xor(target, value, __ATOMIC_SEQ_CST); }
 
 }

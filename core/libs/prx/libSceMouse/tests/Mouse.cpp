@@ -1,3 +1,4 @@
+#include "prx/libSceMouse/include/Api.hpp"
 #include "prx/libSceMouse/include/mouse_structs.h"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
@@ -8,11 +9,7 @@
 
 extern "C" {
 bool MouseIsOpen_nid_no_patch();
-int APS5_VABI sceMouseInit();
-int APS5_VABI sceMouseOpen(int, std::int32_t, std::int32_t, const void*);
-int APS5_VABI sceMouseClose(std::int32_t);
-int APS5_VABI sceMouseRead(std::int32_t, MouseData*, std::int32_t);
-int APS5_VABI sceMouseResetAbsolutePosition(std::int32_t, std::uint16_t, std::uint16_t);
+
 }
 
 static void Require(bool value) { if (!value) std::abort(); }

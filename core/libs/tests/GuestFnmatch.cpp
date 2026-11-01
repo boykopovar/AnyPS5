@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstdlib>
@@ -5,10 +7,7 @@
 #include <clocale>
 #include <cctype>
 #include <string>
-extern "C" int APS5_VABI fnmatch_nid_postfix(const char*, const char*, int);
-extern "C" int APS5_VABI strcasecmp_nid_postfix(const char*, const char*);
-extern "C" int APS5_VABI strncasecmp_nid_postfix(const char*, const char*, std::size_t);
-extern "C" char* APS5_VABI strcasestr_nid_postfix(const char*, const char*);
+
 struct Case {
     const char* pattern;
     const char* string;
@@ -32,10 +31,11 @@ static void CheckCaseInsensitiveBytePairs() {
             char left[] = {static_cast<char>(a), 0};
             char right[] = {static_cast<char>(b), 0};
             const int expected = FoldCByte(a) - FoldCByte(b);
-            Require(strcasecmp_nid_postfix(left, right) == expected);
+            const int sign = (expected > 0) - (expected < 0);
+            Require(strcasecmp_nid_postfix(left, right) == sign);
             Require(strncasecmp_nid_postfix(left, right, 0) == 0);
-            Require(strncasecmp_nid_postfix(left, right, 1) == expected);
-            Require(strncasecmp_nid_postfix(left, right, 2) == expected);
+            Require(strncasecmp_nid_postfix(left, right, 1) == sign);
+            Require(strncasecmp_nid_postfix(left, right, 2) == sign);
             const char* match = b == 0 || expected == 0 ? left : nullptr;
             Require(strcasestr_nid_postfix(left, right) == match);
             const char pattern[] = {'\\', static_cast<char>(a), 0};
@@ -51,9 +51,9 @@ static void CheckCaseInsensitiveBytePairs() {
     Require(strcasestr_nid_postfix(repeated, "aaac") == repeated + 6);
     Require(strcasestr_nid_postfix(repeated, "aAa") == repeated);
     Require(strcasestr_nid_postfix(repeated, "aaad") == nullptr);
-    Require(strcasecmp_nid_postfix("AbC", "aBcD") == -'d');
+    Require(strcasecmp_nid_postfix("AbC", "aBcD") == -1);
     Require(strncasecmp_nid_postfix("AbC", "aBcD", 3) == 0);
-    Require(strncasecmp_nid_postfix("AbC", "aBcD", 4) == -'d');
+    Require(strncasecmp_nid_postfix("AbC", "aBcD", 4) == -1);
 }
 
 static void CheckCaseInsensitiveHostLocale() {
@@ -142,6 +142,7 @@ int main() {
     bool threw = false;
     try {
         fnmatch_nid_postfix(nullptr, "x", 0);
+
     } catch (const std::invalid_argument&) {
         threw = true;
     }

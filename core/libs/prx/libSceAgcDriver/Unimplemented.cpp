@@ -1,3 +1,4 @@
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -10,6 +11,7 @@ constexpr int DEBUG_UNAVAILABLE = static_cast<int>(0x8A6C1000);
 constexpr int DRIVER_FEATURE_UNAVAILABLE = static_cast<int>(0x8A6D0001);
 constexpr int DRIVER_NULL_OUTPUT = static_cast<int>(0x8A6D0003);
 constexpr int GPU_RESET_UNAVAILABLE = static_cast<int>(0x8A6C0045);
+constexpr int MODULE_REGISTRATION_FAILED = static_cast<int>(0x8A6D0003);
 constexpr std::size_t TOOL_MEMORY_RANGE_SIZE = 12;
 
 }
@@ -67,7 +69,6 @@ int APS5_VABI sceAgcDriverNopDataWritePacket(void* destination, uint32_t address
     if (data != nullptr && bytes != 0) std::memcpy(static_cast<std::byte*>(destination) + 8, data, bytes);
     return data == nullptr || bytes == 0 ? 2 : static_cast<int>(totalBytes / 4);
 }
-
 
 int APS5_VABI sceAgcDriverSetValidationDisabled() {
     return DEBUG_UNAVAILABLE;
@@ -191,6 +192,34 @@ int APS5_VABI sceAgcDriverReleaseHDRScopesACQ() {
 
 int APS5_VABI sceAgcDriverSetTargetRingForDiag() {
     return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverAcquireRazorACQ() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverGetPaDebugInterfaceVersion() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSetHsOffchipParamDirect() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSubmitMultiCommandBuffersDirect() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSubmitToRazorACQ() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverSuspendPointSubmitDirect() {
+    return DRIVER_FEATURE_UNAVAILABLE;
+}
+
+int APS5_VABI sceAgcDriverModuleRegistration() {
+    return MODULE_REGISTRATION_FAILED;
 }
 
 int APS5_VABI sceAgcDriverSetValueToSharedGds() {

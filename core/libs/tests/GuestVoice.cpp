@@ -1,3 +1,4 @@
+#include "prx/libSceVoice/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -8,38 +9,6 @@
 #include <limits>
 #include <stdexcept>
 #include <vector>
-
-extern "C" {
-int APS5_VABI sceVoiceInit(const VoiceInitParam*, std::int32_t);
-int APS5_VABI sceVoiceSetThreadsParams(const VoiceThreadsParams*);
-int APS5_VABI sceVoiceStart(const VoiceStartParam*);
-int APS5_VABI sceVoiceStop();
-int APS5_VABI sceVoiceEnd_nid_postfix();
-int APS5_VABI sceVoiceCreatePort(std::uint32_t*, const VoicePortParam*);
-int APS5_VABI sceVoiceDeletePort(std::uint32_t);
-int APS5_VABI sceVoiceConnectIPortToOPort(std::uint32_t, std::uint32_t);
-int APS5_VABI sceVoiceDisconnectIPortFromOPort(std::uint32_t, std::uint32_t);
-int APS5_VABI sceVoiceGetVolume(std::uint32_t, float*);
-int APS5_VABI sceVoiceSetMuteFlag(std::uint32_t, std::uint8_t);
-int APS5_VABI sceVoiceSetVolume(std::uint32_t, float);
-int APS5_VABI sceVoiceGetBitRate(std::uint32_t, std::uint32_t*);
-int APS5_VABI sceVoiceGetMuteFlag(std::uint32_t, bool*);
-int APS5_VABI sceVoiceGetPortInfo(std::uint32_t, VoicePortInfo*);
-int APS5_VABI sceVoiceReadFromOPort(std::uint32_t, void*, std::uint32_t*);
-int APS5_VABI sceVoiceResetPort(std::uint32_t);
-int APS5_VABI sceVoicePausePort(std::uint32_t);
-int APS5_VABI sceVoiceResumePort(std::uint32_t);
-int APS5_VABI sceVoicePausePortAll(void);
-int APS5_VABI sceVoiceResumePortAll(void);
-int APS5_VABI sceVoiceGetResourceInfo(VoiceResourceInfo*);
-int APS5_VABI sceVoiceEnableChat(void);
-int APS5_VABI sceVoiceDisableChat(void);
-int APS5_VABI sceVoiceInitHQ(const VoiceInitParam*, std::int32_t);
-int APS5_VABI sceVoiceVADSetVersion(std::int32_t);
-int APS5_VABI sceVoiceSetMuteFlagAll(bool);
-int APS5_VABI sceVoiceSetBitRate(std::uint32_t, std::uint32_t);
-int APS5_VABI sceVoiceUpdatePort(std::uint32_t, const VoicePortParam*);
-}
 
 namespace {
 

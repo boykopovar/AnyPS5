@@ -1,3 +1,4 @@
+#include "prx/libSceNetCtlApDialog/include/Api.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstddef>

@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
 #include "VulkanTestDevice.hpp"
@@ -228,6 +229,7 @@ int main() {
             Draw(*device, waveSize);
             Check(waveSize, 3);
         }
+        Require(!device->GraphicsPipelineLibraries() || AgcDriver::Graphics::PipelineLibraryCountersOf(device->Device()).linked == 0, "pixel interlock: a primitive-ordered pixel shader's pipeline was linked from graphics pipeline libraries");
         std::printf("pixel interlock tests passed: 10 draws of %u overlapping triangles over %u pixels, 2 of them with a killed BDA fault in every %uth column\n", Layers, Width * Height, FaultColumns);
         return 0;
     } catch (const std::exception& error) {

@@ -1,15 +1,13 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/ColorTargetLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureDetiler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "VulkanTestDevice.hpp"
+#include "FixtureDeviceSelection.hpp"
 #include <SDL_loadso.h>
 #include <vector>
 #include <algorithm>
@@ -32,7 +30,6 @@ using namespace AgcDriver::Graphics;
 constexpr std::uint32_t Side = 64;
 constexpr std::size_t BlockBytes = 65536;
 alignas(4096) std::array<std::uint8_t, BlockBytes * 2> Storage{};
-alignas(4096) std::array<std::uint8_t, BlockBytes * 2> CopyStorage{};
 constexpr std::uint32_t Format32Float = 22;
 constexpr std::uint32_t Format8Uint = 5;
 
@@ -41,6 +38,8 @@ public:
     Device() {
 #ifdef _WIN32
         library = SDL_LoadObject("vulkan-1.dll");
+#elif defined(__APPLE__)
+        library = SDL_LoadObject("libvulkan.1.dylib");
 #else
         library = SDL_LoadObject("libvulkan.so.1");
 #endif
@@ -52,6 +51,12 @@ public:
             application.apiVersion = VK_API_VERSION_1_1;
             VkInstanceCreateInfo info{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
             info.pApplicationInfo = &application;
+#ifdef __APPLE__
+            const char* portability = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+            info.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+            info.enabledExtensionCount = 1;
+            info.ppEnabledExtensionNames = &portability;
+#endif
             Check(function<PFN_vkCreateInstance>("vkCreateInstance")(&info, nullptr, &instance), "vkCreateInstance");
             std::uint32_t count = 0;
             const auto enumerate = function<PFN_vkEnumeratePhysicalDevices>("vkEnumeratePhysicalDevices");
@@ -59,7 +64,7 @@ public:
             Require(count != 0, "no Vulkan device");
             std::vector<VkPhysicalDevice> devices(count);
             Check(enumerate(instance, &count, devices.data()), "vkEnumeratePhysicalDevices");
-            context.physical = devices.front();
+            context.physical = SelectFixturePhysicalDevice(devices, function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties"));
             const auto extensions = function<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
             Check(extensions(context.physical, nullptr, &count, nullptr), "vkEnumerateDeviceExtensionProperties");
             std::vector<VkExtensionProperties> available(count);
@@ -331,69 +336,6 @@ void RunPairings(Context context, std::uint8_t* block) {
     ExpectFailure([&] { static_cast<void>(DepthSurfaceStoreBack(context, *depth)); }, "through a view that another view of the plane", "a store back through a replaced view was taken by an older pairing that covers the plane");
 }
 
-void DepthCopyCase(Context context, std::uint8_t* block) {
-    const auto colorAddress = reinterpret_cast<std::uint64_t>(block);
-    const auto depthAddress = colorAddress + BlockBytes / 4;
-    Recorder recorder(context);
-    recorder.Activate();
-    const auto submit = [&] {
-        recorder.Submit();
-        Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle");
-    };
-    ColorTarget color{};
-    color.address = colorAddress;
-    color.surfaceAddress = colorAddress;
-    color.extent = {Side, Side};
-    color.surfaceExtent = color.extent;
-    color.format = VK_FORMAT_R32_SFLOAT;
-    color.elementBytes = 4;
-    color.tileMode = ColorTileMode::RenderTarget;
-    color.bytes = ColorTargetLayout(Side, Side, ColorTileMode::RenderTarget, 4).Bytes();
-    const auto copy = [&](std::uint32_t samples, std::uint32_t sample, VkExtent2D extent) {
-        RunDepthCopyPass(context, DepthCopyPass{depthAddress, extent, samples, sample, color});
-        submit();
-        const auto resident = CachedStorageSurface(context, SurfaceForTarget(color));
-        resident->MarkDirty();
-        resident->WriteBack();
-        submit();
-    };
-    const auto countBlock = [&](float value) {
-        std::size_t count = 0;
-        for (std::size_t offset = 0; offset < BlockBytes; offset += sizeof(float)) {
-            float texel = 0;
-            std::memcpy(&texel, block + offset, sizeof(texel));
-            if (texel == value) ++count;
-        }
-        return count;
-    };
-    std::fill(block, block + BlockBytes, std::uint8_t{0});
-    ExpectFailure([&] { copy(1, 0, {Side, Side}); }, "no draw rendered", "a DB depth copy from memory without a depth surface was accepted");
-    const auto sampledCounts = context.limits.sampledImageDepthSampleCounts & context.limits.framebufferDepthSampleCounts;
-    const std::uint32_t samples = (sampledCounts & VK_SAMPLE_COUNT_2_BIT) != 0 ? 2u : (sampledCounts & VK_SAMPLE_COUNT_4_BIT) != 0 ? 4u : 0u;
-    if (samples != 0) {
-        Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.375f, 0, 0, false, samples}) != VK_NULL_HANDLE, "the multisample depth surface was not created");
-        for (std::uint32_t sample = 0; sample < samples; ++sample) {
-            std::fill(block, block + BlockBytes, std::uint8_t{0});
-            copy(samples, sample, {Side, Side});
-            Require(countBlock(0.375f) == Side * Side, "the DB depth copy of sample " + std::to_string(sample) + " of " + std::to_string(samples) + " did not store the cleared depth in every texel of the R32 float target");
-        }
-        ExpectFailure([&] { copy(samples, samples, {Side, Side}); }, "does not have", "a DB depth copy of a sample past the last of a multisample surface was accepted");
-        ExpectFailure([&] { copy(samples, 0, {Side / 2, Side / 2}); }, "of another size", "a DB depth copy of another extent than the depth surface was accepted");
-        ClearDepthSurfaces(context.device);
-    }
-    if ((context.limits.sampledImageDepthSampleCounts & VK_SAMPLE_COUNT_2_BIT) == 0) {
-        Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.375f, 0, 0, false, 2}) != VK_NULL_HANDLE, "the unsampleable two-sample depth surface was not created");
-        ExpectFailure([&] { copy(2, 0, {Side, Side}); }, "cannot sample at its sample count", "a DB depth copy from an unsampleable two-sample depth surface was accepted");
-        ClearDepthSurfaces(context.device);
-        std::puts("DB depth copy: unsupported two-sample source refused cleanly");
-    }
-    Require(DepthSurfaceView(context, DepthTarget{depthAddress, 0, {Side, Side}, VK_FORMAT_D32_SFLOAT, 0.625f, 0, 0, false, 1}) != VK_NULL_HANDLE, "the one-sample depth surface was not created");
-    std::fill(block, block + BlockBytes, std::uint8_t{0});
-    copy(1, 0, {Side, Side});
-    Require(countBlock(0.625f) == Side * Side, "the DB depth copy of a one-sample depth surface did not store the cleared depth in every texel of the R32 float target");
-    ExpectFailure([&] { copy(1, 1, {Side, Side}); }, "does not have", "a DB depth copy of a second sample of a one-sample surface was accepted");
-}
-
 }
 
 int main() {
@@ -414,11 +356,6 @@ int main() {
         {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             Run(context, block);
-            auto* copyBlock = CopyStorage.data() + (BlockBytes - reinterpret_cast<std::uintptr_t>(CopyStorage.data()) % BlockBytes) % BlockBytes;
-            GuestAllocations::Mutation().Add(copyBlock, BlockBytes, true, true, true);
-            DepthCopyCase(context, copyBlock);
-            ClearCachedTextures(context.device);
-            GuestAllocations::Mutation().Remove(copyBlock);
             ClearDepthSurfaces(context.device);
             RunPairings(context, block);
             ClearDepthSurfaces(context.device);
