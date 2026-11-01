@@ -54,7 +54,10 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     const auto fileOffset = [&](std::uint64_t address, std::uint64_t size) {
         for (const auto& header : headers) {
             if (header.Type != 1 || address < header.MappedAddress || address - header.MappedAddress > header.FileSize || size > header.FileSize - (address - header.MappedAddress)) continue;
-            const auto offset = header.Offset + address - header.MappedAddress;
+            const auto relative = address - header.MappedAddress;
+            if (relative > std::numeric_limits<std::uint64_t>::max() - header.Offset)
+                throw Domain::RelinkerException("Code analysis: file range exceeds image", header.Offset);
+            const auto offset = header.Offset + relative;
             range(offset, size);
             return offset;
         }
@@ -229,7 +232,7 @@ std::set<Domain::VirtualAddress> CodeInstructionCollector::Collect(const std::ve
     range(0, 64);
     if (const auto entry = Io::ReadU64(bytes, 24); entry != 0) addRoot(entry);
     if (const auto init = value(12, 0x6000000c)) addRoot(*init);
-    if (const auto fini = value(13, 0x6000000d); fini && *fini != 0) addRoot(*fini);
+    if (const auto fini = value(13, 0x6000000d)) addRoot(*fini);
     const auto symbolBytes = value(0x6100003f, 0xffffffffffffffffull);
     std::uint64_t symbolCount = 0;
     if (symbolBytes) {
