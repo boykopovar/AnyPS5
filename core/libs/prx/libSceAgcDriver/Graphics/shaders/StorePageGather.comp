@@ -1,0 +1,82 @@
+#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+
+layout(local_size_x = 256) in;
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Words { uint words[]; };
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer Targets { u64vec4 targets[]; };
+layout(push_constant) uniform Parameters {
+    Words fault;
+    Words pages;
+    Targets targets;
+    uint64_t base;
+    uint count;
+    uint slots;
+    uint writtenCountWord;
+    uint writtenSlotsWord;
+    uint writtenListWord;
+    uint overflowWord;
+} parameters;
+
+const uint PageShift = 12u;
+const uint PageWords = 1024u;
+const uint MaskWords = 128u;
+const uint Probes = 16u;
+const uint ChunkShift = 17u;
+const uint ChunkPages = 32u;
+const uint SlotLimit = 2048u;
+const uint None = 0xffffffffu;
+
+shared uint claimed;
+
+uint claimPage(uint64_t address) {
+    uint key = uint((address - parameters.base) >> PageShift) + 1u;
+    uint hash = (key * 0x9e3779b1u) >> (32u - uint(findLSB(parameters.slots)));
+    for (uint probe = 0u; probe < Probes; ++probe) {
+        uint slot = (hash + probe) & (parameters.slots - 1u);
+        uint previous = atomicCompSwap(parameters.pages.words[slot], 0u, key);
+        if (previous == 0u) return slot;
+        if (previous == key) return None;
+    }
+    atomicOr(parameters.fault.words[parameters.overflowWord], 1u);
+    return None;
+}
+
+void main() {
+    uint claims = min(parameters.fault.words[parameters.writtenCountWord], SlotLimit);
+    for (uint claim = gl_WorkGroupID.x; claim < claims; claim += gl_NumWorkGroups.x) {
+        uint record = parameters.fault.words[parameters.writtenListWord + claim];
+        uint key = parameters.fault.words[parameters.writtenSlotsWord + 2u * record];
+        uint mask = parameters.fault.words[parameters.writtenSlotsWord + 2u * record + 1u];
+        uint64_t chunk = uint64_t(key - 1u) << ChunkShift;
+        for (uint page = 0u; page < ChunkPages; ++page) {
+            if ((mask & (1u << page)) == 0u) continue;
+            uint64_t address = chunk + (uint64_t(page) << PageShift);
+            uint first = parameters.count;
+            uint last = 0u;
+            for (uint index = 0u; index < parameters.count; ++index) {
+                u64vec4 span = parameters.targets.targets[index];
+                if (address + (1u << PageShift) <= span.x || address >= span.y) continue;
+                first = min(first, index);
+                last = index;
+            }
+            if (first == parameters.count) continue;
+            barrier();
+            if (gl_LocalInvocationIndex == 0u) claimed = claimPage(address);
+            barrier();
+            uint slot = claimed;
+            if (slot == None) continue;
+            uint data = parameters.slots * (1u + MaskWords) + slot * PageWords;
+            for (uint word = gl_LocalInvocationIndex; word < PageWords; word += gl_WorkGroupSize.x) {
+                uint64_t at = address + uint64_t(word) * 4u;
+                for (uint index = first; index <= last; ++index) {
+                    u64vec4 span = parameters.targets.targets[index];
+                    if (at < span.x || at + 4u > span.y) continue;
+                    Words source = Words(span.z + (at - span.x));
+                    parameters.pages.words[data + word] = source.words[0];
+                    break;
+                }
+            }
+        }
+    }
+}

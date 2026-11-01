@@ -12,6 +12,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "ShaderCacheDirectory.hpp"
+#include "ShaderDiskCache.hpp"
 #include "../NarrowConstantStoreFixture.hpp"
 #include "Recompiler.hpp"
 #include "ShaderDiskCache.hpp"
@@ -469,6 +470,10 @@ constexpr std::uint32_t JournalModuleRecord = 1u;
 constexpr std::uint32_t JournalComputeRecord = 3u;
 constexpr std::uint32_t JournalHeaderBytes = 32u;
 
+std::uint64_t JournalRecordBytes(std::uint64_t payloadBytes) {
+    return (sizeof(JournalRecordHeader) + payloadBytes + 7u) / 8u * 8u;
+}
+
 void AppendJournalRecord(std::vector<std::byte>& file, std::uint32_t kind, const std::vector<std::byte>& payload) {
     const JournalRecordHeader header{kind, 0u, payload.size(), ShaderRecompiler::HashBytes(payload)};
     const auto offset = file.size();
@@ -510,14 +515,28 @@ void ReplayRacesDispatchTests() {
     const auto words = AddressWords(compute);
     std::vector<std::vector<std::uint32_t>> codes;
     for (std::uint32_t salt = 16; salt < 16 + Pipelines; ++salt) codes.push_back(ComputeCode(salt));
+    const auto path = AgcDriver::Graphics::PipelineJournalPath();
+    const std::filesystem::path aside = path.string() + ".aside";
+    AgcDriver::Graphics::FlushPipelineJournal();
+    std::error_code error;
+    std::filesystem::rename(path, aside, error);
+    Require(!error, "cannot set the journal aside before recording the raced pipelines");
+    std::vector<ShaderRecompiler::PipelineIdentity> raced;
     {
         const auto device = OpenVulkanTestDevice();
         Require(device != nullptr, "the device recording the raced pipelines could not be opened");
         device->WaitForPipelineJournalReplay();
-        for (const auto& code : codes) device->Dispatch(CompileCompute(*device, code, words, 32), 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        for (const auto& code : codes) {
+            const auto result = CompileCompute(*device, code, words, 32);
+            raced.push_back(result.Identity());
+            device->Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+        }
         device->WaitIdle();
         AgcDriver::Graphics::FlushPipelineJournal();
     }
+    const auto journaled = ReadJournalComputeIdentities(path);
+    const auto held = std::ranges::count_if(raced, [&](const ShaderRecompiler::PipelineIdentity& identity) { return std::ranges::find(journaled, identity) != journaled.end(); });
+    Require(held == Pipelines, "the journal holds " + std::to_string(held) + " of the " + std::to_string(Pipelines) + " raced compute pipelines under its cap, so the replay cannot race the others");
     const auto before = Snapshot();
     {
         const auto device = OpenVulkanTestDevice();
@@ -532,6 +551,11 @@ void ReplayRacesDispatchTests() {
         const auto visited = (after.journal.replayedCompute - before.journal.replayedCompute) + (after.journal.replayPresent - before.journal.replayPresent);
         Require(device->ComputePipelinesCreated() == visited, "a dispatch and the replay both built a compute pipeline: " + std::to_string(device->ComputePipelinesCreated()) + " built for " + std::to_string(visited) + " replayed");
     }
+    AgcDriver::Graphics::FlushPipelineJournal();
+    std::filesystem::remove(path, error);
+    Require(!error, "cannot remove the raced pipelines' journal");
+    std::filesystem::rename(aside, path, error);
+    Require(!error, "cannot put the journal back after the raced pipelines");
 }
 
 void NewestEntriesTests() {
@@ -637,6 +661,9 @@ void EvictionTests() {
 
 void EvictionWatermarkTests() {
     using namespace NarrowConstantStoreFixture;
+    constexpr std::uint64_t JournalCap = 1024u * 1024u;
+    constexpr std::uint64_t RewriteTarget = JournalCap - JournalCap / 4u;
+    constexpr std::uint64_t RecordShare = (JournalCap - RewriteTarget) / 4u;
     const auto path = AgcDriver::Graphics::PipelineJournalPath();
     const auto before = Snapshot();
     Block compute(BlockBytes);
@@ -647,7 +674,14 @@ void EvictionWatermarkTests() {
         device->WaitForPipelineJournalReplay();
         for (std::uint32_t salt = 8; salt <= 10; ++salt) {
             auto result = CompileCompute(*device, ComputeCode(salt), words, 32);
-            result.shaderDataUserWords.assign(16u * 1024u, salt);
+            result.shaderDataUserWords.clear();
+            std::vector<std::byte> module;
+            ShaderRecompiler::ShaderDiskCache::EncodeResult(result, module);
+            const auto recordBytes = [&](std::uint64_t userWords) { return JournalRecordBytes(20u + module.size() + userWords * sizeof(std::uint32_t)) + JournalRecordBytes(17u); };
+            Require(recordBytes(0) <= RecordShare, "the fixture's compute module alone takes " + std::to_string(recordBytes(0)) + " journal bytes, more than the " + std::to_string(RecordShare) + " each record may take after a rewrite");
+            auto userWords = (RecordShare - recordBytes(0)) / sizeof(std::uint32_t);
+            while (recordBytes(userWords) > RecordShare) --userWords;
+            result.shaderDataUserWords.assign(static_cast<std::size_t>(userWords), salt);
             AgcDriver::Graphics::RecordComputePipeline(result, true);
         }
         AgcDriver::Graphics::FlushPipelineJournal();

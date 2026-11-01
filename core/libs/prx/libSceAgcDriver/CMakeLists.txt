@@ -142,6 +142,19 @@ add_custom_command(
         VERBATIM
 )
 
+set(agcStorePageGatherShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/StorePageGather.comp)
+set(agcStorePageGatherShaderSpv ${agcTextureDetileGeneratedDir}/StorePageGather.spv)
+set(agcStorePageGatherShaderHeader ${agcTextureDetileGeneratedDir}/StorePageGather_spv.h)
+add_custom_command(
+        OUTPUT "${agcStorePageGatherShaderHeader}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+        COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 -o "${agcStorePageGatherShaderSpv}" "${agcStorePageGatherShaderSource}"
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${agcStorePageGatherShaderSpv} -DOUTPUT=${agcStorePageGatherShaderHeader}
+        -DSYMBOL=STORE_PAGE_GATHER_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+        DEPENDS "${agcStorePageGatherShaderSource}" glslang-standalone
+        VERBATIM
+)
+
 set(agcSampleCounterShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/SampleCounter.comp)
 set(agcSampleCounterShaderSpv ${agcTextureDetileGeneratedDir}/SampleCounter.spv)
 set(agcSampleCounterShaderHeader ${agcTextureDetileGeneratedDir}/SampleCounter_spv.h)
@@ -373,6 +386,7 @@ set(agcDriverSources
         ${agcTextureDetileImageShaderHeader}
         ${agcTextureRepackShaderHeader}
         ${agcDispatchArgumentsShaderHeader}
+        ${agcStorePageGatherShaderHeader}
         ${agcSampleCounterShaderHeader}
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}

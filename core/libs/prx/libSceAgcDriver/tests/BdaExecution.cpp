@@ -1,5 +1,6 @@
 #include "BdaShader.hpp"
 #include "BdaAbi.hpp"
+#include "PipelineSpecialization.hpp"
 #include "IntermediateRepresentation/IrMetadata/ShaderStage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include <algorithm>
@@ -9,8 +10,10 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -60,8 +63,11 @@ public:
             moduleInfo.codeSize = code.size_bytes();
             moduleInfo.pCode = code.data();
             Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &moduleInfo, nullptr, &module), "vkCreateShaderModule");
+            const std::uint32_t storePages = 1u;
+            const VkSpecializationMapEntry entry{ShaderRecompiler::PipelineSpecialization::StorePages, 0u, sizeof(storePages)};
+            const VkSpecializationInfo specialization{1u, &entry, sizeof(storePages), &storePages};
             VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-            pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", nullptr};
+            pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, module, "main", &specialization};
             pipelineInfo.layout = layout;
             Check(context.Function<PFN_vkCreateComputePipelines>("vkCreateComputePipelines")(context.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline), "vkCreateComputePipelines");
         } catch (...) { release(); throw; }
@@ -539,7 +545,120 @@ void RunBdaExecutionTests(const Context& context) {
     RunBdaAnchorTests(context);
 }
 
+static void RunBdaStorePageTests(const Context& context) {
+    namespace Abi = ShaderRecompiler::BdaAbi;
+    constexpr std::uint32_t slots = 64;
+    constexpr std::uint64_t page = Abi::StorePageBytes;
+    constexpr std::uint64_t guest = 0x7fff12400000ULL;
+    Buffer unbound(context, 2 * page, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer masked(context, page, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    Buffer pool(context, Abi::StorePagePoolBytes(slots), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    const std::array<Abi::Range, 2> ranges{{
+        {guest, guest + 2 * page, unbound.DeviceAddress(), Abi::Read | Abi::Write | Abi::Spill, 0},
+        {guest + 2 * page, guest + 3 * page, masked.DeviceAddress(), Abi::Read | Abi::Write | Abi::Masked, 0},
+    }};
+    Buffer table(context, sizeof(Abi::Header) + sizeof(ranges), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer fault(context, Abi::FaultBufferBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    Buffer output(context, 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    const Abi::Header header{Abi::Version, static_cast<std::uint32_t>(ranges.size()), sizeof(Abi::Range), 0};
+    std::memcpy(table.Bytes().data(), &header, sizeof(header));
+    std::memcpy(table.Bytes().data() + sizeof(header), ranges.data(), sizeof(ranges));
+    const auto words = [&](Buffer& buffer) { return reinterpret_cast<std::uint32_t*>(buffer.Bytes().data()); };
+    const auto reset = [&](bool attached) {
+        std::memset(unbound.Bytes().data(), 0x77, unbound.Bytes().size());
+        std::memset(masked.Bytes().data(), 0xcd, masked.Bytes().size());
+        std::memset(pool.Bytes().data(), 0, pool.Bytes().size());
+        std::memset(fault.Bytes().data(), 0, fault.Bytes().size());
+        std::memset(output.Bytes().data(), 0, output.Bytes().size());
+        if (!attached) return;
+        const auto address = pool.DeviceAddress();
+        auto* faultWords = words(fault);
+        faultWords[Abi::StorePagesWord] = static_cast<std::uint32_t>(address);
+        faultWords[Abi::StorePagesWord + 1] = static_cast<std::uint32_t>(address >> 32u);
+        faultWords[Abi::StorePageBaseWord] = static_cast<std::uint32_t>(guest);
+        faultWords[Abi::StorePageBaseWord + 1] = static_cast<std::uint32_t>(guest >> 32u);
+        faultWords[Abi::StorePageSlotsWord] = slots;
+    };
+    const auto slotOf = [&](std::uint64_t address) -> std::optional<std::uint32_t> {
+        const auto key = Abi::StorePageKey(guest, address);
+        for (std::uint32_t probe = 0; probe < Abi::StorePageProbes; ++probe) {
+            const auto slot = (Abi::StorePageHash(key, slots) + probe) & (slots - 1u);
+            if (words(pool)[slot] == key) return slot;
+        }
+        return std::nullopt;
+    };
+    const auto pageBytes = [&](std::uint32_t slot) { return pool.Bytes().data() + Abi::StorePageWord(slots, slot) * sizeof(std::uint32_t); };
+    const auto run = [&](std::vector<std::uint32_t> shader) {
+        Pipeline pipeline(context, shader, {&table, &fault, &output});
+        pipeline.Run(1);
+        Abi::Fault result{};
+        std::memcpy(&result, fault.Bytes().data(), sizeof(result));
+        std::uint32_t loaded = 0;
+        std::memcpy(&loaded, output.Bytes().data(), sizeof(loaded));
+        return std::pair{result, loaded};
+    };
+    const auto untouched = [&](Buffer& buffer, std::byte fill) {
+        const auto bytes = buffer.Bytes();
+        return std::all_of(bytes.begin(), bytes.end(), [&](std::byte value) { return value == fill; });
+    };
+    reset(true);
+    auto [stored, loaded] = run(MakeBdaStoreLoadTestShader(guest + 0x104, guest + 0x104, 0xa1b2c3d4u, 32));
+    Require(stored.state == Abi::FaultState::Empty, "a store into an unbound heap mirror block published a fault");
+    Require(loaded == 0xa1b2c3d4u, "a read after a store into an unbound heap mirror block in the same dispatch returned " + Hex(loaded));
+    Require(untouched(unbound, std::byte{0x77}), "a store into an unbound heap mirror block reached the block's zero memory");
+    const auto first = slotOf(guest + 0x104);
+    Require(first.has_value(), "a store into an unbound heap mirror block claimed no store page");
+    std::uint32_t paged = 0;
+    std::memcpy(&paged, pageBytes(*first) + 0x104, sizeof(paged));
+    Require(paged == 0xa1b2c3d4u, "the store page of an unbound heap mirror block holds " + Hex(paged));
+    Require(std::all_of(pageBytes(*first), pageBytes(*first) + 0x104, [](std::byte value) { return value == std::byte{0}; }), "a store page holds bytes no store wrote");
+    Require(words(fault)[Abi::StorePageOverflowWord] == 0, "one store page overflowed the store page table");
+    reset(true);
+    std::tie(stored, loaded) = run(MakeBdaStoreLoadTestShader(guest + 0x10, guest + page + 0x20, 0x11223344u, 32));
+    Require(stored.state == Abi::FaultState::Empty && loaded == 0x77777777u, "a read of an unbound block no store reached did not read its memory (got " + Hex(loaded) + ")");
+    Require(slotOf(guest + 0x10).has_value() && !slotOf(guest + page).has_value(), "a read claimed a store page");
+    reset(true);
+    std::tie(stored, loaded) = run(MakeBdaStoreLoadTestShader(guest + page - 2, guest + page - 4, 0xa1b2c3d4u, 32));
+    Require(stored.state == Abi::FaultState::Empty, "an unaligned store across two unbound pages published a fault");
+    Require(loaded == 0xc3d40000u, "a read beside an unaligned store across two unbound pages returned " + Hex(loaded));
+    const auto low = slotOf(guest + page - 2);
+    const auto high = slotOf(guest + page);
+    Require(low.has_value() && high.has_value() && *low != *high, "an unaligned store across two unbound pages did not claim a store page each");
+    Require(pageBytes(*low)[page - 2] == std::byte{0xd4} && pageBytes(*low)[page - 1] == std::byte{0xc3} && pageBytes(*high)[0] == std::byte{0xb2} && pageBytes(*high)[1] == std::byte{0xa1}, "an unaligned store across two unbound pages split its bytes wrongly");
+    reset(true);
+    std::tie(stored, loaded) = run(MakeBdaStoreLoadTestShader(guest + 2 * page + 0x13, guest + 2 * page + 0x10, 0x5au, 8));
+    Require(stored.state == Abi::FaultState::Empty && loaded == 0x5acdcdcdu, "a byte store into a copy-backed heap mirror did not reach its memory (read " + Hex(loaded) + ")");
+    const auto maskSlot = slotOf(guest + 2 * page);
+    Require(maskSlot.has_value(), "a store into a copy-backed heap mirror claimed no store page");
+    const auto* mask = words(pool) + Abi::StoreMaskWord(slots, *maskSlot);
+    Require(mask[0] == (1u << 0x13) && std::all_of(mask + 1, mask + Abi::StoreMaskWords, [](std::uint32_t word) { return word == 0; }), "the store mask of a byte store holds " + Hex(mask[0]));
+    Require(std::all_of(pageBytes(*maskSlot), pageBytes(*maskSlot) + page, [](std::byte value) { return value == std::byte{0}; }), "a store into a copy-backed heap mirror wrote its store page");
+    reset(true);
+    std::tie(stored, loaded) = run(MakeBdaStoreLoadTestShader(guest + 2 * page + 0x1e, guest + 2 * page + 0x1c, 0xa1b2c3d4u, 32));
+    Require(stored.state == Abi::FaultState::Empty && loaded == 0xc3d4cdcdu, "an unaligned dword store into a copy-backed heap mirror read back " + Hex(loaded));
+    const auto* split = words(pool) + Abi::StoreMaskWord(slots, *slotOf(guest + 2 * page));
+    Require(split[0] == 0xc0000000u && split[1] == 0x3u, "the store mask of an unaligned dword store holds " + Hex(split[0]) + " " + Hex(split[1]));
+    reset(true);
+    const std::array<std::uint32_t, 4> values{0x01020304u, 0x05060708u, 0x090a0b0cu, 0x0d0e0f10u};
+    std::tie(stored, loaded) = run(MakeBdaDwordWriteTestShader(guest + 2 * page + 0x18, 4, values.data()));
+    Require(stored.state == Abi::FaultState::Empty && std::memcmp(masked.Bytes().data() + 0x18, values.data(), sizeof(values)) == 0, "a four-dword store into a copy-backed heap mirror did not reach its memory");
+    const auto* wide = words(pool) + Abi::StoreMaskWord(slots, *slotOf(guest + 2 * page));
+    Require(wide[0] == 0xff000000u && wide[1] == 0xffu && wide[2] == 0, "the store mask of a four-dword store across two mask words holds " + Hex(wide[0]) + " " + Hex(wide[1]));
+    reset(true);
+    const auto key = Abi::StorePageKey(guest, guest);
+    for (std::uint32_t probe = 0; probe < Abi::StorePageProbes; ++probe) words(pool)[(Abi::StorePageHash(key, slots) + probe) & (slots - 1u)] = key + 1000u + probe;
+    std::tie(stored, loaded) = run(MakeBdaStoreLoadTestShader(guest + 8, guest + 8, 0xa1b2c3d4u, 32));
+    Require(stored.state == Abi::FaultState::Ready && stored.reason == Abi::FaultReason::StorePages && stored.address == guest + 8 && stored.bytes == 4, "a store finding no free store page did not fault");
+    Require(words(fault)[Abi::StorePageOverflowWord] == 1, "a store finding no free store page did not mark the overflow");
+    Require(untouched(unbound, std::byte{0x77}), "a refused store reached the unbound block's memory");
+    reset(false);
+    std::tie(stored, loaded) = run(MakeBdaStoreLoadTestShader(guest + 8, guest + 8, 0xa1b2c3d4u, 32));
+    Require(stored.state == Abi::FaultState::Ready && stored.reason == Abi::FaultReason::StorePages, "a store into an unbound block without a store page table did not fault");
+    Require(untouched(unbound, std::byte{0x77}), "a store without a store page table reached the unbound block's memory");
+}
+
 void RunBdaStoreExecutionTests(const Context& context) {
+    RunBdaStorePageTests(context);
     namespace Abi = ShaderRecompiler::BdaAbi;
     Buffer first(context, 2, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     Buffer second(context, 3, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);

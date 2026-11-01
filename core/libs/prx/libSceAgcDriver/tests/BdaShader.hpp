@@ -14,6 +14,7 @@ std::vector<std::uint32_t> MakeBdaFaultSequenceTestShader(std::initializer_list<
 std::vector<std::uint32_t> MakeBdaDwordWriteTestShader(std::uint64_t address, std::uint32_t dwords, const std::uint32_t* values);
 std::vector<std::uint32_t> MakeBdaStoreTestShader(std::uint64_t address, std::uint32_t value, std::uint32_t bits, bool coherent);
 std::vector<std::uint32_t> MakeBdaWriteTestShader(std::uint64_t address, std::uint32_t value, std::uint32_t bits, bool coherent);
+std::vector<std::uint32_t> MakeBdaStoreLoadTestShader(std::uint64_t store, std::uint64_t load, std::uint32_t value, std::uint32_t bits);
 inline constexpr std::uint32_t BdaAnchoredReadInputWord = 256;
 struct BdaAnchoredRead {
     std::int32_t immediate = 0;
