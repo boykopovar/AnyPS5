@@ -33,6 +33,9 @@ enum class FrameCallKind : std::uint32_t {
     UnregisterVideoOutput,
 };
 
+inline constexpr std::uint32_t InFlightDeltaFlag = 1;
+inline constexpr std::uint32_t InFlightCallsVersion = 2;
+
 struct FrameCall {
     FrameCallKind kind = FrameCallKind::End;
     std::uint64_t ordinal = 0;
@@ -78,7 +81,8 @@ public:
     static constexpr std::string_view CallsName = "calls.bin";
     static constexpr std::string_view MemoryName = "memory.bin";
     static constexpr std::string_view HeaderName = "capture.json";
-    static constexpr std::string_view CallsMagic = "aps5-frame-calls 1\n";
+    static constexpr std::string_view CallsMagic = "aps5-frame-calls 2\n";
+    static constexpr std::string_view CallsMagicV1 = "aps5-frame-calls 1\n";
     static constexpr std::string_view MemoryMagic = "aps5-frame-memory 1\n";
     static constexpr std::size_t BlockBytes = 64u * 1024u;
     static constexpr std::size_t ChunkBytes = 4u * 1024u * 1024u;
@@ -119,6 +123,7 @@ public:
     const std::vector<FrameCall>& Calls() const;
     const std::vector<FrameMemoryChunk>& Chunks() const;
     const std::string& Header() const;
+    std::uint32_t Version() const;
     bool Truncated() const;
     void Read(const FrameMemoryChunk& chunk, std::span<std::byte> destination) const;
     std::vector<std::byte> Read(const FrameMemoryChunk& chunk) const;
@@ -128,6 +133,7 @@ private:
     std::vector<FrameCall> calls;
     std::vector<FrameMemoryChunk> chunks;
     std::string header;
+    std::uint32_t version = 2;
     bool truncated = false;
 };
 

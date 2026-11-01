@@ -19,6 +19,8 @@
 #include <set>
 #include <span>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace AgcDriver {
@@ -54,6 +56,21 @@ public:
 
 private:
     enum class State { Waiting, Recording, Done };
+
+    struct StoreOwner {
+        std::uint64_t group = 0;
+        std::uint64_t accepted = 0;
+    };
+    struct StoreHazard {
+        std::uint64_t group = 0;
+        std::uint64_t page = 0;
+        std::uint64_t serial = 0;
+    };
+    static void observeDriverStore(std::uint64_t begin, std::uint64_t end, std::uint64_t serial);
+    void noteDriverStore(std::uint64_t begin, std::uint64_t end, std::uint64_t serial);
+    std::size_t holdReason(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks);
+    void arm(std::span<const std::pair<std::uint64_t, std::uint64_t>> blocks, std::uint64_t group, std::uint64_t accepted);
+    bool stopOnHazard();
 
     struct Range {
         std::uint64_t address = 0;
@@ -137,6 +154,16 @@ private:
     std::uint64_t allocationsGeneration = 0;
     std::uint64_t lateRanges = 0;
     std::array<std::uint64_t, 17> submitDepths{};
+    mutable std::mutex storeMutex;
+    std::unordered_set<std::uint64_t> driverPages;
+    std::unordered_map<std::uint64_t, StoreOwner> storeOwners;
+    StoreHazard storeHazard;
+    std::uint64_t unattributedStores = 0;
+    std::uint64_t inFlightDeltas = 0;
+    std::uint64_t heldDeltas = 0;
+    std::array<std::uint64_t, 12> holdReasons{};
+    std::set<std::uint64_t> callThreads;
+    static std::atomic<FrameRecorder*> observing;
     std::vector<std::string> warnings;
     std::chrono::steady_clock::time_point origin;
     std::chrono::steady_clock::time_point startedAt;

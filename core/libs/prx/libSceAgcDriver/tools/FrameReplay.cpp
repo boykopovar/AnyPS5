@@ -136,11 +136,33 @@ private:
     Frames& frames;
 };
 
-std::uint64_t headerNumber(const std::string& header, std::string_view key) {
+std::optional<std::uint64_t> headerValue(const std::string& header, std::string_view key) {
     const auto quoted = "\"" + std::string(key) + "\":";
     const auto at = header.find(quoted);
-    if (at == std::string::npos) throw std::runtime_error("frame replay: the capture header has no " + std::string(key));
-    return std::strtoull(header.c_str() + at + quoted.size(), nullptr, 10);
+    if (at == std::string::npos) return std::nullopt;
+    const auto* const end = header.data() + header.size();
+    std::uint64_t value = 0;
+    const auto [last, error] = std::from_chars(header.data() + at + quoted.size(), end, value);
+    if (error != std::errc{} || last == end || std::string_view(",} \t\r\n").find(*last) == std::string_view::npos) throw std::runtime_error("frame replay: the capture header's " + std::string(key) + " is not a number");
+    return value;
+}
+
+std::uint64_t headerNumber(const std::string& header, std::string_view key) {
+    const auto value = headerValue(header, key);
+    if (!value) throw std::runtime_error("frame replay: the capture header has no " + std::string(key));
+    return *value;
+}
+
+void requireVerifiedDeltas(const FrameCaptureReader& reader) {
+    if (reader.Version() < AgcDriver::InFlightCallsVersion) return;
+    const auto& header = reader.Header();
+    const auto stale = headerValue(header, "stale_delta");
+    if (stale.value_or(0) != 0) throw std::runtime_error("frame replay: the capture stopped because a memory delta was read while submissions that stored into it were in flight (stale_delta " + std::to_string(*stale) + ")");
+    const auto inFlight = std::count_if(reader.Calls().begin(), reader.Calls().end(), [](const FrameCall& call) { return call.kind == FrameCallKind::Memory && (call.flags & AgcDriver::InFlightDeltaFlag) != 0; });
+    if (inFlight == 0) return;
+    const auto refuse = [&](const std::string& reason) { return std::runtime_error("frame replay: " + std::to_string(inFlight) + " memory deltas were read while submissions were in flight, but " + reason + ", so stores those submissions made into them later were never checked"); };
+    if (header.empty()) throw refuse("capture.json is missing or empty");
+    if (!stale) throw refuse("capture.json has no stale_delta");
 }
 
 void requireMemoryInRanges(const FrameCaptureReader& reader) {
@@ -297,6 +319,7 @@ Skipped restoreMemory(const FrameCaptureReader& reader) {
     std::size_t size = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &size);
     if (!reader.Header().empty() && headerNumber(reader.Header(), "arena_base") != base) throw std::runtime_error("frame replay: the guest arena is at a different address than in the capture");
+    requireVerifiedDeltas(reader);
     requireMemoryInRanges(reader);
     progress();
     Skipped skipped;
@@ -369,6 +392,7 @@ struct Replay {
     std::atomic<std::size_t> sequenced{0};
     std::uint64_t unfinished = 0;
     std::size_t threads = 0;
+    std::uint64_t singleThreadOrdinal = 0;
     std::size_t pass = 0;
     bool recording = false;
     Clock::time_point startedAt{};
@@ -506,6 +530,13 @@ struct Replay {
             const std::unique_lock lock(memoryMutex);
             const auto began = Clock::now();
             const bool pacing = options.pace && recording;
+            if (pacing && reader.Version() >= AgcDriver::InFlightCallsVersion && (call.flags & AgcDriver::InFlightDeltaFlag) != 0) {
+                if (call.ordinal > singleThreadOrdinal) throw std::runtime_error("frame replay: memory delta at call " + std::to_string(call.ordinal) + " was read with submissions in flight after a second thread made calls, which this replay cannot order");
+                waitStarted(call);
+                paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
+                restoreGroup(call.values.at(0));
+                return;
+            }
             const bool settled = !pacing || AgcDriverHoldSettled_nid_postfix(stalled.load() && progress().second == stalledAt.load() ? 0 : options.busyTimeout.count());
             const SettledHold hold{pacing};
             paceWaitedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - began).count();
@@ -519,6 +550,28 @@ struct Replay {
             return;
         }
         throw std::runtime_error("frame replay: unknown call kind");
+    }
+
+    void waitStarted(const FrameCall& call) {
+        const auto accepted = progress().first;
+        const auto limit = Clock::now() + options.busyTimeout;
+        auto lastSeen = progress();
+        auto quietSince = Clock::now();
+        for (std::size_t index = 1; index < call.values.size(); ++index) {
+            const auto serial = accepted - (call.accepted - call.values[index]);
+            const auto blocked = [&](const std::string& reason) { return std::runtime_error("frame replay: memory delta at call " + std::to_string(call.ordinal) + " waits for submission " + std::to_string(call.values[index]) + " (replay serial " + std::to_string(serial) + "), which had started when the capture read the delta, but " + reason); };
+            while (!AgcDriverSerialDone_nid_postfix(serial)) {
+                const auto now = Clock::now();
+                if (const auto seen = progress(); seen != lastSeen) {
+                    lastSeen = seen;
+                    quietSince = now;
+                } else if (now - quietSince >= options.paceTimeout && AgcDriverSettled_nid_postfix() && !AgcDriverSerialDone_nid_postfix(serial) && progress() == seen) {
+                    throw blocked("no queue runs and the serials stopped at " + std::to_string(seen.second) + "/" + std::to_string(seen.first) + "; blocked on" + describeBlocked());
+                }
+                if (now >= limit) throw blocked("it did not complete within " + std::to_string(options.busyTimeout.count()) + " ms");
+                std::this_thread::sleep_for(std::chrono::microseconds(50));
+            }
+        }
     }
 
     static bool rewindWait(const AgcDriver::AwaitedWait& wait) {
@@ -662,6 +715,12 @@ struct Replay {
         std::map<std::uint64_t, std::vector<std::size_t>> byThread;
         for (std::size_t index = 0; index < calls.size(); ++index) byThread[calls[index].thread].push_back(index);
         threads = byThread.size();
+        singleThreadOrdinal = calls.empty() ? 0 : calls.back().ordinal;
+        for (const auto& call : calls) {
+            if (call.thread == calls.front().thread) continue;
+            singleThreadOrdinal = call.ordinal - 1;
+            break;
+        }
         std::mutex mutex;
         std::condition_variable turn;
         std::size_t started = 0;

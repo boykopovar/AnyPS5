@@ -77,6 +77,11 @@ public:
     std::vector<std::uint32_t> PendingEopFlipTokens();
     std::pair<std::uint64_t, std::uint64_t> SerialProgress();
     StartedProgressSnapshot StartedProgress();
+    bool UnfinishedLabelOverlaps(std::uint64_t begin, std::uint64_t end);
+    bool SerialDone(std::uint64_t serial);
+    void HoldForRecorder();
+    void ReleaseForRecorder();
+    void ParkForRecorder() { if (recorderHold.load(std::memory_order_acquire)) parkForRecorder(); }
     std::uint64_t FlipSubmissions() const;
     std::vector<AwaitedWait> AwaitedWaits();
     void WaitForPipelineJournal();
@@ -158,6 +163,7 @@ private:
     void finishFlipWork(std::uint64_t workSerial);
     std::uint64_t submitFlipWork(std::uint32_t queue);
     void waitFlipWork(std::uint64_t workSerial);
+    void parkForRecorder();
     void reserveOutputs(Submission& submission);
     void executeRewindTail(const Submission& stalled);
     void enqueue(Submission submission);
@@ -499,6 +505,7 @@ private:
 
     std::atomic<bool> failed{false};
     std::atomic<bool> stopping{false};
+    std::atomic<bool> recorderHold{false};
     bool stopped = false;
     bool resetGraphics = false;
 

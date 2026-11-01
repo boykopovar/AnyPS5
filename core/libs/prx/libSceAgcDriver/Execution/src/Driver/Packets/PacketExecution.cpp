@@ -279,6 +279,7 @@ void Driver::execute(const Submission& submission) {
     } settleFinisher{submission.queue == 0};
     for (std::size_t cursor = 0; cursor < submission.commands.size();) {
         if (packetEpoch()) bumpEpoch(&EpochBumps::packets);
+        ParkForRecorder();
         CheckFailure();
         const auto header = submission.commands[cursor];
         if (Pm4::FillerPacket(header)) { ++cursor; continue; }

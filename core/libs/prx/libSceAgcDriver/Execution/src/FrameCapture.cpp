@@ -360,7 +360,9 @@ std::vector<std::byte> FrameCaptureWriter::compress(std::span<const std::byte> b
 FrameCaptureReader::FrameCaptureReader(const std::filesystem::path& directory) : directory(directory) {
     const auto callsPath = directory / FrameCaptureWriter::CallsName;
     const auto callBytes = readFile(callsPath);
-    requireMagic(callBytes, FrameCaptureWriter::CallsMagic, callsPath);
+    const auto first = std::span<const std::byte>(callBytes).first(std::min(callBytes.size(), FrameCaptureWriter::CallsMagicV1.size()));
+    if (first.size() == FrameCaptureWriter::CallsMagicV1.size() && std::memcmp(first.data(), FrameCaptureWriter::CallsMagicV1.data(), first.size()) == 0) version = 1;
+    else requireMagic(callBytes, FrameCaptureWriter::CallsMagic, callsPath);
     std::size_t at = FrameCaptureWriter::CallsMagic.size();
     while (at < callBytes.size()) {
         if (callBytes.size() - at < 8) {
@@ -438,6 +440,10 @@ const std::vector<FrameCall>& FrameCaptureReader::Calls() const {
 
 const std::vector<FrameMemoryChunk>& FrameCaptureReader::Chunks() const {
     return chunks;
+}
+
+std::uint32_t FrameCaptureReader::Version() const {
+    return version;
 }
 
 const std::string& FrameCaptureReader::Header() const {
