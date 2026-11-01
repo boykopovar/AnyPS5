@@ -65,7 +65,7 @@ def elf_sections(path, data):
     return [unpack("<IIQQQQIIQQ", data, section_offset + index * 64, path, f"section header {index}") for index in range(section_count)]
 
 
-def elf_program_dynamic_symbols(path, data):
+def elf_program_dynamic_symbols(path, data, metadata=None):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
     ident, program_offset, program_size, program_count = header[0], header[5], header[9], header[10]
     if ident[6] != 1 or header[3] != 1:
@@ -158,6 +158,8 @@ def elf_program_dynamic_symbols(path, data):
         elif info >> 4 in (1, 2, 10) and other & 3 in (0, 3):
             exports.add(symbol)
     needed = {cstring(data, string_offset + value, string_offset + string_size, path, "needed library name") for value in needed_offsets}
+    if metadata is not None and 14 in dynamic:
+        metadata["soname"] = cstring(data, string_offset + dynamic[14], string_offset + string_size, path, "SONAME")
     return imports, exports, needed
 
 
@@ -196,10 +198,10 @@ def elf_exports(path, data):
     return names
 
 
-def elf_imports(path, data):
+def elf_imports(path, data, metadata=None):
     header = unpack("<16sHHIQQQIHHHHHH", data, 0, path, "ELF header")
     if not header[6] or header[6] >= len(data):
-        imports, _, needed = elf_program_dynamic_symbols(path, data)
+        imports, _, needed = elf_program_dynamic_symbols(path, data, metadata)
         return imports, needed
     sections = elf_sections(path, data)
     symbols = {}
@@ -232,6 +234,8 @@ def elf_imports(path, data):
                     break
                 if tag == 1:
                     needed.add(cstring(data, strings_offset + value, strings_offset + strings_size, path, "needed library name"))
+                elif tag == 14 and metadata is not None:
+                    metadata["soname"] = cstring(data, strings_offset + value, strings_offset + strings_size, path, "SONAME")
             if not terminated:
                 raise AuditError(f"{path}: dynamic section is not terminated by DT_NULL")
     return symbols, needed
@@ -455,25 +459,34 @@ def read_modules(directories):
     imports = {}
     exports = defaultdict(set)
     images = {}
+    modules = []
     for directory in directories:
         for file in module_files(directory):
             data = file.read_bytes()
             digest = hashlib.sha256(data).digest()
-            if file.name in images:
-                previous, fingerprint = images[file.name]
-                if digest != fingerprint:
-                    raise AuditError(f"ambiguous guest module {file.name}: {previous} and {file} have different contents")
-                continue
-            images[file.name] = (file, digest)
+            metadata = {}
             if data.startswith(b"MZ"):
-                imports[file.name] = ([], [])
+                requested = ([], [])
                 names = pe_exports(file, data)
             else:
-                symbols, needed = elf_imports(file, data)
-                imports[file.name] = (sorted(symbols.items()), sorted(needed))
+                symbols, needed = elf_imports(file, data, metadata)
+                requested = (sorted(symbols.items()), sorted(needed))
                 names = elf_exports(file, data)
-            for name in names:
-                exports[name.split(MODULE_SUFFIX, 1)[0]].add(file.name)
+            modules.append((file, digest, requested, names, metadata.get("soname", "")))
+    for file, digest, requested, names, soname in modules:
+        if soname and any(other.parent == file.parent and len(other.name) < len(file.name)
+                          and file.name.startswith(other.name) and other_soname == soname
+                          for other, _, _, _, other_soname in modules):
+            continue
+        if file.name in images:
+            previous, fingerprint = images[file.name]
+            if digest != fingerprint:
+                raise AuditError(f"ambiguous guest module {file.name}: {previous} and {file} have different contents")
+            continue
+        images[file.name] = (file, digest)
+        imports[file.name] = requested
+        for name in names:
+            exports[name.split(MODULE_SUFFIX, 1)[0]].add(file.name)
     return imports, {name: sorted(files) for name, files in exports.items()}
 
 
