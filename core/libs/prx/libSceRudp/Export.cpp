@@ -29,6 +29,7 @@ constexpr int RUDP_ERROR_MEMORY = static_cast<int>(0x80770007u);
 constexpr int RUDP_ERROR_CONN_RESET = static_cast<int>(0x80770009u);
 constexpr int RUDP_ERROR_CONN_REFUSED = static_cast<int>(0x8077000Au);
 constexpr int RUDP_ERROR_NOT_ACCEPTABLE = static_cast<int>(0x80770011u);
+constexpr int RUDP_ERROR_NOT_BOUND = static_cast<int>(0x80770013u);
 constexpr int RUDP_ERROR_CANCELLED = static_cast<int>(0x80770014u);
 constexpr int RUDP_ERROR_INVALID_VPORT = static_cast<int>(0x80770015u);
 constexpr int RUDP_ERROR_WOULDBLOCK = static_cast<int>(0x80770016u);
@@ -677,8 +678,28 @@ int APS5_VABI sceRudpFlush(int ctxId) {
     return RUDP_ERROR_NOT_ACCEPTABLE;
 }
 
-int APS5_VABI sceRudpGetLocalInfo() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceRudpGetLocalInfo(int ctxId, int* socketId, void* addr, std::uint32_t* addrLen, std::uint16_t* vport, std::uint8_t* muxMode) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    if (!g_inited) {
+        return RUDP_ERROR_NOT_INITIALIZED;
+    }
+    if (ctxId < 0) {
+        return RUDP_ERROR_INVALID_ARGUMENT;
+    }
+    if (!valid_ctx(ctxId)) {
+        return RUDP_ERROR_INVALID_CONTEXT_ID;
+    }
+    const auto& context = g_ctx.at(ctxId);
+    if (!context.bound) {
+        return RUDP_ERROR_NOT_BOUND;
+    }
+    if (socketId) *socketId = context.socketId;
+    if (vport) *vport = context.vport;
+    if (muxMode) *muxMode = context.muxMode;
+    if (addr && addrLen && *addrLen > 0) {
+        NotImplemented_nid_no_patch(__func__);
+        return 0;
+    }
     return 0;
 }
 
