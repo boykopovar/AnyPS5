@@ -157,7 +157,8 @@ public:
     MultisampleTarget(const Context& context, const ColorTarget& target, std::optional<VkClearColorValue> knownClear = std::nullopt) : context(context), target(target), cmask(target.cmaskAddress, target.cmaskBytes), colorFill(target) {
         this->context.bufferPool.reset();
         if (target.dccAddress != 0) metadataValid = std::make_shared<std::atomic<bool>>(true);
-        const auto initial = knownClear.has_value() ? knownClear : target.dccAddress != 0 || target.cmaskFastClear ? std::optional{initialDccClear(target)} : initialColorContents(target);
+        std::shared_ptr<Buffer> initialUpload;
+        const auto initial = knownClear.has_value() ? knownClear : target.dccAddress != 0 || target.cmaskFastClear ? std::optional{initialDccClear(target)} : initialColorContents(context, target, initialUpload);
         const auto samples = static_cast<VkSampleCountFlagBits>(target.samples);
         Require((context.limits.framebufferColorSampleCounts & samples) != 0, "the device cannot render color with the target's sample count");
         VkFormatProperties properties{};
@@ -237,6 +238,7 @@ public:
                         const auto count = std::min(stride, bytes - offset);
                         context.detiler->DispatchMultisampleImage(commands, target.elementBytes, initialUpload->Handle(), offset, (count + 3u) & ~VkDeviceSize{3}, initialView, target.extent.width, target.extent.height, 1u, target.samples, static_cast<std::uint32_t>(offset / target.elementBytes), static_cast<std::uint32_t>(count / target.elementBytes));
                     }
+                    if (recorder != nullptr) recorder->Keep(initialUpload, initialUpload->Bytes().size());
                     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
                     if (recorder != nullptr) Recorder::CountBarriers(Recorder::CommandClass::Draw, 3);
                 }
@@ -375,7 +377,7 @@ public:
     void Keep() {
         if (auto* recorder = Recorder::Active(); recorder != nullptr && recorder->Device() == context.device) {
             recorder->Keep(shared_from_this());
-            recorder->KeepBytes(this, allocationBytes + initialColor.size() + (initialUpload ? initialUpload->Bytes().size() : 0u));
+            recorder->KeepBytes(this, allocationBytes + guestColorBaseline.size());
         }
     }
 
@@ -556,7 +558,7 @@ public:
 
     MultisampleColorSnapshot ColorSnapshot() {
         Require(target.tileMode == ColorTileMode::RenderTarget && target.dccAddress == 0 && target.cmaskAddress == 0, "guest color snapshots with unsupported tiling or multisample metadata are not implemented");
-        Require(!initialColor.empty(), "guest color snapshot has no initial footprint");
+        Require(!guestColorBaseline.empty(), "guest color snapshot has no initial footprint");
         readbackRecorder().Sync();
         Require(active->load(std::memory_order_acquire), "multisampled color target was retired before guest color snapshot");
         auto original = currentGuestColor();
@@ -573,7 +575,7 @@ public:
     }
 
     void PublishColorSnapshot(const MultisampleColorSnapshot& snapshot) {
-        Require(snapshot.original.size() == initialColor.size() && snapshot.current.size() == initialColor.size() && !initialColor.empty(), "guest color publication snapshot sizes differ");
+        Require(snapshot.original.size() == guestColorBaseline.size() && snapshot.current.size() == guestColorBaseline.size() && !guestColorBaseline.empty(), "guest color publication snapshot sizes differ");
         const auto bytes = snapshot.current.size();
         Require(bytes <= std::numeric_limits<std::uint64_t>::max() - target.address, "guest color publication range overflows");
         const auto end = target.address + bytes;
@@ -817,36 +819,35 @@ private:
         return true;
     }
 
-    std::vector<std::byte> initialColor;
+    std::vector<std::byte> guestColorBaseline;
     std::optional<std::uint32_t> paddingFill;
-    std::unique_ptr<Buffer> initialUpload;
     VkImageView initialView = VK_NULL_HANDLE;
 
-    std::optional<VkClearColorValue> initialColorContents(const ColorTarget& use) {
+    std::optional<VkClearColorValue> initialColorContents(const Context& uploadContext, const ColorTarget& use, std::shared_ptr<Buffer>& initialUpload) {
         Require(use.cmaskAddress == 0, "initial multisample color samples with CMASK require a modeled metadata import");
         Require(use.layers == 1u && use.arraySlice == 0u && use.arrayLastSlice == 0u && use.depth == 1u && use.depthSlice == 0u && use.mipCount == 1u && use.mip == 0u && !use.mipTail, "initial multisample array, volume or mip contents are not implemented");
         Require(FindGuestColorTargetFormat(use.format, use.elementBytes).has_value(), "initial multisample color format or element size is unsupported");
         const auto bytes = MultisampledColorBytes(use);
         Require(bytes != 0 && bytes <= std::numeric_limits<std::size_t>::max(), "initial multisample color footprint is not implemented");
-        initialColor.resize(static_cast<std::size_t>(bytes));
-        GuestMemory::Read(use.address, initialColor);
-        const auto repeated = std::equal(initialColor.begin() + use.elementBytes, initialColor.end(), initialColor.begin());
+        guestColorBaseline.resize(static_cast<std::size_t>(bytes));
+        GuestMemory::Read(use.address, guestColorBaseline);
+        const auto repeated = std::equal(guestColorBaseline.begin() + use.elementBytes, guestColorBaseline.end(), guestColorBaseline.begin());
         if (repeated) {
             std::array<std::uint32_t, 4> pattern{};
             auto texels = std::as_writable_bytes(std::span(pattern));
-            for (std::size_t offset = 0; offset < texels.size(); offset += use.elementBytes) std::memcpy(texels.data() + offset, initialColor.data(), use.elementBytes);
+            for (std::size_t offset = 0; offset < texels.size(); offset += use.elementBytes) std::memcpy(texels.data() + offset, guestColorBaseline.data(), use.elementBytes);
             VkClearColorValue clear{};
             if (ClearColorForTexel(use.format, use.elementBytes, pattern, clear)) return clear;
         }
         Require(use.tileMode == ColorTileMode::RenderTarget, "nonuniform initial multisample color tiling is not implemented");
         const MultisampleTextureLayout layout(TextureTileMode::kR64KBX, use.elementBytes, use.samples, use.extent.width, use.extent.height, 1u, use.pipeBankXor);
-        Require(layout.Bytes() == initialColor.size(), "initial multisample color layout and footprint differ");
+        Require(layout.Bytes() == guestColorBaseline.size(), "initial multisample color layout and footprint differ");
         const auto elements = static_cast<std::uint64_t>(use.extent.width) * use.extent.height * use.samples;
         Require(elements != 0 && elements <= std::numeric_limits<std::uint32_t>::max(), "initial multisample color element count is unsupported");
         const auto alignedBytes = (layout.LinearBytes() + 3u) & ~std::uint64_t{3};
         Require(alignedBytes <= std::numeric_limits<std::size_t>::max(), "initial multisample color exceeds host address space");
-        initialUpload = std::make_unique<Buffer>(context, static_cast<std::size_t>(alignedBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
-        layout.Detile(initialColor, initialUpload->Bytes().first(static_cast<std::size_t>(layout.LinearBytes())));
+        initialUpload = std::make_shared<Buffer>(uploadContext, static_cast<std::size_t>(alignedBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+        layout.Detile(guestColorBaseline, initialUpload->Bytes().first(static_cast<std::size_t>(layout.LinearBytes())));
         return std::nullopt;
     }
 
@@ -860,9 +861,9 @@ private:
     }
 
     std::vector<std::byte> currentGuestColor() const {
-        if (GuestMemory::CompareMapped(target.address, initialColor) == GuestMemory::Compare::Equal) return initialColor;
+        if (GuestMemory::CompareMapped(target.address, guestColorBaseline) == GuestMemory::Compare::Equal) return guestColorBaseline;
         if (paddingFill) {
-            auto filled = initialColor;
+            auto filled = guestColorBaseline;
             for (std::size_t offset = 0; offset < filled.size(); offset += sizeof(*paddingFill)) std::memcpy(filled.data() + offset, &*paddingFill, sizeof(*paddingFill));
             if (GuestMemory::CompareMapped(target.address, filled) == GuestMemory::Compare::Equal) return filled;
         }
