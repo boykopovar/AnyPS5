@@ -52,6 +52,7 @@ def built(build):
 
 
 def commands(content):
+    content = content.removeprefix("\ufeff")
     content = LEXICAL.sub(lambda match: re.sub(r"[^\n]", " ", match.group())
                           if match.group("comment") is not None else match.group(), content)
     code = LEXICAL.sub(lambda match: re.sub(r"[^\n]", "_", match.group()), content)
@@ -71,7 +72,7 @@ def commands(content):
             if content[position] == "#":
                 position = content.find("\n", position)
                 if position < 0:
-                    break
+                    position = len(content)
                 continue
             token = ARGUMENT.match(content, position)
             if token is None:
@@ -79,13 +80,15 @@ def commands(content):
             argument = token.group(0)
             if argument.startswith('"'):
                 argument = re.sub(r"\\(\r?\n|.)",
-                                  lambda match: {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t"}.get(match[1], match[1]),
+                                  lambda match: {"\n": "", "\r\n": "", "n": "\n", "r": "\r", "t": "\t", ";": r"\;"}.get(match[1], match[1]),
                                   argument[1:-1], flags=re.S)
             elif token.group("equals") is not None:
                 width = len(token.group("equals")) + 2
                 argument = argument[width:-width].removeprefix("\n")
             arguments.append(argument)
             position = token.end()
+        else:
+            raise ValueError(f"unterminated {command.group(1)} command at position {command.start()}")
 
 
 def registered(build):
@@ -181,6 +184,15 @@ def run_scripts(root, files):
             content = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
             for command, arguments in commands(content):
                 if command == "add_test":
+                    if arguments and arguments[0] == "NAME":
+                        if "COMMAND" not in arguments[2:]:
+                            continue
+                        start = arguments.index("COMMAND", 2) + 1
+                        end = next((index for index in range(start, len(arguments))
+                                    if arguments[index] in ("CONFIGURATIONS", "WORKING_DIRECTORY", "COMMAND_EXPAND_LISTS", "BUILD_DEPENDS")), len(arguments))
+                        arguments = arguments[start:end]
+                    else:
+                        arguments = arguments[1:]
                     run.update(argument.rpartition("}")[2].lstrip("/") for argument in arguments)
         elif name.startswith(".github/workflows/") and name.endswith((".yml", ".yaml")):
             for line in workflow_run_lines((Path(root) / name).read_text(encoding="utf-8", errors="replace")):
