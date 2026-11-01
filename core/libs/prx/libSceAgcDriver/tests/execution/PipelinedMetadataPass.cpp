@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -126,6 +127,10 @@ int main() {
     setenv("APS5_DRAW_PIPELINE", "1", 1);
 #endif
     try {
+        {
+            const auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+        }
         {
             GuestAllocations::Mutation mutation;
             mutation.Add(Surface.data(), Surface.size_bytes(), true, true, true);

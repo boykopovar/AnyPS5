@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#include <type_traits>
 
 static void Require(bool value, const char* what) {
     if (value) return;
@@ -63,6 +64,16 @@ int main() {
     LibreSslPutError_nid_no_patch(10, 1, 2);
     ERR_remove_thread_state_nid_postfix(nullptr);
     Require(ERR_peek_error_nid_postfix() == 0, "removing the thread state empties the queue");
+
+    static_assert(std::is_void_v<decltype(PKCS12_PBE_add_nid_postfix())>);
+    static_assert(std::is_void_v<decltype(OBJ_cleanup_nid_postfix())>);
+    static_assert(std::is_void_v<decltype(SSL_load_error_strings_nid_postfix())>);
+    PKCS12_PBE_add_nid_postfix();
+    OBJ_cleanup_nid_postfix();
+    SSL_load_error_strings_nid_postfix();
+    SSL_load_error_strings_nid_postfix();
+    OBJ_cleanup_nid_postfix();
+    Require(ERR_peek_error_nid_postfix() == 0, "PKCS12_PBE_add, OBJ_cleanup and SSL_load_error_strings queue no error");
 
     std::puts("guest_libressl_error: ok");
     return 0;

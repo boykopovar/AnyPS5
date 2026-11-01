@@ -21,6 +21,7 @@ def fixture():
 def strict_fixture():
     image = optional_plt_fixture([(4, 0x6a0)])
     struct.pack_into("<I", image, 64 + 4, 5)
+    struct.pack_into("<Q", image, 0x400 + 5 * 16 + 8, 0)
     struct.pack_into("<IIII", image, 0x6a0, 1, 1, 0, 0)
     return image
 
