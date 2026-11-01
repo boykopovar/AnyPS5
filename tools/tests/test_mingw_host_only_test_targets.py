@@ -153,6 +153,18 @@ class HostOnlyTargets(unittest.TestCase):
             ["first_tests", "second_tests"],
         )
 
+    def test_build_wide_inputs_check_all_host_targets(self):
+        first = self.target("first_tests")
+        second = self.target("second_tests", source="core/libs/tests/Second.cpp")
+        build_dir = self.fixture([first, second])
+        source_root, targets = build_mingw_host_only_tests.read_reply(build_dir)
+        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", "core/CMakeLists.txt", ".gitmodules"):
+            with self.subTest(path=path):
+                self.assertEqual(
+                    build_mingw_host_only_tests.host_only_test_targets(source_root, targets, [path]),
+                    ["first_tests", "second_tests"],
+                )
+
     def test_header_listed_as_a_target_source_still_selects_all_host_targets(self):
         first = self.target("first_tests")
         second = self.target("second_tests", source="core/libs/tests/Second.cpp")

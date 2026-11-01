@@ -94,6 +94,15 @@ class GuestTestTargets(unittest.TestCase):
         fragment = "core/libs/prx/libSceAgcDriver/tests/cmake/agc_driver_flip_tests.cmake"
         self.assertEqual(self.selections(self.fixture([guest_a, guest_b]), [fragment]), ["guest_a_tests", "guest_b_tests"])
 
+    def test_a_build_wide_input_selects_every_guest_test_and_reaches_the_libs(self):
+        guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
+        guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
+        build = self.fixture([guest_a, guest_b])
+        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", "core/CMakeLists.txt", ".gitmodules"):
+            with self.subTest(path=path):
+                self.assertTrue(build_changed_guest_tests.reaches_libs({path}))
+                self.assertEqual(self.selections(build, [path]), ["guest_a_tests", "guest_b_tests"])
+
     def test_an_unrelated_change_selects_nothing(self):
         guest = self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")
         self.assertEqual(self.selections(self.fixture([guest]), ["core/relinker/codegen/src/Amd64OnlyConverter.cpp"]), [])
