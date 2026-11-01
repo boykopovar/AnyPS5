@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/AdaptiveStaging.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -266,6 +267,32 @@ struct ImportSettle {
 #endif
 };
 
+const bool importsLockOrderChecked = MapImportGate::LockOrderChecked();
+
+thread_local std::uint32_t importsHeld = 0;
+
+class ImportsMutex {
+public:
+    void lock() noexcept {
+        mutex.lock();
+        if (importsLockOrderChecked) ++importsHeld;
+    }
+
+    bool try_lock() noexcept {
+        if (!mutex.try_lock()) return false;
+        if (importsLockOrderChecked) ++importsHeld;
+        return true;
+    }
+
+    void unlock() noexcept {
+        if (importsLockOrderChecked) --importsHeld;
+        mutex.unlock();
+    }
+
+private:
+    AgcDriver::Mutex mutex;
+};
+
 // Imports persist across draws, keyed by allocation base, and are dropped when their allocation leaves
 // the registered set; a dropped import is destroyed once the recorded work that may read it completed.
 struct RefreshedRange {
@@ -275,7 +302,7 @@ struct RefreshedRange {
 };
 
 struct HostImports {
-    AgcDriver::Mutex mutex;
+    ImportsMutex mutex;
     VkDevice device = VK_NULL_HANDLE;
     PFN_vkDestroyBuffer destroyBuffer = nullptr;
     PFN_vkFreeMemory freeMemory = nullptr;
@@ -4303,6 +4330,16 @@ const HostImport* HostImportFor(const Context& context, std::uint64_t address, s
     return importAccess(context, state, address, address + bytes, lease, requester);
 }
 
+void RequireGpuLockBeforeImports(const char* where) {
+    if (!importsLockOrderChecked || importsHeld == 0 || GuestMemory::GpuMutex().HeldByThisThread()) return;
+    std::fprintf(stderr, "[lock] ASSERT: %s takes GuestMemory::GpuMutex while this thread holds the host imports mutex without it\n", where);
+    std::abort();
+}
+
+bool ImportsHeldByThisThread() {
+    return importsHeld != 0;
+}
+
 const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t address, std::size_t bytes) {
     if (context.hostImportAlignment == 0 || bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return nullptr;
     auto& state = Imports();
@@ -4330,8 +4367,9 @@ bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size
 bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
     if (context.hostImportAlignment == 0) return true;
     ensurePinWaiter();
+    const bool withoutGpu = !GuestMemory::GpuMutex().HeldByThisThread();
     auto& state = Imports();
-    std::lock_guard lock(state.mutex);
+    std::unique_lock lock(state.mutex);
     if (!adoptDevice && (state.device != context.device || state.watchDevice != context.device)) return false;
     const bool adopting = state.device != context.device;
     GuestAllocations::Lease current;
@@ -4347,11 +4385,33 @@ bool ImportMappedRanges(const Context& context, const GuestAllocations::Mapped& 
         if (current.empty()) current = GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch(ranges);
         if (leasedRangeOwner(current, range->address) != range) continue;
         try {
-            const auto run = importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state));
+            auto run = importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state));
+            std::optional<MapImportGate::ImportHold> hold;
+            if (withoutGpu) {
+                auto stripes = MapImportGate::StripesOf(run.base, run.base + run.bytes);
+                bool owned = true;
+                for (;;) {
+                    lock.unlock();
+                    hold.reset();
+                    hold.emplace(stripes);
+                    MapImportGate::RunUnlockedHookForTest();
+                    lock.lock();
+                    if (state.device != context.device || state.watchDevice != context.device) return false;
+                    if (state.refreshedGeneration > generation) return true;
+                    current = GuestAllocations::GuestAllocationsAcquireMapped_nid_no_patch(ranges);
+                    owned = leasedRangeOwner(current, range->address) == range;
+                    if (!owned) break;
+                    run = importRun(current, range->address, std::numeric_limits<std::uint64_t>::max(), effectiveBudget(context, state));
+                    if (hold->Covers(run.base, run.base + run.bytes)) break;
+                    MapImportGate::CountRetry();
+                    stripes |= MapImportGate::StripesOf(run.base, run.base + run.bytes);
+                }
+                if (!owned) continue;
+            }
             const bool replacing = wouldRetireImport(state, run);
-            if (!GuestMemory::GpuMutex().HeldByThisThread()) {
+            if (withoutGpu) {
                 const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{run.base, run.base + run.bytes}}};
-                if (replacing || StorageTexture::AnyPendingOverlaps(span)) return false;
+                if (replacing || StorageTexture::UnwatchHookLocksGpu(span)) return false;
             } else if (replacing) {
                 current = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
                 if (leasedRangeOwner(current, range->address) != range) continue;

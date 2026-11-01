@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MapImportGate.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
@@ -70,6 +71,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <deque>
 #include <cctype>
 #include <cmath>
 #include <chrono>
@@ -7083,6 +7085,807 @@ void staleGenerationTests(const Device& device, Recorder& recorder) {
 #endif
 }
 
+#ifdef _WIN32
+bool FailPendingCollect(std::uintptr_t, std::size_t, void (*)(void*, std::uintptr_t, std::uintptr_t), void*) {
+    return false;
+}
+#endif
+
+bool pendingAfterLeavingWatchTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: results pending after a block left the watch not tested\n";
+        return false;
+    }
+    constexpr std::size_t unit = 65536;
+    const auto pattern = [](std::size_t i) { return static_cast<std::uint8_t>(i * 131u + 7u); };
+    const auto decided = PrepareImportWatch(base);
+    SetImportWatch(base, ImportWatch::Watch);
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() { SetImportWatch(context, decided); }
+    } restore{base, decided};
+    enum class Write { None, AfterPending, BeforePending, UnwatchedFullClear, UnwatchedPartialWrite, BeforeUnwatch, UnwatchedWithoutHook, PendingWithoutHook, UnprovenUnwatch, LateUnwatchedWrite, LateBeforeUnwatch, LateWithoutHook, LateUnproven };
+    for (const std::uint32_t side : {256u, 1024u})
+    for (const auto write : {Write::None, Write::AfterPending, Write::BeforePending, Write::UnwatchedFullClear, Write::UnwatchedPartialWrite, Write::BeforeUnwatch, Write::UnwatchedWithoutHook, Write::PendingWithoutHook, Write::UnprovenUnwatch, Write::LateUnwatchedWrite, Write::LateBeforeUnwatch, Write::LateWithoutHook, Write::LateUnproven}) {
+#ifndef _WIN32
+        if (write == Write::UnprovenUnwatch || write == Write::LateUnproven) continue;
+#endif
+        const std::size_t surfaceBytes = static_cast<std::size_t>(side) * side * 4;
+        const std::size_t units = surfaceBytes / unit;
+        const std::size_t lastUnit = units - 1;
+        const bool large = side > 256;
+        const bool unwatchedWrite = write == Write::UnwatchedFullClear || write == Write::UnwatchedPartialWrite;
+        const bool late = write == Write::LateUnwatchedWrite || write == Write::LateBeforeUnwatch || write == Write::LateWithoutHook || write == Write::LateUnproven;
+        const bool lateUnwatch = write == Write::LateBeforeUnwatch || write == Write::LateUnproven;
+        const bool partial = write == Write::UnwatchedPartialWrite || late;
+        const bool unitWritten = unwatchedWrite || write == Write::BeforeUnwatch || late;
+        const bool unhashed = write == Write::UnwatchedWithoutHook || write == Write::PendingWithoutHook || write == Write::UnprovenUnwatch;
+        const bool pageWritten = write == Write::AfterPending || write == Write::BeforePending;
+        const std::string what = std::string(large ? "1024x1024, " : "") + (write == Write::None ? "no CPU write" : write == Write::AfterPending ? "a CPU write after the results were pending again" : write == Write::BeforePending ? "a CPU write before the results were pending again" : write == Write::UnwatchedFullClear ? "a CPU write into the unwatched block before results that cover it" : write == Write::UnwatchedPartialWrite ? "a CPU write into the unwatched block before results that cover part of it" : write == Write::BeforeUnwatch ? "a CPU write into the last block while it was still watched, before it left the watch" : write == Write::UnwatchedWithoutHook ? "the last block left the watch without the unwatch hook" : write == Write::PendingWithoutHook ? "the last block left the watch without the unwatch hook while the results were pending" : write == Write::LateUnwatchedWrite ? "a CPU write into the unwatched block after results that cover part of it were written" : write == Write::LateBeforeUnwatch ? "a CPU write into the last block after results that cover part of it were written, before it left the watch" : write == Write::LateWithoutHook ? "a CPU write into the last block after it left the watch without the unwatch hook and results that cover part of it were written" : write == Write::LateUnproven ? "a CPU write into the last block after results that cover part of it were written, before it left the watch through a failed collect" : "the last block left the watch through a failed collect");
+        const std::string cause = !large && late ? "its bytes differ from the copy taken at its upload" : write == Write::LateUnwatchedWrite || (large && unwatchedWrite) ? "its bytes no longer match the hash taken when its range left the watch" : unwatchedWrite ? "its bytes differ from the copy taken at its upload" : write == Write::BeforeUnwatch || write == Write::LateBeforeUnwatch ? (large ? "the write watch saw CPU writes to it after its generation, before its range left the watch" : "its bytes differ from the copy taken at its upload") : write == Write::UnwatchedWithoutHook || write == Write::LateWithoutHook ? "no hash of its bytes was taken for its current generation" : write == Write::PendingWithoutHook ? "its results became pending while its range was watched, and its bytes were not saved when the range left the watch" : "its range left the watch through the unwatch hook without its CPU writes proven";
+        void* block = AllocateWatched(surfaceBytes, unit);
+        if (block == nullptr) {
+            std::cout << "no write watching: results pending after a block left the watch not tested\n";
+            return false;
+        }
+        auto* memory = static_cast<std::uint8_t*>(block);
+        std::memset(memory, 0x5a, surfaceBytes);
+        const auto address = reinterpret_cast<std::uint64_t>(block);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, surfaceBytes, true, true, true);
+        }
+        struct Unregister {
+            const Context& context;
+            void* block;
+            std::uint64_t address;
+            std::size_t surfaceBytes;
+            ~Unregister() {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, address, surfaceBytes);
+                ReleaseWatched(block, surfaceBytes);
+            }
+        } unregister{base, block, address, surfaceBytes};
+        AgcDriver::GuestMemory::CollectWritesUncached(address, surfaceBytes);
+        TextureDetiler detiler(base);
+        auto context = base;
+        context.detiler = &detiler;
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = side;
+        resource.height = side;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == surfaceBytes, "(p) unexpected surface size");
+        {
+            auto image = StorageTexture::Create(context, detiler, resource, 0);
+            recorder.Keep(image);
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            const auto clear = [&](const VkClearColorValue& value) {
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1, &range);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                image->MarkDirty();
+            };
+            const auto store = [&] {
+                image->WriteBack();
+                recorder.Submit();
+                device.WaitQueue();
+                recorder.Sync();
+            };
+            const auto writePage = [&] {
+                for (std::size_t i = 0; i < 4096; ++i) memory[(units - 2) * unit + i] = pattern(i);
+            };
+            const bool onPath = AgcDriver::GuestMemory::Watched(address, surfaceBytes) && HostImportFor(context, address, surfaceBytes) != nullptr;
+#ifdef _WIN32
+            if (!onPath) {
+                std::cout << "the image's host import left its memory unwatched: results pending after a block left the watch not tested\n";
+                return false;
+            }
+#else
+            Require(onPath, "(p) " + what + ": the image is not on the path under test");
+#endif
+            Require(!image->GuestSnapshotValid(), "(p) " + what + ": the upload left saved guest bytes while its memory was watched");
+            const auto cpuUnit = [](std::size_t i) { return i % 4 == 0 ? static_cast<std::uint8_t>(0x11) : static_cast<std::uint8_t>(i * 131u + 7u); };
+            if (write == Write::BeforeUnwatch) {
+                for (std::size_t i = 0; i < unit; ++i) memory[lastUnit * unit + i] = cpuUnit(i);
+            }
+            const auto unwatchLast = [&] {
+                if (write == Write::UnprovenUnwatch || write == Write::LateUnproven) {
+#ifdef _WIN32
+                    struct Unhook {
+                        ~Unhook() { AgcDriver::GuestMemory::SetFreshCollectHook(nullptr); }
+                    } unhook;
+                    AgcDriver::GuestMemory::SetFreshCollectHook(&FailPendingCollect);
+                    Require(AgcDriver::GuestMemory::MarkWritten(address + lastUnit * unit, 4) == 0, "(p) " + what + ": the failed collect produced trusted stamps");
+#endif
+                } else if (write == Write::UnwatchedWithoutHook || write == Write::PendingWithoutHook || write == Write::LateWithoutHook) {
+                    struct Rehook {
+                        ~Rehook() { AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch); }
+                    } rehook;
+                    AgcDriver::GuestMemory::SetUnwatchHook(nullptr);
+                    AgcDriver::GuestMemory::Unwatch(address + lastUnit * unit, unit);
+                } else {
+                    AgcDriver::GuestMemory::Unwatch(address + lastUnit * unit, unit);
+                }
+                Require(!AgcDriver::GuestMemory::Watched(address, surfaceBytes) && AgcDriver::GuestMemory::Watched(address, lastUnit * unit), "(p) " + what + ": the last block did not leave the watch alone");
+            };
+            if (write != Write::PendingWithoutHook && !lateUnwatch) unwatchLast();
+            if (write == Write::BeforePending) writePage();
+            if (unwatchedWrite) {
+                for (std::size_t i = 0; i < unit; ++i) memory[lastUnit * unit + i] = cpuUnit(i);
+            }
+            if (partial) {
+                constexpr std::uint32_t patch = 16;
+                Buffer staging(context, patch * patch * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+                const auto bytes = staging.Bytes();
+                for (std::size_t at = 0; at < patch * patch * 4; at += 4) {
+                    bytes[at] = std::byte{0};
+                    bytes[at + 1] = std::byte{255};
+                    bytes[at + 2] = std::byte{0};
+                    bytes[at + 3] = std::byte{255};
+                }
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                VkBufferImageCopy copy{};
+                copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                copy.imageOffset = {static_cast<std::int32_t>(side - 64), static_cast<std::int32_t>(side - 64), 0};
+                copy.imageExtent = {patch, patch, 1};
+                context.Function<PFN_vkCmdCopyBufferToImage>("vkCmdCopyBufferToImage")(commands, staging.Handle(), image->Image(), VK_IMAGE_LAYOUT_GENERAL, 1, &copy);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+                if (late) {
+                    recorder.Submit();
+                    device.WaitQueue();
+                    recorder.Sync();
+                    for (std::size_t i = 0; i < unit; ++i) memory[lastUnit * unit + i] = cpuUnit(i);
+                    if (lateUnwatch) unwatchLast();
+                }
+                image->MarkDirty();
+                recorder.Submit();
+                device.WaitQueue();
+                recorder.Sync();
+            } else {
+                clear(VkClearColorValue{{0.0f, 1.0f, 0.0f, 1.0f}});
+            }
+            if (write == Write::PendingWithoutHook) unwatchLast();
+            if (write == Write::AfterPending) writePage();
+            bool refused = false;
+            std::string refusal;
+            try {
+                store();
+            } catch (const std::exception& error) {
+                try {
+                    recorder.Submit();
+                    device.WaitQueue();
+                    recorder.Sync();
+                } catch (...) {
+                }
+                if (!unitWritten && !unhashed) throw;
+                refused = true;
+                refusal = error.what();
+                static_cast<void>(StorageTexture::DiscardPendingInside(address, surfaceBytes));
+            } catch (...) {
+                try {
+                    recorder.Submit();
+                    device.WaitQueue();
+                    recorder.Sync();
+                } catch (...) {
+                }
+                throw;
+            }
+            if (refused) {
+                const std::string unitCause = "(unit " + std::to_string(write == Write::PendingWithoutHook ? 0 : lastUnit) + " of " + std::to_string(units) + ": " + cause;
+                Require(refusal.find(unitCause) != std::string::npos, "(p) " + what + ": the refusal does not name the cause '" + unitCause + "': " + refusal);
+            }
+            if (unhashed && refused) {
+                std::cout << "(p) " + what + ": refused rather than stored\n";
+                for (std::size_t i = 0; i < unit; ++i) Require(memory[lastUnit * unit + i] == 0x5a, "(p) " + what + ": the refused write-back changed the guest's bytes");
+                recorder.Sync();
+                continue;
+            }
+            if (unitWritten) {
+                if (refused) {
+                    std::cout << "(p) " + what + ": refused rather than stored\n";
+                    for (std::size_t i = 0; i < unit; ++i) Require(memory[lastUnit * unit + i] == cpuUnit(i), "(p) " + what + ": the refused write-back changed the CPU's bytes");
+                    recorder.Sync();
+                    continue;
+                }
+                std::vector<std::byte> storedUnit(unit);
+                AgcDriver::GuestMemory::Read(address + lastUnit * unit, storedUnit);
+                std::size_t greens = 0;
+                for (std::size_t at = 0; at < unit; at += 4) {
+                    const bool green = std::to_integer<std::uint8_t>(storedUnit[at]) == 0 && std::to_integer<std::uint8_t>(storedUnit[at + 1]) == 255 && std::to_integer<std::uint8_t>(storedUnit[at + 2]) == 0 && std::to_integer<std::uint8_t>(storedUnit[at + 3]) == 255;
+                    bool cpu = true;
+                    for (std::size_t c = 0; c < 4; ++c) cpu = cpu && std::to_integer<std::uint8_t>(storedUnit[at + c]) == cpuUnit(at + c);
+                    Require(green || cpu, "(p) " + what + ": a texel the GPU did not write holds neither the CPU's bytes nor a result, at +0x" + std::to_string(at));
+                    greens += green;
+                }
+                if (!partial) Require(greens == unit / 4, "(p) " + what + ": " + std::to_string(greens) + " of " + std::to_string(unit / 4) + " words took the GPU result");
+                else Require(greens == 16 * 16, "(p) " + what + ": " + std::to_string(greens) + " words took the GPU result, want 256");
+                std::vector<std::byte> rest(lastUnit * unit);
+                AgcDriver::GuestMemory::Read(address, rest);
+                for (std::size_t at = 0; at < lastUnit * unit; at += 4) {
+                    const bool green = std::to_integer<std::uint8_t>(rest[at]) == 0 && std::to_integer<std::uint8_t>(rest[at + 1]) == 255 && std::to_integer<std::uint8_t>(rest[at + 2]) == 0 && std::to_integer<std::uint8_t>(rest[at + 3]) == 255;
+                    if (!partial) Require(green, "(p) " + what + ": the watched units did not take the GPU result at +0x" + std::to_string(at));
+                    else Require(std::to_integer<std::uint8_t>(rest[at]) == 0x5a, "(p) " + what + ": the watched units changed where the GPU wrote nothing, at +0x" + std::to_string(at));
+                }
+                recorder.Sync();
+                continue;
+            }
+            std::vector<std::byte> read(surfaceBytes);
+            AgcDriver::GuestMemory::Read(address, read);
+            constexpr std::array<std::uint8_t, 4> green{0, 255, 0, 255};
+            const auto isGreen = [&](std::size_t at) {
+                for (std::size_t c = 0; c < 4; ++c) {
+                    if (std::to_integer<std::uint8_t>(read[at + c]) != green[c]) return false;
+                }
+                return true;
+            };
+            std::string unitSummary;
+            for (std::size_t u = 0; u < units; ++u) {
+                std::size_t greens = 0, untouched = 0, other = 0, rawGreens = 0;
+                for (std::size_t at = u * unit; at < (u + 1) * unit; at += 4) {
+                    if (isGreen(at)) ++greens;
+                    else if (std::to_integer<std::uint8_t>(read[at]) == 0x5a) ++untouched;
+                    else ++other;
+                    if (memory[at] == green[0] && memory[at + 1] == green[1] && memory[at + 2] == green[2] && memory[at + 3] == green[3]) ++rawGreens;
+                }
+                unitSummary += " unit " + std::to_string(u) + ": " + std::to_string(greens) + " green words, " + std::to_string(untouched) + " untouched, " + std::to_string(other) + " other, " + std::to_string(rawGreens) + " green in the raw memory;";
+            }
+            for (std::size_t at = 0; at < surfaceBytes; at += 4) {
+                if (pageWritten && at >= (units - 2) * unit && at < lastUnit * unit) continue;
+                Require(isGreen(at), "(p) " + what + ": GPU results were not stored at +0x" + std::to_string(at) + ";" + unitSummary);
+            }
+            if (pageWritten) {
+                for (std::size_t i = 0; i < 4096; ++i) Require(std::to_integer<std::uint8_t>(read[(units - 2) * unit + i]) == pattern(i), "(p) " + what + ": the GPU results overwrote the CPU's bytes;" + unitSummary);
+            }
+        }
+        recorder.Sync();
+    }
+    return true;
+}
+
+struct GateBlock {
+    void* block = nullptr;
+    std::size_t bytes = 0;
+    std::vector<void*> registered;
+
+    std::uint64_t Address() const { return reinterpret_cast<std::uint64_t>(block); }
+
+    GuestAllocations::Mapped Register(std::uint64_t offset, std::size_t length) {
+        auto* at = static_cast<std::byte*>(block) + offset;
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(at, length, true, true, true);
+        }
+        registered.push_back(at);
+        GuestAllocations::Mapped mapped;
+        for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+            if (range->address == reinterpret_cast<std::uint64_t>(at)) mapped.push_back(range);
+        }
+        Require(mapped.size() == 1, "(gate) a mapped range is not registered");
+        return mapped;
+    }
+
+    void Unregister(const Context& context) {
+        for (auto* at : registered) {
+            GuestAllocations::Mutation mutation;
+            mutation.Remove(at);
+        }
+        registered.clear();
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        HostImportFor(context, Address(), bytes);
+    }
+};
+
+struct GateFixture {
+    const Context& base;
+    ImportWatch decided;
+    TextureDetiler detiler;
+    Context context;
+    std::deque<GateBlock> blocks;
+
+    explicit GateFixture(const Context& base) : base(base), decided(PrepareImportWatch(base)), detiler(base), context(base) {
+        context.detiler = &detiler;
+        SetImportWatch(base, ImportWatch::Unwatch);
+    }
+
+    ~GateFixture() {
+        AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch);
+        StorageTexture::SetPublishHookForTest(nullptr);
+        MapImportGate::SetUnlockedHookForTest(nullptr);
+        for (auto& block : blocks) {
+            block.Unregister(context);
+            ReleaseWatched(block.block, block.bytes);
+        }
+        SetImportWatch(base, decided);
+    }
+
+    GateBlock* Allocate(std::size_t bytes, std::size_t alignment) {
+        void* block = AllocateWatched(bytes, alignment);
+        if (block == nullptr) return nullptr;
+        std::memset(block, 0x5a, bytes);
+        AgcDriver::GuestMemory::CollectWritesUncached(reinterpret_cast<std::uint64_t>(block), bytes);
+        blocks.push_back({block, bytes, {}});
+        return &blocks.back();
+    }
+
+    bool Adopt() {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        return ImportMappedRanges(context, {}, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
+    }
+
+    std::shared_ptr<StorageTexture> Image(std::uint64_t address, std::uint32_t side) {
+        GuestTextureResource resource{};
+        resource.baseAddress = address;
+        resource.width = side;
+        resource.height = side;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = 56;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        Require(DescribeSurface(resource).guestBytes == static_cast<std::uint64_t>(side) * side * 4, "(gate) unexpected surface size");
+        return StorageTexture::Create(context, detiler, resource, 0);
+    }
+};
+
+struct GateWatchdog {
+    std::atomic<bool> finished{false};
+    std::thread thread;
+
+    GateWatchdog(const char* what, int seconds) {
+        thread = std::thread([this, what, seconds] {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+            while (!finished.load(std::memory_order_acquire)) {
+                if (std::chrono::steady_clock::now() > deadline) {
+                    std::cerr << what << ": deadlock, a thread did not finish within " << seconds << " s\n";
+                    std::cerr.flush();
+                    std::_Exit(1);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    ~GateWatchdog() {
+        finished.store(true, std::memory_order_release);
+        thread.join();
+    }
+};
+
+bool GateUnavailable(const Context& context, const char* what) {
+    if (context.hostImportAlignment != 0 && AgcDriver::GuestMemory::WriteWatched()) return false;
+    std::cout << "host imports or write watching unavailable: " << what << " not tested\n";
+    return true;
+}
+
+std::atomic<int> gateStage{0};
+
+bool AwaitGate(const std::function<bool()>& done, int seconds = 5) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+    while (!done()) {
+        if (std::chrono::steady_clock::now() > deadline) return false;
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+void GateUnwatchHook(std::uint64_t address, std::size_t bytes);
+
+void GatePublishHook() {
+    AgcDriver::GuestMemory::SetUnwatchHook(&GateUnwatchHook);
+    gateStage.store(1, std::memory_order_release);
+    Require(AwaitGate([] { return MapImportGate::DrainingImportsForTest() != 0 || gateStage.load(std::memory_order_acquire) >= 2; }), "(g) the map-time import neither waited for the publication nor reached its unwatch hook");
+}
+
+std::function<bool()> gateHookRelease;
+std::atomic<bool> gateHookTimedOut{false};
+
+void GateUnwatchHook(std::uint64_t address, std::size_t bytes) {
+    int expected = 1;
+    if (gateStage.compare_exchange_strong(expected, 2, std::memory_order_acq_rel) && gateHookRelease && !AwaitGate(gateHookRelease)) gateHookTimedOut.store(true, std::memory_order_release);
+    StorageTexture::SaveBeforeUnwatch(address, bytes);
+}
+
+void GateUnlockedHook() {
+    int expected = 1;
+    if (gateStage.compare_exchange_strong(expected, 2, std::memory_order_acq_rel) && gateHookRelease && !AwaitGate(gateHookRelease)) gateHookTimedOut.store(true, std::memory_order_release);
+}
+
+bool mapGatePublicationTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "a publication between the map-time check and the unwatch hook")) return false;
+    GateFixture fixture(base);
+    auto* block = fixture.Allocate(4 << 20, 65536);
+    if (block == nullptr) return false;
+    const auto mapped = block->Register(0, 512 * 1024);
+    Require(fixture.Adopt(), "(g) the device was not adopted");
+    const auto before = MapImportGate::CountersForTest();
+    gateStage.store(0);
+    gateHookTimedOut.store(false);
+    gateHookRelease = [] { return gateStage.load(std::memory_order_acquire) >= 3; };
+    StorageTexture::SetPublishHookForTest(&GatePublishHook);
+    std::atomic<int> deferred{-1};
+    std::shared_ptr<StorageTexture> image;
+    {
+        GateWatchdog watchdog("(g) publication between the check and the hook", 20);
+        std::thread mapping([&] {
+            if (!AwaitGate([] { return gateStage.load(std::memory_order_acquire) >= 1; })) return;
+            deferred.store(ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false) ? 0 : 1, std::memory_order_release);
+        });
+        image = fixture.Image(block->Address(), 1024);
+        StorageTexture::SetPublishHookForTest(nullptr);
+        gateStage.store(3, std::memory_order_release);
+        HostImportFor(fixture.context, block->Address(), 512 * 1024);
+        mapping.join();
+    }
+    recorder.Keep(image);
+    const auto after = MapImportGate::CountersForTest();
+    Require(!gateHookTimedOut.load(), "(g) the unwatch hook was not released");
+    Require(deferred.load() == 1, "(g) the map-time import ran its unwatch hook over a storage image published after its check");
+    Require(after.drainWaits > before.drainWaits && after.fastPublications > before.fastPublications, "(g) the map-time import did not wait for the publication on the fast path");
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "(g) the deferred import failed under the GPU lock");
+        Require(HostImportFor(fixture.context, block->Address(), 512 * 1024) != nullptr, "(g) the mapped range was not imported");
+    }
+    std::cout << "map-time import gate: publication between the check and the hook passed\n";
+    return true;
+}
+
+bool mapGatePendingTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "units becoming pending between the map-time check and the unwatch hook")) return false;
+    GateFixture fixture(base);
+    auto* block = fixture.Allocate(2 << 20, 65536);
+    if (block == nullptr) return false;
+    const auto mapped = block->Register(0, 512 * 1024);
+    Require(fixture.Adopt(), "(p) the device was not adopted");
+    auto image = fixture.Image(block->Address(), 512);
+    recorder.Keep(image);
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{block->Address(), block->Address() + (1 << 20)}}};
+    Require(!StorageTexture::UnwatchHookLocksGpu(span), "(p) the clean 1 MiB image already makes the unwatch hook take the GPU lock");
+    const auto before = MapImportGate::CountersForTest();
+    gateStage.store(1);
+    gateHookTimedOut.store(false);
+    gateHookRelease = [&] { return MapImportGate::WaitingPublishersForTest() != 0 || StorageTexture::AnyPendingOverlaps(span); };
+    AgcDriver::GuestMemory::SetUnwatchHook(&GateUnwatchHook);
+    std::atomic<int> deferred{-1};
+    {
+        GateWatchdog watchdog("(p) units pending between the check and the hook", 20);
+        std::thread mapping([&] { deferred.store(ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false) ? 0 : 1, std::memory_order_release); });
+        Require(AwaitGate([] { return gateStage.load(std::memory_order_acquire) >= 2; }), "(p) the map-time import did not reach its unwatch hook");
+        image->MarkDirty();
+        HostImportFor(fixture.context, block->Address(), 512 * 1024);
+        mapping.join();
+    }
+    const auto after = MapImportGate::CountersForTest();
+    Require(!gateHookTimedOut.load(), "(p) the unwatch hook was not released");
+    Require(deferred.load() == 0, "(p) the map-time import was deferred");
+    Require(after.waitedPublications > before.waitedPublications, "(p) the pending transition did not wait for the map-time import");
+    Require(!AgcDriver::GuestMemory::Watched(block->Address(), 512 * 1024), "(p) the mapped range is still watched");
+    Require(StorageTexture::AnyPendingOverlaps(span), "(p) the image's results are not pending");
+    std::cout << "map-time import gate: units pending between the check and the hook passed\n";
+    return true;
+}
+
+bool mapGateFastPathTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "the map-time import gate's fast path")) return false;
+    GateFixture fixture(base);
+    auto* block = fixture.Allocate(4 << 20, 65536);
+    if (block == nullptr) return false;
+    const auto before = MapImportGate::CountersForTest();
+    auto image = fixture.Image(block->Address(), 1024);
+    recorder.Keep(image);
+    image->MarkDirty();
+    image->MarkDirty();
+    const auto after = MapImportGate::CountersForTest();
+    Require(after.fastPublications == before.fastPublications + 2, "(f) a creation and a first pending transition did not take the fast path");
+    Require(after.stripedPublications == before.stripedPublications && after.waitedPublications == before.waitedPublications && after.importHolds == before.importHolds, "(f) a publication took a stripe without a map-time import in flight");
+    std::cout << "map-time import gate: fast path passed\n";
+    return true;
+}
+
+bool mapGateDisjointTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "map-time import gate stripes of disjoint ranges")) return false;
+    GateFixture fixture(base);
+    auto* mappedBlock = fixture.Allocate(2 << 20, 65536);
+    if (mappedBlock == nullptr) return false;
+    GateBlock* other = nullptr;
+    for (int attempt = 0; attempt < 8 && other == nullptr; ++attempt) {
+        auto* candidate = fixture.Allocate(4 << 20, 65536);
+        Require(candidate != nullptr, "(d) no second watched block");
+        if ((MapImportGate::StripesOf(candidate->Address(), candidate->Address() + (4 << 20)) & MapImportGate::StripesOf(mappedBlock->Address(), mappedBlock->Address() + (2 << 20))).none()) other = candidate;
+    }
+    Require(other != nullptr, "(d) no watched block on other stripes");
+    const auto mapped = mappedBlock->Register(0, 512 * 1024);
+    Require(fixture.Adopt(), "(d) the device was not adopted");
+    auto warm = fixture.Image(other->Address() + (3 << 20), 256);
+    recorder.Keep(warm);
+    std::atomic<bool> created{false};
+    gateStage.store(1);
+    gateHookTimedOut.store(false);
+    gateHookRelease = [&] { return created.load(std::memory_order_acquire); };
+    MapImportGate::SetUnlockedHookForTest(&GateUnlockedHook);
+    const auto before = MapImportGate::CountersForTest();
+    std::shared_ptr<StorageTexture> image;
+    {
+        GateWatchdog watchdog("(d) disjoint stripes", 20);
+        std::thread mapping([&] { ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false); });
+        Require(AwaitGate([] { return gateStage.load(std::memory_order_acquire) >= 2; }), "(d) the map-time import did not take its stripes");
+        image = fixture.Image(other->Address(), 1024);
+        created.store(true, std::memory_order_release);
+        mapping.join();
+    }
+    MapImportGate::SetUnlockedHookForTest(nullptr);
+    recorder.Keep(image);
+    const auto after = MapImportGate::CountersForTest();
+    Require(!gateHookTimedOut.load(), "(d) a creation over other stripes did not complete while the map-time import held its own");
+    Require(after.stripedPublications == before.stripedPublications + 1 && after.waitedPublications == before.waitedPublications, "(d) a creation over other stripes waited for the map-time import or skipped its stripes");
+    std::cout << "map-time import gate: disjoint stripes passed\n";
+    return true;
+}
+
+GateBlock* gateRetryBlock = nullptr;
+std::atomic<int> gateRetryHooks{0};
+
+void GateRetryHook() {
+    if (gateRetryHooks.fetch_add(1) == 0) static_cast<void>(gateRetryBlock->Register(2 << 20, 1 << 20));
+}
+
+bool mapGateRetryTests(const Device& device, Recorder& recorder) {
+    static_cast<void>(recorder);
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "a map-time import run growing past its gate stripes")) return false;
+    GateFixture fixture(base);
+    GateBlock* block = nullptr;
+    for (int attempt = 0; attempt < 8 && block == nullptr; ++attempt) {
+        auto* candidate = fixture.Allocate(4 << 20, 1 << 21);
+        if (candidate == nullptr) return false;
+        if (candidate->Address() % (1 << 21) == 0) block = candidate;
+    }
+    Require(block != nullptr, "(r) no watched block aligned to a stripe");
+    auto mapped = block->Register((3 << 20) / 2, 512 * 1024);
+    Require(fixture.Adopt(), "(r) the device was not adopted");
+    gateRetryBlock = block;
+    gateRetryHooks.store(0);
+    MapImportGate::SetUnlockedHookForTest(&GateRetryHook);
+    const auto before = MapImportGate::CountersForTest();
+    bool imported = false;
+    {
+        GateWatchdog watchdog("(r) run growing past its stripes", 20);
+        std::thread mapping([&] { imported = ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false); });
+        mapping.join();
+    }
+    MapImportGate::SetUnlockedHookForTest(nullptr);
+    const auto after = MapImportGate::CountersForTest();
+    Require(imported, "(r) the map-time import was deferred");
+    Require(gateRetryHooks.load() == 2 && after.retries == before.retries + 1, "(r) the grown run did not take the stripes again");
+    Require(HostImportCovers(fixture.context, block->Address() + (3 << 20) / 2, (3 << 20) / 2), "(r) the grown run was not imported whole");
+    std::cout << "map-time import gate: run growing past its stripes passed\n";
+    return true;
+}
+
+bool mapGateStressTests(const Device& device) {
+    const auto& base = device.GetContext();
+    if (GateUnavailable(base, "the map-time import gate under load")) return false;
+    GateFixture fixture(base);
+    constexpr int slots = 4;
+    std::array<GateBlock*, slots> blocks{};
+    for (auto& block : blocks) {
+        block = fixture.Allocate(4 << 20, 65536);
+        if (block == nullptr) return false;
+    }
+    Require(fixture.Adopt(), "(s) the device was not adopted");
+    std::array<std::vector<std::shared_ptr<StorageTexture>>, slots> images;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    std::atomic<std::uint64_t> creations{0};
+    std::atomic<std::uint64_t> imports{0};
+    std::atomic<std::uint64_t> deferrals{0};
+    std::exception_ptr failure;
+    std::mutex failureMutex;
+    const auto guard = [&](auto&& body) {
+        try {
+            body();
+        } catch (...) {
+            std::lock_guard lock(failureMutex);
+            if (!failure) failure = std::current_exception();
+        }
+    };
+    const auto before = MapImportGate::CountersForTest();
+    {
+        GateWatchdog watchdog("(s) map-time import gate under load", 40);
+        std::vector<std::thread> threads;
+        for (int worker = 0; worker < 2; ++worker) {
+            threads.emplace_back([&, worker] {
+                guard([&] {
+                    std::minstd_rand random(static_cast<unsigned>(17 + worker));
+                    while (std::chrono::steady_clock::now() < deadline) {
+                        const auto slot = static_cast<int>(random() % slots);
+                        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                        auto& kept = images[static_cast<std::size_t>(slot)];
+                        switch (random() % 4) {
+                        case 0:
+                            kept.push_back(fixture.Image(blocks[static_cast<std::size_t>(slot)]->Address(), random() % 2 == 0 ? 1024 : 512));
+                            creations.fetch_add(1, std::memory_order_relaxed);
+                            if (kept.size() > 2) kept.erase(kept.begin());
+                            break;
+                        case 1:
+                            if (!kept.empty()) kept.back()->MarkDirty();
+                            break;
+                        case 2:
+                            if (!kept.empty()) kept.back()->Flush();
+                            break;
+                        default:
+                            HostImportFor(fixture.context, blocks[static_cast<std::size_t>(slot)]->Address(), 512 * 1024);
+                            break;
+                        }
+                    }
+                });
+            });
+        }
+        for (int mapper = 0; mapper < 2; ++mapper) {
+            threads.emplace_back([&, mapper] {
+                guard([&] {
+                    std::minstd_rand random(static_cast<unsigned>(101 + mapper));
+                    while (std::chrono::steady_clock::now() < deadline) {
+                        auto* block = blocks[static_cast<std::size_t>(mapper + 2 * static_cast<int>(random() % 2))];
+                        const auto mapped = block->Register(0, 512 * 1024);
+                        if (ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false)) {
+                            imports.fetch_add(1, std::memory_order_relaxed);
+                        } else {
+                            deferrals.fetch_add(1, std::memory_order_relaxed);
+                            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                            ImportMappedRanges(fixture.context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true);
+                        }
+                        block->Unregister(fixture.context);
+                    }
+                });
+            });
+        }
+        for (auto& thread : threads) thread.join();
+    }
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        for (auto& kept : images) kept.clear();
+    }
+    if (failure) std::rethrow_exception(failure);
+    const auto after = MapImportGate::CountersForTest();
+    std::cout << "map-time import gate under load: " << creations.load() << " creations, " << imports.load() << " map-time imports, " << deferrals.load() << " deferred; publications " << after.fastPublications - before.fastPublications << " fast, " << after.stripedPublications - before.stripedPublications << " striped (" << after.waitedPublications - before.waitedPublications << " waited); " << after.importHolds - before.importHolds << " import holds (" << after.drainWaits - before.drainWaits << " drained, " << after.retries - before.retries << " retried)\n";
+    Require(creations.load() != 0 && imports.load() + deferrals.load() != 0, "(s) the load did not run");
+    std::cout << "map-time import gate under load passed\n";
+    return true;
+}
+
+std::atomic<bool> unwatchHookEntered{false};
+
+void SignalUnwatchHook(std::uint64_t address, std::size_t bytes) {
+    unwatchHookEntered.store(true, std::memory_order_release);
+    StorageTexture::SaveBeforeUnwatch(address, bytes);
+}
+
+bool unwatchHookLockOrderTests(const Device& device, Recorder& recorder) {
+    const auto& base = device.GetContext();
+    if (base.hostImportAlignment == 0) {
+        std::cout << "host imports unavailable: the unwatch hook's lock order at a map-time import not tested\n";
+        return false;
+    }
+    constexpr std::uint32_t side = 1024;
+    constexpr std::size_t surfaceBytes = static_cast<std::size_t>(side) * side * 4;
+    constexpr std::size_t mappedBytes = 512 * 1024;
+    const auto decided = PrepareImportWatch(base);
+    SetImportWatch(base, ImportWatch::Unwatch);
+    struct Restore {
+        const Context& context;
+        ImportWatch decided;
+        ~Restore() {
+            SetImportWatch(context, decided);
+            AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch);
+        }
+    } restore{base, decided};
+    void* block = AllocateWatched(surfaceBytes, 65536);
+    if (block == nullptr) {
+        std::cout << "no write watching: the unwatch hook's lock order at a map-time import not tested\n";
+        return false;
+    }
+    std::memset(block, 0x5a, surfaceBytes);
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, mappedBytes, true, true, true);
+    }
+    struct Unregister {
+        const Context& context;
+        void* block;
+        std::uint64_t address;
+        ~Unregister() {
+            {
+                GuestAllocations::Mutation mutation;
+                mutation.Remove(block);
+            }
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            HostImportFor(context, address, mappedBytes);
+            ReleaseWatched(block, surfaceBytes);
+        }
+    } unregister{base, block, address};
+    GuestAllocations::Mapped mapped;
+    for (const auto& range : GuestAllocations::GuestAllocationsAcquire_nid_postfix()) {
+        if (range->address == address) mapped.push_back(range);
+    }
+    Require(mapped.size() == 1, "(l) the surface's range is not registered");
+    AgcDriver::GuestMemory::CollectWritesUncached(address, surfaceBytes);
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    GuestTextureResource resource{};
+    resource.baseAddress = address;
+    resource.width = side;
+    resource.height = side;
+    resource.mipCount = 1;
+    resource.tileMode = TextureTileMode::kR64KBX;
+    resource.dimension = TextureDimension::k2D;
+    resource.format = 56;
+    resource.dstSelX = 4;
+    resource.dstSelY = 5;
+    resource.dstSelZ = 6;
+    resource.dstSelW = 7;
+    Require(DescribeSurface(resource).guestBytes == surfaceBytes, "(l) unexpected surface size");
+    auto image = StorageTexture::Create(context, detiler, resource, 0);
+    recorder.Keep(image);
+    std::atomic<bool> finished{false};
+    std::thread watchdog([&] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!finished.load(std::memory_order_acquire)) {
+            if (std::chrono::steady_clock::now() > deadline) {
+                std::cerr << "(l) deadlock: a map-time import ran the unwatch hook into the GPU lock under the import lock while the GPU lock's owner waited for the import lock\n";
+                std::cerr.flush();
+                std::_Exit(1);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    });
+    std::atomic<int> deferred{-1};
+    {
+        std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+        Require(ImportMappedRanges(context, {}, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "(l) the device was not adopted");
+        unwatchHookEntered.store(false, std::memory_order_release);
+        AgcDriver::GuestMemory::SetUnwatchHook(&SignalUnwatchHook);
+        std::thread mapping([&] { deferred.store(ImportMappedRanges(context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), false) ? 0 : 1, std::memory_order_release); });
+        while (!unwatchHookEntered.load(std::memory_order_acquire) && deferred.load(std::memory_order_acquire) < 0) std::this_thread::yield();
+        HostImportFor(context, address, mappedBytes);
+        gpu.unlock();
+        mapping.join();
+    }
+    finished.store(true, std::memory_order_release);
+    watchdog.join();
+    AgcDriver::GuestMemory::SetUnwatchHook(&StorageTexture::SaveBeforeUnwatch);
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        if (deferred.load() == 1) Require(ImportMappedRanges(context, mapped, GuestAllocations::GuestAllocationsGeneration_nid_postfix(), true), "(l) the deferred import failed under the GPU lock");
+        Require(HostImportFor(context, address, mappedBytes) != nullptr, "(l) the surface was not imported");
+    }
+    std::cout << "unwatch hook lock order at a map-time import passed\n";
+    return true;
+}
+
 // A write-back stores the texels of an image and leaves every other byte of the surface's memory
 // as it was: the padding of the tile blocks the surface covers only partly (its last block column
 // and row), the tail block of a mip chain, the bytes between the mips and the pitch padding of a
@@ -12745,6 +13548,7 @@ int main(int argc, char** argv) {
             descriptorPoolTests(device);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-stress-only") return mapGateStressTests(device) ? 0 : 77;
         std::unique_lock gpu(GpuMutex());
 #ifdef _WIN32
         if (argc == 2 && std::string_view(argv[1]) == "--storage-cpu-snapshot-only") {
@@ -12837,6 +13641,13 @@ int main(int argc, char** argv) {
             settledBaselineTests(device, recorder);
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--pending-after-unwatch-only") return pendingAfterLeavingWatchTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--unwatch-lock-order-only") return unwatchHookLockOrderTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-publication-only") return mapGatePublicationTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-pending-only") return mapGatePendingTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-fast-path-only") return mapGateFastPathTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-disjoint-only") return mapGateDisjointTests(device, recorder) ? 0 : 77;
+        if (argc == 2 && std::string_view(argv[1]) == "--map-gate-retry-only") return mapGateRetryTests(device, recorder) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--command-buffer-release-only") {
             commandBufferReleaseTests(device, recorder);
             return 0;
@@ -13132,6 +13943,7 @@ int main(int argc, char** argv) {
         settledBaselineTests(device, recorder);
         importWatchTests(device);
         staleGenerationTests(device, recorder);
+        pendingAfterLeavingWatchTests(device, recorder);
         importWindowTests(device, recorder);
         dataWordPositionsTests();
         dataRefreshTests(device, recorder);
