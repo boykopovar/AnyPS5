@@ -507,7 +507,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
     const auto metaSize = MetaHeaders + headers.size() * 56;
     std::vector<std::uint8_t> meta(metaSize, 0);
     Io::WriteU64(meta, 0, MetaVersion);
-    const auto firstLoad = std::find_if(headers.begin(), headers.end(), [](const auto& header) { return header.Type == 1; });
+    const auto firstLoad = std::find_if(headers.begin(), headers.end(), [](const auto& header) { return header.Type == 1 && header.MemorySize != 0; });
     if (firstLoad == headers.end()) throw Domain::RelinkerException("No PT_LOAD segments found");
     Io::WriteU64(meta, MetaLoadBias, imageBase + image.GetRva(firstLoad->MappedAddress) - firstLoad->MappedAddress);
     input.Rebases.push_back(metaRva + MetaLoadBias);
