@@ -19,6 +19,9 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <stdexcept>
+#include <string_view>
 #include <iostream>
 #include <mutex>
 #include <span>
@@ -152,10 +155,54 @@ void Run(AgcDriver::VulkanDevice& device, const GuestBlock& guest, std::size_t o
     Require(words[OverwrittenDword] == Overwritten, what + "the pending image's store put its older texels over a newer address-based store");
 }
 
+int AsyncEntryFailure() {
+    int failedTails = 0;
+#ifdef _WIN32
+    Require(_putenv_s("APS5_ASYNC_LANE", "51") == 0, "cannot enable async entry failure mode");
+#else
+    Require(setenv("APS5_ASYNC_LANE", "51", 1) == 0, "cannot enable async entry failure mode");
+#endif
+    std::unique_lock gpu(AgcDriver::GuestMemory::GpuMutex());
+    const auto device = OpenVulkanTestDevice();
+    if (!device) return VulkanTestSkipped;
+    auto* recorder = device->graphicsContext().recorder;
+    if (recorder == nullptr || !recorder->AsyncLaneActive()) {
+        std::puts("skipped: storage flush entry failure requires an active compute-only queue");
+        return VulkanTestSkipped;
+    }
+    GuestBlock guest(false);
+    const auto image = guest.Address();
+    const auto storeImage = Compile(StoreImageCode, ImageUserData(image), device->Target());
+    device->Dispatch(storeImage, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(StoreImageCode.data()));
+    {
+        const AgcDriver::Graphics::Recorder::LaneScope async(1);
+        recorder->Commands();
+        recorder->DeferDispatchBarrier(7, {}, {});
+        recorder->AfterRun([&](auto&) {
+            ++failedTails;
+            throw std::runtime_error("injected storage flush lane entry failure");
+        });
+        bool caught = false;
+        try {
+            AgcDriver::Graphics::StorageTexture::FlushPending(image, ImageBytes, nullptr, "entry failure test");
+        } catch (const std::runtime_error& error) {
+            caught = std::string_view(error.what()) == "injected storage flush lane entry failure";
+        }
+        Require(caught && failedTails == 1, "storage flush did not reach the injected entry failure");
+        Require(AgcDriver::Graphics::StorageTexture::FlushPending(image, ImageBytes, nullptr, "entry retry test"), "storage flush lost its pending image after lane entry failed");
+    }
+    device->WaitIdle();
+    Require(guest.Words()[0] == Stored && guest.Words()[FarDword] == Stored, "retried storage flush lost the pending image texels");
+    Require(failedTails == 1, "storage flush replayed the failed source callback");
+    std::puts("storage flush lane entry failure tests passed");
+    return 0;
 }
 
-int main() {
+}
+
+int main(int argc, char** argv) {
     try {
+        if (argc > 1 && std::string_view(argv[1]) == "--async-entry-failure") return AsyncEntryFailure();
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const bool watched = AgcDriver::GuestMemory::WriteWatched();
