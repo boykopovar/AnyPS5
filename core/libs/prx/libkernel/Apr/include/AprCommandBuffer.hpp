@@ -88,6 +88,22 @@ struct CompactReadFileGatherCommand {
 };
 static_assert(sizeof(CompactReadFileGatherCommand) == 12);
 
+inline constexpr std::uint32_t NopHeaderBytes = 4;
+inline constexpr std::uint32_t NopHeaderMask = 0xffff00ffu;
+inline constexpr std::uint32_t NopHeaderTag = 0x5452000fu;
+
+constexpr std::uint32_t NopHeader(std::uint32_t payloadDwords, std::uint32_t type = 0) {
+    return NopHeaderTag | (payloadDwords & 0xfu) << 8u | (type & 0xfu) << 12u;
+}
+
+constexpr bool IsNopHeader(std::uint32_t header) {
+    return (header & NopHeaderMask) == NopHeaderTag;
+}
+
+constexpr std::uint32_t NopDwords(std::uint32_t header) {
+    return (header >> 8u & 0xfu) + 1u;
+}
+
 struct ResetGatherScatterStateCommand {
     CommandHeader header;
 };

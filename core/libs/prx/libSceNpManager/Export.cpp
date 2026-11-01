@@ -1,3 +1,5 @@
+#include "prx/libSceNpManager/include/LegacyExports.hpp"
+#include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpManager/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -696,9 +698,8 @@ int APS5_VABI sceNpManagerIntIsTemporarySignout(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntIsUnregisteredClientError(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI sceNpManagerIntIsUnregisteredClientError(int error) {
+    return static_cast<std::uint32_t>(error) == 0x82e0104d;
 }
 int APS5_VABI sceNpManagerIntLoginAuthenticate(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -885,6 +886,14 @@ int APS5_VABI sceNpPollAsync(int req_id, int* result) {
     if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
     *result = SCE_NP_ERROR_SIGNED_OUT;
     return NP_POLL_ASYNC_FINISHED;
+}
+
+int APS5_VABI sceNpWaitAsync(int req_id, int* result) {
+    if (!result) return SCE_NP_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(requestMutex);
+    if (!liveRequests.count(req_id)) return SCE_NP_ERROR_REQUEST_NOT_FOUND;
+    *result = SCE_NP_ERROR_SIGNED_OUT;
+    return 0;
 }
 
 void APS5_VABI sceNpRegisterGamePresenceCallback(void* callback, void* userdata) {
@@ -1095,5 +1104,44 @@ int APS5_VABI sceNpSnsFacebookGetAccessToken() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI npManagerLegacyUnknown_70N4VzVCpQg_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("70N4VzVCpQg", npManagerLegacyUnknown_70N4VzVCpQg_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_SSuF3qPYjgA_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("SSuF3qPYjgA", npManagerLegacyUnknown_SSuF3qPYjgA_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_ZKqJVpTOtW0_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("ZKqJVpTOtW0", npManagerLegacyUnknown_ZKqJVpTOtW0_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_jBLJpaqaV1A_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("jBLJpaqaV1A", npManagerLegacyUnknown_jBLJpaqaV1A_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_mtowPSR0JN8_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("mtowPSR0JN8", npManagerLegacyUnknown_mtowPSR0JN8_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_qp_minus_DvqvPOYM_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("qp-DvqvPOYM", npManagerLegacyUnknown_qp_minus_DvqvPOYM_nid_no_patch);
+
+int APS5_VABI npManagerLegacyUnknown_tmnDjDmI3AI_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tmnDjDmI3AI", npManagerLegacyUnknown_tmnDjDmI3AI_nid_no_patch);
 
 }

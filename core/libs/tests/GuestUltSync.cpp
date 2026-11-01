@@ -63,6 +63,23 @@ void MutexTryLock() {
     CHECK(sceUltMutexTryLock(&mutex) == State);
 }
 
+void MutexAndRuntimeOptParams() {
+    alignas(8) std::uint8_t misaligned[sizeof(UltMutexOptParam) + 8];
+    CHECK(sceUltMutexOptParamInitialize(nullptr, 0) == Null);
+    CHECK(sceUltMutexOptParamInitialize(reinterpret_cast<UltMutexOptParam*>(misaligned + 4), 0) == -2139029502);
+    UltMutexOptParam mutexOptions;
+    std::memset(&mutexOptions, 0xa5, sizeof(mutexOptions));
+    CHECK(sceUltMutexOptParamInitialize(&mutexOptions, 0x1234) == Ok);
+    CHECK(mutexOptions.header[0] == 0x6C696275 && mutexOptions.header[1] == 0x6C746D61 && mutexOptions.header[2] == 0x67696300);
+    CHECK(mutexOptions.buildVersion == 0x1234 && mutexOptions.attribute == 0);
+    for (const std::uint32_t word : mutexOptions.reserved) CHECK(word == 0);
+    UltUlthreadRuntimeOptParam runtimeOptions;
+    std::memset(&runtimeOptions, 0xa5, sizeof(runtimeOptions));
+    CHECK(sceUltUlthreadRuntimeOptParamInitialize(nullptr, 0) == Null);
+    CHECK(sceUltUlthreadRuntimeOptParamInitialize(&runtimeOptions, 0) == Ok);
+    for (const std::uint8_t byte : runtimeOptions.bytes) CHECK(byte == 0);
+}
+
 void OptParams() {
     using Initializer = decltype(&sceUltSemaphoreOptParamInitialize);
     for (const Initializer initialize : {sceUltSemaphoreOptParamInitialize, sceUltQueueOptParamInitialize, sceUltQueueDataResourcePoolOptParamInitialize,
@@ -677,7 +694,10 @@ int main(int argc, char** argv) {
     if (argc != 2) return 2;
     CHECK(sceUltInitialize() == Ok);
     if (std::strcmp(argv[1], "mutex-trylock") == 0) MutexTryLock();
-    else if (std::strcmp(argv[1], "opt-params") == 0) OptParams();
+    else if (std::strcmp(argv[1], "opt-params") == 0) {
+        OptParams();
+        MutexAndRuntimeOptParams();
+    }
     else if (std::strcmp(argv[1], "rwlock-validation") == 0) ReaderWriterValidation();
     else if (std::strcmp(argv[1], "rwlock-readers") == 0) ReaderWriterReaders();
     else if (std::strcmp(argv[1], "rwlock-writer") == 0) ReaderWriterWriter();
