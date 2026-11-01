@@ -47,6 +47,7 @@
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketConnect.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <climits>
 #include <cstdint>
@@ -412,6 +413,79 @@ bool ZeroPortConnect(Socket& socket, const void* address, std::uint32_t length) 
     }
     Fail(49);
     return true;
+}
+bool GuestReadable(const void* pointer, std::uint64_t length) {
+    if (length == 0) return true;
+    constexpr std::uint64_t page = 4096;
+    const auto* bytes = static_cast<const unsigned char*>(pointer);
+    unsigned char value;
+    for (std::uint64_t done = 0; done < length; done += page)
+        if (!GuestCopyIn_nid_no_patch(&value, bytes + done, 1)) return false;
+    return GuestCopyIn_nid_no_patch(&value, bytes + (length - 1), 1);
+}
+#ifdef _WIN32
+constexpr DWORD ReadableProtection = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+constexpr DWORD WritableProtection = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+std::uint64_t GuestPrefix(const void* pointer, std::uint64_t length, DWORD allowed) {
+    const auto start = reinterpret_cast<std::uintptr_t>(pointer);
+    std::uint64_t covered = 0;
+    while (covered < length) {
+        const auto address = start + covered;
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory)) break;
+        if (memory.State != MEM_COMMIT || (memory.Protect & PAGE_GUARD) != 0 || (memory.Protect & allowed) == 0) break;
+        covered += reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize - address;
+    }
+    return std::min(covered, length);
+}
+bool SourceFaults(const void* pointer, std::uint64_t length) {
+    if (length == 0) return false;
+    GuestArena::GuestArenaPrepareHostRead_nid_no_patch(pointer, static_cast<std::size_t>(length));
+    return GuestPrefix(pointer, length, ReadableProtection) != length;
+}
+bool PendingFits(const Socket& socket, void* buffer, std::uint64_t usable, int flags, int& error) {
+    error = 0;
+    if (socket.type == 2) {
+        sockaddr_storage ignored{};
+        socklen_t ignoredSize = sizeof(ignored);
+        const auto peeked = ::recvfrom(socket.value, static_cast<char*>(buffer), static_cast<int>(usable),
+            NativeReceiveFlags((flags & ~GuestWaitAll) | GuestPeek, socket.type), reinterpret_cast<sockaddr*>(&ignored), &ignoredSize);
+        if (peeked >= 0) return true;
+        if (WSAGetLastError() == WSAEMSGSIZE) return false;
+        error = NativeError();
+        return true;
+    }
+    char probe[1];
+    sockaddr_storage ignored{};
+    socklen_t ignoredSize = sizeof(ignored);
+    const auto first = ::recvfrom(socket.value, probe, sizeof(probe), NativeReceiveFlags((flags & ~GuestWaitAll) | GuestPeek, socket.type),
+        reinterpret_cast<sockaddr*>(&ignored), &ignoredSize);
+    if (first < 0) {
+        error = NativeError();
+        return true;
+    }
+    if (first == 0) return true;
+    unsigned long pending = 0;
+    if (ioctlsocket(socket.value, FIONREAD, &pending) != 0) {
+        error = NativeError();
+        return true;
+    }
+    return pending <= usable;
+}
+void DropDatagram(const Socket& socket, int flags) {
+    if (socket.type != 2 || (flags & GuestPeek) != 0) return;
+    char probe[1];
+    sockaddr_storage ignored{};
+    socklen_t ignoredSize = sizeof(ignored);
+    ::recvfrom(socket.value, probe, sizeof(probe), NativeReceiveFlags(flags, socket.type), reinterpret_cast<sockaddr*>(&ignored), &ignoredSize);
+}
+#else
+bool SourceFaults(const void* pointer, std::uint64_t length) {
+    return !GuestReadable(pointer, length);
+}
+#endif
+bool ReportAddress(void* address, std::uint32_t* addressLength, const void* name, std::uint32_t size) {
+    return (address == nullptr || GuestCopyOut_nid_no_patch(address, name, size)) && GuestCopyOut_nid_no_patch(addressLength, &size, sizeof(size));
 }
 void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* length) {
     unsigned char bytes[28]{};
@@ -1580,8 +1654,11 @@ int APS5_VABI _ioctl_nid_postfix(int descriptor, std::uint64_t request, void* ar
 }
 std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, std::uint64_t length,
     int flags, const void* address, std::uint32_t addressLength) {
+    std::array<unsigned char, 255> destinationCopy;
     if (address) {
         if (const int error = AddressLengthError(address, addressLength)) return Fail(error);
+        if (!GuestCopyIn_nid_no_patch(destinationCopy.data(), address, addressLength)) return Fail(14);
+        address = destinationCopy.data();
     }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
@@ -1592,19 +1669,30 @@ std::int64_t APS5_VABI sendto_nid_postfix(int descriptor, const void* buffer, st
     int result;
     if (!address || (socket->type == 1 && PeerConnected(*socket))) {
         if (!address && addressLength != 0) return Fail(22);
+#ifdef _WIN32
+        if (SourceFaults(buffer, length)) return Fail(14);
+#endif
         result = ::send(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags));
     } else {
         sockaddr_storage native{};
         socklen_t size;
-        if (!Address(socket->family, address, addressLength, native, size)) return -1;
-        if (const auto answered = ZeroPortSend(*socket, native, length); answered != NotAnswered) return answered;
+        if (!Address(socket->family, address, addressLength, native, size)) return socket->type == 2 && SourceFaults(buffer, length) ? Fail(14) : -1;
+        if (const auto answered = ZeroPortSend(*socket, native, length); answered != NotAnswered)
+            return socket->type == 2 && SourceFaults(buffer, length) ? Fail(14) : answered;
+#ifdef _WIN32
+        if (SourceFaults(buffer, length)) return Fail(14);
+#endif
         result = static_cast<int>(::sendto(socket->value, static_cast<const char*>(buffer), static_cast<int>(length), SocketSendFlags(*socket, flags),
             reinterpret_cast<sockaddr*>(&native), size));
     }
-    return result < 0 ? Fail(SendError(socket->type)) : result;
+    if (result >= 0) return result;
+    const int error = SendError(socket->type);
+    return socket->type == 2 && address && SourceFaults(buffer, length) ? Fail(14) : Fail(error);
 }
 std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::uint64_t length,
     int flags, void* address, std::uint32_t* addressLength) {
+    std::uint32_t capacity = 0;
+    if (addressLength && !GuestCopyIn_nid_no_patch(&capacity, addressLength, sizeof(capacity))) return Fail(14);
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
@@ -1614,27 +1702,42 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     if (!destination.Open()) return Fail(14);
     if (const int answered = ReceiveAnsweredHere(*socket, length); answered >= 0) {
         if (answered > 0) return Fail(answered);
-        if (address) *addressLength = 0;
+        if (addressLength && !ReportAddress(address, addressLength, nullptr, address ? 0 : capacity)) return Fail(14);
         return 0;
     }
     sockaddr_storage native{};
     socklen_t size = sizeof(native);
     if (const int waited = WaitForTransfer(*socket, false, flags)) return Fail(waited);
-    auto result = ::recvfrom(socket->value, static_cast<char*>(buffer), static_cast<int>(length),
+    std::uint64_t limit = length;
+#ifdef _WIN32
+    if (length != 0 && (limit = GuestPrefix(buffer, length, WritableProtection)) < length) {
+        int error = 0;
+        if (!PendingFits(*socket, buffer, limit, flags, error)) {
+            DropDatagram(*socket, flags);
+            return Fail(14);
+        }
+        if (error) return Fail(error);
+    }
+#endif
+    std::int64_t result = ::recvfrom(socket->value, static_cast<char*>(buffer), static_cast<int>(limit),
         NativeReceiveFlags(flags, socket->type), reinterpret_cast<sockaddr*>(&native), &size);
 #ifdef _WIN32
-    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(length);
+    if (result < 0 && socket->type == 2 && WSAGetLastError() == WSAEMSGSIZE) result = static_cast<int>(limit);
 #endif
     if (result < 0) return Fail(NativeError());
+    if (!addressLength) return result;
+    unsigned char name[28]{};
+    std::uint32_t reported = address ? 0 : capacity;
     if (address && socket->family == GuestUnix) {
-        if (socket->type == 1) *addressLength = 0; else UnnamedAddress(address, addressLength);
-        return result;
+        if (socket->type != 1) {
+            reported = capacity;
+            UnnamedAddress(name, &reported);
+        }
+    } else if (address && (native.ss_family == AF_INET || native.ss_family == AF_INET6)) {
+        reported = capacity;
+        GuestAddress(native, name, &reported);
     }
-    if (address) {
-        if (native.ss_family == AF_INET || native.ss_family == AF_INET6) GuestAddress(native, address, addressLength);
-        else *addressLength = 0;
-    }
-    return result;
+    return ReportAddress(address, addressLength, name, reported) ? result : Fail(14);
 }
 
 static_assert(sizeof(GuestMsghdr) == 48 && offsetof(GuestMsghdr, iov) == 16 && offsetof(GuestMsghdr, control) == 32 && offsetof(GuestMsghdr, flags) == 44);
@@ -1670,14 +1773,7 @@ std::int64_t APS5_VABI sendmsg_nid_postfix(int descriptor, const GuestMsghdr* me
 }
 #ifdef _WIN32
 static bool GuestPagesAllow(std::uintptr_t start, std::size_t bytes, DWORD allowed) {
-    const auto end = start + bytes;
-    for (auto address = start; address < end;) {
-        MEMORY_BASIC_INFORMATION memory{};
-        if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory)) return false;
-        if (memory.State != MEM_COMMIT || (memory.Protect & PAGE_GUARD) != 0 || (memory.Protect & allowed) == 0) return false;
-        address = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
-    }
-    return true;
+    return GuestPrefix(reinterpret_cast<const void*>(start), bytes, allowed) == bytes;
 }
 #elif defined(__linux__)
 static bool Transferred(ssize_t copied, std::size_t bytes, const char* call) {
