@@ -13,7 +13,8 @@ namespace {
 
 constexpr int ErrorArgument = static_cast<int>(0x80BE0001);
 
-using CaptureFn = int (APS5_VABI*)(std::uint32_t, void*, void*, void*);
+using CancelFn = int (APS5_VABI*)(void*);
+using CaptureFn = int (APS5_VABI*)(std::uint32_t, void*, CancelFn, void*);
 using GetAppInfoFn = int (APS5_VABI*)(int, void*);
 using IsVshDisabledFn = int (APS5_VABI*)(int*);
 using GetDrcParamFn = int (APS5_VABI*)(int, void*, std::uint64_t, void*, void*, std::uint64_t, void*);
