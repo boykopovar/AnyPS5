@@ -325,9 +325,10 @@ int APS5_VABI pthread_suspend_all_np_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI pthread_suspend_np_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI pthread_suspend_np_nid_postfix(Pthread thread) {
+    constexpr int GuestEinval = 22;
+    if (!thread) return GuestEinval;
+    return SuspendGuestThread_nid_no_patch(thread);
 }
 
 int APS5_VABI pthread_suspend_user_context_np_nid_postfix(void) {

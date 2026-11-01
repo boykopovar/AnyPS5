@@ -30,6 +30,11 @@
 #include <ucontext.h>
 #include <unistd.h>
 #endif
+#ifdef __linux__
+#include <link.h>
+#include <string_view>
+#include <utility>
+#endif
 
 #ifdef _WIN32
 extern "C" void Aps5RedirectedEntryStub();
@@ -1074,6 +1079,187 @@ asm(".text\n"
     "    jmp *%r8\n");
 #endif
 
+#ifdef _WIN32
+namespace {
+
+void CALLBACK ParkApc(ULONG_PTR) {
+    ParkCurrentGuestThread_nid_no_patch();
+}
+
+CodeKind FrozenCode(HANDLE native, DWORD64& image) {
+    CONTEXT context{};
+    context.ContextFlags = CONTEXT_CONTROL;
+    if (!GetThreadContext(native, &context) || RestoringContext(context.Rip)) return CodeKind::Host;
+    return RunningCode(context.Rip, image);
+}
+
+}
+#elif defined(__linux__)
+namespace {
+
+constexpr int ParkSignal = SIGUSR2;
+constexpr std::size_t GuestRangeCapacity = 256;
+
+struct GuestRanges {
+    std::array<std::atomic<std::uintptr_t>, GuestRangeCapacity> begins{};
+    std::array<std::atomic<std::uintptr_t>, GuestRangeCapacity> ends{};
+    std::atomic<std::size_t> count{0};
+    std::atomic<std::uint32_t> version{0};
+    std::mutex refresh;
+};
+
+GuestRanges& Ranges() {
+    static GuestRanges ranges;
+    return ranges;
+}
+
+struct RangeSearch {
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> found;
+    bool mainSeen = false;
+};
+
+int CollectGuestRanges(dl_phdr_info* info, std::size_t, void* data) {
+    auto& search = *static_cast<RangeSearch*>(data);
+    constexpr std::string_view guestSuffix = ".guest.prx";
+    const std::string_view name = info->dlpi_name != nullptr ? info->dlpi_name : "";
+    const bool main = !search.mainSeen;
+    search.mainSeen = true;
+    if (!main && (name.size() < guestSuffix.size() || name.substr(name.size() - guestSuffix.size()) != guestSuffix)) return 0;
+    for (int index = 0; index < info->dlpi_phnum; ++index) {
+        const auto& header = info->dlpi_phdr[index];
+        if (header.p_type != PT_LOAD || (header.p_flags & PF_X) == 0 || header.p_memsz == 0) continue;
+        const std::uintptr_t begin = info->dlpi_addr + header.p_vaddr;
+        search.found.emplace_back(begin, begin + header.p_memsz);
+    }
+    return 0;
+}
+
+void RefreshGuestRanges() {
+    RangeSearch search;
+    dl_iterate_phdr(CollectGuestRanges, &search);
+    auto& ranges = Ranges();
+    if (search.found.size() > GuestRangeCapacity)
+        throw std::length_error("pthread_suspend_np: more than 256 executable guest segments are loaded");
+    std::lock_guard lock(ranges.refresh);
+    const std::size_t count = search.found.size();
+    ranges.version.fetch_add(1, std::memory_order_acq_rel);
+    for (std::size_t index = 0; index < count; ++index) {
+        ranges.begins[index].store(search.found[index].first, std::memory_order_relaxed);
+        ranges.ends[index].store(search.found[index].second, std::memory_order_relaxed);
+    }
+    ranges.count.store(count, std::memory_order_relaxed);
+    ranges.version.fetch_add(1, std::memory_order_release);
+}
+
+bool InGuestRange(std::uintptr_t address) {
+    auto& ranges = Ranges();
+    const std::uint32_t before = ranges.version.load(std::memory_order_acquire);
+    if ((before & 1) != 0) return false;
+    bool found = false;
+    const std::size_t count = ranges.count.load(std::memory_order_relaxed);
+    for (std::size_t index = 0; index < count && !found; ++index)
+        found = address >= ranges.begins[index].load(std::memory_order_relaxed) && address < ranges.ends[index].load(std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_acquire);
+    return found && ranges.version.load(std::memory_order_relaxed) == before;
+}
+
+void ParkOnSignal(int, siginfo_t*, void* context) {
+    const int saved = errno;
+    const auto address = static_cast<std::uintptr_t>(static_cast<ucontext_t*>(context)->uc_mcontext.gregs[REG_RIP]);
+    if (InGuestRange(address) || TimedWait::InSuspendSafeWait()) ParkCurrentGuestThread_nid_no_patch();
+    errno = saved;
+}
+
+void InstallParkSignal() {
+    static const bool installed = [] {
+        static_cast<void>(Ranges());
+        struct sigaction action{};
+        action.sa_sigaction = ParkOnSignal;
+        action.sa_flags = SA_SIGINFO | SA_RESTART;
+        sigemptyset(&action.sa_mask);
+        sigaddset(&action.sa_mask, SIGUSR1);
+        if (sigaction(ParkSignal, &action, nullptr) != 0)
+            throw std::system_error(errno, std::generic_category(), "pthread_suspend_np: cannot install the host signal handler");
+        return true;
+    }();
+    static_cast<void>(installed);
+}
+
+}
+#endif
+
+bool RequestGuestThreadPark(PthreadPrivate* thread) {
+#ifdef _WIN32
+    constexpr std::uint64_t RetryNanos = 1000000;
+    constexpr unsigned YieldsPerSleep = 256;
+    const auto native = static_cast<HANDLE>(thread->nativeHandle);
+    bool queued = false;
+    unsigned attempts = 0;
+    while (thread->parked.load(std::memory_order_acquire) == 0 && thread->suspended.load(std::memory_order_seq_cst)) {
+        if (SuspendThread(native) == static_cast<DWORD>(-1)) {
+            constexpr DWORD ExitWaitMillis = 1000;
+            const DWORD error = GetLastError();
+            if (WaitForSingleObject(native, ExitWaitMillis) == WAIT_OBJECT_0) return false;
+            throw std::system_error(static_cast<int>(error), std::system_category(), "pthread_suspend_np: cannot suspend the target thread");
+        }
+        if (Exited(native)) {
+            ResumeThread(native);
+            return false;
+        }
+        DWORD64 image = 0;
+        const auto running = FrozenCode(native, image);
+        if (running == CodeKind::Guest) {
+            thread->parked.store(1, std::memory_order_release);
+            thread->osParked.store(true, std::memory_order_seq_cst);
+            if (!thread->suspended.load(std::memory_order_seq_cst) && thread->osParked.exchange(false, std::memory_order_seq_cst)) {
+                thread->parked.store(0, std::memory_order_release);
+                ResumeThread(native);
+            }
+            return true;
+        }
+        if (!queued && thread->waitCount.load(std::memory_order_seq_cst) > 0) queued = QueueUserAPC(ParkApc, native, 0) != 0;
+        ResumeThread(native);
+        if (running == CodeKind::Unknown) {
+            static_cast<void>(ClassifyImage(image));
+            continue;
+        }
+        if (++attempts % YieldsPerSleep == 0) TimedWait::SleepNanos(RetryNanos);
+        else SwitchToThread();
+    }
+#elif defined(__linux__)
+    constexpr std::uint64_t RetryNanos = 1000000;
+    constexpr unsigned YieldsPerSleep = 256;
+    constexpr std::uint64_t ResendNanos = 20000;
+    InstallParkSignal();
+    RefreshGuestRanges();
+    for (unsigned attempts = 1;; ++attempts) {
+        {
+            const auto live = LockLiveGuestThread(thread);
+            if (!live.owns_lock()) return false;
+            if (thread->parked.load(std::memory_order_acquire) != 0 || !thread->suspended.load(std::memory_order_seq_cst)) return true;
+            const int result = pthread_kill(thread->hostThread, ParkSignal);
+            if (result == ESRCH) return false;
+            if (result != 0) throw std::system_error(result, std::generic_category(), "pthread_suspend_np: cannot signal the target thread");
+        }
+        TimedWait::SleepNanos(attempts % YieldsPerSleep == 0 ? RetryNanos : ResendNanos);
+    }
+#else
+    static_cast<void>(thread);
+    NotImplemented_nid_no_patch("pthread_suspend_np of a running thread");
+#endif
+    return true;
+}
+
+void ReleaseGuestThreadPark(PthreadPrivate* thread) {
+#ifdef _WIN32
+    if (!thread->osParked.exchange(false, std::memory_order_seq_cst)) return;
+    thread->parked.store(0, std::memory_order_release);
+    ResumeThread(static_cast<HANDLE>(thread->nativeHandle));
+#else
+    static_cast<void>(thread);
+#endif
+}
+
 extern "C" {
 
 int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler) {
@@ -1108,6 +1294,7 @@ int APS5_VABI sceKernelRaiseException(Pthread thread, int signum) {
  if (thread->suspended.load(std::memory_order_acquire)) {
   int pending = 0;
   if (thread->pendingException.compare_exchange_strong(pending, signum, std::memory_order_acq_rel) || pending > 0) return 0;
+  if (thread->suspended.load(std::memory_order_seq_cst)) throw std::runtime_error("sceKernelRaiseException: the target thread is suspended");
  }
  return RaiseOn(thread, handler, signum) ? 0 : SCE_KERNEL_ERROR_ESRCH;
 #else
