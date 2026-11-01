@@ -239,6 +239,8 @@ static void CheckHandleQueries(int user, int handle) {
     for (std::size_t i = 0; i < unique.size(); ++i) Require(unique[i] == (i < 0x18 ? 0 : 0xaa));
 
     const PadLightBarParam color{10, 20, 30};
+    Require(scePadSetLightBar(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadSetLightBar(closed, &color) == PAD_ERROR_INVALID_HANDLE);
     Require(scePadSetLightBar(handle, &color) == PAD_OK && LightBarValid());
     Require(scePadResetLightBarAllByPortType(3) == PAD_ERROR_INVALID_ARG);
     Require(scePadResetLightBarAllByPortType(PAD_PORT_TYPE_SPECIAL) == PAD_OK && LightBarValid());
