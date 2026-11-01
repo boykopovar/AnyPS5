@@ -12,6 +12,7 @@
 #include <stdexcept>
 #include <string>
 #include <source_location>
+#include <utility>
 
 namespace {
 
@@ -1072,6 +1073,54 @@ void TestURLParsing() {
         Case{"https:", "https://host/a/b?x#y", "https://host/a/b?x"},
         Case{"next", "", nullptr},
         Case{"http://", "", nullptr},
+        Case{"file:", "", "file:///"},
+        Case{"file:///a/../b", "", "file:///b"},
+        Case{"file://localhost/a", "", "file:///a"},
+        Case{"file://LOCALHOST/a", "", "file:///a"},
+        Case{"file://server/a", "", "file://server/a"},
+        Case{"file:///C:/a/../../b", "", "file:///C:/b"},
+        Case{"file:C|/a", "", "file:///C:/a"},
+        Case{"file://C:/a", "", "file:///C:/a"},
+        Case{"file:///C|/a", "", "file:///C|/a"},
+        Case{"file:///w|/m", "", "file:///w|/m"},
+        Case{"file://server/C|/a", "", "file://server/C|/a"},
+        Case{"file://[::1]/a", "", "file://[::1]/a"},
+        Case{"file://host:80/a", "", nullptr},
+        Case{"file://u@host/a", "", nullptr},
+        Case{"../b", "file:///C:/dir/a", "file:///C:/b"},
+        Case{"/b", "file:///C:/dir/a", "file:///C:/b"},
+        Case{"D|/b", "file:///C:/dir/a", "file:///D:/b"},
+        Case{"//other/a", "file://server/dir/a", "file://other/a"},
+        Case{"?new", "file:///a?old#f", "file:///a?new"},
+        Case{"#new", "file:///a?old#f", "file:///a?old#new"},
+        Case{"foo:/..//path", "", "foo:/.//path"},
+        Case{"..//path", "foo:/p", "foo:/.//path"},
+        Case{"path", "foo:/.//p", "foo:/.//path"},
+        Case{"", "foo:/.//p", "foo:/.//p"},
+        Case{"//C|?foo/bar", "file:///tmp/mock/path", "file:///C:/?foo/bar"},
+        Case{"//C|#foo/bar", "file:///tmp/mock/path", "file:///C:/#foo/bar"},
+        Case{"\\a", "foo://foo/a", "foo://foo/a"},
+        Case{"\\/a", "foo://foo/a", "foo://a"},
+        Case{"\\\\a", "foo://foo/a", "foo://a"},
+        Case{"foo://host/ !\"$%&'()*+,-./:;<=>@[\\]^_`{|}~", "", "foo://host/%20!%22$%&'()*+,-./:;%3C=%3E@[\\]^_%60%7B|%7D~"},
+        Case{"foo://Host/a", "", "foo://Host/a"},
+        Case{"foo://", "", "foo://"},
+        Case{"foo:///a", "", "foo:///a"},
+        Case{"foo:/a", "", "foo:/a"},
+        Case{"foo:/a/../b", "", "foo:/b"},
+        Case{"foo://host:0", "", "foo://host:0"},
+        Case{"foo://u:p@Host:99/a?x#y", "", "foo://u:p@Host:99/a?x#y"},
+        Case{"foo://é/a", "", "foo://%C3%A9/a"},
+        Case{"foo://%65X/a", "", "foo://%65X/a"},
+        Case{"foo://xn--/a", "", "foo://xn--/a"},
+        Case{"foo://bad host/a", "", nullptr},
+        Case{"foo://[::1]/a", "", "foo://[::1]/a"},
+        Case{"../b", "foo://host/a/c", "foo://host/b"},
+        Case{"../b", "foo:/a/c", "foo:/b"},
+        Case{"//other/x", "foo:/a/c", "foo://other/x"},
+        Case{"foo:bar", "foo:/a/c", "foo:bar"},
+        Case{"foo://host/a\\b", "", "foo://host/a\\b"},
+        Case{"foo://u@host?x", "", "foo://u@host/?x"},
         Case{"about:blank", "", "about:blank"},
         Case{"data:text/plain,hello world?x#y", "", "data:text/plain,hello world?x#y"},
         Case{"#new", "about:blank?x#old", "about:blank?x#new"},
@@ -1101,13 +1150,25 @@ void TestURLParsing() {
         const auto bracket = href.find('[');
         if (bracket != std::string::npos && href[scheme + 1] == '/' && bracket < href.find('/', scheme + 3))
             Check(ViewText(URLHost(&result)) == href.substr(bracket, href.find(']', bracket) - bracket + 1));
-        const auto pathStart = result.hostEnd + ((result.bits >> 3) & 7);
+        auto pathStart = result.hostEnd + ((result.bits >> 3) & 7);
+        if (pathStart == scheme + 1 && href.substr(pathStart, 2) == "/.") pathStart += 2;
         Check(ViewText(URLPath(&result)) == href.substr(pathStart, result.pathEnd - pathStart));
         Check(ViewText(URLQuery(&result)) == href.substr(result.pathEnd, result.queryEnd - result.pathEnd));
         Check(ViewText(URLFragmentSign(&result)) == href.substr(result.queryEnd));
         Check(result.pathAfterLastSlash <= result.pathEnd);
     }
     URL noBase{};
+    for (const auto& entry : {std::pair{"foo:/x", 4U}, std::pair{"foo:///x", 6U}, std::pair{"file:///x", 7U}}) {
+        auto text = FromUTF8Z(U8(entry.first));
+        URL parsed{};
+        parse(&parsed, &noBase, &text, nullptr);
+        String parsedOwner(parsed.impl);
+        Check(parsed.bits & 1);
+        Check(!(parsed.bits & 4));
+        Check(parsed.userStart == entry.second && parsed.userEnd == entry.second && parsed.passwordEnd == entry.second);
+        Check(parsed.hostEnd == entry.second && ViewText(URLHost(&parsed)).empty());
+        Check(ViewText(URLPath(&parsed)) == "/x");
+    }
     auto input = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
     URL value{};
     parse(&value, &noBase, &input, nullptr);

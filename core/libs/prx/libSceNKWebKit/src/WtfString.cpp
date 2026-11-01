@@ -1225,10 +1225,13 @@ struct ParsedURL {
     std::optional<std::string> query;
     std::optional<std::string> fragment;
     bool opaque{false};
+    bool authority{false};
 };
 
 bool URLAuthority(std::u16string_view text, ParsedURL& value) {
+    const bool special = URLDefaultPort(value.scheme) || value.scheme == "file";
     const auto at = text.rfind('@');
+    if (value.scheme == "file" && at != std::u16string_view::npos) return false;
     if (at != std::u16string_view::npos) {
         auto credentials = text.substr(0, at);
         auto colon = credentials.find(':');
@@ -1236,6 +1239,7 @@ bool URLAuthority(std::u16string_view text, ParsedURL& value) {
         if (colon != std::u16string_view::npos) value.password = EncodeURL(credentials.substr(colon + 1), 2);
         text.remove_prefix(at + 1);
     }
+    if (text.empty()) return !special && at == std::u16string_view::npos;
     auto colon = text.find(':');
     if (text.starts_with(u"[")) {
         const auto end = text.find(']');
@@ -1243,7 +1247,16 @@ bool URLAuthority(std::u16string_view text, ParsedURL& value) {
         colon = end + 1;
         if (colon == text.size()) colon = std::u16string_view::npos;
         else if (text[colon] != ':') return false;
-    } else if (!URLHost(text.substr(0, colon), value.host)) return false;
+    } else if (special) {
+        if (!URLHost(text.substr(0, colon), value.host)) return false;
+    } else {
+        const auto host = text.substr(0, colon);
+        if (host.empty()) return false;
+        for (char16_t unit : host)
+            if (!unit || std::u16string_view(u" #/:<>?@[\\]^|").find(unit) != std::u16string_view::npos) return false;
+        value.host = EncodeURL(host, 0);
+    }
+    if (value.scheme == "file" && colon != std::u16string_view::npos) return false;
     if (colon != std::u16string_view::npos && colon + 1 < text.size()) {
         unsigned port = 0;
         for (char16_t unit : text.substr(colon + 1)) {
@@ -1251,13 +1264,20 @@ bool URLAuthority(std::u16string_view text, ParsedURL& value) {
             port = port * 10 + unit - '0';
             if (port > 65535) return false;
         }
-        if (port != URLDefaultPort(value.scheme)) value.port = std::to_string(port);
+        if (!URLDefaultPort(value.scheme) || port != URLDefaultPort(value.scheme)) value.port = std::to_string(port);
     }
     return true;
 }
 
-std::string URLPath(std::u16string text) {
-    std::replace(text.begin(), text.end(), u'\\', u'/');
+bool URLDrive(std::u16string_view text) {
+    return text.size() >= 2 && ((text[0] >= 'a' && text[0] <= 'z') || (text[0] >= 'A' && text[0] <= 'Z'))
+        && (text[1] == ':' || text[1] == '|')
+        && (text.size() == 2 || std::u16string_view(u"/\\?#").find(text[2]) != std::u16string_view::npos);
+}
+
+std::string URLPath(std::u16string text, bool special, bool file = false) {
+    if (text.empty()) return {};
+    if (special) std::replace(text.begin(), text.end(), u'\\', u'/');
     std::vector<std::string> segments;
     for (std::size_t start = 1;;) {
         auto end = text.find('/', start);
@@ -1269,8 +1289,16 @@ std::string URLPath(std::u16string text) {
                 i += 2;
             } else dots.push_back(segment[i]);
         }
+        if (!special) {
+            const auto backslash = dots.find('\\');
+            if (backslash != std::u16string::npos && (dots.substr(0, backslash) == u"." || dots.substr(0, backslash) == u"..")) {
+                end = text.find('\\', start);
+                dots.resize(backslash);
+            }
+        }
         if (dots == u"..") {
-            if (!segments.empty()) segments.pop_back();
+            const bool driveRoot = file && segments.size() == 1 && URLDrive(std::u16string(segments[0].begin(), segments[0].end()));
+            if (!segments.empty() && !driveRoot) segments.pop_back();
         } else if (dots != u".") segments.push_back(EncodeURL(segment, 1));
         if (end == std::u16string::npos) {
             if (dots == u"." || dots == u"..") segments.emplace_back();
@@ -1298,11 +1326,70 @@ ParsedURL URLBase(const URL& base) {
     value.user = part(base.userStart, base.userEnd);
     value.password = part(base.userEnd == base.passwordEnd ? base.userEnd : base.userEnd + 1, base.passwordEnd);
     value.host = part(hostStart, base.hostEnd);
-    if (pathStart > base.hostEnd) value.port = part(base.hostEnd + 1, pathStart);
+    const unsigned portEnd = base.hostEnd + ((base.bits >> 3) & 7);
+    if (portEnd > base.hostEnd) value.port = part(base.hostEnd + 1, portEnd);
     value.path = part(pathStart, base.pathEnd);
     if (base.queryEnd > base.pathEnd) value.query = part(base.pathEnd + 1, base.queryEnd);
     value.opaque = base.bits & 4;
+    value.authority = base.userStart == schemeEnd + 3;
     return value;
+}
+
+bool ParseFileURL(std::u16string text, const URL& base, ParsedURL& value) {
+    const bool fileBase = (base.bits & 1) && URLBytes(URLUnits(Slice(View(base.impl), 0, base.bits >> 6))) == "file";
+    if (fileBase) value = URLBase(base);
+    value.scheme = "file";
+    value.authority = true;
+    std::replace(text.begin(), text.end(), u'\\', u'/');
+    const bool authority = text.starts_with(u"//");
+    const bool slash = text.starts_with(u"/");
+    bool driveHost = false;
+    if (authority) {
+        value = {};
+        value.scheme = "file";
+        value.authority = true;
+        auto end = text.find_first_of(u"/?#", 2);
+        if (end == std::u16string::npos) end = text.size();
+        auto host = std::u16string_view(text).substr(2, end - 2);
+        if (URLDrive(host)) {
+            driveHost = true;
+            text.erase(0, 1);
+        } else {
+            if (!host.empty() && !URLAuthority(host, value)) return false;
+            if (value.host == "localhost") value.host.clear();
+            text.erase(0, end);
+        }
+    }
+    auto fragment = text.find('#');
+    if (fragment != std::u16string::npos) {
+        value.fragment = EncodeURL(std::u16string_view(text).substr(fragment + 1), 5);
+        text.resize(fragment);
+    }
+    const auto query = text.find('?');
+    if (query != std::u16string::npos) {
+        value.query = EncodeURL(std::u16string_view(text).substr(query + 1), 4);
+        text.resize(query);
+    } else if (!text.empty() || authority) value.query.reset();
+    if (!text.empty()) {
+        if (!authority && !slash) {
+            std::string prefix = fileBase ? value.path.substr(0, value.path.rfind('/') + 1) : "/";
+            if (URLDrive(text)) {
+                prefix = "/";
+                text[1] = ':';
+            }
+            text.insert(text.begin(), prefix.begin(), prefix.end());
+        } else if ((!authority || driveHost) && text.starts_with(u"/") && URLDrive(std::u16string_view(text).substr(1))) {
+            text[2] = ':';
+        } else if (!authority && fileBase && value.path.size() >= 3) {
+            std::u16string basePath(value.path.begin() + 1, value.path.end());
+            if (URLDrive(basePath)) text.insert(1, basePath.substr(0, 2) + u"/");
+        }
+        if (driveHost && text.size() == 3 && (query != std::u16string::npos || fragment != std::u16string::npos)) text.push_back('/');
+        if (!text.starts_with(u"/")) text.insert(text.begin(), '/');
+        value.path = URLPath(std::move(text), true, true);
+    } else if (authority || !fileBase) value.path = "/";
+    if (value.path.empty()) value.path = "/";
+    return true;
 }
 
 bool ParseURL(std::u16string text, const URL& base, ParsedURL& value) {
@@ -1316,15 +1403,13 @@ bool ParseURL(std::u16string text, const URL& base, ParsedURL& value) {
         if (colon > 0x3FFFFFF) return false;
         for (auto unit : text.substr(0, colon)) value.scheme.push_back(static_cast<char>(AsciiCase(unit, true)));
         text.erase(0, colon + 1);
-        if (value.scheme == "file") throw std::runtime_error("WTF::URL: file URL parsing is not implemented");
-        if (!URLDefaultPort(value.scheme)) {
-            if (text.starts_with(u"/")) throw std::runtime_error("WTF::URL: non-special hierarchical URL parsing is not implemented");
-            value.opaque = true;
-        }
+        if (value.scheme != "file" && !URLDefaultPort(value.scheme)) value.opaque = !text.starts_with(u"/");
     }
+    if (value.scheme == "file" || (!hasScheme && (base.bits & 1) && URLBytes(URLUnits(Slice(View(base.impl), 0, base.bits >> 6))) == "file"))
+        return ParseFileURL(std::move(text), base, value);
     const bool sameBase = (base.bits & 1) && value.scheme == URLBytes(URLUnits(Slice(View(base.impl), 0, base.bits >> 6)));
-    const bool relative = !hasScheme || (!value.opaque && sameBase && !text.starts_with(u"//"));
-    bool authority = !relative && !value.opaque;
+    const bool relative = !hasScheme || (URLDefaultPort(value.scheme) && sameBase && !text.starts_with(u"//"));
+    bool authority = !relative && !value.opaque && (URLDefaultPort(value.scheme) || text.starts_with(u"//"));
     if (relative) {
         if (!(base.bits & 1)) return false;
         if (hasScheme && text == u"/") return false;
@@ -1334,22 +1419,26 @@ bool ParseURL(std::u16string text, const URL& base, ParsedURL& value) {
             value.fragment = EncodeURL(std::u16string_view(text).substr(1), 5);
             return true;
         }
-        if (!URLDefaultPort(value.scheme)) throw std::runtime_error("WTF::URL: file or non-special hierarchical base is not implemented");
         auto slash = [](char16_t unit) { return unit == '/' || unit == '\\'; };
         authority = text.size() >= 2 && slash(text[0]) && slash(text[1]);
+        if (!authority && text.starts_with(u"\\")) text[0] = '/';
         if (authority) {
             value.user.clear(); value.password.clear(); value.host.clear(); value.port.clear(); value.path.clear(); value.query.reset();
         }
     }
+    const bool special = URLDefaultPort(value.scheme);
     if (authority) {
-        std::size_t start = text.find_first_not_of(u"/\\");
+        value.authority = true;
+        std::size_t start = special ? text.find_first_not_of(u"/\\") : 2;
         if (start == std::u16string::npos) return false;
-        auto end = text.find_first_of(u"/\\?#", start);
+        auto end = text.find_first_of(special ? u"/\\?#" : u"/?#", start);
         if (end == std::u16string::npos) end = text.size();
         auto host = std::u16string_view(text).substr(start, end - start);
-        if (end < text.size() && text[end] == '\\' && host.find('@') != std::u16string_view::npos) return false;
+        if (special && end < text.size() && text[end] == '\\' && host.find('@') != std::u16string_view::npos) return false;
+        const bool credentialQuery = !special && host.find('@') != std::u16string_view::npos && end < text.size() && (text[end] == '?' || text[end] == '#');
         if (!URLAuthority(host, value)) return false;
         text.erase(0, end);
+        if (credentialQuery) text.insert(text.begin(), '/');
     }
     auto fragment = text.find('#');
     if (fragment != std::u16string::npos) {
@@ -1358,23 +1447,24 @@ bool ParseURL(std::u16string text, const URL& base, ParsedURL& value) {
     }
     auto query = text.find('?');
     if (query != std::u16string::npos) {
-        value.query = EncodeURL(std::u16string_view(text).substr(query + 1), value.opaque ? 3 : 4);
+        value.query = EncodeURL(std::u16string_view(text).substr(query + 1), special ? 4 : 3);
         text.resize(query);
     } else if (!text.empty() || authority || value.opaque) value.query.reset();
     if (value.opaque) value.path = EncodeURL(text, 0);
     else if (!text.empty() || authority) {
-        if (text.empty() || (text[0] != '/' && text[0] != '\\')) {
+        if ((text.empty() && special) || (!text.empty() && text[0] != '/' && (!special || text[0] != '\\'))) {
             std::string prefix = authority ? "/" : value.path.substr(0, value.path.rfind('/') + 1);
+            if (prefix.empty()) prefix = "/";
             text.insert(text.begin(), prefix.begin(), prefix.end());
         }
-        value.path = URLPath(std::move(text));
+        value.path = URLPath(std::move(text), special);
     }
     return true;
 }
 
 URL StoreURL(const ParsedURL& value, const String& input) {
     URL result{};
-    std::string text = value.scheme + (value.opaque ? ":" : "://");
+    std::string text = value.scheme + (value.authority ? "://" : ":");
     result.userStart = static_cast<unsigned>(text.size());
     text += value.user;
     result.userEnd = static_cast<unsigned>(text.size());
@@ -1386,8 +1476,10 @@ URL StoreURL(const ParsedURL& value, const String& input) {
     unsigned portLength = 0;
     if (!value.port.empty()) { text += ":" + value.port; portLength = static_cast<unsigned>(value.port.size() + 1); }
     const auto pathStart = text.size();
-    text += value.path;
-    auto slash = value.path.rfind('/');
+    auto path = value.path;
+    if (!value.authority && !value.opaque && path.starts_with("//")) path.insert(1, "./");
+    text += path;
+    auto slash = path.rfind('/');
     result.pathAfterLastSlash = static_cast<unsigned>(pathStart + (slash == std::string::npos ? 0 : slash + 1));
     result.pathEnd = static_cast<unsigned>(text.size());
     if (value.query) text += "?" + *value.query;
