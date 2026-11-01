@@ -707,6 +707,22 @@ void Deadline(int ssl, Mode mode, bool overall) {
 
 }
 
+void HostAuthority(int ssl) {
+    std::fprintf(stderr, "HTTP2 host header scenario\n");
+    Server server(Mode::Normal);
+    Client client(ssl);
+    Require(sceHttp2AddRequestHeader(client.tmpl, "Host", "template.example", 0) == 0, "template host");
+    client.Create(server.Url());
+    Require(sceHttp2AddRequestHeader(client.request, "host", "request.example", 0) == 0, "request host");
+    Require(sceHttp2SendRequest(client.request, nullptr, 0) == 0, "send host request");
+    std::array<char, 64> buffer;
+    while (sceHttp2ReadData(client.request, buffer.data(), buffer.size()) > 0) {}
+    server.Join();
+    const auto& headers = server.Headers();
+    Require(headers.count(":authority") == 1 && headers.find(":authority")->second == "request.example", "host header becomes the authority");
+    Require(headers.count("host") == 0, "host header is not sent");
+}
+
 int main(int argc, char** argv) {
 #ifndef _WIN32
     std::signal(SIGPIPE, SIG_IGN);
@@ -756,6 +772,7 @@ int main(int argc, char** argv) {
         Failure(untrusted, Mode::Normal);
         Success(untrusted, Mode::Normal, true);
         Require(sceSslTerm_nid_postfix(untrusted) == 0, "untrusted SSL term");
+        HostAuthority(ssl);
     }
     Require(sceSslTerm_nid_postfix(ssl) == 0, "SSL term");
     std::puts("HTTP2 loopback transport passed");
