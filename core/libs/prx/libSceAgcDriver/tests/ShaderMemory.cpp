@@ -9845,8 +9845,9 @@ void verifyQuadMaskNeighbourReads() {
         require(stored, "quad mask: the pixel program stores no output");
         return nested;
     };
-    for (const auto code : {std::span<const std::uint32_t>(explicitExec), std::span<const std::uint32_t>(constantWqm), std::span<const std::uint32_t>(permute)}) {
-        require(!outputStoresNested(compile(code, true, true)), "a color export of a pixel program that reads neighbour lanes is stored inside an EXEC branch, which lets drivers move those reads out of uniform control flow");
+    constexpr std::array<std::uint32_t, 6> livePermute{0x7e040284u, 0xdac80000u, 0x01000002u, 0xf800180fu, 0x01010101u, 0xbf810000u};
+    for (const bool masked : {false, true}) {
+        require(!outputStoresNested(compile(livePermute, masked, true)), "a color export of a pixel program that reads neighbour lanes is stored inside an EXEC branch, which lets drivers move those reads out of uniform control flow");
     }
     for (const auto code : {std::span<const std::uint32_t>(explicitExec), std::span<const std::uint32_t>(constantWqm), std::span<const std::uint32_t>(permute)}) {
         const auto unmasked = compile(code, false, false);
