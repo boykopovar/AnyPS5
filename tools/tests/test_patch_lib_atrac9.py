@@ -1,4 +1,5 @@
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -7,6 +8,12 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 SCRIPT = REPOSITORY / "core/libs/prx/libSceAjm.native/PatchLibAtrac9.cmake"
+
+CMAKE = (
+    sys.argv[1]
+    if len(sys.argv) >= 2 and os.path.basename(sys.argv[0]) == Path(__file__).name
+    else (shutil.which("cmake") or "cmake")
+)
 
 UNPACK_GUARD = "block->GradientEndUnit < 0 || block->GradientEndUnit >= 48"
 BIT_READER_PEEK = "\tconst int byteIndex = br->Position / 8;\n\tconst int bitIndex = br->Position % 8;\n\tconst int numBytes = (bitIndex + bits - 1) / 8 + 1;\n\tconst unsigned char* buffer = br->Buffer;\n\n\tint value;\n\tswitch (numBytes) {"
@@ -41,7 +48,7 @@ class PatchLibAtrac9Tests(unittest.TestCase):
             'set(LIBATRAC9_PATCHED_DIR "${CMAKE_CURRENT_LIST_DIR}/generated")\n'
             'include("' + SCRIPT.as_posix() + '")\n'
         )
-        return subprocess.run([sys.argv[1], "-P", str(self.wrapper)], capture_output=True, text=True, timeout=60, cwd=self.work)
+        return subprocess.run([CMAKE, "-P", str(self.wrapper)], capture_output=True, text=True, timeout=60, cwd=self.work)
 
     def set_sentinel(self):
         for name in ("unpack.c", "bit_reader.c", "decinit.c", "utility.c"):
