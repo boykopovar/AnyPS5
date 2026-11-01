@@ -1,8 +1,36 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
+#include <array>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+
+namespace {
+
+template <typename TValue>
+bool ReadNpObjectField(const void* object, std::size_t offset, TValue& value) noexcept {
+    const auto address = reinterpret_cast<std::uintptr_t>(object);
+    if (address == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    try {
+        return GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void*>(address + offset), sizeof(value));
+    } catch (...) {
+        return false;
+    }
+}
+
+template <typename TValue>
+bool WriteNpObjectField(void* object, std::size_t offset, const TValue& value) noexcept {
+    const auto address = reinterpret_cast<std::uintptr_t>(object);
+    if (address == 0 || offset > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+    try {
+        return GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + offset), &value, sizeof(value));
+    } catch (...) {
+        return false;
+    }
+}
+
+}
 
 extern "C" {
 
@@ -71,9 +99,9 @@ int APS5_VABI _ZN3sce2np16StreamReadBufferD1Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2np9EventFlag6IsInitEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZNK3sce2np9EventFlag6IsInitEv(const void* self) {
+    std::int32_t initialized = 0;
+    return ReadNpObjectField(self, 0x10, initialized) && initialized != 0;
 }
 
 int APS5_VABI _ZN3sce2np10CancelLockC2Ev(void) {
@@ -151,9 +179,9 @@ int APS5_VABI _ZN3sce2np9EventFlag4OpenEPKc(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np13NpTitleSecret5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZN3sce2np13NpTitleSecret5ClearEv(void* self) {
+    const std::array<std::byte, 0x80> cleared{};
+    WriteNpObjectField(self, 0x8, cleared);
 }
 
 int APS5_VABI _ZN3sce2np10EventQueue7EnqueueEPKvmj(void) {
@@ -201,9 +229,9 @@ int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient10DisconnectEv(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np3ipc10IpmiClient11IsConnectedEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZN3sce2np3ipc10IpmiClient11IsConnectedEv(void* self) {
+    std::int32_t state = 0;
+    return ReadNpObjectField(self, 0x18, state) && state == 0;
 }
 
 int APS5_VABI _ZN3sce2np12HttpTemplate19SetAuthInfoCallbackEPFii15SceHttpAuthTypePKcPcS5_iPPhPmPiPvESA_(void) {
@@ -341,9 +369,11 @@ int APS5_VABI _ZN3sce2np9EventFlag3SetEm(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2np7RingBuf6IsFullEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZNK3sce2np7RingBuf6IsFullEv(const void* self) {
+    std::uint64_t readPosition = 0;
+    std::uint64_t writePosition = 0;
+    return ReadNpObjectField(self, 0x20, readPosition) && ReadNpObjectField(self, 0x28, writePosition) &&
+           readPosition == writePosition;
 }
 
 int APS5_VABI _ZN3sce2npneERKNS0_13NpTitleSecretERK16SceNpTitleSecret(void) {
@@ -386,9 +416,9 @@ int APS5_VABI _ZN3sce2np6Thread4InitEPKcimm(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np7Callout10IsTimedoutEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZN3sce2np7Callout10IsTimedoutEv(void* self) {
+    std::int32_t state = 0;
+    return ReadNpObjectField(self, 0x10, state) && (state > 0 || state == -2);
 }
 
 int APS5_VABI _ZN3sce2np7Callout11CalloutFuncEPv(void) {
@@ -496,9 +526,9 @@ int APS5_VABI _sceNpAllocatorMalloc(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np13RingBufMemory6IsInitEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZN3sce2np13RingBufMemory6IsInitEv(void* self) {
+    std::uintptr_t buffer = 0;
+    return ReadNpObjectField(self, 0x8, buffer) && buffer != 0;
 }
 
 int APS5_VABI _ZN3sce2np7RingBufD0Ev(void) {
@@ -521,9 +551,9 @@ int APS5_VABI _ZN3sce2np15CancelableScope5BeginEPNS0_6HandleEPKciS5_(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2np10EventQueue6IsInitEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZNK3sce2np10EventQueue6IsInitEv(const void* self) {
+    std::uint16_t initialized = 0;
+    return ReadNpObjectField(self, 0x98, initialized) && initialized != 0;
 }
 
 int APS5_VABI _ZN3sce2np8JsonBool5ClearEv(void) {
@@ -606,9 +636,8 @@ int APS5_VABI _ZN3sce2np10EventQueueD0Ev(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3sce2np8JsonNull5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+void APS5_VABI _ZN3sce2np8JsonNull5ClearEv(void* self) {
+    static_cast<void>(self);
 }
 
 int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient12AbortRequestEii(void) {
@@ -616,9 +645,9 @@ int APS5_VABI _ZN3sce2np3ipc17ServiceIpmiClient12AbortRequestEii(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3sce2np5Mutex6IsInitEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+bool APS5_VABI _ZNK3sce2np5Mutex6IsInitEv(const void* self) {
+    std::uint8_t initialized = 0;
+    return ReadNpObjectField(self, 0x10, initialized) && initialized != 0;
 }
 
 }
