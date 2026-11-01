@@ -45,30 +45,6 @@ int APS5_VABI WKURLRequestCopySettingHTTPBody() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKURLResponseCopyURL() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseCopyMIMEType() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseHTTPStatusCode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseCopySuggestedFilename() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseIsAttachment() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKURLResponseGetExpectedContentLength() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKSecurityOriginCopyProtocol() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -101,4 +101,18 @@ public:
     bool valid = false;
 };
 
+class URLResponse final : public ObjectOf<ObjectType::URLResponse> {
+public:
+    URLResponse() = default;
+    URLResponse(Retained<URL> url, Retained<String> mimeType, int statusCode, Retained<String> suggestedFilename, bool isAttachment, std::int64_t expectedContentLength)
+        : url(std::move(url)), mimeType(std::move(mimeType)), statusCode(statusCode), suggestedFilename(std::move(suggestedFilename)), isAttachment(isAttachment), expectedContentLength(expectedContentLength) {}
+
+    Retained<URL> url;
+    Retained<String> mimeType;
+    int statusCode = 0;
+    Retained<String> suggestedFilename;
+    bool isAttachment = false;
+    std::int64_t expectedContentLength = 0;
+};
+
 }  // namespace NKWebKit

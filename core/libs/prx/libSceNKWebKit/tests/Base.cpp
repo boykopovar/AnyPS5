@@ -342,6 +342,105 @@ static void TestUserContentURLPattern() {
 static void TestURLRequestResponse() {
     Require(WKURLRequestGetTypeID() == 23);
     Require(WKURLResponseGetTypeID() == 24);
+
+    auto responseObj = NKWebKit::Make<NKWebKit::URLResponse>(
+        NKWebKit::Make<NKWebKit::URL>("https://example.com/test.png"),
+        NKWebKit::String::FromUtf8("image/png"),
+        200,
+        NKWebKit::String::FromUtf8("test.png"),
+        true,
+        123456789LL
+    );
+    const void* responseRef = NKWebKit::ToRef(responseObj);
+
+    auto* url = WKURLResponseCopyURL(responseRef);
+    auto* urlString = WKURLCopyString(url);
+    Require(WKStringIsEqualToUTF8CString(urlString, "https://example.com/test.png"));
+    WKRelease(urlString);
+    WKRelease(url);
+
+    auto* mime = WKURLResponseCopyMIMEType(responseRef);
+    Require(WKStringIsEqualToUTF8CString(mime, "image/png"));
+    WKRelease(mime);
+
+    Require(WKURLResponseHTTPStatusCode(responseRef) == 200);
+
+    auto* filename = WKURLResponseCopySuggestedFilename(responseRef);
+    Require(WKStringIsEqualToUTF8CString(filename, "test.png"));
+    WKRelease(filename);
+
+    Require(WKURLResponseIsAttachment(responseRef));
+    Require(WKURLResponseGetExpectedContentLength(responseRef) == 123456789LL);
+
+    auto defaultObj = NKWebKit::Make<NKWebKit::URLResponse>();
+    const void* defaultRef = NKWebKit::ToRef(defaultObj);
+
+    auto* emptyUrl = WKURLResponseCopyURL(defaultRef);
+    auto* emptyUrlString = WKURLCopyString(emptyUrl);
+    Require(WKStringIsEmpty(emptyUrlString));
+    WKRelease(emptyUrlString);
+    WKRelease(emptyUrl);
+
+    auto* emptyMime = WKURLResponseCopyMIMEType(defaultRef);
+    Require(WKStringIsEmpty(emptyMime));
+    WKRelease(emptyMime);
+
+    Require(WKURLResponseHTTPStatusCode(defaultRef) == 0);
+
+    auto* emptyFilename = WKURLResponseCopySuggestedFilename(defaultRef);
+    Require(WKStringIsEmpty(emptyFilename));
+    WKRelease(emptyFilename);
+
+    Require(!WKURLResponseIsAttachment(defaultRef));
+    Require(WKURLResponseGetExpectedContentLength(defaultRef) == 0);
+
+    bool threw = false;
+    try {
+        WKURLResponseCopyURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseCopyMIMEType(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseHTTPStatusCode(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseCopySuggestedFilename(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseIsAttachment(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKURLResponseGetExpectedContentLength(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
 }
 
 static void TestError() {
