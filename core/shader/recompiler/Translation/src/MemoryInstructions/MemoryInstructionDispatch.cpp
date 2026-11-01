@@ -369,9 +369,11 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::DsWriteSrc2B32:
         return dsSrc2(inst, IrOpcode::WriteSharedU32);
     case RdnaOpcode::DsMinSrc2F32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicFMin32);
     case RdnaOpcode::DsMaxSrc2F32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicFMax32);
     case RdnaOpcode::DsAddSrc2F32:
-        throw std::runtime_error("f32 DS src2 operations depend on the f32 denormal mode, which is not modelled for LDS float atomics");
+        return dsSrc2(inst, IrOpcode::SharedAtomicFAdd32);
     case RdnaOpcode::DsWrxchgRtnB32:
         return dsAtomic(inst, IrOpcode::SharedAtomicSwap32, true);
 
