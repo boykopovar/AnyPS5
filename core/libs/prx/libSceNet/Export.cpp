@@ -2396,7 +2396,9 @@ int lookup_ipv4(int rid, const char* hostname, const char* func, std::vector<std
 }
 
 int APS5_VABI sceNetResolverStartNtoa(int rid, const char* hostname, void* addr, int timeout, int retry, int flags) {
-    if (timeout < 0 || retry < 0 || (static_cast<unsigned>(flags) & 0xfffefffeu) != 0) return fail(NET_EINVAL);
+    constexpr int minimumTimeout = 1000000;
+    if (timeout < 0 || (timeout != 0 && timeout < minimumTimeout) || retry < 0 || (static_cast<unsigned>(flags) & 0xfffefffeu) != 0)
+        return fail(NET_EINVAL);
     if (!hostname || !addr) return fail(NET_EINVAL);
     std::vector<std::uint32_t> addresses;
     if (const int error = lookup_ipv4(rid, hostname, __func__, addresses)) return error;

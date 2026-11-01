@@ -47,7 +47,7 @@ private:
         std::span<const std::byte> Payload() const;
     };
 
-    File readFile() const;
+    File readFile(const std::filesystem::path& source) const;
     std::optional<FileHeader> readHeader() const;
     void load(std::vector<std::byte>& initialData);
     void save(bool final, bool waitForPipelines);

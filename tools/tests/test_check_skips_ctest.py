@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess
 import sys
+import shutil
 import tempfile
 import unittest
 
@@ -12,6 +13,8 @@ TOOL = Path(__file__).resolve().parents[1] / "check_skips.py"
 
 class IntentionalSkipTests(unittest.TestCase):
     def check_real_skip(self, property_name, property_value, message, exit_code, expected):
+        if shutil.which("ctest") is None:
+            self.skipTest("CTest is required to write a real JUnit report")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             script = root / "skip.py"

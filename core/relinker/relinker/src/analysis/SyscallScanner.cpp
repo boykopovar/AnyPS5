@@ -1,6 +1,8 @@
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <codegen/IInstructionScanner.hpp>
 #include <codegen/x86/DecodedInstruction.hpp>
+#include <codegen/x86/X64InstructionDecoder.hpp>
+#include <codegen/CodegenException.hpp>
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -252,9 +254,8 @@ static std::optional<std::uint64_t> ConstantRaxSetEndingAt(const std::vector<std
     }
     if (end >= 2 && (code[end - 2] == 0x31 || code[end - 2] == 0x33) && code[end - 1] == 0xC0) {
         const ActivePrefixes prefixes = ActivePrefixesBefore(code, end - 2);
-        const bool wordSized = prefixes.OperandSize && (prefixes.Rex & 0x08) == 0;
         const bool extendedOperand = (prefixes.Rex & 0x05) != 0;
-        if (!wordSized && !extendedOperand)
+        if (!prefixes.OperandSize && !extendedOperand)
             return 0;
     }
     return std::nullopt;
@@ -306,6 +307,107 @@ static std::optional<std::uint64_t> ConstantSyscallNumberInBytes(const std::vect
     return std::nullopt;
 }
 
+static bool EndsControlFlow(const Codegen::ControlFlowKind kind) {
+    using enum Codegen::ControlFlowKind;
+    return kind == Return || kind == Trap || kind == UnconditionalJump || kind == IndirectJump;
+}
+
+static bool ContainsOffset(const std::vector<CodeRange>& ranges, const std::size_t offset) {
+    const auto after = std::upper_bound(ranges.begin(), ranges.end(), offset, [](const std::size_t value, const CodeRange& range) { return value < range.Begin; });
+    return after != ranges.begin() && offset < std::prev(after)->End;
+}
+
+static std::size_t NextRangeBegin(const std::vector<CodeRange>& ranges, const std::size_t offset, const std::size_t limit) {
+    const auto after = std::upper_bound(ranges.begin(), ranges.end(), offset, [](const std::size_t value, const CodeRange& range) { return value < range.Begin; });
+    if (after == ranges.end() || after->Begin >= limit)
+        return limit;
+    return static_cast<std::size_t>(after->Begin);
+}
+
+static void QueueInstructionTargets(std::vector<std::size_t>& pending, const std::vector<bool>& visited, const std::vector<CodeRange>& unwind, const Codegen::DecodedInstructionInfo& info, const std::vector<std::uint8_t>& code, const std::size_t pos, const std::size_t limit) {
+    if (info.HasBranchTarget && !info.HasRipRelativeDisp) {
+        const auto target = static_cast<std::int64_t>(pos + info.Length) + info.BranchDisp;
+        if (target >= 0 && target < static_cast<std::int64_t>(limit)) {
+            const auto targetPos = static_cast<std::size_t>(target);
+            if (!ContainsOffset(unwind, targetPos) && !visited[targetPos])
+                pending.push_back(targetPos);
+        }
+    }
+    if (!info.IsTwoByteOpcode && info.Opcode == 0x8D && info.HasRipRelativeDisp &&
+        info.RipRelativeDispOffset + sizeof(std::int32_t) <= info.Length &&
+        pos + info.RipRelativeDispOffset + sizeof(std::int32_t) <= code.size()) {
+        std::int32_t disp = 0;
+        std::memcpy(&disp, code.data() + pos + info.RipRelativeDispOffset, sizeof(disp));
+        const auto target = static_cast<std::int64_t>(pos + info.Length) + disp;
+        if (target >= 0 && target < static_cast<std::int64_t>(limit)) {
+            const auto targetPos = static_cast<std::size_t>(target);
+            if (!ContainsOffset(unwind, targetPos) && !visited[targetPos])
+                pending.push_back(targetPos);
+        }
+    }
+}
+
+static std::vector<CodeRange> DiscoverRoutines(const std::vector<std::uint8_t>& code, const std::size_t limit, const std::vector<CodeRange>& unwindRanges) {
+    if (unwindRanges.empty())
+        return {};
+    const auto unwind = Codegen::MergeCodeRanges(unwindRanges);
+    std::vector<CodeRange> routines = unwind;
+    const Codegen::X64InstructionDecoder decoder;
+    std::vector<std::size_t> pending;
+    std::vector<bool> visited(limit, false);
+    for (const auto& range : unwind) {
+        if (range.Begin >= limit)
+            continue;
+        const auto end = static_cast<std::size_t>(std::min(range.End, static_cast<ByteCount>(limit)));
+        auto pos = static_cast<std::size_t>(range.Begin);
+        while (pos < end) {
+            Codegen::DecodedInstructionInfo info;
+            try {
+                info = decoder.DecodeInstruction(code.data() + pos, end - pos);
+            } catch (const Codegen::CodegenException&) {
+                break;
+            }
+            if (info.Length == 0 || info.Length > end - pos)
+                break;
+            QueueInstructionTargets(pending, visited, unwind, info, code, pos, limit);
+            for (std::size_t b = 0; b < info.Length; ++b)
+                visited[pos + b] = true;
+            pos += info.Length;
+        }
+    }
+
+    std::set<std::size_t> explored;
+    while (!pending.empty()) {
+        const auto root = pending.back();
+        pending.pop_back();
+        if (root >= limit || ContainsOffset(unwind, root) || !explored.insert(root).second)
+            continue;
+        auto pos = root;
+        while (pos < limit && !ContainsOffset(unwind, pos)) {
+            if (visited[pos] && pos != root)
+                break;
+            const auto fence = NextRangeBegin(unwind, pos, limit);
+            Codegen::DecodedInstructionInfo info;
+            try {
+                info = decoder.DecodeInstruction(code.data() + pos, fence - pos);
+            } catch (const Codegen::CodegenException&) {
+                break;
+            }
+            if (info.Length == 0 || info.Length > fence - pos)
+                break;
+            QueueInstructionTargets(pending, visited, unwind, info, code, pos, limit);
+            for (std::size_t b = 0; b < info.Length; ++b)
+                visited[pos + b] = true;
+            pos += info.Length;
+            if (EndsControlFlow(info.FlowKind))
+                break;
+        }
+        if (pos > root)
+            routines.push_back({root, pos});
+    }
+    return Codegen::MergeCodeRanges(std::move(routines));
+}
+
 class SyscallScanner : public ISyscallScanner {
 public:
     SyscallScanner(Domain::IProgress& progress, const bool trapSdkStubs) : progress(progress), trapSdkStubs(trapSdkStubs) {}
@@ -323,14 +425,11 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
     const auto limit = static_cast<std::size_t>(codeSectionSize);
 
     const std::string source(input);
-    const auto scanner = Codegen::MakeInstructionScanner([&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Decode, source, completed, total}); }, unwindRanges);
+    const auto functions = DiscoverRoutines(codeSection, limit, unwindRanges);
+    const auto scanner = Codegen::MakeInstructionScanner([&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Decode, source, completed, total}); }, functions);
     RecentInstructions recent;
     std::vector<std::size_t> trapped;
-    const auto functions = Codegen::MergeCodeRanges(unwindRanges);
-    const auto insideFunction = [&](const std::size_t offset) {
-        const auto after = std::upper_bound(functions.begin(), functions.end(), offset, [](const std::size_t value, const CodeRange& range) { return value < range.Begin; });
-        return after != functions.begin() && offset < std::prev(after)->End;
-    };
+    const auto insideFunction = [&](const std::size_t offset) { return ContainsOffset(functions, offset); };
     std::size_t skipped = 0;
     std::optional<FileByteOffset> firstSkipped;
     scanner->VisitCodeSection(codeSection, codeSectionOffset, codeSectionSize, [&](const Codegen::InstructionMatch& match) {
@@ -359,14 +458,12 @@ std::vector<std::size_t> SyscallScanner::ScanCodeSectionForSyscalls(const std::v
         std::optional<std::uint64_t> number;
         if (kind == ForbiddenInstruction::Invocation)
             number = ConstantSyscallNumber(codeSection, codeSectionOffset, recent);
-        if (!functions.empty() && !number && !insideFunction(start)) {
-            if (kind == ForbiddenInstruction::Invocation)
-                number = ConstantSyscallNumberInBytes(codeSection, opcode);
-            if (!number) {
-                ++skipped;
-                if (!firstSkipped) firstSkipped = match.Offset;
-                return;
-            }
+        if (!unwindRanges.empty() && !number && kind == ForbiddenInstruction::Invocation)
+            number = ConstantSyscallNumberInBytes(codeSection, opcode);
+        if (!unwindRanges.empty() && !number && !insideFunction(start)) {
+            ++skipped;
+            if (!firstSkipped) firstSkipped = match.Offset;
+            return;
         }
 
         std::ostringstream msg;
