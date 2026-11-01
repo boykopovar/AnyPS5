@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "tests/TemporaryFile.hpp"
 #include <cstdarg>
 #include <chrono>
 #include <cstddef>
@@ -43,7 +44,7 @@ int main() {
     Require(stream != nullptr);
 
     const int written = WriteFormatted(stream, "value: %d, string: %s", 12345, "testing");
-    Require(written == 24);
+    Require(written == 29);
     Require(fclose_nid_postfix(stream) == 0);
 
     std::ifstream in(filePath, std::ios::binary);
@@ -53,7 +54,8 @@ int main() {
     Require(contents == "value: 12345, string: testing");
     std::filesystem::remove(filePath);
 
-    FileStream closedStream{};
+    FileStream closedStream(TemporaryFile::Open());
+    closedStream.Close();
     *__error_nid_postfix() = 0;
     Require(WriteFormatted(&closedStream, "test") == -1);
     Require(*__error_nid_postfix() == 9);
