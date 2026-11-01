@@ -4,6 +4,7 @@
 #include "prx/libwebrtc/include/ExpFilter.hpp"
 #include "prx/libwebrtc/include/RtcpCommonHeader.hpp"
 #include "prx/libwebrtc/include/Opus.hpp"
+#include "prx/libwebrtc/include/RecursiveCriticalSection.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -188,10 +189,10 @@ int APS5_VABI libwebrtcUnknown27(void);
 int APS5_VABI _ZN3rtc10SSLAdapter6CreateEPNS_6SocketE_nid_postfix(void);
 int APS5_VABI libwebrtcUnknown28(void);
 int APS5_VABI _ZN6webrtc16AsyncDnsResolverC1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(void);
-int APS5_VABI _ZN3rtc9CritScopeD1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(void);
-int APS5_VABI _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(void);
+void APS5_VABI _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(WebRtcCritScope* scope, const WebRtcRecursiveCriticalSection* section);
+void APS5_VABI _ZN3rtc9CritScopeD1Ev_nid_postfix(WebRtcCritScope* scope);
+void APS5_VABI _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(WebRtcRecursiveCriticalSection* section);
+void APS5_VABI _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(WebRtcRecursiveCriticalSection* section);
 int APS5_VABI _ZN3rtc13ThreadManager8InstanceEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread15ProcessMessagesEi_nid_postfix(void);
 int APS5_VABI _ZN3rtc13ThreadManager13CurrentThreadEv_nid_postfix(void);
@@ -220,8 +221,8 @@ int APS5_VABI _ZN3rtc6Thread16BlockingCallImplENS_12FunctionViewIFvvEEERKN6webrt
 int APS5_VABI _ZN3rtc6Thread6DeleteEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc6Thread30IsProcessingMessagesForTestingEv_nid_postfix(void);
 int APS5_VABI _ZN3rtc6ThreadC1EPNS_12SocketServerE_nid_postfix(void);
-int APS5_VABI _ZNK3rtc24RecursiveCriticalSection5EnterEv_nid_postfix(void);
-int APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(void);
+void APS5_VABI _ZNK3rtc24RecursiveCriticalSection5EnterEv_nid_postfix(const WebRtcRecursiveCriticalSection* section);
+void APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(const WebRtcRecursiveCriticalSection* section);
 void APS5_VABI _ZN3rtc9ExpFilter5ResetEf_nid_postfix(WebRtcExpFilter* filter, float alpha);
 float APS5_VABI _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(WebRtcExpFilter* filter, float exponent, float sample);
 int APS5_VABI _ZNK6webrtc4rtcp10RtcpPacket5BuildEv_nid_postfix(void);

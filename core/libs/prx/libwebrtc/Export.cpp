@@ -945,26 +945,6 @@ int APS5_VABI _ZN6webrtc16AsyncDnsResolverC1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN3rtc9CritScopeC1EPKNS_24RecursiveCriticalSectionE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc9CritScopeD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc24RecursiveCriticalSectionC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN3rtc24RecursiveCriticalSectionD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN3rtc13ThreadManager8InstanceEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1106,16 +1086,6 @@ int APS5_VABI _ZN3rtc6Thread30IsProcessingMessagesForTestingEv_nid_postfix(void)
 }
 
 int APS5_VABI _ZN3rtc6ThreadC1EPNS_12SocketServerE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3rtc24RecursiveCriticalSection5EnterEv_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNK3rtc24RecursiveCriticalSection5LeaveEv_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
