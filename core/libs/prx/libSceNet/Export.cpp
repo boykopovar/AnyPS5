@@ -1342,9 +1342,12 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
         }, true, static_cast<int>(len));
 #endif
     } else {
+        std::array<std::uint8_t, sizeof(sockaddr_storage)> address{};
+        const auto address_length = std::min<std::uint32_t>(tolen, address.size());
+        if (address_length && !GuestSocketReadGuest_nid_no_patch(address.data(), to, address_length)) return fail(NET_EFAULT);
         sockaddr_storage destination{};
         NativeLength destination_length = 0;
-        if (!guest_to_native_address(to, tolen, destination, destination_length)) return fail(NET_EINVAL);
+        if (!guest_to_native_address(address.data(), address_length, destination, destination_length)) return fail(NET_EINVAL);
         if (destination.ss_family != (socket.family == NET_AF_INET ? AF_INET : AF_INET6)) return fail(NET_EAFNOSUPPORT);
 #ifdef __APPLE__
         result = send_stream_in_chunks(*socket.native, flags, static_cast<const char*>(buf), len, [&](const char* data, std::size_t size) {
@@ -1366,9 +1369,18 @@ int64_t APS5_VABI sceNetSendto(int s, const void* buf, size_t len, int flags, co
 }
 
 int64_t APS5_VABI sceNetSendmsg(int s, const NetMsghdr* msg, int flags) {
-    const auto total = message_length(msg);
+    if (!msg) return fail(NET_EFAULT);
+    NetMsghdr message{};
+    if (!GuestSocketReadGuest_nid_no_patch(&message, msg, sizeof(message))) return fail(NET_EFAULT);
+    std::vector<NetIovec> vectors;
+    if (message.iov && message.iov_length > 0 && message.iov_length <= NET_UIO_MAXIOV) {
+        vectors.resize(static_cast<std::size_t>(message.iov_length));
+        if (!GuestSocketReadGuest_nid_no_patch(vectors.data(), message.iov, vectors.size() * sizeof(NetIovec))) return fail(NET_EFAULT);
+        message.iov = vectors.data();
+    }
+    const auto total = message_length(&message);
     if (total < 0) return total;
-    if (msg->control && msg->control_length) throw std::runtime_error("sceNetSendmsg: control data is not supported");
+    if (message.control && message.control_length) throw std::runtime_error("sceNetSendmsg: control data is not supported");
     std::vector<char> buffer;
     try {
         buffer.resize(static_cast<std::size_t>(total));
@@ -1376,11 +1388,11 @@ int64_t APS5_VABI sceNetSendmsg(int s, const NetMsghdr* msg, int flags) {
         return fail(55);
     }
     std::size_t offset = 0;
-    for (int i = 0; i < msg->iov_length; ++i) {
-        if (msg->iov[i].length) std::memcpy(buffer.data() + offset, msg->iov[i].base, msg->iov[i].length);
-        offset += msg->iov[i].length;
+    for (const auto& entry : vectors) {
+        if (entry.length && !GuestSocketReadGuest_nid_no_patch(buffer.data() + offset, entry.base, entry.length)) return fail(NET_EFAULT);
+        offset += entry.length;
     }
-    return sceNetSendto(s, buffer.data(), buffer.size(), flags, msg->name, msg->name ? msg->name_length : 0u);
+    return sceNetSendto(s, buffer.data(), buffer.size(), flags, message.name, message.name ? message.name_length : 0u);
 }
 
 int64_t APS5_VABI sceNetRecvmsg(int s, NetMsghdr* msg, int flags) {
