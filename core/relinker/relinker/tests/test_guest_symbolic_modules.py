@@ -61,13 +61,14 @@ def executable(first, second):
     for name in names:
         offsets.append(len(strings))
         strings += name + b'\0'
+    assert len(strings) <= 0x80
     image[0x4800:0x4800 + len(strings)] = strings
     tags = [(5, 0x4800), (10, len(strings)), (6, 0x4880), (11, 24),
-            (4, 0x4840), (7, 0x4900), (8, 48), (9, 24),
+            (4, 0x48d0), (7, 0x4900), (8, 48), (9, 24),
             (1, offsets[2]), (1, offsets[3]),
             (0x61000045, (1 << 48) | offsets[4]), (0x61000045, (2 << 48) | offsets[5])]
     dynamic(image, 0x4600, 120, tags)
-    struct.pack_into('<IIIIII', image, 0x4840, 1, 3, 1, 0, 2, 0)
+    struct.pack_into('<IIIIII', image, 0x48d0, 1, 3, 1, 0, 2, 0)
     for index in range(2):
         struct.pack_into('<IBBHQQ', image, 0x4898 + 24 * index, offsets[index], 0x12, 0, 0, 0, 0)
         struct.pack_into('<QQq', image, 0x4900 + 24 * index, 0x4a20 + 8 * index, ((index + 1) << 32) | 6, 0)
