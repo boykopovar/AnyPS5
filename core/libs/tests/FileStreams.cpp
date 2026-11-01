@@ -29,6 +29,9 @@
 #include <io.h>
 #else
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/socket.h>
+#endif
 #endif
 
 static void Require(bool condition, const char* message = "File stream check failed") {
@@ -331,6 +334,44 @@ static void CheckReadErrnoAndStatus(const char* path) {
         }
         if (descriptors[1] >= 0) ::close(descriptors[1]);
     }
+#ifdef __linux__
+    for (int reader = 0; reader < 4; ++reader) {
+        int descriptors[2];
+        Require(::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) == 0);
+        const int flags = ::fcntl(descriptors[0], F_GETFL);
+        Require(flags >= 0 && ::fcntl(descriptors[0], F_SETFL, flags | O_NONBLOCK) == 0);
+        auto* native = ::fdopen(descriptors[0], "r+");
+        Require(native != nullptr);
+        std::array<char, 512> nativeBuffer{};
+        Require(std::setvbuf(native, nativeBuffer.data(), _IOFBF, nativeBuffer.size()) == 0);
+        FileStream stream(native);
+        Require(std::fwrite("pending", 1, 7, native) == 7);
+        std::array<char, 4096> chunk{};
+        bool blocked = false;
+        for (int attempt = 0; attempt < 10000; ++attempt) {
+            if (::write(descriptors[0], chunk.data(), chunk.size()) < 0) {
+                Require(errno == EAGAIN || errno == EWOULDBLOCK);
+                blocked = true;
+                break;
+            }
+        }
+        Require(blocked);
+        std::array<char, 8> buffer{};
+        buffer.fill('!');
+        errno = 35;
+        switch (reader) {
+        case 0: Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), &stream) == 0); break;
+        case 1: Require(fgetc_nid_postfix(&stream) == EOF); break;
+        case 2: Require(getc_unlocked_nid_postfix(&stream) == EOF); break;
+        case 3: Require(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), &stream) == nullptr); break;
+        }
+        Require(errno == 35, "Read transition leaked native errno");
+        Require(ferror_nid_postfix(&stream) != 0 && feof_nid_postfix(&stream) == 0);
+        Require(std::all_of(buffer.begin(), buffer.end(), [](char byte) { return byte == '!'; }));
+        static_cast<void>(stream.Close());
+        Require(::close(descriptors[1]) == 0);
+    }
+#endif
 #endif
 }
 
