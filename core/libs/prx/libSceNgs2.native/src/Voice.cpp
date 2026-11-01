@@ -1,4 +1,4 @@
-#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
+#include "prx/libSceNgs2.native/include/Api.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -139,6 +139,7 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
                 stateFlags = SCE_NGS2_VOICE_STATE_FLAG_INUSE;
             }
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
+                Ngs2ClearCustomReverb(*this);
                 if (IsSampler()) {
                     Ngs2ReplaySampler(*this);
                     Ngs2ResetFilterHistory(*this);
@@ -231,6 +232,7 @@ void Ngs2Voice::ResetSetup() {
     for (auto& gain : customGain) if (gain.configured) gain.lifecycleUnknown = true;
     ++waveformRevision;
     SetEvent(SCE_NGS2_VOICE_EVENT_STOP_IMM);
+    Ngs2ResetCustomReverb(*this);
     Ngs2ResetPitchShift(*this);
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
     for (auto& matrix : matrices) matrix.clear();
