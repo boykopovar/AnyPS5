@@ -108,10 +108,12 @@ constexpr float FanStep = 6.28318530718f / FanRim;
 alignas(256) std::array<Vertex, FanRim + 1> Fan{};
 alignas(256) std::array<Vertex, FanRim + 1> FanScrambled{};
 alignas(256) std::array<std::uint16_t, FanRim + 1> FanIndices{};
-alignas(256) std::array<std::uint16_t, FanRim + 1> FanRestart{};
+alignas(256) std::array<std::uint16_t, FanRim + 2> FanRestart{};
 alignas(256) std::array<Vertex, 4 * Columns> Quads{};
 alignas(256) std::array<std::uint16_t, 5 * Columns> QuadStrips{};
 alignas(256) std::array<std::uint32_t, 5 * Columns> QuadStrips32{};
+alignas(256) std::array<std::uint16_t, 5 * Columns> QuadFans{};
+alignas(256) std::array<std::uint32_t, 5 * Columns> QuadFans32{};
 
 std::array<std::uint32_t, 4> VertexBufferDescriptor(const void* vertices, std::uint32_t count) {
     const auto address = reinterpret_cast<std::uintptr_t>(vertices);
@@ -324,7 +326,7 @@ int main() {
             FanIndices[k] = static_cast<std::uint16_t>(FanRim - k);
             FanRestart[k] = FanIndices[k];
         }
-        FanRestart[FanRim] = 0xffffu;
+        FanRestart[FanRim + 1] = 0xffffu;
         for (std::uint32_t quad = 0; quad < Columns; ++quad) {
             const auto color = TriangleColor(quad);
             const std::array<float, 4> rgba{color[0] / 255.0f, color[1] / 255.0f, color[2] / 255.0f, 1.0f};
@@ -340,6 +342,13 @@ int main() {
             }
             QuadStrips[5 * quad + 4] = 0xffffu;
             QuadStrips32[5 * quad + 4] = 0xffffffffu;
+            constexpr std::array<std::uint32_t, 4> fanOrder{0u, 1u, 3u, 2u};
+            for (std::uint32_t k = 0; k < 4; ++k) {
+                QuadFans[5 * quad + k] = static_cast<std::uint16_t>(4 * quad + fanOrder[k]);
+                QuadFans32[5 * quad + k] = 4 * quad + fanOrder[k];
+            }
+            QuadFans[5 * quad + 4] = 0xffffu;
+            QuadFans32[5 * quad + 4] = 0xffffffffu;
         }
 
         const auto testDevice = OpenVulkanTestDevice();
@@ -554,14 +563,21 @@ int main() {
         ClearPixels();
         DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
         CheckFan("indexed triangle fan with restart enabled and no restart index");
-        bool refused = false;
-        try {
-            DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanRestart.data()), static_cast<std::uint32_t>(FanRestart.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
-        } catch (const std::runtime_error& error) {
-            refused = std::string(error.what()).find("primitive restart in a triangle fan") != std::string::npos;
-            if (!refused) throw;
-        }
-        Require(refused, "a triangle fan with a restart index was drawn");
+        ClearPixels();
+        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(FanRestart.data()), static_cast<std::uint32_t>(FanRestart.size()), 2, 1, 0, true}, VertexBufferDescriptor(FanScrambled.data(), static_cast<std::uint32_t>(FanScrambled.size())), ShaderRecompiler::MeshDrawPushOffsetBytes, true});
+        CheckFan("indexed triangle fan ending in a restart index");
+        ClearPixels();
+        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(QuadFans.data()), static_cast<std::uint32_t>(QuadFans.size()), 2, 1, 0, true}, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
+        CheckQuads("16-bit triangle fans with restarts", 0, Columns);
+        ClearPixels();
+        DrawMesh(device, {fan, {reinterpret_cast<std::uintptr_t>(QuadFans32.data()), static_cast<std::uint32_t>(QuadFans32.size()), 4, 1, 0, true}, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
+        CheckQuads("32-bit triangle fans with restarts", 0, Columns);
+        std::copy(quadWords.begin(), quadWords.end(), record);
+        AgcDriver::Pm4::DrawParameters quadFanDraw{reinterpret_cast<std::uintptr_t>(QuadFans.data()), static_cast<std::uint32_t>(QuadFans.size()), 2, 1, 0, true};
+        quadFanDraw.indirect = AgcDriver::Pm4::DrawParameters::IndirectDraw{reinterpret_cast<std::uintptr_t>(record), 0x25u, 20u, 20u, 1u, false, 0u, 0x280u, 0x280u, 0x280u, false, 0u};
+        ClearPixels();
+        DrawMesh(device, {fan, quadFanDraw, quadBuffer, ShaderRecompiler::MeshDrawPushOffsetBytes, true, 64u, VK_CULL_MODE_FRONT_BIT});
+        CheckQuads("indirect triangle fans with restarts", 1, 3);
         const std::array<std::uint32_t, 5> fanWords{static_cast<std::uint32_t>(FanIndices.size()), 1u, 0u, 0u, 0u};
         std::copy(fanWords.begin(), fanWords.end(), record);
         AgcDriver::Pm4::DrawParameters fanDraw{reinterpret_cast<std::uintptr_t>(FanIndices.data()), static_cast<std::uint32_t>(FanIndices.size()), 2, 1, 0, true};
