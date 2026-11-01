@@ -1711,6 +1711,16 @@ struct SaveDataMount3 {
     std::uint8_t reserved[32];
 };
 
+struct SaveDataMount2 {
+    int user_id;
+    int pad;
+    const SceSaveDataDirName* dir_name;
+    std::uint64_t blocks;
+    std::uint32_t mount_mode;
+    std::uint8_t reserved[32];
+    int pad2;
+};
+
 struct SaveDataDirNameSearchCond {
     std::int32_t user_id;
     std::int32_t pad;

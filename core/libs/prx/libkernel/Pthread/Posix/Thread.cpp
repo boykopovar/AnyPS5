@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -68,8 +69,9 @@ int APS5_VABI cpuset_getaffinity_nid_postfix(int level, int which, std::int64_t 
     if (level < 1 || level > 3) return fail(GuestEinval);
     if (level != LevelWhich) NotImplemented_nid_no_patch("cpuset_getaffinity other than the calling thread or process");
     if (which == WhichProcess) affinity = LiveGuestThreadsAffinity();
-    std::memset(mask, 0, size);
-    std::memcpy(mask, &affinity, sizeof(affinity));
+    std::array<std::uint8_t, MaximumSize> buffer{};
+    std::memcpy(buffer.data(), &affinity, sizeof(affinity));
+    if (!GuestCopyOut_nid_no_patch(mask, buffer.data(), size)) return fail(GuestEfault);
     return 0;
 }
 
@@ -83,9 +85,10 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
     };
     if (size < sizeof(KernelCpumask) || size > MaximumSize) return fail(GuestErange);
     if (!mask) return fail(GuestEfault);
-    const auto* bytes = static_cast<const std::uint8_t*>(mask);
+    std::array<std::uint8_t, MaximumSize> buffer{};
+    if (!GuestCopyIn_nid_no_patch(buffer.data(), mask, size)) return fail(GuestEfault);
     for (std::size_t index = sizeof(KernelCpumask); index < size; ++index) {
-        if (bytes[index] != 0) return fail(GuestEinval);
+        if (buffer[index] != 0) return fail(GuestEinval);
     }
     auto* self = scePthreadSelf();
     if (which == WhichThread) {
@@ -100,7 +103,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
     if (level < 1 || level > 3) return fail(GuestEinval);
     if (level != LevelWhich) NotImplemented_nid_no_patch("cpuset_setaffinity other than the calling thread or process");
     KernelCpumask requested = 0;
-    std::memcpy(&requested, bytes, sizeof(requested));
+    std::memcpy(&requested, buffer.data(), sizeof(requested));
     const KernelCpumask affinity = requested & sceKernelGetAvailableCpumask();
     if (affinity == 0) return fail(GuestEdeadlk);
     if (which == WhichThread) {
@@ -112,9 +115,9 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
 
 int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* priority) {
     constexpr int Lookup = 0, Set = 1;
-    constexpr int GuestEsrch = 3, GuestEfault = 14;
+    constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEfault = 14;
     constexpr int GuestSchedFifo = 1, GuestSchedRr = 3;
-    constexpr std::uint16_t Realtime = 2, Normal = 3, Fifo = 10;
+    constexpr std::uint16_t Realtime = 2, Normal = 3, Idle = 4, Fifo = 10, FifoBit = 8;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
         return -1;
@@ -136,6 +139,8 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
         if (!GuestCopyOut_nid_no_patch(priority, &current, sizeof(current))) return fail(GuestEfault);
         return 0;
     }
+    const auto requestedClass = static_cast<std::uint16_t>(requested.type & ~FifoBit);
+    if (requestedClass == Realtime || requestedClass == Idle) return fail(GuestEperm);
     if (other) NotImplemented_nid_no_patch("rtprio_thread: a thread other than the calling one");
     if (realTime) NotImplemented_nid_no_patch("rtprio_thread: a guest thread's real-time class");
     if (requested.type == Normal && requested.prio == 0) return 0;
@@ -272,8 +277,9 @@ int APS5_VABI pthread_getaffinity_np_nid_postfix(Pthread thread, std::size_t cpu
     KernelCpumask mask = 0;
     const int result = scePthreadGetaffinity(thread, &mask);
     if (result != 0) return PosixThread::ToErrno(result);
-    std::memset(cpuset, 0, cpusetSize);
-    std::memcpy(cpuset, &mask, sizeof(mask));
+    std::array<std::uint8_t, GUEST_CPUSET_BYTES> buffer{};
+    std::memcpy(buffer.data(), &mask, sizeof(mask));
+    if (!GuestCopyOut_nid_no_patch(cpuset, buffer.data(), cpusetSize)) return PosixThread::GUEST_EFAULT;
     return 0;
 }
 
@@ -286,7 +292,7 @@ int APS5_VABI pthread_setaffinity_np_nid_postfix(Pthread thread, std::size_t cpu
     if (cpusetSize != GUEST_CPUSET_BYTES) return GUEST_ERANGE;
     if (!cpuset) return PosixThread::GUEST_EFAULT;
     KernelCpumask requested = 0;
-    std::memcpy(&requested, cpuset, sizeof(requested));
+    if (!GuestCopyIn_nid_no_patch(&requested, cpuset, sizeof(requested))) return PosixThread::GUEST_EFAULT;
     const KernelCpumask affinity = requested & sceKernelGetAvailableCpumask();
     if (affinity == 0) return GuestEdeadlk;
     return PosixThread::ToErrno(scePthreadSetaffinity(thread, affinity));

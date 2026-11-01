@@ -22,6 +22,7 @@ int GraphicsFillRatesSetMapping(FontGraphicsFillRates* rates, float first, float
 int GraphicsDrawupFillFlatColor(FontGraphicsFrame* graphicsObject, const void* color, void** output);
 int GraphicsDrawupFillLinearGradient(FontGraphicsFrame* graphicsObject, std::uint32_t mode, const void* color1, const void* color2, void** output, float extent0, float extent1, float x0, float y0, float x1, float y1);
 int GraphicsDrawupFillRadialGradient(FontGraphicsFrame* graphicsObject, std::uint32_t mode, const void* color1, const void* color2, void** output, float extent0, float extent1, float x0, float y0, float x1, float y1);
+int GraphicsAppendGradientSegment(FontGraphicsFrame* graphicsObject, void* gradient, float position, const void* color);
 int GraphicsDrawupFillTextureImageObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height);
 int GraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, std::uint32_t format, std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1, std::uint32_t option2, std::uint32_t dimension2, void** output);
 
