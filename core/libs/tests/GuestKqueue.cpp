@@ -74,6 +74,8 @@ static constexpr std::uint32_t NoteAttrib = 0x0008;
 static constexpr std::uint32_t NoteLink = 0x0010;
 static constexpr std::uint32_t NoteRename = 0x0020;
 static constexpr std::uint32_t NoteRevoke = 0x0040;
+static constexpr std::uint32_t NoteFork = 0x40000000;
+static constexpr std::uint32_t NoteExit = 0x80000000;
 static constexpr int ReadWrite = 0x0002;
 static constexpr int Create = 0x0200;
 static constexpr int Directory = 0x00020000;
@@ -316,6 +318,35 @@ static void UnsupportedFilters() {
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
     RequireFailure(Apply(kq, Change(static_cast<std::uintptr_t>(pipe[0]), EvfiltProcdesc, EvAdd)), GuestEbadf);
+    Require(close_nid_postfix(kq) == 0);
+}
+
+static void ProcessExitOnSelf() {
+    const int kq = kqueue_nid_postfix();
+    const auto self = static_cast<std::uintptr_t>(getpid_nid_postfix());
+    int marker = 0;
+    KernelEvent events[4]{};
+    RequireFailure(Apply(kq, Change(self, EvfiltProc, EvDelete)), GuestEnoent);
+    const KernelEvent add = Change(self, EvfiltProc, EvAdd | EvReceipt, NoteExit, 9, &marker);
+    Require(kevent_nid_postfix(kq, &add, 1, events, 4, nullptr) == 1);
+    Require(events[0].ident == self && events[0].filter == EvfiltProc && events[0].flags == EvError && events[0].data == 0 && events[0].fflags == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvAdd, NoteExit)) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvAdd)) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvDisable)) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvEnable)) == 0);
+    Require(Poll(kq, events, 4) == 0);
+    Require(Throws([kq, self] { Apply(kq, Change(self, EvfiltProc, EvAdd, NoteFork)); }));
+    Require(Apply(kq, Change(self, EvfiltProc, EvForceoneshot, 0, 0, &marker)) == 0);
+    Require(Poll(kq, events, 4) == 1);
+    Require(events[0].ident == self && events[0].filter == EvfiltProc && events[0].flags == (EvReceipt | EvClear | EvOneshot));
+    Require(events[0].fflags == 0 && events[0].data == 0 && events[0].udata == &marker);
+    Require(Poll(kq, events, 4) == 0);
+    RequireFailure(Apply(kq, Change(self, EvfiltProc, EvDelete)), GuestEnoent);
+    Require(Apply(kq, Change(self, EvfiltProc, EvAdd | EvOneshot, NoteExit)) == 0);
+    Require(Apply(kq, Change(self, EvfiltProc, EvDelete)) == 0);
+    RequireFailure(Apply(kq, Change(self, EvfiltProc, EvEnable)), GuestEnoent);
+    Require(Throws([kq, self] { Apply(kq, Change(self, EvfiltProc, EvAdd, NoteExit | NoteFork)); }));
     Require(close_nid_postfix(kq) == 0);
 }
 
@@ -1634,6 +1665,7 @@ int main(int argc, char** argv) {
     PipeWrite();
 #endif
     UserEvents();
+    ProcessExitOnSelf();
     WatchKqueue();
     SocketPair();
     SocketShutReadReportsEof();
