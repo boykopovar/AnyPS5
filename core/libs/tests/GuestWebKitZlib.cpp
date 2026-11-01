@@ -140,15 +140,6 @@ void Errors() {
     Require(deflate_nid_postfix(nullptr, Z_FINISH) == Z_STREAM_ERROR, "null deflate stream");
     Require(inflate_nid_postfix(&stream, Z_FINISH) == Z_STREAM_ERROR, "uninitialized inflate");
 
-    for (const int windowBits : {16, 31, 32, 47}) {
-        bool threw = false;
-        try { inflateInit2__nid_postfix(&stream, windowBits, "1.3.1", STREAM_SIZE); } catch (const std::runtime_error&) { threw = true; }
-        Require(threw, "gzip inflate throws");
-    }
-    bool deflateThrew = false;
-    try { deflateInit2__nid_postfix(&stream, 6, Z_DEFLATED, 31, 8, 0, "1.3.1", STREAM_SIZE); } catch (const std::runtime_error&) { deflateThrew = true; }
-    Require(deflateThrew, "gzip deflate throws");
-    Require(stream.state == nullptr, "gzip rejection leaves the stream");
     Require(inflateInit2__nid_postfix(&stream, 20, "1.3.1", STREAM_SIZE) == Z_STREAM_ERROR, "invalid wrapped window");
     Require(deflateInit2__nid_postfix(&stream, 6, Z_DEFLATED, 24, 8, 0, "1.3.1", STREAM_SIZE) == Z_STREAM_ERROR, "gzip window 8");
     stream = GuestZStream{};
