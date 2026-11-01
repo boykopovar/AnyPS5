@@ -469,6 +469,27 @@ class TestWebRunnerTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             self.assertIn("archive module does not exist", err.getvalue())
 
+    def test_main_does_not_call_path_resolve_on_the_build_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            build = Path(tmp) / "build"
+            (build / "web").mkdir(parents=True)
+            (build / "web" / "archive.mjs").write_text(
+                'from "https://cdn.jsdelivr.net/npm/@zip.js/zip.js/dist/zip.min.js";\n',
+                encoding="utf-8")
+            real_resolve = Path.resolve
+
+            def resolve(self):
+                if self == build:
+                    raise AssertionError("resolve called on build path")
+                return real_resolve(self)
+
+            with patch.object(Path, "resolve", resolve), patch("subprocess.run"), \
+                    patch("urllib.request.urlopen") as mock_url:
+                mock_resp = mock_url.return_value.__enter__.return_value
+                mock_resp.read.return_value = b""
+                result = test_web.main(["--build", str(build)])
+                self.assertEqual(result, 0)
+
     def test_main_rejects_archive_missing_zip_url(self):
         with tempfile.TemporaryDirectory() as tmp:
             build = Path(tmp) / "build"

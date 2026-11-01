@@ -121,7 +121,7 @@ IrValue* Pass::TryRemoveTrivialPhi(IrValue& phi, Variable variable) {
         same = MakeInitialValue(variable);
     }
     std::vector<IrValue*> users;
-    for (IrValue* user : phi.Uses()) users.push_back(user);
+    for (IrValue* user : phi.Uses()) if (user->IsPhi()) users.push_back(user);
     phi.ReplaceUsesWith(same, true);
     for (IrValue* user : users) {
         if (user->IsPhi()) {

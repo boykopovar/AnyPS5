@@ -55,6 +55,11 @@ static void CheckRejectedArguments() {
     Require(sceKernelGetPageTableStats(&value, nullptr, &value, &value) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelGetPageTableStats(&value, &value, nullptr, &value) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelGetPageTableStats(&value, &value, &value, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    auto* bad = reinterpret_cast<int*>(0x10);
+    Require(sceKernelGetPageTableStats(bad, &value, &value, &value) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetPageTableStats(&value, bad, &value, &value) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetPageTableStats(&value, &value, bad, &value) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetPageTableStats(&value, &value, &value, bad) == SCE_KERNEL_ERROR_EFAULT);
 }
 
 static void CheckCpuGranules() {
@@ -111,6 +116,10 @@ static void CheckTraceMemoryStats() {
     second[0] = 1;
     Require(sceKernelGetTraceMemoryStats(nullptr, second) == 0 && second[0] == 0);
     Require(sceKernelGetTraceMemoryStats(nullptr, nullptr) == 0);
+    auto* badTrace = reinterpret_cast<std::uint64_t*>(0x10);
+    Require(sceKernelGetTraceMemoryStats(badTrace, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetTraceMemoryStats(nullptr, badTrace) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelGetTraceMemoryStats(badTrace, badTrace) == SCE_KERNEL_ERROR_EFAULT);
 }
 
 int main() {

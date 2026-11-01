@@ -154,12 +154,12 @@ static void Run(const Api& api) {
     for (const auto* property : {"fallback-script", "default-script"}) {
         Query<std::uint32_t>(api, library, native, "autofitter", property);
         for (const auto script : {
+            999u,
+            0xFFFFFFFFu,
             static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_NONE),
             static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_LATIN),
             static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_CJK),
-            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_INDIC),
-            999u,
-            0xFFFFFFFFu
+            static_cast<std::uint32_t>(FT_AUTOHINTER_SCRIPT_INDIC)
         }) {
             Change(api, library, native, other, nativeOther, "autofitter", property, script);
         }

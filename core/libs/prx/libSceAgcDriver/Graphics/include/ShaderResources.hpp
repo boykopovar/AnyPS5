@@ -155,6 +155,7 @@ struct ImageTableReuseCounts {
     std::uint64_t writesMade = 0;
 };
 ImageTableReuseCounts ImageTableReuses();
+std::uint64_t SampledTexturesCleared();
 std::uint64_t SampledLookupKeyScans();
 
 struct PresyncSurface {
@@ -173,7 +174,7 @@ public:
     // then no other member may be used. `compute` and `snapshots` must outlive Complete(). An
     // address-based shader (BDA tables) builds entirely in Complete(): its lease acquisition
     // reconciles imports and refreshes mirrors, which needs the lock.
-    ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots, bool deferred, std::uint64_t dispatchThreads = 0);
+    ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots, bool deferred, std::uint64_t dispatchThreads = 0, std::optional<std::pair<std::uint64_t, std::size_t>> htileClear = std::nullopt);
     void Complete();
     bool Completed() const { return completed; }
     ~ShaderResources();
@@ -622,6 +623,7 @@ private:
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writeOnlyRanges;
     bool drawBuild = false;
     std::uint64_t dispatchThreads = 0;
+    std::optional<std::pair<std::uint64_t, std::size_t>> htileClear;
     std::vector<std::shared_ptr<Texture>> textures;
     std::vector<bool> textureFirstLayer;
     std::vector<bool> textureBaseLevel;
@@ -659,6 +661,7 @@ private:
     bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
     // The import table's identity when the direct regions' serials were last proved.
     HostImportsProof importsProof;
+    bool importsReconcilable = false;
     // FNV-1a offset basis: the hash of no data buffers (DataWordsHash).
     std::uint64_t dataWordsHash = 14695981039346656037ull;
     void rehashDataWords();

@@ -319,6 +319,16 @@ static void CheckStrtonum() {
     Require(strtonum_nid_postfix("42", 0, 100, nullptr) == 42 && *__error_nid_postfix() == 34);
 }
 
+static void CheckStrnlenSBounds() {
+    const char bounded[] = {'a', 'b', 'c'};
+    Require(strnlen_s_nid_postfix("abc", 0) == 0);
+    Require(strnlen_s_nid_postfix("", 4) == 0);
+    Require(strnlen_s_nid_postfix(bounded, sizeof(bounded)) == 3);
+    Require(strnlen_s_nid_postfix("abc", 2) == 2);
+    Require(strnlen_s_nid_postfix("ab\0cd", 5) == 2);
+    Require(strnlen_s_nid_postfix(nullptr, 0) == 0);
+}
+
 static void CheckCharacterConversionInSearches() {
     const char bytes[] = "a\xe9" "b\xe9" "c";
     Require(strchr_nid_postfix(bytes, 0xe9) == bytes + 1);
@@ -339,6 +349,7 @@ int main() {
     CheckBcopy();
     if (!CheckDirnameLengths()) return 1;
     CheckCharacterConversionInSearches();
+    CheckStrnlenSBounds();
     CheckBoundsCheckedFunctions();
     CheckCaseInsensitiveComparison();
     CheckSscanfS();
