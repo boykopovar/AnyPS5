@@ -6080,9 +6080,8 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6String
     ReleaseIntrusivePtr(self, 0x30, __func__);
 }
 
-int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE4sizeEv(const void* self) {
+    return HostVectorSize(self, __func__);
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEED1Ev(IntrusivePtr* self) {
@@ -6096,5 +6095,91 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorImEEEaSERS6_
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi6Common6String5emptyEv(const CommonString* self) {
     return self->buffer == nullptr || self->buffer[0] == '\0';
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi16getPublicProfileEiRKNS4_27ParameterToGetPublicProfileERNS1_6Common11TransactionINS8_12IntrusivePtrINS3_24GetPublicProfileResponseEEENSA_INS8_18ResponseHeaderBaseEEEEE() {
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi27ParameterToGetPublicProfile10initializeEPNS1_6Common10LibContextEPKc() {
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi27ParameterToGetPublicProfile9terminateEv() {
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi27ParameterToGetPublicProfileC1Ev() {
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi11UserProfile2V115BasicProfileApi27ParameterToGetPublicProfileD1Ev() {
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEENS4_INS2_18ResponseHeaderBaseEEEEC1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEENS4_INS2_18ResponseHeaderBaseEEEED1Ev(void* self) {
+    (void)self;
+    return 0;
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V114PersonalDetailEEC1Ev(IntrusivePtr* self) {
+    *self = {};
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEC1Ev(IntrusivePtr* self) {
+    *self = {};
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, 0x00, __func__);
+}
+
+void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V16AvatarEEEEEED1Ev(IntrusivePtr* self) {
+    ReleaseIntrusivePtr(self, 0x30, __func__);
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEENS4_INS2_18ResponseHeaderBaseEEEE5startEPNS2_10LibContextE() {
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+int APS5_VABI _ZN3sce2Np9CppWebApi6Common15TransactionBaseINS2_12IntrusivePtrINS1_11UserProfile2V125GetPublicProfilesResponseEEENS4_INS2_18ResponseHeaderBaseEEEE28setResponseInformationOptionEP37SceNpWebApi2ResponseInformationOption() {
+    return 0;
+}
+
+int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEENS4_INS2_18ResponseHeaderBaseEEEE11getResponseERS8_() {
+    return SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEcvbEv(const IntrusivePtr* self) {
+    return self->object != nullptr;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V124GetPublicProfileResponseEEptEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11UserProfile2V16AvatarEEptEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V112BasicProfileEEEEEEdeEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_11UserProfile2V16AvatarEEEEEEdeEv(const IntrusivePtr* self) {
+    return self->object;
+}
+
+std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V112BasicProfileEEEE4sizeEv(const void* self) {
+    return HostVectorSize(self, __func__);
 }
 }
