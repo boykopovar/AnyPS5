@@ -1,0 +1,8 @@
+### Summary
+Add negative test coverage verifying null timespec pointer rejection in clock and time queries. Ensures null destination pointers passed to sceKernelClockGettime fail with SCE_KERNEL_ERROR_EFAULT (0x8002000e) across supported and unsupported clock IDs.
+
+- [x] Depends on: none
+- [x] Fixes: none
+- [x] Unblocks: none
+- [x] GPUs tested: n/a
+- [x] AI-assisted: yes
