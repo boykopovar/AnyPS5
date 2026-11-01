@@ -84,20 +84,26 @@ int APS5_VABI sceScreenShotEnableNotification() {
     return 0;
 }
 
-int APS5_VABI sceScreenShotCapture() {
+int APS5_VABI sceScreenShotCapture(std::uint32_t type, void* out, int (*cancel)(void*), void* cancelArg) {
+    if (type >= 2 || !out) return ErrorArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceScreenShotGetAppInfo() {
+
+int APS5_VABI sceScreenShotGetAppInfo(int id, void* out) {
+    if (id == -1 || !out) return ErrorArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
 int APS5_VABI sceScreenShotGetDrcParam() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceScreenShotIsVshScreenCaptureDisabled() {
-    NotImplemented_nid_no_patch(__func__);
+
+int APS5_VABI sceScreenShotIsVshScreenCaptureDisabled(int* out) {
+    if (!out) return ErrorArgument;
+    *out = disabled ? 1 : 0;
     return 0;
 }
 int APS5_VABI sceScreenShotSetDrcParam() {

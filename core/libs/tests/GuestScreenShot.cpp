@@ -58,17 +58,33 @@ private:
 
 void TestDisableState() {
     int value = -1;
+    int vshValue = -1;
     Require(sceScreenShotIsDisabled(0, &value) == 0 && value == 0, "capture starts enabled");
+    Require(sceScreenShotIsVshScreenCaptureDisabled(&vshValue) == 0 && vshValue == 0, "vsh capture starts enabled");
     Require(sceScreenShotDisable() == 0, "disable");
     Require(sceScreenShotIsDisabled(0, &value) == 0 && value == 1, "disable is reported");
+    Require(sceScreenShotIsVshScreenCaptureDisabled(&vshValue) == 0 && vshValue == 1, "vsh disable is reported");
     Require(sceScreenShotEnable() == 0, "enable");
     Require(sceScreenShotIsDisabled(0, &value) == 0 && value == 0, "enable is reported");
+    Require(sceScreenShotIsVshScreenCaptureDisabled(&vshValue) == 0 && vshValue == 0, "vsh enable is reported");
     value = 7;
     Require(sceScreenShotIsDisabled(-1, &value) == ErrorArgument && value == 7, "id -1 is rejected");
     Require(sceScreenShotIsDisabled(0, nullptr) == ErrorArgument, "null result is rejected");
+    Require(sceScreenShotIsVshScreenCaptureDisabled(nullptr) == ErrorArgument, "null vsh result is rejected");
     Require(sceScreenShotDisableNotification() == 0 && sceScreenShotEnableNotification() == 0, "notification toggles");
     Require(sceScreenShotIsDisabled(1, &value) == 0 && value == 0, "positive id 1 is accepted");
     Require(sceScreenShotIsDisabled(2, &value) == 0 && value == 0, "positive id 2 is accepted");
+
+    int dummy = 0;
+    Require(sceScreenShotCapture(2, &dummy, nullptr, nullptr) == ErrorArgument, "capture type 2 is rejected");
+    Require(sceScreenShotCapture(3, &dummy, nullptr, nullptr) == ErrorArgument, "capture type 3 is rejected");
+    Require(sceScreenShotCapture(0, nullptr, nullptr, nullptr) == ErrorArgument, "null capture out is rejected");
+    Require(sceScreenShotCapture(1, nullptr, nullptr, nullptr) == ErrorArgument, "null capture out with type 1 is rejected");
+    Require(sceScreenShotCapture(2, nullptr, nullptr, nullptr) == ErrorArgument, "null capture out with type 2 is rejected");
+    Require(sceScreenShotGetAppInfo(-1, &dummy) == ErrorArgument, "app info id -1 is rejected");
+    Require(sceScreenShotGetAppInfo(0, nullptr) == ErrorArgument, "app info null out is rejected");
+    Require(sceScreenShotGetAppInfo(1, nullptr) == ErrorArgument, "app info null out with positive id is rejected");
+    Require(sceScreenShotGetAppInfo(-1, nullptr) == ErrorArgument, "app info id -1 and null out is rejected");
 }
 
 void TestOverlay(bool large) {
