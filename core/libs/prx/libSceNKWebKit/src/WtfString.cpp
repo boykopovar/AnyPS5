@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <cstddef>
@@ -12,6 +13,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 #include "WtfStringAbi.hpp"
 
@@ -168,9 +170,14 @@ void* Allocate(std::size_t size, std::size_t alignment = 16);
 void Deallocate(void* ptr);
 }  // namespace NKWebKit
 
+namespace {
+void RemoveAtom(NKWebKit::WtfAbi::StringImpl* impl);
+}  // namespace
+
 namespace NKWebKit::WtfAbi {
 
 static void Destroy(StringImpl* impl) {
+    if ((impl->hashAndFlags & 16) && impl->length) RemoveAtom(impl);
     switch (impl->hashAndFlags & 3) {
     case 1:
         Deallocate(const_cast<void*>(impl->data));
@@ -188,7 +195,7 @@ void Release(StringImpl* impl) {
         impl->refCount -= 2;
         return;
     }
-    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3) std::terminate();
+    if (impl->hashAndFlags & 32 || (impl->hashAndFlags & 3) == 3) std::terminate();
     Destroy(impl);
 }
 
@@ -307,6 +314,75 @@ bool EqualViews(StringView a, StringView b, bool ignoreCase = false) {
         if (x != y) return false;
     }
     return true;
+}
+
+struct AtomTable {
+    std::unordered_multimap<unsigned, StringImpl*> entries;
+
+    ~AtomTable() {
+        for (const auto& entry : entries) entry.second->hashAndFlags &= ~16U;
+    }
+};
+
+struct AtomTableTag {};
+
+void RemoveAtom(StringImpl* impl) {
+    auto& atomTable = HostThreadLocal<AtomTable, AtomTableTag>();
+    auto [first, last] = atomTable.entries.equal_range(impl->hashAndFlags >> 8);
+    for (auto it = first; it != last; ++it) {
+        if (it->second == impl) {
+            atomTable.entries.erase(it);
+            return;
+        }
+    }
+    throw std::invalid_argument("WTF atom belongs to another thread");
+}
+
+StringImpl* FindAtom(StringView view, unsigned hash) {
+    auto& atomTable = HostThreadLocal<AtomTable, AtomTableTag>();
+    auto [first, last] = atomTable.entries.equal_range(hash);
+    for (auto it = first; it != last; ++it)
+        if (EqualViews(View(it->second), view)) return it->second;
+    return nullptr;
+}
+
+template<typename Make> String Intern(StringView view, Make make) {
+    unsigned hash = Hash(view);
+    if (auto* found = FindAtom(view, hash)) return String(Retain(found));
+    auto result = make();
+    HostThreadLocal<AtomTable, AtomTableTag>().entries.emplace(hash, result.impl);
+    result.impl->hashAndFlags = (result.impl->hashAndFlags & 255) | (hash << 8) | 16;
+    return result;
+}
+
+String AddAtomBuffer(StringView view) {
+    if (!view.data) return String();
+    if (!view.length) return String(EmptyImpl());
+    return Intern(view, [&] { return String(CopyImpl(view, true)); });
+}
+
+String AddStaticAtom(StringView view) {
+    if (!view.data || !view.length) throw std::invalid_argument("empty WTF static atom");
+    return Intern(view, [&] {
+        return String(new (NKWebKit::Allocate(sizeof(StringImpl))) StringImpl{2, view.length, view.data, view.is8Bit ? 4U : 0U});
+    });
+}
+
+void RequireAtomStorage(const StringImpl* impl, const char* function) {
+    const auto* owner = impl;
+    if ((impl->hashAndFlags & 3) == 2)
+        owner = *reinterpret_cast<StringImpl* const*>(reinterpret_cast<const unsigned char*>(impl) + 24);
+    if (((impl->hashAndFlags | owner->hashAndFlags) & 32) || (owner->hashAndFlags & 3) == 3)
+        throw std::runtime_error(std::string(function) + ": symbol and external string storage is not modelled");
+}
+
+String AddAtom(StringImpl* impl, const char* function) {
+    if (!impl) return String();
+    if (!impl->length) return String(EmptyImpl());
+    if (impl->refCount & 1) return AddStaticAtom(View(impl));
+    RequireAtomStorage(impl, function);
+    if (impl->hashAndFlags & 16) return String(Retain(impl));
+    return Intern(View(impl), [&] { return String(Retain(impl)); });
 }
 
 bool EqualImpls(const StringImpl* a, const StringImpl* b, bool ignoreCase = false) {
@@ -467,10 +543,98 @@ template<typename T> String IntegerString(T value) {
 }  // namespace
 
 extern "C" {
+String APS5_VABI _ZN3WTF14AtomStringImpl10addLiteralEPKcj(const char* data, unsigned length) {
+    return AddStaticAtom({data, length, true});
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(StringImpl& impl) {
+    return AddAtom(&impl, __func__);
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE(StringImpl& impl) {
+    if (!impl.length) return String(EmptyImpl());
+    auto view = View(&impl);
+    return String(Retain(FindAtom(view, Hash(view))));
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl3addEPKDsj(const char16_t* data, unsigned length) {
+    return AddAtomBuffer({data, length, false});
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl3addEPKhj(const unsigned char* data, unsigned length) {
+    return AddAtomBuffer({data, length, true});
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl3addEPKNS_10StringImpl16StaticStringImplE(const StringImpl* impl) {
+    const auto& value = Checked(impl);
+    if (!(value.refCount & 1)) throw std::invalid_argument("nonstatic WTF static atom");
+    return AddStaticAtom(View(impl));
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj(StringImpl* impl, unsigned start, unsigned length) {
+    if (!impl) return String();
+    if (!length || start >= impl->length) return String(EmptyImpl());
+    length = std::min(length, impl->length - start);
+    if (!start && length == impl->length) return AddAtom(impl, __func__);
+    RequireAtomStorage(impl, __func__);
+    auto view = View(impl);
+    view.data = static_cast<const unsigned char*>(view.data) + std::size_t(start) * (view.is8Bit ? 1 : 2);
+    view.length = length;
+    return Intern(view, [&] {
+        String owner(Retain(impl));
+        return SharedSubstring(&owner, start, length);
+    });
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl6lookUpEPKDsj(const char16_t* data, unsigned length) {
+    StringView view{data, length, false};
+    return String(Retain(FindAtom(view, Hash(view))));
+}
+
+String APS5_VABI _ZN3WTF14AtomStringImpl6lookUpEPKhj(const unsigned char* data, unsigned length) {
+    StringView view{data, length, true};
+    return String(Retain(FindAtom(view, Hash(view))));
+}
+
+String APS5_VABI _ZN3WTF10AtomString6numberEi(int value) {
+    auto string = IntegerString(value);
+    return AddAtom(string.impl, __func__);
+}
+
+String APS5_VABI _ZN3WTF10AtomString6numberEj(unsigned value) {
+    auto string = IntegerString(value);
+    return AddAtom(string.impl, __func__);
+}
+
+String APS5_VABI _ZN3WTF10AtomString6numberEm(std::uint64_t value) {
+    auto string = IntegerString(value);
+    return AddAtom(string.impl, __func__);
+}
+
+String APS5_VABI _ZN3WTF10AtomString6numberEy(std::uint64_t value) {
+    auto string = IntegerString(value);
+    return AddAtom(string.impl, __func__);
+}
+
+String APS5_VABI _ZN3WTF10AtomString16fromUTF8InternalEPKcS2_(const char* start, const char* end) {
+    if (!start) throw std::invalid_argument("null WTF atom UTF-8 input");
+    if (!end) end = start + std::strlen(start);
+    if (reinterpret_cast<std::uintptr_t>(end) <= reinterpret_cast<std::uintptr_t>(start))
+        throw std::invalid_argument("empty WTF atom UTF-8 range");
+    auto string = FromUTF8(reinterpret_cast<const unsigned char*>(start), static_cast<std::size_t>(end - start));
+    return AddAtom(string.impl, __func__);
+}
+
+String APS5_VABI _ZNK3WTF10AtomString23convertToASCIIUppercaseEv(const String* self) {
+    auto* impl = Checked(self).impl;
+    String converted(ConvertCase(View(impl), false, impl));
+    return AddAtom(converted.impl, __func__);
+}
+
 void APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_(StringImpl* impl) {
     if (!impl || (impl->refCount & 1)) throw std::invalid_argument("invalid WTF string destruction");
-    if (impl->hashAndFlags & 48 || (impl->hashAndFlags & 3) == 3)
-        throw std::runtime_error("StringImpl::destroy: atom, symbol and external strings are not modelled");
+    if (impl->hashAndFlags & 32 || (impl->hashAndFlags & 3) == 3)
+        throw std::runtime_error("StringImpl::destroy: symbol and external strings are not modelled");
     NKWebKit::WtfAbi::Destroy(impl);
 }
 

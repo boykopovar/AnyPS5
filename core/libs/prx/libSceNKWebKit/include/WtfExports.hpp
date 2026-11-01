@@ -62,6 +62,23 @@ NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl23convertToASCIIUppercaseE
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKDsj(const char16_t* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl6createEPKhj(const unsigned char* data, unsigned length);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl9substringEjj(const NKWebKit::WtfAbi::StringImpl* self, unsigned start, unsigned length);
+
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14AtomStringImpl10addLiteralEPKcj(const char* data, unsigned length);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14AtomStringImpl11addSlowCaseERNS_10StringImplE(NKWebKit::WtfAbi::StringImpl& impl);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14AtomStringImpl14lookUpSlowCaseERNS_10StringImplE(NKWebKit::WtfAbi::StringImpl& impl);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14AtomStringImpl3addEPKDsj(const char16_t* data, unsigned length);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14AtomStringImpl3addEPKhj(const unsigned char* data, unsigned length);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14AtomStringImpl3addEPKNS_10StringImpl16StaticStringImplE(const NKWebKit::WtfAbi::StringImpl* impl);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14AtomStringImpl3addEPNS_10StringImplEjj(NKWebKit::WtfAbi::StringImpl* impl, unsigned start, unsigned length);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14AtomStringImpl6lookUpEPKDsj(const char16_t* data, unsigned length);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF14AtomStringImpl6lookUpEPKhj(const unsigned char* data, unsigned length);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10AtomString6numberEi(int value);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10AtomString6numberEj(unsigned value);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10AtomString6numberEm(std::uint64_t value);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10AtomString6numberEy(std::uint64_t value);
+NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10AtomString16fromUTF8InternalEPKcS2_(const char* start, const char* end);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK3WTF10AtomString23convertToASCIIUppercaseEv(const NKWebKit::WtfAbi::String* self);
+
 void* APS5_VABI _ZN3WTF10fastCallocEmm(std::size_t count, std::size_t size);
 void* APS5_VABI _ZN3WTF10fastMallocEm(std::size_t size);
 char* APS5_VABI _ZN3WTF10fastStrDupEPKc(const char* str);
