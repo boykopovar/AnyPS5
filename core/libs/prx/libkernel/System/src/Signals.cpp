@@ -5,6 +5,7 @@
 #include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <atomic>
@@ -209,22 +210,29 @@ void RunHandler(int guest, GuestHandler handler) {
         target.fetch_or(replaced[word] & before[word]);
     }
 }
-void Dispatch(int native) {
+void Dispatch(int native, bool asynchronous) {
     int guest = 0;
     for (int candidate : {2, 4, 6, 8, 11, 15})
         if (NativeSignal(candidate) == native) { guest = candidate; break; }
     if (!guest) return;
-#ifdef _WIN32
-    // Preserve the guest's persistent registration across CRT delivery.
-    std::signal(native, Dispatch);
-#endif
     if (SignalBlocked(guest)) {
         MarkPending(guest);
         return;
     }
+    if (asynchronous && ThreadCancel::DeferIoSignal(native, (handlerFlags[guest].load() & SaRestart) != 0)) return;
     const auto callback = handlers[guest].load();
     if (reinterpret_cast<std::uintptr_t>(callback) > 1) RunHandler(guest, callback);
 }
+#ifdef _WIN32
+void Dispatch(int native) {
+    std::signal(native, Dispatch);
+    Dispatch(native, native == SIGINT || native == SIGTERM || native == SIGABRT);
+}
+#else
+void HostDispatch(int native, siginfo_t* information, void*) {
+    Dispatch(native, native == SIGINT || native == SIGTERM || (information && information->si_code <= 0));
+}
+#endif
 bool Delivered(const GuestSigaction& action) {
     return action.handler > 1 && (action.flags & SaSiginfo) == 0;
 }
@@ -235,8 +243,20 @@ bool Install(int guest, const GuestSigaction& action) {
     const int native = NativeSignal(guest);
     if (!native) return true;
     const auto previous = handlers[guest].exchange(Delivered(action) ? reinterpret_cast<GuestHandler>(action.handler) : nullptr);
-    auto hostHandler = action.handler == 1 ? SIG_IGN : Delivered(action) ? Dispatch : SIG_DFL;
-    if (std::signal(native, hostHandler) == SIG_ERR) {
+#ifdef _WIN32
+    auto hostHandler = action.handler == 1 ? SIG_IGN : Delivered(action) ? static_cast<void (*)(int)>(Dispatch) : SIG_DFL;
+    const bool installed = std::signal(native, hostHandler) != SIG_ERR;
+#else
+    struct sigaction host{};
+    sigemptyset(&host.sa_mask);
+    host.sa_flags = SA_RESTART;
+    if (Delivered(action)) {
+        host.sa_sigaction = HostDispatch;
+        host.sa_flags |= SA_SIGINFO;
+    } else host.sa_handler = action.handler == 1 ? SIG_IGN : SIG_DFL;
+    const bool installed = ::sigaction(native, &host, nullptr) == 0;
+#endif
+    if (!installed) {
         handlers[guest].store(previous);
         return false;
     }
