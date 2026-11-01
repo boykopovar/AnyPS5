@@ -1,25 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libSceLibreSsl3/include/Reference.hpp"
 
-#include <atomic>
-#include <limits>
 #include <stdexcept>
-
-namespace {
-
-static_assert(std::atomic_ref<std::int32_t>::required_alignment <= alignof(std::int32_t));
-
-int Retain_nid_no_patch(std::int32_t& references) {
-    std::atomic_ref<std::int32_t> count(references);
-    auto previous = count.load();
-    for (;;) {
-        if (previous == std::numeric_limits<std::int32_t>::max())
-            throw std::overflow_error("LibreSSL3 key reference count overflow");
-        if (count.compare_exchange_weak(previous, previous + 1))
-            return previous > 0;
-    }
-}
-
-} // namespace
 
 extern "C" {
 
@@ -39,6 +21,12 @@ int APS5_VABI RSA_up_ref_nid_postfix(LibreSsl3Rsa* rsa) {
     if (!rsa)
         throw std::invalid_argument("RSA_up_ref requires a key");
     return Retain_nid_no_patch(rsa->references);
+}
+
+int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx) {
+    if (!ctx)
+        throw std::invalid_argument("SSL_CTX_up_ref requires a context");
+    return Retain_nid_no_patch(ctx->references);
 }
 
 }

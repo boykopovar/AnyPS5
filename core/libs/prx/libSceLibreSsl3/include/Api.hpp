@@ -2,6 +2,8 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceLibreSsl3/include/Key.hpp"
+#include "prx/libSceLibreSsl3/include/Ssl.hpp"
+#include "prx/libSceLibreSsl3/include/X509.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Cipher.hpp"
 
@@ -63,12 +65,12 @@ int APS5_VABI RSA_padding_add_PKCS1_PSS_mgf1_nid_postfix(void);
 int APS5_VABI RSA_up_ref_nid_postfix(LibreSsl3Rsa* rsa);
 int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void);
 int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void);
-int APS5_VABI SSL_CTX_set_max_proto_version_nid_postfix(void);
-int APS5_VABI SSL_CTX_set_min_proto_version_nid_postfix(void);
-int APS5_VABI SSL_CTX_up_ref_nid_postfix(void);
-int APS5_VABI SSL_SESSION_up_ref_nid_postfix(void);
-int APS5_VABI SSL_get_client_random_nid_postfix(void);
-int APS5_VABI SSL_up_ref_nid_postfix(void);
+int APS5_VABI SSL_CTX_set_max_proto_version_nid_postfix(LibreSsl3SslCtx* context, std::uint16_t version);
+int APS5_VABI SSL_CTX_set_min_proto_version_nid_postfix(LibreSsl3SslCtx* context, std::uint16_t version);
+int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx);
+int APS5_VABI SSL_SESSION_up_ref_nid_postfix(LibreSsl3SslSession* session);
+std::size_t APS5_VABI SSL_get_client_random_nid_postfix(const LibreSsl3Ssl* ssl, unsigned char* out, std::size_t maxOut);
+int APS5_VABI SSL_up_ref_nid_postfix(LibreSsl3Ssl* ssl);
 int APS5_VABI X509_PUBKEY_get0_param_nid_postfix(void);
 int APS5_VABI X509_STORE_CTX_free_nid_postfix(void);
 int APS5_VABI X509_STORE_CTX_init_nid_postfix(void);
@@ -80,10 +82,10 @@ int APS5_VABI X509_get0_notBefore_nid_postfix(void);
 int APS5_VABI X509_get0_signature_nid_postfix(void);
 int APS5_VABI X509_get_ext_nid_postfix(void);
 int APS5_VABI X509_get_ext_count_nid_postfix(void);
-int APS5_VABI X509_get_version_nid_postfix(void);
+std::int64_t APS5_VABI X509_get_version_nid_postfix(const LibreSsl3X509* certificate);
 int APS5_VABI X509_getm_notAfter_nid_postfix(void);
 int APS5_VABI X509_getm_notBefore_nid_postfix(void);
-int APS5_VABI X509_up_ref_nid_postfix(void);
+int APS5_VABI X509_up_ref_nid_postfix(LibreSsl3X509* certificate);
 void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char** input, std::int64_t length);
 int APS5_VABI d2i_ECParameters_nid_postfix(void);
 int APS5_VABI d2i_PKCS7_nid_postfix(void);
