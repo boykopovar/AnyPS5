@@ -159,4 +159,18 @@ std::int8_t APS5_VABI _ZNK6icu_6813LocaleBuilder11copyErrorToER10UErrorCode_nid_
     *status = Require(builder).status;
     return *status > 0;
 }
+LocaleBuilder* APS5_VABI _ZN6icu_6813LocaleBuilder9setLocaleERKNS_6LocaleE_nid_postfix(LocaleBuilder* builder, const Locale* locale) {
+    Require(builder); Require(locale);
+    if (locale == builder->extensions) throw std::invalid_argument("ICU locale builder: adopted locale alias");
+    _ZN6icu_6813LocaleBuilder5clearEv_nid_postfix(builder);
+    auto piece = [](const char* text) { return StringPiece{text, text ? CheckedInt_nid_no_patch(std::strlen(text)) : 0}; };
+    _ZN6icu_6813LocaleBuilder11setLanguageENS_11StringPieceE_nid_postfix(builder, piece(locale->language));
+    _ZN6icu_6813LocaleBuilder9setScriptENS_11StringPieceE_nid_postfix(builder, piece(locale->script));
+    _ZN6icu_6813LocaleBuilder9setRegionENS_11StringPieceE_nid_postfix(builder, piece(locale->country));
+    if (locale->variantBegin < 0 || (!locale->baseName && locale->variantBegin)) throw std::invalid_argument("ICU locale builder: invalid variant offset");
+    _ZN6icu_6813LocaleBuilder10setVariantENS_11StringPieceE_nid_postfix(builder, piece(locale->baseName ? locale->baseName + locale->variantBegin : nullptr));
+    builder->extensions = _ZNK6icu_686Locale5cloneEv_nid_postfix(locale);
+    if (!builder->extensions) builder->status = 7;
+    return builder;
+}
 }

@@ -12,12 +12,13 @@ namespace {
 using namespace Icu::Abi;
 template<typename TValue> TValue& Require(TValue* value) { if (!value) throw std::invalid_argument("ICU service locale: null pointer"); return *value; }
 struct LocalString { UnicodeString text{}; LocalString() { text.Init(); } ~LocalString() { _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&text); } };
-std::array<char, 3> Ids{};
+std::array<char, 4> Ids{};
 const TypeInfo* KeyBaseType() { UnicodeString id{}; id.Init(); ICUServiceKey key{}; _ZN6icu_6813ICUServiceKeyC2ERKNS_13UnicodeStringE_nid_postfix(&key, &id); const auto* type = reinterpret_cast<const TypeInfo* const*>(key.vtable)[-1]; _ZN6icu_6813ICUServiceKeyD2Ev_nid_postfix(&key); _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&id); return type; }
 const TypeInfo* FactoryBaseType() { ICUServiceFactory factory{}; _ZN6icu_6817ICUServiceFactoryD2Ev_nid_postfix(&factory); return reinterpret_cast<const TypeInfo* const*>(factory.vtable)[-1]; }
 const DerivedTypeInfo KeyType{{SingleTypeTable_nid_no_patch(), "N6icu_689LocaleKeyE"}, KeyBaseType()};
 const DerivedTypeInfo FactoryType{{SingleTypeTable_nid_no_patch(), "N6icu_6816LocaleKeyFactoryE"}, FactoryBaseType()};
 const DerivedTypeInfo SimpleType{{SingleTypeTable_nid_no_patch(), "N6icu_6822SimpleLocaleKeyFactoryE"}, &FactoryType.type};
+const DerivedTypeInfo ResourceFactoryType{{SingleTypeTable_nid_no_patch(), "N6icu_6824ICUResourceBundleFactoryE"}, &FactoryType.type};
 template<std::size_t TCount> struct Table { std::ptrdiff_t offset; const TypeInfo* type; std::array<GuestFunction, TCount> slots; };
 static_assert(sizeof(Table<13>) == 120 && alignof(Table<13>) == 8 && offsetof(Table<13>, slots) == 16);
 static_assert(sizeof(Table<9>) == 88 && alignof(Table<9>) == 8 && offsetof(Table<9>, slots) == 16);
@@ -57,6 +58,17 @@ const Table<9> SimpleTable{0, &SimpleType.type, {{
     reinterpret_cast<GuestFunction>(_ZNK6icu_6816LocaleKeyFactory10handlesKeyERKNS_13ICUServiceKeyER10UErrorCode_nid_postfix),
     reinterpret_cast<GuestFunction>(_ZNK6icu_6816LocaleKeyFactory12handleCreateERKNS_6LocaleEiPKNS_10ICUServiceER10UErrorCode_nid_postfix),
     reinterpret_cast<GuestFunction>(_ZNK6icu_6816LocaleKeyFactory15getSupportedIDsER10UErrorCode_nid_postfix),
+}}};
+const Table<9> ResourceFactoryTable{0, &ResourceFactoryType.type, {{
+    reinterpret_cast<GuestFunction>(_ZN6icu_6824ICUResourceBundleFactoryD1Ev_nid_postfix),
+    reinterpret_cast<GuestFunction>(_ZN6icu_6824ICUResourceBundleFactoryD0Ev_nid_postfix),
+    reinterpret_cast<GuestFunction>(_ZNK6icu_6824ICUResourceBundleFactory17getDynamicClassIDEv_nid_postfix),
+    reinterpret_cast<GuestFunction>(_ZNK6icu_6816LocaleKeyFactory6createERKNS_13ICUServiceKeyEPKNS_10ICUServiceER10UErrorCode_nid_postfix),
+    reinterpret_cast<GuestFunction>(_ZNK6icu_6816LocaleKeyFactory16updateVisibleIDsERNS_9HashtableER10UErrorCode_nid_postfix),
+    reinterpret_cast<GuestFunction>(_ZNK6icu_6816LocaleKeyFactory14getDisplayNameERKNS_13UnicodeStringERKNS_6LocaleERS1__nid_postfix),
+    reinterpret_cast<GuestFunction>(_ZNK6icu_6816LocaleKeyFactory10handlesKeyERKNS_13ICUServiceKeyER10UErrorCode_nid_postfix),
+    reinterpret_cast<GuestFunction>(_ZNK6icu_6824ICUResourceBundleFactory12handleCreateERKNS_6LocaleEiPKNS_10ICUServiceER10UErrorCode_nid_postfix),
+    reinterpret_cast<GuestFunction>(_ZNK6icu_6824ICUResourceBundleFactory15getSupportedIDsER10UErrorCode_nid_postfix)
 }}};
 void RemoveTail(UnicodeString* text, std::int32_t index) {
     if (index == 0) { if (text->Flags() & UnicodeString::IsBogus) text->Empty(); else text->SetLength(0); }
@@ -114,6 +126,19 @@ bool HasLocaleKey(const TypeInfo* type) {
     }
     return false;
 }
+void ConstructResourceFactory(ICUResourceBundleFactory* self, const UnicodeString* name) {
+    Require(self);
+    ConstructFactory(reinterpret_cast<LocaleKeyFactory*>(self), 0, nullptr);
+    self->vtable = ResourceFactoryTable.slots.data();
+    if (name) _ZN6icu_6813UnicodeStringC1ERKS0__nid_postfix(&self->bundleName, name);
+    else self->bundleName.Init();
+}
+void DestroyResourceFactory(ICUResourceBundleFactory* self) {
+    Require(self).vtable = ResourceFactoryTable.slots.data();
+    _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&self->bundleName);
+    DestroyFactory(reinterpret_cast<LocaleKeyFactory*>(self));
+}
+
 }
 
 extern "C" {
@@ -249,4 +274,39 @@ std::int8_t APS5_VABI _ZN6icu_6813LocaleUtility12isFallbackOfERKNS_13UnicodeStri
     Require(root); Require(child);
     return _ZNK6icu_6813UnicodeString7indexOfEPKDsiiii_nid_postfix(child, root->Array(), 0, root->Length(), 0, child->Length()) == 0 && (child->Length() == root->Length() || _ZNK6icu_6813UnicodeString9getCharAtEi_nid_postfix(child, root->Length()) == u'_');
 }
+
+void APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix(SimpleLocaleKeyFactory* self, Object* object, const Locale* locale, std::int32_t kind, std::int32_t coverage) {
+    Require(self); Require(locale);
+    ConstructFactory(reinterpret_cast<LocaleKeyFactory*>(self), coverage, nullptr);
+    self->vtable = SimpleTable.slots.data();
+    self->object = object;
+    self->id.Init();
+    self->kind = kind;
+    _ZN6icu_6813LocaleUtility18initNameFromLocaleERKNS_6LocaleERNS_13UnicodeStringE_nid_postfix(locale, &self->id);
+}
+
+void APS5_VABI _ZN6icu_6822SimpleLocaleKeyFactoryC2EPNS_7UObjectERKNS_6LocaleEii_nid_postfix(SimpleLocaleKeyFactory* self, Object* object, const Locale* locale, std::int32_t kind, std::int32_t coverage) {
+    _ZN6icu_6822SimpleLocaleKeyFactoryC1EPNS_7UObjectERKNS_6LocaleEii_nid_postfix(self, object, locale, kind, coverage);
+}
+
+UnicodeString* APS5_VABI _ZN6icu_6813LocaleUtility18initNameFromLocaleERKNS_6LocaleERNS_13UnicodeStringE_nid_postfix(const Locale* locale, UnicodeString* result) {
+    Require(result); Require(locale);
+    if (locale->isBogus) {
+        result->Bogus();
+    } else {
+        LocalString temporary;
+        _ZN6icu_6813UnicodeStringC1EPKciNS0_10EInvariantE_nid_postfix(&temporary.text, &Require(locale->fullName), -1, 0);
+        _ZN6icu_6813UnicodeString8doAppendERKS0_ii_nid_postfix(result, &temporary.text, 0, temporary.text.Length());
+    }
+    return result;
+}
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryC1Ev_nid_postfix(ICUResourceBundleFactory* self) { ConstructResourceFactory(self, nullptr); }
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryC1ERKNS_13UnicodeStringE_nid_postfix(ICUResourceBundleFactory* self, const UnicodeString* name) { Require(name); ConstructResourceFactory(self, name); }
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryC2Ev_nid_postfix(ICUResourceBundleFactory* self) { ConstructResourceFactory(self, nullptr); }
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryC2ERKNS_13UnicodeStringE_nid_postfix(ICUResourceBundleFactory* self, const UnicodeString* name) { Require(name); ConstructResourceFactory(self, name); }
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryD0Ev_nid_postfix(ICUResourceBundleFactory* self) { DestroyResourceFactory(self); Free_nid_no_patch(self); }
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryD1Ev_nid_postfix(ICUResourceBundleFactory* self) { DestroyResourceFactory(self); }
+void APS5_VABI _ZN6icu_6824ICUResourceBundleFactoryD2Ev_nid_postfix(ICUResourceBundleFactory* self) { DestroyResourceFactory(self); }
+void* APS5_VABI _ZN6icu_6824ICUResourceBundleFactory16getStaticClassIDEv_nid_postfix() { return &Ids[3]; }
+void* APS5_VABI _ZNK6icu_6824ICUResourceBundleFactory17getDynamicClassIDEv_nid_postfix(const ICUResourceBundleFactory* self) { return &Ids[3]; }
 }

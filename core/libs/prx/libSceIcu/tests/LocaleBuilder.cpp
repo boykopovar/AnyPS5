@@ -40,6 +40,10 @@ int main() {
     bool invalid = false;
     try { _ZN6icu_6813LocaleBuilder11setLanguageENS_11StringPieceE_nid_postfix(&builder, {"en", -1}); } catch (const std::invalid_argument&) { invalid = true; }
     Check(invalid);
+    Check(_ZN6icu_6813LocaleBuilder9setLocaleERKNS_6LocaleE_nid_postfix(&builder, _ZN6icu_686Locale5getUSEv_nid_postfix()) == &builder);
+    Check(builder.status == 0 && builder.extensions && !builder.variant);
+    Check(std::strcmp(builder.language, "en") == 0 && std::strcmp(builder.region, "US") == 0);
+    Check(std::strcmp(builder.extensions->fullName, "en_US") == 0);
     _ZN6icu_6813LocaleBuilderD1Ev_nid_postfix(&builder);
     Check(builder.vtable == Icu::Abi::Vtable_nid_no_patch(Icu::Abi::Class::Object));
     std::puts("ICU locale builder tests passed");
