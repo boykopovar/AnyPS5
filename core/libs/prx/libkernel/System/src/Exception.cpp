@@ -3,6 +3,7 @@
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
@@ -606,6 +607,7 @@ QueuedDelivery* ClaimReturnBreak(ReturnBreak& entry, QueuedDelivery* queued) {
 }
 
 LONG CALLBACK ReturnBreakHandler(EXCEPTION_POINTERS* info) {
+    if (GuestArena::GuestArenaRecoverRead_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     auto* context = info->ContextRecord;
     if (info->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && *UnwindGuard() != nullptr) {
         context->Rsp = (context->Rsp & ~static_cast<DWORD64>(15)) - 8;
