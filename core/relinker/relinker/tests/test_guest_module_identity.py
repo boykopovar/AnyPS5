@@ -3,9 +3,9 @@ import os
 import struct
 import subprocess
 import sys
-import tempfile
 
 from test_windows_import_modules import consumer, dynamic, executable, provider
+from guest_import_fixtures import fixture_directory
 from test_guest_module_directories import needed_libraries
 
 
@@ -37,7 +37,7 @@ def sce_strings(image):
 
 def main():
     relinker = Path(sys.argv[1]).resolve()
-    with tempfile.TemporaryDirectory(prefix='anyps5-module-identity-') as directory:
+    with fixture_directory('anyps5-module-identity-') as directory:
         work = Path(directory)
 
         def convert(label, windows, request, module_name='libGuest', providers=None, guest_request=None, symbol='shared#A#B', module_directory='sce_module', extra=None):
@@ -98,7 +98,7 @@ def main():
                     assert not artifact.exists(), artifact
                     assert len(list((output.parent / 'app0').rglob('*.guest.prx'))) == 1
                     if not windows:
-                        assert 'libGuest.suprx' in needed_libraries(output.read_bytes())
+                        assert 'libGuest.prx' in needed_libraries(output.read_bytes())
 
             result, output = convert(f'outside-ambiguous-{windows}', windows, 'libGuest.suprx', module_directory='.',
                 providers={'one.prx': declared_provider(22, ('libGuest',))},
@@ -187,7 +187,7 @@ def main():
                 if windows:
                     run(output, error='Failed to load module:')
                 else:
-                    assert request in needed_libraries(output.read_bytes())
+                    assert request.replace('.suprx', '.prx') in needed_libraries(output.read_bytes())
 
         providers = {'wrong.prx': declared_provider(11, ('other',)),
                      'right.prx': declared_provider(22, ('libGuest',))}

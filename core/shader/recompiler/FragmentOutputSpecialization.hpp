@@ -32,7 +32,7 @@ inline std::vector<std::uint32_t> SpecializeFragmentOutputs(std::vector<std::uin
             reversed = constant.value;
         }
         if (constant.id < PipelineSpecialization::ExportPackingBase || constant.id >= PipelineSpecialization::ExportPackingBase + 8u) continue;
-        if (constant.value > static_cast<std::uint32_t>(ColorExportPacking::Float11_11_10)) throw std::runtime_error("invalid prepared fragment export packing");
+        if (constant.value > static_cast<std::uint32_t>(ColorExportPacking::Uint)) throw std::runtime_error("invalid prepared fragment export packing");
         if (constant.value != static_cast<std::uint32_t>(ColorExportPacking::None)) packed.insert(constant.id - PipelineSpecialization::ExportPackingBase);
     }
     if (packed.empty() && !dualSource && reversed == 0u) return words;

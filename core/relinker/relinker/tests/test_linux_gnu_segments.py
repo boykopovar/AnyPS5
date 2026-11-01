@@ -7,12 +7,14 @@ import subprocess
 import sys
 import tempfile
 
+from signal_run import run_without_core_dump
 from test_linux_load_alignment import fixture
 
 PT_GNU_STACK = 0x6474E551
 PT_GNU_RELRO = 0x6474E552
 PT_SCE_VERSION = 0x6FFFFF01
-BASE = 0x400000
+DEFAULT_BASE = 0x400000
+BASE = 0x800000
 
 
 def image():
@@ -47,8 +49,8 @@ def main():
         work = Path(directory)
         source = work / "input.elf"
         source.write_bytes(image())
-        for options, base, keeps_relro in (([], 0, True), (["--linux-fixed-base", hex(BASE)], BASE, True), (["--lazy-binding"], 0, False)):
-            output = work / ("fixed.elf" if base else "plain.elf")
+        for name, options, base, keeps_relro in (("default", [], DEFAULT_BASE, True), ("fixed", ["--linux-fixed-base", hex(BASE)], BASE, True), ("lazy", ["--lazy-binding"], 0, False)):
+            output = work / (name + ".elf")
             result = subprocess.run([str(relinker), "--skip-sce-module", *options, str(source), str(output)],
                                     capture_output=True, text=True, timeout=20)
             assert result.returncode == 0, (result.stdout, result.stderr)
@@ -62,6 +64,17 @@ def main():
                 assert relro[3:5] == (0x500 + base, 0x500 + base), relro
                 assert relro[5:7] == (0x100, 0x100), relro
 
+        dropped_stack = image()
+        struct.pack_into("<IIQQQQQQ", dropped_stack, 64 + 2 * 56, PT_SCE_VERSION, 0, 0, 0, 0, 0, 0, 1)
+        source.write_bytes(dropped_stack)
+        output = work / "synthesized.elf"
+        result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)],
+                                capture_output=True, text=True, timeout=20)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        found = {header[0]: header for header in headers(output.read_bytes())}
+        assert found[PT_GNU_STACK] == (PT_GNU_STACK, 6, 0, 0, 0, 0, 0, 16), found
+        assert found[PT_GNU_RELRO][3:5] == (0x500 + DEFAULT_BASE, 0x500 + DEFAULT_BASE), found
+
         if sys.platform.startswith("linux"):
             for options, mode in (([], "default"), (["--linux-fixed-base", hex(BASE)], "fixed")):
                 for relro_memory_size, keeps_relro in ((0x4000, True), (0x8000, False)):
@@ -73,8 +86,22 @@ def main():
                     found = {header[0]: header for header in headers(output.read_bytes())}
                     assert (PT_GNU_RELRO in found) == keeps_relro, "PT_GNU_RELRO was kept without writable load coverage"
                     output.chmod(output.stat().st_mode | 0o111)
-                    execution = subprocess.run([str(output)], capture_output=True, text=True, timeout=20)
+                    execution = run_without_core_dump([str(output)], capture_output=True, text=True, timeout=20)
                     assert execution.returncode == -signal.SIGTRAP, (execution.returncode, execution.stdout, execution.stderr)
+
+            synthesized_executable = executable_image(0x4000)
+            struct.pack_into("<IIQQQQQQ", synthesized_executable, 64 + 2 * 56, PT_SCE_VERSION, 0, 0, 0, 0, 0, 0, 1)
+            source.write_bytes(synthesized_executable)
+            output = work / "execute-synthesized-stack.elf"
+            result = subprocess.run([str(relinker), "--skip-sce-module", str(source), str(output)],
+                                    capture_output=True, text=True, timeout=20)
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            found = {header[0]: header for header in headers(output.read_bytes())}
+            assert found[PT_GNU_STACK] == (PT_GNU_STACK, 6, 0, 0, 0, 0, 0, 16), found
+            assert found[PT_GNU_RELRO][3:5] == (0x4000 + DEFAULT_BASE, 0x4000 + DEFAULT_BASE), found
+            output.chmod(output.stat().st_mode | 0o111)
+            execution = run_without_core_dump([str(output)], capture_output=True, text=True, timeout=20)
+            assert execution.returncode == -signal.SIGTRAP, (execution.returncode, execution.stdout, execution.stderr)
     print("Linux GNU segment tests passed")
 
 

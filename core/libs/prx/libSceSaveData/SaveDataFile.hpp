@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cerrno>
 #include <cstddef>
+#include <cstdio>
 #include <filesystem>
-#include <fstream>
+#include <random>
+#include <string>
 #include <system_error>
 
 #ifdef _WIN32
@@ -20,6 +23,7 @@ namespace savedata {
 template <typename ReplaceOperation>
 inline bool replace_file_with(const std::filesystem::path& path, const void* data, std::size_t size,
                               ReplaceOperation&& replace_operation) {
+    if (size != 0 && data == nullptr) return false;
     const auto parent = path.parent_path();
     std::error_code error;
     if (!parent.empty()) {
@@ -29,60 +33,57 @@ inline bool replace_file_with(const std::filesystem::path& path, const void* dat
         }
     }
 
-    auto temporary = path;
-    temporary += ".tmp";
-    const auto remove_temporary = [&temporary]() {
-        std::error_code ignored;
-        std::filesystem::remove(temporary, ignored);
-    };
-
-    {
-        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-        if (!file) {
-            remove_temporary();
-            return false;
-        }
-        if (size != 0) {
-            if (data == nullptr) {
-                file.close();
-                remove_temporary();
-                return false;
-            }
-            file.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
-        }
-        file.flush();
-        if (!file) {
-            file.close();
-            remove_temporary();
-            return false;
-        }
-        file.close();
-        if (!file) {
-            remove_temporary();
-            return false;
-        }
+    std::filesystem::path temporary;
+    std::FILE* file = nullptr;
+    std::random_device random;
+    for (unsigned attempt = 0; attempt < 128; ++attempt) {
+        temporary = path;
+        temporary += ".tmp." + std::to_string(random()) + "." + std::to_string(random());
+#ifdef _WIN32
+        file = _wfopen(temporary.c_str(), L"wbx");
+#else
+        file = std::fopen(temporary.c_str(), "wbx");
+#endif
+        if (file) break;
+        if (errno != EEXIST) return false;
     }
+    if (!file) return false;
 
+    struct Cleanup {
+        const std::filesystem::path& path;
+        std::FILE*& file;
+        bool remove = true;
+        ~Cleanup() {
+            if (file) std::fclose(file);
+            std::error_code ignored;
+            if (remove) std::filesystem::remove(path, ignored);
+        }
+    } cleanup{temporary, file};
+
+    const bool written = size == 0 || std::fwrite(data, 1, size, file) == size;
+    const bool closed = std::fclose(file) == 0;
+    file = nullptr;
+    if (!written || !closed) return false;
     const bool replaced = replace_operation(temporary, path);
-    if (!replaced) {
-        remove_temporary();
-    }
+    cleanup.remove = !replaced;
     return replaced;
 }
 
-inline bool replace_file(const std::filesystem::path& path, const void* data, std::size_t size) {
+inline bool move_replacing(const std::filesystem::path& source, const std::filesystem::path& destination) {
 #ifdef _WIN32
-    return replace_file_with(path, data, size, [](const auto& temporary, const auto& destination) {
-        return ::MoveFileExW(temporary.c_str(), destination.c_str(),
-                             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-    });
+    return ::MoveFileExW(source.c_str(), destination.c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
-    return replace_file_with(path, data, size, [](const auto& temporary, const auto& destination) {
-        std::error_code error;
-        std::filesystem::rename(temporary, destination, error);
-        return !error;
-    });
+    std::error_code error;
+    std::filesystem::rename(source, destination, error);
+    return !error;
 #endif
+}
+
+inline bool replace_file(const std::filesystem::path& path, const void* data, std::size_t size) {
+    return replace_file_with(path, data, size, [](const auto& temporary, const auto& destination) {
+        return move_replacing(temporary, destination);
+    });
 }
 
 }

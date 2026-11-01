@@ -68,6 +68,7 @@ struct BasicBlock {
     std::uint32_t instructionBegin = 0;
     std::uint32_t instructionEnd = 0;
     std::uint32_t estimatedSpirvWords = 0;
+    std::uint32_t immediatePostDominator = InvalidControlFlowId;
     std::vector<std::uint32_t> predecessors;
     std::vector<std::uint32_t> successors;
     std::vector<std::uint32_t> dominators;
@@ -108,6 +109,8 @@ struct ControlFlowGraph {
     std::vector<std::uint32_t> codeTableLoadProgramCounters;
     std::vector<CodeTableLoad> codeTableLoads;
     std::vector<std::uint32_t> unlinkedCallProgramCounters;
+    std::uint32_t linkEscapeWaveSize = 0;
+    std::string linkEscapeReason;
     std::uint32_t entryBlock = InvalidControlFlowId;
     bool hasFetchCall = false;
     std::uint32_t fetchCallProgramCounter = 0;

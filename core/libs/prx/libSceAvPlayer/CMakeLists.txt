@@ -12,6 +12,11 @@ if(BUILD_TESTING)
     file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer)
     add_test(NAME guest_avplayer COMMAND guest_avplayer_tests)
     add_test(NAME guest_avplayer_callback_close COMMAND guest_avplayer_tests --callback-close)
+    add_test(NAME guest_avplayer_paused_first_video COMMAND guest_avplayer_tests --paused-first-video)
+    set_tests_properties(guest_avplayer_paused_first_video PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_paused_first_video
+        TIMEOUT 20)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_paused_first_video)
     set_tests_properties(guest_avplayer PROPERTIES
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer
         TIMEOUT 60)
@@ -20,6 +25,8 @@ if(BUILD_TESTING)
         TIMEOUT 20 RUN_SERIAL TRUE)
     if(WIN32)
         set_tests_properties(guest_avplayer PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")
+        set_tests_properties(guest_avplayer_paused_first_video PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")
         set_tests_properties(guest_avplayer_callback_close PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAvPlayer>")

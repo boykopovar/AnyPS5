@@ -6,6 +6,7 @@
 #include "ImageTableAbi.hpp"
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -19,6 +20,8 @@ struct ImageTableElement {
     bool depthCompare = false;
     DescriptorBindingKind kind = DescriptorBindingKind::Buffers;
     std::uint32_t samplers = 0;
+    bool atomic = false;
+    bool atomic64 = false;
 };
 
 struct ImageTableSamplerElement {
@@ -42,6 +45,16 @@ struct ResolvedImageTables {
     std::uint32_t faults = 0;
 };
 
+struct ImageTableReuseCounts {
+    std::uint64_t unwritten = 0;
+    std::uint64_t compared = 0;
+    std::uint64_t wordsRead = 0;
+    std::uint64_t shared = 0;
+    std::uint64_t columns = 0;
+    std::uint64_t resolutions = 0;
+    std::uint64_t resolutionsShared = 0;
+};
+
 struct RuntimeImageModeMatch {
     std::optional<std::uint32_t> mode;
     ImageTableAbi::PoisonReason reason = ImageTableAbi::PoisonReason::InvalidFormat;
@@ -62,12 +75,14 @@ public:
     static std::uint32_t RuntimeImageMode(const ImageResource& image, const DescriptorValue& descriptor, std::span<const ImageResource> modes);
     static void PrepareImageModes(ShaderInfo& info);
     static const char* UnnormalizedSampleMismatch(const ImageResource& image);
+    static std::shared_ptr<const ResolvedImageTables> ResolveImageTablesShared(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey);
     static bool NullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor);
     static ResolvedImageTables ResolveImageTables(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint64_t memoKey = 0);
     [[nodiscard]] IrResourcePlan ExtractPlan(const IrProgram& program) const;
     static void CompactPlan(IrResourcePlan& plan);
     void Materialize(const IrResourcePlan& program, const SrtRuntime& runtime, ResourceSnapshot& snapshot) const;
     static std::uint64_t SpecializationNanoseconds();
+    static ImageTableReuseCounts TableReuse();
     static std::uint64_t EvaluateNanoseconds();
     static std::uint64_t MaterializeNanoseconds();
 };

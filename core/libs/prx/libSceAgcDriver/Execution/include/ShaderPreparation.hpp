@@ -16,6 +16,7 @@ public:
     ShaderPreparationTransaction& operator=(const ShaderPreparationTransaction&) = delete;
     PreparedShaderState& Edit(const ShaderSnapshot& snapshot);
     const PreparedShaderState& Read(const ShaderSnapshot& snapshot) const;
+    bool Tracks(const ShaderSnapshot& snapshot) const;
     void Hold();
     void Commit();
 

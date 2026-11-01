@@ -1,5 +1,8 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "tests/TemporaryFile.hpp"
+#include <climits>
 #include <cstdlib>
 #include <fcntl.h>
 #include <cstring>
@@ -17,66 +20,17 @@
 #include <stdexcept>
 #ifdef _WIN32
 #include <fcntl.h>
+#include <windows.h>
 #else
 #include <unistd.h>
 #endif
 extern "C" {
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-void APS5_VABI clearerr_unlocked_nid_postfix(FileStream*);
-int APS5_VABI fileno_unlocked_nid_postfix(FileStream*);
-char* APS5_VABI fgetln_nid_postfix(FileStream*, std::size_t*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-std::size_t APS5_VABI fwrite_nid_postfix(const void*, std::size_t, std::size_t, FileStream*);
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-int APS5_VABI fseeko_nid_postfix(FileStream*, std::int64_t, int);
-std::int64_t APS5_VABI ftello_nid_postfix(FileStream*);
-int APS5_VABI fseek_nid_postfix(FileStream*, std::int64_t, int);
-std::int64_t APS5_VABI ftell_nid_postfix(FileStream*);
-int* APS5_VABI __error_nid_postfix();
+
 extern FileStream* __stdinp_nid_postfix;
 extern FileStream* __stdoutp_nid_postfix;
 extern FileStream* __stderrp_nid_postfix;
 extern int __isthreaded_nid_postfix;
-int APS5_VABI fprintf_nid_postfix(FileStream*, const char*, ...);
-int APS5_VABI fputs_nid_postfix(const char*, FileStream*);
-int APS5_VABI printf_nid_postfix(const char*, ...);
-int APS5_VABI vprintf_nid_postfix(const char*, void*);
-int APS5_VABI puts_nid_postfix(const char*);
-int APS5_VABI vfprintf_nid_postfix(FileStream*, const char*, void*);
-int APS5_VABI vsprintf_nid_postfix(char*, const char*, void*);
-int APS5_VABI fgetc_nid_postfix(FileStream*);
-int APS5_VABI fputc_nid_postfix(int, FileStream*);
-int APS5_VABI getc_unlocked_nid_postfix(FileStream*);
-int APS5_VABI putc_unlocked_nid_postfix(int, FileStream*);
-int APS5_VABI fputwc_nid_postfix(char16_t, FileStream*);
-int APS5_VABI fputws_nid_postfix(const char16_t*, FileStream*);
-std::int32_t APS5_VABI getwc_nid_postfix(FileStream*);
-std::int32_t APS5_VABI getwchar_nid_postfix();
-int APS5_VABI putwc_nid_postfix(char16_t, FileStream*);
-int APS5_VABI putwchar_nid_postfix(char16_t);
-char16_t* APS5_VABI fgetws_nid_postfix(char16_t*, int, FileStream*);
-int APS5_VABI getchar_unlocked_nid_postfix();
-int APS5_VABI putchar_unlocked_nid_postfix(int);
-int APS5_VABI fscanf_nid_postfix(FileStream*, const char*, ...);
-int APS5_VABI __srget_nid_postfix(FileStream*);
-int APS5_VABI __swbuf_nid_postfix(int, FileStream*);
-int APS5_VABI ungetc_nid_postfix(int, FileStream*);
-char* APS5_VABI fgets_nid_postfix(char*, int, FileStream*);
-int APS5_VABI feof_nid_postfix(FileStream*);
-int APS5_VABI ferror_nid_postfix(FileStream*);
-int APS5_VABI fileno_nid_postfix(FileStream*);
-void APS5_VABI clearerr_nid_postfix(FileStream*);
-void APS5_VABI rewind_nid_postfix(FileStream*);
-int APS5_VABI setvbuf_nid_postfix(FileStream*, char*, int, std::size_t);
-void APS5_VABI setbuf_nid_postfix(FileStream*, char*);
-FileStream* APS5_VABI fdopen_nid_postfix(int, const char*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-int APS5_VABI fflush_nid_postfix(FileStream*);
-int APS5_VABI _Getmbcurmax_nid_postfix();
-int APS5_VABI ___mb_cur_max_nid_postfix();
-void APS5_VABI flockfile_nid_postfix(FileStream*);
-void APS5_VABI funlockfile_nid_postfix(FileStream*);
-int APS5_VABI ftrylockfile_nid_postfix(FileStream*);
+
 }
 static void Require(bool value) { if (!value) std::abort(); }
 static int APS5_VABI WriteFormatted(FileStream* stream, const char* format, ...) {
@@ -87,7 +41,7 @@ static int APS5_VABI WriteFormatted(FileStream* stream, const char* format, ...)
     std::va_list args;
     va_start(args, format);
 #endif
-    const int result = vfprintf_nid_postfix(stream, format, args);
+    const int result = vfprintf_nid_postfix(stream, format, reinterpret_cast<VaList*>(args));
 #ifdef _WIN32
     __builtin_sysv_va_end(args);
 #else
@@ -103,7 +57,7 @@ static int APS5_VABI PrintStandard(const char* format, ...) {
     std::va_list args;
     va_start(args, format);
 #endif
-    const int result = vprintf_nid_postfix(format, args);
+    const int result = vprintf_nid_postfix(format, reinterpret_cast<VaList*>(args));
 #ifdef _WIN32
     __builtin_sysv_va_end(args);
 #else
@@ -119,7 +73,7 @@ static int APS5_VABI FormatString(char* buffer, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
 #endif
-    const int result = vsprintf_nid_postfix(buffer, format, args);
+    const int result = vsprintf_nid_postfix(buffer, format, reinterpret_cast<VaList*>(args));
 #ifdef _WIN32
     __builtin_sysv_va_end(args);
 #else
@@ -135,8 +89,41 @@ static bool CheckFileBytes(const std::string& filename, const std::string& expec
     return false;
 }
 
+static void CheckGetcharPutchar() {
+    auto* const savedInput = __stdinp_nid_postfix;
+    auto* const savedOutput = __stdoutp_nid_postfix;
+    FileStream input(TemporaryFile::Open());
+    Require(fputc_nid_postfix('T', &input) == 'T' && fputc_nid_postfix(0xff, &input) == 0xff);
+    rewind_nid_postfix(&input);
+    __stdinp_nid_postfix = &input;
+    Require(getchar_nid_postfix() == 'T' && getchar_nid_postfix() == 0xff);
+    Require(getchar_nid_postfix() == EOF && feof_nid_postfix(&input) != 0 && ferror_nid_postfix(&input) == 0);
+    FileStream output(TemporaryFile::Open());
+    __stdoutp_nid_postfix = &output;
+    const int written[] = {putchar_nid_postfix('U'), putchar_nid_postfix(0x141), putchar_nid_postfix(-1)};
+    __stdinp_nid_postfix = savedInput;
+    __stdoutp_nid_postfix = savedOutput;
+    Require(written[0] == 'U' && written[1] == 0x41 && written[2] == 0xff);
+    rewind_nid_postfix(&output);
+    Require(fgetc_nid_postfix(&output) == 'U' && fgetc_nid_postfix(&output) == 0x41 && fgetc_nid_postfix(&output) == 0xff);
+    Require(fgetc_nid_postfix(&output) == EOF);
+    input.Close();
+    output.Close();
+}
+
+static void CheckGetcPutc() {
+    FileStream stream(TemporaryFile::Open());
+    Require(putc_nid_postfix('A', &stream) == 'A');
+    Require(putc_nid_postfix(0x141, &stream) == 0x41);
+    Require(putc_nid_postfix(-1, &stream) == 0xff);
+    rewind_nid_postfix(&stream);
+    Require(getc_nid_postfix(&stream) == 'A' && getc_nid_postfix(&stream) == 0x41 && getc_nid_postfix(&stream) == 0xff);
+    Require(getc_nid_postfix(&stream) == EOF && feof_nid_postfix(&stream) != 0 && ferror_nid_postfix(&stream) == 0);
+    stream.Close();
+}
+
 static void CheckUnlockedStreams() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     auto& guest = stream.GuestState();
     const auto originalFlags = guest.flags;
     for (const int value : {0, 0x7f, 0x80, 0xff, 0x1ab, -2}) {
@@ -160,6 +147,7 @@ static void CheckUnlockedStreams() {
     stream.SetError();
     Require(putc_unlocked_nid_postfix('R', &stream) == 'R' && (guest.flags & 0x40));
     clearerr_nid_postfix(&stream);
+
     Require(!(guest.flags & 0x40));
     stream.Close();
 
@@ -167,18 +155,35 @@ static void CheckUnlockedStreams() {
     { std::ofstream seed(filename, std::ios::binary); seed.put('A'); Require(seed.good()); }
     FileStream readOnly(std::fopen(filename.c_str(), "rb"));
     Require(putc_unlocked_nid_postfix('X', &readOnly) == EOF && (readOnly.GuestState().flags & 0x40));
+    Require(ferror_unlocked_nid_postfix(&readOnly) == 1 && feof_unlocked_nid_postfix(&readOnly) == 0);
+    clearerr_unlocked_nid_postfix(&readOnly);
+
+    Require(ferror_unlocked_nid_postfix(&readOnly) == 0);
     readOnly.Close();
     Require(CheckFileBytes(filename, "A", "rb", false));
     Require(std::filesystem::remove(filename));
 }
 
 static void CheckUnlockedQueries() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
+    Require(feof_unlocked_nid_postfix(&stream) == 0 && ferror_unlocked_nid_postfix(&stream) == 0);
+    Require(std::fgetc(stream.GetHandle()) == EOF);
+    Require(feof_unlocked_nid_postfix(&stream) == 1 && ferror_unlocked_nid_postfix(&stream) == 0);
+    Require((stream.GuestState().flags & 0x60) == 0x20);
+    stream.SetError();
+    Require(feof_unlocked_nid_postfix(&stream) == 1 && ferror_unlocked_nid_postfix(&stream) == 1);
+    clearerr_unlocked_nid_postfix(&stream);
+
+    Require(feof_unlocked_nid_postfix(&stream) == 0 && ferror_unlocked_nid_postfix(&stream) == 0);
+    Require(std::fgetc(stream.GetHandle()) == EOF && std::ungetc('Q', stream.GetHandle()) == 'Q');
+    Require(feof_unlocked_nid_postfix(&stream) == 0 && ferror_unlocked_nid_postfix(&stream) == 0);
+    Require(std::fgetc(stream.GetHandle()) == 'Q');
     Require(fputc_nid_postfix(0x7f, &stream) == 0x7f);
     std::rewind(stream.GetHandle());
     Require(fgetc_nid_postfix(&stream) == 0x7f && feof_nid_postfix(&stream) == 0);
     Require(fgetc_nid_postfix(&stream) == -1 && feof_nid_postfix(&stream) != 0);
     clearerr_unlocked_nid_postfix(&stream);
+
     Require(feof_nid_postfix(&stream) == 0 && ferror_nid_postfix(&stream) == 0);
     Require(fileno_unlocked_nid_postfix(&stream) == fileno_nid_postfix(&stream) && fileno_unlocked_nid_postfix(&stream) >= 0);
     Require(fileno_unlocked_nid_postfix(nullptr) == -1);
@@ -189,7 +194,7 @@ static void CheckUnlockedQueries() {
 }
 
 static void CheckTryLock() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     const auto tryFromOtherThread = [&] {
         int result = 0;
         std::thread other([&] {
@@ -203,6 +208,7 @@ static void CheckTryLock() {
     Require(ftrylockfile_nid_postfix(&stream) == 0);
     Require(tryFromOtherThread() == -1);
     funlockfile_nid_postfix(&stream);
+
     Require(tryFromOtherThread() == -1);
     std::atomic<bool> written = false;
     std::thread writer([&] {
@@ -212,14 +218,17 @@ static void CheckTryLock() {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Require(!written && fputc_nid_postfix('A', &stream) == 'A');
     funlockfile_nid_postfix(&stream);
+
     writer.join();
     Require(written && tryFromOtherThread() == 0);
     std::atomic<bool> held = false, release = false;
     std::thread owner([&] {
         flockfile_nid_postfix(&stream);
+
         held = true;
         while (!release) std::this_thread::yield();
         funlockfile_nid_postfix(&stream);
+
     });
     while (!held) std::this_thread::yield();
     const int contended = ftrylockfile_nid_postfix(&stream);
@@ -227,6 +236,7 @@ static void CheckTryLock() {
     owner.join();
     Require(contended == -1 && ftrylockfile_nid_postfix(&stream) == 0);
     funlockfile_nid_postfix(&stream);
+
     Require(tryFromOtherThread() == 0);
     Require(fseeko_nid_postfix(&stream, 0, SEEK_SET) == 0);
     Require(fgetc_nid_postfix(&stream) == 'A' && fgetc_nid_postfix(&stream) == 'B');
@@ -239,17 +249,19 @@ static void CheckTryLock() {
     Require(threw);
 }
 
-static void CheckUnlockedStreamLock(bool write) {
-    FileStream stream(std::tmpfile());
+static void CheckUnlockedStreamLock(bool write, int (APS5_VABI *query)(FileStream*) = nullptr) {
+    FileStream stream(TemporaryFile::Open());
     Require(std::fputc('A', stream.GetHandle()) == 'A');
     std::rewind(stream.GetHandle());
     std::atomic<bool> held = false, release = false, entered = false, done = false;
     int result = EOF;
     std::thread owner([&] {
         flockfile_nid_postfix(&stream);
+
         held = true;
         while (!release) std::this_thread::yield();
         funlockfile_nid_postfix(&stream);
+
     });
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     while (!held && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
@@ -260,7 +272,7 @@ static void CheckUnlockedStreamLock(bool write) {
     }
     std::thread caller([&] {
         entered = true;
-        result = write ? putc_unlocked_nid_postfix('B', &stream) : getc_unlocked_nid_postfix(&stream);
+        result = query ? query(&stream) : write ? putc_unlocked_nid_postfix('B', &stream) : getc_unlocked_nid_postfix(&stream);
         done = true;
     });
     const auto enteredDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
@@ -277,14 +289,15 @@ static void CheckUnlockedStreamLock(bool write) {
     release = true;
     owner.join();
     caller.join();
-    Require(completedWhileHeld && result == (write ? 'B' : 'A'));
+    Require(completedWhileHeld && result == (query ? 0 : write ? 'B' : 'A'));
     stream.Close();
 }
 
 static void CheckFgetsSize() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(fwrite_nid_postfix("line\n", 1, 5, &stream) == 5);
     rewind_nid_postfix(&stream);
+
     for (const int size : {0, -1, std::numeric_limits<int>::min()}) {
         char buffer[8];
         std::memset(buffer, '!', sizeof(buffer));
@@ -294,6 +307,7 @@ static void CheckFgetsSize() {
         Require(buffer[0] == '!' && ftello_nid_postfix(&stream) == 0);
         Require(ferror_nid_postfix(&stream) != 0);
         clearerr_nid_postfix(&stream);
+
         Require(ferror_nid_postfix(&stream) == 0);
     }
     char line[8]{};
@@ -302,19 +316,88 @@ static void CheckFgetsSize() {
     stream.Close();
 }
 
+static void CheckFgetsSizeOne() {
+    FileStream stream(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("line\n", 1, 5, &stream) == 5);
+    rewind_nid_postfix(&stream);
+    char buffer[8];
+    std::memset(buffer, '!', sizeof(buffer));
+    Require(fgets_nid_postfix(buffer, 1, &stream) == buffer && buffer[0] == '\0' && buffer[1] == '!');
+    Require(ftello_nid_postfix(&stream) == 0 && ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) == 0);
+    Require(fgets_nid_postfix(buffer, sizeof(buffer), &stream) == buffer && std::strcmp(buffer, "line\n") == 0);
+    stream.Close();
+}
+
+static void CheckSupplementaryWideCharacters() {
+    const char16_t text[] = u"A\U0001F600\n";
+    FileStream stream(TemporaryFile::Open());
+    Require(fputws_nid_postfix(text, &stream) == 4);
+    rewind_nid_postfix(&stream);
+    char bytes[8]{};
+    Require(fread_nid_postfix(bytes, 1, sizeof(bytes), &stream) == 6 && std::memcmp(bytes, "A\xF0\x9F\x98\x80\n", 6) == 0);
+    rewind_nid_postfix(&stream);
+    char16_t line[8]{};
+    Require(fgetws_nid_postfix(line, 8, &stream) == line && std::u16string_view(line) == std::u16string_view(text));
+    rewind_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == u'A' && getwc_nid_postfix(&stream) == 0xd83d && getwc_nid_postfix(&stream) == 0xde00);
+    Require(getwc_nid_postfix(&stream) == u'\n' && getwc_nid_postfix(&stream) == -1 && ferror_nid_postfix(&stream) == 0);
+    rewind_nid_postfix(&stream);
+    Require(fgetws_nid_postfix(line, 3, &stream) == line && line[0] == u'A' && line[1] == 0xd83d && line[2] == 0);
+    Require(fgetws_nid_postfix(line, 8, &stream) == line && line[0] == 0xde00 && line[1] == u'\n' && line[2] == 0);
+    rewind_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == u'A' && getwc_nid_postfix(&stream) == 0xd83d);
+    Require(fseeko_nid_postfix(&stream, 0, SEEK_SET) == 0 && getwc_nid_postfix(&stream) == u'A');
+    rewind_nid_postfix(&stream);
+    Require(getwc_nid_postfix(&stream) == u'A' && getwc_nid_postfix(&stream) == 0xd83d);
+    Require(ungetwc_nid_postfix(u'X', &stream) == u'X');
+    Require(getwc_nid_postfix(&stream) == u'X' && getwc_nid_postfix(&stream) == 0xde00 && getwc_nid_postfix(&stream) == u'\n');
+    stream.Close();
+
+    FileStream units(TemporaryFile::Open());
+    Require(fputwc_nid_postfix(0xd83d, &units) == 0xd83d && fputwc_nid_postfix(0xde00, &units) == 0xde00);
+    rewind_nid_postfix(&units);
+    Require(getwc_nid_postfix(&units) == 0xd83d && getwc_nid_postfix(&units) == 0xde00 && getwc_nid_postfix(&units) == -1);
+    units.Close();
+
+    for (const std::string_view malformed : {"\xC0\x80", "\xE0\x9F\xBF", "\xF0\x8F\xBF\xBF", "\xF4\x90\x80\x80", "\xF8\x88\x80\x80\x80"}) {
+        FileStream input(TemporaryFile::Open());
+        Require(fwrite_nid_postfix(malformed.data(), 1, malformed.size(), &input) == malformed.size());
+        rewind_nid_postfix(&input);
+        *__error_nid_postfix() = 0;
+        Require(getwc_nid_postfix(&input) == -1 && *__error_nid_postfix() == 86 && ferror_nid_postfix(&input) != 0);
+        input.Close();
+    }
+}
+
+static void CheckUngetcEndOfFile() {
+    FileStream stream(TemporaryFile::Open());
+    Require(fwrite_nid_postfix("ab", 1, 2, &stream) == 2);
+    rewind_nid_postfix(&stream);
+    Require(ungetc_nid_postfix(EOF, &stream) == EOF);
+    Require(ftello_nid_postfix(&stream) == 0 && fgetc_nid_postfix(&stream) == 'a');
+    Require(fgetc_nid_postfix(&stream) == 'b' && fgetc_nid_postfix(&stream) == EOF && feof_nid_postfix(&stream) != 0);
+    Require(ungetc_nid_postfix(EOF, &stream) == EOF && feof_nid_postfix(&stream) != 0);
+    Require(ungetc_nid_postfix('z', &stream) == 'z' && feof_nid_postfix(&stream) == 0);
+    Require(fgetc_nid_postfix(&stream) == 'z' && fgetc_nid_postfix(&stream) == EOF && feof_nid_postfix(&stream) != 0);
+    stream.Close();
+}
+
 static void CheckRewind() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(fwrite_nid_postfix("ab", 1, 2, &stream) == 2);
     *__error_nid_postfix() = 7;
     rewind_nid_postfix(&stream);
+
     Require(*__error_nid_postfix() == 7 && ftello_nid_postfix(&stream) == 0);
     Require(fgetc_nid_postfix(&stream) == 'a' && ungetc_nid_postfix('z', &stream) == 'z');
     rewind_nid_postfix(&stream);
+
     Require(fgetc_nid_postfix(&stream) == 'a' && fgetc_nid_postfix(&stream) == 'b' && fgetc_nid_postfix(&stream) == EOF);
     Require(feof_nid_postfix(&stream) != 0);
     stream.SetError();
     Require(ferror_nid_postfix(&stream) != 0);
     rewind_nid_postfix(&stream);
+
     Require(feof_nid_postfix(&stream) == 0 && ferror_nid_postfix(&stream) == 0 && fgetc_nid_postfix(&stream) == 'a');
     stream.Close();
     int pipeEnds[2];
@@ -337,6 +420,7 @@ static void CheckRewind() {
     Require(fgetc_nid_postfix(&pipe) == 'q' && fgetc_nid_postfix(&pipe) == EOF && feof_nid_postfix(&pipe) != 0);
     *__error_nid_postfix() = 0;
     rewind_nid_postfix(&pipe);
+
     Require(*__error_nid_postfix() == 29 && feof_nid_postfix(&pipe) == 0 && ferror_nid_postfix(&pipe) == 0);
     pipe.Close();
 }
@@ -374,7 +458,7 @@ static bool CheckBinaryModes() {
     for (const auto* mode : modes) {
         for (const bool reopen : {false, true}) {
             { std::ofstream seed(filename, std::ios::binary | std::ios::trunc); seed.write(original.data(), original.size()); Require(seed.good()); }
-            FileStream redirected(std::tmpfile());
+            FileStream redirected(TemporaryFile::Open());
             FileStream* stream = reopen ? freopen_nid_postfix(filename.c_str(), mode, &redirected) : fopen_nid_postfix(filename.c_str(), mode);
             Require(stream != nullptr);
             const bool update = std::strchr(mode, '+') != nullptr;
@@ -405,7 +489,7 @@ static bool CheckBinaryModes() {
         }
     }
     for (const auto* mode : {"", "q", "tr", "rx", "rbx"}) {
-        FileStream redirected(std::tmpfile());
+        FileStream redirected(TemporaryFile::Open());
         Require(fopen_nid_postfix(filename.c_str(), mode) == nullptr && *__error_nid_postfix() == 22);
         Require(freopen_nid_postfix(filename.c_str(), mode, &redirected) == nullptr && *__error_nid_postfix() == 22);
     }
@@ -489,7 +573,13 @@ static void CheckDescriptorAccessModes() {
 #endif
             Require(descriptor >= 0);
             const int requested = std::strchr(mode, '+') ? 2 : *mode == 'r' ? 0 : 1;
+#ifdef _WIN32
+            const bool incompatible = false;
+            const bool unchecked = access != 2 && access != requested;
+#else
             const bool incompatible = access != 2 && access != requested;
+            const bool unchecked = false;
+#endif
 #ifdef _WIN32
             const auto originalHandle = _get_osfhandle(descriptor);
             if (incompatible) Require(_lseek(descriptor, 2, SEEK_SET) == 2);
@@ -520,6 +610,16 @@ static void CheckDescriptorAccessModes() {
                 Require(::close(descriptor) == 0);
 #endif
                 Require(CheckFileBytes(filename, probeAppend ? "reXained" : "retained", mode, false));
+            } else if (unchecked) {
+                Require(stream != nullptr && fileno_nid_postfix(stream) == descriptor);
+                if (access == 1) {
+                    Require(fgetc_nid_postfix(stream) == -1 && ferror_nid_postfix(stream) != 0);
+                } else {
+                    Require(fputc_nid_postfix('X', stream) == 'X');
+                    Require(fflush_nid_postfix(stream) == -1 && *__error_nid_postfix() == 9);
+                }
+                fclose_nid_postfix(stream);
+                Require(CheckFileBytes(filename, "retained", mode, false));
             } else {
                 Require(stream != nullptr);
                 if (requested == 0) Require(fgetc_nid_postfix(stream) == 'r');
@@ -541,7 +641,7 @@ static void CheckDescriptorAccessModes() {
 }
 
 static void CheckClosedStreamWrites() {
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     Require(freopen_nid_postfix("missing-closed-stream-dir/out.log", "w", &stream) == nullptr);
     Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
     Require(fprintf_nid_postfix(&stream, "%d", 1) == -1 && *__error_nid_postfix() == 9);
@@ -556,8 +656,58 @@ static void CheckClosedStreamWrites() {
     Require(fseeko_nid_postfix(&stream, 0, SEEK_SET) == -1 && *__error_nid_postfix() == 9);
     Require(ftello_nid_postfix(&stream) == -1 && *__error_nid_postfix() == 9);
     Require(fileno_nid_postfix(&stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(fputwc_nid_postfix(u't', &stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(putwc_nid_postfix(u't', &stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(fputws_nid_postfix(u"text", &stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix('t', &stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(ungetwc_nid_postfix(0x100, &stream) == -1 && *__error_nid_postfix() == 9);
     Require(ferror_nid_postfix(&stream) == 0 && feof_nid_postfix(&stream) == 0);
     Require(fclose_nid_postfix(&stream) == -1 && *__error_nid_postfix() == 9);
+}
+
+static std::string FileText(const std::string& filename) {
+    std::ifstream input(filename, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+}
+
+static void CheckClosedStreamReopen() {
+    const auto filename = "anyps5-closed-reopen-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    FileStream stream(TemporaryFile::Open());
+    Require(fclose_nid_postfix(&stream) == 0);
+    Require(freopen_nid_postfix("missing-closed-stream-dir/out.log", "w", &stream) == nullptr && *__error_nid_postfix() == 2);
+    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
+    const std::string overlong(300, 'n');
+    Require(freopen_nid_postfix(overlong.c_str(), "w", &stream) == nullptr && *__error_nid_postfix() == 63);
+    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
+    Require(freopen_nid_postfix(nullptr, "w", &stream) == nullptr && *__error_nid_postfix() == 9);
+    Require(freopen_nid_postfix(filename.c_str(), "w", &stream) == &stream);
+    Require(fputs_nid_postfix("reopened\n", &stream) >= 0 && fflush_nid_postfix(&stream) == 0);
+    Require(fileno_nid_postfix(&stream) >= 0);
+    Require(freopen_nid_postfix(filename.c_str(), "r", &stream) == &stream);
+    Require(fgetc_nid_postfix(&stream) == 'r');
+    Require(fclose_nid_postfix(&stream) == 0);
+    Require(FileText(filename) == "reopened\n");
+    Require(std::filesystem::remove(filename));
+}
+
+static int CheckReopenedClosedStandardOutput() {
+    const auto filename = "anyps5-closed-stdout-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(fclose_nid_postfix(__stdoutp_nid_postfix) == 0);
+    Require(printf_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
+    const std::string overlong(300, 'n');
+    Require(freopen_nid_postfix(overlong.c_str(), "w", __stdoutp_nid_postfix) == nullptr && *__error_nid_postfix() == 63);
+    Require(printf_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
+    Require(freopen_nid_postfix(filename.c_str(), "w", __stdoutp_nid_postfix) == __stdoutp_nid_postfix);
+    Require(printf_nid_postfix("%d\n", 1) == 2 && puts_nid_postfix("text") >= 0 && fflush_nid_postfix(__stdoutp_nid_postfix) == 0);
+    Require(fclose_nid_postfix(__stdoutp_nid_postfix) == 0);
+    Require(FileText(filename) == "1\ntext\n");
+    Require(std::filesystem::remove(filename));
+    return 0;
 }
 
 static int CheckClosedStandardOutput() {
@@ -565,9 +715,21 @@ static int CheckClosedStandardOutput() {
     Require(printf_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
     Require(puts_nid_postfix("text") == -1 && *__error_nid_postfix() == 9);
     Require(PrintStandard("%d", 1) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(printf_s_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(printf_s_nid_postfix("%p", nullptr) == -1 && *__error_nid_postfix() == 9);
     Require(fputs_nid_postfix("text", __stdoutp_nid_postfix) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(wprintf_nid_postfix(u"%d", 1) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(putwchar_nid_postfix(u't') == -1 && *__error_nid_postfix() == 9);
     Require(std::fputs("host output\n", stdout) >= 0 && std::fflush(stdout) == 0 && !std::ferror(stdout));
     Require(freopen_nid_postfix("missing-closed-stream-dir/err.log", "a", __stderrp_nid_postfix) == nullptr);
+    *__error_nid_postfix() = 2;
+    perror_nid_postfix("closed stderr");
+    perror_nid_postfix(nullptr);
+    Require(*__error_nid_postfix() == 2);
     Require(std::fputs("host error\n", stderr) >= 0 && std::fflush(stderr) == 0 && !std::ferror(stderr));
     return 0;
 }
@@ -582,17 +744,97 @@ static int CheckExclusiveStandardOutput() {
     return 0;
 }
 
+static int CheckUpdateStandardOutput() {
+    const auto filename = "anyps5-update-stdout-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    auto* const stream = __stdoutp_nid_postfix;
+    Require(freopen_nid_postfix(filename.c_str(), "a+b", stream) == stream);
+    Require(fputs_nid_postfix("0123456789", stream) >= 0);
+    const auto readFirst = [stream] { Require(fseek_nid_postfix(stream, 0, SEEK_SET) == 0 && fgetc_nid_postfix(stream) == '0'); };
+    readFirst();
+    Require(puts_nid_postfix("A") != EOF);
+    readFirst();
+    Require(printf_nid_postfix("%s", "B") == 1);
+    readFirst();
+    Require(PrintStandard("%s", "C") == 1);
+    readFirst();
+    Require(printf_s_nid_postfix("%s", "D") == 1);
+    readFirst();
+    Require(wprintf_nid_postfix(u"E") == 1);
+    Require(ferror_nid_postfix(stream) == 0);
+    Require(freopen_nid_postfix(filename.c_str(), "rb", stream) == stream && fgetc_nid_postfix(stream) == '0');
+    *__error_nid_postfix() = 0;
+    Require(puts_nid_postfix("A") == EOF && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(printf_nid_postfix("%s", "B") == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(PrintStandard("%s", "C") == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(printf_s_nid_postfix("%s", "D") == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(wprintf_nid_postfix(u"E") == -1 && *__error_nid_postfix() == 9);
+    Require(ferror_nid_postfix(stream) != 0 && fclose_nid_postfix(stream) == 0);
+    Require(CheckFileBytes(filename, "0123456789A\nBCDE", "a+b", true));
+    Require(std::filesystem::remove(filename));
+    return 0;
+}
+
+static void CheckSetvbufInvalidMode() {
+    FileStream stream(TemporaryFile::Open());
+    for (const int mode : {3, -1, INT_MAX}) Require(setvbuf_nid_postfix(&stream, nullptr, mode, 0) == EOF);
+    char buffer[16];
+    std::memset(buffer, 'z', sizeof(buffer));
+    Require(setvbuf_nid_postfix(&stream, buffer, 3, sizeof(buffer)) == EOF);
+    Require(fputc_nid_postfix('A', &stream) == 'A');
+    Require(buffer[0] == 'z');
+    Require(fflush_nid_postfix(&stream) == 0);
+    std::rewind(stream.GetHandle());
+    Require(fgetc_nid_postfix(&stream) == 'A');
+    Require(fgetc_nid_postfix(&stream) == EOF);
+    stream.Close();
+}
+
+#ifdef _WIN32
+static void CheckStandardStreamDeleteSharing() {
+    int index = 0;
+    for (auto* stream : {__stdinp_nid_postfix, __stderrp_nid_postfix}) {
+        const std::string filename = "anyps5-standard-delete-" + std::to_string(index++) + "-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        auto* const native = stream->GetHandle();
+        const int descriptor = ::_fileno(native);
+        Require(freopen_nid_postfix(filename.c_str(), "w+b", stream) == stream);
+        Require(stream->GetHandle() == native && ::_fileno(stream->GetHandle()) == descriptor);
+        Require(fputc_nid_postfix('A', stream) == 'A' && fflush_nid_postfix(stream) == 0);
+        const std::string renamed = filename + "-moved";
+        std::filesystem::rename(filename, renamed);
+        Require(fputc_nid_postfix('B', stream) == 'B' && fflush_nid_postfix(stream) == 0);
+        Require(std::filesystem::remove(renamed));
+        Require(fseeko_nid_postfix(stream, 0, SEEK_SET) == 0);
+        Require(fgetc_nid_postfix(stream) == 'A' && fgetc_nid_postfix(stream) == 'B');
+    }
+}
+#endif
+
 int main(int argc, char** argv) {
+    if (argc > 1 && std::string_view(argv[1]) == "--update-stdout") return CheckUpdateStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--closed-stdout") return CheckClosedStandardOutput();
     if (argc > 1 && std::string_view(argv[1]) == "--exclusive-stdout") return CheckExclusiveStandardOutput();
+    if (argc > 1 && std::string_view(argv[1]) == "--reopen-closed-stdout") return CheckReopenedClosedStandardOutput();
     CheckClosedStreamWrites();
+    CheckClosedStreamReopen();
+    CheckSetvbufInvalidMode();
     CheckDescriptorAccessModes();
-    Require(_Getmbcurmax_nid_postfix() == 1 && _Getmbcurmax_nid_postfix() == ___mb_cur_max_nid_postfix());
+    Require(_Getmbcurmax_nid_postfix() == 3 && ___mb_cur_max_nid_postfix() == 1);
     CheckFlushWhileReading();
-    Require(fdopen_nid_postfix(-1, "rb") == nullptr && *__error_nid_postfix() == 9);
+    for (const int negative : {-1, -2, INT_MIN}) {
+        *__error_nid_postfix() = 1234;
+        Require(fdopen_nid_postfix(negative, "rb") == nullptr && *__error_nid_postfix() == 1234);
+        for (const char* invalid : {"x", "", "z", "xr"}) {
+            *__error_nid_postfix() = 1234;
+            Require(fdopen_nid_postfix(negative, invalid) == nullptr && *__error_nid_postfix() == 22);
+        }
+    }
     Require(fdopen_nid_postfix(0, nullptr) == nullptr && *__error_nid_postfix() == 22);
     Require(fdopen_nid_postfix(0, "invalid") == nullptr && *__error_nid_postfix() == 22);
-    std::FILE* original = std::tmpfile();
+    std::FILE* original = TemporaryFile::Open();
     Require(original != nullptr);
     std::fputs("retained", original);
     std::fflush(original);
@@ -605,6 +847,7 @@ int main(int argc, char** argv) {
     auto* wrapped = fdopen_nid_postfix(descriptor, "r+b");
     Require(wrapped != nullptr && fileno_nid_postfix(wrapped) == descriptor);
     setbuf_nid_postfix(wrapped, nullptr);
+
     Require(fseek_nid_postfix(wrapped, 0, SEEK_SET) == 0);
     char contents[32]{};
     Require(fgets_nid_postfix(contents, sizeof(contents), wrapped) == contents && std::strcmp(contents, "retained") == 0);
@@ -637,7 +880,7 @@ int main(int argc, char** argv) {
     Require(fileno_nid_postfix(__stderrp_nid_postfix) == 2);
     auto* const savedInput = __stdinp_nid_postfix;
     auto* const savedOutput = __stdoutp_nid_postfix;
-    FileStream customIn(std::tmpfile());
+    FileStream customIn(TemporaryFile::Open());
     Require(fputc_nid_postfix('T', &customIn) == 'T');
     std::rewind(customIn.GetHandle());
     __stdinp_nid_postfix = &customIn;
@@ -645,7 +888,7 @@ int main(int argc, char** argv) {
     Require(getchar_unlocked_nid_postfix() == EOF);
     Require(ungetc_nid_postfix('W', &customIn) == 'W');
     Require(getwchar_nid_postfix() == 'W');
-    FileStream customOut(std::tmpfile());
+    FileStream customOut(TemporaryFile::Open());
     __stdoutp_nid_postfix = &customOut;
     Require(putchar_unlocked_nid_postfix('U') == 'U');
     Require(putwchar_nid_postfix(u'V') == u'V');
@@ -654,14 +897,14 @@ int main(int argc, char** argv) {
     Require(fgetc_nid_postfix(&customOut) == 'V');
     __stdinp_nid_postfix = savedInput;
     __stdoutp_nid_postfix = savedOutput;
-    FileStream stream(std::tmpfile());
+    FileStream stream(TemporaryFile::Open());
     auto& guest = *reinterpret_cast<GuestFilePrefix*>(&stream);
     Require(&guest == &stream.GuestState());
     Require(guest.position == nullptr && guest.readRemaining == 0 && guest.writeRemaining == 0);
     Require(guest.descriptor == fileno_nid_postfix(&stream));
-    FileStream lineBuffered(std::tmpfile());
+    FileStream lineBuffered(TemporaryFile::Open());
     Require(setvbuf_nid_postfix(&lineBuffered, nullptr, 1, 0) == 0);
-    FileStream fullyBuffered(std::tmpfile());
+    FileStream fullyBuffered(TemporaryFile::Open());
     Require(setvbuf_nid_postfix(&fullyBuffered, nullptr, 0, 0) == 0);
     Require(setvbuf_nid_postfix(&stream, nullptr, 2, 0) == 0);
     Require(fputc_nid_postfix('A', &stream) == 'A');
@@ -677,11 +920,12 @@ int main(int argc, char** argv) {
     Require(fgetc_nid_postfix(&stream) == EOF);
     Require(feof_nid_postfix(&stream) && (guest.flags & 0x20));
     clearerr_nid_postfix(&stream);
+
     Require(!feof_nid_postfix(&stream) && !(guest.flags & 0x20));
     stream.Close();
     Require(guest.flags == 0 && guest.descriptor == -1);
 
-    FileStream wide(std::tmpfile());
+    FileStream wide(TemporaryFile::Open());
     Require(fputwc_nid_postfix(u'A', &wide) == u'A');
     Require(fputws_nid_postfix(u"B\x00E9", &wide) == 2);
     std::rewind(wide.GetHandle());
@@ -690,7 +934,7 @@ int main(int argc, char** argv) {
     Require(std::memcmp(wideBytes, "AB\xC3\xA9", 4) == 0);
     wide.Close();
 
-    FileStream wideIo(std::tmpfile());
+    FileStream wideIo(TemporaryFile::Open());
     Require(putwc_nid_postfix(u'H', &wideIo) == u'H');
     Require(putwc_nid_postfix(u'i', &wideIo) == u'i');
     Require(putwc_nid_postfix(u'\n', &wideIo) == u'\n');
@@ -708,21 +952,25 @@ int main(int argc, char** argv) {
     Require(wideBuf[0] == u'E' && wideBuf[1] == u'n' && wideBuf[2] == u'd' && wideBuf[3] == 0);
     Require(fgetws_nid_postfix(wideBuf, 16, &wideIo) == nullptr);
     Require(feof_nid_postfix(&wideIo));
-    Require(fgetws_nid_postfix(wideBuf, 0, &wideIo) == nullptr && *__error_nid_postfix() == 22);
-    Require(ferror_nid_postfix(&wideIo));
     clearerr_nid_postfix(&wideIo);
+
+    *__error_nid_postfix() = 0;
+    Require(fgetws_nid_postfix(wideBuf, 0, &wideIo) == nullptr && *__error_nid_postfix() == 0);
+    Require(fgetws_nid_postfix(wideBuf, -1, &wideIo) == nullptr && *__error_nid_postfix() == 0);
+    Require(!ferror_nid_postfix(&wideIo));
     Require(fgetws_nid_postfix(nullptr, 16, &wideIo) == nullptr && *__error_nid_postfix() == 22);
     Require(ferror_nid_postfix(&wideIo));
     clearerr_nid_postfix(&wideIo);
+
     Require(fgetws_nid_postfix(wideBuf, 16, nullptr) == nullptr && *__error_nid_postfix() == 22);
     wideBuf[0] = u'X';
     wideBuf[1] = u'Y';
     std::rewind(wideIo.GetHandle());
-    Require(fgetws_nid_postfix(wideBuf, 1, &wideIo) == wideBuf && wideBuf[0] == 0 && wideBuf[1] == u'Y');
+    Require(fgetws_nid_postfix(wideBuf, 1, &wideIo) == nullptr && wideBuf[0] == u'X' && wideBuf[1] == u'Y');
     Require(fgetc_nid_postfix(&wideIo) == 'H');
     wideIo.Close();
 
-    FileStream roundTrip(std::tmpfile());
+    FileStream roundTrip(TemporaryFile::Open());
     Require(putwc_nid_postfix(u'é', &roundTrip) == u'é');
     Require(putwc_nid_postfix(u'\u20ac', &roundTrip) == u'\u20ac');
     Require(putwc_nid_postfix(u'\n', &roundTrip) == u'\n');
@@ -737,16 +985,16 @@ int main(int argc, char** argv) {
     Require(utfBuf[0] == u'é' && utfBuf[1] == u'\u20ac' && utfBuf[2] == u'\n' && utfBuf[3] == 0);
     roundTrip.Close();
 
-    FileStream midErr(std::tmpfile());
+    FileStream midErr(TemporaryFile::Open());
     Require(fputc_nid_postfix('A', &midErr) == 'A');
     Require(fputc_nid_postfix(0xff, &midErr) == 0xff);
     std::rewind(midErr.GetHandle());
     char16_t midBuf[16]{};
-    Require(fgetws_nid_postfix(midBuf, 16, &midErr) == nullptr);
+    Require(fgetws_nid_postfix(midBuf, 16, &midErr) == midBuf && midBuf[0] == u'A' && midBuf[1] == 0);
     Require(ferror_nid_postfix(&midErr));
     midErr.Close();
 
-    FileStream formatted(std::tmpfile());
+    FileStream formatted(TemporaryFile::Open());
     const char expected[] = "guest 4294967297 1.25 1 2 3 4 5 6 7 8\n";
     Require(fprintf_nid_postfix(&formatted, "%s %ld %.2f %d %d %d %d %d %d %d %d\n",
         "guest", std::int64_t{4294967297}, 1.25, 1, 2, 3, 4, 5, 6, 7, 8) == sizeof(expected) - 1);
@@ -759,7 +1007,7 @@ int main(int argc, char** argv) {
     Require(std::strcmp(output, "  3.50:end") == 0);
     formatted.Close();
 
-    FileStream scanned(std::tmpfile());
+    FileStream scanned(TemporaryFile::Open());
     Require(fprintf_nid_postfix(&scanned, "%d %s", 42, "answer") == 9);
     std::rewind(scanned.GetHandle());
     Require(fscanf_nid_postfix(&scanned, "%*d") == 0);
@@ -775,7 +1023,7 @@ int main(int argc, char** argv) {
     Require(feof_nid_postfix(&scanned) && (scanned.GuestState().flags & 0x20));
     scanned.Close();
 
-    FileStream scanBinary(std::tmpfile());
+    FileStream scanBinary(TemporaryFile::Open());
     Require(std::fputs("0b101", scanBinary.GetHandle()) >= 0);
     std::rewind(scanBinary.GetHandle());
     int binaryValue = -1;
@@ -784,7 +1032,7 @@ int main(int argc, char** argv) {
     scanBinary.Close();
 
 #ifdef _WIN32
-    FileStream scanSuppressed(std::tmpfile());
+    FileStream scanSuppressed(TemporaryFile::Open());
     Require(std::fputs("12", scanSuppressed.GetHandle()) >= 0);
     std::rewind(scanSuppressed.GetHandle());
     int suppressedTarget = 321;
@@ -793,7 +1041,7 @@ int main(int argc, char** argv) {
     scanSuppressed.Close();
 #endif
 
-    FileStream scanMany(std::tmpfile());
+    FileStream scanMany(TemporaryFile::Open());
     Require(std::fputs("7 1 2 3 4 5 6 7 8 4294967297 -4294967298 4294967299 abc %!", scanMany.GetHandle()) >= 0);
     std::rewind(scanMany.GetHandle());
     int numbers[8]{};
@@ -815,7 +1063,7 @@ int main(int argc, char** argv) {
     Require(fscanf_nid_postfix(&scanMany, "%d", &unmatched) == EOF && unmatched == 123);
     scanMany.Close();
 
-    FileStream positioned(std::tmpfile());
+    FileStream positioned(TemporaryFile::Open());
     constexpr std::int64_t largeOffset = INT64_C(4294967313);
     Require(fseeko_nid_postfix(&positioned, largeOffset, SEEK_SET) == 0);
     Require(ftello_nid_postfix(&positioned) == largeOffset);
@@ -834,7 +1082,7 @@ int main(int argc, char** argv) {
     positioned.Close();
 
     const auto filename = "anyps5-reopen-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    FileStream redirected(std::tmpfile());
+    FileStream redirected(TemporaryFile::Open());
     Require(fgetc_nid_postfix(&redirected) == EOF && feof_nid_postfix(&redirected));
     Require(freopen_nid_postfix(filename.c_str(), "w+b", &redirected) == &redirected);
     Require(!feof_nid_postfix(&redirected));
@@ -848,13 +1096,14 @@ int main(int argc, char** argv) {
     { std::ifstream input(filename, std::ios::binary); std::string contents; std::getline(input, contents);
       Require(contents == "RS"); }
     Require(std::filesystem::remove(filename));
-    FileStream failed(std::tmpfile());
+    FileStream failed(TemporaryFile::Open());
     Require(freopen_nid_postfix(filename.c_str(), "rb", &failed) == nullptr);
     Require(*__error_nid_postfix() == 2);
     Require(failed.GuestState().flags == 0 && failed.GuestState().descriptor == -1);
-    FileStream locked(std::tmpfile());
+    FileStream locked(TemporaryFile::Open());
     flockfile_nid_postfix(&locked);
     flockfile_nid_postfix(&locked);
+
     std::atomic<bool> lockedWrite = false;
     std::thread writer([&] {
         Require(fputc_nid_postfix('B', &locked) == 'B');
@@ -863,19 +1112,61 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Require(!lockedWrite && fputc_nid_postfix('A', &locked) == 'A');
     funlockfile_nid_postfix(&locked);
+
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     Require(!lockedWrite);
     funlockfile_nid_postfix(&locked);
+
     writer.join();
     Require(lockedWrite && fseeko_nid_postfix(&locked, 0, SEEK_SET) == 0);
     Require(fgetc_nid_postfix(&locked) == 'A' && fgetc_nid_postfix(&locked) == 'B');
     locked.Close();
     CheckRewind();
+    CheckUngetcEndOfFile();
     CheckFgetsSize();
+    CheckFgetsSizeOne();
+    CheckSupplementaryWideCharacters();
     CheckUnlockedStreams();
+    CheckGetcPutc();
+    CheckGetcharPutchar();
     CheckUnlockedStreamLock(false);
     CheckUnlockedStreamLock(true);
+    CheckUnlockedStreamLock(false, feof_unlocked_nid_postfix);
+    CheckUnlockedStreamLock(false, ferror_unlocked_nid_postfix);
     CheckTryLock();
     CheckUnlockedQueries();
-    return CheckBinaryModes() ? 0 : 1;
+    if (!CheckBinaryModes()) return 1;
+#ifdef _WIN32
+    CheckStandardStreamDeleteSharing();
+    const std::string standardFilename = "anyps5-standard-reopen-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    Require(freopen_nid_postfix(standardFilename.c_str(), "w", __stdoutp_nid_postfix) == __stdoutp_nid_postfix);
+    const HANDLE hostOutput = ::GetStdHandle(STD_OUTPUT_HANDLE);
+    Require(hostOutput != nullptr && hostOutput != INVALID_HANDLE_VALUE);
+    Require(hostOutput != reinterpret_cast<HANDLE>(::_get_osfhandle(::_fileno(stdout))));
+    DWORD handleFlags = 0;
+    Require(::GetHandleInformation(hostOutput, &handleFlags) != 0);
+    constexpr char hostMessage[] = "host stdout preserved\n";
+    DWORD hostWritten = 0;
+    Require(::WriteFile(hostOutput, hostMessage, sizeof(hostMessage) - 1, &hostWritten, nullptr) != 0 && hostWritten == sizeof(hostMessage) - 1);
+    Require(printf_nid_postfix("standard output") == 15 && fflush_nid_postfix(__stdoutp_nid_postfix) == 0);
+    { std::ifstream input(standardFilename, std::ios::binary); std::string contents; std::getline(input, contents);
+      Require(contents == "standard output"); }
+    const std::string movedFilename = standardFilename + "-moved";
+    std::error_code renameError;
+    std::filesystem::rename(standardFilename, movedFilename, renameError);
+    Require(!renameError && !std::filesystem::exists(standardFilename) && std::filesystem::exists(movedFilename));
+    Require(printf_nid_postfix(" continued") == 10 && fflush_nid_postfix(__stdoutp_nid_postfix) == 0);
+    { std::ifstream input(movedFilename, std::ios::binary); std::string contents; std::getline(input, contents);
+      Require(contents == "standard output continued"); }
+    Require(std::filesystem::remove(movedFilename));
+    Require(!std::filesystem::exists(movedFilename));
+    Require(printf_nid_postfix(" after delete") == 13 && fflush_nid_postfix(__stdoutp_nid_postfix) == 0);
+    const std::string exclusiveFilename = "anyps5-standard-exclusive-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    { std::ofstream out(exclusiveFilename, std::ios::binary); out << "existing"; }
+    Require(freopen_nid_postfix(exclusiveFilename.c_str(), "wx", __stdoutp_nid_postfix) == nullptr && *__error_nid_postfix() == 17);
+    Require(std::filesystem::remove(exclusiveFilename));
+    Require(printf_nid_postfix("closed") == -1 && *__error_nid_postfix() == 9);
+    Require(std::fputs("host stdout intact\n", stdout) >= 0 && std::fflush(stdout) == 0);
+#endif
+    return 0;
 }

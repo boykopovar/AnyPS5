@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
@@ -16,19 +18,6 @@
 #include <mutex>
 #include <stdexcept>
 #include <string_view>
-
-extern "C" {
-void* APS5_VABI mmap_nid_postfix(void*, std::size_t, int, int, int, std::int64_t) noexcept;
-int APS5_VABI munmap_nid_postfix(void*, std::size_t) noexcept;
-int APS5_VABI mprotect_nid_postfix(void*, std::size_t, int) noexcept;
-void* APS5_VABI memalign_nid_postfix(std::size_t, std::size_t);
-void* APS5_VABI realloc_nid_postfix(void*, std::size_t);
-void APS5_VABI free_nid_postfix(void*);
-int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelReleaseDirectMemory(std::int64_t, std::size_t);
-}
 
 namespace {
 
@@ -63,16 +52,16 @@ void* Map(std::size_t bytes = BlockBytes) {
     return result;
 }
 
-void CheckPattern(const void* pointer) {
+void CheckPattern(const void* pointer, std::size_t bytes = FillBytes) {
     const auto* data = static_cast<const std::byte*>(pointer);
-    for (std::size_t offset = 0; offset < FillBytes; offset += sizeof(Pattern))
+    for (std::size_t offset = 0; offset < bytes; offset += sizeof(Pattern))
         Require(std::memcmp(data + offset, Pattern.data(), sizeof(Pattern)) == 0, "guest mutation lost the pending GPU fill");
 }
 
-void Fill(AgcDriver::VulkanDevice& device, void* pointer) {
+void Fill(AgcDriver::VulkanDevice& device, void* pointer, std::size_t bytes = FillBytes) {
     std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
-    Require(device.FillBuffer(Address(pointer), FillBytes, Pattern), "Vulkan device did not import the guest allocation");
-    Require(Imported(device, pointer), "GPU fill did not create a host import");
+    Require(device.FillBuffer(Address(pointer), bytes, Pattern), "Vulkan device did not import the guest allocation");
+    Require(Imported(device, pointer, bytes), "GPU fill did not create a host import");
 }
 
 void CheckMappings(AgcDriver::VulkanDevice& device) {
@@ -105,14 +94,25 @@ void CheckMappings(AgcDriver::VulkanDevice& device) {
     Require(!Imported(device, mapping), "host import survived guest munmap");
 
     mapping = Map(3 * BlockBytes);
-    Fill(device, mapping);
+    Fill(device, mapping, 3 * BlockBytes);
     auto* middle = static_cast<std::uint8_t*>(mapping) + BlockBytes;
     Require(mprotect_nid_postfix(middle, BlockBytes, 1) == 0, "guest partial protection failed");
-    Require(!Imported(device, mapping), "whole host import survived partial protection change");
-    CheckPattern(mapping);
-    Fill(device, mapping);
+    Require(!Imported(device, mapping, 3 * BlockBytes), "whole host import survived partial protection change");
+    CheckPattern(mapping, 3 * BlockBytes);
+    Require(munmap_nid_postfix(middle, BlockBytes) == 0, "guest middle unmap after protection change failed");
+    Require(!Imported(device, mapping, 3 * BlockBytes), "host import still covered the protected and unmapped middle range");
+    Require(munmap_nid_postfix(mapping, BlockBytes) == 0, "guest prefix unmap after protection change failed");
+    Require(munmap_nid_postfix(middle + BlockBytes, BlockBytes) == 0, "guest suffix unmap after protection change failed");
+
+    mapping = Map(3 * BlockBytes);
+    Fill(device, mapping, 3 * BlockBytes);
+    Require(Imported(device, mapping, 3 * BlockBytes), "whole host import did not cover the three-block mapping before middle unmap");
+    middle = static_cast<std::uint8_t*>(mapping) + BlockBytes;
     Require(munmap_nid_postfix(middle, BlockBytes) == 0, "guest middle unmap failed");
-    Require(Imported(device, mapping), "unrelated prefix import was retired by middle unmap");
+    Require(!Imported(device, mapping, 3 * BlockBytes), "middle unmap left a host import spanning the unmapped range");
+    Require(!Imported(device, mapping), "middle unmap retained the prefix of the retired host import");
+    Fill(device, mapping);
+    Require(Imported(device, mapping), "the retained prefix was not imported again after middle unmap");
     Require(munmap_nid_postfix(mapping, BlockBytes) == 0, "guest prefix unmap failed");
     Require(!Imported(device, mapping), "prefix host import survived guest munmap");
     Require(munmap_nid_postfix(middle + BlockBytes, BlockBytes) == 0, "guest suffix unmap failed");
@@ -130,12 +130,14 @@ void CheckHeap(AgcDriver::VulkanDevice& device) {
     Require(!Imported(device, allocation), "host import survived guest realloc");
     CheckPattern(replacement);
     free_nid_postfix(replacement);
+
     for (int iteration = 0; iteration < 3; ++iteration) {
         allocation = memalign_nid_postfix(BlockBytes, BlockBytes);
         Require(allocation != nullptr, "guest heap reuse allocation failed");
         std::memset(allocation, 0, BlockBytes);
         Fill(device, allocation);
         free_nid_postfix(allocation);
+
         Require(!Imported(device, allocation), "host import survived guest free or heap cache eviction");
     }
 }
@@ -167,8 +169,10 @@ void CheckLockedMutation(AgcDriver::VulkanDevice& device) {
 }
 
 void CheckCopy(AgcDriver::VulkanDevice& device) {
-    auto* source = Map();
-    auto* destination = Map();
+    auto* span = static_cast<std::uint8_t*>(Map(3 * BlockBytes));
+    Require(munmap_nid_postfix(span + BlockBytes, BlockBytes) == 0, "guest copy gap unmap failed");
+    void* source = span;
+    void* destination = span + 2 * BlockBytes;
     {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
         Fill(device, source);

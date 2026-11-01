@@ -6,6 +6,7 @@
 #include <iostream>
 #include <iterator>
 #include <map>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -131,7 +132,8 @@ void run(const std::filesystem::path& root) {
 }
 
 int main() {
-    const auto root = std::filesystem::temp_directory_path() / "anyps5-desktop-entry-tests";
+    const auto root = std::filesystem::temp_directory_path() /
+                      ("anyps5-desktop-entry-tests-" + std::to_string(std::random_device{}()));
     std::filesystem::remove_all(root);
     try {
         run(root);

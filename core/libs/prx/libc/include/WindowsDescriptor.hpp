@@ -1,6 +1,7 @@
 #ifndef CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSDESCRIPTOR_HPP
 #define CORE_LIBS_PRX_LIBC_INCLUDE_WINDOWSDESCRIPTOR_HPP
 
+#include "GuestFileNumber.hpp"
 #include <cstdint>
 #include <io.h>
 #include <stdexcept>
@@ -26,6 +27,14 @@ static inline ACCESS_MASK WindowsHandleAccess_nid_no_patch(HANDLE handle, int de
     if (status < 0)
         throw std::runtime_error(std::string(function) + ": cannot read the access of descriptor " + std::to_string(descriptor) + ", status=" + std::to_string(status));
     return information.GrantedAccess;
+}
+
+static inline std::uint32_t WindowsFileNumber_nid_no_patch(std::uint64_t fileId) {
+    return GuestFileNumber_nid_no_patch(fileId);
+}
+
+static inline std::uint32_t WindowsFileNumber_nid_no_patch(const BY_HANDLE_FILE_INFORMATION& identity) {
+    return WindowsFileNumber_nid_no_patch((static_cast<std::uint64_t>(identity.nFileIndexHigh) << 32) | identity.nFileIndexLow);
 }
 
 static inline bool WindowsHandleOnlyAppends_nid_no_patch(ACCESS_MASK access) {

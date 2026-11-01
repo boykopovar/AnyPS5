@@ -1,3 +1,5 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstddef>
@@ -12,21 +14,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-extern "C" {
-FileStream* APS5_VABI fopen_nid_postfix(const char*, const char*);
-FileStream* APS5_VABI freopen_nid_postfix(const char*, const char*, FileStream*);
-std::size_t APS5_VABI fwrite_nid_postfix(const void*, std::size_t, std::size_t, FileStream*);
-std::size_t APS5_VABI fread_nid_postfix(void*, std::size_t, std::size_t, FileStream*);
-int APS5_VABI fseek_nid_postfix(FileStream*, std::int64_t, int);
-std::int64_t APS5_VABI ftell_nid_postfix(FileStream*);
-int APS5_VABI fflush_nid_postfix(FileStream*);
-int APS5_VABI fclose_nid_postfix(FileStream*);
-int APS5_VABI fileno_nid_postfix(FileStream*);
-int APS5_VABI ftruncate_nid_postfix(int, std::int64_t);
-int APS5_VABI flock_nid_postfix(int, int);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Check(bool condition, int line) {
     if (!condition) {

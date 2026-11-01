@@ -18,6 +18,9 @@ inline constexpr double MouseRateWindowSeconds = 0.25;
 inline constexpr double MouseRateGapSeconds = 0.05;
 inline constexpr double MouseSmoothingReports = 3.0;
 inline constexpr double MouseSmoothingLimitMs = 30.0;
+inline constexpr std::chrono::milliseconds ShakeHalfPeriod{50};
+inline constexpr float ShakeAcceleration = 2.0f * 9.80665f;
+inline constexpr float ShakeAngularVelocity = 6.0f;
 
 class MouseStick {
 public:
@@ -51,6 +54,11 @@ private:
 struct InputRequests {
     bool toggleFullscreen = false;
     bool togglePerformanceOverlay = false;
+    bool screenshot = false;
+    bool showPadStatus = false;
+    bool volumeUp = false;
+    bool volumeDown = false;
+    bool toggleMute = false;
     bool toggleMouse = false;
     bool releaseMouse = false;
 };

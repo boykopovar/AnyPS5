@@ -61,6 +61,18 @@ void _detectVertexBuffers(ShaderVertexInputInfo& info) {
     }
 }
 
+void _validateTessellation(const TessellationConfiguration* tessellation) {
+    if (tessellation == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: tessellation configuration is missing");
+    if (tessellation->inputControlPoints == 0u || tessellation->inputControlPoints > 32u || tessellation->outputControlPoints == 0u || tessellation->outputControlPoints > 32u) throw std::runtime_error("ShaderInputInfoBuilder: invalid tessellation control-point counts");
+    if ((tessellation->domain != 1u && tessellation->domain != 2u) || (tessellation->partitioning != 0u && tessellation->partitioning != 2u && tessellation->partitioning != 3u) || (tessellation->outputTopology != 2u && tessellation->outputTopology != 3u)) throw std::runtime_error("ShaderInputInfoBuilder: unsupported tessellation configuration");
+    if (tessellation->patchesPerGroup == 0u || tessellation->patchesPerGroup > 256u) throw std::runtime_error("ShaderInputInfoBuilder: invalid tessellation patches per group");
+}
+
+void _validateMesh(const MeshConfiguration* mesh) {
+    if (mesh == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: a mesh-stage program has no mesh configuration");
+    if (mesh->threadsPerGroup == 0u || mesh->maxVertices == 0u || mesh->maxPrimitives == 0u || (mesh->outputPrimitiveSize != 1u && mesh->outputPrimitiveSize != 2u && mesh->outputPrimitiveSize != 3u) || mesh->provokingVertex >= mesh->outputPrimitiveSize) throw std::runtime_error("ShaderInputInfoBuilder: invalid mesh configuration");
+}
+
 }
 
 ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const GuestContext& context, std::uint32_t hostSubgroupSize, const MeshConfiguration* mesh, const TessellationConfiguration* tessellation) {
@@ -123,6 +135,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         place(PixelInput::PositionW, pixel.posW);
         place(PixelInput::FrontFace, pixel.frontFace);
         place(PixelInput::Ancillary, pixel.ancillary);
+        place(PixelInput::SampleCoverage, (pixel.inputAddr & PixelInputBit(PixelInput::SampleCoverage)) != 0u);
         place(PixelInput::LineStipple, (pixel.inputAddr & PixelInputBit(PixelInput::LineStipple)) != 0u);
         place(PixelInput::PositionFixedPoint, (pixel.inputAddr & PixelInputBit(PixelInput::PositionFixedPoint)) != 0u);
         for (std::uint32_t i = 0; i < 8; ++i) {
@@ -138,8 +151,11 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         pixelStorage.psNoPerspective = pixel.noPerspective;
         pixelStorage.psPixelKillEnable = pixel.pixelKillEnable;
         pixelStorage.psDepthExportEnable = pixel.depthExportEnable;
+        pixelStorage.psDepthExportMin = pixel.depthExportMin;
+        pixelStorage.psDepthExportMax = pixel.depthExportMax;
         pixelStorage.psSampleMaskExportEnable = pixel.sampleMaskExportEnable;
         pixelStorage.psStencilRefExportEnable = pixel.stencilRefExportEnable;
+        pixelStorage.psStencilOperationValueExport = pixel.stencilOperationValueExport;
         pixelStorage.psSampleShading = pixel.sampleShading;
         pixelStorage.psEarlyZ = pixel.earlyZ;
         pixelStorage.psExecuteOnNoop = pixel.executeOnNoop;
@@ -148,8 +164,23 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         if (pixel.ditheredAlphaToCoverage && !pixel.alphaToCoverage) throw std::runtime_error("dithered alpha-to-coverage requires enabled coverage");
         pixelStorage.psAlphaToCoverage = pixel.alphaToCoverage;
         pixelStorage.psDitheredAlphaToCoverage = pixel.ditheredAlphaToCoverage;
+        pixelStorage.psDitheredAlphaSamples = pixel.ditheredAlphaSamples;
         pixelStorage.quadPixelMask = pixel.quadPixelMask;
         pixelStorage.quadSampleMask = pixel.quadSampleMask;
+        pixelStorage.psIteratesSamples = pixel.iteratesSamples;
+        pixelStorage.psPositionLocation = pixel.positionLocation;
+        pixelStorage.sampleLocations = pixel.sampleLocations;
+        for (const auto& merge : pixel.targetMerges) {
+            const auto& first = pixel.targetMerges.front();
+            if (merge.mask == 0u || merge.target >= 8u || std::ranges::count(pixel.targetMerges, merge.target, &TargetMerge::target) != 1 || (merge.samples != 1u && merge.samples != 2u && merge.samples != 4u && merge.samples != 8u) || merge.samples != first.samples || merge.depthStencilWrites != first.depthStencilWrites || merge.depthStencilTests != first.depthStencilTests) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target merge");
+            const auto& blend = merge.blend;
+            if (blend.enabled && (merge.samples != 1u || blend.colorSource > 14u || blend.colorDestination > 14u || blend.alphaSource > 14u || blend.alphaDestination > 14u || blend.colorOperation > 4u || blend.alphaOperation > 4u || blend.writeMask > 0xfu)) throw std::runtime_error("ShaderInputInfoBuilder: invalid color target blend");
+            pixelStorage.merges.push_back(merge);
+            pixelStorage.mergeSamples = merge.samples;
+            pixelStorage.mergeDepthStencilWrites = merge.depthStencilWrites;
+            pixelStorage.mergeDepthStencilTests = merge.depthStencilTests;
+        }
+        pixelStorage.sampleOrder = pixel.sampleOrder;
         ShaderStageInputInfo result;
         result.pixel = &pixelStorage;
         return result;
@@ -171,6 +202,11 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         vertexStorage.hostSubgroupSize = hostSubgroupSize;
         vertexStorage.fetchEmbedded = vertex.fetchEmbedded;
         vertexStorage.paClVsOutCntl = vertex.paClVsOutCntl;
+        vertexStorage.depthRemap = {vertex.depthRemapMode};
+        vertexStorage.pointList = vertex.pointList;
+        vertexStorage.pointSize = vertex.pointSize;
+        vertexStorage.pointSizeMin = vertex.pointSizeMin;
+        vertexStorage.pointSizeMax = vertex.pointSizeMax;
         vertexStorage.fetchExternal = false;
         vertexStorage.fetchAttribReg = static_cast<int>(vertex.fetchAttribReg);
         vertexStorage.fetchBufferReg = static_cast<int>(vertex.fetchBufferReg);
@@ -185,10 +221,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         }
         _detectVertexBuffers(vertexStorage);
         if (stage == ShaderStageKind::Local || stage == ShaderStageKind::TessellationControl || stage == ShaderStageKind::TessellationEvaluation) {
-            if (tessellation == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: tessellation configuration is missing");
-            if (tessellation->inputControlPoints == 0u || tessellation->inputControlPoints > 32u || tessellation->outputControlPoints == 0u || tessellation->outputControlPoints > 32u) throw std::runtime_error("ShaderInputInfoBuilder: invalid tessellation control-point counts");
-            if ((tessellation->domain != 1u && tessellation->domain != 2u) || (tessellation->partitioning != 0u && tessellation->partitioning != 2u && tessellation->partitioning != 3u) || (tessellation->outputTopology != 2u && tessellation->outputTopology != 3u)) throw std::runtime_error("ShaderInputInfoBuilder: unsupported tessellation configuration");
-            if (tessellation->patchesPerGroup == 0u || tessellation->patchesPerGroup > 256u) throw std::runtime_error("ShaderInputInfoBuilder: invalid tessellation patches per group");
+            _validateTessellation(tessellation);
             auto& target = vertexStorage.tess;
             target.inputControlPoints = tessellation->inputControlPoints;
             target.outputControlPoints = tessellation->outputControlPoints;
@@ -200,9 +233,11 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.breakAtInstance = tessellation->breakAtInstance;
             target.instancePatches = tessellation->instancePatches;
             target.drawParameters = tessellation->drawParameters;
+            target.mergedHull = tessellation->mergedHull;
+            target.geometryItemDwords = stage == ShaderStageKind::TessellationEvaluation && mesh != nullptr ? mesh->esgsItemSize : 0u;
         }
         if (stage == ShaderStageKind::Mesh) {
-            if (mesh == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: a mesh-stage program has no mesh configuration");
+            _validateMesh(mesh);
             auto& target = vertexStorage.mesh;
             target.threadsNum[0] = mesh->threadsPerGroup;
             target.threadsNum[1] = 1u;
@@ -218,7 +253,8 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             target.provokingVertex = mesh->provokingVertex;
             target.esgsItemSize = mesh->esgsItemSize;
             target.outputPrimitiveSize = mesh->outputPrimitiveSize;
-            if (target.threadsNum[0] == 0u || target.maxVertices == 0u || target.maxPrimitives == 0u || (target.outputPrimitiveSize != 2u && target.outputPrimitiveSize != 3u) || target.provokingVertex >= target.outputPrimitiveSize) throw std::runtime_error("ShaderInputInfoBuilder: invalid mesh configuration");
+            if (target.outputPrimitiveSize == 1u) vertexStorage.pointList = true;
+            target.capturedInput = tessellation != nullptr;
         }
         ShaderStageInputInfo result;
         result.vertex = &vertexStorage;
@@ -229,6 +265,53 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
         throw std::runtime_error("ShaderInputInfoBuilder: unexpected stage");
     }
     throw std::runtime_error("ShaderInputInfoBuilder: unexpected stage");
+}
+
+void ValidateVertexStageInputs(ShaderStageKind stage, const GuestContext& context, const MeshConfiguration* mesh, const TessellationConfiguration* tessellation) {
+    if (!context.vertex.has_value()) {
+        throw std::runtime_error("ShaderInputInfoBuilder: GuestContext.vertex is not set");
+    }
+    const auto& vertex = *context.vertex;
+    if (vertex.resourcesNum > vertex.resources.size()) throw std::runtime_error("ShaderInputInfoBuilder: invalid vertex resource count");
+    struct Buffer {
+        std::uint64_t addr;
+        std::uint32_t stride;
+        std::uint32_t numRecords;
+        std::uint32_t fetchIndex;
+        int attrNum;
+    };
+    std::array<Buffer, ShaderVertexInputInfo::MaxResources> buffers;
+    int buffersNum = 0;
+    const std::array<std::uint32_t, 4> embedded{};
+    for (std::uint32_t ri = 0; ri < vertex.resourcesNum; ++ri) {
+        const auto& fields = vertex.fetchEmbedded ? embedded : vertex.resources[ri].fields;
+        const std::uint16_t stride = static_cast<std::uint16_t>((fields[1] >> 16u) & 0x3fffu);
+        const std::uint64_t base = (static_cast<std::uint64_t>(fields[0]) | (static_cast<std::uint64_t>(fields[1]) << 32u)) & 0xffffffffffffull;
+        const std::uint32_t numRecords = fields[2];
+        const std::uint32_t fetchIndex = vertex.fetchEmbedded ? 0u : vertex.resourcesDst[ri].fetchIndex;
+        bool merged = false;
+        for (int bi = 0; bi < buffersNum; ++bi) {
+            auto& b = buffers[bi];
+            if (b.stride != stride || b.fetchIndex != fetchIndex) continue;
+            const auto low = base < b.addr ? base : b.addr;
+            if (base - low >= stride || b.addr - low >= stride) continue;
+            if (b.numRecords != numRecords) throw std::runtime_error("ShaderInputInfoBuilder: merged vertex buffers disagree on record count");
+            b.addr = low;
+            if (b.attrNum >= ShaderVertexInputBuffer::MaxAttributes) throw std::runtime_error("ShaderInputInfoBuilder: vertex buffer attribute count exceeds the supported domain");
+            ++b.attrNum;
+            merged = true;
+            break;
+        }
+        if (merged) continue;
+        if (buffersNum >= ShaderVertexInputInfo::MaxResources) throw std::runtime_error("ShaderInputInfoBuilder: vertex buffer count exceeds the supported domain");
+        buffers[buffersNum++] = {base, stride, numRecords, fetchIndex, 1};
+    }
+    if (stage == ShaderStageKind::Local || stage == ShaderStageKind::TessellationControl || stage == ShaderStageKind::TessellationEvaluation) {
+        _validateTessellation(tessellation);
+    }
+    if (stage == ShaderStageKind::Mesh) {
+        _validateMesh(mesh);
+    }
 }
 
 }

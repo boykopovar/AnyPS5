@@ -1,3 +1,4 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "../include/Pthread.hpp"
 #include "../include/ThreadLifecycle.hpp"
 #include "../include/WindowsThreadLocal.hpp"

@@ -5,20 +5,11 @@
 #include <utility>
 #include <iterator>
 #include <initializer_list>
+#include <vector>
 
 namespace ShaderRecompiler {
 
 namespace {
-
-void ReturnBdaZeroIf(SpirvEmitterState& state, std::uint32_t condition, std::uint32_t zero) {
-    const auto failed = state.module.AllocateId();
-    const auto next = state.module.AllocateId();
-    state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
-    state.module.AddFunction(spv::OpBranchConditional, condition, failed, next);
-    EmitLabel(state, failed);
-    state.module.AddFunction(spv::OpReturnValue, zero);
-    EmitLabel(state, next);
-}
 
 // (u64 address, u32 bytes, u32 instruction) -> u64 device address of the range holding all the bytes,
 std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool recordFaults, std::uint32_t permission = BdaAbi::Read, bool rangeResult = false) {
@@ -40,31 +31,38 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
     state.module.AddFunction(spv::OpFunctionParameter, u32, bytes);
     state.module.AddFunction(spv::OpFunctionParameter, u32, instruction);
     EmitLabel(state, state.module.AllocateId());
-    const auto fail = [&](std::uint32_t condition, BdaAbi::FaultReason reason) {
-        if (recordFaults) {
-            ReturnBdaFailureIf(state, condition, address, bytes, instruction, reason);
-        } else {
-            ReturnBdaZeroIf(state, condition, zero);
-        }
+    const auto outer = state.module.AllocateId();
+    const auto outerBody = state.module.AllocateId();
+    const auto outerContinue = state.module.AllocateId();
+    const auto outerMerge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpBranch, outer);
+    EmitLabel(state, outer);
+    state.module.AddFunction(spv::OpLoopMerge, outerMerge, outerContinue, spv::LoopControlMaskNone);
+    state.module.AddFunction(spv::OpBranch, outerBody);
+    EmitLabel(state, outerBody);
+    std::vector<std::uint32_t> exits{spv::OpPhi, resultType, state.module.AllocateId()};
+    const auto leave = [&](std::uint32_t value) {
+        exits.push_back(value);
+        exits.push_back(state.currentLabel);
+        state.module.AddFunction(spv::OpBranch, outerMerge);
     };
+    const auto leaveIf = [&](std::uint32_t condition, std::uint32_t reason) {
+        const auto failed = state.module.AllocateId();
+        const auto next = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
+        state.module.AddFunction(spv::OpBranchConditional, condition, failed, next);
+        EmitLabel(state, failed);
+        if (recordFaults) RecordBdaFaultReason(state, address, bytes, instruction, reason);
+        leave(zero);
+        EmitLabel(state, next);
+    };
+    const auto fail = [&](std::uint32_t condition, BdaAbi::FaultReason reason) { leaveIf(condition, recordFaults ? constant(static_cast<std::uint32_t>(reason)) : 0u); };
     const auto failFirst = [&](std::initializer_list<std::pair<std::uint32_t, BdaAbi::FaultReason>> checks) {
         auto reason = constant(0u);
         for (auto check = std::rbegin(checks); check != std::rend(checks); ++check) {
             reason = Select(state, u32, check->first, constant(static_cast<std::uint32_t>(check->second)), reason);
         }
-        const auto failed = binary(spv::OpINotEqual, boolean, reason, constant(0u));
-        if (!recordFaults) {
-            ReturnBdaZeroIf(state, failed, zero);
-            return;
-        }
-        const auto failedLabel = state.module.AllocateId();
-        const auto next = state.module.AllocateId();
-        state.module.AddFunction(spv::OpSelectionMerge, next, spv::SelectionControlMaskNone);
-        state.module.AddFunction(spv::OpBranchConditional, failed, failedLabel, next);
-        EmitLabel(state, failedLabel);
-        RecordBdaFaultReason(state, address, bytes, instruction, reason);
-        state.module.AddFunction(spv::OpReturnValue, BdaConstant(state, 0u));
-        EmitLabel(state, next);
+        leaveIf(binary(spv::OpINotEqual, boolean, reason, constant(0u)), reason);
     };
     const auto length = state.module.AllocateId();
     state.module.AddFunction(spv::OpArrayLength, u32, length, state.bdaPagetableVariable, 0u);
@@ -133,11 +131,15 @@ std::uint32_t DefineBdaLookup(SpirvEmitterState& state, const char* name, bool r
         const auto bound = Select(state, u64, binary(spv::OpLogicalOr, boolean, last, binary(spv::OpULessThan, boolean, finish, next)), finish, next);
         const auto range = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeConstruct, rangeType, range, begin, bound, base);
-        state.module.AddFunction(spv::OpReturnValue, range);
-        state.module.AddFunction(spv::OpFunctionEnd);
-        return function;
+        leave(range);
+    } else {
+        leave(result);
     }
-    state.module.AddFunction(spv::OpReturnValue, result);
+    EmitLabel(state, outerContinue);
+    state.module.AddFunction(spv::OpBranch, outer);
+    EmitLabel(state, outerMerge);
+    state.module.AddFunction(exits);
+    state.module.AddFunction(spv::OpReturnValue, exits[2]);
     state.module.AddFunction(spv::OpFunctionEnd);
     return function;
 }
