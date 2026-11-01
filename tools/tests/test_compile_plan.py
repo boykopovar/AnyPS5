@@ -48,7 +48,7 @@ class FeatureTests(unittest.TestCase):
         import contextlib
         import io
         output = io.StringIO()
-        with patch.object(check_compile, "repository", return_value=self.root), patch.object(check_compile, "changed", return_value=[]), contextlib.redirect_stdout(output):
+        with patch.object(check_compile, "repository", return_value=self.root), patch.object(check_compile.base_ref, "resolve", return_value="main"), patch.object(check_compile, "changed", return_value=[]), contextlib.redirect_stdout(output):
             code = check_compile.main(["--dry-run", "--build", str(self.root / "missing")])
         self.assertEqual((code, json.loads(output.getvalue())), (0, {"translation_units": []}))
 
