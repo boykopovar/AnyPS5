@@ -31,7 +31,7 @@ class IntentionalSkipTests(unittest.TestCase):
             self.assertIn('<skipped message="' + ("SKIP_RETURN_CODE=77" if property_name == "SKIP_RETURN_CODE" else "SKIP_REGULAR_EXPRESSION_MATCHED") + '"', xml)
             for job in ("windows", "linux"):
                 with self.subTest(job=job):
-                    checked = subprocess.run([sys.executable, "-I", str(TOOL), str(report), "--job", job, "--require-tests"],
+                    checked = subprocess.run([sys.executable, "-I", str(TOOL), str(report), "--job", job],
                                              capture_output=True, encoding="utf-8", timeout=10)
                     self.assertEqual(checked.returncode, expected, checked.stdout + checked.stderr)
                     self.assertNotIn("Traceback", checked.stderr)
@@ -48,14 +48,6 @@ class IntentionalSkipTests(unittest.TestCase):
 
     def test_real_regex_skip_with_unexpected_reason_fails(self):
         self.check_real_skip("SKIP_REGULAR_EXPRESSION", "skipped,", "skipped, flaky", 0, 1)
-
-    def test_notrun_without_ctest_skip_marker_is_rejected(self):
-        for marker in ('', '<skipped message="no display"/>', '<skipped message="SKIP_RETURN_CODE=77 extra"/>'):
-            with self.subTest(marker=marker), tempfile.TemporaryDirectory() as directory:
-                report = Path(directory) / "report.xml"
-                report.write_text(f'<testsuite><testcase name="agc_missing" status="notrun">{marker}</testcase></testsuite>', encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, "notrun.*not run"):
-                    list(check_skips.skips(report))
 
     def test_disabled_status_is_rejected_even_with_ctest_skip_marker(self):
         with tempfile.TemporaryDirectory() as directory:

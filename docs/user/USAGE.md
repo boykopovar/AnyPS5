@@ -639,6 +639,8 @@ The audit also walks the built libraries' own host dependencies: each `.prx` und
 | `--libs <dir>` | Built `.prx` directory. Required; repeat for several. |
 | `--modules <dir>` | Directory of the title's own modules; repeat for several. |
 | `--source <dir>` | `core/libs/prx` tree that is searched for throwing stubs. Defaults to this repository's. |
+| `--strict-stubs` | Also exit with code `1` when an import has class `stub`, weak imports and the imports of `--modules` files included. `partial` imports do not count. |
+| `--strict-providers` | Also exit with code `1` when an import that names a library is exported only by another library. `module` imports and imports that `libc.prx` exports do not count. |
 | `--names <file>` | NID and name per line, as in `aerolib.csv` from [`tools/nid_names.py`](../../tools/nid_names.py); names the absent imports. Never downloaded; a name that does not hash to its NID is marked. |
 | `--json <file>` | Full result, stamped with the repository's commit and whether its tree was modified. |
 
