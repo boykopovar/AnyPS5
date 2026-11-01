@@ -1,67 +1,9 @@
-#include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libSceNKWebKit/include/FieldSettersExports.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-extern "C" {
-void APS5_VABI _ZN3JSC14ProtoCallFrame12setCodeBlockEPNS_9CodeBlockE(void*, std::uintptr_t);
-void APS5_VABI _ZN3JSC14ProtoCallFrame12setThisValueENS_7JSValueE(void*, std::uintptr_t);
-void APS5_VABI _ZN3JSC14ProtoCallFrame15setGlobalObjectEPNS_14JSGlobalObjectE(void*, std::uintptr_t);
-void APS5_VABI _ZN3JSC14ProtoCallFrame17setPaddedArgCountEj(void*, std::uint32_t);
-void APS5_VABI _ZN3JSC14ProtoCallFrame29setArgumentCountIncludingThisEi(void*, std::uint32_t);
-void APS5_VABI _ZN3JSC14ProtoCallFrame9setCalleeEPNS_8JSObjectE(void*, std::uintptr_t);
-void APS5_VABI _ZN7WebCore13GraphicsLayer9setClientERNS_19GraphicsLayerClientE(void*, std::uintptr_t);
-void APS5_VABI _ZN7WebCore18TextureMapperLayer15setBackingStoreEPNS_25TextureMapperBackingStoreE(void*, std::uintptr_t);
-void APS5_VABI _ZN7WebCore18TextureMapperLayer16setContentsLayerEPNS_26TextureMapperPlatformLayerE(void*, std::uintptr_t);
-void APS5_VABI _ZN7WebCore23ApplicationCacheStorage14setMaximumSizeEl(void*, std::uintptr_t);
-void APS5_VABI _ZN7WebCore23ApplicationCacheStorage21setDefaultOriginQuotaEl(void*, std::uintptr_t);
-void APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC1EPNS_15SQLiteStatementE(void*, std::uintptr_t);
-void APS5_VABI _ZN7WebCore29SQLiteStatementAutoResetScopeC2EPNS_15SQLiteStatementE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector21CSSFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector21CSSFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector21DOMFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector21DOMFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector21InspectorConsoleAgent12setHeapAgentEPNS_18InspectorHeapAgentE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector22HeapFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector22HeapFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector22PageFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector22PageFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector24CanvasFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector24CanvasFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector24RemoteControllableTarget19setTargetIdentifierEj(void*, std::uint32_t);
-void APS5_VABI _ZN9Inspector24TargetFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector24TargetFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector24WorkerFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector24WorkerFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector25BrowserFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector25BrowserFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector25ConsoleFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector25NetworkFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector25NetworkFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector25RuntimeFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector25RuntimeFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector26DatabaseFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector26DatabaseFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector26DebuggerFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector26DebuggerFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector26TimelineFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector26TimelineFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector27AnimationFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector27AnimationFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector27InspectorFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector27InspectorFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector27LayerTreeFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector27LayerTreeFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector28DOMStorageFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector28DOMStorageFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector32ScriptProfilerFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector32ScriptProfilerFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector34ApplicationCacheFrontendDispatcherC1ERNS_14FrontendRouterE(void*, std::uintptr_t);
-void APS5_VABI _ZN9Inspector34ApplicationCacheFrontendDispatcherC2ERNS_14FrontendRouterE(void*, std::uintptr_t);
-}
 
 static void Require(bool condition) {
     if (!condition) std::abort();
