@@ -2,6 +2,8 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
+#include <array>
 #include <chrono>
 #include <climits>
 #include <csignal>
@@ -93,8 +95,29 @@ static int UnblockPendingDefault() {
     return 1;
 }
 
+static int ShortExpiries() {
+    const GuestSignalSet alarmSet{{1u << 13, 0, 0, 0}};
+    const KernelTimespec patience{2, 0};
+    const GuestItimerval shortOnce{{0, 0}, {0, 2000}};
+    Require(_sigprocmask_nid_postfix(1, &alarmSet, nullptr) == 0, "blocking SIGALRM failed");
+    std::array<std::chrono::nanoseconds, 31> samples{};
+    for (auto& sample : samples) {
+        const auto before = std::chrono::steady_clock::now();
+        Require(setitimer_nid_postfix(0, &shortOnce, nullptr) == 0, "arming the 2 ms timer failed");
+        Require(sigtimedwait_nid_postfix(&alarmSet, nullptr, &patience) == 14, "the 2 ms timer did not expire");
+        sample = std::chrono::steady_clock::now() - before;
+        Require(sample >= std::chrono::milliseconds(2), "the 2 ms timer expired early");
+    }
+    std::sort(samples.begin(), samples.end());
+    const auto median = samples[samples.size() / 2];
+    std::fprintf(stderr, "setitimer(2 ms) expiry median: %lld ns\n", static_cast<long long>(median.count()));
+    Require(median < std::chrono::milliseconds(12), "the 2 ms timer expired on a coarse tick");
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc > 1 && std::strcmp(argv[1], "pending-default") == 0) return UnblockPendingDefault();
+    if (argc > 1 && std::strcmp(argv[1], "short-expiry") == 0) return ShortExpiries();
     const auto ignore = reinterpret_cast<Handler>(std::uintptr_t{1});
     Require(signal_nid_postfix(14, ignore) == nullptr, "SIGALRM was not initially defaulted");
     const GuestItimerval valid{{0, 0}, {30, 0}};
