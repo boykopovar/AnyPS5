@@ -95,6 +95,33 @@ void InvalidIds() {
     Require(ktimer_settime_nid_postfix(id, 0, nullptr, nullptr) == -1 && Error() == Efault);
 }
 
+void SettimeNegative() {
+    const int id = Create();
+    GuestItimerspec old{};
+    *__error_nid_postfix() = 0;
+    Require(ktimer_settime_nid_postfix(id, 0, nullptr, nullptr) == -1 && Error() == Efault);
+    *__error_nid_postfix() = 0;
+    Require(ktimer_settime_nid_postfix(id, TimerAbstime, nullptr, nullptr) == -1 && Error() == Efault);
+    *__error_nid_postfix() = 0;
+    Require(ktimer_settime_nid_postfix(id, 0, nullptr, &old) == -1 && Error() == Efault);
+    *__error_nid_postfix() = 0;
+    Require(ktimer_settime_nid_postfix(id, TimerAbstime, nullptr, &old) == -1 && Error() == Efault);
+    for (const int badId : {-9999, -1, 0, 1, 2, 32, 100, 9999}) {
+        *__error_nid_postfix() = 0;
+        Require(ktimer_settime_nid_postfix(badId, 0, nullptr, nullptr) == -1 && Error() == Efault);
+        *__error_nid_postfix() = 0;
+        Require(ktimer_settime_nid_postfix(badId, TimerAbstime, nullptr, &old) == -1 && Error() == Efault);
+    }
+    const GuestItimerspec valid{{0, 0}, {1, 0}};
+    for (const int badFlags : {-9999, -1, 2, 3, 4, 100, ~TimerAbstime}) {
+        *__error_nid_postfix() = 0;
+        Require(ktimer_settime_nid_postfix(id, badFlags, &valid, nullptr) == -1 && Error() == Einval);
+        *__error_nid_postfix() = 0;
+        Require(ktimer_settime_nid_postfix(id, badFlags, &valid, &old) == -1 && Error() == Einval);
+    }
+    Require(ktimer_delete_nid_postfix(id) == 0);
+}
+
 void Values() {
     const int id = Create();
     GuestItimerspec disarmed = Get(id);
@@ -172,6 +199,7 @@ void Absolute() {
 int main() {
     Creation();
     InvalidIds();
+    SettimeNegative();
     Values();
     Expiry();
     Absolute();
