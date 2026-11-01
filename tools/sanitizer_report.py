@@ -29,9 +29,11 @@ def results(path):
             raise ValueError(f"{path}: testcase {name} is listed more than once")
         skipped, status = case.find("skipped"), case.get("status")
         reason = (skipped.get("message") or "").strip() if skipped is not None else ""
-        if status in SKIPPED_STATUSES or (skipped is not None and (CTEST_SKIP.fullmatch(reason) or status not in FAILED_STATUSES)):
+        if case.find("failure") is not None or case.find("error") is not None:
+            outcome = "failed"
+        elif status in SKIPPED_STATUSES or (skipped is not None and (CTEST_SKIP.fullmatch(reason) or status not in FAILED_STATUSES)):
             outcome = "skipped"
-        elif status in FAILED_STATUSES or case.find("failure") is not None or case.find("error") is not None:
+        elif status in FAILED_STATUSES:
             outcome = "failed"
         else:
             outcome = "passed"
@@ -83,6 +85,14 @@ def cell(text):
     return " ".join(text.split()).replace("|", "\\|")
 
 
+def test_name(text):
+    if not any(character in text for character in "|`\r\n"):
+        return f"`{text}`"
+    text = text.replace("\r", r"\r").replace("\n", r"\n")
+    return "<code>" + "".join(character if character.isalnum() or character == " " else f"&#{ord(character)};"
+                            for character in text) + "</code>"
+
+
 def summarize(title, found, known=None, details=None):
     known, details = known or {}, details or {}
     counts = {outcome: sum(1 for value in found.values() if value == outcome) for outcome in ("passed", "skipped", "failed")}
@@ -93,17 +103,17 @@ def summarize(title, found, known=None, details=None):
              f"{len(found)} tests: {counts['passed']} passed, {counts['skipped']} skipped, {tally}.", ""]
     if failed and any(name in details for name in failed):
         lines += ["| Failed test | First sanitizer report |", "| - | - |"]
-        lines += [f"| `{name}` | {cell(details.get(name, ''))} |" for name in failed] + [""]
+        lines += [f"| {test_name(name)} | {cell(details.get(name, ''))} |" for name in failed] + [""]
     elif failed:
-        lines += ["| Failed test |", "| - |"] + [f"| `{name}` |" for name in failed] + [""]
+        lines += ["| Failed test |", "| - |"] + [f"| {test_name(name)} |" for name in failed] + [""]
     if expected:
-        lines += ["| Known failure | Reason |", "| - | - |"] + [f"| `{name}` | {cell(known[name])} |" for name in expected] + [""]
+        lines += ["| Known failure | Reason |", "| - | - |"] + [f"| {test_name(name)} | {cell(known[name])} |" for name in expected] + [""]
     recovered = sorted(name for name in known if found.get(name) == "passed")
     if recovered:
-        lines += ["| Listed as known but passed | Reason |", "| - | - |"] + [f"| `{name}` | {cell(known[name])} |" for name in recovered] + [""]
+        lines += ["| Listed as known but passed | Reason |", "| - | - |"] + [f"| {test_name(name)} | {cell(known[name])} |" for name in recovered] + [""]
     absent = sorted(name for name in known if name not in found)
     if absent:
-        lines += ["| Listed as known but not in this run |", "| - |"] + [f"| `{name}` |" for name in absent] + [""]
+        lines += ["| Listed as known but not in this run |", "| - |"] + [f"| {test_name(name)} |" for name in absent] + [""]
     return "\n".join(lines) + "\n", bool(failed)
 
 
