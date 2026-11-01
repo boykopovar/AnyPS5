@@ -86,6 +86,12 @@ class PublicHeaderPackageTests(unittest.TestCase):
         self.api.write_text('/*\n#include "Missing.hpp"\n*/\nconst char* text = R"test(\n#include "AlsoMissing.hpp"\n)test";\n', encoding="utf-8")
         self.assertEqual(len(package_headers.public_headers(self.source)), 3)
 
+    def test_include_next_is_rejected(self):
+        self.api.write_text('#include_next <vendor.h>\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Unsupported include_next"):
+            package_headers.package(self.source, self.output, "v1")
+        self.assertFalse(self.output.exists())
+
     def test_external_symlink_is_rejected(self):
         external = self.root / "external.hpp"
         external.write_text("", encoding="utf-8")
