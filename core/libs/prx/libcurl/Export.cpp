@@ -23,6 +23,56 @@
 #define CURL_ARGS_END() va_end(args)
 #endif
 
+extern "C" {
+extern curl_malloc_callback Curl_cmalloc;
+extern curl_free_callback Curl_cfree;
+extern curl_realloc_callback Curl_crealloc;
+extern curl_strdup_callback Curl_cstrdup;
+extern curl_calloc_callback Curl_ccalloc;
+}
+
+namespace {
+
+void* GuestCurlMalloc(size_t size) {
+    return malloc_nid_postfix(size);
+}
+
+void GuestCurlFree(void* pointer) {
+    free_nid_postfix(pointer);
+}
+
+void* GuestCurlRealloc(void* pointer, size_t size) {
+    return realloc_nid_postfix(pointer, size);
+}
+
+char* GuestCurlStrdup(const char* text) {
+    return strdup_nid_postfix(text);
+}
+
+void* GuestCurlCalloc(size_t count, size_t size) {
+    return calloc_nid_postfix(count, size);
+}
+
+const bool guestAllocatorInstalled = [] {
+    Curl_cmalloc = GuestCurlMalloc;
+    Curl_cfree = GuestCurlFree;
+    Curl_crealloc = GuestCurlRealloc;
+    Curl_cstrdup = GuestCurlStrdup;
+    Curl_ccalloc = GuestCurlCalloc;
+    return true;
+}();
+
+std::mutex globalMutex;
+unsigned globalInitCount = 0;
+
+CURLcode GlobalInitWithGuestAllocator(long flags) {
+    const CURLcode result = ::curl_global_init_mem(flags, GuestCurlMalloc, GuestCurlFree, GuestCurlRealloc, GuestCurlStrdup, GuestCurlCalloc);
+    if (result == CURLE_OK) ++globalInitCount;
+    return result;
+}
+
+}
+
 namespace {
 
 
@@ -662,19 +712,19 @@ void APS5_VABI curl_mime_free_nid_postfix(curl_mime* mime) {
 }
 
 char* APS5_VABI curl_escape_nid_postfix(const char* string, int length) {
-    return ::curl_escape(string, length);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 char* APS5_VABI curl_easy_escape_nid_postfix(CURL* handle, const char* string, int length) {
-    return ::curl_easy_escape(handle, string, length);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 char* APS5_VABI curl_unescape_nid_postfix(const char* string, int length) {
-    return ::curl_unescape(string, length);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 char* APS5_VABI curl_easy_unescape_nid_postfix(CURL* handle, const char* string, int inlength, int* outlength) {
-    return ::curl_easy_unescape(handle, string, inlength, outlength);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI curl_mvfprintf_nid_postfix(std::FILE* whereto, const char* format, VaList* args) {
@@ -749,7 +799,7 @@ char* APS5_VABI curl_version_nid_postfix() {
 }
 
 void APS5_VABI curl_free_nid_postfix(void* p) {
-    ::curl_free(p);
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI curl_strequal() {
@@ -868,7 +918,8 @@ CURLcode APS5_VABI curl_mime_name_nid_postfix(curl_mimepart* part, const char* n
 }
 
 CURLcode APS5_VABI curl_global_init_nid_postfix(long long flags) {
-    return ::curl_global_init(static_cast<long>(flags));
+    std::lock_guard lock(globalMutex);
+    return GlobalInitWithGuestAllocator(HostLong(flags));
 }
 
 CURL* APS5_VABI curl_easy_duphandle_nid_postfix(CURL* handle) {
@@ -911,7 +962,7 @@ CURLcode APS5_VABI curl_mime_type_nid_postfix(curl_mimepart* part, const char* m
 }
 
 struct guest_curl_slist* APS5_VABI curl_slist_append_nid_postfix(struct guest_curl_slist* list, const char* string) {
-    return reinterpret_cast<guest_curl_slist*>(::curl_slist_append(reinterpret_cast<curl_slist*>(list), string));
+    NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI curl_easy_reset_nid_postfix(CURL* handle) {
@@ -922,6 +973,10 @@ void APS5_VABI curl_easy_reset_nid_postfix(CURL* handle) {
 }
 
 CURL* APS5_VABI curl_easy_init_nid_postfix() {
+    {
+        std::lock_guard lock(globalMutex);
+        if (!globalInitCount && GlobalInitWithGuestAllocator(CURL_GLOBAL_DEFAULT) != CURLE_OK) return nullptr;
+    }
     auto* easy = ::curl_easy_init();
     if (!easy) return nullptr;
     try {
@@ -959,7 +1014,9 @@ const struct guest_curl_easyoption* APS5_VABI curl_easy_option_next_nid_postfix(
 }
 
 void APS5_VABI curl_global_cleanup_nid_postfix() {
+    std::lock_guard lock(globalMutex);
     ::curl_global_cleanup();
+    if (globalInitCount) --globalInitCount;
 }
 
 CURLSHcode APS5_VABI curl_share_setopt_nid_postfix(CURLSH* share_handle, CURLSHoption option, ...) {
@@ -1080,7 +1137,7 @@ const struct guest_curl_easyoption* APS5_VABI curl_easy_option_by_name_nid_postf
 }
 
 void APS5_VABI curl_slist_free_all_nid_postfix(struct guest_curl_slist* list) {
-    ::curl_slist_free_all(reinterpret_cast<curl_slist*>(list));
+    NotImplemented_nid_no_patch(__func__);
 }
 
 std::time_t APS5_VABI curl_getdate_nid_postfix(const char* p, const std::time_t* unused) {

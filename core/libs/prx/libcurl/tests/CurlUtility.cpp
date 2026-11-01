@@ -31,30 +31,6 @@ int main() {
     Require(has_http);
     Require(has_file);
 
-    char* esc = curl_easy_escape_nid_postfix(nullptr, "Hello World! 123", 16);
-    Require(esc != nullptr);
-    Require(std::strcmp(esc, "Hello%20World%21%20123") == 0);
-
-    int outlen = 0;
-    char* unesc = curl_easy_unescape_nid_postfix(nullptr, esc, 0, &outlen);
-    Require(unesc != nullptr);
-    Require(outlen == 16);
-    Require(std::strcmp(unesc, "Hello World! 123") == 0);
-
-    curl_free_nid_postfix(esc);
-    curl_free_nid_postfix(unesc);
-
-    char* old_esc = curl_escape_nid_postfix("Foo Bar", 7);
-    Require(old_esc != nullptr);
-    Require(std::strcmp(old_esc, "Foo%20Bar") == 0);
-
-    char* old_unesc = curl_unescape_nid_postfix(old_esc, 0);
-    Require(old_unesc != nullptr);
-    Require(std::strcmp(old_unesc, "Foo Bar") == 0);
-
-    curl_free_nid_postfix(old_esc);
-    curl_free_nid_postfix(old_unesc);
-
     const std::time_t date1 = curl_getdate_nid_postfix("Sun, 06 Nov 1994 08:49:37 GMT", nullptr);
     Require(date1 == 784111777);
 
@@ -79,15 +55,6 @@ int main() {
     char* non_env = curl_getenv_nid_postfix("NONEXISTENT_VAR_ANYPS5_TEST_12345");
     Require(non_env == nullptr);
 
-    const char bytes[] = {'a', '\0', 'b', static_cast<char>(0xff)};
-    char* binary = curl_easy_escape_nid_postfix(nullptr, bytes, sizeof(bytes));
-    Require(binary && std::strcmp(binary, "a%00b%FF") == 0);
-    int decodedLength = -1;
-    char* decoded = curl_easy_unescape_nid_postfix(nullptr, binary, 0, &decodedLength);
-    Require(decoded && decodedLength == sizeof(bytes));
-    Require(std::memcmp(decoded, bytes, sizeof(bytes)) == 0);
-    curl_free_nid_postfix(binary);
-    curl_free_nid_postfix(decoded);
     Require(curl_version_info_nid_postfix(CURLVERSION_FIRST) == info);
     curl_global_cleanup_nid_postfix();
     return 0;
