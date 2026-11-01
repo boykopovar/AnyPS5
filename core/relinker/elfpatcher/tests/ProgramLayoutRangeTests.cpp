@@ -21,6 +21,13 @@ static Domain::ProgramHeader Load(std::uint64_t vaddr, std::uint64_t memorySize,
     return load;
 }
 
+static Domain::ProgramHeader Relro(std::uint64_t vaddr, std::uint64_t memorySize) {
+    Domain::ProgramHeader relro{};
+    relro.Type = Elfpatcher::PT_GNU_RELRO; relro.Flags = Elfpatcher::PF_R; relro.Offset = vaddr; relro.MappedAddress = vaddr;
+    relro.PhysicalAddress = vaddr; relro.FileSize = memorySize; relro.MemorySize = memorySize; relro.Alignment = 1;
+    return relro;
+}
+
 static std::vector<Domain::ProgramHeader> MappedLoads(const std::vector<std::uint8_t>& buf, std::uint64_t tableOffset, std::uint16_t count) {
     std::vector<Domain::ProgramHeader> loads;
     for (std::uint16_t index = 0; index < count; ++index) {
@@ -149,6 +156,21 @@ int main() {
         bool stackSlotRejected = false;
         try { (void)writeSingle(6); } catch (const std::exception&) { stackSlotRejected = true; }
         Require(stackSlotRejected, "layout must refuse to drop the synthetic stack when its slot is missing");
+
+        const std::vector<Domain::ProgramHeader> oneRelro{Load(0x1000, 0x3000, 0x3000, Elfpatcher::PF_R | Elfpatcher::PF_W), Relro(0x1000, 0x800)};
+        Require(builder.RequiredProgramHeaderCount(oneRelro) == 8, "a single RELRO range must reserve its own header slot");
+        const std::vector<Domain::ProgramHeader> twoDisjointRelros{Load(0x1000, 0x3000, 0x3000, Elfpatcher::PF_R | Elfpatcher::PF_W), Relro(0x1000, 0x800), Relro(0x2000, 0x800)};
+        bool multiRelroRejected = false;
+        try { (void)builder.RequiredProgramHeaderCount(twoDisjointRelros); } catch (const std::exception&) { multiRelroRejected = true; }
+        Require(multiRelroRejected, "layout must refuse more than one disjoint RELRO range on Linux output");
+        const std::vector<Domain::ProgramHeader> twoOverlappingRelros{Load(0x1000, 0x3000, 0x3000, Elfpatcher::PF_R | Elfpatcher::PF_W), Relro(0x1000, 0x800), Relro(0x1400, 0x800)};
+        bool overlappingRelroRejected = false;
+        try { (void)builder.RequiredProgramHeaderCount(twoOverlappingRelros); } catch (const std::exception&) { overlappingRelroRejected = true; }
+        Require(overlappingRelroRejected, "layout must refuse more than one RELRO range on Linux output even when they overlap");
+        const std::vector<Domain::ProgramHeader> twoIdenticalRelros{Load(0x1000, 0x3000, 0x3000, Elfpatcher::PF_R | Elfpatcher::PF_W), Relro(0x1000, 0x800), Relro(0x1000, 0x800)};
+        bool identicalRelroRejected = false;
+        try { (void)builder.RequiredProgramHeaderCount(twoIdenticalRelros); } catch (const std::exception&) { identicalRelroRejected = true; }
+        Require(identicalRelroRejected, "layout must refuse more than one RELRO range on Linux output even when they are identical");
         constexpr std::uint16_t extendedCount = 0xffff;
         std::vector<Domain::ProgramHeader> manyHeaders(extendedCount - Elfpatcher::kSyntheticProgramHeaderCount - 2);
         manyHeaders.front() = singleLoad.front();
@@ -170,6 +192,6 @@ int main() {
         rejected = false;
         try { writeMany(manyHeaders, largeOutput, extendedCount); } catch (const Domain::RelinkerException&) { rejected = true; }
         Require(rejected && largeOutput == beforeLarge, "extended count written without section-zero encoding");
-        std::cout << "25 program layout cases passed\n";
+        std::cout << "29 program layout cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
