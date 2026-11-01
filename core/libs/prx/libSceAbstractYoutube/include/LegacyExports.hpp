@@ -1,0 +1,28 @@
+#pragma once
+
+#include "SceTypes.hpp"
+
+extern "C" {
+
+int APS5_VABI abstractYoutubeLegacyUnknown__plus_XiOtdILEHI_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_4orcGYZG2cE_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_6svBaAI4Ggw_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_CCv9CYanMNI_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_EEx55k0zSLo_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_HYDApQYDgcI_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_IGnFlGNW_plus_Vo_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_JzBDUIC5xok_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_NPYN89qO2Ks_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_P_plus_ZjKSLi5lg_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_RkaqMMDQJp4_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_ZpVRh3D86UY_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_ZwkYXHwQ7Mc_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_cktbTmca48I_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_fUXj4GBxyHs_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_g58APdyJ_minus_5Y_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_hXCJIJZZ5MY_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_kgeuOe7oln8_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_pR9ULw2VrSs_nid_no_patch();
+int APS5_VABI abstractYoutubeLegacyUnknown_tjbj7QysZwk_nid_no_patch();
+
+}
