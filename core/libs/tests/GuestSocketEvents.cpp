@@ -363,6 +363,7 @@ int main() {
         Require(recv_nid_postfix(datagram, late, sizeof(late), 0x80) == events[0].data);
     }
     Require(drained == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(recv_nid_postfix(datagram, late, sizeof(late), 0x80) < 0);
     Require(sceKernelDeleteReadEvent(blocking, datagram) == SCE_OK);
     Require(close_nid_postfix(datagram) == 0);
     Require(sceKernelAddReadEvent(blocking, reader, 1, nullptr) == SCE_OK);
