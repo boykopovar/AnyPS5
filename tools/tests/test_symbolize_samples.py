@@ -67,6 +67,50 @@ def build_pe(path, with_symbols=True, with_exports=False, second_code=False, tim
 
 
 class SymbolizeSamplesTests(unittest.TestCase):
+    def test_exports_cannot_read_virtual_only_section_tails(self):
+        path = self.libs / "tail.prx"
+        build_pe(path, with_symbols=False, with_exports=True)
+        image = bytearray(path.read_bytes())
+        struct.pack_into("<I", image, 0x58 + 240 + 40 + 8, 0x400)
+        struct.pack_into("<I", image, 0x648, 0x2200)
+        image[0x800:0x80B] = b"ghost_name\0"
+        path.write_bytes(image)
+        with self.assertRaisesRegex(ValueError, "file-backed"):
+            symbolize_samples.PeModule(path)
+
+    def test_export_tables_and_names_stay_inside_raw_section_data(self):
+        path = self.libs / "bounds.prx"
+        for field, value in ((0x600 + 28, 0x21FC), (0x600 + 32, 0x21FC), (0x600 + 36, 0x21FE), (0x648, 0x21FC)):
+            with self.subTest(field=field):
+                build_pe(path, with_symbols=False, with_exports=True)
+                image = bytearray(path.read_bytes())
+                struct.pack_into("<I", image, field, value)
+                image[0x7FC:0x805] = b"nameTAIL\0"
+                path.write_bytes(image)
+                with self.assertRaises(ValueError):
+                    symbolize_samples.PeModule(path)
+
+    def test_export_name_can_end_at_the_last_raw_section_byte(self):
+        path = self.libs / "end.prx"
+        build_pe(path, with_symbols=False, with_exports=True)
+        image = bytearray(path.read_bytes())
+        struct.pack_into("<I", image, 0x648, 0x21FC)
+        image[0x7FC:0x800] = b"end\0"
+        path.write_bytes(image)
+        self.assertEqual(symbolize_samples.PeModule(path).name(0x1020), "~end")
+
+    def test_export_name_bound_uses_the_same_file_backing_as_its_offset(self):
+        path = self.libs / "overlap.prx"
+        build_pe(path, with_symbols=False, with_exports=True)
+        image = bytearray(path.read_bytes())
+        struct.pack_into("<IIII", image, 0x58 + 240 + 8, 0x400, 0x2000, 0x400, 0xC00)
+        struct.pack_into("<I", image, 0x648, 0x21FC)
+        image[0x7FC:0x805] = b"nameTAIL\0"
+        path.write_bytes(image)
+        with self.assertRaisesRegex(ValueError, "unterminated"):
+            symbolize_samples.PeModule(path)
+
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
