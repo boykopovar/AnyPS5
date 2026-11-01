@@ -99,7 +99,7 @@ jobs:
         run: cmake --build build --target libs
       - shell: cmd
         working-directory: build
-        run: ctest --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml
+        run: ctest --output-on-failure --timeout 120 --parallel 4 --output-log ctest.log --output-junit ctest.xml --no-tests=error
       - run: python tools/check_skips.py build/ctest.xml --job windows
       - name: Report tests slower than 30 s
         if: ${{ !cancelled() }}
