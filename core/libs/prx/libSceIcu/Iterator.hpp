@@ -48,4 +48,6 @@ static_assert(sizeof(UCharIterator) == 112);
 
 extern "C" {
 std::int32_t APS5_VABI u_strCompareIter_nid_postfix(UCharIterator* first, UCharIterator* second, std::uint8_t codePointOrder);
+void APS5_VABI uiter_setString_nid_postfix(UCharIterator*, const char16_t*, std::int32_t);
+void APS5_VABI uiter_setUTF8_nid_postfix(UCharIterator*, const char*, std::int32_t);
 }
