@@ -12,6 +12,7 @@
 #include <iostream>
 #include <span>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace {
@@ -178,6 +179,17 @@ void ScalarReads(AgcDriver::VulkanDevice& device) {
         device.WaitIdle();
         const auto value = test.inBounds ? expected : 0u;
         Require(std::all_of(Output.begin(), Output.end(), [value](std::uint32_t word) { return word == value; }), "scalar buffer bounds differ for stride " + std::to_string(test.stride) + " records " + std::to_string(test.records));
+    }
+    std::uint32_t unalignedExpected = 0;
+    std::memcpy(&unalignedExpected, Input.data() + 4u, sizeof(unalignedExpected));
+    for (const auto& [base, records, value] : {std::tuple{Input.data() + 2u, 6u, 0u}, std::tuple{Input.data() + 2u, 8u, unalignedExpected}, std::tuple{static_cast<std::uint8_t*>(nullptr), 8u, 0u}}) {
+        const auto input = BufferDescriptor(base, records);
+        std::copy(input.begin(), input.end(), userData.begin());
+        Output.fill(Fill);
+        const auto result = ShaderRecompiler::Recompile(request);
+        device.Dispatch(result, 1, 1, 1);
+        device.WaitIdle();
+        Require(std::all_of(Output.begin(), Output.end(), [value](std::uint32_t word) { return word == value; }), "scalar buffer read differs for base " + Hex(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(base))) + " records " + std::to_string(records) + ": " + Hex(Output[0]));
     }
     GuestAllocations::Mutation().Remove(Input.data());
 }
