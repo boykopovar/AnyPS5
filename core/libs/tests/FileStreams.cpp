@@ -45,6 +45,16 @@ static void CheckWriteFlushErrno(const std::string& base) {
         Require(fwrite_nid_postfix(&byte, 0, 1, stream) == 0 && errno == 35);
         Require(fwrite_nid_postfix(&byte, 1, 0, stream) == 0 && errno == 35);
         Require(fwrite_nid_postfix(&byte, 1, 1, stream) == 1 && errno == 35);
+        Require(fputc_nid_postfix('b', stream) == 'b' && errno == 35);
+        Require(putc_nid_postfix('c', stream) == 'c' && errno == 35);
+        Require(__swbuf_nid_postfix('d', stream) == 'd' && errno == 35);
+        Require(putc_unlocked_nid_postfix('e', stream) == 'e' && errno == 35);
+        Require(fputc_nid_postfix(-1, stream) == 255 && errno == 35);
+        Require(putc_unlocked_nid_postfix(-1, stream) == 255 && errno == 35);
+        Require(putc_nid_postfix(0x141, stream) == 0x41 && errno == 35);
+        Require(__swbuf_nid_postfix(300, stream) == 44 && errno == 35);
+        Require(fputs_nid_postfix("hello", stream) >= 0 && errno == 35);
+        Require(fputs_nid_postfix("", stream) >= 0 && errno == 35);
         Require(fflush_nid_postfix(stream) == 0 && errno == 35);
         Require(fflush_nid_postfix(nullptr) == 0 && errno == 35);
         Require(fclose_nid_postfix(stream) == 0 && std::remove(path.c_str()) == 0);
@@ -98,11 +108,74 @@ static void CheckWriteFlushErrno(const std::string& base) {
         Require(native != nullptr);
         Require(std::setvbuf(native, nullptr, _IONBF, 0) == 0);
         FileStream stream(native);
-        errno = 0;
+        errno = 35;
         char byte = 'q';
-        Require(fwrite_nid_postfix(&byte, 1, 1, &stream) == 0);
+        Require(fwrite_nid_postfix(&byte, 0, 1, &stream) == 0 && errno == 35);
+        Require(fwrite_nid_postfix(&byte, 1, 0, &stream) == 0 && errno == 35);
+        Require(fputs_nid_postfix("", &stream) >= 0 && errno == 35);
+        Require(ferror_nid_postfix(&stream) == 0);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+    struct WriterCase {
+        bool (*failWrite)(FileStream*);
+        bool (*recoverWrite)(FileStream*);
+        char expectedByte;
+    };
+    const WriterCase writerCases[] = {
+        {
+            [](FileStream* s) { return fputc_nid_postfix('1', s) == EOF; },
+            [](FileStream* s) { return fputc_nid_postfix('A', s) == 'A'; },
+            'A'
+        },
+        {
+            [](FileStream* s) { return putc_nid_postfix('2', s) == EOF; },
+            [](FileStream* s) { return putc_nid_postfix('B', s) == 'B'; },
+            'B'
+        },
+        {
+            [](FileStream* s) { return __swbuf_nid_postfix('3', s) == EOF; },
+            [](FileStream* s) { return __swbuf_nid_postfix('C', s) == 'C'; },
+            'C'
+        },
+        {
+            [](FileStream* s) { return putc_unlocked_nid_postfix('4', s) == EOF; },
+            [](FileStream* s) { return putc_unlocked_nid_postfix('D', s) == 'D'; },
+            'D'
+        },
+        {
+            [](FileStream* s) { return fputs_nid_postfix("error-string", s) == EOF; },
+            [](FileStream* s) { return fputs_nid_postfix("E", s) >= 0; },
+            'E'
+        },
+        {
+            [](FileStream* s) { char b = '5'; return fwrite_nid_postfix(&b, 1, 1, s) == 0; },
+            [](FileStream* s) { char b = 'F'; return fwrite_nid_postfix(&b, 1, 1, s) == 1; },
+            'F'
+        },
+    };
+
+    for (const auto& testCase : writerCases) {
+        fillPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        Require(std::setvbuf(native, nullptr, _IONBF, 0) == 0);
+        FileStream stream(native);
+        errno = 0;
+        Require(testCase.failWrite(&stream));
         Require(errno == 35);
         Require(ferror_nid_postfix(&stream) != 0);
+        drainPipe();
+        errno = 35;
+        Require(testCase.recoverWrite(&stream));
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+        char readByte = 0;
+        Require(::read(fds[0], &readByte, 1) == 1 && readByte == testCase.expectedByte);
+        clearerr_nid_postfix(&stream);
+        Require(ferror_nid_postfix(&stream) == 0);
         drainPipe();
         Require(stream.Close() == 0);
     }
@@ -164,6 +237,55 @@ static void CheckWriteFlushErrno(const std::string& base) {
         errno = 0;
         Require(fflush_nid_postfix(nullptr) == EOF);
         Require(errno == 35);
+        drainPipe();
+        Require(stream.Close() == 0);
+    }
+    struct LineBufferCase {
+        void (*controlWrite)(FileStream*);
+        void (*newlineFlushWrite)(FileStream*);
+    };
+    const LineBufferCase lineCases[] = {
+        {
+            [](FileStream* s) { Require(fputc_nid_postfix('x', s) == 'x'); },
+            [](FileStream* s) { Require(fputc_nid_postfix('\n', s) == EOF); }
+        },
+        {
+            [](FileStream* s) { Require(fputs_nid_postfix("control", s) >= 0); },
+            [](FileStream* s) { Require(fputs_nid_postfix("flush\n", s) == EOF); }
+        },
+        {
+            [](FileStream* s) {
+                char data[] = "ctrl";
+                Require(fwrite_nid_postfix(data, 1, sizeof(data) - 1, s) == sizeof(data) - 1);
+            },
+            [](FileStream* s) {
+                char data[] = "flush\n";
+                fwrite_nid_postfix(data, 1, sizeof(data) - 1, s);
+            }
+        }
+    };
+
+    for (const auto& lineCase : lineCases) {
+        drainPipe();
+        const int writeFd = ::dup(fds[1]);
+        Require(writeFd >= 0);
+        auto* native = ::fdopen(writeFd, "wb");
+        Require(native != nullptr);
+        char streamBuf[512];
+        Require(std::setvbuf(native, streamBuf, _IOLBF, sizeof(streamBuf)) == 0);
+        FileStream stream(native);
+
+        fillPipe();
+        errno = 35;
+        lineCase.controlWrite(&stream);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) == 0);
+
+        errno = 0;
+        lineCase.newlineFlushWrite(&stream);
+        Require(errno == 35);
+        Require(ferror_nid_postfix(&stream) != 0);
+
         drainPipe();
         Require(stream.Close() == 0);
     }
