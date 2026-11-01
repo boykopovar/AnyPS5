@@ -185,8 +185,9 @@ int APS5_VABI scePadGetControllerInformation(int handle, PadControllerInformatio
  info->stickInfo.deadZoneLeft = 13;
  info->stickInfo.deadZoneRight = 13;
  info->connectionType = PAD_CONNECTION_TYPE_LOCAL;
- info->connectedCount = 1;
- info->connected = true;
+ const bool connected = PortOf(handle) != 0 || Pad::IsConnected(0);
+ info->connectedCount = connected ? 1 : 0;
+ info->connected = connected;
  info->deviceClass = PAD_DEVICE_CLASS_STANDARD;
  return PAD_OK;
 }
@@ -218,15 +219,6 @@ int APS5_VABI scePadGetInfo_nid_postfix(PadInfo* info) {
    std::memcpy(slot.bluetoothMacAddress, mac, sizeof(slot.bluetoothMacAddress));
    ++count;
   }
- }
- if (count == 0) {
-  PadInfo::PadTypeInfo& slot = info->padTypeInfo[0];
-  slot.connectPort = 0;
-  slot.status = 1;
-  slot.deviceType = PAD_DEVICE_TYPE_DUAL_SENSE;
-  slot.connectType = PAD_CONNECT_TYPE_BLUETOOTH;
-  std::memcpy(slot.bluetoothMacAddress, PAD_BD_ADDRESS, sizeof(slot.bluetoothMacAddress));
-  count = 1;
  }
  info->connectedCount[0] = count;
  info->connectedCount[1] = 0;

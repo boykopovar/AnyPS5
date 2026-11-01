@@ -404,7 +404,7 @@ class RegistrationTests(unittest.TestCase):
 
     def run_tool(self, build):
         return subprocess.run([sys.executable, "-I", str(Path(check_test_registration.__file__)), str(build)],
-                              capture_output=True, text=True, timeout=30)
+                              capture_output=True, encoding="utf-8", timeout=30)
 
     def test_missing_build_directory_is_reported_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
