@@ -67,8 +67,19 @@ static void DestroyWhileWaiting() {
     Require(pthread_barrier_destroy_nid_postfix(&context.barrier) == GUEST_EINVAL);
 }
 
+static void BarrierattrInitNullPointer() {
+    Require(pthread_barrierattr_init_nid_postfix(nullptr) == GUEST_EINVAL);
+    PthreadBarrierattrPrivate** nullAttr = nullptr;
+    Require(pthread_barrierattr_init_nid_postfix(nullAttr) == GUEST_EINVAL);
+    PthreadBarrierattrPrivate* attr = nullptr;
+    Require(pthread_barrierattr_init_nid_postfix(&attr) == 0 && attr != nullptr);
+    Require(pthread_barrierattr_destroy_nid_postfix(&attr) == 0 && attr == nullptr);
+    Require(pthread_barrierattr_init_nid_postfix(nullptr) == GUEST_EINVAL);
+}
+
 int main() {
     DestroyWhileWaiting();
+    BarrierattrInitNullPointer();
     PthreadBarrierattrPrivate* missing = nullptr;
     int pshared = -1;
     Require(pthread_barrierattr_init_nid_postfix(nullptr) == GUEST_EINVAL);
@@ -139,4 +150,5 @@ int main() {
     Require(pthread_barrier_wait_nid_postfix(&single) == BARRIER_SERIAL_THREAD);
     Require(pthread_barrier_destroy_nid_postfix(&single) == 0);
     Require(pthread_barrierattr_destroy_nid_postfix(&attr) == 0);
+    Require(pthread_barrierattr_init_nid_postfix(nullptr) == GUEST_EINVAL);
 }
