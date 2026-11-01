@@ -44,6 +44,7 @@ int main() {
     Require(scePngEncCreate(nullptr, memory.data(), memorySize, &handle) == invalidAddr);
     Require(scePngEncCreate(&create, nullptr, memorySize, &handle) == invalidAddr);
     Require(scePngEncCreate(&create, memory.data(), memorySize, nullptr) == invalidAddr);
+    Require(scePngEncCreate(&create, memory.data(), memorySize, reinterpret_cast<void**>(0x10)) == invalidAddr);
     Require(scePngEncCreate(&create, memory.data(), memorySize - 1, &handle) == invalidSize);
     Require(scePngEncCreate(&create, memory.data(), memorySize, &handle) == 0 && reinterpret_cast<std::uintptr_t>(handle) % 16 == 0);
 
@@ -66,6 +67,10 @@ int main() {
         for (const std::uint16_t colorSpace : {3, 19}) {
             encode.pixel_format = pixelFormat;
             encode.color_space = colorSpace;
+            Require(scePngEncEncode(handle, &encode, reinterpret_cast<PngEncOutputInfo*>(0x10)) == invalidAddr);
+            auto badEncode = encode;
+            badEncode.png_mem_addr = reinterpret_cast<std::uint8_t*>(0x10);
+            Require(scePngEncEncode(handle, &badEncode, nullptr) == invalidAddr);
             PngEncOutputInfo info{};
             const int size = scePngEncEncode(handle, &encode, &info);
             Require(size > 1 && static_cast<std::size_t>(size) < png.size()

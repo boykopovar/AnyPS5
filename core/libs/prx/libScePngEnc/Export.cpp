@@ -1,6 +1,7 @@
 #include "prx/libScePngEnc/include/Api.hpp"
 #include <algorithm>
 #include <bit>
+#include <cerrno>
 #include <new>
 #include <cstdint>
 #include <cstddef>
@@ -96,7 +97,13 @@ int APS5_VABI scePngEncCreate(const PngEncCreateParam* param, void* memoryAddres
     ctx->maxImageWidth = (param->max_image_width + 7) & ~std::uint32_t{7};
     ctx->maxFilterNumber = param->max_filter_number;
     ctx->scratchSize = requiredSize - 112;
-    *handle = ctx;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(handle, &ctx, sizeof(ctx));
+    errno = savedErrno;
+    if (!copied) {
+        ctx->self = nullptr;
+        return PNG_ENC_ERROR_INVALID_ADDR;
+    }
     return 0;
 }
 
@@ -148,9 +155,28 @@ int APS5_VABI scePngEncEncode(void* handle, const PngEncEncodeParam* param, PngE
     }
 
     const bool overflow = png.size() > param->png_mem_size;
-    if (outputInfo) *outputInfo = {overflow ? 0 : static_cast<std::uint32_t>(png.size()), overflow ? 0 : height};
-    if (overflow) return PNG_ENC_ERROR_DATA_OVERFLOW;
-    std::copy(png.begin(), png.end(), param->png_mem_addr);
+    PngEncOutputInfo originalOutputInfo{};
+    const int savedErrno = errno;
+    if (outputInfo && !GuestCopyIn_nid_no_patch(&originalOutputInfo, outputInfo, sizeof(originalOutputInfo))) {
+        errno = savedErrno;
+        return PNG_ENC_ERROR_INVALID_ADDR;
+    }
+    if (outputInfo) {
+        const PngEncOutputInfo outInfo{overflow ? 0 : static_cast<std::uint32_t>(png.size()), overflow ? 0 : height};
+        if (!GuestCopyOut_nid_no_patch(outputInfo, &outInfo, sizeof(outInfo))) {
+            errno = savedErrno;
+            return PNG_ENC_ERROR_INVALID_ADDR;
+        }
+    }
+    if (overflow) {
+        errno = savedErrno;
+        return PNG_ENC_ERROR_DATA_OVERFLOW;
+    }
+    if (!GuestCopyOut_nid_no_patch(param->png_mem_addr, png.data(), png.size())) {
+        errno = savedErrno;
+        return PNG_ENC_ERROR_INVALID_ADDR;
+    }
+    errno = savedErrno;
     return static_cast<int>(png.size());
 }
 
