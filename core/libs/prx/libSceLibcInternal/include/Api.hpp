@@ -50,6 +50,10 @@ int APS5_VABI getopt_nid_postfix(int count, char* const* arguments, const char* 
 int APS5_VABI getopt_long_nid_postfix(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index);
 int APS5_VABI getopt_long_only_nid_postfix(int count, char* const* arguments, const char* options, const GuestOption* longOptions, int* index);
 int APS5_VABI inet_aton_nid_postfix(const char* text, std::uint32_t* address);
+double APS5_VABI __kernel_cos_nid_postfix(double x, double y);
+double APS5_VABI __kernel_sin_nid_postfix(double x, double y, int iy);
+float APS5_VABI __kernel_cosdf_nid_postfix(double x);
+float APS5_VABI __kernel_sindf_nid_postfix(double x);
 std::uint32_t APS5_VABI inet_addr_nid_postfix(const char* text);
 char* APS5_VABI inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
 char* APS5_VABI __inet_ntoa_r_nid_postfix(std::uint32_t address, char* buffer, std::uint32_t size);
