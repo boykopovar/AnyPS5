@@ -82,7 +82,7 @@ ImageType rawImageType(const DescriptorValue& descriptor) {
 
 bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor) {
     if (nullImageDescriptor(descriptor)) return true;
-    return static_cast<std::uint32_t>(rawImageType(descriptor)) <= 1u && image.table == NoTable && image.read && !image.written && !image.atomic;
+    return static_cast<std::uint32_t>(rawImageType(descriptor)) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
 }
 
 IrBufferFormat rawImageFormat(const DescriptorValue& descriptor) {
