@@ -76,6 +76,10 @@ void Lookup() {
     unsigned char none = 0;
     LibreSslAsn1Object empty{nullptr, nullptr, 0, 0, &none, 0};
     Require(LibreSslObjectNid_nid_no_patch(&empty) == 404, "an empty encoding lands on NID_ccitt");
+    Require(OBJ_obj2nid_nid_postfix(nullptr) == 0, "a null object has no NID");
+    Require(OBJ_obj2nid_nid_postfix(&commonName.object) == 13, "the export finds a built-in encoding");
+    Require(OBJ_obj2nid_nid_postfix(&preset.object) == 6, "the export returns a set NID without a search");
+    Require(OBJ_obj2nid_nid_postfix(&unknown.object) == 0, "the export leaves an unknown encoding undefined");
 }
 
 void Names() {
@@ -152,6 +156,7 @@ void Created() {
     Require(OBJ_create_nid_postfix("1 2 3 4", "secondShort", nullptr) == LibreSslObjectCount + 1, "spaces separate arcs and each object takes the next NID");
     RequireText(added.object, 64, 11, "secondShort", "the latest object with an encoding wins, and a missing long name falls back to the short name");
     Require(OBJ_create_nid_postfix("2.5.4.3", nullptr, nullptr) == LibreSslObjectCount + 2, "an added object may repeat a built-in OID");
+    Require(OBJ_obj2nid_nid_postfix(&commonName.object) == LibreSslObjectCount + 2, "the export finds an added encoding before the built-in table");
     RequireText(commonName.object, 64, 7, "2.5.4.3", "added encodings are searched before the table, and a nameless one prints in dotted form");
     Require(OBJ_create_nid_postfix("1.2.18446744073709551616.5", "big", "bigLong") == LibreSslObjectCount + 3, "an arc past 64 bits");
     RequireText(big.object, 64, 7, "bigLong", "an arc past 64 bits is encoded exactly");
@@ -167,6 +172,7 @@ void Created() {
     OBJ_cleanup_nid_postfix();
     RequireText(added.object, 64, 7, "1.2.3.4", "OBJ_cleanup removes added objects");
     RequireText(commonName.object, 64, 10, "commonName", "OBJ_cleanup restores the built-in names");
+    Require(OBJ_obj2nid_nid_postfix(&commonName.object) == 13, "after OBJ_cleanup the export finds the built-in encoding again");
     RequireText(unknown.object, 64, 5, "1.2.5", "after OBJ_cleanup an unknown NID past the table reports no error");
     Require(ERR_get_error_nid_postfix() == 0, "after OBJ_cleanup an unknown NID past the table reports no error");
     OBJ_cleanup_nid_postfix();
