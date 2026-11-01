@@ -21,3 +21,32 @@
 - [sceNetCtlGetIfStat](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) throws on macOS: an unprivileged process reads the interface byte counters (`getifaddrs` and `sysctl(NET_RT_IFLIST2)` alike) reduced to their low 32 bits, so a total would wrap every 4 GiB
 - [Host interface cache](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - on Windows, `sceNetCtlGetState`, `sceNetCtlGetStateV6`, `sceNetCtlCheckCallback`, `sceNetCtlGetIfStat` and `sceNetCtlGetInfo` reuse the last host interface query until `NotifyUnicastIpAddressChange`, `NotifyIpInterfaceChange` or `NotifyRouteChange2` reports a change, instead of calling `GetAdaptersAddresses` on every call. A DNS server change with no address, interface or route change is seen only at the next such change. If the notifications cannot be registered, every call queries the host as before.
 - [sceNetCtlGetNatInfo](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - performs RFC 5389 STUN binding probes from the active host IPv4 interface against `stun.playstation.net` and fallback third-party STUN servers (`stun.cloudflare.com`, `stun.l.google.com`, `stun1.l.google.com`) instead of reading cached state from the console's background `netctl` service, which probes `*.np.stun.playstation.net` with authenticated Classic STUN (RFC 3489); those third-party hosts receive the host's IPv4 address when an uncached call resolves or probes them. Each discovery call has a 1000 ms total time budget (DNS resolution included, 300 ms per UDP probe), and successful results are cached for 60 s per local IPv4 address while failures re-probe on the next call. Console captures confirm NAT type 2, NAT type 3, and STUN failure; NAT type 1 when the mapped endpoint matches the local socket is not measured on a console with a direct public IP.
+
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceNetCtl/Export.cpp) - 20 entries present in both version-labelled images are import-resolution declarations only. None is listed in the pinned public 3.20 catalogue for this library. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+[Version-pinned selected ELF export records](https://gist.github.com/kyon-eth/3fbb1a4a6f95a936b4cd58e9c3d8c50c/5e3af709224ed8235af11337309af0725e5685cb) list every NID below with its image label, decoded export module and library, raw qualified symbol, ELF function type, value and size for each inspected version-labelled image. The extract SHA-256 is `02ab27f12bcd0cc9fa03fa33f55fc201110f0d54a86bbbaa093d55d0a8cf262d`; its full-module sorted-function-NID digests and raw module-parameter words permit independent comparison. This is an analyst-produced metadata record, not independent authentication of the original images or proof of prototypes or behavior.
+
+| Name | NID |
+| --- | --- |
+| `sceInetStatInit` | `0NRuAY4RRLc` |
+| `sceInetStatTerm` | `W4wSTmiI4+0` |
+| `sceNetConnSwitcherStop` | `xCPBfQsndCs` |
+| `Unknown` | `09YMz3Vp5us` |
+| `Unknown` | `1PGApDf96ao` |
+| `Unknown` | `1mrTXfVGn+g` |
+| `Unknown` | `2Ny2lzU3o9w` |
+| `Unknown` | `3cNKxJXXYYk` |
+| `Unknown` | `AIu-tRC-mSM` |
+| `Unknown` | `BSERkV-a9e8` |
+| `Unknown` | `FwX+Js8qXNA` |
+| `Unknown` | `I14Npt-awQg` |
+| `Unknown` | `KUdWtCC6w-0` |
+| `Unknown` | `QnQ4RBu546Y` |
+| `Unknown` | `e5-Xj0wEzbI` |
+| `Unknown` | `lScJhO3Rnpk` |
+| `Unknown` | `mfWDyuk-M0I` |
+| `Unknown` | `on7RqSRy8pU` |
+| `Unknown` | `sngJX5nUjVM` |
+| `Unknown` | `wVXoAlD7Fsg` |

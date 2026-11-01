@@ -139,6 +139,9 @@ int main() {
     Require(sceNpAuthSetTimeout(unknownReq, 2, 5000000, 10000000, 10000000, 10000000) == requestNotFound);
 
     Require(sceNpAuthWaitAsync(syncReq, nullptr) == invalidArgument);
+    Require(sceNpAuthPollAsync(asyncReq, nullptr) == invalidArgument);
+    Require(sceNpAuthPollAsync(syncReq, nullptr) == invalidArgument);
+    Require(sceNpAuthPollAsync(unknownReq, nullptr) == invalidArgument);
     Require(sceNpAuthWaitAsync(syncReq, &waitResult) == invalidId);
     Require(sceNpAuthPollAsync(syncReq, &pollResult) == invalidId);
 

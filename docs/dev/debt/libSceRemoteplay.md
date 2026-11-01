@@ -1,12 +1,24 @@
 # libSceRemoteplay technical debt
 
+### Additional callable exports
+
+- [Remoteplay export `HV7jZe1frbM`](../../../core/libs/prx/libSceRemoteplay/Export.cpp) is a function record with qualifier `D#A` in older and later version-labelled modules; both map library ID 3 and module ID 0 to `libSceRemoteplay`. Older module words: `0x08540001`, `0x03200004`; later: `0x13590001`, `0x13600007`. The older module contains 44 function NIDs; sorted-LF SHA-256: `dbfa653ec4819a116d5271c2db9a177acb6dfefc0915322b10ef21611fbe0844`, using the [static ELF membership procedure](https://github.com/boykopovar/AnyPS5/pull/12367#issuecomment-6470603298). Version labels do not authenticate retail provenance; the digest identifies the NID set only. Independent verification requires a matching image. The name, signature and behavior are unverified; this declaration throws.
+
+
 ### Silent stubs
 
-- [sceRemoteplayGetConnectionStatus, sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - `sceRemoteplayGetConnectionStatus` reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID; `sceRemoteplayInitialize` and `sceRemoteplayTerminate` perform no remote play session setup or teardown
+- [sceRemoteplayGetConnectionStatus](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - reports `REMOTEPLAY_CONNECTION_STATUS_DISCONNECT` (0) for any user ID: on the console the value comes from the session service, and the wrapper retries once through another internal query when that answers `0x80020003`; this tree has no session, so the value and the retry path are unmodelled
+
+### Functional
+
+- [sceRemoteplayInitialize, sceRemoteplayTerminate](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - the state machine follows the firmware 11.00 module (`libSceRemoteplay.sprx`), not checked on 13.x or on a console. `Initialize` (`0x13a0`) and `Terminate` (`0x13d0`) are thin wrappers over one singleton. An absent heap is accepted and the module allocates and aligns a 0x1800-byte heap itself, whose allocation failure is `0x80fc0002`; a present heap must be at least 0x1800 (`0x80fc0001`), and a call while the state is initialized returns `0x80fc0003`. Terminate returns `0x80fc0004` unless the module is initialized and leaves a terminated state that a later initialize accepts, so the state is not a boolean
+- [sceRemoteplayInitialize](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - the 0x1800 heap contents (the session object), the 5,000,000-unit timeout and the two virtual calls that initialize performs are unmodelled
+- [sceRemoteplayGetConnectionStatus](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - the state checks follow the 11.00 module (`0x1520`), not checked on 13.x or on a console: it returns `0x80fc0004` unless the module is initialized, checks the state before the output pointer and answers `0x80fc0001` for a null output
 
 ### Unknown function info
 
 - [libSceRemoteplay additional exports](../../../core/libs/prx/libSceRemoteplay/Export.cpp) - these name/NID pairs are present in the 13.60 export inventory. Parameter lists, return types and behavior are unverified. Parameterless `int` declarations are import-resolution placeholders, not verified ABI prototypes; every entry throws through `NotImplemented_nid_no_patch`. No runtime functionality is implemented.
+- [`sceRemoteplayDisableInputDevice` and `sceRemoteplayEnableInputDevice`](../../../core/libs/prx/libSceRemoteplay/Export.cpp) (libSceRemoteplay) - parameter lists, return types and behaviour are unverified, so every entry throws through `NotImplemented_nid_no_patch`; the parameterless `int` declarations only resolve imports. The names and NIDs come from the [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/226383a7fa4b1275d6cebf61eb1c1e7ca7b58bcb/data/firmware-13.60/libsceremoteplay-0c70684750.jsonl), and the pinned [module map](https://github.com/boykopovar/ps5-nid-map/blob/cc1d586fddab576a520f226da6b2632b031e6d09/data/Modules/libSceRemoteplay.inc) assigns them to `libSceRemoteplay`.
 
 | Name | NID |
 | --- | --- |
