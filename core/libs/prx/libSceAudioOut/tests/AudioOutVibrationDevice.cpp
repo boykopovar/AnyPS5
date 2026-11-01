@@ -19,6 +19,8 @@ constexpr std::uint32_t frames = 256;
 bool available = true;
 bool failOpen = false;
 bool failInitialize = false;
+bool stopped = false;
+int queuedWhileStopped = 0;
 bool failEnumeration = false;
 bool pulse = false;
 std::uint32_t frequency = 48000;
@@ -206,6 +208,7 @@ extern "C" SDL_AudioDeviceID SDLCALL SDL_OpenAudioDevice(const char* name, int c
     Require(capture == 0 && flags == 0 && desired->callback == nullptr && desired->freq == static_cast<int>(frequency) && desired->format == AUDIO_F32SYS && desired->channels == (pulse ? 6 : 4) && desired->samples == frames, "native controller request changed");
     if (failOpen) return 0;
     ++opened;
+    stopped = false;
     *obtained = *desired;
     return 42;
 }
@@ -216,17 +219,19 @@ extern "C" int SDLCALL SDL_QueueAudio(SDL_AudioDeviceID device, const void* data
     const auto* samples = static_cast<const float*>(data);
     const std::size_t sampleCount = bytes / sizeof(float);
     played.assign(samples, samples + sampleCount);
+    if (stopped) ++queuedWhileStopped;
     ++queued;
     return 0;
 }
 extern "C" void SDLCALL SDL_ClearQueuedAudio(SDL_AudioDeviceID device) { Require(device == 42, "wrong native queue cleared"); }
 extern "C" void SDLCALL SDL_CloseAudioDevice(SDL_AudioDeviceID device) { Require(device == 42, "wrong native device closed"); ++closed; }
+extern "C" SDL_AudioStatus SDLCALL SDL_GetAudioDeviceStatus(SDL_AudioDeviceID device) { return device == 42 && !stopped ? SDL_AUDIO_PLAYING : SDL_AUDIO_STOPPED; }
 
 int main(int argc, char** argv) {
     try {
         Require(argc == 2, "invalid test arguments");
         const std::string_view mode = argv[1];
-        Require(mode == "quad" || mode == "pulse" || mode == "open_failure" || mode == "timing" || mode == "cadence" || mode == "discovery_failure", "invalid device mode");
+        Require(mode == "quad" || mode == "pulse" || mode == "open_failure" || mode == "timing" || mode == "cadence" || mode == "discovery_failure" || mode == "disconnect", "invalid device mode");
         pulse = mode == "pulse";
         Pad::Initialize();
         Pad::SetVibrationMode(1);
@@ -239,6 +244,22 @@ int main(int argc, char** argv) {
         }
         if (mode == "timing") {
             RunTiming();
+            std::puts("legacy vibration device tests passed");
+            return 0;
+        }
+        if (mode == "disconnect") {
+            const int port = sceAudioOutOpen(0x10000000, 10, 0, frames, frequency, 1);
+            Require(port > 0 && opened == 1, "the controller port did not open its sound card");
+            stopped = true;
+            std::array<std::int16_t, frames * 2> samples{};
+            for (std::uint32_t frame = 0; frame < frames; ++frame) {
+                samples[frame * 2] = 8192;
+                samples[frame * 2 + 1] = -16384;
+            }
+            Require(sceAudioOutOutput(port, samples.data()) == static_cast<int>(frames), "vibration output after the controller stopped failed");
+            Require(opened == 2 && closed == 1, "the stopped controller sound card was not reopened");
+            Require(queued == 1 && queuedWhileStopped == 0, "vibration PCM was queued to the stopped controller sound card");
+            Require(sceAudioOutClose(port) == 0 && closed == 2, "the reopened controller sound card was not closed with its port");
             std::puts("legacy vibration device tests passed");
             return 0;
         }

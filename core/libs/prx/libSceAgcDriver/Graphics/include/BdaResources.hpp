@@ -37,8 +37,6 @@ public:
         std::uint64_t hits = 0;
         std::uint64_t misses = 0;
         std::size_t held = 0;
-        // Hits served by the cached address space's serial alone (no hash, no compare; see
-        // GuestBufferMemory::CachedAddressTable), counted in `hits` too.
         std::uint64_t spaceTables = 0;
         // Why the most recently used table did not serve a build ([bda-table] first-differing entry
         // class): its owners were gone (expired weak reference), or its word hash differed, split by
