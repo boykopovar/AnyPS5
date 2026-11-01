@@ -1,10 +1,9 @@
-#include "prx/libSceFreeType/include/Api.hpp"
+#include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include "SceTypes.hpp"
-#include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -474,15 +473,16 @@ int APS5_VABI sceFreeTypeOtTan_nid_no_patch() {
 }
 APS5_EXPORT("dojyaLKzKN0", sceFreeTypeOtTan_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_08_mhD_AAds_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI FT_Trace_Get_Count_nid_no_patch() {
+    return 0;
 }
-APS5_EXPORT("08-mhD-AAds", sceFreeTypeOtUnknown_08_mhD_AAds_nid_no_patch);
+APS5_EXPORT("08-mhD-AAds", FT_Trace_Get_Count_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtUnknown_64XMq6sDxUo_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+const char* APS5_VABI FT_Trace_Get_Name_nid_no_patch(int idx) {
+    static_cast<void>(idx);
+    return nullptr;
 }
-APS5_EXPORT("64XMq6sDxUo", sceFreeTypeOtUnknown_64XMq6sDxUo_nid_no_patch);
+APS5_EXPORT("64XMq6sDxUo", FT_Trace_Get_Name_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_4xG87W9dTSg_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
