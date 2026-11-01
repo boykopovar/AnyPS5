@@ -6,6 +6,7 @@
 - [sceVideoOutOpen](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) validates the priority and CPU affinity that the open param requests for the VideoOut service thread but does not apply them: the port's present and vblank threads are host threads, and guest priorities and affinities do not reach host scheduling. Of the 16 calls in ten titles checked, all pass user 255 and index 0, 13 pass bus type 0 and three read it from a field (one call each in Borderlands 4, MXGP 26 and Super Meat Boy 3D), and 13 pass no open param. Metal Gear Solid 4 (PPSA18194) passes one from `mgs4.elf` with neither flag set and one from its launcher that sets only the affinity, 0x3e. Astro Bot (PPSA21564) sets priority 256 and affinity 0x1fff
 - [sceVideoOutAddVrrStatusFlagsPrivilege](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) returns 0 and does nothing: the host output has no VRR state to report. The name comes from an assert message in a title that requires `SCE_VIDEO_OUT_OK`; the NID hashes to it, the arguments are unknown (it is called without any)
 - [sceVideoOutVrrPegToFixedRate, sceVideoOutVrrUnpegFromFixedRate](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - PPSA05684 passes the handle to both, two further zero arguments to `sceVideoOutVrrPegToFixedRate`, and ignores the results. The meaning of those two arguments is unknown, so only zeros are accepted. VRR is not modelled and the output always runs at a fixed rate, so both calls only validate the handle and return 0
+- [sceVideoOutCursorSet2xMagnify](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) takes the handle and the cursor index like the other cursor calls and returns 0: no cursor image is drawn, so a magnified cursor cannot be observed, and the console's answer is unmeasured. PC5 (PPSA11018) imports it. The signature `(handle, index, enable)` and the effect of the flag are unverified
 
 ### Unknown function info
 
@@ -35,6 +36,9 @@
 
 ### Functional
 
+- [ANYPS5_PAD_IDENTIFY and haptics reports](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - the pulse uses the SDL motor rumble path only; it is not checked against the Bluetooth DualSense haptics-report path of open PR #9154, and the two have not been run together.
+- [ANYPS5_PAD_IDENTIFY on request](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - no key or overlay entry sends the pattern on demand; `always` repeats it every 30 seconds instead.
+- [ANYPS5_PAD_IDENTIFY pulse pattern](../../../core/libs/prx/libSceVideoOut/src/PadInput.cpp) (libSceVideoOut) - the 150 ms full-strength pulses 400 ms apart and the 500 ms quiet window are AnyPS5 choices: no measurement shows how a real controller's motors feel them or whether players can count the pulses.
 - [sceVideoOutOpen](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - opening a bus that is already open returns `SCE_VIDEO_OUT_ERROR_RESOURCE_BUSY` (`0x80290009`), as [shadPS4's](https://github.com/shadps4-emu/shadPS4/blob/e0a466753a1aacbc8db8253be685bf7ab4d9daae/src/core/libraries/videoout/driver.cpp#L53-L60) PS4 driver does for its main port; the PS5 result is unverified. PPSA99764 opens the main bus twice and carries on, presenting through the first handle. [KytyPS5](https://github.com/KytyPS5/KytyPS5/blob/5e837a9beac82c031868eaad9348d6a48245fb99/src/graphics/presentation/videoOut.cpp#L651-L662) (PS5) returns the same error for an already open bus; [fpPS4](https://github.com/red-prig/fpPS4/blob/04cefd43e6fddd1ab033e7980cd356d14c964905/src/ps4_libscevideoout.pas#L656-L667) (PS4) opens another handle instead
 - [sceVideoOutGetEventId, sceVideoOutGetEventData, sceVideoOutGetEventCount](../../../core/libs/prx/libSceVideoOut/src/Event.cpp) (libSceVideoOut) - the PS5 result is unverified for an event of another filter, for which all three return `VIDEO_OUT_ERROR_INVALID_EVENT` (`0x8029000D`), and for a VideoOut id this library never registers, for which sceVideoOutGetEventId returns the same code. Both follow the PS4 libraries of [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/cda4c7780adf59c84e2c70e080ac4f4a0ef7cdac/src/core/libraries/videoout/video_out.cpp#L187-L242) and [fpPS4](https://github.com/red-prig/fpPS4/blob/04cefd43e6fddd1ab033e7980cd356d14c964905/src/ps4_libscevideoout.pas#L719-L758); a null pointer throws here, where both return `VIDEO_OUT_ERROR_INVALID_ADDRESS`. #11376 (item 6) reports that PPSA28180 compares the result of sceVideoOutGetEventId for an event of another filter with `0x8029000D`; the call site was not checked here
 - [sceVideoOutOpen, bus 0x20](../../../core/libs/prx/libSceVideoOut/src/Output.cpp) (libSceVideoOut) - PPSA05666 opens the PS VR2 output as `sceVideoOutOpen(255, 0x20, 0, NULL)` after `sceHmd2ReprojectionEnableVrMode(0x2000F)`, and its own log calls the bus `SCE_VIDEO_OUT_BUS_TYPE_HMD2_MAIN`. The console answers `0x80290001` from a process that is not a game, with the headset connected and worn or not, for users 255 and 0 and for a null or zeroed open parameter, so that is returned here before the other argument checks; what a game gets with a headset attached is not measured. On the handle the title then calls `sceVideoOutRegisterBuffers2` with set 0, two buffers, a 4000x2040 attribute (tiling 0, pitch 0, pixel format `0x8100000022000000`), category 16 and a null option, where each `VideoOutBuffers.data` points at a 16-byte `{pointer, 2}` whose pointer is the structure it passed to `sceHmd2ReprojectionEnableMirroring`, holding per-eye 2000x2040 texture descriptors rather than frame memory; then `sceVideoOutConfigureOutput` and `sceVideoOutIsOutputSupported` with mode `0x2000F`, and the GPU waits on buffer 0 of that handle. None of that is modelled: the HMD output needs a VR backend. With the error code as its handle the title's next call, `sceVideoOutRegisterBuffers2`, throws here for the unknown handle; the console's answer to it is not measured. The TV bus answers `0x8029001E` to the HMD modes `0x20001` and `0x2000C` to `0x20010` on the console, as here
@@ -45,3 +49,200 @@
 - [Windows game controllers](../../../core/libs/prx/libSceVideoOut/src/VideoOutDriver.cpp) (libSceVideoOut) - SDL's DirectInput joystick backend is disabled at default hint priority before `SDL_InitSubSystem`, because its device enumeration blocks forever on some vendor HID devices (#1042). XInput and HIDAPI controllers are detected; controllers reachable only through DirectInput are not. Setting `SDL_DIRECTINPUT_ENABLED=1` restores them on hosts without such a device. SDL's Windows.Gaming.Input backend stays on by default. Setting `APS5_NO_WGI` turns it off at default hint priority, for hosts where it faults at `Windows.Gaming.Input.dll+0x10a84` a few seconds into every run: seen on Windows 10 Pro 22H2 (19045) with the Nefarius and Oculus virtual gamepad emulation buses installed and no physical controller connected. With it off, devices and features reachable only through Windows.Gaming.Input are lost: racing wheels, arcade sticks, flight sticks, HID pads without an HIDAPI driver, and Xbox One and Series trigger rumble.
 
 - The following pending declarations have unverified signatures and behavior; they are parameterless import-resolution declarations and throw through `NotImplemented_nid_no_patch`: [`sceDbgVideoOutAddOutputModeVr60Privilege`](../../../core/libs/prx/libSceVideoOut/Unimplemented.cpp).
+
+- [ANYPS5_PAD_PORT0_STATE](../../../core/libs/prx/libSceVideoOut/include/Port0Presence.hpp) (libSceVideoOut) - the 500 ms hold before a controller's removal or return changes port 0, and the rule that keyboard and mouse input reaches port 0 only while a controller is bound there, are AnyPS5 choices that keep a flapping cable from flapping the title. The console's own reaction (how long it takes to report a removed pad, whether it pauses on connected false, and whether it logs the initial user out) is not measured.
+
+### Additional callable exports
+
+- The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/ea0a096e6231dbe7b98b5a308e2ac91e/00f8422a1ae71e32816d72ae579c2f2d097f63a0) records module, logical library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp); it is a metadata summary rather than independent verification. Some NIDs belong to multiple logical libraries within the module.
+
+- [Additional callable exports](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp) - 182 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 107 match the public 3.20 catalogue and 75 do not. These are import-resolution declarations only. Neither image label authenticates a retail firmware version. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `sceVideoOutAddBuffer` | `4iy9hG9Du1s` |
+| `sceVideoOutAddBuffer4k2kPrivilege` | `twrSaoZ9cJs` |
+| `sceVideoOutAddBufferAnisoPrivilege` | `lm+1oyWKwy0` |
+| `sceVideoOutAddBufferHdrPrivilege` | `VAlir52gpQI` |
+| `sceVideoOutAddBufferYccPrivilege` | `D3s8DoEnuR4` |
+| `sceVideoOutAddDisplayPositionEvent` | `Cxb2w82t7lw` |
+| `sceVideoOutAddDriver` | `HtwSd4H2Tws` |
+| `sceVideoOutAddS3dHmdPrivilege` | `iT+aFczA7ak` |
+| `sceVideoOutAddSetModeEvent` | `AjtlFa2HRws` |
+| `sceVideoOutAddStereoBuffer` | `Ax1Qs3Cm95Q` |
+| `sceVideoOutAdjustColor2_` | `8Lf4Fp1TxA0` |
+| `sceVideoOutClearVrrMaster` | `WnHBARNFUyw` |
+| `sceVideoOutConfigureLayout` | `PeUUCAS9Kso` |
+| `sceVideoOutConfigureOptionsInitialize_` | `ktP9j1fN-zE` |
+| `sceVideoOutConfigureOutputEx` | `2CxY28ewv8g` |
+| `sceVideoOutConfigureOutputModeExSubmitDoneUnsafe_` | `-gYpMonpw2M` |
+| `sceVideoOutConfigureOutputModeEx_` | `lQh55Q8DUAg` |
+| `sceVideoOutConfigureOutputMode_` | `N1bEoJ4SRw4` |
+| `sceVideoOutControlHdcpEncryption` | `M-JkRj7X+No` |
+| `sceVideoOutCursorIsUpdatePending` | `HibOtezzT6M` |
+| `sceVideoOutCursorSetPositionStereo` | `735GfVO9v2s` |
+| `sceVideoOutCurveSamplePointsCalc_` | `kazBRXPqR7c` |
+| `sceVideoOutDebugAddVrrPrivilege` | `rAYR4zzw414` |
+| `sceVideoOutDebugBlankPipe` | `-9YA0lVAq+U` |
+| `sceVideoOutDebugReadCrc` | `4E8qvHf7Cj0` |
+| `sceVideoOutDebugSetDrr` | `itbQplM5K74` |
+| `sceVideoOutDebugSetGlobalAlpha` | `Y+0m4suevbk` |
+| `sceVideoOutDebugTriggerRefresh` | `8ZWscRWE6-s` |
+| `sceVideoOutDeleteDisplayPositionEvent` | `gbJ8QxXOR6g` |
+| `sceVideoOutDeleteDriver` | `KA515kD5rAY` |
+| `sceVideoOutDeleteSetModeEvent` | `fXCSkDTpJFg` |
+| `sceVideoOutDriverAddEvent` | `oeNtdmvV4II` |
+| `sceVideoOutDriverDecrementBufferLabel` | `0jGJbNTpSV4` |
+| `sceVideoOutDriverDeleteEvent` | `lOR+Nos+Je8` |
+| `sceVideoOutDriverGetBufferLabelAddress` | `NGyEl5aT4fc` |
+| `sceVideoOutDriverGetEopHandle` | `P1bIHoga4jE` |
+| `sceVideoOutDriverGetFinishedEopHandle` | `G6peSSDP4iA` |
+| `sceVideoOutDriverGetLatestEopHandle` | `GL8+3RHW5vk` |
+| `sceVideoOutDriverIncrementBufferLabel` | `Ztx4b2LhRDk` |
+| `sceVideoOutDriverResetBufferLabel` | `soAIjspgdt8` |
+| `sceVideoOutDriverTriggerEvent` | `OHnnkrUcShM` |
+| `sceVideoOutGetBufferInformation` | `5V8YGx9g0UA` |
+| `sceVideoOutGetCoredumpOutputMode` | `IZw2TINic+0` |
+| `sceVideoOutGetCurrentOutputMode_` | `W0iQAbGaTBg` |
+| `sceVideoOutGetDeviceInfoExOts_` | `p7FV-mU6EM0` |
+| `sceVideoOutGetDeviceInfoEx_` | `k6JLQGuPEYA` |
+| `sceVideoOutGetHdmiKsvList_` | `hZvzQy2VLKY` |
+| `sceVideoOutGetHdmiMonitorInfoNoMask_` | `421cr+-5Mus` |
+| `sceVideoOutGetHdmiMonitorInfo_` | `+XlDnumvLVA` |
+| `sceVideoOutGetHdmiRawEdid_` | `+sXvR1JH9Aw` |
+| `sceVideoOutGetMonitorInfo` | `lafoiUl5-5U` |
+| `sceVideoOutGetOutputStatusEx` | `HqiYk8A4mZ0` |
+| `sceVideoOutGetPipelineStatus` | `Ygv0S+Hi+hA` |
+| `sceVideoOutGetPortStatusInfoByBusSpecifier_` | `4TPW3H2f-lM` |
+| `sceVideoOutGetPortStatusInfo_` | `SDoPm73tOyI` |
+| `sceVideoOutGetPortStatusInfo` | `y4l-VBLsNio` |
+| `sceVideoOutGetStatusForWebcore` | `+tB28CUr9W0` |
+| `sceVideoOutGetVideoOutModeByBusSpecifier_` | `UazrNFzZPRU` |
+| `sceVideoOutHdmiMonitorInfoIsSupportedHdcpVersion` | `XNtZ16LIhf0` |
+| `sceVideoOutHdmiMonitorInfoIsSupportedVideoOutMode_` | `WBZrUaQY+EU` |
+| `sceVideoOutLockBuffer` | `7ifZFxWJ9Q4` |
+| `sceVideoOutRazorAddCallback` | `ZX7C79uOujU` |
+| `sceVideoOutRazorRecallCallbacks` | `hGcTks-qqIU` |
+| `sceVideoOutRazorRemoveCallback` | `zUDW7kIFclI` |
+| `sceVideoOutRegisterBufferAttribute` | `EJQifjOp8s4` |
+| `sceVideoOutRegisterStereoBuffers` | `lCTCOogRbk0` |
+| `sceVideoOutRemoveBuffer` | `H8teLntGkWs` |
+| `sceVideoOutSetAlphaControl` | `-zRnJ7WoWSY` |
+| `sceVideoOutSetBlankAfterResume` | `zILy8t+5bPo` |
+| `sceVideoOutSetContentType` | `KHBNAkJhT64` |
+| `sceVideoOutSetDisplayEventPosition` | `18NPivA-byc` |
+| `sceVideoOutSetGamutMetadata_` | `emayD9LHYsc` |
+| `sceVideoOutSetGlobalAlpha` | `Ujsmw0VOqOo` |
+| `sceVideoOutSetToneMap_` | `CxUz3nU06NE` |
+| `sceVideoOutSetVrrMaster` | `zzi147PCXzI` |
+| `sceVideoOutSubmitChangeBufferAttribute` | `IOdgHlCGU-k` |
+| `sceVideoOutSysAddSetModeEvent2` | `fYWVVDKZOCk` |
+| `sceVideoOutSysAddSetModeEvent` | `X8FN-5Nk-yE` |
+| `sceVideoOutSysAddVblankEvent2` | `Am8Hlr7tlxA` |
+| `sceVideoOutSysAddVblankEvent` | `Ek+VR4lcJQI` |
+| `sceVideoOutSysChangePipelineLayout` | `7gnD2bc0zvs` |
+| `sceVideoOutSysClose` | `dIb9LsrpkQM` |
+| `sceVideoOutSysConfigureLayout` | `FDTOhhPHtps` |
+| `sceVideoOutSysConfigureOutputMode` | `ox3wD142jZQ` |
+| `sceVideoOutSysConfigureOutput` | `ofkhJRiQua0` |
+| `sceVideoOutSysDeleteVblankEvent2` | `2EBuouuYKgM` |
+| `sceVideoOutSysDeleteVblankEvent` | `iwsJdAZCg34` |
+| `sceVideoOutSysFloatPort` | `sKtbl0gCX64` |
+| `sceVideoOutSysGetBus` | `7VSZJxxcTL8` |
+| `sceVideoOutSysGetColorConversionStatus` | `IpMhRnVgJUU` |
+| `sceVideoOutSysGetCurrentOutputMode` | `IysRiVOGIVM` |
+| `sceVideoOutSysGetDeviceInfo` | `2sgenMqwczM` |
+| `sceVideoOutSysGetFlipStatus` | `21sS8EU45cw` |
+| `sceVideoOutSysGetKsvList` | `Ur8iOIm0tyE` |
+| `sceVideoOutSysGetMonitorInfo_` | `vMLWuJckGv0` |
+| `sceVideoOutSysGetOutputStatus` | `Ip78YCQUrTo` |
+| `sceVideoOutSysGetPipelineStatus` | `dFhciCfO31s` |
+| `sceVideoOutSysGetResolutionStatus2` | `qLDCAl8ygCw` |
+| `sceVideoOutSysGetResolutionStatus` | `8XGijEoThE0` |
+| `sceVideoOutSysGetVblankStatus2` | `iYrCszX93AM` |
+| `sceVideoOutSysGetVblankStatus` | `d1AjT2uZJn0` |
+| `sceVideoOutSysGetVideoOutModeByBusSpecifier` | `AAELy8Yc3Mc` |
+| `sceVideoOutSysHdmiMonitorInfoIsMorpheus` | `3-9DXFGVg0M` |
+| `sceVideoOutSysInitMode` | `9cmjhjqa7Sg` |
+| `sceVideoOutSysIsModeS3d` | `iUigHJ2op4M` |
+| `sceVideoOutSysIsOutputSupported` | `Z0EyU29WqOg` |
+| `sceVideoOutSysIsSupportedByMonitorInfo_` | `mfxElr79O7Q` |
+| `sceVideoOutSysIsUserStatusHdr` | `q+vWPvYIh8o` |
+| `sceVideoOutSysIsUserStatusSystemDefault` | `O57F5ikhGxo` |
+| `sceVideoOutSysIsUserStatusVr` | `4XsQdhiOaAc` |
+| `sceVideoOutSysModeIsHdr` | `I7-lGGvFgBM` |
+| `sceVideoOutSysModeIsSystemDefault` | `5Y8uUbGMio0` |
+| `sceVideoOutSysModeIsVrLegacy` | `zecl8Gox+P0` |
+| `sceVideoOutSysModeIsVrNative` | `SgA2MtojPto` |
+| `sceVideoOutSysModeIsVr` | `QEiuHxjungc` |
+| `sceVideoOutSysOpenInternal` | `kP4l+nyBjRA` |
+| `sceVideoOutSysOpenVrNative` | `WUU+ufqgLJg` |
+| `sceVideoOutSysReadCrc64` | `eBvoaLwfBBQ` |
+| `sceVideoOutSysReadCrc` | `E8C608-pFng` |
+| `sceVideoOutSysResetAtGpuReset` | `djc8fOzOXxk` |
+| `sceVideoOutSysSetColorMode` | `gqK4its31ck` |
+| `sceVideoOutSysSetDcePipeMode` | `jvPer4hz+UU` |
+| `sceVideoOutSysSetDimmer2` | `X7tWmHNtoKg` |
+| `sceVideoOutSysSetDimmer` | `OOF0YO73GTA` |
+| `sceVideoOutSysSetHdcpEncryption` | `kxDKWwEobyA` |
+| `sceVideoOutSysSetHdrMetadata` | `-ka14VvHSX0` |
+| `sceVideoOutSysSetOverscanRatio` | `nMbAqI1ty8w` |
+| `sceVideoOutSysUpdateDisplayParameter` | `UFDoqv4XXC0` |
+| `sceVideoOutSysUpdatePrivilege` | `Jl91AhxKc0w` |
+| `sceVideoOutSysUpdateRenderingMode` | `4G37EIMMD+Q` |
+| `sceVideoOutUnlockBuffer` | `amghnA-Ev5s` |
+| `sceVideoOutUnregisterBufferAttribute` | `SRQSpP4QK5U` |
+| `Unknown` | `-5AIEU9+11g` |
+| `Unknown` | `0y3VgFMy99k` |
+| `Unknown` | `1r0tse0IXgU` |
+| `Unknown` | `32RkOEsOvQE` |
+| `Unknown` | `3xrSV8U0Hsg` |
+| `Unknown` | `7ZOVeum-aAg` |
+| `Unknown` | `8nnuVJFfTaM` |
+| `Unknown` | `99wK8O6hGtY` |
+| `Unknown` | `9ho7J3ihMlg` |
+| `Unknown` | `BIfepC2zRH4` |
+| `Unknown` | `Ek7XQBAkFYA` |
+| `Unknown` | `F3cj7Bea07w` |
+| `Unknown` | `IQMqDChUkMM` |
+| `Unknown` | `InORxXcUzR8` |
+| `Unknown` | `JDjWoYVTvdk` |
+| `Unknown` | `Ji+6MtHGDHU` |
+| `Unknown` | `LMgBlt8J+8A` |
+| `Unknown` | `M4lTPTxoeN0` |
+| `Unknown` | `MuM1bZDAvV8` |
+| `Unknown` | `N0AyfJuu8-w` |
+| `Unknown` | `NyVCSlocu3k` |
+| `Unknown` | `OWn+sZtXKbg` |
+| `Unknown` | `P5a32OulZQk` |
+| `Unknown` | `P96+z-0vEqs` |
+| `Unknown` | `QLfXO66LPcI` |
+| `Unknown` | `RGGakYPkFIo` |
+| `Unknown` | `UW7CnswVJFQ` |
+| `Unknown` | `VKBIGfxIuAA` |
+| `Unknown` | `Wu+K43K3ToE` |
+| `Unknown` | `XGIE4BsuS6A` |
+| `Unknown` | `aB6EqO5VB38` |
+| `Unknown` | `d7eh3psk1J8` |
+| `Unknown` | `fWJeR0LHh1s` |
+| `Unknown` | `iUybgvm4EPM` |
+| `Unknown` | `l-NHggThj7U` |
+| `Unknown` | `nrZ1di4tauc` |
+| `Unknown` | `oNJ4gsibB6c` |
+| `Unknown` | `pTxsULu4Nh0` |
+| `Unknown` | `q9HFykGcuWU` |
+| `Unknown` | `qWRDqFaC9GE` |
+| `Unknown` | `tHObJYt1qSM` |
+| `Unknown` | `udcfTO7aAyM` |
+| `Unknown` | `v9gmbZSAovI` |
+| `Unknown` | `vXMpe7Murfc` |
+| `Unknown` | `wKJpFhCTrX0` |
+| `Unknown` | `wZI4fmUJMlw` |
+| `Unknown` | `xqlbOlrMbBs` |
+| `Unknown` | `yGMBA0AKcgQ` |
+| `Unknown` | `yoK0AjkkBkI` |
+| `Unknown` | `ys239q8VgXY` |
+
+- [sceVideoOutSetConfigurationMode](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): the name hashes to NID `N1+j0RymMUQ`, a function export in both older and later version-labelled images. Its signature and behavior are unverified; this import-resolution declaration throws.
+
+- [Older callable NIDs](../../../core/libs/prx/libSceVideoOut/InventoryExports.cpp): 7 unidentified exports have unverified names, signatures and behavior. These are throwing import-resolution placeholders; no functionality is implemented. No matching NIDs were found in the later module inventory. Six use the primary library qualifier and one uses the nosubmission qualifier; qualified guest import resolution is unverified.

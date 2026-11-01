@@ -98,6 +98,17 @@ class PublicHeaderPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "outside core/libs"):
             package_headers.package(self.source, self.output, "v1")
 
+    def test_header_symlink_loop_is_rejected_without_traceback(self):
+        loop = self.umbrella.with_name("Loop.hpp")
+        try:
+            loop.symlink_to("Loop.hpp")
+        except OSError as error:
+            self.skipTest(str(error))
+        self.api.write_text('#include "Loop.hpp"\n', encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "Symbolic link loop"):
+            package_headers.public_headers(self.source)
+        self.assertTrue(loop.is_symlink())
+
     def test_header_command_needs_no_build_directory(self):
         with patch.object(package_release, "ROOT", self.source):
             self.assertEqual(package_release.main(["--platform", "headers", "--version", "v1", "--output", str(self.output)]), 0)
@@ -243,6 +254,21 @@ class ReleasePackageTests(unittest.TestCase):
         with tarfile.open(self.output / "prx-windows-unpatched-v1.tar.gz") as archive:
             self.assertEqual(archive.extractfile("libs/libc.prx").read(), b"original exports")
             self.assertEqual(archive.extractfile("libs/implib/libc.dll.a").read(), b"import archive")
+
+    def test_webrtc_library_archives_include_vad_notices(self):
+        (self.source / "core/libs/prx/libwebrtc").mkdir()
+        (self.unpatched.parent / "libwebrtc.prx").write_bytes(b"unpatched library")
+        (self.library.parent / "libwebrtc.prx").write_bytes(b"WebRTC library bytes")
+        source = self.source / "3rdparty/libfvad"
+        source.mkdir(parents=True)
+        (source / "LICENSE").write_bytes(b"VAD license\n")
+        (source / "PATENTS").write_bytes(b"VAD patent grant\n")
+        package_release.package("linux", self.build, self.output, "v1")
+        for archive_name, content in {"libfvad.txt": b"VAD license\n", "libfvad-patents.txt": b"VAD patent grant\n"}.items():
+            with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+                self.assertEqual(archive.read("libs/licenses/" + archive_name), content)
+            with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+                self.assertEqual(archive.extractfile("libs/licenses/" + archive_name).read(), content)
 
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()
@@ -1075,6 +1101,25 @@ class ReleaseMainTests(unittest.TestCase):
                 package_release.main(["--docs", str(Path(tmp) / "nonexistent"), "--output", str(output)])
             self.assertEqual(error.exception.code, 2)
             self.assertIn("not a directory", stderr.getvalue())
+
+    def test_main_reports_symbolic_link_loop_on_output_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            docs = root / "docs"
+            docs.mkdir()
+            (docs / "guide.md").write_text("# Guide", encoding="utf-8")
+            output = root / "assets"
+            try:
+                output.symlink_to("assets")
+            except (OSError, NotImplementedError) as error:
+                self.skipTest(str(error))
+            result = subprocess.run([sys.executable, str(Path(package_release.__file__)),
+                                     "--docs", str(docs), "--output", str(output)],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertIn("symbolic link loop", result.stderr)
+            self.assertFalse((root / "assets.md").exists())
 
     def test_main_reconfigures_streams(self):
         class Stream:

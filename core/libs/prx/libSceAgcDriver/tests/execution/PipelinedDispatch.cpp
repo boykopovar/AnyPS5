@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "TargetAddressWindow.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -53,6 +54,22 @@ std::uint32_t* Scratch = nullptr;
 std::uint32_t* Table = nullptr;
 std::uint32_t* TargetA = nullptr;
 std::uint32_t* TargetB = nullptr;
+
+void NewTargetPair() {
+    constexpr std::size_t regionBytes = 3u * BlockBytes;
+#ifdef _WIN32
+    auto* region = static_cast<std::uint32_t*>(VirtualAlloc(nullptr, regionBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+#else
+    auto* region = static_cast<std::uint32_t*>(std::aligned_alloc(BlockBytes, regionBytes));
+#endif
+    if (region == nullptr) throw std::runtime_error("pipelined dispatch: cannot allocate contiguous target blocks");
+    std::memset(region, 0, regionBytes);
+    GuestAllocations::Mutation().Add(region, regionBytes, true, true, false);
+    const auto indices = AgcDriver::Tests::TargetAddressWindowPair(reinterpret_cast<std::uintptr_t>(region), BlockBytes);
+    constexpr auto wordsPerBlock = BlockBytes / sizeof(std::uint32_t);
+    TargetA = region + indices[0] * wordsPerBlock;
+    TargetB = region + indices[1] * wordsPerBlock;
+}
 
 alignas(256) constexpr std::array<std::uint32_t, 8> Code{0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x4a060481u, 0xe0701000u, 0x80010301u, 0xbf810000u};
 
@@ -169,8 +186,7 @@ int main() {
         Output = NewBlock();
         Scratch = NewBlock();
         Table = NewBlock();
-        TargetA = NewBlock();
-        TargetB = NewBlock();
+        NewTargetPair();
         check((reinterpret_cast<std::uintptr_t>(TargetA) >> 32u) == (reinterpret_cast<std::uintptr_t>(TargetB) >> 32u), "the two targets do not share their high address dword");
         const auto initialDescriptor = BufferDescriptor(TargetA, BufferBytes);
         std::copy(initialDescriptor.begin(), initialDescriptor.end(), Table);
