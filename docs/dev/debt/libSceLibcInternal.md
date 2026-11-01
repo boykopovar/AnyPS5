@@ -6,7 +6,9 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 
 - The [revision-pinned identity inventory](https://gist.github.com/kyon-eth/6bd58c3d7a0fa933dd4b524754c43265/e4e5dbc43890a24e35dc1c656135000210e28390) records module, library, symbol type and NIDs for [InventoryExports.cpp](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp); it is a metadata summary rather than independent verification. One entry belongs to the logical library `libSceLibcInternalExt` within this module.
 
-- [Additional callable exports](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) - 297 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 291 match the public 3.20 catalogue and 6 do not. These are declarations only; neither image label authenticates a retail firmware version. Signatures and behavior are unverified; parameterless `int` declarations are placeholders. Every entry throws through `NotImplemented_nid_no_patch`. All declarations use literal NID aliases; the table records candidate names where known. No runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+- [Additional callable exports](../../../core/libs/prx/libSceLibcInternal/InventoryExports.cpp) - 297 entries observed in a 3.20-labelled image and a later 13.60-labelled image; 291 match the public 3.20 catalogue and 6 do not. Apart from the two `showmanyc` exports below, these remain import-resolution declarations: signatures and behavior are unverified, parameterless `int` declarations are placeholders, and their bodies throw through `NotImplemented_nid_no_patch`. All declarations use literal NID aliases; the table records candidate names where known. No other runtime functionality is implemented; data exports need separate analysis. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+`IAEl1Ta7yVU` and `olsoiZsezkk` are the narrow and wide `std::basic_streambuf::showmanyc` exports. Ghidra inspection of the locally held firmware 13.60 `libSceLibcInternal.sprx` shows `xor eax, eax; ret` at both NID-resolved export addresses. Their Itanium names match the standard-library declarations, whose return type is `std::streamsize`; the base `showmanyc` contract returns zero ([C++ draft](https://eel.is/c++draft/streambuf.virt.get)). The bodies do not access the stream buffer. Firmware identity and implementation were inspected locally; no firmware material is included here.
 
 | Name | NID |
 | --- | --- |
@@ -57,10 +59,8 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 | `_ZNSt14overflow_errorD2Ev` | `OypvNf3Uq3c` |
 | `_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsgetnEPci` | `VpwymQiS4ck` |
 | `_ZNSt15basic_streambufIcSt11char_traitsIcEE6xsputnEPKci` | `sXaxl1QGorg` |
-| `_ZNSt15basic_streambufIcSt11char_traitsIcEE9showmanycEv` | `IAEl1Ta7yVU` |
 | `_ZNSt15basic_streambufIwSt11char_traitsIwEE6xsgetnEPwi` | `lZVehk7yFok` |
 | `_ZNSt15basic_streambufIwSt11char_traitsIwEE6xsputnEPKwi` | `041c37QfoUc` |
-| `_ZNSt15basic_streambufIwSt11char_traitsIwEE9showmanycEv` | `olsoiZsezkk` |
 | `_ZNSt15underflow_errorD2Ev` | `xiqd+QkuYXc` |
 | `_ZNSt16nested_exceptionD1Ev` | `+qKS53qzWdA` |
 | `_ZNSt16nested_exceptionD2Ev` | `8R00hgzXQDY` |
