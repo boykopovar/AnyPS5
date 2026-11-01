@@ -62,6 +62,7 @@ static void CheckOwnershipAndRelativeLock() {
     Require(pthread_mutex_isowned_np_nid_postfix(&mutex) == 0);
     Require(pthread_mutex_reltimedlock_np_nid_postfix(&mutex, 1000) == POSIX_EINVAL);
     Require(Throws([] { pthread_mutex_isowned_np_nid_postfix(nullptr); }));
+    Require(scePthreadMutexTrylock(nullptr) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 static void CheckLoops(PthreadMutexattr* attr) {
