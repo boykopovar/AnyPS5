@@ -44,6 +44,7 @@ void CheckUnmountedCalls() {
     std::size_t gotSize = 0;
     SaveDataMount3 nullMount{};
     SaveDataMountResult mountResult{};
+    Check(sceSaveDataMount(nullptr, &mountResult) == SaveDataErrorParameter, "mount null mount is PARAMETER");
     Check(sceSaveDataMount3(nullptr, &mountResult) == SaveDataErrorParameter, "mount3 null mount is PARAMETER");
     Check(sceSaveDataMount3(&nullMount, nullptr) == SaveDataErrorParameter, "mount3 null result is PARAMETER");
     Check(sceSaveDataMount3(&nullMount, &mountResult) == SaveDataErrorParameter, "mount3 null dir_name is PARAMETER");
