@@ -1,6 +1,5 @@
 #include "ShadowAddressSpace.hpp"
 
-#if defined(__linux__)
 #include <sys/mman.h>
 #include <atomic>
 #include <mutex>
@@ -38,4 +37,3 @@ extern "C" bool ShadowRangeAvailable_nid_no_patch(std::uintptr_t begin, std::uin
 }
 
 }
-#endif
