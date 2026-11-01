@@ -1,8 +1,6 @@
 #include "prx/libc/include/ScanWideField.hpp"
 #include "prx/libc/include/General.hpp"
 
-#include <cstring>
-
 namespace {
 
 std::size_t DecodeUtf8(const char* text, char32_t* point) {
@@ -11,12 +9,9 @@ std::size_t DecodeUtf8(const char* text, char32_t* point) {
         *point = lead;
         return 1;
     }
-    std::size_t size = 0;
-    char32_t value = 0;
-    if ((lead & 0xE0) == 0xC0) { size = 2; value = lead & 0x1F; }
-    else if ((lead & 0xF0) == 0xE0) { size = 3; value = lead & 0x0F; }
-    else if ((lead & 0xF8) == 0xF0) { size = 4; value = lead & 0x07; }
-    else return 0;
+    const std::size_t size = LibcDetail::WideScanCharacterLength(lead);
+    if (size == 0) return 0;
+    char32_t value = lead & (0x7F >> size);
     for (std::size_t index = 1; index < size; ++index) {
         const auto next = static_cast<unsigned char>(text[index]);
         if ((next & 0xC0) != 0x80) return 0;
@@ -31,6 +26,14 @@ std::size_t DecodeUtf8(const char* text, char32_t* point) {
 }
 
 namespace LibcDetail {
+
+std::size_t WideScanCharacterLength(unsigned char lead) {
+    if (lead < 0x80) return 1;
+    if ((lead & 0xE0) == 0xC0) return 2;
+    if ((lead & 0xF0) == 0xE0) return 3;
+    if ((lead & 0xF8) == 0xF0) return 4;
+    return 0;
+}
 
 std::size_t ReadWideScanCharacter(const char* text, char32_t* point) {
     const std::size_t size = DecodeUtf8(text, point);
@@ -61,8 +64,8 @@ bool InWideScanset(const std::string& specifier, char32_t point) {
     return member != negated;
 }
 
-void RequireNoPositionalWideScan(const char* format) {
-    if (std::strchr(format, '$') != nullptr) NotImplemented_nid_no_patch("sscanf positional arguments with a 16-bit wide conversion on Linux");
+void RejectPositionalScan(const char* what) {
+    NotImplemented_nid_no_patch(what);
 }
 
 }
