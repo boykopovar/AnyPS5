@@ -359,6 +359,13 @@ int main() {
             Require(reader.TranslateVirtualAddress(0x101f) == 0x25f);
             RejectAddress(Fixture(), 0x1020);
         }},
+        {"symndx exceeding symbol table bounds in DT_GNU_HASH", [] {
+            auto bytes = Fixture();
+            Write<std::uint32_t>(bytes, 196, 0x6ffffff6);
+            Write<std::uint32_t>(bytes, 0x244, 100);
+            Write<std::uint32_t>(bytes, 192, 21);
+            RejectSections(std::move(bytes));
+        }},
     };
     std::size_t failures = 0;
     for (const auto& [name, test] : cases) {
