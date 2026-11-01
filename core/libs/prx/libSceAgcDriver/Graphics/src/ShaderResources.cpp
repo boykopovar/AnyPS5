@@ -631,29 +631,33 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, 
         std::chrono::steady_clock::time_point calculatedAt{};
     } cached;
     const auto now = std::chrono::steady_clock::now();
-    std::lock_guard lock(cached.mutex);
     std::optional<VkPhysicalDeviceMemoryBudgetPropertiesEXT> reported;
-    std::uint64_t sampled = 0;
-    std::uint64_t storage = 0;
-    const auto read = [&] {
-        reported.emplace(VkPhysicalDeviceMemoryBudgetPropertiesEXT{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT});
-        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
-        properties.pNext = &*reported;
-        context.memoryProperties2(context.physical, &properties);
-        cached.device = context.physical;
-        cached.read = now;
-        sampled = SampledTextureMemory();
-        storage = storageCacheBytes();
-        cached.budget = StorageTextureBudget(context.memory, &*reported, sampled, storage);
-        cached.ceiling = StorageTextureCeiling(context.memory, &*reported);
-        cached.calculatedAt = std::chrono::steady_clock::now();
-    };
-    if (cached.device != context.physical || now - cached.read >= std::chrono::seconds(1)) read();
-    const auto needed = std::min(required, cached.ceiling);
-    if (needed > cached.budget && context.bufferPool != nullptr && context.bufferPool->ReclaimIdleDevice(needed - cached.budget, now) != 0) read();
-    if (calculatedAt != nullptr) *calculatedAt = cached.calculatedAt;
-    if (reported) MemoryAccounting::Report(context, *reported, sampled, storage, cached.budget);
-    return cached.budget;
+    StorageTextureBudgetSnapshot snapshot;
+    std::uint64_t budget;
+    {
+        std::lock_guard lock(cached.mutex);
+        const auto read = [&] {
+            reported.emplace(VkPhysicalDeviceMemoryBudgetPropertiesEXT{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT});
+            VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+            properties.pNext = &*reported;
+            context.memoryProperties2(context.physical, &properties);
+            cached.device = context.physical;
+            cached.read = now;
+            const auto sampled = SampledTextureMemory();
+            const auto storage = storageCacheBytes();
+            snapshot = CalculateStorageTextureBudget(context.memory, &*reported, sampled, storage);
+            cached.budget = snapshot.selectedBudget;
+            cached.ceiling = snapshot.ceiling;
+            cached.calculatedAt = std::chrono::steady_clock::now();
+        };
+        if (cached.device != context.physical || now - cached.read >= std::chrono::seconds(1)) read();
+        const auto needed = std::min(required, cached.ceiling);
+        if (needed > cached.budget && context.bufferPool != nullptr && context.bufferPool->ReclaimIdleDevice(needed - cached.budget, now) != 0) read();
+        budget = cached.budget;
+        if (calculatedAt != nullptr) *calculatedAt = cached.calculatedAt;
+    }
+    if (reported) MemoryAccounting::Report(context, *reported, snapshot);
+    return budget;
 }
 
 std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
@@ -1344,18 +1348,29 @@ std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory)
 }
 
 std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported) {
-    const auto heap = largestDeviceLocalHeap(memory);
-    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return TextureCacheBudget(memory);
-    return std::max<std::uint64_t>(512ull << 20u, std::min<std::uint64_t>(memory.memoryHeaps[*heap].size / 2u, reported->heapBudget[*heap] / 2u));
+    return CalculateStorageTextureBudget(memory, reported, 0, 0).ceiling;
 }
 
 std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes) {
+    return CalculateStorageTextureBudget(memory, reported, sampledBytes, storageBytes).selectedBudget;
+}
+
+StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes) {
+    StorageTextureBudgetSnapshot snapshot;
+    snapshot.sampledBytes = sampledBytes;
+    snapshot.storageBytes = storageBytes;
+    snapshot.ceiling = TextureCacheBudget(memory);
+    snapshot.selectedBudget = snapshot.ceiling;
     const auto heap = largestDeviceLocalHeap(memory);
-    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return TextureCacheBudget(memory);
-    const auto budget = reported->heapBudget[*heap];
+    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return snapshot;
+    snapshot.heap = heap;
+    const auto heapBudget = reported->heapBudget[*heap];
     const auto usage = reported->heapUsage[*heap];
-    const auto reserved = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes) + sampledBytes + budget / 8u;
-    return std::min<std::uint64_t>(StorageTextureCeiling(memory, reported), std::max<std::uint64_t>(512ull << 20u, budget > reserved ? budget - reserved : 0u));
+    snapshot.reserved = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes) + sampledBytes + heapBudget / 8u;
+    snapshot.available = heapBudget > snapshot.reserved ? heapBudget - snapshot.reserved : 0u;
+    snapshot.ceiling = std::max<std::uint64_t>(512ull << 20u, std::min<std::uint64_t>(memory.memoryHeaps[*heap].size / 2u, heapBudget / 2u));
+    snapshot.selectedBudget = std::min<std::uint64_t>(snapshot.ceiling, std::max<std::uint64_t>(512ull << 20u, snapshot.available));
+    return snapshot;
 }
 
 std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes) {
