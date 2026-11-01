@@ -4,14 +4,12 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
+#include <initializer_list>
 #include <stdexcept>
 
 namespace {
 
 constexpr int GuestEfault = 14;
-constexpr char SecondsAdjustment[] = "adjtime: adjusting the clock by 2.000000 is not supported, the host clock is not changed";
-constexpr char SubSecondAdjustment[] = "adjtime: adjusting the clock by 0.-00001 is not supported, the host clock is not changed";
 
 void Require(bool condition, const char* message) {
     if (!condition) {
@@ -20,14 +18,17 @@ void Require(bool condition, const char* message) {
     }
 }
 
-void RequireAdjustment(const KernelTimeval& delta, const char* expected) {
+void RequireAdjustment(const KernelTimeval& delta) {
+    KernelTimeval remaining{-3, -2};
+    const auto before = NotImplementedCalls_nid_no_patch();
     try {
-        adjtime_nid_postfix(&delta, nullptr);
-    } catch (const std::runtime_error& value) {
-        Require(std::strcmp(value.what(), expected) == 0, value.what());
+        adjtime_nid_postfix(&delta, &remaining);
+    } catch (const std::runtime_error&) {
+        Require(NotImplementedCalls_nid_no_patch() == before + 1, "unsupported adjustment bypassed the unimplemented-call counter");
+        Require(remaining.tv_sec == -3 && remaining.tv_usec == -2, "unsupported adjustment modified oldDelta");
         return;
     }
-    Require(false, expected);
+    Require(false, "unsupported adjustment returned success");
 }
 
 } // namespace
@@ -37,11 +38,11 @@ int main() {
     KernelTimeval remaining{-3, -2};
     Require(adjtime_nid_postfix(nullptr, &remaining) == 0, "adjtime with a null delta did not succeed");
     Require(remaining.tv_sec == 0 && remaining.tv_usec == 0, "adjtime did not report a zero pending adjustment");
-    Require(adjtime_nid_postfix(reinterpret_cast<const KernelTimeval*>(1), nullptr) == -1 && *__error_nid_postfix() == GuestEfault, "adjtime with an unreadable delta did not fail with EFAULT");
-    const KernelTimeval seconds{2, 0};
-    RequireAdjustment(seconds, SecondsAdjustment);
-    const KernelTimeval subSecond{0, -1};
-    RequireAdjustment(subSecond, SubSecondAdjustment);
+    Require(adjtime_nid_postfix(nullptr, reinterpret_cast<KernelTimeval*>(1)) == -1 && *__error_nid_postfix() == GuestEfault, "adjtime with an unwritable oldDelta did not fail with EFAULT");
+    remaining = {-3, -2};
+    Require(adjtime_nid_postfix(reinterpret_cast<const KernelTimeval*>(1), &remaining) == -1 && *__error_nid_postfix() == GuestEfault, "adjtime with an unreadable delta did not fail with EFAULT");
+    Require(remaining.tv_sec == -3 && remaining.tv_usec == -2, "adjtime wrote oldDelta before reading delta");
+    for (const KernelTimeval delta : {KernelTimeval{2, 0}, KernelTimeval{0, -1}, KernelTimeval{0, 0}}) RequireAdjustment(delta);
     std::puts("guest_kernel_sys_adjtime passed");
     return 0;
 }
