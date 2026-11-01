@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 shadPS4 Emulator Project
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 #include "prx/libSceVideoCoreServerInterface/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
