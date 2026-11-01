@@ -90,6 +90,17 @@ int ResetAbsolutePosition(std::int32_t handle, std::uint16_t x, std::uint16_t y)
     return MOUSE_OK;
 }
 
+int DebugGetDeviceId(std::int32_t handle, std::int32_t* deviceId) {
+    std::lock_guard lock(mouseMutex);
+    if (!initialized) return MOUSE_ERROR_NOT_INITIALIZED;
+    if (deviceId == nullptr) return MOUSE_ERROR_INVALID_ARG;
+    *deviceId = -1;
+    if (handle != MOUSE_HANDLE || !opened) return MOUSE_ERROR_INVALID_HANDLE;
+    if (!connected) return MOUSE_OK;
+    *deviceId = MOUSE_DEVICE_ID;
+    return MOUSE_OK;
+}
+
 void Publish(const MouseInputEvent& event) {
     std::lock_guard lock(mouseMutex);
     if (event.connectionChange) {
