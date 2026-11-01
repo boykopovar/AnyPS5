@@ -725,13 +725,7 @@ bool hasDppForm(RdnaOpcode opcode) {
 }
 
 bool acceptsDpp8(RdnaOpcode opcode) {
-    switch (opcode) {
-        case RdnaOpcode::VMovrelsB32:
-        case RdnaOpcode::VMovrelsdB32:
-        case RdnaOpcode::VMovrelsd2B32:
-            return false;
-        default: return hasDppForm(opcode);
-    }
+    return hasDppForm(opcode);
 }
 
 bool isNativeVop3F16TernaryOpcode(RdnaOpcode opcode) {
