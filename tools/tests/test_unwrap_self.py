@@ -1406,6 +1406,15 @@ class UnwrapTest(unittest.TestCase):
                 self.assertEqual(output.read_bytes(), b"previous output")
 
     def test_null_segment_alignment_is_ignored(self):
+        for offset, address, size, alignment in ((0, 0xDEADBEEF, 0x10, 3),
+                                                (0xFFFFFFFFFFFFFFFF, 0, 0xFFFFFFFFFFFFFFFF, 1 << 50)):
+            with self.subTest(offset=offset, address=address):
+                segments = default_segments()
+                segments[2] = (PT_NULL, 0, offset, address, size, alignment)
+                result, output = self.convert(build_container(segments, default_records(), default_payloads()))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                _, headers = read_program_headers(output)
+                self.assertEqual(headers[2], (PT_NULL, 0, 0, 0, 0, 0, 0, 0))
         segments = default_segments()
         segments[2] = (PT_NULL, 0, 0, 0, 0, 3)
         container = build_container(segments, default_records(), default_payloads())
