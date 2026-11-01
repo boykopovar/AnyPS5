@@ -85,6 +85,9 @@ int main() try {
     Require(fixture.Read().at(0x1ffc) == 0x12345678);
     fixture.SetWords({});
     Require(fixture.Read().empty());
+    fixture.Tags[0].Value = 0;
+    fixture.SetWords({});
+    Require(fixture.Read().empty());
     fixture.Tags.clear();
     Require(fixture.Read().empty());
 
@@ -100,6 +103,7 @@ int main() try {
     for (std::size_t index = 0; index < 3; ++index) {
         Reject([&](auto& input) { auto tag = input.Tags[index]; ++tag.Value; input.Tags.push_back(tag); }, "Conflicting duplicate");
     }
+    Reject([](auto& input) { input.Tags[0].Value = 0; }, "DT_RELR address is zero");
     Reject([](auto& input) { input.SetWords({3}); }, "bitmap precedes address");
     Reject([](auto& input) { input.SetWords({0x200, 0x200}); }, "Overlapping RELR targets");
     Reject([](auto& input) { input.SetWords({0x200, 0x206}); }, "Overlapping RELR targets");
