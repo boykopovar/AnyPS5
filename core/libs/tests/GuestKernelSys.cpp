@@ -1477,6 +1477,27 @@ int main() {
     for (const int missing : {-2147483647 - 1, 1, 2, 3, 100, 2147483647}) {
         Require(kldsym_nid_postfix(missing, 1, &lookup) == -1 && Error() == 2);
     }
+    Require(swapon_nid_postfix(nullptr) == -1 && Error() == 14);
+    Require(swapon_nid_postfix(reinterpret_cast<const char*>(0x10)) == -1 && Error() == 14);
+    Require(swapon_nid_postfix("") == -1 && Error() == 2);
+    Require(swapon_nid_postfix((root / "missing").string().c_str()) == -1 && Error() == 2);
+    Require(swapon_nid_postfix((root / "file.txt" / "child").string().c_str()) == -1 && Error() == 20);
+    Require(swapon_nid_postfix((root / std::string(256, 'n')).string().c_str()) == -1 && Error() == 63);
+    Require(swapon_nid_postfix(("/" + std::string(1024, 'p')).c_str()) == -1 && Error() == 63);
+    Require(swapon_nid_postfix(file.c_str()) == -1 && Error() == 15);
+    Require(swapon_nid_postfix(root.string().c_str()) == -1 && Error() == 15);
+    const auto swapFileLink = (root / "swap-file.link").string();
+    const auto swapDirectoryLink = (root / "swap-directory.link").string();
+    const auto swapDangling = (root / "swap-dangling.link").string();
+    if (symlink_nid_postfix("file.txt", swapFileLink.c_str()) == 0) {
+        Require(symlink_nid_postfix(".", swapDirectoryLink.c_str()) == 0);
+        Require(symlink_nid_postfix("swap-missing", swapDangling.c_str()) == 0);
+        Require(swapon_nid_postfix(swapFileLink.c_str()) == -1 && Error() == 15);
+        Require(swapon_nid_postfix(swapDirectoryLink.c_str()) == -1 && Error() == 15);
+        Require(swapon_nid_postfix(swapDangling.c_str()) == -1 && Error() == 2);
+        Require(unlink_nid_postfix(swapFileLink.c_str()) == 0 && unlink_nid_postfix(swapDangling.c_str()) == 0);
+        Require(std::filesystem::remove(swapDirectoryLink));
+    }
     const std::string throughFile = (root / "file.txt" / "child").string();
     Require(pathconf_nid_postfix(throughFile.c_str(), 4) == -1 && Error() == 20);
     Require(fchmodat_nid_postfix(-100, throughFile.c_str(), 0600, 0) == -1 && Error() == 20);

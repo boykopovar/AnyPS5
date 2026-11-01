@@ -541,7 +541,7 @@ int APS5_VABI setlogin_nid_postfix(const char* name);
 int APS5_VABI sigqueue_nid_postfix(void);
 int APS5_VABI sigreturn_nid_postfix(const UserUcontext* context);
 int APS5_VABI statfs_nid_postfix(void);
-int APS5_VABI swapon_nid_postfix(void);
+int APS5_VABI swapon_nid_postfix(const char* name);
 int APS5_VABI symlinkat_nid_postfix(void);
 int APS5_VABI sysc_e00_nid_postfix(void);
 int APS5_VABI sysc_m00_nid_postfix(void);

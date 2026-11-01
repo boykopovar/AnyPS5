@@ -72,6 +72,7 @@ constexpr int GuestEsrch = 3;
 constexpr int GuestEio = 5;
 constexpr int GuestEbadf = 9;
 constexpr int GuestEfault = 14;
+constexpr int GuestEnotblk = 15;
 constexpr int GuestEnotdir = 20;
 constexpr int GuestEisdir = 21;
 constexpr int GuestEinval = 22;
@@ -821,6 +822,22 @@ int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data) {
     if (const int error = CopyGuestPath_nid_no_patch(lookup.name, name)) return static_cast<int>(Fail(error));
     if (fileid != 0) return static_cast<int>(Fail(GuestEnoent));
     throw std::runtime_error("kldsym: looking up the symbol " + name + " in every kernel module is not supported");
+}
+
+int APS5_VABI swapon_nid_postfix(const char* name) {
+    std::string copy;
+    if (const int error = CopyPath(name, copy)) return static_cast<int>(Fail(error));
+    if (copy.size() >= GuestPathMax || HasLongComponent(copy)) return static_cast<int>(Fail(GuestEnametoolong));
+    FileStat status{};
+    if (stat_nid_postfix(copy.c_str(), &status) != 0) return -1;
+    constexpr std::uint16_t TypeMask = 0170000;
+    constexpr std::uint16_t CharacterDevice = 0020000;
+    constexpr std::uint16_t BlockDevice = 0060000;
+    const std::uint16_t type = status.st_mode & TypeMask;
+    if (type == CharacterDevice || type == BlockDevice) {
+        throw std::runtime_error("swapon: adding the device " + copy + " as swap space is not supported");
+    }
+    return static_cast<int>(Fail(GuestEnotblk));
 }
 
 int APS5_VABI symlink_nid_postfix(const char* target, const char* created) {
