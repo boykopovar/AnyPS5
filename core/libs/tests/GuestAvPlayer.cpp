@@ -1616,6 +1616,78 @@ void TestVideoSyncTolerance() {
     Check(allocations.blocks.empty(), "sync tolerance allocations leaked");
 }
 
+void TestSyncedVideoFollowsClockWithSlowConsumer() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "slow consumer init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "slow consumer source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "slow consumer ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "slow consumer video failed");
+    Check(sceAvPlayerStart(player) == 0, "slow consumer start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "slow consumer first frame missing");
+    const auto start = std::chrono::steady_clock::now();
+    const auto first = static_cast<std::int64_t>(frame.timestamp);
+    std::int64_t worst = 0;
+    for (int poll = 1; poll <= 2; ++poll) {
+        std::this_thread::sleep_until(start + std::chrono::milliseconds(400 * poll));
+        Check(sceAvPlayerGetVideoDataEx(player, &frame) != 0, "slow consumer frame " + std::to_string(poll) + " missing");
+        CheckVideoFrame(frame);
+        const auto elapsed = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+        worst = std::max(worst, first + elapsed - static_cast<std::int64_t>(frame.timestamp));
+    }
+    Check(worst <= 150, "the picture handed out fell " + std::to_string(worst) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "slow consumer close failed");
+}
+
+std::int64_t VideoLagBehindClock(AvPlayerInternal* player, const std::string& what) {
+    AvPlayerFrameInfoEx frame{};
+    Check(sceAvPlayerGetVideoDataEx(player, &frame) != 0, what + " frame missing");
+    CheckVideoFrame(frame);
+    return static_cast<std::int64_t>(sceAvPlayerCurrentTime(player)) - static_cast<std::int64_t>(frame.timestamp);
+}
+
+void TestSyncedVideoCatchesUpAfterResume() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "resume catch-up init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "resume catch-up source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "resume catch-up ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "resume catch-up video failed");
+    Check(sceAvPlayerStart(player) == 0, "resume catch-up start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "resume catch-up first frame missing");
+    Check(sceAvPlayerPause(player) == 0, "resume catch-up pause failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Check(sceAvPlayerResume(player) == 0, "resume catch-up resume failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    const auto lag = VideoLagBehindClock(player, "resume catch-up");
+    Check(lag <= 150, "after resume the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "resume catch-up close failed");
+}
+
+void TestVideoCatchesUpAfterSwitchToSyncedMode() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "sync switch init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync switch source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "sync switch ready missing");
+    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync switch no-sync mode rejected");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync switch video failed");
+    Check(sceAvPlayerStart(player) == 0, "sync switch start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync switch first frame missing");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Check(sceAvPlayerSetAvSyncMode(player, 0) == 0, "sync switch default mode rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    const auto lag = VideoLagBehindClock(player, "sync switch");
+    Check(lag <= 150, "after switching to default sync the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "sync switch close failed");
+}
+
 void TestAudioClockDriftGating() {
     const auto open = [](Events& events) {
         AvPlayerInitData init = InitData(&events);
@@ -2087,6 +2159,9 @@ int main(int argc, char** argv) {
         TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
         TestVideoSyncTolerance();
+        TestSyncedVideoFollowsClockWithSlowConsumer();
+        TestSyncedVideoCatchesUpAfterResume();
+        TestVideoCatchesUpAfterSwitchToSyncedMode();
         TestAudioClockDriftGating();
         TestAudioEofClockRebase();
         TestAudioClockAdvancesAfterEof();
