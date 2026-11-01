@@ -301,6 +301,53 @@ static void TestVectorPushBackReleasesElements() {
     Require(deletedObject == object);
 }
 
+static void TestVectorFunctionsAcceptTheHandleObject() {
+    int context = 0;
+
+    IntrusivePtr vector;
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEEC1EPNS2_10LibContextE(&vector, &context);
+    unsigned char object[ObjectSize];
+    std::memset(object, 0x5a, sizeof(object));
+    WriteCount(object, 0, 1);
+    IntrusivePtr filled{object, RecordDelete, &context};
+    Require(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE8pushBackERKS8_(&vector, &filled) == 0);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(&vector) == 1);
+    Require(_ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEE4sizeEv(vector.object) == 1);
+    _ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEEEED1Ev(&vector);
+    _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_7Matches2V116RequestMatchTeamEED1Ev(&filled);
+
+    alignas(8) unsigned char body[0x50] = {};
+    const std::uint64_t magic = 0x434e507056656342ULL;
+    std::memcpy(body, &magic, sizeof(magic));
+    WriteCount(body, VectorReferenceCountOffset, 1);
+    *reinterpret_cast<std::int32_t*>(body + 0x34) = 1;
+    IntrusivePtr elements[2] = {};
+    *reinterpret_cast<IntrusivePtr**>(body + 0x38) = elements;
+    *reinterpret_cast<std::uint64_t*>(body + 0x40) = 2;
+    *reinterpret_cast<std::uint64_t*>(body + 0x48) = 2;
+    IntrusivePtr handle{body, nullptr, &context};
+
+    const auto presenceBegin = reinterpret_cast<void* (APS5_VABI*)(void*, void*)>(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE5beginEv);
+    const auto presenceEnd = reinterpret_cast<void* (APS5_VABI*)(void*, void*)>(_ZN3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEE3endEv);
+    const auto presenceNext = reinterpret_cast<void* (APS5_VABI*)(void*)>(_ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEEppEv);
+    const auto presenceNotEqual = reinterpret_cast<bool (APS5_VABI*)(const void*, const void*)>(_ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_11UserProfile2V113BasicPresenceEEEEneERKS9_);
+
+    unsigned char first[0x10] = {}, last[0x10] = {};
+    Require(presenceBegin(first, body) == first);
+    Require(presenceEnd(last, body) == last);
+    Require(presenceNotEqual(first, last));
+    Require(presenceNext(first) == first);
+    Require(presenceNotEqual(first, last));
+    Require(presenceNext(first) == first);
+    Require(!presenceNotEqual(first, last));
+
+    Require(presenceBegin(first, &handle) == first);
+    Require(presenceEnd(last, &handle) == last);
+    Require(presenceNext(first) == first);
+    Require(presenceNext(first) == first);
+    Require(!presenceNotEqual(first, last));
+}
+
 static void TestAdoptedVectorBodyDestroyedThroughDeleter() {
     int context = 0;
     alignas(8) unsigned char body[ObjectSize];
@@ -390,7 +437,38 @@ static void TestUserProfileVectorAssign() {
 }
 
 static void TestUserProfileModelAndTransaction() {
-    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfileC1EPNS1_6Common10LibContextE() == 0);
+    std::uint8_t profile[0xd0];
+    std::memset(profile, 0xa5, sizeof(profile));
+    std::uint64_t context = 0;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfileC1EPNS1_6Common10LibContextE(profile, &context) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile13onlineIdIsSetEv(profile) == false);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile19personalDetailIsSetEv(profile) == false);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile25isOfficiallyVerifiedIsSetEv(profile) == false);
+    const bool verified = true;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfile23setIsOfficiallyVerifiedERKb(profile, &verified) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile25isOfficiallyVerifiedIsSetEv(profile));
+    unsigned char onlineId[0x14];
+    std::memset(onlineId, 0x61, sizeof(onlineId));
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfile11setOnlineIdERK13SceNpOnlineId(profile, onlineId) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V112BasicProfile13onlineIdIsSetEv(profile));
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V112BasicProfileD1Ev(profile) == profile);
+
+    std::uint8_t presence[0x28];
+    std::memset(presence, 0xa5, sizeof(presence));
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresenceC1EPNS1_6Common10LibContextE(presence, &context) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence17onlineStatusIsSetEv(presence) == false);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence14inContextIsSetEv(presence) == false);
+    const std::uint64_t accountId = 0x1234;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence12setAccountIdERKm(presence, &accountId) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence12getAccountIdEv(presence) == 0x1234);
+    const bool inContext = true;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence12setInContextERKb(presence, &inContext) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence12getInContextEv(presence));
+    const std::uint32_t status = 2;
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresence15setOnlineStatusERKNS3_12OnlineStatusE(presence, &status) == 0);
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence17onlineStatusIsSetEv(presence));
+    Require(_ZNK3sce2Np9CppWebApi11UserProfile2V113BasicPresence15getOnlineStatusEv(presence) == 2);
+    Require(_ZN3sce2Np9CppWebApi11UserProfile2V113BasicPresenceD1Ev(presence) == presence);
 
     std::uint64_t transaction[0x20];
     std::memset(transaction, 0xa5, sizeof(transaction));
@@ -513,6 +591,7 @@ int main(int argc, char** argv) {
     TestMatchmakingSharedOwnership();
     TestMatchTeamVectorSize();
     TestVectorPushBackReleasesElements();
+    TestVectorFunctionsAcceptTheHandleObject();
     TestAdoptedVectorBodyDestroyedThroughDeleter();
     TestUserProfileVectorAssign();
     TestUserProfileModelAndTransaction();
