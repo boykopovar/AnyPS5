@@ -19,7 +19,11 @@ extern "C" {
 int APS5_VABI pthread_barrierattr_init_nid_postfix(PthreadBarrierattrPrivate** attr) {
     if (!attr) return 22;
     try {
-        *attr = new PthreadBarrierattrPrivate;
+        auto* value = new PthreadBarrierattrPrivate;
+        if (!GuestCopyOut_nid_no_patch(attr, &value, sizeof(value))) {
+            delete value;
+            return 14;
+        }
         return 0;
     } catch (const std::bad_alloc&) {
         return 12;
@@ -27,23 +31,30 @@ int APS5_VABI pthread_barrierattr_init_nid_postfix(PthreadBarrierattrPrivate** a
 }
 
 int APS5_VABI pthread_barrierattr_destroy_nid_postfix(PthreadBarrierattrPrivate** attr) {
-    if (!attr || !*attr) return 22;
-    delete *attr;
-    *attr = nullptr;
+    if (!attr) return 22;
+    PthreadBarrierattrPrivate* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, attr, sizeof(value)) || !value) return 22;
+    PthreadBarrierattrPrivate* cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(attr, &cleared, sizeof(cleared))) return 14;
+    delete value;
     return 0;
 }
 
 int APS5_VABI pthread_barrierattr_getpshared_nid_postfix(PthreadBarrierattrPrivate* const* attr, int* pshared) {
-    if (!attr || !*attr) return 22;
+    if (!attr) return 22;
     if (!pshared) APS5_INVALID_ARG_EX;
-    *pshared = (*attr)->pshared;
+    PthreadBarrierattrPrivate* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, attr, sizeof(value)) || !value) return 22;
+    if (!GuestCopyOut_nid_no_patch(pshared, &value->pshared, sizeof(value->pshared))) return 14;
     return 0;
 }
 
 int APS5_VABI pthread_barrierattr_setpshared_nid_postfix(PthreadBarrierattrPrivate** attr, int pshared) {
-    if (!attr || !*attr) return 22;
+    if (!attr) return 22;
+    PthreadBarrierattrPrivate* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, attr, sizeof(value)) || !value) return 22;
     if (pshared != PROCESS_PRIVATE) return 22;
-    (*attr)->pshared = pshared;
+    value->pshared = pshared;
     return 0;
 }
 
@@ -53,7 +64,10 @@ int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, 
     try {
         auto* value = new PthreadBarrierPrivate;
         value->count = count;
-        *barrier = value;
+        if (!GuestCopyOut_nid_no_patch(barrier, &value, sizeof(value))) {
+            delete value;
+            return 14;
+        }
         return 0;
     } catch (const std::bad_alloc&) {
         return 12;
@@ -61,33 +75,36 @@ int APS5_VABI pthread_barrier_init_nid_postfix(PthreadBarrierPrivate** barrier, 
 }
 
 int APS5_VABI pthread_barrier_wait_nid_postfix(PthreadBarrierPrivate** barrier) {
-    if (!barrier || !*barrier) return 22;
-    auto& value = **barrier;
-    std::unique_lock lock(value.mutex);
-    const auto generation = value.generation;
-    ++value.active;
-    if (++value.arrived == value.count) {
-        value.arrived = 0;
-        ++value.generation;
-        value.changed.notify_all();
-        --value.active;
+    if (!barrier) return 22;
+    PthreadBarrierPrivate* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, barrier, sizeof(value)) || !value) return 22;
+    std::unique_lock lock(value->mutex);
+    const auto generation = value->generation;
+    ++value->active;
+    if (++value->arrived == value->count) {
+        value->arrived = 0;
+        ++value->generation;
+        value->changed.notify_all();
+        --value->active;
         return -1;
     }
-    value.changed.wait(lock, [&] { return value.generation != generation; });
-    if (--value.active == 0) value.changed.notify_all();
+    value->changed.wait(lock, [&] { return value->generation != generation; });
+    if (--value->active == 0) value->changed.notify_all();
     return 0;
 }
 
 int APS5_VABI pthread_barrier_destroy_nid_postfix(PthreadBarrierPrivate** barrier) {
-    if (!barrier || !*barrier) return 22;
-    auto* value = *barrier;
+    if (!barrier) return 22;
+    PthreadBarrierPrivate* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, barrier, sizeof(value)) || !value) return 22;
     {
         std::unique_lock lock(value->mutex);
         if (value->arrived != 0) return 16;
         value->changed.wait(lock, [&] { return value->active == 0; });
     }
+    PthreadBarrierPrivate* cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(barrier, &cleared, sizeof(cleared))) return 14;
     delete value;
-    *barrier = nullptr;
     return 0;
 }
 
