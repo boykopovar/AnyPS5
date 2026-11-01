@@ -112,8 +112,14 @@ def check_permissions(relinker, work, runnable):
          ("rwxp", "rwxp", "rw-p", "rw-p")),
         ("cross-permissions", (0x5ffc,), ((0x5000, 0x1800, 0), (0x6000, 0x1000, 6)),
          ("rwxp", "rw-p")),
+        ("relro", (0x5000, 0x6000), ((0x5000, 0x2000, 7),),
+         ("r--p", "r--p", "rwxp", "rwxp"), (0x5000, 0x1000)),
+        ("relro-rounded", (0x5000, 0x6000), ((0x5000, 0x2000, 7),),
+         ("r--p", "r--p", "rwxp", "rwxp"), (0x5800, 0x1000)),
+        ("relro-partial-page", (0x5000, 0x6000), ((0x5000, 0x2000, 7),),
+         ("rwxp",) * 4, (0x5800, 0x700)),
     )
-    for name, slots, segments, expected in cases:
+    for name, slots, segments, expected, *relro in cases:
         for base in (None, "0x400000", "0x100010000"):
             for trace in (False, True):
                 label = f"{name}-{base or 'default'}-{'traced' if trace else 'untraced'}"
@@ -122,6 +128,10 @@ def check_permissions(relinker, work, runnable):
                 image = permissions_fixture(slots, segments)
                 if not segments:
                     struct.pack_into("<I", image, 68, 7)
+                if relro:
+                    start, size = relro[0]
+                    struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56,
+                                     0x6474e552, 4, start, start, start, size, size, 1)
                 source = case / "input.elf"
                 source.write_bytes(image)
                 output = case / "output.elf"
@@ -130,7 +140,14 @@ def check_permissions(relinker, work, runnable):
                     options += ["--linux-fixed-base", base]
                 result = relink(relinker, source, output, *options)
                 assert result.returncode == 0, (label, result.stdout, result.stderr)
-                assert struct.unpack_from("<H", output.read_bytes(), 16)[0] == 2, label
+                converted = output.read_bytes()
+                assert struct.unpack_from("<H", converted, 16)[0] == 2, label
+                if relro:
+                    phoff = struct.unpack_from("<Q", converted, 32)[0]
+                    entsize, count = struct.unpack_from("<HH", converted, 54)
+                    headers = [struct.unpack_from("<IIQQQQQQ", converted, phoff + index * entsize)
+                               for index in range(count)]
+                    assert sum(header[0] == 0x6474e552 for header in headers) == 1, label
                 if not runnable:
                     continue
                 (case / "libs").mkdir()
@@ -142,8 +159,9 @@ def check_permissions(relinker, work, runnable):
                 assert run.stderr == "hook\n" * (len(slots) if trace else 0), (label, run.stderr)
                 actual = tuple(run.stdout.splitlines())
                 print(label, actual)
-                if actual != expected:
-                    failures.append((label, expected, actual))
+                expected_access = tuple("rw-p" if trace and access == "r--p" else access for access in expected)
+                if actual != expected_access:
+                    failures.append((label, expected_access, actual))
     assert not failures, ("Tracing changed effective slot page permissions", failures)
 
 

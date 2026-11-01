@@ -660,6 +660,17 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     if (_fixedBase)
         RebaseProgramHeaders(buf, tableOff, phEntSize, writtenPh, base);
 
+    std::uint64_t relroStart = 0;
+    std::uint64_t relroEnd = 0;
+    for (std::uint16_t index = 0; index < writtenPh; ++index) {
+        const auto header = static_cast<std::size_t>(tableOff + static_cast<std::uint64_t>(index) * phEntSize);
+        if (Io::ReadU32(buf, header + kPhdrTypeOffset) != PT_GNU_RELRO)
+            continue;
+        const auto start = Io::ReadU64(buf, header + kPhdrVaddrOffset);
+        const auto size = Io::ReadU64(buf, header + kPhdrMemSizeOffset);
+        relroStart = start & ~(kDefaultLoadAlignment - 1);
+        relroEnd = (start + size) & ~(kDefaultLoadAlignment - 1);
+    }
     for (const auto& [page, offset] : tracePages) {
         std::uint32_t flags = 0;
         for (std::uint16_t index = 0; index < writtenPh; ++index) {
@@ -671,6 +682,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
             if (size != 0 && address(page) >= (start & ~(kDefaultLoadAlignment - 1)) && address(page) < start + size)
                 flags = Io::ReadU32(buf, header + kPhdrFlagsOffset);
         }
+        if (address(page) >= relroStart && address(page) < relroEnd)
+            flags &= ~PF_X;
         Io::WriteU32(buf, offset + 8, 3 | ((flags & PF_X) != 0 ? 4 : 0));
     }
 
