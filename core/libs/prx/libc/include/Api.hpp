@@ -1164,6 +1164,7 @@ char* APS5_VABI ctime_nid_postfix(const int64_t* timer);
 size_t APS5_VABI strftime_nid_postfix(char* str, size_t count, const char* format, const GuestTm* timeptr);
 size_t APS5_VABI wcsftime_nid_postfix(std::uint16_t* str, size_t count, const std::uint16_t* format, const GuestTm* timeptr);
 int64_t APS5_VABI clock_nid_postfix();
+int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base);
 int APS5_VABI ctime_s_nid_postfix(char* buffer, std::size_t size, const std::int64_t* time);
 int APS5_VABI asctime_s_nid_postfix(char* buffer, std::size_t size, const GuestTm* time);
 GuestTm* APS5_VABI gmtime_r_nid_postfix(const std::int64_t* timer, GuestTm* result);

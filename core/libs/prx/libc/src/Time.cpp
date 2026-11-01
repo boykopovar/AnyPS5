@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 #include <cerrno>
 #include <ctime>
 #include <cstring>
@@ -24,6 +25,8 @@ extern "C" char* tzname_nid_postfix[2];
 extern "C" int64_t timezone_nid_postfix;
 
 namespace {
+
+std::atomic<ClockGetresFn_nid_no_patch> registeredClockGetres{nullptr};
 
 constexpr const char* WEEKDAY_NAMES[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 constexpr const char* MONTH_NAMES[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
@@ -450,6 +453,17 @@ void APS5_VABI tzset_nid_postfix(void) {
 
     daylight_nid_postfix = local.tm_isdst >= 0 ? 1 : 0;
     timezone_nid_postfix = static_cast<int64_t>(libc_difftime_nid_postfix(libc_mktime_nid_postfix(&universal), libc_mktime_nid_postfix(&local)));
+}
+
+void RegisterClockGetres_nid_no_patch(ClockGetresFn_nid_no_patch fn) {
+    registeredClockGetres.store(fn, std::memory_order_release);
+}
+
+int APS5_VABI timespec_getres_nid_postfix(KernelTimespec* result, int base) {
+    if (base != 1) return 0;
+    const auto clockGetres = registeredClockGetres.load(std::memory_order_acquire);
+    if (clockGetres == nullptr) NotImplemented_nid_no_patch(__func__);
+    return clockGetres(0, result) == 0 ? 1 : 0;
 }
 
 int64_t APS5_VABI libc_time_nid_postfix(int64_t* timer) {
