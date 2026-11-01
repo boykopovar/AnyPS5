@@ -1,0 +1,11 @@
+if(BUILD_TESTING)
+    add_test_executable(texture_format_lookup_tests ${LIBS_INCLUDE_DIR}/tests/TextureFormatLookup.cpp)
+    target_include_directories(texture_format_lookup_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
+    target_link_libraries(texture_format_lookup_tests PRIVATE libSceAgcDriver libc)
+    configure_windows_unwind(texture_format_lookup_tests)
+    add_test(NAME texture_format_lookup COMMAND texture_format_lookup_tests)
+    if(WIN32)
+        set_tests_properties(texture_format_lookup PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

@@ -720,6 +720,65 @@ static void RecordLocks() {
 }
 #endif
 
+static void RegistryLifetime() {
+    std::array<std::thread, 8> workers;
+    for (std::size_t worker = 0; worker < workers.size(); ++worker) {
+        workers[worker] = std::thread([worker] {
+            for (int turn = 0; turn < 512; ++turn) {
+                const int descriptor = 100000 + turn * 512 + static_cast<int>(worker) * 64;
+                GuestDescriptorAccess first(descriptor, GuestDescriptorAccess::Mode::Read, std::defer_lock);
+                const auto version = first.Snapshot();
+                {
+                    GuestDescriptorAccess second(descriptor, GuestDescriptorAccess::Mode::Change);
+                }
+                Require(!version.Unchanged(), "registry split a live descriptor generation");
+                GuestDescriptorAccess replacement(descriptor, GuestDescriptorAccess::Mode::Read);
+                Require(replacement.Snapshot().Unchanged(), "registry lost a retained descriptor generation");
+            }
+        });
+    }
+    for (auto& worker : workers) worker.join();
+}
+
+static void CloseBeforeNative() {
+    int descriptors[2]{};
+    Require(pipe_nid_postfix(descriptors) == 0, "create pre-entry close pipe");
+    std::atomic<bool> entered{false}, interrupted{false}, release{false}, closed{false};
+    std::int64_t result = -2;
+    std::thread reader([&] {
+        scePthreadSelf();
+        ThreadCancel::IoRestart restart(false);
+        ThreadCancel::IoPoint point(restart);
+        result = File::WithIoDescriptor(descriptors[0], [&](int descriptor) {
+            return ThreadCancel::Native([&] {
+                entered.store(true);
+                Require(Observe([&] { return GuestDescriptorAccess::Operation::CurrentInterrupted(); }), "close did not interrupt before native entry");
+                interrupted.store(true);
+                Require(Observe([&] { return release.load(); }), "release native entry");
+                char byte = 0;
+#ifdef _WIN32
+                return ::_read(descriptor, &byte, 1);
+#else
+                return static_cast<int>(::read(descriptor, &byte, 1));
+#endif
+            });
+        });
+    });
+    Require(Observe([&] { return entered.load(); }), "observe native entry gap");
+    std::thread closer([&] {
+        Require(close_nid_postfix(descriptors[0]) == 0, "close pre-entry reader");
+        closed.store(true);
+    });
+    Require(Observe([&] { return interrupted.load(); }), "observe interruption before native entry");
+    release.store(true);
+    const bool completed = Observe([&] { return closed.load(); });
+    if (!completed) Require(write_nid_postfix(descriptors[1], "x", 1) == 1, "release missing-retry control");
+    reader.join();
+    closer.join();
+    Require(completed && result == -1, "close lost interruption across native entry");
+    Require(close_nid_postfix(descriptors[1]) == 0, "close pre-entry peer");
+}
+
 int main(int argc, char** argv) {
     Require(argc >= 2, "expected descriptor-access case");
     if (std::strcmp(argv[1], "posix_close") == 0) {
@@ -733,7 +792,9 @@ int main(int argc, char** argv) {
         else CloseReaders(std::atoi(argv[2]) != 0);
         return 0;
     }
-    if (std::strcmp(argv[1], "capacity") == 0) Capacity();
+    if (std::strcmp(argv[1], "registry_lifetime") == 0) RegistryLifetime();
+    else if (std::strcmp(argv[1], "close_before_native") == 0) CloseBeforeNative();
+    else if (std::strcmp(argv[1], "capacity") == 0) Capacity();
     else if (std::strcmp(argv[1], "no_aliases") == 0) NoAliases();
     else if (std::strcmp(argv[1], "access_cancel") == 0) AccessCancellation();
     else if (std::strcmp(argv[1], "protected_close") == 0) ProtectedClose();

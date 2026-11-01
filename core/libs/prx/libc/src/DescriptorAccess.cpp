@@ -1,6 +1,8 @@
 #include "prx/libc/include/DescriptorAccess.hpp"
 
 #include <condition_variable>
+#include <array>
+#include <algorithm>
 #include <map>
 #include <thread>
 #include <limits>
@@ -32,13 +34,37 @@ struct GuestDescriptorAccess::State {
 };
 
 std::shared_ptr<GuestDescriptorAccess::State> GuestDescriptorAccess::Get(int descriptor) {
-    static std::mutex mutex;
-    static std::map<int, std::weak_ptr<State>> entries;
-    std::lock_guard lock(mutex);
-    std::erase_if(entries, [](const auto& entry) { return entry.second.expired(); });
-    if (auto state = entries[descriptor].lock()) return state;
-    auto state = std::make_shared<State>();
-    entries[descriptor] = state;
+    struct Entry {
+        State* identity;
+        std::weak_ptr<State> state;
+    };
+    struct Bucket {
+        std::mutex mutex;
+        std::map<int, Entry> entries;
+    };
+    static auto* buckets = new std::array<Bucket, 64>;
+    auto& bucket = (*buckets)[static_cast<unsigned>(descriptor) % buckets->size()];
+    {
+        std::lock_guard lock(bucket.mutex);
+        const auto found = bucket.entries.find(descriptor);
+        if (found != bucket.entries.end())
+            if (auto state = found->second.state.lock()) return state;
+    }
+    auto state = std::shared_ptr<State>(new State, [&bucket, descriptor](State* released) {
+        {
+            std::lock_guard lock(bucket.mutex);
+            const auto found = bucket.entries.find(descriptor);
+            if (found != bucket.entries.end() && found->second.identity == released) bucket.entries.erase(found);
+        }
+        delete released;
+    });
+    {
+        std::lock_guard lock(bucket.mutex);
+        const auto found = bucket.entries.find(descriptor);
+        if (found != bucket.entries.end())
+            if (auto existing = found->second.state.lock()) return existing;
+        bucket.entries.insert_or_assign(descriptor, Entry{state.get(), state});
+    }
     return state;
 }
 
@@ -59,9 +85,11 @@ void DescriptorAccessLock_nid_no_patch(void* access) {
         if (self.mode == GuestDescriptorAccess::Mode::Close) ++self.state->closesWaiting;
         try {
             if (self.mode == GuestDescriptorAccess::Mode::Close) {
+                auto retry = std::chrono::milliseconds(1);
                 while (!self.state->CanChange()) {
                     self.state->Interrupt();
-                    self.state->changed.wait_for(lock, std::chrono::milliseconds(1));
+                    self.state->changed.wait_for(lock, retry, [&] { return self.state->CanChange(); });
+                    retry = std::min(retry * 2, std::chrono::milliseconds(16));
                 }
             } else self.state->changed.wait(lock, [&] { return self.state->CanChange(); });
         } catch (...) {

@@ -324,6 +324,7 @@ void CALLBACK WaitingEntry(ULONG_PTR parameter) {
 
 void DeliverIoCallbacks() {
     while (auto* queued = ioDeliveries) {
+        if (ThreadCancel::DeferIoCallback(DeliverIoCallbacks, RetireIoCallbacks)) return;
         ioDeliveries = queued->next;
         WaitingEntry(reinterpret_cast<ULONG_PTR>(queued));
     }
@@ -1034,6 +1035,11 @@ bool RaiseOn(Pthread thread) {
 }
 
 #ifdef _WIN32
+extern "C" void GuestExceptionQueueIoForTest_nid_no_patch(void (APS5_VABI* handler)(int, void*)) {
+    auto* queued = new QueuedDelivery{handler, 30};
+    WaitingEntry(reinterpret_cast<ULONG_PTR>(queued));
+    DeliverIoCallbacks();
+}
 extern "C" [[noreturn]] void Aps5RedirectedEntry(void* delivery) {
     RedirectedEntry(static_cast<Delivery*>(delivery));
 }
