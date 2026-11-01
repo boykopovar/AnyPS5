@@ -5,20 +5,6 @@
 
 extern "C" {
 
-int APS5_VABI libSceHidControlUnknown_00qes5NswlQ_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_8fIm7UR4VDc_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_AjBZjowWaFI_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_C05jP9w4PCc_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_DUGI7AXFtV0_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_HZJRMD3BeKk_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_i5ALHbvjRi8_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_iVF5VrBHJzk_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_OFyJjudLKlA_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_tcDE01gUoN0_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_TKax3WNHtEg_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_w2MEBm2Tvm8_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_WikCB91EU0w_nid_no_patch();
-int APS5_VABI libSceHidControlUnknown_yJJq5Arw8EI_nid_no_patch();
 int APS5_VABI sceHidControlConnectHandle(std::uint32_t param_1, std::uint32_t param_2, std::uint32_t param_3);
 int APS5_VABI sceHidControlConnectPort(std::uint32_t param_1, std::uint32_t param_2);
 int APS5_VABI sceHidControlConnectPswDeviceForNearby(std::uint32_t param_1, std::uint32_t param_2);
@@ -28,7 +14,6 @@ int APS5_VABI sceHidControlDisconnectPort(std::uint32_t param_1, std::uint32_t p
 int APS5_VABI sceHidControlEnableMicBeamForming();
 int APS5_VABI sceHidControlGetAuthInformation(std::uint16_t param_1, std::uint16_t param_2, std::uint32_t param_3, std::uint8_t* param_4);
 int APS5_VABI sceHidControlGetBatteryState();
-int APS5_VABI sceHidControlGetControllerSerialNumberInformation(std::uint32_t param_1, std::uint8_t* param_2);
 int APS5_VABI sceHidControlGetDeviceId(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlGetDeviceInfo(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlGetDeviceName();
@@ -44,7 +29,6 @@ int APS5_VABI sceHidControlGetPswDeviceNameForNearby();
 int APS5_VABI sceHidControlGetPswEqBandValues(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3);
 int APS5_VABI sceHidControlGetPswEqPresetName(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3);
 int APS5_VABI sceHidControlGetPswEqPresetSelection(std::uint32_t param_1, std::int64_t param_2);
-int APS5_VABI sceHidControlGetPswNearbyDeviceInfo(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlGetPswNetworkLocale(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlGetPswSidetoneLevel(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlGetPswState(std::uint32_t param_1, std::int64_t param_2);
@@ -55,14 +39,12 @@ int APS5_VABI sceHidControlIsForceUpdateNeeded(std::uint32_t param_1, std::uint3
 int APS5_VABI sceHidControlPswUpdateGetDeviceFirmwareUpdateTelemetryData(std::uint32_t param_1, std::uint32_t* param_2);
 int APS5_VABI sceHidControlPswUpdateGetReconnectStatus(std::uint32_t param_1);
 int APS5_VABI sceHidControlPswUpdateGetStatus(std::uint32_t param_1, std::uint32_t param_2);
-int APS5_VABI sceHidControlPswUpdateInit();
 int APS5_VABI sceHidControlPswUpdateIsReady(std::uint32_t param_1, std::uint32_t* param_2);
 int APS5_VABI sceHidControlPswUpdateIsUpdateNeeded(std::uint32_t param_1, std::int64_t param_2, std::uint16_t* param_3);
 int APS5_VABI sceHidControlPswUpdateIsUpdateNeededForMultiDevice(std::uint32_t param_1, std::uint16_t* param_2, std::uint16_t* param_3, std::uint16_t* param_4);
 int APS5_VABI sceHidControlPswUpdateSendAppendixData(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlPswUpdateSendData(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlPswUpdateStart(std::uint32_t param_1, std::int64_t param_2);
-int APS5_VABI sceHidControlPswUpdateTerm();
 int APS5_VABI sceHidControlSetAllVibrationMute(std::uint32_t param_1);
 int APS5_VABI sceHidControlSetApplicationFocus(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlSetCollaboInputSettingOverrideProcess();
@@ -73,7 +55,6 @@ int APS5_VABI sceHidControlSetJediVolumeGain(std::int64_t param_1, std::uint32_t
 int APS5_VABI sceHidControlSetProcessFocus(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlSetPswCommand(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlSetPswConsoleMute(std::uint32_t param_1, std::uint8_t param_2);
-int APS5_VABI sceHidControlSetPswControllerCommunicationMethod(std::uint32_t param_1);
 int APS5_VABI sceHidControlSetPswDeviceName(std::uint32_t param_1, std::int64_t param_2);
 int APS5_VABI sceHidControlSetPswEqBandValues(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3);
 int APS5_VABI sceHidControlSetPswEqPresetName(std::uint32_t param_1, std::int32_t param_2, std::int64_t param_3);
