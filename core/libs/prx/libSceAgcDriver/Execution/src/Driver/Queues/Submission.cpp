@@ -272,8 +272,16 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
     const auto segment = submission.indirectSegments[index];
     const auto address = reinterpret_cast<std::uint64_t>(segment.target);
     const auto bytes = segment.words * sizeof(std::uint32_t);
-    if (DrawPipeline::Active() && DrawPipeline::Queue0().Overlaps(address, bytes)) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
-    if (DrawFinisher::Busy() && DrawFinisher::Get().PendingOverlaps(address, address + bytes)) DrawFinisher::Get().Drain();
+    const bool pipelineWrites = DrawPipeline::Active() && DrawPipeline::Queue0().Overlaps(address, bytes);
+    const bool finisherWrites = DrawFinisher::Busy() && DrawFinisher::Get().PendingOverlaps(address, address + bytes);
+    const bool recordedWrites = [&] {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        const auto* recorder = Graphics::Recorder::Active();
+        return recorder != nullptr && recorder->PendingWriterSerial(address, bytes) != 0;
+    }();
+    if (!pipelineWrites && !finisherWrites && !recordedWrites) return false;
+    if (pipelineWrites) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
+    if (finisherWrites) DrawFinisher::Get().Drain();
     std::vector<std::uint32_t> words(segment.words);
     GuestMemory::Read(address, std::as_writable_bytes(std::span(words)), alignof(std::uint32_t));
     const auto end = segment.start + segment.words;

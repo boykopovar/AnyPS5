@@ -160,29 +160,52 @@ void NestedRewrite(const GuestBlock& block, std::uint32_t marker) {
     std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
     std::memcpy(block.Bytes(ChildOffset), fillers.data(), sizeof(fillers));
     Store(block, MarkerOffset, 0);
-    Store(block, GateOffset, 0);
     const auto parent = block.At(CommandsOffset);
     const auto child = block.At(ChildOffset);
     const auto target = block.At(MarkerOffset);
-    const auto gate = block.At(GateOffset);
-    auto words = Pm4(0x3c, {0x13, Low(gate), High(gate), 1, 0xffffffffu, 0x19});
+    auto call = Pm4(0x3f, {Low(child), High(child) & 0xffffu, CommandWords});
+    call.push_back(Filler);
+    auto words = Dispatching(block, call, CommandsOffset);
+    const auto writeChild = Dispatching(block, Pm4(0x37, {0x500u, Low(target), High(target), marker}), ChildOffset);
+    words.insert(words.end(), writeChild.begin(), writeChild.end());
     const auto run = Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(parent), High(parent) & 0xffffu, CommandWords, 0, 0, 0});
     words.insert(words.end(), run.begin(), run.end());
     Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&dcb) == 0, "GPU-written indirect buffer: the nested submission failed");
-    auto rewritten = Dispatching(block, Pm4(0x37, {0x500u, Low(target), High(target), marker}), ChildOffset);
-    const auto call = Pm4(0x3f, {Low(child), High(child) & 0xffffu, CommandWords});
-    rewritten.insert(rewritten.end(), call.begin(), call.end());
-    Require(rewritten.size() <= CommandWords, "GPU-written indirect buffer: the rewritten parent does not fit its buffer");
-    std::memcpy(block.Bytes(CommandsOffset), rewritten.data(), rewritten.size() * sizeof(std::uint32_t));
-    Store(block, GateOffset, 1);
     AgcDriverWaitIdle_nid_postfix();
     AgcDriver::GuestMemory::FlushGpuWrites(target, sizeof(std::uint32_t));
     const auto seen = Load(block, MarkerOffset);
-    Require(seen == marker, "an indirect buffer called from a rewritten COND_INDIRECT_BUFFER ran as it was when the parent was read, not as the dispatch before the call wrote it: the marker is " + std::to_string(seen) + ", expected " + std::to_string(marker));
+    Require(seen == marker, "an indirect buffer called from a COND_INDIRECT_BUFFER a dispatch wrote ran as it was copied, not as the dispatch before it wrote it: the marker is " + std::to_string(seen) + ", expected " + std::to_string(marker));
 }
 
 void InvalidRewrite(const GuestBlock& block) {
+    std::array<std::uint32_t, CommandWords> fillers{};
+    fillers.fill(Filler);
+    std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
+    Store(block, MarkerOffset, 0);
+    Store(block, LabelOffset, 0);
+    const auto commands = block.At(CommandsOffset);
+    const auto marker = block.At(MarkerOffset);
+    const auto label = block.At(LabelOffset);
+    auto words = Dispatching(block, {0x00000000u, 0x00002000u, 0xc0033700u, Low(marker), High(marker)});
+    const auto run = Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0});
+    words.insert(words.end(), run.begin(), run.end());
+    const auto after = Pm4(0x37, {0x500u, Low(label), High(label), 1});
+    words.insert(words.end(), after.begin(), after.end());
+    Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
+    Require(sceAgcDriverSubmitDcb(&dcb) == 0, "GPU-written indirect buffer: the submission of the invalid rewrite failed");
+    try {
+        AgcDriverWaitIdle_nid_postfix();
+    } catch (const std::exception& error) {
+        throw std::runtime_error(std::string("a COND_INDIRECT_BUFFER rewritten after its submission with contents that do not validate failed the queue instead of running as it was copied: ") + error.what());
+    }
+    AgcDriver::GuestMemory::FlushGpuWrites(label, sizeof(std::uint32_t));
+    AgcDriver::GuestMemory::FlushGpuWrites(marker, sizeof(std::uint32_t));
+    Require(Load(block, LabelOffset) == 1, "the packet after a rewritten COND_INDIRECT_BUFFER whose contents do not validate did not run");
+    Require(Load(block, MarkerOffset) == 0, "a rewritten COND_INDIRECT_BUFFER whose contents do not validate ran part of them instead of running as it was copied");
+}
+
+void CpuRewriteAfterSubmit(const GuestBlock& block, bool conditional) {
     std::array<std::uint32_t, CommandWords> fillers{};
     fillers.fill(Filler);
     std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
@@ -194,26 +217,21 @@ void InvalidRewrite(const GuestBlock& block) {
     const auto label = block.At(LabelOffset);
     const auto gate = block.At(GateOffset);
     auto words = Pm4(0x3c, {0x13, Low(gate), High(gate), 1, 0xffffffffu, 0x19});
-    const auto run = Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0});
+    const auto run = conditional ? Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0}) : Pm4(0x3f, {Low(commands), High(commands) & 0xffffu, CommandWords});
     words.insert(words.end(), run.begin(), run.end());
     const auto after = Pm4(0x37, {0x500u, Low(label), High(label), 1});
     words.insert(words.end(), after.begin(), after.end());
     Packet dcb{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    Require(sceAgcDriverSubmitDcb(&dcb) == 0, "GPU-written indirect buffer: the submission of the invalid rewrite failed");
-    std::vector<std::uint32_t> rewritten{0x00000000u, 0x00002000u};
+    Require(sceAgcDriverSubmitDcb(&dcb) == 0, "GPU-written indirect buffer: the submission of the CPU rewrite failed");
     const auto store = Pm4(0x37, {0x500u, Low(marker), High(marker), 1});
-    rewritten.insert(rewritten.end(), store.begin(), store.end());
-    std::memcpy(block.Bytes(CommandsOffset), rewritten.data(), rewritten.size() * sizeof(std::uint32_t));
+    std::memcpy(block.Bytes(CommandsOffset), store.data(), store.size() * sizeof(std::uint32_t));
     Store(block, GateOffset, 1);
-    try {
-        AgcDriverWaitIdle_nid_postfix();
-    } catch (const std::exception& error) {
-        throw std::runtime_error(std::string("a COND_INDIRECT_BUFFER rewritten after its submission with contents that do not validate failed the queue instead of running as it was copied: ") + error.what());
-    }
+    AgcDriverWaitIdle_nid_postfix();
     AgcDriver::GuestMemory::FlushGpuWrites(label, sizeof(std::uint32_t));
     AgcDriver::GuestMemory::FlushGpuWrites(marker, sizeof(std::uint32_t));
-    Require(Load(block, LabelOffset) == 1, "the packet after a rewritten COND_INDIRECT_BUFFER whose contents do not validate did not run");
-    Require(Load(block, MarkerOffset) == 0, "a rewritten COND_INDIRECT_BUFFER whose contents do not validate ran part of them instead of running as it was copied");
+    const std::string kind = conditional ? "a COND_INDIRECT_BUFFER" : "an INDIRECT_BUFFER";
+    Require(Load(block, LabelOffset) == 1, "the packet after " + kind + " the CPU rewrote after its submission did not run");
+    Require(Load(block, MarkerOffset) == 0, kind + " the CPU rewrote after its submission, with no GPU work before it writing the buffer, ran the rewritten commands instead of running as it was copied");
 }
 
 void Run(const GuestBlock& block, std::uint32_t marker, bool conditional) {
@@ -313,18 +331,14 @@ void RewrittenWaitBeforeOwnFlip(const GuestBlock& block) {
     std::array<std::uint32_t, CommandWords> fillers{};
     fillers.fill(Filler);
     std::memcpy(block.Bytes(CommandsOffset), fillers.data(), sizeof(fillers));
-    Store(block, GateOffset, 0);
     const auto commands = block.At(CommandsOffset);
-    const auto gate = block.At(GateOffset);
-    auto second = Pm4(0x3c, {0x13, Low(gate), High(gate), 1, 0xffffffffu, 0x19});
+    auto second = Dispatching(block, {renderingWait[0], renderingWait[1], renderingWait[2], renderingWait[3], Filler});
     const auto branch = Pm4(0x3f, {1, 0, 0, 0, 0, 0, 0, Low(commands), High(commands) & 0xffffu, CommandWords, 0, 0, 0});
     second.insert(second.end(), branch.begin(), branch.end());
     second.insert(second.end(), flip.begin(), flip.end());
     Packet secondDcb{second.data(), static_cast<std::uint32_t>(second.size()), 0, {}};
-    Require(sceAgcDriverSubmitDcb(&secondDcb) == 0, "GPU-written indirect buffer: the second flip submission failed");
-    std::memcpy(block.Bytes(CommandsOffset), renderingWait.data(), sizeof(renderingWait));
     const auto opened = std::chrono::steady_clock::now();
-    Store(block, GateOffset, 1);
+    Require(sceAgcDriverSubmitDcb(&secondDcb) == 0, "GPU-written indirect buffer: the second flip submission failed");
     AgcDriverWaitIdle_nid_postfix();
     const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - opened).count();
     int timedOut = 0;
@@ -337,7 +351,7 @@ void RewrittenWaitBeforeOwnFlip(const GuestBlock& block) {
         waited = output->tickets->waited;
     }
     AgcDriverUnregisterVideoOutput_nid_postfix(Handle, output);
-    Require(timedOut == 0, "a rendering wait written into an indirect buffer after its submission waited for the flip after that buffer in the same submission (" + std::to_string(took) + " ms, timed out after 3 s)");
+    Require(timedOut == 0, "a rendering wait a dispatch wrote into an indirect buffer waited for the flip after that buffer in the same submission (" + std::to_string(took) + " ms, timed out after 3 s)");
     Require(ready == 2, "the two flips did not complete: " + std::to_string(ready) + " completed");
     std::string tickets;
     for (const auto ticket : waited) tickets += (tickets.empty() ? "" : ", ") + std::to_string(ticket);
@@ -357,6 +371,8 @@ int main() {
         HeldWaitAfterRewrite(block);
         NestedRewrite(block, 0x5eed0003u);
         InvalidRewrite(block);
+        CpuRewriteAfterSubmit(block, true);
+        CpuRewriteAfterSubmit(block, false);
         RewrittenWaitBeforeOwnFlip(block);
         AgcDriverShutdown_nid_postfix();
         std::puts("GPU-written indirect buffer: indirect buffers run what the dispatch before them wrote");
