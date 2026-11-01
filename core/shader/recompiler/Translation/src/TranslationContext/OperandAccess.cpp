@@ -328,6 +328,9 @@ IrU32 TranslationContext::applyBitSourceModifiers(const RdnaOperand& operand, Ir
 }
 
 bool TranslationContext::outputModifierApplies(std::uint32_t denormalShift) const {
+    if (((rounding.unknown >> denormalShift) & 2u) != 0u) {
+        throw std::runtime_error("output modifier on a result whose MODE denormal bits differ between the paths reaching it or were written from an SGPR: not implemented");
+    }
     const std::uint32_t mode = floatMode.has_value() ? floatMode->floatMode : 0xc0u;
     return !ieeeMode && ((mode >> denormalShift) & 2u) == 0u;
 }
