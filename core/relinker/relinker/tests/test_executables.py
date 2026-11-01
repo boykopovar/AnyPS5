@@ -27,7 +27,7 @@ def main():
             output = case / "out" / ("app.exe" if windows else "app.elf")
             output.parent.mkdir(exist_ok=True)
             result = subprocess.run([str(relinker), *(["--windows"] if windows else []), "--registry", *options, str(source), str(output)],
-                                    capture_output=True, text=True, timeout=60)
+                                    capture_output=True, text=True, encoding="utf-8", timeout=60)
             return result, output
 
         for windows in (False, True):

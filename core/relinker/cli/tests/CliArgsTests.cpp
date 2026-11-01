@@ -125,6 +125,9 @@ void excludeSceModuleConsumesNextTokenVerbatim() {
 
 void excludeSceModuleWithoutValue() {
     expectThrows({"--exclude-sce-module"}, "--exclude-sce-module requires a file name");
+    expectThrows({"--exclude-sce-module", "", "input.elf", "output.elf"}, "--exclude-sce-module requires a file name");
+    const auto args = parse({"--exclude-sce-module", "module with spaces.prx", "input.elf", "output.elf"});
+    require(args.excludedSceModules.count("module with spaces.prx") == 1, "a nonempty excluded file name was changed");
 }
 
 void excludeConflictsWithSkip() {
@@ -199,6 +202,14 @@ void windowsGuiRequiresWindows() {
     require(ok.windowsGui && ok.toWindows, "--windows-gui with --windows was rejected");
 }
 
+void frameRedZoneRequiresWindows() {
+    const std::string message = "--frame-red-zone requires --windows";
+    expectThrows({"--frame-red-zone", "input.elf", "output.elf"}, message);
+    expectThrows({"--macos", "--frame-red-zone", "input.elf", "output.elf"}, message);
+    const auto ok = parse({"--windows", "--frame-red-zone", "input.elf", "output.elf"});
+    require(ok.frameRedZone && ok.toWindows, "--frame-red-zone with --windows was rejected");
+}
+
 void missingPositionals() {
     expectUsage({});
     expectUsage({"input.elf"});
@@ -212,6 +223,8 @@ void windowsFixedBase() {
         const auto args = parse({"--windows-fixed-base", value, "--windows", "input.elf", "output.exe"});
         require(args.windowsFixedBase == 0x400000, "fixed base was parsed incorrectly");
     }
+    require(parse({"--windows", "--windows-fixed-base", "0x20000", "input.elf", "output.exe"}).windowsFixedBase == 0x20000, "lowest fixed base was rejected");
+    require(parse({"--windows", "--windows-fixed-base", "0x7fffffff0000", "input.elf", "output.exe"}).windowsFixedBase == 0x7fffffff0000, "highest fixed base was rejected");
     require(parse({"--windows", "--windows-fixed-base", "0x400000000", "input.elf", "output.exe"}).windowsFixedBase == 0x400000000, "fixed base was truncated to 32 bits");
     for (const auto& value : {"0", "0x10000", "0x400001", "0x", "-4194304", "+4194304", " 4194304", "0x400000junk", "18446744073709551616", "0x800000000000"})
         expectThrows({"--windows", "--windows-fixed-base", value, "input.elf", "output.exe"}, "--windows-fixed-base requires a 64 KiB-aligned address from 0x20000 through 0x7fffffff0000");
@@ -266,6 +279,12 @@ void moduleDirectories() {
     require(args.moduleDirectories == std::vector<std::string>{"Media/Plugins", "extra"}, "--module-dir directories were not recorded in order");
     require(args.inputPath == "input.elf" && args.outputPath == "output.elf", "--module-dir consumed a positional path");
     expectThrows({"--module-dir"}, "--module-dir requires a directory");
+    expectThrows({"--module-dir", "", "input.elf", "output.elf"}, "--module-dir requires a directory");
+    const auto literal = parse({"--module-dir", "--windows", "input.elf", "output.elf"});
+    require(literal.moduleDirectories == std::vector<std::string>{"--windows"} && !literal.toWindows,
+        "--module-dir must keep consuming the next token verbatim");
+    const auto spaced = parse({"--module-dir", "module with spaces", "input.elf", "output.elf"});
+    require(spaced.moduleDirectories == std::vector<std::string>{"module with spaces"}, "a nonempty module directory was changed");
     expectThrows({"--skip-sce-module", "--module-dir", "Media/Plugins", "input.elf", "output.elf"}, "--module-dir conflicts with --skip-sce-module");
     expectThrows({"--module-dir", "Media/Plugins", "--skip-sce-module", "input.elf", "output.elf"}, "--module-dir conflicts with --skip-sce-module");
 }
@@ -322,7 +341,7 @@ void verifyMode() {
     expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--exclude-sce-module", "x.prx"}, noEffect);
     expectThrows({"--verify-patches", "p.toml", "--verify-output", "out.elf", "--skip-sce-module"}, noEffect);
     expectThrows({"--verify-patches", "p.toml", "in.elf", "extra"}, "unexpected argument: extra");
-    for (const auto* option : {"--windows", "--macos", "--to-intel", "--to-rosetta", "--trace-imports", "--lazy-binding", "--autorun", "--registry", "--skip-syscall-check", "--no-patches"})
+    for (const auto* option : {"--windows", "--macos", "--to-intel", "--to-rosetta", "--frame-red-zone", "--trace-imports", "--lazy-binding", "--autorun", "--registry", "--skip-syscall-check", "--no-patches"})
         expectThrows({"--verify-patches", "p.toml", option, "in.elf"}, std::string(option) + " cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--rpath", "x", "in.elf"}, "--rpath cannot be used with --verify-patches");
     expectThrows({"--verify-patches", "p.toml", "--patches", "q.toml", "in.elf"}, "--patches cannot be used with --verify-patches");
@@ -361,6 +380,7 @@ int main() {
         tooManyPositionals();
         windowsDiagnosticsRequiresWindows();
         windowsGuiRequiresWindows();
+        frameRedZoneRequiresWindows();
         missingPositionals();
         windowsFixedBase();
         linuxFixedBase();

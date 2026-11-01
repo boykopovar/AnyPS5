@@ -76,7 +76,7 @@ std::uint64_t ElfReader::_readU64At(FileByteOffset fileByteOffset) const {
     return value;
 }
 
-ElfHeader ElfReader::ReadHeader() const {
+void ElfReader::ValidateMagic() const {
     if (_fileBuffer.size() < 0x40) {
         throw RelinkerException("File too small for ELF header");
     }
@@ -90,6 +90,10 @@ ElfHeader ElfReader::ReadHeader() const {
         _fileBuffer[2] != 'L' || _fileBuffer[3] != 'F') {
         throw RelinkerException("Invalid ELF magic number: " + formatMagic());
     }
+}
+
+ElfHeader ElfReader::ReadHeader() const {
+    ValidateMagic();
     if (_fileBuffer[4] != 2 || _fileBuffer[5] != 1 || _fileBuffer[6] != 1)
         throw RelinkerException("Expected little-endian ELF64 version 1");
     if (_readU16At(0x12) != 62)
@@ -216,6 +220,12 @@ std::vector<SectionHeader> ElfReader::ReadSectionHeaders() const {
         sh.Info = _readU32At(offset + 0x2c);
         sh.EntrySize = _readU64At(offset + kShdrEntSizeOffset);
 
+        if (sh.Type != SHT_NULL && sh.Type != SHT_NOBITS && sh.SectionSize != 0) {
+            if (!_rangeFits(sh.Offset, sh.SectionSize, _fileBuffer.size())) {
+                throw RelinkerException("Section offset out of bounds", sh.Offset);
+            }
+        }
+
         sh.Name = _resolveShdrName(nameOffset, header);
 
         headers.push_back(sh);
@@ -260,15 +270,11 @@ std::vector<DynamicTag> ElfReader::ReadDynamicTags(const ProgramHeader& dynamicH
     if (!_rangeFits(dynamicHeader.Offset, dynamicHeader.FileSize, _fileBuffer.size())) {
         throw RelinkerException("Dynamic segment out of bounds", dynamicHeader.Offset);
     }
-    if (dynamicHeader.FileSize % 16 != 0) {
-        throw RelinkerException("Invalid dynamic segment size", dynamicHeader.Offset);
-    }
-
     std::vector<DynamicTag> tags;
     FileByteOffset offset = dynamicHeader.Offset;
     const FileByteOffset end = dynamicHeader.Offset + dynamicHeader.FileSize;
 
-    while (offset < end) {
+    while (end - offset >= 16) {
         DynamicTag tag;
         tag.Tag = static_cast<std::int64_t>(_readU64At(offset));
         tag.Value = _readU64At(offset + 0x08);

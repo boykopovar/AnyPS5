@@ -12,6 +12,7 @@ from signal_run import run_without_core_dump
 from test_linux_load_alignment import PT_LOAD, PT_SCE_VERSION, fixture, loads
 
 ENTRY = 0x10
+DEFAULT_BASE = 0x400000
 ARGV_CHECK = bytes.fromhex(
     "833f02" "751e"
     "48837f0800" "7417"
@@ -79,7 +80,7 @@ def main():
                                     capture_output=True, text=True, timeout=20)
             if error is None:
                 assert result.returncode == 0, (address, result.stdout, result.stderr)
-                assert entry_call_target(far.read_bytes()) == ENTRY, hex(address)
+                assert entry_call_target(far.read_bytes()) == DEFAULT_BASE + ENTRY, hex(address)
             else:
                 assert result.returncode == 2 and error in result.stderr and not far.exists(), (address, result)
     print("Linux entry argv test passed")

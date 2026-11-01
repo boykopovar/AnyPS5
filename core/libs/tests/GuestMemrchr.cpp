@@ -1,9 +1,6 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdlib>
-
-extern "C" {
-void* APS5_VABI memrchr_nid_postfix(const void*, int, std::size_t);
-}
 
 int main() {
     const unsigned char bytes[] = {0xff, 0x01, 0xff, 0x00};

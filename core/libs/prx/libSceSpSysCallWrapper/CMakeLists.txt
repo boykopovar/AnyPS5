@@ -1,0 +1,16 @@
+add_library(libSceSpSysCallWrapper SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceSpSysCallWrapper PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(libSceSpSysCallWrapper PRIVATE libSceNet)
+configure_windows_unwind(libSceSpSysCallWrapper)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_sp_syscall_wrapper_tests ${LIBS_INCLUDE_DIR}/tests/GuestSpSysCallWrapper.cpp)
+    target_include_directories(guest_sp_syscall_wrapper_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sp_syscall_wrapper_tests PRIVATE libSceSpSysCallWrapper libSceNet libkernel libc)
+    configure_windows_unwind(guest_sp_syscall_wrapper_tests)
+    add_test(NAME guest_sp_syscall_wrapper COMMAND guest_sp_syscall_wrapper_tests)
+    if(WIN32)
+        set_tests_properties(guest_sp_syscall_wrapper PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSpSysCallWrapper>")
+    endif()
+endif()
