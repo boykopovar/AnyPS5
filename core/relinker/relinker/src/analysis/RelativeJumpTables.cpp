@@ -1,3 +1,4 @@
+#include <unordered_map>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <codegen/CodegenException.hpp>
@@ -255,6 +256,7 @@ std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, Vi
     }
     const Codegen::X64InstructionDecoder decoder;
     std::vector<TableLoad> loads;
+    std::unordered_map<std::size_t, std::vector<std::size_t>> loadsAt;
     std::vector<bool> instructionStarts(code.size() + 1, false);
     bool flowEnded = false;
     bool sawIndirectJump = false;
@@ -262,16 +264,18 @@ std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, Vi
     for (std::size_t position = 0; position < code.size();) {
         instructionStarts[position] = true;
         if (flowEnded && sawIndirectJump) {
-            for (const auto& load : loads) {
-                if (load.Target != position || load.At >= lastIndirectJump) continue;
-                const auto end = TablesEnd(code, position, loads, instructionStarts);
-                if (end == 0) continue;
-                const auto aligned = std::min<std::size_t>(code.size(), static_cast<std::size_t>(((codeAddress + end + 15) & ~VirtualAddress{15}) - codeAddress));
-                const auto checkedTo = std::max(aligned, std::min(code.size(), unwindEnd));
-                const bool toRangeEnd = OnlyPadding(code, end, code.size(), decoder);
-                if (!toRangeEnd && !OnlyPadding(code, end, checkedTo, decoder)) continue;
-                if (tableEnd) *tableEnd = toRangeEnd ? code.size() : checkedTo;
-                return position;
+            if (const auto found = loadsAt.find(position); found != loadsAt.end()) {
+                for (const auto at : found->second) {
+                    if (at >= lastIndirectJump) continue;
+                    const auto end = TablesEnd(code, position, loads, instructionStarts);
+                    if (end == 0) continue;
+                    const auto aligned = std::min<std::size_t>(code.size(), static_cast<std::size_t>(((codeAddress + end + 15) & ~VirtualAddress{15}) - codeAddress));
+                    const auto checkedTo = std::max(aligned, std::min(code.size(), unwindEnd));
+                    const bool toRangeEnd = OnlyPadding(code, end, code.size(), decoder);
+                    if (!toRangeEnd && !OnlyPadding(code, end, checkedTo, decoder)) continue;
+                    if (tableEnd) *tableEnd = toRangeEnd ? code.size() : checkedTo;
+                    return position;
+                }
             }
         }
         Codegen::DecodedInstructionInfo info;
@@ -286,7 +290,10 @@ std::size_t FindTrailingRelativeJumpTable(std::span<const std::uint8_t> code, Vi
             std::int32_t displacement = 0;
             std::memcpy(&displacement, code.data() + next - 4, sizeof(displacement));
             const auto target = static_cast<std::int64_t>(next) + displacement;
-            if (target > static_cast<std::int64_t>(next) && target < static_cast<std::int64_t>(code.size())) loads.push_back({position, static_cast<std::size_t>(target)});
+            if (target > static_cast<std::int64_t>(next) && target < static_cast<std::int64_t>(code.size())) {
+                loads.push_back({position, static_cast<std::size_t>(target)});
+                loadsAt[static_cast<std::size_t>(target)].push_back(position);
+            }
         }
         if (info.FlowKind == Codegen::ControlFlowKind::IndirectJump) {
             sawIndirectJump = true;
@@ -341,6 +348,7 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
     }
     std::vector<VirtualAddress> pendingTargets(branchTargets.begin(), branchTargets.end());
     std::set<VirtualAddress> exploredGaps;
+    std::vector<bool> decoded(segment.size(), false);
     while (!pendingTargets.empty()) {
         const auto current = pendingTargets.back();
         pendingTargets.pop_back();
@@ -350,7 +358,8 @@ std::vector<RelativeJumpTable> FindRelativeJumpTables(std::span<const std::uint8
         const bool inKnownFunction = after != mergedFunctions.begin() && current < std::prev(after)->second;
         if (inKnownFunction || !exploredGaps.insert(current).second) continue;
         auto pos = static_cast<std::size_t>(current - segmentVAddr);
-        while (pos < segment.size()) {
+        while (pos < segment.size() && !decoded[pos]) {
+            decoded[pos] = true;
             Codegen::DecodedInstructionInfo info;
             try {
                 info = decoder.DecodeInstruction(segment.data() + pos, segment.size() - pos);
