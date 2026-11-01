@@ -305,7 +305,17 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
     allocation.specialization = std::move(plan.specialization);
 }
 
-DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet) const {
+bool BufferDescriptorPresent(const DescriptorValue& descriptor) {
+    return descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
+}
+
+BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, std::span<const BufferSubstitute> substitutes, std::size_t index) {
+    const bool present = BufferDescriptorPresent(descriptor);
+    if (!present && !substitutes.empty()) return index < substitutes.size() && substitutes[index].known ? substitutes[index] : BufferSubstitute{};
+    return {descriptor.dwords[1] & 0xffff0000u, descriptor.dwords[3], present ? descriptor.dwords[0] & 3u : 0u, present};
+}
+
+DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes) const {
     if (stage == IrShaderStage::Pixel && exportMappings.size() != 8u) fail("fragment runtime export mappings are missing");
     if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity");
     DescriptorBindingPlan plan;
@@ -331,25 +341,25 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto& descriptor = snapshot.buffers.at(index);
         if (descriptor.dwordCount != 4u) fail("buffer specialization requires four descriptor words");
         const auto& buffer = info.buffers[index];
-        const auto format = (descriptor.dwords[3] >> 12u) & 0x7fu;
-        const bool present = descriptor.dwords[2] != 0u && (descriptor.dwords[0] != 0u || (descriptor.dwords[1] & 0xffffu) != 0u);
-        if (buffer.descriptorFormatted && (format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) || (present && format == 0u))) fail("buffer specialization has an unsupported format");
-        const auto misalignment = present ? descriptor.dwords[0] & 3u : 0u;
+        const auto fields = BufferSpecializationFields(descriptor, substitutes, index);
+        const auto format = (fields.word3 >> 12u) & 0x7fu;
+        if (buffer.descriptorFormatted && (format > static_cast<std::uint32_t>(IrBufferFormat::Format32_32_32_32Float) || (fields.known && format == 0u))) fail("buffer specialization has an unsupported format");
+        const auto misalignment = fields.misalignment;
         auto alignment = static_cast<std::uint32_t>(buffer.typedAlignment);
         if (buffer.descriptorFormatted && format != 0u) alignment = std::max(alignment, std::min(GetFormatInfo(static_cast<IrBufferFormat>(format)).byteSize, 4u));
         if (alignment == 0u || misalignment % alignment != 0u) fail("is a formatted buffer access through a V# whose base is not aligned to its element");
-        if (registrationModules && buffer.descriptorFormatted) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 1u, descriptor.dwords[3]});
+        if (registrationModules && buffer.descriptorFormatted) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 1u, fields.word3});
         if (registrationModules) plan.specialization.push_back({PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords + 3u, misalignment});
         if (!registrationModules) {
             const auto first = PipelineSpecialization::BufferBase + index * PipelineSpecialization::BufferWords;
-            plan.specialization.push_back({first, descriptor.dwords[1] & 0xffff0000u});
-            plan.specialization.push_back({first + 1u, descriptor.dwords[3]});
+            plan.specialization.push_back({first, fields.word1});
+            plan.specialization.push_back({first + 1u, fields.word3});
             plan.specialization.push_back({first + 3u, misalignment});
         }
         if (buffer.formattedReadMask != 0u) {
             for (std::uint32_t component = 0; component < 4u; ++component) {
                 if ((buffer.formattedReadMask & (1u << component)) == 0u) continue;
-                const auto selector = (descriptor.dwords[3] >> (component * 3u)) & 7u;
+                const auto selector = (fields.word3 >> (component * 3u)) & 7u;
                 if (selector == 2u || selector == 3u) fail("buffer specialization has a reserved component selector");
             }
         }
