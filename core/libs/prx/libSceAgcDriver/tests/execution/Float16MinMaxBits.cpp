@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -83,8 +84,9 @@ const std::array<Check, 4> PackedChecks{{
 }};
 
 struct Mode {
-    const char* name;
+    std::string name;
     std::optional<ShaderRecompiler::ShaderFloatMode> floatMode;
+    bool scalar = true;
 };
 
 const std::array<Mode, 7> Modes{{
@@ -254,11 +256,36 @@ int main() {
             request.context.floatMode = mode.floatMode;
             return ShaderRecompiler::Recompile(request);
         };
+        std::vector<Mode> modes(Modes.begin(), Modes.end());
+        for (std::uint32_t rounding = 0; rounding < 4; ++rounding) {
+            for (std::uint32_t denorm = 0; denorm < 4; ++denorm) {
+                for (const bool ieee : {false, true}) {
+                    for (const bool dx10 : {false, true}) {
+                        modes.push_back({"packed rounding=" + std::to_string(rounding) + " denorm=" + std::to_string(denorm) + " ieee=" + std::to_string(ieee) + " dx10=" + std::to_string(dx10),
+                                         ShaderRecompiler::ShaderFloatMode{0x30u | (rounding << 2u) | (denorm << 6u), dx10, ieee, false}, false});
+                    }
+                }
+            }
+        }
+        for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
+            auto add = PackedCode;
+            add[5] = 0xcc0f400au;
+            bool rejected = false;
+            try {
+                static_cast<void>(compile(add, {"packed add", ShaderRecompiler::ShaderFloatMode{0xc0u | (rounding << 2u)}}));
+            } catch (const std::runtime_error& error) {
+                Require(std::string(error.what()).find("f16 rounding not to nearest even") != std::string::npos, "unexpected packed add diagnostic: " + std::string(error.what()));
+                rejected = true;
+            }
+            Require(rejected, "directed packed add did not throw");
+        }
+        constexpr std::array<std::uint32_t, 16> special{0x0000u, 0x8000u, 0x7c00u, 0xfc00u, 0x7e01u, 0xfe42u, 0x7c01u, 0xfc42u,
+                                                       0x0001u, 0x8001u, 0x03ffu, 0x83ffu, 0x0400u, 0x8400u, 0x3c00u, 0xbc00u};
         std::uint64_t compared = 0u;
-        for (const auto& mode : Modes) {
+        for (const auto& mode : modes) {
             const bool flushInputs = mode.floatMode.has_value() && (mode.floatMode->floatMode & 0x40u) == 0u;
             const Model model{mode.floatMode.has_value() && mode.floatMode->ieeeMode, !mode.floatMode.has_value() || mode.floatMode->dx10Clamp, flushInputs};
-            const auto scalar = compile(ScalarCode, mode);
+            const auto scalar = mode.scalar ? std::optional{compile(ScalarCode, mode)} : std::nullopt;
             const auto packed = compile(PackedCode, mode);
             for (std::uint32_t batch = 0; batch < Batches; ++batch) {
                 for (std::uint32_t tid = 0; tid < Threads; ++tid) {
@@ -268,6 +295,11 @@ int main() {
                     if (tid % 8u == 1u) row[1] = row[0] ^ 0x80008000u;
                     if (tid % 8u == 2u) row[2] = row[1];
                     if (tid % 8u == 3u) row[2] = row[0] ^ 0x80008000u;
+                    if (tid < special.size()) {
+                        for (std::uint32_t index = 0; index < Inputs; ++index) {
+                            row[index] = special[(tid + batch + index) % special.size()] | (special[(tid + batch + index + 7u) % special.size()] << 16u);
+                        }
+                    }
                 }
                 const auto run = [&](const ShaderRecompiler::RecompileResult& result, std::span<const std::uint32_t> code, std::span<const Check> checks, bool isPacked) {
                     Output.fill(0xdeadbeefu);
@@ -283,7 +315,7 @@ int main() {
                         }
                     }
                 };
-                run(scalar, ScalarCode, ScalarChecks, false);
+                if (scalar.has_value()) run(*scalar, ScalarCode, ScalarChecks, false);
                 run(packed, PackedCode, PackedChecks, true);
             }
         }
