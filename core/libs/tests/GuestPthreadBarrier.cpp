@@ -1,3 +1,4 @@
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <array>
@@ -139,4 +140,24 @@ int main() {
     Require(pthread_barrier_wait_nid_postfix(&single) == BARRIER_SERIAL_THREAD);
     Require(pthread_barrier_destroy_nid_postfix(&single) == 0);
     Require(pthread_barrierattr_destroy_nid_postfix(&attr) == 0);
+
+    Context sysContext;
+    Require(pthread_barrier_init_nid_postfix(&sysContext.barrier, nullptr, 2) == 0);
+    auto* const sysBarrier = sysContext.barrier;
+    Pthread sysThread = nullptr;
+    Require(scePthreadCreate(&sysThread, nullptr, Waiter, &sysContext, nullptr) == 0);
+    for (;;) {
+        {
+            std::lock_guard lock(sysBarrier->mutex);
+            if (sysBarrier->arrived == 1) break;
+        }
+        std::this_thread::yield();
+    }
+    Require(scePthreadBarrierDestroy(&sysContext.barrier) == SCE_KERNEL_ERROR_EBUSY && sysContext.barrier == sysBarrier);
+    Require(scePthreadBarrierWait(&sysContext.barrier) == BARRIER_SERIAL_THREAD);
+    Require(scePthreadJoin(sysThread, nullptr) == 0);
+    Require(sysContext.released == 1 && sysContext.serial == 0);
+    Require(scePthreadBarrierDestroy(&sysContext.barrier) == 0 && sysContext.barrier == nullptr);
+    Require(scePthreadBarrierWait(&sysContext.barrier) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadBarrierDestroy(&sysContext.barrier) == SCE_KERNEL_ERROR_EINVAL);
 }
