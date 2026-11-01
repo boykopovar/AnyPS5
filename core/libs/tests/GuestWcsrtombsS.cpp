@@ -3,11 +3,28 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr auto Failed = static_cast<std::size_t>(-1);
 constexpr auto Huge = std::size_t{1} << 63;
+constexpr auto Limit = (std::size_t{1} << 61) - 1;
+static int violations = 0;
+static std::string lastMessage;
+
+static void APS5_VABI RecordViolation(const char* message, void* pointer, int) {
+    Require(pointer == nullptr);
+    ++violations;
+    lastMessage = message;
+}
+
+static bool Reported(const char* message) {
+    const bool matched = violations == 1 && lastMessage == message;
+    violations = 0;
+    lastMessage.clear();
+    return matched;
+}
 static const std::uint16_t text[] = {'a', 'b', 'c', 0};
 static const std::uint16_t wide[] = {'a', 0x100, 'b', 0};
 
@@ -28,12 +45,14 @@ static Run Convert(const std::uint16_t* input, std::size_t capacity, std::size_t
 }
 
 int main() {
+    set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&RecordViolation));
     auto run = Convert(text, 0, 0, false);
     Require(run.status == 0 && run.result == 3 && run.source == text);
     run = Convert(wide, 0, Huge, false);
     Require(run.status == 0 && run.result == 4 && run.source == wide);
     run = Convert(text, 5, 1, false);
     Require(run.status == 22 && run.result == Failed && run.source == text);
+    Require(Reported("wcsrtombs_s: bad argument"));
 
     run = Convert(text, 8, 8);
     Require(run.status == 0 && run.result == 3 && run.source == nullptr && std::memcmp(run.out, "abc\0x", 5) == 0);
@@ -46,6 +65,7 @@ int main() {
 
     run = Convert(text, 3, 8);
     Require(run.status == 34 && run.result == Failed && run.source == text + 3 && std::memcmp(run.out, "\0bcx", 4) == 0);
+    Require(Reported("wcstombs_s: buffer too small"));
     run = Convert(text, 3, 3);
     Require(run.status == 34 && run.result == Failed && run.source == text + 3 && std::memcmp(run.out, "\0bcx", 4) == 0);
     run = Convert(text, 1, 8);
@@ -53,6 +73,15 @@ int main() {
 
     run = Convert(wide, 8, 8);
     Require(run.status == 0 && run.result == 4 && run.source == nullptr && std::memcmp(run.out, "a\xc4\x80" "b\0", 5) == 0);
+    violations = 0;
+    run = Convert(text, Limit, 8);
+    Require(run.status == 0 && run.result == 3 && violations == 0);
+    run = Convert(text, 8, Limit);
+    Require(run.status == 0 && run.result == 3 && violations == 0);
+    run = Convert(text, Limit + 1, 8);
+    Require(run.status == 22 && run.result == Failed && run.out[0] == 'x' && Reported("wcsrtombs_s: bad argument"));
+    run = Convert(text, 8, Limit + 1);
+    Require(run.status == 22 && run.result == Failed && run.source == text && run.out[0] == '\0' && Reported("wcsrtombs_s: bad argument"));
 
     run = Convert(text, 0, 8);
     Require(run.status == 22 && run.result == Failed && run.source == text && run.out[0] == 'x');
@@ -84,8 +113,11 @@ int main() {
     Require(std::memcmp(narrow, "ab\0x", 4) == 0);
     Require(wcstombs_s_nid_postfix(&result, nullptr, 0, text, 0) == 0 && result == 3);
     std::memset(narrow, 'x', sizeof(narrow));
+    violations = 0;
     Require(wcstombs_s_nid_postfix(&result, narrow, 3, text, 3) == 34 && result == Failed && narrow[0] == '\0');
+    Require(Reported("wcstombs_s: buffer overflow"));
     Require(wcstombs_s_nid_postfix(&result, nullptr, 4, text, 4) == 22 && result == Failed);
+    Require(Reported("wcstombs_s: bad argument"));
     std::memset(narrow, 'x', sizeof(narrow));
     Require(wcstombs_s_nid_postfix(&result, narrow, sizeof(narrow), nullptr, sizeof(narrow)) == 22);
     Require(result == Failed && narrow[0] == '\0');
