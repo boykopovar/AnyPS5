@@ -112,6 +112,114 @@ def source_assembly_definitions(text):
             yield match.group(1)
 
 
+def data_declarations(tokens, c_linkage):
+    direct = tokens[:2] in (["extern", '"C"'], ["extern", '"C++"'])
+    if direct:
+        c_linkage = tokens[1] == '"C"'
+        tokens = tokens[2:]
+    if not c_linkage or not tokens or tokens[0] in {"using", "typedef"}:
+        return []
+    header = tokens[:next((index for index, token in enumerate(tokens) if token in {"=", "{"}), len(tokens))]
+    if "static" in header:
+        return []
+    external = direct or "extern" in header
+    names, groups = [], []
+    name, initialized, local = None, False, False
+    base = header[:next((index for index, token in enumerate(header) if token in {"*", "&", ","}), len(header))]
+    base_const, constexpr, start = "const" in base, "constexpr" in base, 0
+    pairs = {"(": ")", "[": "]", "{": "}", "<": ">"}
+    angle_ends, end = [None] * len(tokens), None
+    for index in range(len(tokens) - 1, -1, -1):
+        if tokens[index] in {">", "=", "{"}:
+            end = tokens[index]
+        angle_ends[index] = end
+    for index, token in enumerate(tokens):
+        if token == "," and not groups:
+            if name is not None and not local and (initialized or not external):
+                names.append(name)
+            name, initialized, local, start = None, False, False, index + 1
+        elif token == "=" and not groups:
+            initialized = True
+        elif not initialized and re.fullmatch(r"[A-Za-z_]\w*_nid_postfix", token):
+            prefix = tokens[start:index]
+            unqualified = prefix[:]
+            while unqualified and unqualified[-1] in {"const", "volatile"}:
+                unqualified.pop()
+            pointer = len(groups) == 1 and unqualified[-2:] == ["(", "*"]
+            following = tokens[index + 1] if index + 1 < len(tokens) else None
+            previous = tokens[index - 1] if index else None
+            argument_index = index + 2
+            while argument_index < len(tokens) and tokens[argument_index] in {"+", "-", "!", "~", "("}:
+                argument_index += 1
+            argument = tokens[argument_index] if argument_index < len(tokens) else ""
+            direct_init = following == "(" and (re.match(r"[0-9.]|(?:u8|u|U|L)?R?[\"']", argument) or argument in {"true", "false", "nullptr"})
+            if (not groups or pointer) and (following != "(" or direct_init) and previous not in {"struct", "class", "union", "enum"}:
+                name = token
+                pointers = [offset for offset, item in enumerate(prefix) if item in {"*", "&"}]
+                local = not external and (constexpr or ("const" in prefix[pointers[-1] + 1:] if pointers else base_const))
+                if direct_init:
+                    initialized = True
+        template = False
+        if token == "<" and index > 0 and re.fullmatch(r"[A-Za-z_]\w*|>", tokens[index - 1]) and \
+                index + 1 < len(tokens) and tokens[index + 1] not in {"<", "="}:
+            template = angle_ends[index] == ">"
+        if token in pairs and (token != "<" or template):
+            if token == "{" and not groups:
+                initialized = True
+            groups.append(pairs[token])
+        elif groups and token == groups[-1]:
+            groups.pop()
+    if name is not None and not local and (initialized or not external):
+        names.append(name)
+    return names
+
+
+def source_data_definitions(text):
+    text = text.replace("\\\n", "").replace("\\\r\n", "")
+    scopes, groups, statement = [False], [], []
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    directive_end = 0
+    for match in CPP_TOKEN.finditer(text):
+        if match.start() < directive_end or match.group("comment") is not None:
+            continue
+        token = match.group()
+        if token == "#" and not text[text.rfind("\n", 0, match.start()) + 1:match.start()].strip():
+            end = text.find("\n", match.end())
+            directive_end = len(text) if end < 0 else end
+            continue
+        if scopes[-1] is None:
+            if token == "{":
+                scopes.append(None)
+            elif token == "}":
+                scopes.pop()
+            continue
+        if token == "{" and not groups:
+            if statement in (["extern", '"C"'], ["extern", '"C++"']):
+                scopes.append(statement[1] == '"C"')
+            elif statement[:1] == ["namespace"] or statement[:2] == ["inline", "namespace"]:
+                scopes.append(scopes[-1] if statement[-1] != "namespace" else None)
+            elif data_declarations(statement + ["{", "}"], scopes[-1]):
+                statement.append(token)
+                groups.append("}")
+                continue
+            else:
+                scopes.append(None)
+            statement = []
+        elif token == "}" and not groups:
+            if len(scopes) > 1:
+                scopes.pop()
+            statement = []
+        elif token == ";" and not groups:
+            yield from data_declarations(statement, scopes[-1])
+            statement = []
+        else:
+            statement.append(token)
+            if token in pairs:
+                groups.append(pairs[token])
+            elif groups and token == groups[-1]:
+                groups.pop()
+
+
 def collect_unknowns():
     found = {}
     for path in source_files(PRX):
@@ -133,6 +241,9 @@ def collect_real_names():
         for name in source_assembly_definitions(text):
             names.add(name)
             names.add(strip_nid_postfix(name))
+        for name in source_data_definitions(text):
+            names.add(name)
+            names.add(strip_nid_postfix(name))
     return names
 
 
@@ -143,6 +254,7 @@ def source_locations(nids):
         exports = set(source_aliases(text))
         names = [match.group(1) for match in source_definitions(text)]
         names.extend(source_assembly_definitions(text))
+        names.extend(source_data_definitions(text))
         for name in names:
             canonical = strip_nid_postfix(name)
             if not canonical.endswith(("_nid_no_patch", "_nid_no_patch_cut")):
