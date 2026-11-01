@@ -34,9 +34,11 @@ void TestInitialUserLogout() {
     SceUserServiceEvent event{};
     UserServiceLoginUserIdList list{};
     int initial = -1;
+    Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetInitialUser(&initial) == USER_SERVICE_OK && initial == USER_SERVICE_INITIAL_USER_ID);
 
     UserServiceSetUserConnected_nid_postfix(0, false);
+    Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
     Require(event.event_type == 1 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
@@ -44,6 +46,7 @@ void TestInitialUserLogout() {
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_ERROR_NO_EVENT);
 
     UserServiceSetUserConnected_nid_postfix(0, true);
+    Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetEvent(&event) == USER_SERVICE_OK);
     Require(event.event_type == 0 && event.user_id == USER_SERVICE_INITIAL_USER_ID);
     Require(sceUserServiceGetLoginUserIdList(&list) == USER_SERVICE_OK);
