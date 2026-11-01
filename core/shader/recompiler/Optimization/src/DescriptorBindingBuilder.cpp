@@ -207,6 +207,28 @@ const char* UnnormalizedUseReason(std::uint32_t uses) {
     }
 }
 
+void RequireShaderMinLod(const ShaderInfo& info, const ResourceSnapshot& snapshot, std::uint32_t image, const ImageResource& mode, std::uint32_t clamp) {
+    const auto prefix = "image " + std::to_string(image) + " applies its T#'s minimum LOD of " + std::to_string(clamp) + "/256 in the shader";
+    if ((mode.emulatedCompare & EmulatedCompare::Enabled) != 0u || mode.conversionFormat == IrBufferFormat::Format11_11_10UNorm) fail(prefix + " to an emulated depth-compare or 11:11:10 sample, which is not implemented");
+    for (const auto& pair : info.sampledPairs) {
+        if (pair.image != image) continue;
+        const auto& sampler = info.samplers.at(pair.sampler);
+        const auto name = "S# " + std::to_string(pair.sampler);
+        if (sampler.table != NoTable) fail(prefix + " and is sampled through " + name + " from a table, whose LOD range is unknown, which is not implemented");
+        if ((sampler.uses & SamplerUseQueryLod) != 0u) fail(prefix + " and " + name + " is used by image_get_lod, which is not implemented");
+        if ((sampler.uses & SamplerUseGather) != 0u && clamp >= 256u) fail(prefix + " and " + name + " is used by a gather, which reads below that level, which is not implemented");
+        if ((sampler.uses & (SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient)) == 0u) continue;
+        const auto& words = snapshot.samplers.at(pair.sampler).dwords;
+        const bool unnormalized = (words[0] & ForceUnnormalizedBit) != 0u;
+        const bool mipmapped = !unnormalized && ((words[2] >> 26u) & 3u) != 0u;
+        const auto maxLod = mipmapped ? (words[1] >> 12u) & 0xfffu : 0u;
+        if (maxLod < clamp) fail(prefix + " above the maximum LOD of " + std::to_string(maxLod) + "/256 of " + name + (mipmapped ? "" : unnormalized ? " (unnormalized)" : " (no mip filter)") + ", which is not implemented");
+        if ((((words[2] >> 20u) ^ (words[2] >> 22u)) & 1u) != 0u) fail(prefix + " and " + name + " has different magnification and minification filters, between which the clamp moves the choice, which is not implemented");
+        const auto bias = static_cast<std::int32_t>(((words[2] & 0x3fffu) ^ 0x2000u) - 0x2000u);
+        if (bias != 0 && (sampler.uses & SamplerUseExplicitLod) != 0u) fail(prefix + " to an explicit LOD that " + name + " biases by " + std::to_string(bias) + "/256, which is not implemented");
+    }
+}
+
 struct UnnormalizedProof {
     std::vector<bool> samplers;
     std::vector<bool> images;
@@ -343,7 +365,7 @@ BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, s
     return {descriptor.dwords[1] & 0xffff0000u, descriptor.dwords[3], present ? descriptor.dwords[0] & 3u : 0u, present};
 }
 
-DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes) const {
+DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod) const {
     if (stage == IrShaderStage::Pixel && exportMappings.size() != 8u) fail("fragment runtime export mappings are missing");
     if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity");
     DescriptorBindingPlan plan;
@@ -402,6 +424,16 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         const auto first = PipelineSpecialization::ImageBase + index * PipelineSpecialization::ImageWords;
         plan.specialization.push_back({first, imageModes[index]});
         for (std::uint32_t component = 0; component < 4u; ++component) plan.specialization.push_back({first + 1u + component, (snapshot.images.at(index).dwords[3] >> (component * 3u)) & 7u});
+        if (shaderImageMinLod) {
+            const auto& words = snapshot.images.at(index).dwords;
+            const auto minLod = (words[1] >> 8u) & 0xfffu;
+            const auto baseLevel = (words[3] >> 12u) & 0xfu;
+            const auto maxMip = (words[5] >> 4u) & 0xfu;
+            const auto lastLevel = std::max(baseLevel <= maxMip ? std::min((words[3] >> 16u) & 0xfu, maxMip) : (words[3] >> 16u) & 0xfu, baseLevel);
+            const auto clamp = minLod > baseLevel * 256u ? std::min(minLod - baseLevel * 256u, (lastLevel - baseLevel) * 256u) : 0u;
+            if (clamp != 0u) RequireShaderMinLod(info, snapshot, index, modes.at(imageModes[index]), clamp);
+            plan.specialization.push_back({PipelineSpecialization::MinLodBase + index, std::bit_cast<std::uint32_t>(static_cast<float>(clamp) / 256.0f)});
+        }
         const auto& image = info.images[index];
         if (image.resourceClass != ImageResourceClass::Storage || !image.written || image.atomic) continue;
         const auto code = (snapshot.images.at(index).dwords[1] >> 20u) & 0x1ffu;

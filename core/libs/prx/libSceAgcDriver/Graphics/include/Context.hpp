@@ -262,6 +262,8 @@ struct Context {
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
     bool primitiveListRestart = false;
     bool imageViewMinLod = false;
+    bool shaderResourceMinLod = false;
+    bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool graphicsPipelineLibrary = false;

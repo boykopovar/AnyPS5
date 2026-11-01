@@ -466,6 +466,8 @@ struct VulkanDevice::State {
     bool graphicsPipelineLibrary = false;
     bool pipelineLinkTimeOptimization = true;
     bool imageViewMinLod = false;
+    bool shaderResourceMinLod = false;
+    bool shaderImageMinLod = false;
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool maintenance5 = false;
@@ -1676,7 +1678,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (hasExtension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &minLodFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
-        state->imageViewMinLod = minLodFeatures.minLod == VK_TRUE;
+        state->imageViewMinLod = minLodFeatures.minLod == VK_TRUE && std::getenv("APS5_NO_IMAGE_VIEW_MIN_LOD") == nullptr;
         if (state->imageViewMinLod) deviceExtensions.push_back(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
     }
     minLodFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_MIN_LOD_FEATURES_EXT};
@@ -1901,6 +1903,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (enabled.shaderImageGatherExtended) state->capabilities.push_back(spv::CapabilityImageGatherExtended);
     enabled.shaderResourceMinLod = available.shaderResourceMinLod;
     if (enabled.shaderResourceMinLod) state->capabilities.push_back(spv::CapabilityMinLod);
+    state->shaderResourceMinLod = enabled.shaderResourceMinLod == VK_TRUE;
+    state->shaderImageMinLod = state->shaderResourceMinLod && !state->imageViewMinLod && !state->graphicsPipelineLibrary;
     enabled.sampleRateShading = available.sampleRateShading;
     enabled.geometryShader = available.geometryShader;
     state->geometryShader = enabled.geometryShader == VK_TRUE;
@@ -4160,6 +4164,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.fragmentShaderBarycentricEnabled = state->fragmentShaderBarycentric;
     target.fragmentBarycentricBuiltins = state->fragmentBarycentricBuiltins;
     target.nonConstantImageOffsets = state->maintenance8;
+    target.shaderImageMinLod = state->shaderImageMinLod;
     target.narrowSubgroupClock = state->narrowSubgroupClock;
     target.float64DenormPreserve = state->float64DenormPreserve;
     target.float16DenormPreserve = state->float16DenormPreserve;
@@ -4333,6 +4338,8 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.earlyFragmentSampleMaskTestBeforeSampleCounting = state->earlyFragmentSampleMaskTestBeforeSampleCounting;
     context.primitiveListRestart = state->primitiveListRestart;
     context.imageViewMinLod = state->imageViewMinLod;
+    context.shaderResourceMinLod = state->shaderResourceMinLod;
+    context.shaderImageMinLod = state->shaderImageMinLod;
     context.pipelineExecutableInfo = state->pipelineExecutableInfo;
     context.maintenance8 = state->maintenance8;
     context.srgbDecodeFormats = state->srgbDecodeFormats;
