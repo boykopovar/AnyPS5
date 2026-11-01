@@ -17,6 +17,7 @@
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AspectFit.hpp"
+#include "prx/libSceAgcDriver/Execution/include/FrameLimit.hpp"
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
 #include "prx/libSceVideoOut/include/DialogInput.hpp"
@@ -42,9 +43,31 @@ namespace {
 
 constexpr std::uint64_t FLIP_ROOM_WAIT_MICROS = 60000000;
 constexpr std::uint64_t PRESENT_POLL_MICROS = 10000;
+constexpr std::int64_t FRAME_LIMIT_SLICE_NANOS = 20000000;
 
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(std::string("VideoOut: ") + reason);
+}
+
+std::optional<AgcDriver::FramePacer>& framePacer() {
+    static std::optional<AgcDriver::FramePacer> pacer = []() -> std::optional<AgcDriver::FramePacer> {
+        const auto& limit = AgcDriver::ConfiguredFrameLimit();
+        if (!limit) return std::nullopt;
+        return AgcDriver::FramePacer(limit->milliFramesPerSecond);
+    }();
+    return pacer;
+}
+
+bool paceFlip(FlipRequest& req) {
+    auto& pacer = framePacer();
+    if (!pacer) return true;
+    const auto clock = [] { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); };
+    const auto sleep = [&](std::int64_t nanos) {
+        PreciseSleepUs(static_cast<unsigned long long>((nanos + 999) / 1000));
+        std::lock_guard lock(req.cfg->mutex);
+        return !req.cfg->Closed() && !req.cfg->failure;
+    };
+    return pacer->Pace(clock, sleep, FRAME_LIMIT_SLICE_NANOS);
 }
 
 std::uint32_t resolutionIndex(std::uint32_t width, std::uint32_t height) {
@@ -610,6 +633,15 @@ void VideoOutDriver::processFlip(FlipRequest& req) {
             req.gpuComplete = true;
         }
     } else {
+        if (!paceFlip(req)) {
+            std::lock_guard lock(req.cfg->mutex);
+            req.cfg->CheckAlive();
+            if (req.cfg->Closed()) {
+                req.ReleaseLocked();
+                return;
+            }
+        }
+        timing.Mark("frame_limit");
         OnMainThread([&] { window.Ensure(req.width, req.height); });
         const auto extensions = windowExtensions(window.Handle());
         const AgcDriver::PresentationWindow target{window.Handle(), extensions, &createWindowSurface, &windowDrawableSize, req.width, req.height, req.timing};

@@ -1,0 +1,10 @@
+if(BUILD_TESTING)
+    add_test_executable(scalar_saveexec_tests ${LIBS_INCLUDE_DIR}/tests/ScalarSaveexec.cpp)
+    target_link_libraries(scalar_saveexec_tests PRIVATE shader_recompiler_agc_driver libc)
+    configure_windows_unwind(scalar_saveexec_tests)
+    add_test(NAME scalar_saveexec COMMAND scalar_saveexec_tests)
+    if(WIN32)
+        set_tests_properties(scalar_saveexec PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
