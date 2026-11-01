@@ -130,7 +130,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_libressl_rsa_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslRsa.cpp)
     target_include_directories(guest_libressl_rsa_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_libressl_rsa_tests PRIVATE libSceLibreSsl)
+    target_link_libraries(guest_libressl_rsa_tests PRIVATE libSceLibreSsl libc)
     configure_windows_unwind(guest_libressl_rsa_tests)
     add_test(NAME guest_libressl_rsa COMMAND guest_libressl_rsa_tests)
     set_tests_properties(guest_libressl_rsa PROPERTIES TIMEOUT 30)
