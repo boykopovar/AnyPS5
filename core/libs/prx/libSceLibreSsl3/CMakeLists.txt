@@ -1,4 +1,4 @@
-add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp)
+add_library(libSceLibreSsl3 SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Digest.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerDecoder.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/Key.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/EvpDigest.cpp)
 target_include_directories(libSceLibreSsl3 PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl3 PRIVATE libSceLibreSsl libc)
 configure_windows_unwind(libSceLibreSsl3)
@@ -87,8 +87,38 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_libressl3_key_reference_tests)
     add_test(NAME guest_libressl3_key_reference COMMAND guest_libressl3_key_reference_tests)
     set_tests_properties(guest_libressl3_key_reference PROPERTIES TIMEOUT 20)
+    add_test_executable(guest_libressl3_evp_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3Evp.cpp)
+    target_include_directories(guest_libressl3_evp_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_evp_tests PRIVATE libSceLibreSsl3 libc)
+    configure_windows_unwind(guest_libressl3_evp_tests)
+    add_test(NAME guest_libressl3_evp COMMAND guest_libressl3_evp_tests)
+    set_tests_properties(guest_libressl3_evp PROPERTIES TIMEOUT 20)
     if(WIN32)
-        set_tests_properties(guest_crypto_memcmp guest_libressl3_digest guest_libressl3_asn1 guest_libressl3_key_reference PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_crypto_memcmp guest_libressl3_digest guest_libressl3_asn1 guest_libressl3_key_reference guest_libressl3_evp PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
     endif()
+endif()
+
+if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLUDE_DIR}/prx/libSceLibreSsl/src/Evp.cpp")
+    add_library(guest_libressl3_mixed_evp_consumer SHARED ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3MixedEvp.cpp)
+    target_include_directories(guest_libressl3_mixed_evp_consumer PRIVATE ${LIBS_INCLUDE_DIR})
+    target_compile_options(guest_libressl3_mixed_evp_consumer PRIVATE -fno-plt -Werror=return-type)
+    target_link_libraries(guest_libressl3_mixed_evp_consumer PRIVATE $<TARGET_FILE:libSceLibreSsl3>)
+    set_target_properties(guest_libressl3_mixed_evp_consumer PROPERTIES PREFIX "" SUFFIX .prx)
+    add_dependencies(guest_libressl3_mixed_evp_consumer libSceLibreSsl3)
+    add_test_executable(guest_libressl3_mixed_evp_loader ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3MixedLoader.cpp)
+    target_link_libraries(guest_libressl3_mixed_evp_loader PRIVATE ${CMAKE_DL_LIBS})
+    add_dependencies(guest_libressl3_mixed_evp_loader guest_libressl3_mixed_evp_consumer libc libkernel libSceLibcInternal nid_patcher)
+    add_test(NAME guest_libressl3_mixed_evp COMMAND ${CMAKE_COMMAND}
+        -DCONSUMER=$<TARGET_FILE:guest_libressl3_mixed_evp_consumer>
+        -DPATCHER=$<TARGET_FILE:nid_patcher>
+        -DLIBC=$<TARGET_FILE:libc>
+        -DKERNEL=$<TARGET_FILE:libkernel>
+        -DINTERNAL=$<TARGET_FILE:libSceLibcInternal>
+        -DLEGACY=$<TARGET_FILE:libSceLibreSsl>
+        -DSSL3=$<TARGET_FILE:libSceLibreSsl3>
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/mixed-evp
+        -P ${LIBS_INCLUDE_DIR}/tests/LibreSsl3MixedEvp.cmake
+        -- $<TARGET_FILE:guest_libressl3_mixed_evp_loader>)
+    set_tests_properties(guest_libressl3_mixed_evp PROPERTIES TIMEOUT 20)
 endif()
