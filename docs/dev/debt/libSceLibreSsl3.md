@@ -2,21 +2,24 @@
 
 ### Unknown function info
 
-- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 81 named callable exports, excluding `CRYPTO_memcmp`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref` and `EC_KEY_up_ref`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
+- [libSceLibreSsl3 pending exports](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - 80 named callable exports, excluding `CRYPTO_memcmp`, `MD5`, `SHA1`, `d2i_ASN1_INTEGER`, `EVP_PKEY_up_ref`, `EC_KEY_up_ref` and `RSA_up_ref`, remain unimplemented from the [PS5 3.20 export table](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceLibreSsl3.c), cross-checked against the same module in PS5 firmware 13.60. Their signatures and behaviour are unverified; the declarations use the no-parameter unknown-signature convention and throw through `NotImplemented_nid_no_patch`.
 
 ### Functional
 
 - [ASN.1 integer decoding](../../../core/libs/prx/libSceLibreSsl3/src/IntegerDecoder.cpp) throws on rejected encodings/allocation failures instead of matching native NULL/error handling. Redundant-sign/empty-content rejection retains old output that the module frees and clears. The decoder does not populate the legacy queue; remaining LibreSSL3 ERR exports throw. [13.42 native-PC evidence](https://github.com/boykopovar/AnyPS5/pull/10948#issuecomment-6412137728), using a recording allocator, confirms tested replacement/free order, allocation cleanup and negative-length NULL returns. Nonnegative null input faults natively and throws here. Console/application-heap ABI and untested error-precedence/overflow combinations remain unverified. Contracts follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/asn1). Closes when: error/replacement semantics and console/allocator interoperability are verified.
 - [CRYPTO_memcmp](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) follows the public [LibreSSL signature and equality contract](https://man.openbsd.org/CRYPTO_memcmp.3), without PS5 verification. The exact nonzero result for unequal buffers is unspecified by that contract. Content-independent execution of its volatile byte reads still depends on the compiler; inspect optimized code when changing toolchains. Closes when: measured on a PS5 and the supported toolchains' generated code is checked.
 - [MD5 and SHA1](../../../core/libs/prx/libSceLibreSsl3/src/Digest.cpp) (libSceLibreSsl3) - follow LibreSSL's [md5.c, sha1.c](https://github.com/libressl/openbsd/tree/bc9483725c5815efb64b6d9acc52fc5fba139212/src/lib/libcrypto) and hash through libSceLibreSsl's `MD5_*` and `SHA1_*`. A null digest buffer, which LibreSSL 4.0.0 does not check, throws. Nothing is checked on the console
-- [EVP_PKEY_up_ref and EC_KEY_up_ref](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) - console layouts and retain/release interoperability are unverified. The 32-byte EVP and 64-byte EC layouts, with counters at offsets 4 and 48, follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `evp/evp_local.h`, `evp/p_lib.c`, `ec/ec_local.h` and `ec/ec_key.c`. Atomic retains replace its internal mutex; future releases must synchronize with the same counters. With no key constructors/destructors in this module, tests use caller-owned objects without validating allocator or destruction compatibility. Null keys and signed-counter overflow, undefined upstream, throw without mutation. Closes when: console layouts and lifetime interoperability are measured.
+- [EVP_PKEY_up_ref, EC_KEY_up_ref and RSA_up_ref](../../../core/libs/prx/libSceLibreSsl3/src/Key.cpp) - console layouts and retain/release interoperability are unverified. The 32-byte EVP, 64-byte EC and 152-byte RSA layouts, with counters at offsets 4, 48 and 104, follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) `evp/evp_local.h`, `evp/p_lib.c`, `ec/ec_local.h`, `ec/ec_key.c`, `rsa/rsa_local.h` and `rsa/rsa_lib.c`; the RSA layout has no `engine` field, unlike libSceLibreSsl's `LibreSslRsa`. Atomic retains replace its internal mutex; future releases must synchronize with the same counters. With no key constructors/destructors in this module, tests use caller-owned objects without validating allocator or destruction compatibility. Null keys and signed-counter overflow, undefined upstream, throw without mutation. Closes when: console layouts and lifetime interoperability are measured.
 
 - [Parent export forwarding](../../../core/libs/prx/libSceLibreSsl3/ParentExports.cpp) exposes 395 parent-library exports on Windows through IAT tail jumps without changing their ABI. Non-Windows hosts use their existing dependency lookup. Static COFF inspection verifies names, parent imports and tail jumps; Windows loading and runtime behavior remain unverified. Parent functions retain their existing implementation limitations.
+- [EVP_MD_CTX_md](../../../core/libs/prx/libSceLibreSsl3/src/DigestContext.cpp) (libSceLibreSsl3) - nothing is checked on the console. As in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/evp_digest.c) `evp_digest.c`, a null context returns null and any other returns its first field, `digest`. That field is first in 4.0.0's `evp_local.h` and in the [2.5.4 layout](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) of the contexts the forwarded libSceLibreSsl exports handle; the layouts differ after it, so the context and digest are declared opaque. Closes when: compared with the console.
+- [EVP_CIPHER_key_length and EVP_CIPHER_iv_length](../../../core/libs/prx/libSceLibreSsl3/src/Cipher.cpp) (libSceLibreSsl3) - nothing is checked on the console. They return `key_len` and `iv_len` from the 80-byte `EVP_CIPHER` of [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp) `evp_local.h` and `evp_cipher.c`. The fields are at offsets 8 and 12, as in the [2.5.4 layout](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/evp/evp.h) of the ciphers the forwarded libSceLibreSsl exports handle. A null cipher, which LibreSSL dereferences, throws. Closes when: compared with the console.
+- [X509_VERIFY_PARAM_set_flags](../../../core/libs/prx/libSceLibreSsl3/src/X509VerifyParam.cpp) (libSceLibreSsl3) - nothing is checked on the console. It ORs the flags into `flags` and returns 1, as both [LibreSSL 2.5.4](https://github.com/libressl/openbsd/blob/2e2c612066aa993717528a0249c15c51128d61cb/src/lib/libcrypto/x509/x509_vpm.c) and [4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/x509/x509_vpm.c) `x509_vpm.c` do. They differ when `EXPLICIT_POLICY`, `INHIBIT_ANY` or `INHIBIT_MAP` is set while `POLICY_CHECK` is neither set nor requested: 2.5.4 also adds `POLICY_CHECK` and 4.0.0 does not. The console's choice is unknown, so that case throws through `NotImplemented_nid_no_patch` and leaves the parameters unchanged. It writes libSceLibreSsl's 2.5.4 `LibreSslX509VerifyParam`, whose `flags` is at offset 24 as in 4.0.0. Null parameters throw. Closes when: the console's policy behaviour is measured.
 - [sk_new, sk_push and sk_free](../../../core/libs/prx/libSceLibreSsl3/src/Stack.cpp) (libSceLibreSsl3) - follow [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/stack/stack.c) `stack.c` with libSceLibreSsl's 32-byte `_STACK` layout, which `stack_local.h` keeps there. Stacks and element arrays come from the guest heap, so the forwarded `sk_pop_free` can release them. Nothing is checked on the console. Where LibreSSL faults or overflows, they throw: `sk_push` on a null stack, on a negative element count, on a null element array it does not regrow, or when the element array cannot double without overflowing `int`
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 180 callable exports: 54 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 176 callable exports: 50 named and 126 known only by NID. Every entry throws. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. No functional implementation or title unblock is claimed.
 
 | Name | NID |
 | --- | --- |
@@ -42,7 +45,6 @@
 | `unknown` | `44M+SEbpNdQ` |
 | `unknown` | `4Q3bvOy4LY8` |
 | `unknown` | `4pEl-5DmrrM` |
-| `EVP_CIPHER_iv_length` | `4ryyfC3TknU` |
 | `SSL_set_accept_state` | `5BoCLZK9mGk` |
 | `unknown` | `5DhOJmgra8E` |
 | `unknown` | `5NBoRJYLH0U` |
@@ -55,7 +57,6 @@
 | `unknown` | `8kct4CSWwOA` |
 | `tls_configure` | `8pwP-7j5UZI` |
 | `X509_STORE_CTX_get0_param` | `8wroYNJAQpo` |
-| `X509_VERIFY_PARAM_set_flags` | `9E9Gr4FLIE4` |
 | `unknown` | `A-Hs-8mau+8` |
 | `unknown` | `A0lZtFjhcTw` |
 | `unknown` | `A65b+ZhOt9k` |
@@ -76,7 +77,6 @@
 | `unknown` | `GFEaREp1UFw` |
 | `EVP_PKEY_get0_EC_KEY` | `GY2X+VHs568` |
 | `unknown` | `GjO5Ap3E-t4` |
-| `EVP_MD_CTX_md` | `H1dRCduUy+o` |
 | `unknown` | `HE-vihq-KKw` |
 | `EVP_PKEY_verify` | `HEuvmk+aHs4` |
 | `unknown` | `IOutZPRNNPo` |
@@ -166,7 +166,6 @@
 | `EVP_PKEY_derive_set_peer` | `ovH4WphWIQQ` |
 | `unknown` | `pW329hq95Hc` |
 | `unknown` | `pdxCm9+CCc4` |
-| `EVP_CIPHER_key_length` | `qAG7o03bkkM` |
 | `unknown` | `qGsc6uT6p1E` |
 | `EVP_PKEY_verify_init` | `qseLIVbdvMQ` |
 | `unknown` | `rJZ-aiNIYCA` |

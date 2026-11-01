@@ -17,6 +17,16 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
+#endif
 
 namespace {
 
@@ -742,6 +752,9 @@ void operatingSystemTests() {
 #else
     require(commit && commit->used != 0 && commit->budget != 0, "the system's commit charge and limit cannot be read");
 #endif
+#ifdef _WIN32
+    require(commit->used <= commit->budget, "the commit charge exceeds its limit");
+#endif
     static std::uint8_t* volatile touched = nullptr;
     const auto before = AgcDriver::ReadPageFaults();
     require(before.has_value(), "the process's page faults cannot be read");
@@ -874,6 +887,31 @@ void paletteTests() {
 
 }
 
+#ifdef _WIN32
+void constrainedCommitTests() {
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    require(K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters), sizeof(counters)) != 0, "the process's private bytes cannot be read");
+    const HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    require(job != nullptr, "cannot create a job object");
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY;
+    limits.ProcessMemoryLimit = counters.PrivateUsage + (std::size_t{256} << 20u);
+    limits.JobMemoryLimit = limits.ProcessMemoryLimit;
+    const bool limited = SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) != 0 && AssignProcessToJobObject(job, GetCurrentProcess()) != 0;
+    CloseHandle(job);
+    require(limited, "cannot put the test process in a job with a commit limit");
+    PERFORMANCE_INFORMATION system{};
+    system.cb = sizeof(system);
+    require(K32GetPerformanceInfo(&system, sizeof(system)) != 0, "the system's commit charge cannot be read with K32GetPerformanceInfo");
+    const auto commit = AgcDriver::ReadCommitCharge();
+    const auto page = static_cast<std::uint64_t>(system.PageSize);
+    const auto used = static_cast<std::uint64_t>(system.CommitTotal) * page;
+    require(commit && commit->budget == static_cast<std::uint64_t>(system.CommitLimit) * page, "the commit limit is not the system's in a process with a lower commit limit");
+    require(std::max(commit->used, used) - std::min(commit->used, used) < (std::uint64_t{1} << 30u), "the commit charge is not the system's in a process with a lower commit limit");
+}
+#endif
+
 int main() {
     try {
         fpsWindowTests();
@@ -904,6 +942,9 @@ int main() {
         driverSourceTests();
         traceSwitchTests();
         costReport();
+#ifdef _WIN32
+        constrainedCommitTests();
+#endif
         std::cout << "performance overlay statistics, layout, palette, packet, pipeline, memory, resolution, page 2 source and trace switch tests passed\n";
         return 0;
     } catch (const std::exception& error) {

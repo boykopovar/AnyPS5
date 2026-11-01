@@ -713,6 +713,7 @@ int APS5_VABI getpriority_nid_postfix(int which, int who);
 int APS5_VABI setpriority_nid_postfix(int which, int who, int niceval);
 int APS5_VABI getdtablesize_nid_postfix(void);
 int APS5_VABI sceKernelIsTrinityMode(void);
+int APS5_VABI sceKernelHasTrinityMode(void);
 void APS5_VABI sceKernelGetOperationMode(int* mode, int* submode);
 int APS5_VABI seteuid_nid_postfix(std::uint32_t euid);
 int APS5_VABI setegid_nid_postfix(std::uint32_t egid);

@@ -4,7 +4,7 @@ import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports no|flushes|binds fewer)|no display|no usable Vulkan device|host imports are unavailable)", re.IGNORECASE)
+DEVICE_LIMITATION = re.compile(r"skipped,.*(subgroup|the device (has no|reports|lacks|does not|imports no|flushes|binds fewer)|the host (has not enough free disk space|cannot allocate a buffer)|no display|no usable Vulkan device|host imports are unavailable|not enough free disk space)", re.IGNORECASE)
 
 NO_DISPLAY = re.compile(r"skipped,.*no display", re.IGNORECASE)
 
@@ -37,17 +37,21 @@ def skips(path, require_tests=False):
     if root.tag not in ("testsuite", "testsuites"):
         raise ValueError(f"{path}: expected a JUnit testsuite or testsuites root, got {root.tag!r}")
     found = False
+    seen = set()
     for case in root.iter("testcase"):
         found = True
-        skipped = case.find("skipped")
-        ctest_skip = skipped is not None and CTEST_SKIP_STATUS.fullmatch(skipped.get("message", "").strip())
-        if case.get("status") == "disabled" or (case.get("status") == "notrun" and not ctest_skip):
-            raise ValueError(f"{path}: testcase {case.get('name')!r} is {case.get('status')} and was not run")
-        if skipped is None:
-            continue
         name = case.get("name")
         if not name:
             raise ValueError(f"{path}: skipped testcase has no name")
+        if name in seen:
+            raise ValueError(f"{path}: testcase {name!r} is listed more than once")
+        seen.add(name)
+        skipped = case.find("skipped")
+        ctest_skip = skipped is not None and CTEST_SKIP_STATUS.fullmatch(skipped.get("message", "").strip())
+        if case.get("status") == "disabled" or (case.get("status") == "notrun" and not ctest_skip):
+            raise ValueError(f"{path}: testcase {name!r} is {case.get('status')} and was not run")
+        if skipped is None:
+            continue
         output = ["skipped, " + reason.strip() for reason in (skipped.get("message", ""), skipped.text or "")
                   if reason.strip() and not CTEST_SKIP_STATUS.fullmatch(reason.strip())]
         output += [case.findtext(channel) or "" for channel in ("system-out", "system-err")]

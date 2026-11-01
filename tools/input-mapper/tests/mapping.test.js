@@ -66,7 +66,7 @@ test('all exportable SDL names validate and unsafe comment names are rejected', 
 test('mouse values and action restrictions match the current INI format', () => {
     for (const action of actions) {
         for (const value of mouseValues) {
-            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus'].includes(action));
+            assert.equal(validate([binding(action, 'MOUSE', value)]).errors.length === 0, !['ToggleFullscreen', 'TogglePerformanceOverlay', 'Screenshot', 'ShowPadStatus', 'VolumeUp', 'VolumeDown', 'ToggleMute'].includes(action));
         }
     }
     assert.ok(validate([binding('Cross', 'MOUSE', 'Button1')]).errors.length);
@@ -160,6 +160,23 @@ test('capture maps physical positions and distinguishes modifiers and keypad', (
     const cases = {KeyA: 'A', Digit1: '1', Enter: 'Return', NumpadEnter: 'Keypad Enter', Numpad1: 'Keypad 1', ControlLeft: 'Left Ctrl', AltRight: 'Right Alt', ArrowUp: 'Up', F24: 'F24', Equal: '=', Backslash: '\\'};
     for (const [code, value] of Object.entries(cases)) assert.deepEqual(captureKey({code, key: 'ignored'}), {value});
     assert.equal(captureKey({code: 'KeyQ', key: 'a'}).value, 'Q');
+});
+
+test('captured media and browser keys round trip through INI bindings', () => {
+    const keys = {
+        MediaTrackNext: 'AudioNext', MediaTrackPrevious: 'AudioPrev', MediaStop: 'AudioStop',
+        MediaPlayPause: 'AudioPlay', MediaSelect: 'MediaSelect',
+        AudioVolumeMute: 'Mute', AudioVolumeUp: 'VolumeUp', AudioVolumeDown: 'VolumeDown',
+        BrowserSearch: 'AC Search', BrowserHome: 'AC Home', BrowserBack: 'AC Back',
+        BrowserForward: 'AC Forward', BrowserStop: 'AC Stop', BrowserRefresh: 'AC Refresh',
+        BrowserFavorites: 'AC Bookmarks'
+    };
+    for (const [code, value] of Object.entries(keys)) {
+        const captured = captureKey({code, key: 'ignored'});
+        assert.deepEqual(captured, {value}, code);
+        const ini = serialize([binding('Cross', 'KEY', captured.value)]);
+        assert.deepEqual(parseIni(ini).entries, [binding('Cross', 'KEY', value)], code);
+    }
 });
 
 test('capture rejects missing identifiers, composition and unsafe punctuation', () => {

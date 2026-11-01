@@ -205,6 +205,15 @@ struct GuestKinfoProc {
 };
 static_assert(offsetof(GuestKinfoProc, pid) == 72 && offsetof(GuestKinfoProc, parentPid) == 76 && offsetof(GuestKinfoProc, flag) == 368 && offsetof(GuestKinfoProc, command) == 447 && sizeof(GuestKinfoProc) == 1088);
 
+GuestKinfoProc GuestProcessRecord() {
+    GuestKinfoProc process{};
+    process.structSize = sizeof(process);
+    process.pid = getpid_nid_postfix();
+    process.parentPid = getppid_nid_postfix();
+    std::memcpy(process.command, "eboot.bin", sizeof("eboot.bin"));
+    return process;
+}
+
 std::vector<GuestVmEntry> GuestVmEntries() {
     std::vector<GuestVmEntry> entries;
     std::uintptr_t start = 0;
@@ -454,6 +463,18 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
         static constexpr char path[] = "/app0/eboot.bin";
         return CopyOut(path, sizeof(path), oldValue, oldLength);
     }
+    if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 8) {
+        if (newValue != nullptr) {
+            *__error_nid_postfix() = 1;
+            return -1;
+        }
+        if (nameLength > 4) {
+            *__error_nid_postfix() = 22;
+            return -1;
+        }
+        const GuestKinfoProc process = GuestProcessRecord();
+        return CopyOut(&process, sizeof(process), oldValue, oldLength);
+    }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 1) {
         if (newValue != nullptr) {
             *__error_nid_postfix() = 1;
@@ -467,11 +488,7 @@ int APS5_VABI sysctl_nid_postfix(const int* name, std::uint32_t nameLength, void
             *__error_nid_postfix() = 3;
             return -1;
         }
-        GuestKinfoProc process{};
-        process.structSize = sizeof(process);
-        process.pid = name[3];
-        process.parentPid = getppid_nid_postfix();
-        std::memcpy(process.command, "eboot.bin", sizeof("eboot.bin"));
+        const GuestKinfoProc process = GuestProcessRecord();
         return CopyOut(&process, sizeof(process), oldValue, oldLength);
     }
     if (nameLength >= 3 && name[0] == 1 && name[1] == 14 && name[2] == 35) {
@@ -684,9 +701,13 @@ int APS5_VABI sceKernelGetSystemSwVersion_nid_postfix(SceKernelSystemSwVersion* 
     if (version == nullptr) {
         return 0;
     }
-    std::memset(version->versionString, 0, sizeof(version->versionString));
-    std::memcpy(version->versionString, "01.000.000", sizeof("01.000.000"));
-    version->version = 0x01000000;
+    char versionString[sizeof(version->versionString)] = {};
+    std::memcpy(versionString, "01.000.000", sizeof("01.000.000"));
+    constexpr std::uint32_t packedVersion = 0x01000000;
+    if (!GuestCopyOut_nid_no_patch(version->versionString, versionString, sizeof(versionString)) ||
+        !GuestCopyOut_nid_no_patch(&version->version, &packedVersion, sizeof(packedVersion))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -694,8 +715,11 @@ int APS5_VABI sceKernelGetSystemExVersion(char* first, char* second) {
     if (first == nullptr || second == nullptr) {
         return 22;
     }
-    *first = '\0';
-    *second = '\0';
+    constexpr char zero = '\0';
+    if (!GuestCopyOut_nid_no_patch(first, &zero, sizeof(zero)) ||
+        !GuestCopyOut_nid_no_patch(second, &zero, sizeof(zero))) {
+        return 14;
+    }
     return 0;
 }
 
@@ -703,7 +727,10 @@ int APS5_VABI sysKernelGetLowerLimitSysexVersion_nid_postfix(char* version) {
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
-    *version = '\0';
+    constexpr char zero = '\0';
+    if (!GuestCopyOut_nid_no_patch(version, &zero, sizeof(zero))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 
@@ -711,7 +738,10 @@ int APS5_VABI sysKernelGetLowerLimitUpdVersion_nid_postfix(std::uint32_t* versio
     if (version == nullptr) {
         return SCE_KERNEL_ERROR_EINVAL;
     }
-    *version = 0;
+    constexpr std::uint32_t zero = 0;
+    if (!GuestCopyOut_nid_no_patch(version, &zero, sizeof(zero))) {
+        return SCE_KERNEL_ERROR_EFAULT;
+    }
     return 0;
 }
 

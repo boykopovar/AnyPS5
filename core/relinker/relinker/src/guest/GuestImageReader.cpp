@@ -47,6 +47,7 @@ GuestImage GuestImageReader::Read(const std::filesystem::path& path, std::vector
         if (header.Type == 1) {
             if (header.FileSize > header.MemorySize || header.MemorySize > std::numeric_limits<std::uint64_t>::max() - header.MappedAddress || (header.Flags & ~7u) != 0) fail("Invalid load segment");
             if (header.Alignment > 1 && (!std::has_single_bit(header.Alignment) || header.Offset % header.Alignment != header.MappedAddress % header.Alignment)) fail("Invalid load segment alignment");
+            if (header.MemorySize == 0) continue;
             const auto next = loads.lower_bound(header.MappedAddress);
             if ((next != loads.end() && next->first < header.MappedAddress + header.MemorySize) || (next != loads.begin() && std::prev(next)->second > header.MappedAddress)) fail("Overlapping load segments");
             loads.emplace(header.MappedAddress, header.MappedAddress + header.MemorySize);

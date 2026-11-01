@@ -324,7 +324,7 @@ int APS5_VABI sceFontGraphicsUpdateShapeFillPlot(FontGraphicsResource* resource,
 int APS5_VABI sceFontSupportGlyphs(const FontGlyphSupport* support);
 int APS5_VABI sceFontWordsFindWordCharacters(FontWords* words, FontTextCharacter* firstCharacter, FontTextCharacter* endCharacter, FontTextCharacter** lastCharacter, FontTextCharacter** nextCharacter);
 int APS5_VABI sceFontGraphicsDrawupFillTextureImageObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height);
-int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, void** output, float x, float y, float width, float height);
+int APS5_VABI sceFontGraphicsDrawupFillTexturePatternObject(FontGraphicsFrame* graphicsObject, const void* fillObject, std::uint32_t mode, std::uint32_t format, std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1, std::uint32_t option2, std::uint32_t dimension2, void** output);
 int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t writingForm, const void* writingLineDetail, void** pWritingLine);
 int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine);
 int APS5_VABI sceFontWritingLineClear(void* writingLine);
