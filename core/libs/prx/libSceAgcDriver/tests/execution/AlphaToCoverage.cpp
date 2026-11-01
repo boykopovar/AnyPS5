@@ -424,6 +424,98 @@ void DitheredCoverage(AgcDriver::VulkanDevice& device, std::uint32_t samples, st
     AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
 }
 
+void CheckDccSamples(AgcDriver::VulkanDevice& device, const AgcDriver::Graphics::ColorTarget& target, const Color& written, float untouched) {
+    alignas(256) static constexpr std::array<std::uint32_t, 26> code{
+        0x34020087, 0xe0301000, 0x80000201, 0xe0301004, 0x80000301, 0xe0301008, 0x80000401, 0xe030100c,
+        0x80000501, 0xe0301010, 0x80000601, 0xe0301014, 0x80000701, 0xbf8c3f70, 0xf0001f30, 0x00011005,
+        0xbf8c3f70, 0xe0701030, 0x80001001, 0xe0701034, 0x80001101, 0xe0701038, 0x80001201, 0xe070103c,
+        0x80001301, 0xbf810000,
+    };
+    alignas(256) static std::array<std::uint32_t, 32u * 32u> buffer{};
+    buffer.fill(0xdeadbeefu);
+    const auto address = reinterpret_cast<std::uintptr_t>(buffer.data());
+    const auto imageAddress = target.address | target.pipeBankXor;
+    const auto sampleShift = static_cast<std::uint32_t>(std::countr_zero(target.samples));
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(sizeof(buffer)), 0x31016facu};
+    const std::array<std::uint32_t, 8> image{
+        static_cast<std::uint32_t>(imageAddress >> 8u),
+        static_cast<std::uint32_t>((imageAddress >> 40u) & 0xffu) | (71u << 20u) | (((Width - 1u) & 3u) << 30u),
+        ((Width - 1u) >> 2u) | ((Height - 1u) << 14u),
+        0xfacu | (sampleShift << 16u) | (0x1bu << 20u) | (14u << 28u), 0u, sampleShift << 4u, 0u, 0u,
+    };
+    std::vector<std::uint32_t> userData(16u);
+    std::copy(descriptor.begin(), descriptor.end(), userData.begin());
+    std::copy(image.begin(), image.end(), userData.begin() + 4u);
+    for (std::uint32_t tid = 0; tid < 32u; ++tid) {
+        const std::array<std::uint32_t, 6> coordinates{0u, 0u, 0u, (tid / target.samples) % 2u == 0u ? 0u : ScissorWidth, 0u, tid % target.samples};
+        std::copy(coordinates.begin(), coordinates.end(), buffer.begin() + tid * 32u);
+    }
+    const auto codeAddress = reinterpret_cast<std::uintptr_t>(code.data());
+    const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{codeAddress, std::as_bytes(std::span(code))}}};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1};
+    ShaderRecompiler::RecompileRequest request{
+        {ShaderStage::Compute, codeAddress, code, 0, {}},
+        {32, 0, userData, compute, std::nullopt, std::nullopt, memory},
+        device.Target(),
+        {0, 0, 0, 128}
+    };
+    request.useCache = false;
+    device.Dispatch(ShaderRecompiler::Recompile(request), 1u, 1u, 1u, {}, codeAddress);
+    device.WaitIdle();
+    for (std::uint32_t tid = 0; tid < 32u; ++tid) {
+        for (std::uint32_t channel = 0; channel < 4u; ++channel) {
+            const auto expected = (tid / target.samples) % 2u == 0u && tid % target.samples == 0u ? written[channel] : untouched;
+            Require(std::bit_cast<float>(buffer[tid * 32u + 12u + channel]) == expected, "a sampled DCC target did not preserve its drawn and untouched samples across recreation");
+        }
+    }
+}
+
+void DccRecreateLayoutTests(AgcDriver::VulkanDevice& device) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    Block source(layout.Bytes() * 4u);
+    Block metadata(BlockBytes);
+    Block resolved(layout.Bytes());
+    struct ClearTargets {
+        AgcDriver::VulkanDevice& device;
+        ~ClearTargets() {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            device.SubmitRecorded(true);
+            device.WaitIdle();
+            AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+            AgcDriver::Graphics::ClearCachedTextures(device.Device());
+        }
+    } clearTargets{device};
+    std::memset(source.data, 0, source.bytes);
+    std::memset(metadata.data, 0, metadata.bytes);
+    std::memset(resolved.data, 0, resolved.bytes);
+    auto target = DecodeTarget(source, 4u);
+    target.dccAddress = metadata.Address();
+    target.dccPipeAligned = true;
+    const Color written{0.25f, 0.25f, 0.25f, 0.25f};
+    Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+    CheckDccSamples(device, target, written, 0.0f);
+    const std::vector<std::byte> ones(AgcDriver::Graphics::MultisampledDccBytes(target), std::byte{0xc0});
+    AgcDriver::GuestMemory::Write(metadata.Address(), ones);
+    target.pipeBankXor = 0x4000u;
+    Draw(device, target, false, Float32Export, Program(written, Float32Export, 1u), false, true);
+    CheckDccSamples(device, target, written, 1.0f);
+    AgcDriver::Graphics::ColorMetadataPass pass{};
+    pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+    pass.source = target;
+    pass.targets = {DecodeTarget(resolved)};
+    device.ColorMetadataPass(pass);
+    const auto stored = ReadBack(device, resolved);
+    for (std::uint32_t y = 0; y < Height; ++y) {
+        for (std::uint32_t x = 0; x < Width; ++x) {
+            for (std::uint32_t channel = 0; channel < 4u; ++channel) {
+                const auto expected = x < ScissorWidth ? 1.0f + (written[channel] - 1.0f) / 4.0f : 1.0f;
+                Require(FromHalf(stored[layout.Offset(x, y) / 2u + channel]) == expected, "a sampled DCC target recreated with another pipe-bank XOR did not resolve its new samples");
+            }
+        }
+    }
+    programCount = 0;
+}
+
 constexpr std::array<DitherCase, 36> EightSampleDitherCases{{
     {0x00000000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
     {0x80000000u, 9u, {0x00u, 0x00u, 0x00u, 0x00u}},
@@ -1205,6 +1297,11 @@ int main(int argc, char** argv) {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (argc == 2 && std::string_view(argv[1]) == "--dcc-recreate-layout") {
+            DccRecreateLayoutTests(*device);
+            std::puts("sampled multisample DCC target recreation and read-back passed");
+            return 0;
+        }
         if (argc == 3 && std::string_view(argv[1]) == "--dcc-srgb-clear") {
             const auto samples = std::string_view(argv[2]) == "2" ? 2u : std::string_view(argv[2]) == "4" ? 4u : std::string_view(argv[2]) == "8" ? 8u : 0u;
             Require(samples != 0, "unknown sRGB DCC test sample count");

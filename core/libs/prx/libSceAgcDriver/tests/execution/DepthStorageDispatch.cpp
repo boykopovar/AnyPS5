@@ -331,7 +331,8 @@ void MultisampledCase(AgcDriver::VulkanDevice& device, const Shaders& compiled, 
     }};
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, std::nullopt, std::nullopt};
-    state.color = {reinterpret_cast<std::uintptr_t>(block + MultisampledColorOffset), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, Width * Height * 16u, 0xe4u};
+    state.color = {reinterpret_cast<std::uintptr_t>(block + MultisampledColorOffset), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, 1u << 16u, 0xe4u};
+    state.color.tileMode = AgcDriver::Graphics::ColorTileMode::RenderTarget;
     state.color.samples = 4;
     state.colors = {state.color};
     state.hasColorTarget = true;
