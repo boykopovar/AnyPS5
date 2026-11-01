@@ -1,5 +1,7 @@
 #include <hsa/hsa.h>
 #include <hsa/hsa_ext_amd.h>
+#include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,6 +50,18 @@ static hsa_status_t findCpu(hsa_agent_t agent, void* data) {
     return HSA_STATUS_SUCCESS;
 }
 
+static int parseRange(const char* text, uint32_t minimum, uint32_t maximum, uint32_t* result) {
+    char* end;
+    const char* number = text;
+    while (isspace((unsigned char)*number)) ++number;
+    if (*number == '-') return 0;
+    errno = 0;
+    const unsigned long value = strtoul(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || value < minimum || value > maximum) return 0;
+    *result = (uint32_t)value;
+    return 1;
+}
+
 static void* readFile(const char* path, size_t* size) {
     FILE* f = fopen(path, "rb");
     if (!f) { perror(path); exit(1); }
@@ -69,8 +83,9 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc != 6) { fprintf(stderr, "usage: oracle --target | oracle code.o threads in.bin out.bin out_dwords\n"); return 2; }
-    const uint32_t threads = (uint32_t)atoi(argv[2]);
-    const uint32_t outDwords = (uint32_t)atoi(argv[5]);
+    uint32_t threads, outDwords;
+    if (!parseRange(argv[2], 1, 1024, &threads)) { fprintf(stderr, "THREADS must be 1 to 1024\n"); return 2; }
+    if (!parseRange(argv[5], 1, 16, &outDwords)) { fprintf(stderr, "OUT_DWORDS must be 1 to 16\n"); return 2; }
     CHECK(hsa_init());
     CHECK(hsa_iterate_agents(findGpu, NULL));
     if (!haveGpu) { fprintf(stderr, "no GPU agent\n"); return 1; }
