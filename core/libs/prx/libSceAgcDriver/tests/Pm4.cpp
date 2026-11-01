@@ -1946,6 +1946,31 @@ void testUnwrittenUserData() {
     expectFailure([&] { static_cast<void>(AgcDriver::DriverDetail::readRegister(shader, 0x95)); }, "required shader register");
 }
 
+void testWaitRegMemBounds() {
+    alignas(8) static std::uint32_t mem32 = 0;
+    const auto base32 = reinterpret_cast<std::uintptr_t>(&mem32);
+    for (std::uint32_t func = 7; func < 16; ++func) {
+        const auto packet = makePacket(0x3c, {0x13 | (func << 8u), static_cast<std::uint32_t>(base32), static_cast<std::uint32_t>(base32 >> 32u), 0, 0xffffffffu, 0});
+        expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, \'invalid WAIT_REG_MEM compare function\');
+    }
+    for (std::uint32_t offset = 1; offset < 4; ++offset) {
+        const auto misaligned = base32 + offset;
+        const auto packet = makePacket(0x3c, {0x13, static_cast<std::uint32_t>(misaligned), static_cast<std::uint32_t>(misaligned >> 32u), 0, 0xffffffffu, 0});
+        expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, \'misaligned\');
+    }
+    alignas(8) static std::uint64_t mem64 = 0;
+    const auto base64 = reinterpret_cast<std::uintptr_t>(&mem64);
+    for (std::uint32_t func = 7; func < 16; ++func) {
+        const auto packet = makePacket(0x93, {0x13 | (func << 8u), static_cast<std::uint32_t>(base64), static_cast<std::uint32_t>(base64 >> 32u), 0, 0, 0xffffffffu, 0xffffffffu, 0});
+        expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, \'invalid WAIT_REG_MEM compare function\');
+    }
+    for (std::uint32_t offset = 1; offset < 8; ++offset) {
+        const auto misaligned = base64 + offset;
+        const auto packet = makePacket(0x93, {0x13, static_cast<std::uint32_t>(misaligned), static_cast<std::uint32_t>(misaligned >> 32u), 0, 0, 0xffffffffu, 0xffffffffu, 0});
+        expectFailure([&] { AgcDriver::Pm4::Validate(packet, 0); }, \'misaligned\');
+    }
+}
+
 void testWaitRegMemMasking() {
     alignas(8) static std::uint32_t mem32[4] = {0x12345678u, 0x9abcdef0u, 0x55555555u, 0xaaaaaaaau};
     const auto base32 = reinterpret_cast<std::uintptr_t>(&mem32[0]);
@@ -2180,7 +2205,8 @@ int main(int argc, char** argv) {
         testMemSemaphore();
         testNopPadSubmission();
         testBranchSubmission();
-        testWaitRegMemMasking();
+        testWaitRegMemBounds();
+    testWaitRegMemMasking();
         testWaitRegMemPipelineDrain();
         testWaitRegMem64ZeroHighMaskDrain();
         testWaitRegMemMisalignedBehindBusyPipeline();
