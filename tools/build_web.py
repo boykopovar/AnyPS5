@@ -93,8 +93,8 @@ def asset_metadata(asset, maximum):
         raise ValueError(f"Invalid release asset {name}: archive size must be a positive integer no greater than {maximum}")
     if not isinstance(asset.get("browser_download_url"), str) or not asset["browser_download_url"]:
         raise ValueError(f"Invalid release asset {name}: browser_download_url must be nonempty text")
-    if asset.get("digest") is not None and not isinstance(asset["digest"], str):
-        raise ValueError(f"Invalid release asset {name}: digest must be text or null")
+    if type(asset.get("digest")) is not str or not re.fullmatch(r"sha256:[0-9a-f]{64}", asset["digest"]):
+        raise ValueError(f"Invalid release asset {name}: digest must be sha256 followed by 64 lowercase hex digits")
     return asset
 
 
@@ -144,7 +144,7 @@ def publish_libraries(output, release=None):
             if size != asset["size"]:
                 raise ValueError("Incomplete release archive")
             checksum = digest.hexdigest()
-            if asset.get("digest") and asset["digest"] != "sha256:" + checksum:
+            if asset["digest"] != "sha256:" + checksum:
                 raise ValueError("Release archive checksum mismatch")
             with zipfile.ZipFile(temporary) as archive:
                 files = archive.infolist()
@@ -204,7 +204,7 @@ def publish_release(output):
     if len(data) != asset["size"]:
         raise ValueError("Incomplete or oversized web release archive")
     checksum = hashlib.sha256(data).hexdigest()
-    if asset.get("digest") and asset["digest"] != "sha256:" + checksum:
+    if asset["digest"] != "sha256:" + checksum:
         raise ValueError("Web release archive checksum mismatch")
     if output.is_symlink() or (output.exists() and not output.is_dir()):
         raise ValueError(f"Release output is not a directory: {output}")
