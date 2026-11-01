@@ -1,5 +1,20 @@
 # libSceNet technical debt
 
+### Additional callable exports
+
+- [Additional callable exports](../../../core/libs/prx/libSceNet/InventoryExports.cpp) - 8 entries present in both version-labelled images are import-resolution declarations only. All belong to module `libSceNet`; seven have logical library `libSceNet` and one has logical library `libSceNetDebug`. Neither label independently authenticates retail firmware provenance. Parameter lists, return types and behavior are unverified; parameterless `int` declarations are placeholders, not verified ABI contracts. Every entry throws through `NotImplemented_nid_no_patch`. Unidentified names use literal NID aliases. No runtime functionality is implemented. Identified candidate names match their NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv).
+
+| Name | NID |
+| --- | --- |
+| `Unknown` | `+hZ3zpjYiYw` |
+| `Unknown` | `-qjsa0xOWMc` |
+| `Unknown` | `DnB6WJ91HGg` |
+| `Unknown` | `HMievhVSU3g` |
+| `Unknown` | `YQZkUbAw6rg` |
+| `Unknown` | `guwFkKH+wP8` |
+| `Unknown` | `mnXcgCBmiV0` |
+| `Unknown` | `pGboVhl-6P0` |
+
 - [sceNetShowRouteWithMemory, sceNetShowIfconfigWithMemory, sceNetShowPolicyWithMemory, sceNetShowRoute6WithMemory](../../../core/libs/prx/libSceNet/Export.cpp) (libSceNet) - validates memory pool ID and returns success without printing anything: the `(poolId)` signature and pool validation follow [shadPS4](https://github.com/shadps4-emu/shadPS4/blob/main/src/core/libraries/net/net.cpp) and `sceNetShowNetstatWithMemory`; shadPS4 stubs the Ifconfig, Policy and Route6 forms the same way, validating the pool and returning success. What the console prints and where is unverified
 ### Silent stubs
 
