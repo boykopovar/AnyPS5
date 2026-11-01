@@ -112,3 +112,18 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
     endif()
 endif()
+
+target_sources(libSceIcu PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Utf16.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_utf16_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/Utf16.cpp)
+    target_include_directories(guest_icu_utf16_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_utf16_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_utf16_tests)
+    add_test(NAME guest_icu_utf16 COMMAND guest_icu_utf16_tests)
+    set_tests_properties(guest_icu_utf16 PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_icu_utf16 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
