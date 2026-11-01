@@ -1450,10 +1450,6 @@ int APS5_VABI sceKernelGetUpdatemode() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceKernelHasTrinityMode() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceKernelIccClearEmcCrashReport() {
     NotImplemented_nid_no_patch(__func__);
 }

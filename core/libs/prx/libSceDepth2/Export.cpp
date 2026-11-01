@@ -1,3 +1,5 @@
+#include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceDepth2/include/InventoryExports.hpp"
 #include "prx/libSceDepth2/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
@@ -55,5 +57,14 @@ int APS5_VABI sceDepth2WaitAndExecutePostProcess(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
+
+}
+
+extern "C" {
+
+int APS5_VABI libSceDepth2Unknown_tLM3AwtzaHs_nid_no_patch() {
+    NotImplemented_nid_no_patch(__func__);
+}
+APS5_EXPORT("tLM3AwtzaHs", libSceDepth2Unknown_tLM3AwtzaHs_nid_no_patch);
 
 }

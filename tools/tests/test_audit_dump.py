@@ -282,6 +282,8 @@ class AuditDumpTests(unittest.TestCase):
         for name, arguments, expected in (
             ("work", ("--relinker", self.relinker, "--work", loop), "cannot check work directory against the input dump"),
             ("relinker", ("--relinker", loop), "no such relinker"),
+            ("json", ("--relinker", self.relinker, "--json", loop), "cannot check JSON output against the input dump"),
+            ("libs", ("--relinker", self.relinker, "--libs", loop), "cannot check work directory against input"),
         ):
             with self.subTest(name=name):
                 errors = io.StringIO()

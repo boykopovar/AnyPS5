@@ -46,10 +46,10 @@ With `--field full=false`, the manual run skips the full builds and runs only th
 
 With `--field linux=false`, the manual run skips the full Linux build and adds Linux to the relinker matrix, if the pull requests change a file the relinker-only build uses. With `--field select=true`, the full builds build and run only the tests whose build inputs the pull requests change; push builds of `main` always run every test.
 
-The Conventions check runs automatically for every contributor, including first-time contributors. It uses the checker from the current tip of the base branch, so rules added after a pull request was opened apply to its next run, and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing:
+The Conventions check runs automatically for every contributor, including first-time contributors. It uses the checker from the current tip of the base branch, so rules added after a pull request was opened apply to its next run, and reads pull request Git objects without executing pull request code. The Conventions check runs on every pull request and fails when a rule on this page is broken. It accepts code comments only when the pull request also changes [technical debt](docs/dev/TechnicalDebt.md), the index or a file in `docs/dev/debt/`, and only UTF-8 text files. Run it locally before pushing; without `--base` it compares with `upstream/main`, then `origin/main`, then `main`, so a fork whose `origin/main` is behind the project is not checked against that old state:
 
 ```
-python3 tools/check_conventions.py --base origin/main
+python3 tools/check_conventions.py
 ```
 
 ## Branches and pull requests
@@ -60,6 +60,7 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 - Open pull requests per author are limited by how many of theirs are merged into `main`: 1 with none merged, 20 with at least 1, no limit from 20. A pull request opened or reopened over the limit is closed automatically; reopen it once another one is merged or closed.
 - Before starting, check that no open pull request already implements the same functions.
 - Keep the branch up to date with `main` and resolve conflicts yourself; rebasing and force-pushing is fine.
+- An AGC test executable and its tests are registered in `core/libs/prx/libSceAgcDriver/tests/cmake/<executable>.cmake`; the tests of an execution test in `tests/execution/` go in the fragment of its `agc_driver_<name>_tests` executable. `CMakeLists.txt` includes the fragments in sorted order, so a fragment uses nothing another fragment defines. A pull request whose change to `libSceAgcDriver/CMakeLists.txt` conflicts after the split rebases and runs `python3 tools/agc_test_split.py resolve` during the stopped rebase, which moves its registrations to their fragments and leaves conflict markers where `main` changed the same lines.
 - A pull request that conflicts with `main` and has no activity for 7 days is labeled `stale` with a reminder. It is not closed.
 - If a pull request needs another one first, say so on the checklist line (`Depends on: #N`; `none` otherwise).
 - If a pull request fixes a reported issue, write `Fixes #N` on its checklist line (`none` otherwise). GitHub closes the issue on merge, and the `fix error` label is added within the hour.

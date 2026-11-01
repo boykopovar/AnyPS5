@@ -216,7 +216,7 @@ void Driver::run(std::uint32_t id) noexcept {
                         }
                         lock.unlock();
                         if (storeIdleResults) {
-                            if (const auto localDevice = device.Load()) localDevice->StoreIdleResults();
+                            if (const auto localDevice = device.Load()) localDevice->StoreIdleResults(true, [&] { return worker.queued.load(std::memory_order_acquire) != 0 || runningWorkers.load(std::memory_order_acquire) != 0; });
                         }
                         lock.lock();
                         if (ready()) break;

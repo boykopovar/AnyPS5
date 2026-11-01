@@ -1,0 +1,228 @@
+#include "VulkanTestDevice.hpp"
+#include "SpirvBackend/SpirvAnalysis.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PresentationPass.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PqToSdr.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
+#include "prx/libSceAgcDriver/Execution/include/PresentationScaler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/FirstSampleCopy.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include <algorithm>
+#include <cstdio>
+#include <chrono>
+#include <memory>
+#include <vector>
+
+using namespace AgcDriver::Graphics;
+
+namespace {
+
+void drain(const Context& context) {
+    DestroyDeferredAtIdle(context, std::chrono::steady_clock::now() + std::chrono::seconds(1));
+}
+
+struct Image {
+    explicit Image(const Context& context) : context(context) {}
+    ~Image() {
+        if (image != VK_NULL_HANDLE) context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+        if (memory != VK_NULL_HANDLE) ReleaseImageMemory(context, memory, bytes, type);
+    }
+    Context context;
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkDeviceSize bytes = 0;
+    std::uint32_t type = 0;
+};
+
+std::unique_ptr<Image> makeImage(const Context& context, const char* category) {
+    auto image = std::make_unique<Image>(context);
+    VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    info.extent = {1024, 1024, 1};
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    Check(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image->image), "vkCreateImage accounting test");
+    VkMemoryRequirements requirements{};
+    context.Function<PFN_vkGetImageMemoryRequirements>("vkGetImageMemoryRequirements")(context.device, image->image, &requirements);
+    VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    allocation.allocationSize = requirements.size;
+    allocation.memoryTypeIndex = context.MemoryType(requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    image->bytes = requirements.size;
+    image->memory = AllocateImageMemory(context, allocation, requirements.memoryTypeBits, category, &image->type);
+    Check(context.Function<PFN_vkBindImageMemory>("vkBindImageMemory")(context.device, image->image, image->memory, 0), "vkBindImageMemory accounting test");
+    return image;
+}
+
+
+void presentationAccounting(const Context& base) {
+    auto context = base;
+    context.bufferPool = std::make_shared<BufferPool>(context);
+    drain(context);
+    const auto baseline = MemoryAccounting::Read(context.device).allocations.size();
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    bool retained = false;
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        {
+            AgcDriver::PresentationScaler scaler(context, VK_FORMAT_B8G8R8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM);
+            scaler.EnsureSourceImage(64, 64);
+            const auto snapshot = MemoryAccounting::Read(context.device);
+            Require(snapshot.complete && snapshot.allocations.size() == baseline + 1, "the presentation source was not counted exactly once");
+            const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [](const auto& allocation) { return allocation.category == "vkAllocateMemory presentation source"; });
+            Require(found != snapshot.allocations.end() && found->bytes != 0 && found->retained == 0 && found->heap < context.memory.memoryHeapCount, "the presentation source has the wrong memory accounting state");
+            Require(!retained || found->memory == memory, "the presentation source did not reuse its retained allocation");
+            memory = found->memory;
+        }
+        drain(context);
+        retained = context.bufferPool->RetainedImages() != 0;
+        const auto snapshot = MemoryAccounting::Read(context.device);
+        Require(snapshot.complete && snapshot.allocations.size() == baseline + (retained ? 1u : 0u), "presentation source release lost a retained allocation or kept freed memory in the ledger");
+        const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [&](const auto& allocation) { return allocation.memory == memory; });
+        if (retained) Require(found != snapshot.allocations.end() && found->retained == found->bytes, "the pooled presentation source was not counted as retained");
+        else Require(found == snapshot.allocations.end(), "the freed presentation source stayed in the ledger");
+    }
+    context.bufferPool.reset();
+    drain(context);
+    Require(MemoryAccounting::Read(context.device).allocations.size() == baseline, "presentation pool destruction left an allocation counted");
+    std::puts("presentation source allocation, retention, reuse and cleanup accounting passed");
+}
+
+
+void presentationUploadAccounting(const Context& base) {
+    auto context = base;
+    context.bufferPool = std::make_shared<BufferPool>(context);
+    drain(context);
+    const auto baseline = MemoryAccounting::Read(context.device).allocations.size();
+    const auto uploads = [&] {
+        const auto snapshot = MemoryAccounting::Read(context.device);
+        Require(snapshot.complete, "presentation upload accounting became incomplete");
+        return std::count_if(snapshot.allocations.begin(), snapshot.allocations.end(), [](const auto& allocation) { return allocation.category == "presentation upload"; });
+    };
+    Require(uploads() == 0, "the upload accounting fixture already holds a presentation image");
+    {
+        AgcDriver::PresentationPass pass(context, 1);
+        for (const auto width : {4u, 8u}) {
+            CommandBatch batch(context);
+            const std::vector<std::byte> texels(width * 4u * 4u);
+            pass.BindTexels(0, batch.Handle(), texels, width, 4, 0x8000000000000000ull, AgcDriver::SdrToneMapLuminanceNits);
+            batch.SubmitAndWait();
+            drain(context);
+            Require(uploads() == 1, "presentation upload allocation or resize was not counted exactly once");
+            const auto snapshot = MemoryAccounting::Read(context.device);
+            const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [](const auto& allocation) { return allocation.category == "presentation upload"; });
+            Require(found->bytes >= texels.size() && found->heap < context.memory.memoryHeapCount && found->retained == 0, "the live presentation upload has the wrong allocation charge");
+            pass.Release(0);
+        }
+    }
+    drain(context);
+    Require(uploads() == 0, "presentation upload destruction left its image in the ledger");
+    context.bufferPool.reset();
+    drain(context);
+    Require(MemoryAccounting::Read(context.device).allocations.size() == baseline, "presentation upload cleanup left accounted memory");
+    std::puts("presentation upload allocation, resize and cleanup accounting passed");
+}
+
+void meshWindowAccounting(const Context& context) {
+    drain(context);
+    const auto baseline = MemoryAccounting::Read(context.device).allocations.size();
+    const auto bytes = (static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowHeaderDwords) + static_cast<std::uint64_t>(ShaderRecompiler::MeshWindowSlots) * ShaderRecompiler::MeshWindowSlotDwords) * 4ull;
+    MeshWindowSetLayout(context);
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        PrepareMeshWindow(context);
+        const auto snapshot = MemoryAccounting::Read(context.device);
+        Require(snapshot.complete && snapshot.allocations.size() == baseline + 1, "mesh window allocation was not counted exactly once");
+        const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [](const auto& allocation) { return allocation.category == "mesh window"; });
+        Require(found != snapshot.allocations.end() && found->bytes >= bytes && found->retained == 0 && found->heap < context.memory.memoryHeapCount, "mesh window memory has the wrong accounting state");
+        Require(memory == VK_NULL_HANDLE || found->memory == memory, "preparing an existing mesh window replaced its allocation");
+        memory = found->memory;
+    }
+    ReleaseMeshWindow(context.device);
+    drain(context);
+    const auto released = MemoryAccounting::Read(context.device);
+    Require(released.complete && released.allocations.size() == baseline, "mesh window destruction left an allocation counted");
+    std::puts("mesh window allocation, repeated preparation and cleanup accounting passed");
+}
+
+}
+
+int main() {
+    try {
+        Require(MemoryAccounting::Enabled(), "memory accounting is not enabled");
+        auto device = OpenVulkanTestDevice();
+        if (!device) return VulkanTestSkipped;
+        auto context = device->graphicsContext();
+        context.bufferPool = std::make_shared<BufferPool>(context);
+        drain(context);
+        const auto baseline = MemoryAccounting::Read(context.device).allocations.size();
+        constexpr auto operations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT;
+        if ((context.subgroup.supportedStages & VK_SHADER_STAGE_FRAGMENT_BIT) != 0 && (context.subgroup.supportedOperations & operations) == operations) {
+            auto ldsContext = context;
+            ldsContext.limits.maxStorageBufferRange = std::min<std::uint32_t>(ldsContext.limits.maxStorageBufferRange, 16u << 20u);
+            PixelFunctionLdsSetLayouts(ldsContext);
+            {
+                CommandBatch batch(ldsContext);
+                PreparePixelFunctionLds(ldsContext, batch.Handle(), ldsContext.subgroup.subgroupSize);
+                const auto snapshot = MemoryAccounting::Read(context.device);
+                Require(snapshot.complete && snapshot.allocations.size() == baseline + 1, "pixel function LDS allocation was not counted");
+                const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [](const auto& allocation) { return allocation.category == "pixel function LDS"; });
+                Require(found != snapshot.allocations.end() && found->bytes != 0 && found->retained == 0 && found->heap < context.memory.memoryHeapCount, "pixel function LDS memory has the wrong accounting state");
+                batch.SubmitAndWait();
+            }
+            ReleasePixelFunctionLds(context.device);
+            drain(context);
+            Require(MemoryAccounting::Read(context.device).allocations.size() == baseline, "pixel function LDS destruction left an allocation counted");
+            std::puts("pixel function LDS allocation accounting and cleanup passed");
+        }
+        if (TargetHasCapability(device->Target(), spv::CapabilityMeshShadingEXT)) meshWindowAccounting(context);
+        presentationAccounting(context);
+        presentationUploadAccounting(context);
+        {
+            FirstSampleCopy copy(context, VK_FORMAT_R8G8B8A8_UNORM, {32, 32});
+            const auto snapshot = MemoryAccounting::Read(context.device);
+            Require(snapshot.complete && snapshot.allocations.size() == baseline + 1, "first-sample image allocation was not counted");
+            const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [](const auto& allocation) { return allocation.category == "vkAllocateMemory first sample"; });
+            Require(found != snapshot.allocations.end() && found->bytes != 0 && found->retained == 0, "first-sample image memory has the wrong accounting state");
+        }
+        drain(context);
+        Require(MemoryAccounting::Read(context.device).allocations.size() == baseline, "first-sample image destruction left an allocation counted");
+        auto first = makeImage(context, "accounting first image");
+        const auto memory = first->memory;
+        const auto bytes = first->bytes;
+        const auto heap = context.memory.memoryTypes[first->type].heapIndex;
+        const auto properties = context.memory.memoryTypes[first->type].propertyFlags;
+        const bool pooled = (properties & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0 && bytes <= (VkDeviceSize{8} << 20u);
+        const auto find = [&](VkDeviceMemory handle) {
+            const auto snapshot = MemoryAccounting::Read(context.device);
+            Require(snapshot.complete, "real Vulkan memory accounting is incomplete");
+            const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [&](const auto& allocation) { return allocation.memory == handle; });
+            Require(found != snapshot.allocations.end(), "a real Vulkan allocation is missing");
+            return *found;
+        };
+        Require(find(memory).bytes == bytes && find(memory).heap == heap && find(memory).retained == 0, "real image memory has the wrong byte count or heap");
+        first.reset();
+        drain(context);
+        if (pooled) Require(find(memory).retained == bytes, "real image pool retention was not counted");
+        auto second = makeImage(context, "accounting second image");
+        Require(!pooled || second->memory == memory, "the real image allocation was not reused");
+        Require(find(second->memory).category == "accounting second image" && find(second->memory).retained == 0, "real image reuse kept its previous accounting state");
+        Require(MemoryAccounting::Read(context.device).allocations.size() == baseline + 1, "real image reuse changed the number of Vulkan allocations");
+        StorageTextureCacheBudget(context);
+        second.reset();
+        context.bufferPool.reset();
+        drain(context);
+        Require(MemoryAccounting::Read(context.device).allocations.size() == baseline, "real image pool destruction left an allocation counted");
+        std::puts("real Vulkan allocation accounting and cleanup passed");
+        return 0;
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        return 1;
+    }
+}
