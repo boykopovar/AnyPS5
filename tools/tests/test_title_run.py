@@ -116,6 +116,14 @@ class AnalysisTests(unittest.TestCase):
         cut.write_bytes(noisy.read_bytes()[:-20])
         self.assertIsNone(title_run.frame_is_uniform(cut))
 
+    def test_classify_reads_the_last_frame(self):
+        uniform = bmp(self.root / "uniform.bmp", 8, 4, lambda x, y: (9, 9, 9))
+        varied = bmp(self.root / "varied.bmp", 8, 4, lambda x, y: (x * 30, y * 60, 0))
+        truncated = self.root / "truncated.bmp"
+        truncated.write_bytes(varied.read_bytes()[:-20])
+        for frame, outcome in ((uniform, "blank"), (varied, "rendering"), (truncated, "frame-unreadable")):
+            self.assertEqual(title_run.classify(True, None, 5.0, True, title_run.frame_is_uniform(frame)), outcome, frame.name)
+
     def test_classify(self):
         cases = [
             ((False, None, None, False, None), "relink-failed"),
@@ -126,7 +134,7 @@ class AnalysisTests(unittest.TestCase):
             ((True, None, 5.0, False, None), "stalled"),
             ((True, None, 5.0, True, True), "blank"),
             ((True, None, 5.0, True, False), "rendering"),
-            ((True, None, 5.0, True, None), "rendering"),
+            ((True, None, 5.0, True, None), "frame-unreadable"),
         ]
         for arguments, outcome in cases:
             self.assertEqual(title_run.classify(*arguments), outcome, arguments)
@@ -198,6 +206,23 @@ class PreparationTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.root = Path(directory.name)
+
+    def test_a_running_title_is_left_alone(self):
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        out = self.root / "out"
+        marker = out / "work/PPSA00001/app0/eboot.bin"
+        marker.parent.mkdir(parents=True)
+        marker.write_bytes(b"running")
+        held = title_run.lock_work(out / "work/PPSA00001.lock")
+        self.addCleanup(held.close)
+        self.assertIsNotNone(held)
+        with self.assertRaisesRegex(SystemExit, "already running in .*: PPSA00001"):
+            title_run.main(["--games", str(self.root / "games"), "--out", str(out), "PPSA00001"])
+        self.assertEqual(marker.read_bytes(), b"running")
+        held.close()
+        again = title_run.lock_work(out / "work/PPSA00001.lock")
+        self.assertIsNotNone(again)
+        again.close()
 
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
