@@ -135,6 +135,8 @@ void DeactivateAndWait(const std::shared_ptr<RegisteredEventCallback>& entry) {
 }
 
 
+void RemoveDrainedCallbacks();
+
 void DispatchUserEvent(const std::vector<std::shared_ptr<RegisteredEventCallback>>& callbacks,
                        const SceUserServiceEvent& event) {
  for (const auto& entry : callbacks) {
@@ -160,6 +162,7 @@ void DispatchUserEvent(const std::vector<std::shared_ptr<RegisteredEventCallback
     --entry->inFlight;
    }
    entry->idle.notify_all();
+   RemoveDrainedCallbacks();
    throw;
   }
   callbacksOnThisThread = invocation.previous;
@@ -168,6 +171,7 @@ void DispatchUserEvent(const std::vector<std::shared_ptr<RegisteredEventCallback
    --entry->inFlight;
   }
   entry->idle.notify_all();
+  RemoveDrainedCallbacks();
  }
 }
 struct CallbackNotification {
