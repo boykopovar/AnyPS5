@@ -303,9 +303,12 @@ public:
     static bool UnwatchHookLocksGpu(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);
     static void SetPublishHookForTest(void (*hook)());
     static constexpr std::uint64_t SmallStoreBytes = 64 * 1024;
+    static constexpr std::uint64_t OccasionalStoreBytes = 1024 * 1024;
+    static constexpr std::uint64_t OccasionalWriteFlips = 8;
     static std::size_t StoreSmallPending(const char* reason);
     static void StoreReadbackBeforeLabel(const char* reason);
     static std::size_t StoreDrawnLinear(const char* reason);
+    static void NoteFlip();
     static std::size_t StoreDrawnLinearTouching(const char* reason, const std::function<bool(std::uint64_t, std::uint64_t)>& touches, bool all);
     static bool AnyPending();
     static void FlushDumpSelected(const char* reason);
@@ -471,6 +474,7 @@ public:
     static std::uint64_t HandedOverSuperseded();
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
+    static std::uint64_t OccasionalLabelStores();
     std::uint64_t GuestBytes() const;
     std::uint64_t BudgetBytes() const;
     std::size_t OriginalSnapshotBytes() const { return original.capacity(); }
@@ -795,6 +799,8 @@ private:
     bool pendingFromOthers = false;
     std::vector<DrawnRect> drawnRects;
     std::vector<std::uint64_t> storeNotes;
+    std::uint64_t writtenFlip = 0;
+    std::atomic<bool> writtenOccasionally{false};
     std::uint64_t version = 0;
     std::uint64_t writes = 0;
     // `original` holds the guest bytes; false after a GPU-side clear, which never read them.
