@@ -286,6 +286,17 @@ static void CheckTextCodes(const FontMemory* memory, FontHandle font) {
     std::uint32_t count = 0;
     FontTextCharacter* characters = sceFontStringRefersTextCharacters(string, &count);
     Require(characters != nullptr && count == 3);
+    FontHandle characterFont = font;
+    std::uint32_t characterCode = 'A';
+    Require(sceFontCharacterGetTextFontCode(nullptr, &characterFont, &characterCode) == SCE_FONT_ERROR_INVALID_PARAMETER && characterFont == nullptr && characterCode == 0);
+    Require(sceFontCharacterGetTextFontCode(nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterGetTextFontCode(characters, nullptr, &characterCode) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterGetTextFontCode(characters, &characterFont, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterGetTextFontCode(characters, &characterFont, &characterCode) == SCE_FONT_OK && characterFont == font && characterCode == 'A');
+    void* textOrder = characters;
+    Require(sceFontCharacterGetTextOrder(characters, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontCharacterGetTextOrder(nullptr, &textOrder) == SCE_FONT_ERROR_INVALID_PARAMETER && textOrder == nullptr);
+    Require(sceFontCharacterGetTextOrder(characters, &textOrder) == SCE_FONT_OK && textOrder == characters->textOrder);
     Require(sceFontStringGetWritingForm(string) == 0x12);
     Require(sceFontStringGetTerminateCode(string) == 0 && sceFontStringGetTerminateOrder(string) == parsed.text + 3);
     ParsedText line{"AV\nA", 0, font};
