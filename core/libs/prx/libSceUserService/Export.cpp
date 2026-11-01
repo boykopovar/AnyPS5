@@ -13,11 +13,13 @@
 #include <memory>
 #include <condition_variable>
 #include <algorithm>
+#include <thread>
 #include "prx/libSceUserService/UserService.hpp"
 
 namespace {
 
 std::atomic<bool> initialized{false};
+bool terminating{};
 std::mutex userMutex;
 
 struct UserEvent {
@@ -133,13 +135,8 @@ void DeactivateAndWait(const std::shared_ptr<RegisteredEventCallback>& entry) {
 }
 
 
-void NotifyUserEvent(std::uint32_t eventType, int userId) {
- std::vector<std::shared_ptr<RegisteredEventCallback>> callbacks;
- {
-  std::shared_lock lock(eventCallbacksMutex);
-  callbacks = eventCallbacks;
- }
- const SceUserServiceEvent event{eventType, userId};
+void DispatchUserEvent(const std::vector<std::shared_ptr<RegisteredEventCallback>>& callbacks,
+                       const SceUserServiceEvent& event) {
  for (const auto& entry : callbacks) {
   UserServiceEventCallback callback;
   void* userData;
@@ -173,15 +170,76 @@ void NotifyUserEvent(std::uint32_t eventType, int userId) {
   entry->idle.notify_all();
  }
 }
+struct CallbackNotification {
+ std::vector<std::shared_ptr<RegisteredEventCallback>> callbacks;
+ SceUserServiceEvent event;
+};
+
+class EventDispatcher {
+ std::mutex mutex;
+ std::condition_variable changed;
+ std::deque<CallbackNotification> notifications;
+ bool stopping{};
+ std::thread worker;
+public:
+ EventDispatcher() : worker([this] {
+  std::unique_lock lock(mutex);
+  while (true) {
+   changed.wait(lock, [&] { return stopping || !notifications.empty(); });
+   if (stopping) return;
+   auto notification = std::move(notifications.front());
+   notifications.pop_front();
+   lock.unlock();
+   DispatchUserEvent(notification.callbacks, notification.event);
+   lock.lock();
+  }
+ }) {}
+ ~EventDispatcher() {
+  {
+   std::lock_guard lock(mutex);
+   stopping = true;
+  }
+  changed.notify_all();
+  worker.join();
+ }
+ void Enqueue(CallbackNotification notification) {
+  {
+   std::lock_guard lock(mutex);
+   notifications.push_back(std::move(notification));
+  }
+  changed.notify_one();
+ }
+};
+
+void NotifyUserEvent(std::uint32_t eventType, int userId) {
+ std::shared_lock lock(eventCallbacksMutex);
+ if (!initialized.load() || eventCallbacks.empty()) return;
+ static EventDispatcher dispatcher;
+ dispatcher.Enqueue({eventCallbacks, {eventType, userId}});
+}
+
+void RemoveDrainedCallbacks() {
+ std::unique_lock lock(eventCallbacksMutex);
+ std::erase_if(eventCallbacks, [](const auto& entry) {
+  std::lock_guard entryLock(entry->mutex);
+  return !entry->active && entry->inFlight == 0;
+ });
+}
+
 void ClearEventCallbacks() {
  std::vector<std::shared_ptr<RegisteredEventCallback>> callbacks;
  {
   std::unique_lock lock(eventCallbacksMutex);
-  callbacks.swap(eventCallbacks);
+  callbacks = eventCallbacks;
+  for (const auto& entry : callbacks) {
+   std::lock_guard entryLock(entry->mutex);
+   entry->active = false;
+  }
  }
  for (const auto& entry : callbacks) {
   DeactivateAndWait(entry);
  }
+ RemoveDrainedCallbacks();
 }
 }
 
@@ -359,7 +417,8 @@ static bool ValidThreadPriority(int priority) {
 }
 
 static int MarkInitialized() {
- if (initialized.exchange(true)) {
+ std::unique_lock lock(eventCallbacksMutex);
+ if (terminating || initialized.exchange(true)) {
   return USER_SERVICE_ERROR_ALREADY_INITIALIZED;
  }
  PopulateInitialLoginEvents();
@@ -383,12 +442,22 @@ int APS5_VABI sceUserServiceInitialize2(std::int32_t priority, KernelCpumask aff
 }
 
 int APS5_VABI sceUserServiceTerminate(void) {
- if (!initialized.exchange(false)) {
-  return USER_SERVICE_ERROR_NOT_INITIALIZED;
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  if (!initialized.exchange(false)) {
+   return USER_SERVICE_ERROR_NOT_INITIALIZED;
+  }
+  terminating = true;
  }
  ClearEventCallbacks();
- std::lock_guard lock(userMutex);
- eventQueue.clear();
+ {
+  std::lock_guard lock(userMutex);
+  eventQueue.clear();
+ }
+ {
+  std::unique_lock lock(eventCallbacksMutex);
+  terminating = false;
+ }
  return USER_SERVICE_OK;
 }
 
@@ -2348,23 +2417,24 @@ int APS5_VABI sceUserServiceUnregisterEventCallback(UserServiceEventCallback cal
  if (callback == nullptr) {
   return USER_SERVICE_ERROR_INVALID_ARGUMENT;
  }
- std::shared_ptr<RegisteredEventCallback> removed;
+ std::vector<std::shared_ptr<RegisteredEventCallback>> removed;
  {
   std::unique_lock lock(eventCallbacksMutex);
   if (!initialized.load()) {
    return USER_SERVICE_ERROR_NOT_INITIALIZED;
   }
-  const auto it = std::find_if(eventCallbacks.begin(), eventCallbacks.end(), [callback, userData](const auto& entry) {
-   return entry->callback == callback && entry->userData == userData;
-  });
-  if (it != eventCallbacks.end()) {
-   removed = *it;
-   eventCallbacks.erase(it);
+  for (const auto& entry : eventCallbacks) {
+   if (entry->callback == callback && entry->userData == userData) {
+    std::lock_guard entryLock(entry->mutex);
+    entry->active = false;
+    removed.push_back(entry);
+   }
   }
  }
- if (removed) {
-  DeactivateAndWait(removed);
+ for (const auto& entry : removed) {
+  DeactivateAndWait(entry);
  }
+ RemoveDrainedCallbacks();
  return USER_SERVICE_OK;
 }
 
@@ -2914,7 +2984,8 @@ int APS5_VABI sceUserServiceRegisterEventCallback(UserServiceEventCallback callb
   return USER_SERVICE_ERROR_NOT_INITIALIZED;
  }
  for (const auto& entry : eventCallbacks) {
-  if (entry->callback == callback && entry->userData == userData) {
+  std::lock_guard entryLock(entry->mutex);
+  if (entry->active && entry->callback == callback && entry->userData == userData) {
    return USER_SERVICE_OK;
   }
  }
