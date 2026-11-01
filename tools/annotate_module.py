@@ -91,12 +91,14 @@ class Module:
     def read_tags(self):
         tags = {}
         offset, size = self.dynamic
-        for position in range(offset, offset + size, 16):
+        if offset + size > len(self.data):
+            raise ModuleError("PT_DYNAMIC extends past the end of the file")
+        for position in range(offset, offset + size - 15, 16):
             tag, value = self.unpack("<qQ", position)
             if tag == DT_NULL:
-                break
+                return tags
             tags.setdefault(tag, value)
-        return tags
+        raise ModuleError("PT_DYNAMIC has no complete DT_NULL terminator")
 
     def require_tag(self, tag, name):
         if tag not in self.tags:
