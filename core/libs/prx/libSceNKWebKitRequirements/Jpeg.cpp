@@ -149,19 +149,19 @@ static void HostTermSource(j_decompress_ptr cinfo) {
     b->host_src.bytes_in_buffer = static_cast<size_t>(gsrc->bytes_in_buffer);
 }
 
-static void APS5_VABI DefaultGuestErrorExit(NKWebKit::GuestCommonPtr cinfo) {
+static void APS5_VABI DefaultGuestErrorExit_nid_no_patch(NKWebKit::GuestCommonPtr cinfo) {
     if (cinfo && cinfo->err && cinfo->err->output_message) {
         cinfo->err->output_message(cinfo);
     }
 }
 
-static void APS5_VABI DefaultGuestEmitMessage(NKWebKit::GuestCommonPtr cinfo, int32_t msg_level) {
+static void APS5_VABI DefaultGuestEmitMessage_nid_no_patch(NKWebKit::GuestCommonPtr cinfo, int32_t msg_level) {
     if (cinfo && cinfo->err && msg_level < 0) {
         cinfo->err->num_warnings++;
     }
 }
 
-static void APS5_VABI DefaultGuestOutputMessage(NKWebKit::GuestCommonPtr cinfo) {
+static void APS5_VABI DefaultGuestOutputMessage_nid_no_patch(NKWebKit::GuestCommonPtr cinfo) {
     if (!cinfo || !cinfo->err) return;
     char buffer[200];
     if (cinfo->err->format_message) {
@@ -169,7 +169,7 @@ static void APS5_VABI DefaultGuestOutputMessage(NKWebKit::GuestCommonPtr cinfo) 
     }
 }
 
-static void APS5_VABI DefaultGuestFormatMessage(NKWebKit::GuestCommonPtr cinfo, char* buffer) {
+static void APS5_VABI DefaultGuestFormatMessage_nid_no_patch(NKWebKit::GuestCommonPtr cinfo, char* buffer) {
     if (!cinfo || !cinfo->err || !buffer) return;
     jpeg_decompress_struct dummy{};
     jpeg_error_mgr dummy_err{};
@@ -182,7 +182,7 @@ static void APS5_VABI DefaultGuestFormatMessage(NKWebKit::GuestCommonPtr cinfo, 
     dummy_err.format_message(reinterpret_cast<j_common_ptr>(&dummy), buffer);
 }
 
-static void APS5_VABI DefaultGuestResetErrorMgr(NKWebKit::GuestCommonPtr cinfo) {
+static void APS5_VABI DefaultGuestResetErrorMgr_nid_no_patch(NKWebKit::GuestCommonPtr cinfo) {
     if (cinfo && cinfo->err) {
         cinfo->err->num_warnings = 0;
         cinfo->err->msg_code = 0;
@@ -341,11 +341,11 @@ NKWebKit::GuestJpegErrorMgr* APS5_VABI jpeg_std_error_nid_postfix(NKWebKit::Gues
         s_std_inited = true;
     }
 
-    err->error_exit = DefaultGuestErrorExit;
-    err->emit_message = DefaultGuestEmitMessage;
-    err->output_message = DefaultGuestOutputMessage;
-    err->format_message = DefaultGuestFormatMessage;
-    err->reset_error_mgr = DefaultGuestResetErrorMgr;
+    err->error_exit = DefaultGuestErrorExit_nid_no_patch;
+    err->emit_message = DefaultGuestEmitMessage_nid_no_patch;
+    err->output_message = DefaultGuestOutputMessage_nid_no_patch;
+    err->format_message = DefaultGuestFormatMessage_nid_no_patch;
+    err->reset_error_mgr = DefaultGuestResetErrorMgr_nid_no_patch;
     err->msg_code = 0;
     err->trace_level = 0;
     err->num_warnings = 0;
