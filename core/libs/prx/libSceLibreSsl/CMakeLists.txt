@@ -2,6 +2,19 @@ add_library(libSceLibreSsl SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/E
 target_include_directories(libSceLibreSsl PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceLibreSsl PRIVATE mbedcrypto)
 configure_windows_unwind(libSceLibreSsl)
+if(BUILD_TESTING)
+    add_test_executable(guest_libre_ssl_des_answers_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslDesAnswers.cpp)
+    target_include_directories(guest_libre_ssl_des_answers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libre_ssl_des_answers_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libre_ssl_des_answers_tests)
+    add_test(NAME guest_libre_ssl_des_answers COMMAND guest_libre_ssl_des_answers_tests)
+    set_tests_properties(guest_libre_ssl_des_answers PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libre_ssl_des_answers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp)
 
 if(BUILD_TESTING)
