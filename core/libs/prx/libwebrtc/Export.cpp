@@ -1407,11 +1407,6 @@ int APS5_VABI _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN7cricket16CreateVideoCodecERKN6webrtc14SdpVideoFormatE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
