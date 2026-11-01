@@ -52,8 +52,8 @@ int main() {
         auto empty = Fixture();
         Io::WriteU64(empty, 112, 0);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
-        for (int kind = 0; kind < 13; ++kind) {
-            auto bytes = Fixture(); auto segment = load;
+        for (int kind = 0; kind < 14; ++kind) {
+            auto bytes = Fixture(); auto segment = load; auto loopEh = eh;
             switch (kind) {
                 case 0: Io::WriteU32(bytes, 64, 0x1000); break;
                 case 1: Io::WriteU32(bytes, 96, 0x1000); break;
@@ -73,7 +73,7 @@ int main() {
                 case 9: bytes[3] = 0x1C; Io::WriteU64(bytes, 16, 0x8000000000000000ULL); break;
                 case 10: {
                     segment.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
-                    eh.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
+                    loopEh.MappedAddress = 0xFFFFFFFFFFFF0000ULL;
                     Io::WriteU64(bytes, 4, 0xFFFFFFFFFFFF0040ULL);
                     bytes[3] = 0x13;
                     Io::WriteU32(bytes, 16, 0x107F0);
@@ -95,16 +95,17 @@ int main() {
                     bytes[99] = 0x80;
                     break;
                 }
+                case 13: bytes[3] = 0x05; break;
             }
             bool rejected = false;
-            std::vector<Domain::ProgramHeader> headers = {segment, eh};
+            std::vector<Domain::ProgramHeader> headers = {segment, loopEh};
             if (kind == 8) {
                 Domain::ProgramHeader high{}; high.Type = 1; high.MappedAddress = 0xFFFFFFFFFFFFF000ULL; high.FileSize = 0x100;
                 headers.push_back(high);
             }
             if (kind == 10) {
                 Domain::ProgramHeader funcSeg{}; funcSeg.Type = 1; funcSeg.MappedAddress = 0x800; funcSeg.FileSize = 0x20;
-                headers = {segment, eh, funcSeg};
+                headers = {segment, loopEh, funcSeg};
             }
             try { Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {}); }
             catch (const std::exception&) { rejected = true; }
@@ -352,6 +353,288 @@ int main() {
             lsdaS2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
         Require(lsdaS2Rejected);
-        std::cout << "30 unwind record cases passed\n";
+        Domain::ProgramHeader augLoad{}; augLoad.Type = 1; augLoad.MappedAddress = 0x1000; augLoad.FileSize = 128;
+        Domain::ProgramHeader augEh = augLoad; augEh.Type = 0x6474E550; augEh.FileSize = 32;
+        auto unterminatedAugBytes = Fixture();
+        unterminatedAugBytes[73] = 'z';
+        unterminatedAugBytes[74] = 'R';
+        unterminatedAugBytes[75] = 'L';
+        unterminatedAugBytes[76] = 'P';
+        bool unterminatedAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unterminatedAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unterminatedAugRejected = std::string(error.what()).find("unterminated CIE augmentation") != std::string::npos;
+        }
+        Require(unterminatedAugRejected);
+        auto unsupportedAugBytes = Fixture();
+        Io::WriteU32(unsupportedAugBytes, 64, 12);
+        unsupportedAugBytes[73] = 'X';
+        unsupportedAugBytes[74] = 0;
+        unsupportedAugBytes[75] = 1;
+        unsupportedAugBytes[76] = 0x78;
+        unsupportedAugBytes[77] = 16;
+        bool unsupportedAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unsupportedAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unsupportedAugRejected = std::string(error.what()).find("unsupported CIE augmentation") != std::string::npos;
+        }
+        Require(unsupportedAugRejected);
+        auto unknownAugBytes = Fixture();
+        Io::WriteU32(unknownAugBytes, 64, 14);
+        unknownAugBytes[73] = 'z';
+        unknownAugBytes[74] = 'X';
+        unknownAugBytes[75] = 0;
+        unknownAugBytes[76] = 1;
+        unknownAugBytes[77] = 0x78;
+        unknownAugBytes[78] = 16;
+        unknownAugBytes[79] = 0;
+        bool unknownAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unknownAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unknownAugRejected = std::string(error.what()).find("unknown CIE augmentation field") != std::string::npos;
+        }
+        Require(unknownAugRejected);
+        auto outOfBoundsAugBytes = Fixture();
+        Io::WriteU32(outOfBoundsAugBytes, 64, 12);
+        outOfBoundsAugBytes[73] = 'z';
+        outOfBoundsAugBytes[74] = 0;
+        outOfBoundsAugBytes[75] = 1;
+        outOfBoundsAugBytes[76] = 0x78;
+        outOfBoundsAugBytes[77] = 16;
+        outOfBoundsAugBytes[78] = 10;
+        bool outOfBoundsAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(outOfBoundsAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            outOfBoundsAugRejected = std::string(error.what()).find("CIE augmentation exceeds record") != std::string::npos;
+        }
+        Require(outOfBoundsAugRejected);
+        auto mismatchAugBytes = Fixture();
+        Io::WriteU32(mismatchAugBytes, 64, 14);
+        mismatchAugBytes[73] = 'z';
+        mismatchAugBytes[74] = 'R';
+        mismatchAugBytes[75] = 0;
+        mismatchAugBytes[76] = 1;
+        mismatchAugBytes[77] = 0x78;
+        mismatchAugBytes[78] = 16;
+        mismatchAugBytes[79] = 2;
+        mismatchAugBytes[80] = 0;
+        bool mismatchAugRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(mismatchAugBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            mismatchAugRejected = std::string(error.what()).find("CIE augmentation size mismatch") != std::string::npos;
+        }
+        Require(mismatchAugRejected);
+        auto truncatedCieBytes = Fixture();
+        Io::WriteU32(truncatedCieBytes, 64, 8);
+        bool truncatedCieRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(truncatedCieBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            truncatedCieRejected = std::string(error.what()).find("CIE fields exceed record") != std::string::npos;
+        }
+        Require(truncatedCieRejected);
+        auto invalidIdBytes = Fixture();
+        Io::WriteU32(invalidIdBytes, 68, 1);
+        bool invalidIdRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(invalidIdBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            invalidIdRejected = std::string(error.what()).find("invalid CIE identifier") != std::string::npos;
+        }
+        Require(invalidIdRejected);
+        for (std::uint8_t badVersion : {std::uint8_t{0}, std::uint8_t{2}, std::uint8_t{5}}) {
+            auto badVersionBytes = Fixture();
+            badVersionBytes[72] = badVersion;
+            bool badVersionRejected = false;
+            try { Relinker::UnusedNidFilter::ReadExceptionFunctions(badVersionBytes, {augLoad, augEh}, {}, {}); }
+            catch (const Domain::RelinkerException& error) {
+                badVersionRejected = std::string(error.what()).find("unsupported CIE version") != std::string::npos;
+            }
+            Require(badVersionRejected);
+        }
+        auto badAddrSizeBytes = Fixture();
+        Io::WriteU32(badAddrSizeBytes, 64, 14);
+        badAddrSizeBytes[72] = 4;
+        badAddrSizeBytes[73] = 0;
+        badAddrSizeBytes[74] = 4;
+        badAddrSizeBytes[75] = 0;
+        bool badAddrSizeRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(badAddrSizeBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            badAddrSizeRejected = std::string(error.what()).find("unsupported CIE address size") != std::string::npos;
+        }
+        Require(badAddrSizeRejected);
+        auto overflowingRaBytes = Fixture();
+        Io::WriteU32(overflowingRaBytes, 64, 25);
+        overflowingRaBytes[72] = 3;
+        overflowingRaBytes[73] = 0;
+        overflowingRaBytes[74] = 1;
+        overflowingRaBytes[75] = 0x78;
+        for (int index = 0; index < 9; ++index) overflowingRaBytes[76 + index] = 0x80;
+        overflowingRaBytes[85] = 0x82;
+        bool overflowingRaRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(overflowingRaBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            overflowingRaRejected = std::string(error.what()).find("overflowing LEB128 value") != std::string::npos;
+        }
+        Require(overflowingRaRejected);
+        auto cieOffsetOobBytes = Fixture();
+        Io::WriteU32(cieOffsetOobBytes, 100, 0x2000);
+        bool cieOffsetOobRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(cieOffsetOobBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            cieOffsetOobRejected = std::string(error.what()).find("invalid FDE CIE offset") != std::string::npos;
+        }
+        Require(cieOffsetOobRejected);
+        auto cieOffsetUnmappedBytes = Fixture();
+        Io::WriteU32(cieOffsetUnmappedBytes, 100, 0x1000);
+        bool cieOffsetUnmappedRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(cieOffsetUnmappedBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            cieOffsetUnmappedRejected = std::string(error.what()).find("unwind address is not file-backed") != std::string::npos;
+        }
+        Require(cieOffsetUnmappedRejected);
+        auto cieTruncatedSizeBytes = Fixture();
+        Io::WriteU32(cieTruncatedSizeBytes, 64, 4);
+        bool cieTruncatedSizeRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(cieTruncatedSizeBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            cieTruncatedSizeRejected = std::string(error.what()).find("unsupported CIE record size") != std::string::npos;
+        }
+        Require(cieTruncatedSizeRejected);
+        auto fdeZeroBytes = Fixture();
+        Io::WriteU32(fdeZeroBytes, 96, 0);
+        bool fdeZeroRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeZeroBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            fdeZeroRejected = std::string(error.what()).find("unsupported FDE record size") != std::string::npos;
+        }
+        Require(fdeZeroRejected);
+        auto inconsistentFdeBytes = Fixture();
+        Io::WriteU64(inconsistentFdeBytes, 104, 0x3000);
+        bool inconsistentFdeRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(inconsistentFdeBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            inconsistentFdeRejected = std::string(error.what()).find("inconsistent FDE function range") != std::string::npos;
+        }
+        Require(inconsistentFdeRejected);
+        auto fdeAugExceedsBytes = Fixture();
+        Io::WriteU32(fdeAugExceedsBytes, 64, 12);
+        fdeAugExceedsBytes[73] = 'z';
+        fdeAugExceedsBytes[74] = 0;
+        fdeAugExceedsBytes[75] = 1;
+        fdeAugExceedsBytes[76] = 0x78;
+        fdeAugExceedsBytes[77] = 16;
+        fdeAugExceedsBytes[78] = 0;
+        Io::WriteU32(fdeAugExceedsBytes, 96, 24);
+        Io::WriteU32(fdeAugExceedsBytes, 100, 36);
+        Io::WriteU64(fdeAugExceedsBytes, 104, 0x2000);
+        Io::WriteU64(fdeAugExceedsBytes, 112, 0x10);
+        fdeAugExceedsBytes[120] = 50;
+        bool fdeAugExceedsRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(fdeAugExceedsBytes, {augLoad, augEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            fdeAugExceedsRejected = std::string(error.what()).find("FDE augmentation exceeds record") != std::string::npos;
+        }
+        Require(fdeAugExceedsRejected);
+        std::vector<std::uint8_t> validLsdaBytes(0x400, 0);
+        Io::WriteU32(validLsdaBytes, 0x200, 25);
+        validLsdaBytes[0x208] = 1;
+        std::copy(std::begin(ciePrefix), std::end(ciePrefix), validLsdaBytes.begin() + 0x209);
+        validLsdaBytes[0x212] = 0;
+        Io::WriteU64(validLsdaBytes, 0x213, 0x1000);
+        validLsdaBytes[0x21B] = 0x03;
+        validLsdaBytes[0x21C] = 0;
+        Io::WriteU32(validLsdaBytes, 0x220, 29);
+        Io::WriteU32(validLsdaBytes, 0x224, 0x24);
+        Io::WriteU64(validLsdaBytes, 0x228, 0x1000);
+        Io::WriteU64(validLsdaBytes, 0x230, 0x20);
+        validLsdaBytes[0x238] = 4;
+        Io::WriteU32(validLsdaBytes, 0x239, 0x280);
+        validLsdaBytes[0x280] = 0xFF;
+        validLsdaBytes[0x281] = 0xFF;
+        validLsdaBytes[0x282] = 3;
+        validLsdaBytes[0x283] = 13;
+        Io::WriteU32(validLsdaBytes, 0x284, 0);
+        Io::WriteU32(validLsdaBytes, 0x288, 0x10);
+        Io::WriteU32(validLsdaBytes, 0x28C, 0x40);
+        validLsdaBytes[0x290] = 0;
+        validLsdaBytes[0x300] = 1;
+        validLsdaBytes[0x302] = 3;
+        Io::WriteU64(validLsdaBytes, 0x304, 0x200);
+        Io::WriteU32(validLsdaBytes, 0x30C, 1);
+        Io::WriteU64(validLsdaBytes, 0x310, 0x1000);
+        Io::WriteU64(validLsdaBytes, 0x318, 0x220);
+        Domain::ProgramHeader validLsdaLoad{}; validLsdaLoad.Type = 1; validLsdaLoad.Flags = 4; validLsdaLoad.FileSize = validLsdaBytes.size(); validLsdaLoad.MemorySize = validLsdaBytes.size(); validLsdaLoad.Alignment = 8;
+        Domain::ProgramHeader validLsdaEh = validLsdaLoad; validLsdaEh.Type = 0x6474E550; validLsdaEh.Offset = 0x300; validLsdaEh.MappedAddress = 0x300; validLsdaEh.FileSize = 32; validLsdaEh.MemorySize = 32; validLsdaEh.Alignment = 4;
+        const auto validLsdaFuncs = Relinker::UnusedNidFilter::ReadExceptionFunctions(validLsdaBytes, {validLsdaLoad, validLsdaEh}, {}, {});
+        Require(validLsdaFuncs.size() == 1 && validLsdaFuncs[0].ExtraTargets.size() == 2 && validLsdaFuncs[0].ExtraTargets[1] == 0x1040);
+        auto lsdaTruncatedBytes = validLsdaBytes;
+        lsdaTruncatedBytes[0x283] = 10;
+        bool lsdaTruncatedRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaTruncatedBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaTruncatedRejected = std::string(error.what()).find("LSDA call-site table size mismatch") != std::string::npos;
+        }
+        Require(lsdaTruncatedRejected);
+        auto lsdaTableSizeOobBytes = validLsdaBytes;
+        lsdaTableSizeOobBytes[0x283] = 0x80;
+        lsdaTableSizeOobBytes[0x284] = 0x10;
+        bool lsdaTableSizeOobRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaTableSizeOobBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaTableSizeOobRejected = std::string(error.what()).find("invalid LSDA table size") != std::string::npos;
+        }
+        Require(lsdaTableSizeOobRejected);
+        auto lsdaTableExceedsBytes = validLsdaBytes;
+        lsdaTableExceedsBytes[0x283] = 0x80;
+        lsdaTableExceedsBytes[0x284] = 0x03;
+        bool lsdaTableExceedsRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaTableExceedsBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaTableExceedsRejected = std::string(error.what()).find("unwind") != std::string::npos;
+        }
+        Require(lsdaTableExceedsRejected);
+        auto lsdaCallEncodingBytes = validLsdaBytes;
+        lsdaCallEncodingBytes[0x282] = 0x13;
+        bool lsdaCallEncodingRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaCallEncodingBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaCallEncodingRejected = std::string(error.what()).find("unsupported LSDA call-site encoding") != std::string::npos;
+        }
+        Require(lsdaCallEncodingRejected);
+        auto lsdaActionLebBytes = validLsdaBytes;
+        lsdaActionLebBytes[0x283] = 22;
+        for (int index = 0; index < 9; ++index) lsdaActionLebBytes[0x290 + index] = 0x80;
+        lsdaActionLebBytes[0x299] = 0x82;
+        bool lsdaActionLebRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaActionLebBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaActionLebRejected = std::string(error.what()).find("overflowing LEB128 value") != std::string::npos;
+        }
+        Require(lsdaActionLebRejected);
+        auto lsdaFdeAugMismatchBytes = validLsdaBytes;
+        lsdaFdeAugMismatchBytes[0x238] = 2;
+        bool lsdaFdeAugMismatchRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaFdeAugMismatchBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaFdeAugMismatchRejected = std::string(error.what()).find("FDE augmentation size mismatch") != std::string::npos;
+        }
+        Require(lsdaFdeAugMismatchRejected);
+        auto lsdaLandingOverflowBytes = validLsdaBytes;
+        lsdaLandingOverflowBytes[0x280] = 0;
+        Io::WriteU64(lsdaLandingOverflowBytes, 0x281, 0xFFFFFFFFFFFFF000ULL);
+        lsdaLandingOverflowBytes[0x289] = 0xFF;
+        lsdaLandingOverflowBytes[0x28A] = 3;
+        lsdaLandingOverflowBytes[0x28B] = 13;
+        Io::WriteU32(lsdaLandingOverflowBytes, 0x28C, 0);
+        Io::WriteU32(lsdaLandingOverflowBytes, 0x290, 0x10);
+        Io::WriteU32(lsdaLandingOverflowBytes, 0x294, 0x2000);
+        lsdaLandingOverflowBytes[0x298] = 0;
+        bool lsdaLandingOverflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(lsdaLandingOverflowBytes, {validLsdaLoad, validLsdaEh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            lsdaLandingOverflowRejected = std::string(error.what()).find("LSDA landing pad address overflowed") != std::string::npos;
+        }
+        Require(lsdaLandingOverflowRejected);
+        std::cout << "56 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
