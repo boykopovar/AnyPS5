@@ -154,11 +154,23 @@ static void CheckStickDeadZones(int handle) {
     Require(info.stickInfo.deadZoneLeft == 13 && info.stickInfo.deadZoneRight == 13);
 }
 
-static void CheckTouchContact() {
+static void CheckTouchContact(int handle) {
+    Require(scePadReadState(handle, nullptr) == PAD_ERROR_INVALID_ARG);
+    Require(scePadRead_nid_postfix(handle, nullptr, 1) == PAD_ERROR_INVALID_ARG);
+    for (const int invalid : {-1, 0, handle + 1, 9999}) {
+        Require(scePadReadState(invalid, nullptr) == PAD_ERROR_INVALID_HANDLE);
+        Require(scePadRead_nid_postfix(invalid, nullptr, 1) == PAD_ERROR_INVALID_HANDLE);
+    }
     PadInputState touch;
     touch.buttons = static_cast<std::uint32_t>(Pad::PadButton::TouchPad);
     touch.touch[0] = {true, 960, 471, 0};
     PadPublishInput_nid_postfix(touch);
+    PadData stateData{};
+    Require(scePadReadState(handle, &stateData) == PAD_OK);
+    Require((stateData.buttons & static_cast<std::uint32_t>(Pad::PadButton::TouchPad)) != 0);
+    Require(stateData.touch_data_touch_num == 1);
+    Require(stateData.touch_data_touch0_x == 960);
+    Require(stateData.touch_data_touch0_y == 471);
     const auto data = Pad::ReadState();
     Require((data.buttons & static_cast<std::uint32_t>(Pad::PadButton::TouchPad)) != 0);
     Require(data.touch_data_touch_num == 1);
@@ -249,10 +261,15 @@ static void CheckHandleQueries(int user, int handle) {
     Require(!scePadIsValidHandle(special, PAD_PORT_TYPE_SPECIAL));
 }
 
-static void CheckVirtualTouchContact() {
+static void CheckVirtualTouchContact(int handle) {
     PadInputState left;
     left.touchLeft = true;
     PadPublishInput_nid_postfix(left);
+    PadData leftState{};
+    Require(scePadReadState(handle, &leftState) == PAD_OK);
+    Require(leftState.touch_data_touch_num == 1);
+    Require(leftState.touch_data_touch0_x == kTouchPadWidth / 4);
+    Require(leftState.touch_data_touch0_y == kTouchPadHeight / 2);
     const auto leftData = Pad::ReadState();
     Require(leftData.touch_data_touch_num == 1);
     Require(leftData.touch_data_touch0_x == kTouchPadWidth / 4);
@@ -261,6 +278,11 @@ static void CheckVirtualTouchContact() {
     PadInputState right;
     right.touchRight = true;
     PadPublishInput_nid_postfix(right);
+    PadData rightState{};
+    Require(scePadReadState(handle, &rightState) == PAD_OK);
+    Require(rightState.touch_data_touch_num == 1);
+    Require(rightState.touch_data_touch0_x == kTouchPadWidth * 3 / 4);
+    Require(rightState.touch_data_touch0_y == kTouchPadHeight / 2);
     const auto rightData = Pad::ReadState();
     Require(rightData.touch_data_touch_num == 1);
     Require(rightData.touch_data_touch0_x == kTouchPadWidth * 3 / 4);
@@ -970,9 +992,9 @@ int main() {
     CheckSpecialPort(user, handle);
     CheckTiltCorrection(handle);
     CheckAngularVelocityDeadband(handle);
-    CheckTouchContact();
+    CheckTouchContact(handle);
     CheckHandleQueries(user, handle);
-    CheckVirtualTouchContact();
+    CheckVirtualTouchContact(handle);
     CheckTouchPadInformation(handle);
     CheckStickDeadZones(handle);
     CheckExtControllerInformation(handle);
