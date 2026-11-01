@@ -21,9 +21,8 @@ STUB_191 = bytes.fromhex("48 c7 c0 bf 00 00 00 49 89 ca 0f 05 c3")
 STUB_9 = bytes.fromhex("48 c7 c0 09 00 00 00 49 89 ca 0f 05 c3")
 
 
-def fixture(stub_code, import_symbol=b"pathconf", import_library=b"libkernel.prx"):
+def fixture(stub_code, import_symbol=b"pathconf", import_library=b"libkernel.prx", rel_type=7, addend=0, sym_type=2, slot=0x800, extra_relocations=None):
     code_base = 0x1000
-    slot = 0x800
     image = bytearray(0x1200)
     image[:16] = b"\x7fELF\x02\x01\x01" + bytes(9)
     struct.pack_into("<HHIQQQIHHHHHH", image, 16, 3, 62, 1, code_base, 64, 0, 0, 64, 56, 8, 64, 0, 0)
@@ -34,7 +33,23 @@ def fixture(stub_code, import_symbol=b"pathconf", import_library=b"libkernel.prx
         struct.pack_into("<IIQQQQQQ", image, 64 + idx * 56, 0x6fffff01, 0, 0, 0, 0, 0, 0, 1)
 
     if import_symbol is not None:
-        relocations = [(slot, (1 << 32) | 7, 0)]
+        all_relocs = [(slot, (1 << 32) | rel_type, addend)]
+        if extra_relocations:
+            all_relocs.extend(extra_relocations)
+
+        plt_relocs = [r for r in all_relocs if (r[1] & 0xFFFFFFFF) == 7]
+        non_plt_relocs = [r for r in all_relocs if (r[1] & 0xFFFFFFFF) != 7]
+
+        plt_off = 0x700
+        plt_sz = len(plt_relocs) * 24
+        rela_off = 0x700 + plt_sz
+        rela_sz = len(non_plt_relocs) * 24
+
+        for idx, relocation in enumerate(plt_relocs):
+            struct.pack_into("<QQq", image, plt_off + idx * 24, *relocation)
+        for idx, relocation in enumerate(non_plt_relocs):
+            struct.pack_into("<QQq", image, rela_off + idx * 24, *relocation)
+
         strtab = b"\x00" + import_symbol + b"\x00" + import_library + b"\x00"
         lib_offset = 1 + len(import_symbol) + 1
         tags = [
@@ -44,19 +59,17 @@ def fixture(stub_code, import_symbol=b"pathconf", import_library=b"libkernel.prx
             (6, 0x620),
             (11, 24),
             (3, slot),
-            (2, 24),
+            (2, plt_sz),
             (20, 7),
-            (23, 0x700),
-            (7, 0x7a0),
-            (8, 0),
+            (23, plt_off if plt_sz > 0 else 0x7a0),
+            (7, rela_off if rela_sz > 0 else 0x7a0),
+            (8, rela_sz),
             (9, 24),
             (0x6100003f, 48),
             (0, 0),
         ]
         image[0x600:0x600 + len(strtab)] = strtab
-        struct.pack_into("<IBBHQQ", image, 0x620 + 24, 1, (1 << 4) | 2, 0, 0, 0, 0)
-        for idx, relocation in enumerate(relocations):
-            struct.pack_into("<QQq", image, 0x700 + idx * 24, *relocation)
+        struct.pack_into("<IBBHQQ", image, 0x620 + 24, 1, (1 << 4) | sym_type, 0, 0, 0, 0)
     else:
         tags = [
             (5, 0x600),
@@ -76,18 +89,31 @@ def fixture(stub_code, import_symbol=b"pathconf", import_library=b"libkernel.prx
     return bytes(image)
 
 
-def guest_module_fixture(stub_code, import_symbol=b"pathconf", import_library=b"libkernel.prx"):
+def guest_module_fixture(stub_code, import_symbol=b"pathconf", import_library=b"libkernel.prx", rel_type=7, addend=0, sym_type=2, slot=0x2050, extra_relocations=None):
     image = bytearray(guest_fixture(b"\x90" * 6))
     image[0x440:0x440 + len(stub_code)] = stub_code
     if import_symbol is not None:
         strtab = b"\x00" + import_symbol + b"\x00" + import_library + b"\x00"
         image[0x800:0x800 + len(strtab)] = strtab
-        struct.pack_into("<IBBHQQ", image, 0x820 + 24, 1, 0x12, 0, 0, 0, 0)
+        struct.pack_into("<IBBHQQ", image, 0x820 + 24, 1, (1 << 4) | sym_type, 0, 0, 0, 0)
         struct.pack_into("<II", image, 0x840, 1, 2)
-        slot = 0x2050
         rela_offset = 0x8C0
         rela_mapped = 0x22C0
-        struct.pack_into("<QQq", image, rela_offset, slot, (1 << 32) | 7, 0)
+        all_relocs = [(slot, (1 << 32) | rel_type, addend)]
+        if extra_relocations:
+            all_relocs.extend(extra_relocations)
+
+        plt_relocs = [r for r in all_relocs if (r[1] & 0xFFFFFFFF) == 7]
+        non_plt_relocs = [r for r in all_relocs if (r[1] & 0xFFFFFFFF) != 7]
+
+        plt_sz = len(plt_relocs) * 24
+        rela_sz = len(non_plt_relocs) * 24
+
+        for idx, relocation in enumerate(plt_relocs):
+            struct.pack_into("<QQq", image, rela_offset + idx * 24, *relocation)
+        for idx, relocation in enumerate(non_plt_relocs):
+            struct.pack_into("<QQq", image, rela_offset + plt_sz + idx * 24, *relocation)
+
         tags = [
             (1, 1 + len(import_symbol) + 1),
             (5, 0x2200),
@@ -97,10 +123,10 @@ def guest_module_fixture(stub_code, import_symbol=b"pathconf", import_library=b"
             (4, 0x2240),
             (0x6100003f, 48),
             (23, rela_mapped),
-            (2, 24),
+            (2, plt_sz),
             (20, 7),
-            (7, rela_mapped + 24),
-            (8, 0),
+            (7, rela_mapped + plt_sz),
+            (8, rela_sz),
             (9, 24),
             (0, 0),
         ]
@@ -152,6 +178,109 @@ def main():
                 assert stub_bytes[6:13] == b"\x90" * 7, (case_name, stub_bytes.hex())
                 disp32 = struct.unpack_from("<i", stub_bytes, 2)[0]
                 assert 0x1000 + 6 + disp32 == 0x800, (case_name, hex(disp32))
+
+        for rel_type in (6, 1):
+            case_name = f"main_rel_{rel_type}"
+            source = work / f"{case_name}.elf"
+            output = work / f"{case_name}.out"
+            source.write_bytes(fixture(STUB_191, import_symbol=b"pathconf", rel_type=rel_type))
+            result = subprocess.run(
+                [str(relinker), "--skip-sce-module", str(source), str(output)],
+                capture_output=True, text=True, timeout=20,
+            )
+            assert result.returncode == 0, (case_name, result.stdout, result.stderr)
+            relinked = output.read_bytes()
+            loads = elf_loads(relinked)
+            code_load = next(header for header in loads if (header[1] & 1))
+            stub_bytes = elf_bytes_at(relinked, loads, code_load[3], 13)
+            assert stub_bytes[0:2] == b"\xff\x25", (case_name, stub_bytes.hex())
+            assert stub_bytes[6:13] == b"\x90" * 7, (case_name, stub_bytes.hex())
+            disp32 = struct.unpack_from("<i", stub_bytes, 2)[0]
+            assert 0x1000 + 6 + disp32 == 0x800, (case_name, hex(disp32))
+
+        nonzero_addend_src = work / "nonzero_addend.elf"
+        nonzero_addend_out = work / "nonzero_addend.out"
+        nonzero_addend_src.write_bytes(fixture(STUB_191, import_symbol=b"pathconf", rel_type=1, addend=4))
+        result = subprocess.run(
+            [str(relinker), "--skip-sce-module", str(nonzero_addend_src), str(nonzero_addend_out)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode != 0, "Expected failure when R_X86_64_64 addend is nonzero"
+        assert "Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import" in result.stderr, result.stderr
+
+        nonzero_trap_out = work / "nonzero_trap.out"
+        result = subprocess.run(
+            [str(relinker), "--skip-sce-module", "--trap-sdk-syscall-stubs", str(nonzero_addend_src), str(nonzero_trap_out)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        trapped_loads = elf_loads(nonzero_trap_out.read_bytes())
+        trapped_code = next(header for header in trapped_loads if (header[1] & 1))
+        trapped_bytes = elf_bytes_at(nonzero_trap_out.read_bytes(), trapped_loads, trapped_code[3], 13)
+        assert trapped_bytes[10:12] == b"\x0f\x0b", trapped_bytes.hex()
+
+        unsupported_rel_src = work / "unsupported_rel.elf"
+        unsupported_rel_out = work / "unsupported_rel.out"
+        unsupported_rel_src.write_bytes(fixture(STUB_191, import_symbol=b"pathconf", rel_type=2))
+        result = subprocess.run(
+            [str(relinker), "--skip-sce-module", str(unsupported_rel_src), str(unsupported_rel_out)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode != 0, "Expected failure when relocation type is unsupported"
+        assert "Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import" in result.stderr, result.stderr
+
+        unsupported_trap_out = work / "unsupported_trap.out"
+        result = subprocess.run(
+            [str(relinker), "--skip-sce-module", "--trap-sdk-syscall-stubs", str(unsupported_rel_src), str(unsupported_trap_out)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        trapped_loads = elf_loads(unsupported_trap_out.read_bytes())
+        trapped_code = next(header for header in trapped_loads if (header[1] & 1))
+        trapped_bytes = elf_bytes_at(unsupported_trap_out.read_bytes(), trapped_loads, trapped_code[3], 13)
+        assert trapped_bytes[10:12] == b"\x0f\x0b", trapped_bytes.hex()
+
+        object_sym_src = work / "object_sym.elf"
+        object_sym_out = work / "object_sym.out"
+        object_sym_src.write_bytes(fixture(STUB_191, import_symbol=b"pathconf", rel_type=7, sym_type=1))
+        result = subprocess.run(
+            [str(relinker), "--skip-sce-module", str(object_sym_src), str(object_sym_out)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode != 0, "Expected failure when symbol is STT_OBJECT"
+        assert "Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import" in result.stderr, result.stderr
+
+        mixed_bad_first_src = work / "mixed_bad_first.elf"
+        mixed_bad_first_out = work / "mixed_bad_first.out"
+        mixed_bad_first_src.write_bytes(fixture(STUB_191, import_symbol=b"pathconf", rel_type=1, addend=4, slot=0x808, extra_relocations=[(0x800, (1 << 32) | 7, 0)]))
+        result = subprocess.run(
+            [str(relinker), "--skip-sce-module", str(mixed_bad_first_src), str(mixed_bad_first_out)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        relinked = mixed_bad_first_out.read_bytes()
+        loads = elf_loads(relinked)
+        code_load = next(header for header in loads if (header[1] & 1))
+        stub_bytes = elf_bytes_at(relinked, loads, code_load[3], 13)
+        assert stub_bytes[0:2] == b"\xff\x25", stub_bytes.hex()
+        disp32 = struct.unpack_from("<i", stub_bytes, 2)[0]
+        assert 0x1000 + 6 + disp32 == 0x800, hex(disp32)
+
+        mixed_good_first_src = work / "mixed_good_first.elf"
+        mixed_good_first_out = work / "mixed_good_first.out"
+        mixed_good_first_src.write_bytes(fixture(STUB_191, import_symbol=b"pathconf", rel_type=7, addend=0, extra_relocations=[(0x808, (1 << 32) | 1, 4)]))
+        result = subprocess.run(
+            [str(relinker), "--skip-sce-module", str(mixed_good_first_src), str(mixed_good_first_out)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        relinked = mixed_good_first_out.read_bytes()
+        loads = elf_loads(relinked)
+        code_load = next(header for header in loads if (header[1] & 1))
+        stub_bytes = elf_bytes_at(relinked, loads, code_load[3], 13)
+        assert stub_bytes[0:2] == b"\xff\x25", stub_bytes.hex()
+        disp32 = struct.unpack_from("<i", stub_bytes, 2)[0]
+        assert 0x1000 + 6 + disp32 == 0x800, hex(disp32)
 
         no_import_source = work / "no_import.elf"
         no_import_out = work / "no_import.out"
@@ -224,6 +353,108 @@ def main():
                 assert stub_bytes[6:13] == b"\x90" * 7, stub_bytes.hex()
                 disp32 = struct.unpack_from("<i", stub_bytes, 2)[0]
                 assert 0x1040 + 6 + disp32 == 0x2050, (hex(disp32), stub_bytes.hex())
+
+        for rel_type in (6, 1):
+            guest_rel_dir = work / f"guest_rel_{rel_type}"
+            mods_dir = guest_rel_dir / "sce_module"
+            mods_dir.mkdir(parents=True)
+            (mods_dir / "sample.prx").write_bytes(guest_module_fixture(STUB_191, import_symbol=b"pathconf", rel_type=rel_type))
+            source = guest_rel_dir / "input.elf"
+            source.write_bytes(main_fixture())
+            output = guest_rel_dir / "output.elf"
+            result = subprocess.run(
+                [str(relinker), str(source), str(output)],
+                capture_output=True, text=True, timeout=20,
+            )
+            assert result.returncode == 0, (result.stdout, result.stderr)
+            converted = output.parent / "app0" / "sce_module" / "sample.prx.guest.prx"
+            image = converted.read_bytes()
+            loads = elf_loads(image)
+            stub_bytes = elf_bytes_at(image, loads, 0x1040, 13)
+            assert stub_bytes[0:2] == b"\xff\x25", stub_bytes.hex()
+            assert stub_bytes[6:13] == b"\x90" * 7, stub_bytes.hex()
+            disp32 = struct.unpack_from("<i", stub_bytes, 2)[0]
+            assert 0x1040 + 6 + disp32 == 0x2050, (hex(disp32), stub_bytes.hex())
+
+        guest_nonzero_dir = work / "guest_nonzero"
+        mods_dir = guest_nonzero_dir / "sce_module"
+        mods_dir.mkdir(parents=True)
+        (mods_dir / "sample.prx").write_bytes(guest_module_fixture(STUB_191, import_symbol=b"pathconf", rel_type=1, addend=4))
+        source = guest_nonzero_dir / "input.elf"
+        source.write_bytes(main_fixture())
+        output = guest_nonzero_dir / "output.elf"
+        result = subprocess.run(
+            [str(relinker), str(source), str(output)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode != 0, "Expected failure when guest module R_X86_64_64 addend is nonzero"
+        assert "Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import" in result.stderr, result.stderr
+
+        output_trapped = guest_nonzero_dir / "output_trapped.elf"
+        result = subprocess.run(
+            [str(relinker), "--trap-sdk-syscall-stubs", str(source), str(output_trapped)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        converted = output_trapped.parent / "app0" / "sce_module" / "sample.prx.guest.prx"
+        image = converted.read_bytes()
+        loads = elf_loads(image)
+        stub_bytes = elf_bytes_at(image, loads, 0x1040, 13)
+        assert stub_bytes[10:12] == b"\x0f\x0b", stub_bytes.hex()
+
+        guest_object_dir = work / "guest_object"
+        mods_dir = guest_object_dir / "sce_module"
+        mods_dir.mkdir(parents=True)
+        (mods_dir / "sample.prx").write_bytes(guest_module_fixture(STUB_191, import_symbol=b"pathconf", rel_type=7, sym_type=1))
+        source = guest_object_dir / "input.elf"
+        source.write_bytes(main_fixture())
+        output = guest_object_dir / "output.elf"
+        result = subprocess.run(
+            [str(relinker), str(source), str(output)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode != 0, "Expected failure when guest module symbol is STT_OBJECT"
+        assert "Homebrew ps5-payload-dev syscall stub 191 cannot be routed: missing libkernel pathconf import" in result.stderr, result.stderr
+
+        guest_mixed_dir = work / "guest_mixed"
+        mods_dir = guest_mixed_dir / "sce_module"
+        mods_dir.mkdir(parents=True)
+        (mods_dir / "sample.prx").write_bytes(guest_module_fixture(STUB_191, import_symbol=b"pathconf", rel_type=1, addend=4, slot=0x2058, extra_relocations=[(0x2050, (1 << 32) | 7, 0)]))
+        source = guest_mixed_dir / "input.elf"
+        source.write_bytes(main_fixture())
+        output = guest_mixed_dir / "output.elf"
+        result = subprocess.run(
+            [str(relinker), str(source), str(output)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        converted = output.parent / "app0" / "sce_module" / "sample.prx.guest.prx"
+        image = converted.read_bytes()
+        loads = elf_loads(image)
+        stub_bytes = elf_bytes_at(image, loads, 0x1040, 13)
+        assert stub_bytes[0:2] == b"\xff\x25", stub_bytes.hex()
+        disp32 = struct.unpack_from("<i", stub_bytes, 2)[0]
+        assert 0x1040 + 6 + disp32 == 0x2050, hex(disp32)
+
+        guest_mixed_good_dir = work / "guest_mixed_good"
+        mods_dir = guest_mixed_good_dir / "sce_module"
+        mods_dir.mkdir(parents=True)
+        (mods_dir / "sample.prx").write_bytes(guest_module_fixture(STUB_191, import_symbol=b"pathconf", rel_type=7, addend=0, slot=0x2050, extra_relocations=[(0x2058, (1 << 32) | 1, 4)]))
+        source = guest_mixed_good_dir / "input.elf"
+        source.write_bytes(main_fixture())
+        output = guest_mixed_good_dir / "output.elf"
+        result = subprocess.run(
+            [str(relinker), str(source), str(output)],
+            capture_output=True, text=True, timeout=20,
+        )
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        converted = output.parent / "app0" / "sce_module" / "sample.prx.guest.prx"
+        image = converted.read_bytes()
+        loads = elf_loads(image)
+        stub_bytes = elf_bytes_at(image, loads, 0x1040, 13)
+        assert stub_bytes[0:2] == b"\xff\x25", stub_bytes.hex()
+        disp32 = struct.unpack_from("<i", stub_bytes, 2)[0]
+        assert 0x1040 + 6 + disp32 == 0x2050, hex(disp32)
 
         guest_no_import_dir = work / "guest_no_import"
         mods_dir = guest_no_import_dir / "sce_module"
