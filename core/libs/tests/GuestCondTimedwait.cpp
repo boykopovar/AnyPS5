@@ -216,6 +216,8 @@ int main() {
     Require(scePthreadCondDestroy(&cond) == SCE_OK);
 
     PthreadCondattr unset = nullptr;
+    Require(scePthreadCondInit(nullptr, &unset, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_cond_init_nid_postfix(nullptr, &unset) == POSIX_EINVAL);
     Require(scePthreadCondInit(&cond, &unset, nullptr) == SCE_OK);
     Require(scePthreadMutexLock(&context.mutex) == SCE_OK);
     Require(scePthreadCondTimedwait(&cond, &context.mutex, 1000) == SCE_KERNEL_ERROR_ETIMEDOUT);
