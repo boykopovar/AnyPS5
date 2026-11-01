@@ -53,6 +53,17 @@ int main() {
     int color = -1;
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetUserColor(123, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_USER_ID_INVALID, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID - 1, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0x20000000, &color) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_USER_ID_INVALID, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID - 1, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID + USER_SERVICE_MAX_USERS, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserColor(0x20000000, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(color == -1);
     Require(sceUserServiceGetUserColor(USER_SERVICE_INITIAL_USER_ID, &color) == USER_SERVICE_OK);
 
     SetLanguage(nullptr);
