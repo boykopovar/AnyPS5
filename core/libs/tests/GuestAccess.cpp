@@ -1,5 +1,7 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #ifdef _WIN32
@@ -9,12 +11,6 @@
 #include <windows.h>
 #include <aclapi.h>
 #endif
-
-extern "C" {
-int APS5_VABI access_nid_postfix(const char*, int);
-int APS5_VABI chdir_nid_postfix(const char*);
-int* APS5_VABI __error_nid_postfix();
-}
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -76,6 +72,46 @@ int main() {
     Require(access_nid_postfix("sample.txt", 1) == -1 && *__error_nid_postfix() == 13);
     std::filesystem::permissions(file, std::filesystem::perms::owner_exec, std::filesystem::perm_options::add);
     Require(access_nid_postfix("sample.txt", 1) == 0);
+#endif
+    const auto dangling = directory / "dangling.link";
+    const auto pointing = directory / "sample.link";
+    const auto loop = directory / "loop.link";
+#ifdef _WIN32
+    const DWORD linkFlags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE;
+    const bool linked = CreateSymbolicLinkW(dangling.c_str(), L"missing.bin", linkFlags) &&
+        CreateSymbolicLinkW(pointing.c_str(), L"sample.txt", linkFlags) && CreateSymbolicLinkW(loop.c_str(), L"loop.link", linkFlags);
+#else
+    std::error_code linkError;
+    std::filesystem::create_symlink("missing.bin", dangling, linkError);
+    if (!linkError) std::filesystem::create_symlink("sample.txt", pointing, linkError);
+    if (!linkError) std::filesystem::create_symlink("loop.link", loop, linkError);
+    const bool linked = !linkError;
+#endif
+    if (linked) {
+        Require(access_nid_postfix("dangling.link", 0) == -1 && *__error_nid_postfix() == 2);
+        Require(access_nid_postfix("dangling.link", 4) == -1 && *__error_nid_postfix() == 2);
+        Require(access_nid_postfix("loop.link", 0) == -1 && *__error_nid_postfix() == 62);
+        Require(access_nid_postfix("sample.link", 6) == 0);
+#ifdef _WIN32
+        Require(SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_READONLY));
+        Require(access_nid_postfix("sample.link", 4) == 0);
+        Require(access_nid_postfix("sample.link", 2) == -1 && *__error_nid_postfix() == 13);
+        Require(SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_NORMAL));
+        Require(SetFileAttributesW(pointing.c_str(), FILE_ATTRIBUTE_READONLY));
+        Require(access_nid_postfix("sample.link", 2) == 0);
+        Require(SetFileAttributesW(pointing.c_str(), FILE_ATTRIBUTE_NORMAL));
+#endif
+    } else {
+        std::fprintf(stderr, "symbolic links unavailable: the access link cases not tested\n");
+    }
+#ifdef _WIN32
+    DeleteFileW(dangling.c_str());
+    DeleteFileW(pointing.c_str());
+    DeleteFileW(loop.c_str());
+#else
+    std::filesystem::remove(dangling, linkError);
+    std::filesystem::remove(pointing, linkError);
+    std::filesystem::remove(loop, linkError);
 #endif
     Require(chdir_nid_postfix("/") == 0);
     std::filesystem::remove(file);

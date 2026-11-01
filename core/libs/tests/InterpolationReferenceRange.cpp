@@ -42,7 +42,9 @@ int main() {
         }
     };
     const auto attribute = Collect(5u, 1u, 0u, 2u);
-    expect(attribute.find("interpolation parameter reference is out of range (attribute 5 component 1 mode 0, 2 inputs)") != std::string::npos, "an attribute past the pixel inputs", attribute);
+    expect(attribute.find("interpolation parameter reference") == std::string::npos, "an attribute past the pixel inputs becomes a default", attribute);
+    const auto empty = Collect(0u, 0u, 0u, 0u);
+    expect(empty.find("interpolation parameter reference") == std::string::npos, "attribute 0 with no SPI inputs becomes a default", empty);
     const auto component = Collect(0u, 4u, 2u, 1u);
     expect(component.find("(attribute 0 component 4 mode 2, 1 inputs)") != std::string::npos, "a component past w", component);
     const auto mode = Collect(1u, 3u, 3u, 3u);

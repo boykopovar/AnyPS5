@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdint>
@@ -15,6 +16,17 @@ void ReplaceFlags(unsigned mask, unsigned flags) {
     environment[1] = (environment[1] & ~mask) | (flags & mask);
     asm volatile("fldenv %0" : : "m"(environment));
     _mm_setcsr((_mm_getcsr() & ~mask) | (flags & mask));
+}
+
+int ChangeTraps(int exceptions, bool enable) {
+    const auto mask = static_cast<unsigned>(exceptions) & Exceptions;
+    std::uint16_t control;
+    asm volatile("fnstcw %0" : "=m"(control));
+    const unsigned csr = _mm_getcsr();
+    const auto changed = static_cast<std::uint16_t>(enable ? (control & ~mask) : (control | mask));
+    asm volatile("fldcw %0" : : "m"(changed));
+    _mm_setcsr(enable ? (csr & ~(mask << 7)) : (csr | (mask << 7)));
+    return static_cast<int>(~((csr >> 7) | control) | ~Exceptions);
 }
 
 }
@@ -41,7 +53,7 @@ int APS5_VABI fesetround_nid_postfix(int rounding) {
 int APS5_VABI fetestexcept_nid_postfix(int exceptions) {
     std::uint16_t status;
     asm volatile("fnstsw %0" : "=am"(status));
-    return (status | _mm_getcsr()) & static_cast<unsigned>(exceptions) & Exceptions;
+    return static_cast<int>((status | _mm_getcsr()) & static_cast<unsigned>(exceptions));
 }
 
 int APS5_VABI fegetexceptflag_nid_postfix(std::uint16_t* flags, int exceptions) {
@@ -49,8 +61,6 @@ int APS5_VABI fegetexceptflag_nid_postfix(std::uint16_t* flags, int exceptions) 
     *flags = static_cast<std::uint16_t>(fetestexcept_nid_postfix(exceptions));
     return 0;
 }
-
-int* APS5_VABI __error_nid_postfix();
 
 void APS5_VABI _Feraise_nid_postfix(int exceptions) {
     constexpr unsigned Invalid = 0x01, Ranges = 0x1c, Overflows = 0x18, Inexact = 0x20;
@@ -74,6 +84,14 @@ int APS5_VABI fesetexceptflag_nid_postfix(const std::uint16_t* flags, int except
     return 0;
 }
 
+int APS5_VABI feraiseexcept_nid_postfix(int exceptions) {
+    const auto raised = static_cast<unsigned>(exceptions);
+    if ((raised & ~Exceptions) != 0) throw std::invalid_argument("feraiseexcept: unsupported exception bits");
+    ReplaceFlags(raised, raised);
+    asm volatile("fwait");
+    return 0;
+}
+
 int APS5_VABI feclearexcept_nid_postfix(int exceptions) {
     const auto mask = static_cast<unsigned>(exceptions) & Exceptions;
     if (mask == Exceptions) {
@@ -82,6 +100,43 @@ int APS5_VABI feclearexcept_nid_postfix(int exceptions) {
     } else if (mask != 0) {
         ReplaceFlags(mask, 0);
     }
+    return 0;
+}
+
+int APS5_VABI feenableexcept_nid_postfix(int exceptions) {
+    return ChangeTraps(exceptions, true);
+}
+
+int APS5_VABI fedisableexcept_nid_postfix(int exceptions) {
+    return ChangeTraps(exceptions, false);
+}
+
+int APS5_VABI __feenableexcept_nid_postfix(int exceptions) {
+    return ChangeTraps(exceptions, true);
+}
+
+int APS5_VABI __fedisableexcept_nid_postfix(int exceptions) {
+    return ChangeTraps(exceptions, false);
+}
+
+int APS5_VABI fegettrapenable_nid_postfix() {
+    std::uint16_t control;
+    asm volatile("fnstcw %0" : "=m"(control));
+    return ~control & Exceptions;
+}
+
+int APS5_VABI fegetexcept_nid_postfix() {
+    return fegettrapenable_nid_postfix();
+}
+
+int APS5_VABI fesettrapenable_nid_postfix(int exceptions) {
+    const auto mask = static_cast<std::uint16_t>(exceptions);
+    if (mask > Exceptions) return 1;
+    std::uint16_t control;
+    asm volatile("fnstcw %0" : "=m"(control));
+    control = static_cast<std::uint16_t>(control & ~mask);
+    asm volatile("fldcw %0" : : "m"(control));
+    _mm_setcsr(_mm_getcsr() & ~(static_cast<unsigned>(mask) << 7));
     return 0;
 }
 

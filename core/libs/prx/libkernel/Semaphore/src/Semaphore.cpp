@@ -1,5 +1,6 @@
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libc/include/General.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -21,18 +22,23 @@ extern "C" {
 
 int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t attr, int init, int max, void* opt) {
  (void)opt;
- if (sem == nullptr || name == nullptr || attr > 2 || init < 0 || max <= 0 || init > max) {
+ if (sem == nullptr) {
   APS5_INVALID_ARG_EX;
  }
-
- *sem = new KernelSemaPrivate(init, max, std::string(name), attr == 1);
+ if ((attr & ~0x103u) != 0 || (attr & 3u) == 3u || name == nullptr || init < 0 || max <= 0 || init > max) {
+  return SCE_KERNEL_ERROR_EINVAL;
+ }
+ *sem = new KernelSemaPrivate(init, max, std::string(name), (attr & 3u) == 1u);
  if (TraceSync()) std::fprintf(stderr, "[sema] create %p '%s' attr=0x%x init=%d max=%d\n", static_cast<void*>(*sem), name, attr, init, max);
  return KERNEL_SEMA_OK;
 }
 
 int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
- if (sem == nullptr || need <= 0) {
-  APS5_INVALID_ARG_EX;
+ if (sem == nullptr) {
+  return SCE_KERNEL_ERROR_ESRCH;
+ }
+ if (need <= 0 || need > sem->maxCount) {
+  return SCE_KERNEL_ERROR_EINVAL;
  }
 
  std::lock_guard<std::mutex> lock(sem->mutex);
@@ -44,8 +50,11 @@ int APS5_VABI sceKernelPollSema(KernelSema sem, int need) {
 }
 
 int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
- if (sem == nullptr || count < 0) {
-  APS5_INVALID_ARG_EX;
+ if (sem == nullptr) {
+  return SCE_KERNEL_ERROR_ESRCH;
+ }
+ if (count <= 0) {
+  return SCE_KERNEL_ERROR_EINVAL;
  }
 
  std::lock_guard<std::mutex> lock(sem->mutex);
@@ -60,7 +69,10 @@ int APS5_VABI sceKernelSignalSema(KernelSema sem, int count) {
 }
 
 int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) {
- if (sem == nullptr || need <= 0) {
+ if (sem == nullptr) {
+  return SCE_KERNEL_ERROR_ESRCH;
+ }
+ if (need <= 0) {
   APS5_INVALID_ARG_EX;
  }
 
@@ -129,7 +141,7 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
 
 int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads) {
  if (sem == nullptr) {
-  APS5_INVALID_ARG_EX;
+  return SCE_KERNEL_ERROR_ESRCH;
  }
 
  std::lock_guard<std::mutex> lock(sem->mutex);
@@ -148,7 +160,7 @@ int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads) {
 
 int APS5_VABI sceKernelDeleteSema(KernelSema sem) {
  if (sem == nullptr) {
-  APS5_INVALID_ARG_EX;
+  return SCE_KERNEL_ERROR_ESRCH;
  }
 
  std::unique_lock<std::mutex> lock(sem->mutex);

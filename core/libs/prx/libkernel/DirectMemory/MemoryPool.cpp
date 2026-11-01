@@ -154,14 +154,10 @@ struct PhysicalMemoryPool {
     }
 
     int LargestFree(int64_t searchStart, int64_t searchEnd, size_t alignment, int64_t* startOut, size_t* sizeOut) {
-        if (!startOut || !sizeOut) return SCE_KERNEL_ERROR_EINVAL;
-        if (searchStart < 0 || searchEnd <= searchStart) return SCE_KERNEL_ERROR_EAGAIN;
-        uint64_t align;
-        if (!NormalizeAlignment(alignment, align)) return SCE_KERNEL_ERROR_EAGAIN;
-
-        uint64_t cur;
-        if (!RoundUp(static_cast<uint64_t>(searchStart), kPage, cur)) return SCE_KERNEL_ERROR_EAGAIN;
-        const uint64_t limit = std::min<uint64_t>(static_cast<uint64_t>(searchEnd), kPoolBytes) & ~(kPage - 1);
+        if ((alignment & (alignment - 1)) != 0) return SCE_KERNEL_ERROR_EINVAL;
+        const uint64_t alignMask = std::max<uint64_t>(alignment, kPage) - 1;
+        uint64_t cur = searchStart > 0 ? std::min<uint64_t>(static_cast<uint64_t>(searchStart) & ~(kPage - 1), kPoolBytes) : 0;
+        const uint64_t limit = searchEnd > 0 ? std::min<uint64_t>((static_cast<uint64_t>(searchEnd) + kPage - 1) & ~(kPage - 1), kPoolBytes) : 0;
 
         std::lock_guard<std::mutex> lock(_mutex);
         uint64_t bestStart = 0;
@@ -175,11 +171,13 @@ struct PhysicalMemoryPool {
             uint64_t runEnd = cur;
             while (runEnd < limit && !_used[runEnd / kPage]) runEnd += kPage;
 
-            uint64_t alignedStart;
-            if (!RoundUp(cur, align, alignedStart)) break;
-            if (alignedStart < runEnd && runEnd - alignedStart > bestSize) {
-                bestStart = alignedStart;
-                bestSize = runEnd - alignedStart;
+            const int64_t low = std::max(static_cast<int64_t>(cur), searchStart);
+            const int64_t high = std::min(static_cast<int64_t>(runEnd), searchEnd);
+            const int64_t alignedStart = static_cast<int64_t>((static_cast<uint64_t>(low) + alignMask) & ~alignMask);
+            const uint64_t size = static_cast<uint64_t>(high) - static_cast<uint64_t>(alignedStart);
+            if (low < high && alignedStart < high && size > bestSize) {
+                bestStart = static_cast<uint64_t>(alignedStart);
+                bestSize = size;
             }
             cur = runEnd;
         }
@@ -267,7 +265,15 @@ private:
         bool splitHi = false;
         try {
             splitHi = _splitAt(hi);
-            ForgetDirectMemory(static_cast<int64_t>(lo), static_cast<size_t>(hi - lo));
+            for (size_t page = first; page < first + count;) {
+                if (!_used[page]) {
+                    ++page;
+                    continue;
+                }
+                const size_t runStart = page;
+                while (page < first + count && _used[page]) ++page;
+                ForgetDirectMemory(static_cast<int64_t>(runStart * kPage), static_cast<size_t>((page - runStart) * kPage));
+            }
         } catch (...) {
             if (splitHi) _unsplitAt(hi);
             if (splitLo) _unsplitAt(lo);

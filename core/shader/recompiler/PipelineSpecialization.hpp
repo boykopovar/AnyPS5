@@ -20,6 +20,9 @@ inline constexpr std::uint32_t BufferBase = 0u;
 inline constexpr std::uint32_t BufferWords = 4u;
 inline constexpr std::uint32_t ImageBase = 1024u;
 inline constexpr std::uint32_t ImageWords = 5u;
+inline constexpr std::uint32_t ImageComponentBase = 65536u;
+inline constexpr std::uint32_t ImageComponentBits = 2u;
+enum class ImageComponentConstant : std::uint32_t { None, Zero, IntegerOne, FloatOne };
 inline constexpr std::uint32_t VertexBase = 4096u;
 inline constexpr std::uint32_t VertexWords = 6u;
 inline constexpr std::uint32_t PushDataOffset = 8188u;
@@ -42,6 +45,7 @@ inline constexpr std::uint32_t DescriptorIndexBase = 16384u;
 inline constexpr std::uint32_t DescriptorIndexStride = 128u;
 inline constexpr std::uint32_t FoldOffsetBase = 57344u;
 inline constexpr std::uint32_t UnnormalizedBaseLevelBase = 57408u;
+inline constexpr std::uint32_t FmaskFormatBase = 57472u;
 
 inline constexpr std::uint32_t DescriptorIndex(std::uint32_t binding, std::uint32_t element) {
     return DescriptorIndexBase + binding * DescriptorIndexStride + element;

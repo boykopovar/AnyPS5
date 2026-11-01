@@ -16,15 +16,30 @@ inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* sou
     std::vector<void*> pointers;
     std::vector<int> suppressedEnds(static_cast<size_t>(std::count(format, format + std::strlen(format), '%')), -1);
     size_t suppressedCount = 0;
+    struct NarrowInteger {
+        void* destination;
+        size_t size;
+        bool isUnsigned;
+        long long value;
+        unsigned long long unsignedValue;
+        int end;
+    };
+    std::vector<NarrowInteger> narrowIntegers;
+    narrowIntegers.reserve(suppressedEnds.size());
     FormatArguments args(source);
     while (*format) {
         const char value = *format++;
         translated += value;
         if (value != '%') continue;
         if (*format == '%') { translated += *format++; continue; }
+        const size_t directive = translated.size() - 1;
         const bool suppressed = *format == '*';
         if (suppressed) translated += *format++;
         while (*format >= '0' && *format <= '9') translated += *format++;
+        if (*format == 'q') {
+            translated.resize(directive);
+            break;
+        }
         std::string length;
         if (*format && std::strchr("hljztL", *format)) {
             length += *format++;
@@ -37,7 +52,8 @@ inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* sou
             return EOF;
         }
         ++format;
-        if (std::strchr("diouxXn", conversion) && (length == "l" || length == "j" || length == "z" || length == "t"))
+        const bool narrow = !suppressed && std::strchr("diouxX", conversion) && (length.empty() || length == "h" || length == "hh");
+        if (narrow || (std::strchr("diouxXn", conversion) && (length == "l" || length == "j" || length == "z" || length == "t")))
             translated += "ll";
         else translated += length;
         translated += conversion;
@@ -48,13 +64,30 @@ inline int ScanWindowsArguments_nid_no_patch(const char* format, const void* sou
             if (*format != ']') { errno = 22; return EOF; }
             translated += *format++;
         }
-        if (!suppressed) pointers.push_back(args.Next<void*>());
+        if (narrow) {
+            const bool isUnsigned = std::strchr("ouxX", conversion) != nullptr;
+            narrowIntegers.push_back({args.Next<void*>(), length.empty() ? sizeof(int) : length == "h" ? sizeof(short) : sizeof(char), isUnsigned, 0, 0, -1});
+            translated += "%n";
+            auto& integer = narrowIntegers.back();
+            pointers.push_back(isUnsigned ? static_cast<void*>(&integer.unsignedValue) : static_cast<void*>(&integer.value));
+            pointers.push_back(&integer.end);
+        } else if (!suppressed) pointers.push_back(args.Next<void*>());
         else if (conversion != 'n') {
             translated += "%n";
             pointers.push_back(&suppressedEnds[suppressedCount++]);
         }
     }
     const int result = scan(translated.c_str(), reinterpret_cast<char*>(pointers.data()));
+    for (const auto& integer : narrowIntegers) {
+        if (integer.end < 0) continue;
+        if (integer.isUnsigned) {
+            if (integer.size == sizeof(char)) *static_cast<unsigned char*>(integer.destination) = static_cast<unsigned char>(integer.unsignedValue);
+            else if (integer.size == sizeof(short)) *static_cast<unsigned short*>(integer.destination) = static_cast<unsigned short>(integer.unsignedValue);
+            else *static_cast<unsigned int*>(integer.destination) = static_cast<unsigned int>(integer.unsignedValue);
+        } else if (integer.size == sizeof(char)) *static_cast<signed char*>(integer.destination) = static_cast<signed char>(integer.value);
+        else if (integer.size == sizeof(short)) *static_cast<short*>(integer.destination) = static_cast<short>(integer.value);
+        else *static_cast<int*>(integer.destination) = static_cast<int>(integer.value);
+    }
     if (result == EOF && std::any_of(suppressedEnds.begin(), suppressedEnds.begin() + suppressedCount, [](int end) { return end >= 0; }))
         return 0;
     return result;

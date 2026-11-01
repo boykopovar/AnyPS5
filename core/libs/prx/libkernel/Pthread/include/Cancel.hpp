@@ -22,6 +22,8 @@ struct CleanupHandler {
 extern "C" {
 void APS5_VABI __pthread_cleanup_push_imp_nid_postfix(void (APS5_VABI* routine)(void*), void* argument, void* info);
 void APS5_VABI __pthread_cleanup_pop_imp_nid_postfix(int execute);
+void APS5_VABI pthread_cleanup_push_nid_postfix(void (APS5_VABI* routine)(void*), void* argument);
+void APS5_VABI pthread_cleanup_pop_nid_postfix(int execute);
 }
 
 namespace ThreadCancel {

@@ -55,12 +55,21 @@ void GuestArenaMapFile_nid_postfix(void* pointer, std::size_t bytes, void* secti
 void* GuestArenaMapAlias_nid_postfix(std::uintptr_t address, std::size_t bytes);
 void GuestArenaUnmapAlias_nid_postfix(void* alias);
 bool GuestArenaResidentSpan_nid_postfix(std::uintptr_t address, std::size_t bytes, std::uintptr_t* start, std::uintptr_t* end);
+void GuestArenaCompareWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+void GuestArenaCompareResidentWhenShared_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+void GuestArenaComparedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count);
+void GuestArenaTakeUnreportedPages_nid_no_patch(std::uintptr_t address, std::size_t bytes, void** pages, std::size_t* count);
 void GuestArenaForgetSection_nid_postfix(void* section);
+bool GuestArenaBeginHostImport_nid_no_patch(void* pointer, std::size_t bytes);
+void GuestArenaEndHostImport_nid_no_patch(void* pointer, std::size_t bytes);
+bool GuestArenaForgetReusableSection_nid_no_patch(void* section);
 #else
 void GuestArenaSetSharedBacking_nid_postfix(SharedBackingResolver resolver);
 void GuestArenaSetSharedBackingWriter_nid_no_patch(SharedBackingWriter writer);
 bool GuestArenaWriteSharedBacking_nid_no_patch(std::uintptr_t address, const void* source, std::size_t bytes);
 bool GuestArenaSharedBacking_nid_postfix(std::uintptr_t address, std::size_t bytes, int* file, std::uint64_t* offset);
+bool GuestArenaOverlapsHostRegion_nid_no_patch(std::uintptr_t address, std::size_t bytes);
+void GuestArenaReleaseHostRegion_nid_no_patch(const void* pointer, std::size_t bytes);
 #endif
 bool GuestArenaBeginHostWrite_nid_postfix(void* pointer, std::size_t bytes);
 void GuestArenaEndHostWrite_nid_postfix(void* pointer, std::size_t bytes);
@@ -84,6 +93,23 @@ private:
     std::size_t bytes;
     bool open;
 };
+
+#ifdef _WIN32
+class HostImportAccess {
+public:
+    HostImportAccess(void* pointer, std::size_t bytes) : pointer(pointer), bytes(bytes), open(GuestArenaBeginHostImport_nid_no_patch(pointer, bytes)) {}
+    ~HostImportAccess() {
+        if (open) GuestArenaEndHostImport_nid_no_patch(pointer, bytes);
+    }
+    HostImportAccess(const HostImportAccess&) = delete;
+    HostImportAccess& operator=(const HostImportAccess&) = delete;
+
+private:
+    void* pointer;
+    std::size_t bytes;
+    bool open;
+};
+#endif
 
 }
 

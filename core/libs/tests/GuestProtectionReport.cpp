@@ -1,20 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
-
-extern "C" {
-int APS5_VABI mprotect_nid_postfix(void*, std::size_t, int) noexcept;
-int APS5_VABI sceKernelMapFlexibleMemory(void**, std::size_t, int, int);
-int APS5_VABI sceKernelAllocateDirectMemory(std::int64_t, std::int64_t, std::size_t, std::size_t, int, std::int64_t*);
-int APS5_VABI sceKernelMapDirectMemory(void**, std::size_t, int, int, std::int64_t, std::size_t);
-int APS5_VABI sceKernelMprotect(const void*, std::size_t, int);
-int APS5_VABI sceKernelMunmap(std::uint64_t, std::size_t);
-int APS5_VABI sceKernelVirtualQuery(const void*, int, VirtualQueryInfo*, std::uint64_t);
-int APS5_VABI sceKernelQueryMemoryProtection(void*, void**, void**, int*);
-}
 
 namespace {
 

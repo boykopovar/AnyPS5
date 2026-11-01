@@ -1,17 +1,10 @@
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <thread>
-
-extern "C" {
-int APS5_VABI sceKernelInstallExceptionHandler(int signum, void* handler);
-int APS5_VABI sceKernelRemoveExceptionHandler(int signum);
-int APS5_VABI sceKernelRaiseException(Pthread thread, int signum);
-int APS5_VABI scePthreadCreate(Pthread* thread, const PthreadAttr* attr, PthreadEntry entry, void* arg, const char* name);
-int APS5_VABI scePthreadJoin(Pthread thread, void** retval);
-int APS5_VABI sceKernelUsleep_nid_postfix(KernelUseconds microseconds);
-}
 
 static constexpr int SIGUSR1 = 30;
 static constexpr int SCE_OK = 0;
